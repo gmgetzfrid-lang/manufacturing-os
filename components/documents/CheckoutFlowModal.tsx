@@ -908,7 +908,7 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
                           <button
                             onClick={handleCheckout}
                             disabled={processing || quickBusy || !ready}
-                            className={`flex-1 py-3 rounded-xl font-bold text-sm flex items-center justify-center shadow-lg ${document.checkedOutBy && !isOrphaned ? 'bg-[var(--color-surface)] border-2 border-blue-600 text-blue-700 hover:bg-blue-50' : 'bg-blue-600 text-white hover:bg-blue-700 shadow-blue-900/20'} disabled:opacity-60 disabled:cursor-not-allowed`}
+                            className={`flex-1 py-3 rounded-xl font-bold text-sm flex items-center justify-center shadow-lg ${document.checkedOutBy && !isOrphaned ? 'bg-[var(--color-surface)] border-2 border-blue-600 text-blue-700 hover:bg-blue-50' : 'bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)] '} disabled:opacity-60 disabled:cursor-not-allowed`}
                           >
                             {processing ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Clock className="w-4 h-4 mr-2" />}
                             {buttonLabel}

@@ -503,7 +503,7 @@ export default function VersionHistoryPanel({
               <button
                 type="submit"
                 disabled={savingLabel || !labelDraft.trim()}
-                className="px-3 py-1.5 rounded-lg bg-blue-600 text-white text-xs font-bold hover:bg-blue-700 disabled:opacity-50 inline-flex items-center gap-1.5"
+                className="px-3 py-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-bold hover:bg-[var(--color-accent-hover)] disabled:opacity-50 inline-flex items-center gap-1.5"
               >
                 {savingLabel ? <><Loader2 className="w-3 h-3 animate-spin" /> Saving…</> : "Save correction"}
               </button>

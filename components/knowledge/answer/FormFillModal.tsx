@@ -115,7 +115,7 @@ export default function FormFillModal({ orgId, documentId, formName, question, a
           </button>
         )}
         <button type="button" onClick={() => void download()} disabled={!draft || busy !== null}
-          className="inline-flex items-center gap-1.5 text-[13px] font-bold px-4 py-2 rounded-lg bg-orange-600 text-white hover:bg-orange-700 disabled:opacity-50">
+          className="inline-flex items-center gap-1.5 text-[13px] font-bold px-4 py-2 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
           {busy === "download" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />} Download filled PDF
         </button>
       </ModalFooter>

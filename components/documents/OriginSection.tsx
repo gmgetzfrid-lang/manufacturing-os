@@ -74,7 +74,7 @@ export default function OriginSection({ doc, orgId, canManage }: {
         <div className="space-y-2">
           <div className="flex gap-1">
             {(["internal", "external"] as const).map((o) => (
-              <button key={o} onClick={() => setOrigin(o)} className={`flex-1 px-2 py-1 rounded-lg text-[11px] font-bold ${origin === o ? "bg-[var(--color-accent)] text-white" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"}`}>{o === "internal" ? "Internal" : "External origin"}</button>
+              <button key={o} onClick={() => setOrigin(o)} className={`flex-1 px-2 py-1 rounded-lg text-[11px] font-bold ${origin === o ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"}`}>{o === "internal" ? "Internal" : "External origin"}</button>
             ))}
           </div>
           {origin === "external" && (

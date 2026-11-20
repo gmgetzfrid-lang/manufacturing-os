@@ -47,7 +47,7 @@ export function CancelJobForm({ id, name, steps, userId, userName, userEmail, on
       <div className="flex items-center justify-end gap-2">
         <button onClick={onClose} disabled={busy} className="text-[12px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-2 py-1">Back</button>
         <button onClick={() => void save()} disabled={busy}
-          className="inline-flex items-center gap-1.5 rounded-md bg-amber-600 hover:bg-amber-700 text-white text-[12px] font-bold px-3 py-1.5 disabled:opacity-50">
+          className="inline-flex items-center gap-1.5 rounded-md bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-[12px] font-bold px-3 py-1.5 disabled:opacity-50">
           {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Ban className="w-3.5 h-3.5" />} Cancel job
         </button>
       </div>

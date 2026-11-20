@@ -257,7 +257,7 @@ export default function WorkOrdersView({ milestones, cancelled = [], childrenByP
             const n = found.filter(is(k)).length;
             return (
               <button key={k} type="button" aria-pressed={!showCancelled && show === k} onClick={() => { setShow(k); setShowCancelled(false); }}
-                className={`h-8 px-2.5 rounded-full border text-[12px] font-semibold ${!showCancelled && show === k ? "border-[var(--color-accent)] bg-[var(--color-accent)] text-[var(--color-accent-fg)]" : "border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
+                className={`h-8 px-2.5 rounded-full border text-[12px] font-semibold ${!showCancelled && show === k ? "border-[var(--color-text)] bg-[var(--color-text)] text-[var(--color-surface)]" : "border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
                 {l} <span className="tabular-nums opacity-80">{n}</span>
               </button>
             );
@@ -342,7 +342,7 @@ export default function WorkOrdersView({ milestones, cancelled = [], childrenByP
                   ref={(el) => { if (el) heads.current.set(o.key, el); else heads.current.delete(o.key); }}
                   className={`w-full text-left px-3 py-2.5 rounded-t-[10px] ${isOpen ? "sticky top-0 z-20 bg-[var(--color-accent-soft)] border-b border-[var(--color-accent)]/30" : "rounded-b-[10px] hover:bg-[var(--color-surface-2)]"}`}>
                   <div className="flex items-start gap-2.5">
-                    <span className={`mt-0.5 shrink-0 inline-flex items-center justify-center w-7 h-7 rounded-full border ${isOpen ? "bg-[var(--color-accent)] border-[var(--color-accent)] text-[var(--color-accent-fg)]" : "border-[var(--color-border-strong)] text-[var(--color-text-muted)]"}`} aria-hidden>
+                    <span className={`mt-0.5 shrink-0 inline-flex items-center justify-center w-7 h-7 rounded-full border ${isOpen ? "bg-[var(--color-text)] border-[var(--color-text)] text-[var(--color-surface)]" : "border-[var(--color-border-strong)] text-[var(--color-text-muted)]"}`} aria-hidden>
                       {isOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
                     </span>
                     <div className="flex-1 min-w-0">

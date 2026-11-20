@@ -302,7 +302,7 @@ function Month({ value, today, planned, onPick, future, earliest }: { value: str
           const k = key(i + 1), on = k === value, later = (!future && k > today) || (!!earliest && k < earliest);
           return (
             <button key={k} type="button" disabled={later} aria-pressed={on} aria-label={dayWords(k)} onClick={() => onPick(k)}
-              className={`relative mx-auto w-9 h-9 rounded-full text-[13px] tabular-nums ${on ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] font-bold" : later ? "text-[var(--color-text-faint)] opacity-40" : `hover:bg-[var(--color-surface-2)] ${k === today ? "font-bold text-[var(--color-accent)] ring-1 ring-inset ring-[var(--color-accent)]" : ""}`}`}>
+              className={`relative mx-auto w-9 h-9 rounded-full text-[13px] tabular-nums ${on ? "bg-[var(--color-text)] text-[var(--color-surface)] font-bold" : later ? "text-[var(--color-text-faint)] opacity-40" : `hover:bg-[var(--color-surface-2)] ${k === today ? "font-bold text-[var(--color-accent)] ring-1 ring-inset ring-[var(--color-accent)]" : ""}`}`}>
               {i + 1}
               {k === planned && <span title="Planned" className={`absolute bottom-1 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full ${on ? "bg-[var(--color-accent-fg)]" : "bg-[var(--color-accent)]"}`} />}
             </button>

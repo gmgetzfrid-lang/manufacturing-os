@@ -220,8 +220,8 @@ export default function IntakePortal({ params }: { params: Promise<{ token: stri
       {/* Submit form */}
       <div className="mt-4 rounded-xl border border-[var(--color-border-strong)] p-4">
         <div className="flex items-center gap-1 mb-3 rounded-lg border border-[var(--color-border)] p-0.5 w-fit">
-          <button onClick={() => setMode("new")} className={`px-3 py-1 rounded-md text-xs font-bold ${mode === "new" ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)]" : "text-[var(--color-text-muted)]"}`}>New document</button>
-          <button onClick={() => setMode("rev")} disabled={data.items.length === 0} className={`px-3 py-1 rounded-md text-xs font-bold disabled:opacity-40 ${mode === "rev" ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)]" : "text-[var(--color-text-muted)]"}`}>Revision of ours</button>
+          <button onClick={() => setMode("new")} className={`px-3 py-1 rounded-md text-xs font-bold ${mode === "new" ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "text-[var(--color-text-muted)]"}`}>New document</button>
+          <button onClick={() => setMode("rev")} disabled={data.items.length === 0} className={`px-3 py-1 rounded-md text-xs font-bold disabled:opacity-40 ${mode === "rev" ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "text-[var(--color-text-muted)]"}`}>Revision of ours</button>
         </div>
         <div className="space-y-2">
           {mode === "new" ? (

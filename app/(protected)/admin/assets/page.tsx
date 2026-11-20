@@ -323,7 +323,7 @@ function AssetsPageInner() {
                 // operating area, not dropping a loose asset.
                 <button
                   onClick={() => setAddUnitOpen(true)}
-                  className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-sm font-black shadow-lg shadow-purple-900/20"
+                  className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-sm font-black shadow-sm"
                 >
                   <Plus className="w-4 h-4" /> New operating area
                 </button>
@@ -339,7 +339,7 @@ function AssetsPageInner() {
                   </button>}
                   <button
                     onClick={() => setAddCategoryOpen(true)}
-                    className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-sm font-black shadow-lg shadow-purple-900/20"
+                    className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-sm font-black shadow-sm"
                   >
                     <Plus className="w-4 h-4" /> New category
                   </button>
@@ -359,23 +359,11 @@ function AssetsPageInner() {
         {/* No codebook units yet → show admins the path instead of a silently
             flat registry. The unit-first view lights up the moment units exist. */}
         {book.units.length === 0 && isAdmin && (
-          <div className="mb-4 rounded-2xl border border-violet-200 bg-violet-50/60 p-4 flex items-start gap-3 flex-wrap">
-            <div className="w-9 h-9 rounded-xl bg-violet-100 border border-violet-200 flex items-center justify-center shrink-0">
-              <BookMarked className="w-4 h-4 text-violet-700" />
-            </div>
-            <div className="flex-1 min-w-[240px]">
-              <div className="text-sm font-black text-[var(--color-text)]">Break this registry into operating areas</div>
-              <p className="text-xs text-[var(--color-text-muted)] mt-0.5 leading-relaxed">
-                Teach the Site Codebook your units (20 = Crude, 25 = DHT…) and this page reorganizes itself:
-                pick a unit first, equipment grouped by type inside it, every asset carrying its site code (E-22 ↔ 2030.22).
-                The same codebook feeds the knowledge AI and drafting request forms.
-              </p>
-            </div>
-            <Link href="/admin/codebook"
-              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-white bg-violet-600 hover:bg-violet-700 transition-colors shrink-0">
-              Set up the Site Codebook <ArrowRight className="w-3.5 h-3.5" />
-            </Link>
-          </div>
+          <p className="mb-3 text-[13px] text-[var(--color-text-muted)] flex items-center gap-1.5 flex-wrap">
+            <BookMarked className="w-4 h-4 shrink-0" />
+            Name your units in the Site Codebook (20 = Crude, 25 = DHT) and this list groups itself by unit, then equipment type.
+            <Link href="/admin/codebook" className="font-bold text-[var(--color-accent)] hover:underline">Set up the codebook</Link>
+          </p>
         )}
 
         {/* Inside a unit: identity header + the unit's pinned libraries. */}
@@ -479,7 +467,7 @@ function AssetsPageInner() {
                   <p className="text-sm font-black text-[var(--color-text)]">Everything is filed.</p>
                   <p className="text-xs text-[var(--color-text-muted)] mt-1">No equipment is missing an operating area.</p>
                   <button onClick={() => setUnitFilter(null)}
-                    className="mt-3 inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-sm font-black shadow">
+                    className="mt-3 inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-sm font-black shadow">
                     <ArrowLeft className="w-4 h-4" /> Back to all areas
                   </button>
                 </div>
@@ -952,7 +940,7 @@ function LinkResourceModal({ orgId, onClose, onSave }: {
         <div className="px-5 py-3 border-t border-[var(--color-border)] bg-[var(--color-surface-2)] rounded-b-2xl flex items-center justify-end gap-2">
           <button onClick={onClose} disabled={busy} className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)]">Cancel</button>
           <button onClick={() => void save()} disabled={busy || !libraryId}
-            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-black text-white bg-purple-600 hover:bg-purple-500 disabled:opacity-50 shadow">
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-black text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50 shadow">
             {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Link2 className="w-3.5 h-3.5" />} Pin it
           </button>
         </div>
@@ -1063,7 +1051,7 @@ function UnassignedAssignPanel({ assets, book, userId, onAssigned }: {
               <button
                 onClick={() => { if (choice) void assign([{ asset: a, unitCode: choice }]); }}
                 disabled={busy || !choice}
-                className="text-[11px] font-black text-white bg-purple-600 hover:bg-purple-500 rounded-lg px-2.5 py-1 disabled:opacity-40"
+                className="text-[11px] font-black text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] rounded-lg px-2.5 py-1 disabled:opacity-40"
               >
                 Assign
               </button>
@@ -1078,7 +1066,7 @@ function UnassignedAssignPanel({ assets, book, userId, onAssigned }: {
         <button
           onClick={() => void assign(chosen.map((a) => ({ asset: a, unitCode: choices.get(a.id)! })))}
           disabled={busy}
-          className="mt-2 inline-flex items-center gap-1.5 text-xs font-black text-white bg-purple-600 hover:bg-purple-500 rounded-lg px-3 py-1.5 disabled:opacity-50"
+          className="mt-2 inline-flex items-center gap-1.5 text-xs font-black text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] rounded-lg px-3 py-1.5 disabled:opacity-50"
         >
           {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
           Assign all {chosen.length} selected
@@ -1275,7 +1263,7 @@ function EmptyState({ onCreate, hasAny }: { onCreate?: () => void; hasAny: boole
           : "Create your first asset - equipment, instrument, valve, anything taggable. Once an asset exists, its tag becomes a clickable chip everywhere you reference it."}
       </p>
       {!hasAny && onCreate && (
-        <button onClick={onCreate} className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-sm font-black shadow-lg">
+        <button onClick={onCreate} className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-sm font-black shadow-lg">
           <Plus className="w-4 h-4" /> Create first asset
         </button>
       )}
@@ -1682,7 +1670,7 @@ function AssetEditDrawer({
           <div className="flex items-center gap-2">
             <button onClick={onClose} disabled={busy} className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)]">Cancel</button>
             {canEdit && (
-              <button onClick={save} disabled={busy || !tag.trim() || hasTagConflict} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-black text-white bg-purple-600 hover:bg-purple-500 disabled:opacity-50 shadow">
+              <button onClick={save} disabled={busy || !tag.trim() || hasTagConflict} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-black text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50 shadow">
                 {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
                 {isCreate ? "Create & add photos" : "Save"}
               </button>
@@ -1754,7 +1742,7 @@ function AddUnitModal({ orgId, userId, existingCodes, onClose, onCreated }: {
             <BookMarkedIcon className="w-3 h-3" /> Full codebook (AI import, decoder)
           </Link>
           <button onClick={() => void save()} disabled={busy}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-black text-white bg-purple-600 hover:bg-purple-500 disabled:opacity-50">
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-black text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
             {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />} Create area
           </button>
         </div>
@@ -1852,7 +1840,7 @@ function AddCategoryModal({ orgId, userId, existingTypeCodes, onClose, onCreated
         <div className="flex items-center justify-end gap-2">
           <button onClick={onClose} className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Cancel</button>
           <button onClick={() => void save()} disabled={busy}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-black text-white bg-purple-600 hover:bg-purple-500 disabled:opacity-50">
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-black text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
             {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />} Create category
           </button>
         </div>

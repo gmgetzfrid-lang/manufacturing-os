@@ -129,7 +129,7 @@ export default function ScheduleFilterBar({ filter, onChange, groups, matchCount
               {groups.map((g) => {
                 const on = !!g.id && filter.groupIds.includes(g.id);
                 return (
-                  <button key={g.id} onClick={() => g.id && toggleGroup(g.id)} className={`px-2 py-1 rounded-full text-[11px] font-semibold border transition-colors ${on ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] border-[var(--color-accent)]" : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-accent-ring)]/60"}`}>
+                  <button key={g.id} onClick={() => g.id && toggleGroup(g.id)} className={`px-2 py-1 rounded-full text-[11px] font-semibold border transition-colors ${on ? "bg-[var(--color-text)] text-[var(--color-surface)] border-[var(--color-text)]" : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-accent-ring)]/60"}`}>
                     {g.name}
                   </button>
                 );

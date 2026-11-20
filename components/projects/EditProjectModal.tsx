@@ -281,7 +281,7 @@ export default function EditProjectModal({ project, actorUserId, actorEmail, act
                   key={v}
                   onClick={() => setVisibility(v)}
                   className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${visibility === v
-                    ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] shadow-sm"
+                    ? "bg-[var(--color-text)] text-[var(--color-surface)] shadow-sm"
                     : "text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"}`}
                 >
                   <Icon className="w-3.5 h-3.5" /> {label}

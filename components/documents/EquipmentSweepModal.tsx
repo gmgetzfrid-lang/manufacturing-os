@@ -295,7 +295,7 @@ export default function EquipmentSweepModal({ orgId, libraryId, libraryName, fol
 
   const chip = (id: typeof filter, label: string, n: number) => (
     <button key={id} type="button" onClick={() => setFilter(id)}
-      className={`rounded-full border px-2.5 py-1 text-[12px] font-bold ${filter === id ? "bg-[var(--color-accent)] border-[var(--color-accent)] text-[var(--color-accent-fg)]" : "border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
+      className={`rounded-full border px-2.5 py-1 text-[12px] font-bold ${filter === id ? "bg-[var(--color-text)] border-[var(--color-text)] text-[var(--color-surface)]" : "border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
       {label} {n}
     </button>
   );

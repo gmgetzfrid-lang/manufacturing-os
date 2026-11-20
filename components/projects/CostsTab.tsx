@@ -466,7 +466,7 @@ function SubTab({ active, onClick, icon, label, count, attention }: {
   return (
     <button onClick={onClick}
       className={`shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${
-        active ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
+        active ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
       {icon} {label}
       {count != null && count > 0 && (
         <span className={`text-[10px] font-black tabular-nums px-1.5 rounded-full ${
@@ -659,7 +659,7 @@ function EntryForm({ orgId, projectId, accountId, parties, actor, onDone, setErr
       <div className="inline-flex items-center rounded-lg border border-[var(--color-border)] p-0.5 gap-0.5">
         {ENTRY_TYPES.map((t) => (
           <button key={t.v} onClick={() => setType(t.v)} title={t.hint}
-            className={`px-2 py-1 rounded-md text-[10px] font-black transition-colors ${type === t.v ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)]" : "text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"}`}>
+            className={`px-2 py-1 rounded-md text-[10px] font-black transition-colors ${type === t.v ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"}`}>
             {t.label}
           </button>
         ))}

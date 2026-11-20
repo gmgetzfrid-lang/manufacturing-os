@@ -83,7 +83,7 @@ export default function WorkflowDiagramModal({
                 <li key={stage.status}>
                   <div className={`rounded-xl border p-3 ${TONE[tone]}`}>
                     <div className="flex items-center gap-2">
-                      <span className={`inline-flex items-center justify-center w-5 h-5 rounded-full text-[10px] font-black ${tone === "current" ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)]" : tone === "done" ? "bg-emerald-500 text-white" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border border-[var(--color-border)]"}`}>{i + 1}</span>
+                      <span className={`inline-flex items-center justify-center w-5 h-5 rounded-full text-[10px] font-black ${tone === "current" ? "bg-[var(--color-text)] text-[var(--color-surface)]" : tone === "done" ? "bg-emerald-500 text-white" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border border-[var(--color-border)]"}`}>{i + 1}</span>
                       <span className="text-sm font-bold text-[var(--color-text)]">{stage.label}</span>
                       {stage.status === current && <span className="ml-auto text-[10px] font-black uppercase tracking-wider text-[var(--color-accent)]">You are here</span>}
                     </div>

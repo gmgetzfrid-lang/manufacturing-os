@@ -842,7 +842,7 @@ function QuickEdit({ leaf, pct, canEdit, onSetStatus, onSetProgress, onAddNote, 
         <span className="w-16 shrink-0 font-black uppercase tracking-wider text-[9.5px] text-[var(--color-text-muted)]">% done</span>
         {PCTS.map((v) => (
           <button key={v} disabled={ro} onClick={() => pickPct(v)}
-            className={`h-7 min-w-[38px] px-1.5 rounded-md border font-bold tabular-nums pointer-coarse:h-9 ${(stagedPct ?? Math.round(pct)) === v ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] border-[var(--color-accent)]" : "border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"} disabled:opacity-40`}>
+            className={`h-7 min-w-[38px] px-1.5 rounded-md border font-bold tabular-nums pointer-coarse:h-9 ${(stagedPct ?? Math.round(pct)) === v ? "bg-[var(--color-text)] text-[var(--color-surface)] border-[var(--color-text)]" : "border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"} disabled:opacity-40`}>
             {v === 100 ? "100" : v}
           </button>
         ))}

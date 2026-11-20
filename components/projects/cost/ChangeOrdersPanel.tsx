@@ -224,7 +224,7 @@ function CoRow({ co, canManage, busy, partyName, accountLabel, accounts, decide,
               </select>
             )}
             <button onClick={() => void decide(co, "approved", accountPick || undefined)} disabled={busy}
-              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-emerald-600 text-white text-[10px] font-black hover:bg-emerald-700 disabled:opacity-50 transition-colors">
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[10px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50 transition-colors">
               {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />} Approve
             </button>
             <button onClick={() => void decide(co, "rejected")} disabled={busy}

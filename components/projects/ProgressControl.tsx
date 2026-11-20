@@ -154,7 +154,7 @@ export function ProgressSlider({ percent, onPick, disabled, busy, commitSame, co
             onClick={() => commit(q)}
             className={`flex-1 text-[11px] font-bold py-1 rounded-md border transition-colors disabled:opacity-50 ${
               val === q
-                ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] border-[var(--color-accent)]"
+                ? "bg-[var(--color-text)] text-[var(--color-surface)] border-[var(--color-text)]"
                 : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
             }`}
           >

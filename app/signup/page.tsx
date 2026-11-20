@@ -122,14 +122,14 @@ export default function SignupPage() {
         <div className="flex bg-slate-900 rounded-2xl p-1 mb-6 border border-slate-800">
           <button
             onClick={() => { setMode("new-org"); setError(null); }}
-            className={`flex-1 flex items-center justify-center gap-2 py-3 px-4 rounded-xl text-sm font-bold transition-all ${mode === "new-org" ? "bg-[var(--color-accent)] text-white shadow-lg" : "text-slate-400 hover:text-white"}`}
+            className={`flex-1 flex items-center justify-center gap-2 py-3 px-4 rounded-xl text-sm font-bold transition-all ${mode === "new-org" ? "bg-[var(--color-text)] text-[var(--color-surface)] shadow-lg" : "text-slate-400 hover:text-white"}`}
           >
             <Building2 className="w-4 h-4" />
             New Organization
           </button>
           <button
             onClick={() => { setMode("request-access"); setError(null); }}
-            className={`flex-1 flex items-center justify-center gap-2 py-3 px-4 rounded-xl text-sm font-bold transition-all ${mode === "request-access" ? "bg-[var(--color-accent)] text-white shadow-lg" : "text-slate-400 hover:text-white"}`}
+            className={`flex-1 flex items-center justify-center gap-2 py-3 px-4 rounded-xl text-sm font-bold transition-all ${mode === "request-access" ? "bg-[var(--color-text)] text-[var(--color-surface)] shadow-lg" : "text-slate-400 hover:text-white"}`}
           >
             <Users className="w-4 h-4" />
             Request Access

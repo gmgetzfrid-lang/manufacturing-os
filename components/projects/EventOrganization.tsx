@@ -24,6 +24,8 @@ export default function EventOrganization({ projectId, canManage, actor, people 
   const [dirty, setDirty] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // Saved: read as a list (role, who); Edit opens the table.
+  const [editing, setEditing] = useState(false);
   useEffect(() => {
     let live = true;
     loadOrg(projectId).then((r) => { if (live) { setRoles(r ?? defaultRoles()); setRecorded(r != null); setDirty(false); } }).catch((e) => { if (live) { setErr((e as Error).message); setRoles(defaultRoles()); } });
@@ -37,7 +39,7 @@ export default function EventOrganization({ projectId, canManage, actor, people 
   const remove = (id: string) => { setRoles((rs) => (rs ?? []).filter((r) => r.id !== id)); setDirty(true); };
   const save = async () => {
     setBusy(true); setErr(null);
-    try { const saved = await saveOrg(projectId, roles.filter((r) => r.role.trim()), { name: actor.email }); setRoles(saved); setRecorded(true); setDirty(false); }
+    try { const saved = await saveOrg(projectId, roles.filter((r) => r.role.trim()), { name: actor.email }); setRoles(saved); setRecorded(true); setDirty(false); setEditing(false); }
     catch (e) { setErr((e as Error).message); }
     finally { setBusy(false); }
   };
@@ -55,6 +57,20 @@ export default function EventOrganization({ projectId, canManage, actor, people 
         </span>
       </div>
       {err && <div role="alert" className="mx-4 mt-3 rounded-xl border border-rose-300 bg-rose-50 dark:bg-rose-950/30 px-3 py-2 text-[12.5px] font-semibold text-rose-800 dark:text-rose-300">{err}</div>}
+      {recorded && !editing ? (
+        <>
+          <ul className="px-4 py-2 divide-y divide-[var(--color-border)]">
+            {roles.map((r) => (
+              <li key={r.id} className="py-2 flex flex-wrap items-baseline gap-x-3 gap-y-0.5 text-[13.5px]">
+                <b className="min-w-[180px] text-[var(--color-text)]">{r.role}</b>
+                <span className={r.person.trim() ? "text-[var(--color-text)]" : r.required ? "font-bold text-rose-700 dark:text-rose-400" : "text-[var(--color-text-muted)]"}>{r.person.trim() || (r.required ? "Not named (required)" : "Not named")}</span>
+                {r.does && <span className="basis-full text-[12px] text-[var(--color-text-muted)]">{r.does}</span>}
+              </li>
+            ))}
+          </ul>
+          {canManage && <div className="px-4 pb-3.5"><button type="button" onClick={() => setEditing(true)} className={btn}>Edit roles</button></div>}
+        </>
+      ) : (<>
       <div className="hidden md:grid grid-cols-[minmax(0,1.1fr)_minmax(0,1.4fr)_minmax(0,1fr)_76px_32px] gap-2 px-4 pt-3">
         <span className={label}>Role</span><span className={label}>Responsible for</span><span className={label}>Who</span><span className={label}>Required</span><span />
       </div>
@@ -73,8 +89,10 @@ export default function EventOrganization({ projectId, canManage, actor, people 
       <div className="px-4 pb-3.5 flex items-center gap-2 flex-wrap">
         {canManage && <button type="button" onClick={add} className={btn}><Plus className="w-4 h-4" /> Add a role</button>}
         {canManage && <button type="button" disabled={busy || (!dirty && recorded)} onClick={() => void save()} className={pri}>{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} {recorded ? "Save changes" : "Save as this event's organization"}</button>}
+        {recorded && <button type="button" onClick={() => { setEditing(false); setDirty(false); void loadOrg(projectId).then((r) => { if (r) setRoles(r); }); }} className={btn}>Cancel</button>}
         <span className="text-[12px] text-[var(--color-text-muted)]">{!recorded ? "This is the starting list. Nothing counts until you save it." : st.missing.length ? `Not named: ${st.missing.join(", ")}.` : "Every required role has a name."}</span>
       </div>
+      </>)}
     </section>
   );
 }

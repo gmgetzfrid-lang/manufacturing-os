@@ -344,7 +344,7 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
           <span className={label}>Phase</span>
           {phases.map((p) => (
             <button key={p.id} type="button" onClick={() => { setPhaseId(p.id); setEditing(null); setAdding(false); setAnswers({}); }} aria-pressed={p.id === phaseId}
-              className={`h-8 px-3 rounded-full border text-[12.5px] font-extrabold ${p.id === phaseId ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] border-[var(--color-accent)]" : "bg-[var(--color-surface)] text-[var(--color-text)] border-[var(--color-border)]"}`}>{p.name}</button>
+              className={`h-8 px-3 rounded-full border text-[12.5px] font-extrabold ${p.id === phaseId ? "bg-[var(--color-text)] text-[var(--color-surface)] border-[var(--color-text)]" : "bg-[var(--color-surface)] text-[var(--color-text)] border-[var(--color-border)]"}`}>{p.name}</button>
           ))}
           <span className="text-[12px] text-[var(--color-text-muted)]">One phase at a time; each has its own review.</span>
         </div>

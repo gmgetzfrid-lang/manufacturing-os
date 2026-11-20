@@ -369,9 +369,9 @@ export default function RestorePage() {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 {([["current", plan.orgNameCollision.currentName, "Keep this workspace’s name"], ["backup", plan.orgNameCollision.backupName, "Use the backup’s name"]] as const).map(([val, name, hint]) => (
                   <button key={val} onClick={() => setKeepName(val)}
-                    className={`text-left rounded-xl border p-3 transition-colors ${keepName === val ? "border-[var(--color-accent)] bg-[var(--color-accent)]/5" : "border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"}`}>
+                    className={`text-left rounded-xl border p-3 transition-colors ${keepName === val ? "border-[var(--color-border-strong)] bg-[var(--color-surface-2)]" : "border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"}`}>
                     <div className="flex items-center gap-2">
-                      <span className={`w-3.5 h-3.5 rounded-full border-2 ${keepName === val ? "border-[var(--color-accent)] bg-[var(--color-accent)]" : "border-[var(--color-border-strong)]"}`} />
+                      <span className={`w-3.5 h-3.5 rounded-full border-2 ${keepName === val ? "border-[var(--color-text)] bg-[var(--color-text)]" : "border-[var(--color-border-strong)]"}`} />
                       <span className="text-sm font-bold text-[var(--color-text)] truncate">{name}</span>
                     </div>
                     <div className="text-[10.5px] text-[var(--color-text-muted)] mt-0.5 pl-[22px]">{hint}</div>

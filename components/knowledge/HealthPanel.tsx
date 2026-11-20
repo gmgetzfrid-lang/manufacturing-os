@@ -204,7 +204,7 @@ export default function HealthPanel({ orgId, libraryId, isController, onRepaired
           {isController && (
             <button onClick={() => void repair()} disabled={repairing || checking}
               className={`inline-flex items-center gap-1 h-8 px-3 rounded-lg text-[11px] font-black disabled:opacity-50 ${
-                fixable > 0 || report.incomplete ? "bg-amber-600 text-white hover:bg-amber-700" : "border border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
+                fixable > 0 || report.incomplete ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]" : "border border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
               {repairing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wrench className="w-3.5 h-3.5" />}
               {repairing ? "Repairing…" : "Repair"}
             </button>
@@ -280,7 +280,7 @@ export default function HealthPanel({ orgId, libraryId, isController, onRepaired
             </div>
             {isController && nameFixable > 0 && (
               <button onClick={() => void fixNames()} disabled={!!naming || repairing}
-                className="shrink-0 inline-flex items-center gap-1 h-8 px-3 rounded-lg bg-amber-600 text-white text-[11px] font-black hover:bg-amber-700 disabled:opacity-60">
+                className="shrink-0 inline-flex items-center gap-1 h-8 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-60">
                 {naming ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wrench className="w-3.5 h-3.5" />}
                 {naming ? `Correcting… ${naming.fixed.toLocaleString()}` : `Correct ${nameFixable.toLocaleString()}`}
               </button>

@@ -123,7 +123,7 @@ export function DraftingRequestsBody() {
           {stageCounts.filter((s) => s.count > 0).map((s) => (
             <button key={s.key} type="button" onClick={() => setStage(stage === s.key ? null : s.key)}
               className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold border transition-colors ${
-                stage === s.key ? "bg-[var(--color-accent)] text-white border-transparent" : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-accent)]"}`}>
+                stage === s.key ? "bg-[var(--color-text)] text-[var(--color-surface)] border-transparent" : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-accent)]"}`}>
               {s.label} <span className="tabular-nums">{s.count}</span>
             </button>
           ))}

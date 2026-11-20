@@ -588,7 +588,7 @@ export default function CitedPageViewer({
             </div>
             <button type="button" onClick={() => setIdx((i) => Math.min(list.length - 1, i + 1))}
               disabled={idx >= list.length - 1}
-              className="inline-flex items-center gap-1 px-3 py-2 rounded-xl bg-orange-600 text-white text-xs font-black hover:bg-orange-500 disabled:opacity-40 shadow shrink-0">
+              className="inline-flex items-center gap-1 px-3 py-2 rounded-xl bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-40 shadow shrink-0">
               <span className="hidden sm:inline">Next source</span> <ChevronRight className="w-4 h-4" />
             </button>
           </div>

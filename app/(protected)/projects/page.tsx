@@ -212,12 +212,12 @@ export default function ProjectsPage() {
         {groups.length > 1 && (
           <div className="flex flex-wrap items-center gap-1.5 mb-3" role="group" aria-label="Kind of project">
             <button onClick={() => setTypeFilter(null)} aria-pressed={!typeFilter}
-              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${!typeFilter ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)]" : "bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"}`}>
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${!typeFilter ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"}`}>
               All kinds
             </button>
             {groups.map((g) => (
               <button key={g.key} onClick={() => setTypeFilter(typeFilter === g.key ? null : g.key)} aria-pressed={typeFilter === g.key}
-                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${typeFilter === g.key ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)]" : "bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"}`}>
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${typeFilter === g.key ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"}`}>
                 {g.label}
                 <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-mono ${typeFilter === g.key ? "bg-white/20" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"}`}>{g.items.length}</span>
               </button>

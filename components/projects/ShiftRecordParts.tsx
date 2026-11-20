@@ -53,7 +53,7 @@ function UndoLine({ text, onUndo, onDismiss }: { text: string; onUndo: () => voi
   return (
     <div role="status" className="mt-1 flex items-center gap-2 rounded-md border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 px-2 py-1 text-[11px] text-amber-900 dark:text-amber-200">
       <span className="min-w-0 flex-1 truncate">{text}</span>
-      <button type="button" onClick={onUndo} className="inline-flex items-center gap-1 px-2 py-1 rounded font-bold bg-amber-600 text-white hover:bg-amber-700"><RotateCcw className="w-3 h-3" /> Undo</button>
+      <button type="button" onClick={onUndo} className="inline-flex items-center gap-1 px-2 py-1 rounded font-bold bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]"><RotateCcw className="w-3 h-3" /> Undo</button>
       <button type="button" onClick={onDismiss} className="px-1.5 py-1 font-semibold hover:underline">Dismiss</button>
     </div>
   );

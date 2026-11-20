@@ -182,7 +182,7 @@ export default function ReviewGateSection({ doc, orgId, canManage, onChanged }: 
             </button>
           )}
           {mine && (
-            <button onClick={() => setSigning(true)} className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-violet-600 text-white text-xs font-black shadow hover:bg-violet-500">
+            <button onClick={() => setSigning(true)} className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-black shadow hover:bg-[var(--color-accent-hover)]">
               <PenLine className="w-3.5 h-3.5" /> Review &amp; sign off{draftLabel ? ` ${draftLabel}` : ""}
             </button>
           )}
@@ -216,7 +216,7 @@ export default function ReviewGateSection({ doc, orgId, canManage, onChanged }: 
               onClick={() => void publish()}
               disabled={busy || !complete}
               title={complete ? "Publish the approved revision" : "Waiting on reviewer sign-off"}
-              className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-emerald-600 text-white text-xs font-black shadow hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed"
+              className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-black shadow hover:bg-[var(--color-accent-hover)] disabled:opacity-40 disabled:cursor-not-allowed"
             >
               {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ArrowUpFromLine className="w-3.5 h-3.5" />} Publish approved revision
             </button>

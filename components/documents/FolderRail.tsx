@@ -19,7 +19,7 @@ function FolderGlyph({ folder, active }: { folder: LibraryCollection; active: bo
       </span>
     );
   }
-  return <Folder className={`w-3.5 h-3.5 shrink-0 ${active ? "text-[var(--color-accent)]" : "text-amber-500"}`} />;
+  return <Folder className={`w-3.5 h-3.5 shrink-0 ${active ? "text-[var(--color-text)]" : "text-amber-500"}`} />;
 }
 
 export interface RailDropPayload {
@@ -118,7 +118,7 @@ function TreeNode({
         {...railDropHandlers(folder.id ?? null, onDropItems)}
         className={`flex items-center gap-0.5 rounded-lg transition-all ${
           isActive
-            ? "bg-[var(--color-accent)]/12 text-[var(--color-accent)]"
+            ? "bg-[var(--color-surface-2)] text-[var(--color-text)]"
             : "text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] hover:text-[var(--color-text)]"
         }`}
         style={{ paddingLeft: `${4 + depth * 12}px`, paddingRight: 6, paddingTop: 4, paddingBottom: 4 }}
@@ -198,7 +198,7 @@ export default function FolderRail({
           {...railDropHandlers(null, onDropItems)}
           className={`w-8 h-8 rounded-lg flex items-center justify-center transition-all ${
             !currentFolderId
-              ? "bg-[var(--color-accent)]/15 text-[var(--color-accent)] ring-1 ring-[var(--color-accent)]/40"
+              ? "bg-[var(--color-surface-2)] text-[var(--color-text)] ring-1 ring-[var(--color-border-strong)]"
               : "text-[var(--color-text-muted)] hover:bg-[var(--color-surface)] hover:text-[var(--color-text)]"
           }`}
           title={libraryName}
@@ -215,7 +215,7 @@ export default function FolderRail({
               {...railDropHandlers(folder.id ?? null, onDropItems)}
               className={`w-8 h-8 rounded-lg flex items-center justify-center transition-all relative ${
                 isActive
-                  ? "bg-[var(--color-accent)]/15 text-[var(--color-accent)] ring-1 ring-[var(--color-accent)]/40"
+                  ? "bg-[var(--color-surface-2)] text-[var(--color-text)] ring-1 ring-[var(--color-border-strong)]"
                   : "text-amber-500 hover:bg-[var(--color-surface)] hover:text-amber-600"
               }`}
               title={folder.name}
@@ -276,7 +276,7 @@ export default function FolderRail({
                 {...railDropHandlers(null, onDropItems)}
                 className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-left transition-all mb-1 ${
                   !currentFolderId
-                    ? "bg-[var(--color-accent)]/12 text-[var(--color-accent)] font-bold"
+                    ? "bg-[var(--color-surface-2)] text-[var(--color-text)] font-bold"
                     : "text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] hover:text-[var(--color-text)]"
                 }`}
               >

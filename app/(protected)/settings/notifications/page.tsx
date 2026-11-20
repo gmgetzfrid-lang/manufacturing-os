@@ -152,7 +152,7 @@ export default function NotificationSettingsPage() {
               <button
                 key={opt}
                 onClick={() => setPrefs({ ...prefs, digest_frequency: opt })}
-                className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors ${prefs.digest_frequency === opt ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] border-[var(--color-accent)]" : "bg-[var(--color-surface)] text-[var(--color-text)] border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"}`}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors ${prefs.digest_frequency === opt ? "bg-[var(--color-text)] text-[var(--color-surface)] border-[var(--color-text)]" : "bg-[var(--color-surface)] text-[var(--color-text)] border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"}`}
               >
                 {opt[0].toUpperCase() + opt.slice(1)}
               </button>

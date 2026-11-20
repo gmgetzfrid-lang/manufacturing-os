@@ -1247,9 +1247,9 @@ function LinksPanel({ orgId, edges, units, estateMissing, onReveal, onConnect, c
       <EstateReadiness key={readinessKey} orgId={orgId} onConnect={onConnect} connecting={connecting} />
       <div className="text-xs text-[var(--color-text-muted)]">What the estate knows about where things belong - every link with its reason. Provable ones came from the codebook, drawing numbers and ancestry; the rest were approved in Review.</div>
       <div className="flex flex-wrap gap-1">
-        <button onClick={() => setFilter("all")} className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold ${filter === "all" ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] border-transparent" : "border-[var(--color-border)]"}`}>all {edges.length}</button>
+        <button onClick={() => setFilter("all")} className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold ${filter === "all" ? "bg-[var(--color-text)] text-[var(--color-surface)] border-transparent" : "border-[var(--color-border)]"}`}>all {edges.length}</button>
         {[...counts.entries()].sort((a, b) => b[1] - a[1]).map(([t, n]) => (
-          <button key={t} onClick={() => setFilter(t)} className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold ${filter === t ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] border-transparent" : "border-[var(--color-border)]"}`}>{EDGE_WORDS[t] ?? t} {n}</button>
+          <button key={t} onClick={() => setFilter(t)} className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold ${filter === t ? "bg-[var(--color-text)] text-[var(--color-surface)] border-transparent" : "border-[var(--color-border)]"}`}>{EDGE_WORDS[t] ?? t} {n}</button>
         ))}
       </div>
       {edges.length === 0 && <div className="text-xs text-[var(--color-text-muted)]">No links yet. Add your units to the Site Codebook, then press &ldquo;Resolve links&rdquo; above the map.</div>}

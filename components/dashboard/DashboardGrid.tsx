@@ -303,19 +303,11 @@ export default function DashboardGrid() {
       <div className="relative p-4 sm:p-6 lg:px-10 max-w-[1720px] mx-auto">
       {/* Onboarding — admins of a fresh org see the setup checklist HERE,
           where login actually lands, not only on /inbox. */}
-      <SetupChecklist />
-      {/* Greeting hero */}
-      <div className="flex items-end justify-between gap-4 mb-6 flex-wrap" style={{ animation: "rise 0.4s var(--ease-fluid) both" }}>
-        <div className="min-w-0">
-          <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-[var(--color-text-faint)]">{dateLine}</div>
-          <h1 className="mt-1 text-2xl sm:text-[28px] font-black tracking-tight text-[var(--color-text)]">
-            {greeting}{firstName ? <>, <span className="bg-clip-text text-transparent" style={{ backgroundImage: "var(--brand-gradient)" }}>{firstName}</span></> : ""}
-          </h1>
-          <p className="text-[13px] text-[var(--color-text-muted)] mt-0.5">
-            {editing
-              ? (isMobile ? "＋ adds widgets · ✕ removes · arrange and resize on a larger screen" : "Drag widgets anywhere · pull a corner to resize · ＋ adds more")
-              : "Here’s your workspace at a glance."}
-          </p>
+      {/* The deck below greets and says what needs you; here only the layout tools. */}
+      <div className="flex items-center justify-between gap-4 mb-3 flex-wrap">
+        <h1 className="sr-only">{greeting}{firstName ? `, ${firstName}` : ""}</h1>
+        <div className="min-w-0 text-[12.5px] text-[var(--color-text-muted)]">
+          {editing ? (isMobile ? "＋ adds widgets · ✕ removes · arrange and resize on a larger screen" : "Drag widgets anywhere · pull a corner to resize · ＋ adds more") : <span className="font-semibold uppercase tracking-[0.12em] text-[11px] text-[var(--color-text-faint)]">{dateLine}</span>}
         </div>
         <div className="flex items-center gap-2 shrink-0">
           <button
@@ -532,6 +524,8 @@ export default function DashboardGrid() {
           onSave={(settings) => saveSettings(settingsWidget.id, settings)}
         />
       )}
+      {/* Setting up a new workspace (admins; hides itself once done or closed): after the work. */}
+      <div className="mt-6"><SetupChecklist /></div>
       </div>
     </div>
   );

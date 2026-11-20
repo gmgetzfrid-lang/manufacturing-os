@@ -366,7 +366,7 @@ const UploadIFCModal = ({ isOpen, onClose, onSubmit, isLoading }: UploadIFCModal
            <button 
              onClick={() => file && onSubmit(file)}
              disabled={!file || isLoading}
-             className="px-4 py-2 bg-teal-600 text-white text-sm font-bold rounded-lg hover:bg-teal-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center"
+             className="px-4 py-2 bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-sm font-bold rounded-lg hover:bg-[var(--color-accent-hover)] disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center"
            >
              {isLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <CheckCircle2 className="w-4 h-4 mr-2" />}
              Issue Final Package
@@ -733,7 +733,7 @@ const FileViewerModal = ({
             {!archived && (
               <button
                 onClick={handleDownloadClick}
-                className={`flex items-center px-4 py-2 rounded-lg text-sm font-bold transition-colors shadow-lg ${file.type === 'Draft' ? 'bg-amber-600 hover:bg-amber-700 text-white' : 'bg-orange-600 hover:bg-orange-700 text-white'}`}
+                className={`flex items-center px-4 py-2 rounded-lg text-sm font-bold transition-colors bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]`}
               >
                 <Download className="w-4 h-4 mr-2" /> {file.type === 'Draft' ? 'Download w/ Warning' : 'Download'}
               </button>
@@ -1560,10 +1560,10 @@ export default function TicketDetailView() {
                       </div>
                       <div className="flex flex-col gap-2">
                         <p className="text-[10px] font-bold text-[var(--color-text-faint)] uppercase tracking-widest mb-1">Select File Category</p>
-                        <button onClick={() => handleFileUpload('Source')} className="w-full py-3 bg-blue-600 text-white rounded-lg font-bold hover:bg-blue-700 transition-colors flex items-center justify-center shadow-md shadow-blue-900/10">
+                        <button onClick={() => handleFileUpload('Source')} className="w-full py-3 border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] rounded-lg font-bold hover:bg-[var(--color-surface-2)] transition-colors flex items-center justify-center">
                           <FileIcon className="w-4 h-4 mr-2"/> Source Asset
                         </button>
-                        <button onClick={() => handleFileUpload('Draft')} className="w-full py-3 bg-orange-600 text-white rounded-lg font-bold hover:bg-orange-700 transition-colors flex items-center justify-center shadow-md shadow-orange-900/10">
+                        <button onClick={() => handleFileUpload('Draft')} className="w-full py-3 bg-[var(--color-accent)] text-[var(--color-accent-fg)] rounded-lg font-bold hover:bg-[var(--color-accent-hover)] transition-colors flex items-center justify-center">
                           <FileText className="w-4 h-4 mr-2"/> Draft Drawing
                         </button>
                         <button onClick={() => handleFileUpload('Reference')} className="w-full py-3 bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text)] rounded-lg font-bold hover:bg-[var(--color-surface-2)] transition-colors flex items-center justify-center">
@@ -1652,7 +1652,7 @@ export default function TicketDetailView() {
                 return redlines[0] ? (
                   <button
                     onClick={() => setViewerFile(redlines[0])}
-                    className="mt-2.5 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold shadow-sm"
+                    className="mt-2.5 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-xs font-bold shadow-sm"
                   >
                     <Pen className="w-3.5 h-3.5" /> View redline markups
                   </button>
@@ -1924,7 +1924,7 @@ export default function TicketDetailView() {
                                        >
                                          {REVISION_REASONS.map(r => <option key={r} value={r}>{r}</option>)}
                                        </select>
-                                       <button onClick={() => handleUpdateCategory(comment.id)} className="p-1 bg-green-500 text-white rounded hover:bg-green-600"><Check className="w-3 h-3" /></button>
+                                       <button onClick={() => handleUpdateCategory(comment.id)} className="p-1 bg-[var(--color-accent)] text-[var(--color-accent-fg)] rounded hover:bg-[var(--color-accent-hover)]"><Check className="w-3 h-3" /></button>
                                        <button onClick={() => setEditingCommentId(null)} className="p-1 bg-slate-300 text-[var(--color-text-muted)] rounded hover:bg-slate-400"><X className="w-3 h-3" /></button>
                                     </div>
                                   ) : (
@@ -2036,7 +2036,7 @@ export default function TicketDetailView() {
                 <button
                   onClick={() => handlePostComment(newComment)}
                   disabled={!newComment.trim()}
-                  className="absolute right-2 bottom-2 p-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 disabled:opacity-50 disabled:hover:bg-orange-600 transition-all shadow-md shadow-orange-900/20"
+                  className="absolute right-2 bottom-2 p-2 bg-[var(--color-accent)] text-[var(--color-accent-fg)] rounded-lg hover:bg-[var(--color-accent-hover)] disabled:opacity-50 disabled:hover:bg-[var(--color-accent-hover)] transition-all shadow-md "
                 ><Send className="w-4 h-4" /></button>
               </div>
               <p className="text-[10px] text-[var(--color-text-faint)] mt-2 text-center">

@@ -784,7 +784,7 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
               <div className="font-semibold text-amber-900 dark:text-amber-200">{ampmAsk.says} Did you mean {ampmAsk.use}?</div>
               <div className="flex flex-wrap gap-2">
                 <button type="button" disabled={busy} onClick={() => { const a = ampmAsk; setAmpmAsk(null); a.fix(); }}
-                  className="h-8 px-3 rounded-lg bg-amber-600 text-white text-[12.5px] font-bold hover:bg-amber-700 disabled:opacity-60">Use {ampmAsk.use}</button>
+                  className="h-8 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[12.5px] font-bold hover:bg-[var(--color-accent-hover)] disabled:opacity-60">Use {ampmAsk.use}</button>
                 <button type="button" disabled={busy} onClick={() => { ampmOk.current = true; setAmpmAsk(null); void save(); }}
                   className="h-8 px-3 rounded-lg border border-amber-400 text-amber-900 dark:text-amber-200 text-[12.5px] font-bold hover:bg-amber-100 dark:hover:bg-amber-900/40 disabled:opacity-60">Keep {ampmAsk.keep}</button>
               </div>
@@ -794,7 +794,7 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
             <div role="alert" className="rounded-md border border-amber-300 bg-amber-50 dark:border-amber-800 dark:bg-amber-950/40 px-2 py-1.5 space-y-1.5">
               <div className="font-semibold text-amber-900 dark:text-amber-200">{aheadAsk}</div>
               <button type="button" disabled={busy} onClick={() => { aheadOk.current = true; setAheadAsk(null); void save(); }}
-                className="h-8 px-3 rounded-lg bg-amber-600 text-white text-[12.5px] font-bold hover:bg-amber-700 disabled:opacity-60">Yes, save it</button>
+                className="h-8 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[12.5px] font-bold hover:bg-[var(--color-accent-hover)] disabled:opacity-60">Yes, save it</button>
             </div>
           )}
           <div className="flex items-center gap-2">

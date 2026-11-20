@@ -228,7 +228,7 @@ export function FindingEditor({ value, onChange, equipment, unitLabel, autoGuess
     const e = defaultTag ? equipment.find((x) => tagKey(x.tag) === tagKey(defaultTag)) : undefined;
     set({ appliesTo: where(eq, every), ...(eq ? { assetTag: value.assetTag ?? defaultTag ?? null, assetId: value.assetId ?? e?.assetId ?? null } : { assetTag: null, assetId: null }) });
   };
-  const box = (on: boolean) => `mt-0.5 w-5 h-5 rounded border-2 flex items-center justify-center shrink-0 ${on ? "bg-[var(--color-accent)] border-[var(--color-accent)] text-[var(--color-accent-fg)]" : "border-[var(--color-border-strong)] bg-[var(--color-surface)]"}`;
+  const box = (on: boolean) => `mt-0.5 w-5 h-5 rounded border-2 flex items-center justify-center shrink-0 ${on ? "bg-[var(--color-text)] border-[var(--color-text)] text-[var(--color-surface)]" : "border-[var(--color-border-strong)] bg-[var(--color-surface)]"}`;
   return (
     <div className="space-y-3">
       <div>

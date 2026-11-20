@@ -229,7 +229,7 @@ function Head({ children }: { children: React.ReactNode }) {
 
 function Toggle({ on }: { on: boolean }) {
   return (
-    <span className={`mt-0.5 shrink-0 inline-flex w-7 h-4 rounded-full transition-colors ${on ? "bg-[var(--color-accent)]" : "bg-slate-300 dark:bg-slate-600"}`}>
+    <span className={`mt-0.5 shrink-0 inline-flex w-7 h-4 rounded-full transition-colors ${on ? "bg-[var(--color-text)]" : "bg-slate-300 dark:bg-slate-600"}`}>
       <span className={`m-0.5 w-3 h-3 rounded-full bg-white transition-transform ${on ? "translate-x-3" : ""}`} />
     </span>
   );

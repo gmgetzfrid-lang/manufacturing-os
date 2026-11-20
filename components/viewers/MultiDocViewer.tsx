@@ -1290,7 +1290,7 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
             ["text", "Text", Type],
             ["eraser", "Eraser - click an object to delete", Eraser],
           ] as [MarkTool, string, typeof Pen][]).map(([t, label, Icon]) => (
-            <button key={t} onClick={() => setMarkTool(t)} title={label} className={`${iconBtn} ${markTool === t ? "bg-orange-600 text-white hover:bg-orange-600" : ""}`}>
+            <button key={t} onClick={() => setMarkTool(t)} title={label} className={`${iconBtn} ${markTool === t ? "bg-[var(--color-text)] text-[var(--color-surface)]" : ""}`}>
               <Icon className="w-4 h-4" />
             </button>
           ))}

@@ -192,7 +192,7 @@ export default function TransmittalPortal({ params }: { params: Promise<{ token:
                   className="mt-0.5 w-full h-9 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-2.5 text-sm text-slate-900 dark:text-white" />
               </label>
               <button onClick={() => void acknowledge()} disabled={ackBusy}
-                className="h-9 inline-flex items-center gap-1.5 px-4 rounded-lg bg-orange-600 text-white text-sm font-black hover:bg-orange-700 disabled:opacity-50 transition-colors">
+                className="h-9 inline-flex items-center gap-1.5 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-sm font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50 transition-colors">
                 {ackBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />} Acknowledge
               </button>
             </div>

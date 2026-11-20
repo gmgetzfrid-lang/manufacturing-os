@@ -362,7 +362,7 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
               {unscheduled.length > 0
                 ? <span className="text-[12px] font-semibold text-amber-800 dark:text-amber-300">{unscheduled.map((p) => p.name).join(", ")} {unscheduled.length === 1 ? "has" : "have"} no schedule yet: complete the project only if {unscheduled.length === 1 ? "it isn't" : "they aren't"} going ahead.</span>
                 : left > 0 && <span className="text-[12px] text-[var(--color-text-muted)]">{left} step{left === 1 ? "" : "s"} still open: you can complete anyway.</span>}
-              <button type="button" onClick={onComplete} className={allWorkDone ? "inline-flex items-center gap-1.5 h-9 px-4 rounded-lg bg-emerald-600 text-white text-[13px] font-black hover:bg-emerald-700" : "inline-flex items-center gap-1.5 h-9 px-4 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-[13px] font-bold hover:bg-[var(--color-surface-2)]"}><Check className="w-4 h-4" /> Mark project complete</button>
+              <button type="button" onClick={onComplete} className={allWorkDone ? "inline-flex items-center gap-1.5 h-9 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[13px] font-black hover:bg-[var(--color-accent-hover)]" : "inline-flex items-center gap-1.5 h-9 px-4 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-[13px] font-bold hover:bg-[var(--color-surface-2)]"}><Check className="w-4 h-4" /> Mark project complete</button>
             </div>
           )}
         </div>
@@ -706,7 +706,7 @@ function TurnoverRow({ it, canManage, busy, onRequired, onAccept, onFile }: { it
   return (
     <div className={`px-3 py-2 flex items-center gap-2.5 text-[12.5px] ${it.required ? "" : "opacity-60"}`}>
       <button type="button" role="switch" aria-checked={it.required} aria-label={`${it.name} needed for this job`} disabled={!canManage || busy} onClick={onRequired}
-        className={`relative w-9 h-5 rounded-full shrink-0 transition-colors ${it.required ? "bg-[var(--color-accent)]" : "bg-slate-300 dark:bg-slate-600"} disabled:opacity-60`}>
+        className={`relative w-9 h-5 rounded-full shrink-0 transition-colors ${it.required ? "bg-[var(--color-text)]" : "bg-slate-300 dark:bg-slate-600"} disabled:opacity-60`}>
         <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all ${it.required ? "left-[18px]" : "left-0.5"}`} />
       </button>
       <span className="min-w-0 flex-1 break-words leading-snug text-[var(--color-text)]" title={it.description ?? undefined}>{it.name}</span>

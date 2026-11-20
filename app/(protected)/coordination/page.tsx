@@ -185,7 +185,7 @@ function CoordinationInner() {
               onClick={() => switchView(t.key)}
               className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${
                 view === t.key
-                  ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)]"
+                  ? "bg-[var(--color-text)] text-[var(--color-surface)]"
                   : "text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
               }`}
             >

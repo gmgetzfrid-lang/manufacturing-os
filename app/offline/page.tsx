@@ -18,7 +18,7 @@ export default function OfflinePage() {
       </p>
       <Link
         href="/"
-        className="mt-6 inline-flex items-center justify-center h-10 px-5 rounded-lg bg-orange-600 hover:bg-orange-700 text-white text-sm font-bold transition-colors"
+        className="mt-6 inline-flex items-center justify-center h-10 px-5 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-sm font-bold transition-colors"
       >
         Try again
       </Link>

@@ -197,13 +197,13 @@ export default function CheckoutsPage() {
             <div className="flex bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg p-1">
               <button
                 onClick={() => setView("grouped")}
-                className={`px-3 py-1.5 text-xs font-bold rounded-md transition-colors ${view === "grouped" ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}
+                className={`px-3 py-1.5 text-xs font-bold rounded-md transition-colors ${view === "grouped" ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}
               >
                 By Project
               </button>
               <button
                 onClick={() => setView("flat")}
-                className={`px-3 py-1.5 text-xs font-bold rounded-md transition-colors ${view === "flat" ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}
+                className={`px-3 py-1.5 text-xs font-bold rounded-md transition-colors ${view === "flat" ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}
               >
                 Flat
               </button>
@@ -511,7 +511,7 @@ function OverlapCard({
             title="Send everyone here an in-app heads-up to coordinate"
             className={`shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-bold transition-colors ${
               nudged ? "bg-emerald-100 text-emerald-700"
-                     : "bg-amber-600 hover:bg-amber-700 text-white disabled:opacity-60"
+                     : "bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] disabled:opacity-60"
             }`}
           >
             <Send className="w-3 h-3" /> {nudged ? "Heads-up sent" : nudging ? "Sending…" : "Nudge to coordinate"}

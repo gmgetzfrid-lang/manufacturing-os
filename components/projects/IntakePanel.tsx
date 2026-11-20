@@ -336,7 +336,7 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
                 <span className="text-xs text-[var(--color-text-muted)]">Rev {p.revLabel ?? "-"} · {p.company ?? "external"}{p.submittedAt ? ` · ${new Date(p.submittedAt).toLocaleDateString()}` : ""}</span>
                 {canManage && (
                   <span className="ml-auto flex items-center gap-1.5">
-                    <button onClick={() => void approve(p)} disabled={busy === p.docId} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-500 text-white text-[11px] font-black hover:bg-emerald-600 disabled:opacity-50">
+                    <button onClick={() => void approve(p)} disabled={busy === p.docId} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
                       {busy === p.docId ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />} Approve
                     </button>
                     <button onClick={() => void reject(p)} disabled={busy === p.docId} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-rose-500/40 text-rose-700 dark:text-rose-300 text-[11px] font-black hover:bg-rose-500/10 disabled:opacity-50">

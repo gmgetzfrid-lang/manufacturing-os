@@ -13,20 +13,18 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { Briefcase, AlertOctagon, FileSignature, Lock, Bell, Loader2, AlertTriangle, MessageSquare, Clock, Flag, ChevronRight, Calendar, Send, XCircle, Zap, ShieldCheck } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
-import { supabase } from "@/lib/supabase";
 import { loadInbox, type InboxSnapshot } from "@/lib/inbox";
 import { useTicketNotifications } from "@/hooks/useTicketNotifications";
 import { resolveMarkupRequest } from "@/lib/markupRequests";
 import { computeNudges } from "@/lib/nudges";
 import { useToast } from "@/components/providers/ToastProvider";
-import SetupChecklist from "@/components/onboarding/SetupChecklist";
 import ViewTabs, { HOME_VIEWS } from "@/components/navigation/ViewTabs";
 import DocThumb from "@/components/documents/DocThumb";
 import DocHoverPreview from "@/components/documents/DocHoverPreview";
 import { DailyBrief } from "@/components/cockpit/DailyBrief";
 import MyDeskPanel from "@/components/cockpit/MyDeskPanel";
 import { QuickLaunch } from "@/components/cockpit/QuickLaunch";
-import { CommandDeck, roleFocus, formatAgo, exportInboxCsv, type PillarStats } from "@/components/cockpit/CommandDeck";
+import { formatAgo, exportInboxCsv } from "@/components/cockpit/CommandDeck";
 import { AttentionFeed, type AttnFilter } from "@/components/cockpit/AttentionFeed";
 
 export default function InboxPage() {
@@ -40,34 +38,11 @@ export default function InboxPage() {
   const [data, setData] = useState<InboxSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [lastLoadedAt, setLastLoadedAt] = useState<number | null>(null);
+  const [, setLastLoadedAt] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [resolvingId, setResolvingId] = useState<string | null>(null);
   const [attnFilter, setAttnFilter] = useState<AttnFilter>("all");
   const [markingAll, setMarkingAll] = useState(false);
-  const [pillars, setPillars] = useState<PillarStats>({ openRequests: 0, lockedDocs: 0, activeProjects: 0, loaded: false });
-
-  // Org-wide headline numbers for the deck pillars. Independent + best-effort.
-  useEffect(() => {
-    if (!activeOrgId) return;
-    let alive = true;
-    void (async () => {
-      const headCount = async (build: () => Promise<{ count: number | null }>) => {
-        try { return (await build()).count ?? 0; } catch { return 0; }
-      };
-      const [openRequests, lockedDocs, activeProjects] = await Promise.all([
-        headCount(() => supabase.from("tickets").select("id", { count: "exact", head: true })
-          .eq("org_id", activeOrgId).not("status", "in", '("CLOSED","CANCELED")') as unknown as Promise<{ count: number | null }>),
-        headCount(() => supabase.from("documents").select("id", { count: "exact", head: true })
-          .eq("org_id", activeOrgId).not("checked_out_by", "is", null) as unknown as Promise<{ count: number | null }>),
-        headCount(() => supabase.from("projects").select("id", { count: "exact", head: true })
-          .eq("org_id", activeOrgId).eq("status", "active") as unknown as Promise<{ count: number | null }>),
-      ]);
-      if (alive) setPillars({ openRequests, lockedDocs, activeProjects, loaded: true });
-    })();
-    return () => { alive = false; };
-  }, [activeOrgId, lastLoadedAt]);
-
   // Accurate per-filter counts (from the unified feed itself — the hook's
   // ticket-only counters don't include notification rows).
   const attnCounts = useMemo(() => ({
@@ -180,23 +155,14 @@ export default function InboxPage() {
       <div className="max-w-6xl mx-auto p-6">
         <ViewTabs title="Home" tabs={HOME_VIEWS} />
 
-        {/* ── COMMAND DECK ─────────────────────────────────────────────
-            The cockpit hero: personal greeting + the three main attractions
-            (Requests · Documents · Projects) as live, deep-linked pillars
-            with their own primary actions, on a dark high-tech band. ── */}
-        <CommandDeck
-          userEmail={userEmail ?? undefined}
-          data={data}
-          pillars={pillars}
-          attentionCount={attentionCount}
-          actionCount={actionRequiredCount}
-          focus={data ? roleFocus(activeRole, data) : null}
-          lastLoadedAt={lastLoadedAt}
-          refreshing={loading || refreshing}
-          canExport={!!data && total > 0}
-          onRefresh={() => void refresh()}
-          onExport={() => data && exportInboxCsv(data, userEmail ?? undefined)}
-        />
+        {/* What needs you, first. (Home has the overview; this page is the list.) */}
+        <div className="flex flex-wrap items-center gap-2 mb-4">
+          <h1 className="text-xl font-black text-[var(--color-text)] mr-auto">
+            {actionRequiredCount > 0 ? `${actionRequiredCount} need${actionRequiredCount === 1 ? "s" : ""} you` : attentionCount > 0 ? `${attentionCount} new` : "Nothing needs you"}
+          </h1>
+          <button type="button" onClick={() => void refresh()} disabled={loading || refreshing} className="h-9 px-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">{loading || refreshing ? "Refreshing…" : "Refresh"}</button>
+          {!!data && total > 0 && <button type="button" onClick={() => exportInboxCsv(data, userEmail ?? undefined)} className="h-9 px-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">Export</button>}
+        </div>
 
         {error && (
           <div className="mb-4 rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-800 flex items-start gap-2">
@@ -204,12 +170,20 @@ export default function InboxPage() {
           </div>
         )}
 
-        {/* First-run setup guidance for new orgs (admins only; self-hides). */}
-        <SetupChecklist />
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
           {/* Left rail (2/3): the brief + the rich attention feed. */}
           <div className="lg:col-span-2 space-y-4">
+            {/* Rich, filterable, actionable attention feed. */}
+            <AttentionFeed
+              items={filteredAttention}
+              counts={attnCounts}
+              filter={attnFilter}
+              onFilter={setAttnFilter}
+              onMarkRead={(id) => { void markRead(id); }}
+              onMarkAll={handleMarkAll}
+              markingAll={markingAll}
+            />
             {/* Daily Brief — narrated synthesis of the day. */}
             {data && <DailyBrief data={data} />}
 
@@ -240,16 +214,6 @@ export default function InboxPage() {
               );
             })()}
 
-            {/* Rich, filterable, actionable attention feed. */}
-            <AttentionFeed
-              items={filteredAttention}
-              counts={attnCounts}
-              filter={attnFilter}
-              onFilter={setAttnFilter}
-              onMarkRead={(id) => { void markRead(id); }}
-              onMarkAll={handleMarkAll}
-              markingAll={markingAll}
-            />
           </div>
 
           {/* Right rail (1/3): my desk + quick launch pad. */}

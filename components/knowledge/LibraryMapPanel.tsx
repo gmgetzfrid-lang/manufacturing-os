@@ -100,7 +100,7 @@ export default function LibraryMapPanel({ orgId, libraryId, libraryName, docs }:
         </div>
         {data?.canMap && data.unmapped > 0 && !mapping && (
           <button type="button" onClick={() => void runMap()}
-            className="inline-flex items-center gap-1.5 h-9 px-4 rounded-lg bg-violet-600 text-white text-xs font-black hover:bg-violet-700">
+            className="inline-flex items-center gap-1.5 h-9 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-black hover:bg-[var(--color-accent-hover)]">
             <MapIcon className="w-4 h-4" /> Map {data.unmapped} document{data.unmapped === 1 ? "" : "s"}
           </button>
         )}
@@ -342,12 +342,12 @@ function MarkCatalogModal({ orgId, libraryId, libraryName, docs, onClose, onDone
       </ModalBody>
       <ModalFooter>
         {result ? (
-          <button type="button" onClick={onDone} className="h-9 px-4 rounded-lg bg-violet-600 text-white text-xs font-black hover:bg-violet-700">Done</button>
+          <button type="button" onClick={onDone} className="h-9 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-black hover:bg-[var(--color-accent-hover)]">Done</button>
         ) : (
           <>
             <button type="button" onClick={onClose} disabled={busy} className="h-9 px-3 rounded-lg text-xs font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Cancel</button>
             <button type="button" onClick={() => void save()} disabled={!can}
-              className="inline-flex items-center gap-1.5 h-9 px-4 rounded-lg bg-violet-600 text-white text-xs font-black hover:bg-violet-700 disabled:opacity-40">
+              className="inline-flex items-center gap-1.5 h-9 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-40">
               {busy ? <><Loader2 className="w-4 h-4 animate-spin" /> Reading…</> : "Mark and read it"}
             </button>
           </>

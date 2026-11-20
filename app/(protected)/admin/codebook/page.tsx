@@ -126,7 +126,7 @@ export default function CodebookPage() {
         {TABS.map((t) => (
           <button key={t.key} onClick={() => setTab(t.key)}
             className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${
-              tab === t.key ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
+              tab === t.key ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
             }`}>
             <t.icon className="w-3.5 h-3.5" /> {t.label}
           </button>

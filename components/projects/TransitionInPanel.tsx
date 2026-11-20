@@ -240,7 +240,7 @@ export default function TransitionInPanel({ orgId, projectId, intakeCollectionId
                       />
                       <button onClick={() => void adoptOne(c)} disabled={busy === c.docId || !destLib}
                         title={!destLib ? "Pick the destination library above" : undefined}
-                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-500 text-white text-[11px] font-black hover:bg-emerald-600 disabled:opacity-50">
+                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
                         {busy === c.docId ? <Loader2 className="w-3 h-3 animate-spin" /> : <ArrowRightCircle className="w-3 h-3" />} Adopt
                       </button>
                       {!impact.clean && onFlagCollision && (

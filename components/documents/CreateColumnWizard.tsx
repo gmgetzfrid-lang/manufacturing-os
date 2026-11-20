@@ -330,7 +330,7 @@ export default function CreateColumnWizard({ isOpen, onClose, onSave, initialTyp
               Next <ArrowRight className="w-4 h-4 ml-2" />
             </button>
           ) : (
-            <button onClick={handleSave} className="px-6 py-2 bg-blue-600 text-white text-sm font-bold rounded-lg hover:bg-blue-700 flex items-center shadow-md shadow-blue-900/20">
+            <button onClick={handleSave} className="px-6 py-2 bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-sm font-bold rounded-lg hover:bg-[var(--color-accent-hover)] flex items-center shadow-md ">
               Save Column
             </button>
           )}

@@ -161,12 +161,12 @@ function ProofCard({ proof, onClose, onOpenPage }: {
             className="border-l-2 border-orange-400 pl-3 py-1 text-[12px] leading-relaxed text-[var(--color-text)] whitespace-pre-wrap max-h-52 overflow-y-auto" />
           <div className="mt-2.5 flex items-center gap-2 flex-wrap">
             {pastJob ? (
-              <a href={c.url} className="inline-flex items-center gap-1.5 text-[11px] font-black px-3 py-1.5 rounded-lg bg-orange-600 text-white shadow-sm hover:bg-orange-700 transition-colors">
+              <a href={c.url} className="inline-flex items-center gap-1.5 text-[11px] font-black px-3 py-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] shadow-sm hover:bg-[var(--color-accent-hover)] transition-colors">
                 <Eye className="w-3.5 h-3.5" /> Open the project
               </a>
             ) : (
             <button onClick={() => onOpenPage(c)}
-              className="inline-flex items-center gap-1.5 text-[11px] font-black px-3 py-1.5 rounded-lg bg-orange-600 text-white shadow-sm hover:bg-orange-700 transition-colors">
+              className="inline-flex items-center gap-1.5 text-[11px] font-black px-3 py-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] shadow-sm hover:bg-[var(--color-accent-hover)] transition-colors">
               <Eye className="w-3.5 h-3.5" /> Open the page - highlighted
             </button>
             )}
@@ -745,7 +745,7 @@ export function SourceCard({ citation, onOpen, delay }: {
             className="border-l-2 border-orange-400 pl-3 py-1 text-[11px] leading-relaxed text-[var(--color-text)] whitespace-pre-wrap max-h-64 overflow-y-auto" />
           <div className="mt-2 flex items-center gap-2">
             <button onClick={() => onOpen(c)}
-              className="inline-flex items-center gap-1.5 text-[10px] font-black px-2.5 py-1.5 rounded-lg bg-orange-600 text-white hover:bg-orange-700 transition-colors">
+              className="inline-flex items-center gap-1.5 text-[10px] font-black px-2.5 py-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)] transition-colors">
               <ExternalLink className="w-3 h-3" /> View highlighted page
             </button>
             {c.quote && <CopyButton text={referencedQuote(c)} label="Copy quote" />}
@@ -998,7 +998,7 @@ function ExportButtons({ question, answer, large = false }: { question: string; 
     setTimeout(() => w.print(), 250);
   };
   const primary = large
-    ? "inline-flex items-center gap-1.5 text-[13px] font-bold px-3.5 py-2 bg-orange-600 text-white shadow-sm hover:bg-orange-700 transition-colors"
+    ? "inline-flex items-center gap-1.5 text-[13px] font-bold px-3.5 py-2 bg-[var(--color-accent)] text-[var(--color-accent-fg)] shadow-sm hover:bg-[var(--color-accent-hover)] transition-colors"
     : "inline-flex items-center gap-1 text-[11px] font-bold px-2 py-1 border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-orange-400 transition-colors";
   const secondary = large
     ? "inline-flex items-center gap-1.5 text-[13px] font-bold px-3.5 py-2 rounded-lg border border-[var(--color-border-strong,var(--color-border))] bg-[var(--color-surface)] text-[var(--color-text)] hover:border-orange-400 transition-colors"
@@ -1099,7 +1099,7 @@ function SettleBox({ items, inline, onAttach, onRethink }: {
       )}
       {onRethink && (
         <button type="button" onClick={onRethink}
-          className="inline-flex items-center gap-1.5 text-[13px] font-bold px-3 py-1.5 rounded-md bg-orange-600 text-white hover:bg-orange-700 transition-colors">
+          className="inline-flex items-center gap-1.5 text-[13px] font-bold px-3 py-1.5 rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)] transition-colors">
           <RefreshCw className="w-3.5 h-3.5" /> {added.length > 0 ? "Rethink with what I added" : "Rethink the answer"}
         </button>
       )}
@@ -1158,7 +1158,7 @@ function HelperBand({ answer, mode, onRethink, onOpenDoc, onFill }: {
         <div className="flex flex-col gap-1.5">
           {step && onRethink && (
             <button type="button" onClick={() => onRethink(step.m)}
-              className="self-start inline-flex items-center gap-1.5 text-[13px] font-bold px-3 py-1.5 rounded-lg bg-violet-600 text-white hover:bg-violet-700 transition-colors">
+              className="self-start inline-flex items-center gap-1.5 text-[13px] font-bold px-3 py-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)] transition-colors">
               <RefreshCw className="w-3.5 h-3.5" /> {step.label}
             </button>
           )}
@@ -1174,7 +1174,7 @@ function HelperBand({ answer, mode, onRethink, onOpenDoc, onFill }: {
               </span>
               {d.form && (
                 <button type="button" onClick={() => onFill(d)}
-                  className="inline-flex items-center gap-1.5 text-[12.5px] font-bold px-3 py-1.5 rounded-md bg-orange-600 text-white hover:bg-orange-700">
+                  className="inline-flex items-center gap-1.5 text-[12.5px] font-bold px-3 py-1.5 rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]">
                   <PenLine className="w-3.5 h-3.5" /> Fill it in
                 </button>
               )}
@@ -1799,7 +1799,7 @@ export function CitationChips({ citations, onOpen }: {
               <p className="text-[11px] text-[var(--color-text-muted)] italic">Passage text wasn&apos;t stored for this older answer - open the page to read it.</p>
             )}
             <button onClick={() => onOpen(c)}
-              className="mt-2 inline-flex items-center gap-1.5 text-[10px] font-black px-2.5 py-1.5 rounded-lg bg-orange-600 text-white hover:bg-orange-700 transition-colors">
+              className="mt-2 inline-flex items-center gap-1.5 text-[10px] font-black px-2.5 py-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)] transition-colors">
               <ExternalLink className="w-3 h-3" /> Open page {c.page} - passage highlighted
             </button>
           </div>

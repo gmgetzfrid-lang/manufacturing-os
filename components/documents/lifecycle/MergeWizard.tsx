@@ -230,7 +230,7 @@ export default function MergeWizard(props: MergeWizardProps) {
             <button
               onClick={() => setStep((s) => (s + 1) as 1 | 2 | 3)}
               disabled={step === 1 ? !step1Valid : !step2Valid}
-              className="inline-flex items-center gap-1.5 text-sm font-bold bg-amber-600 hover:bg-amber-700 text-white px-3 py-1.5 rounded disabled:opacity-40"
+              className="inline-flex items-center gap-1.5 text-sm font-bold bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] px-3 py-1.5 rounded disabled:opacity-40"
             >
               Next <ArrowRight className="w-3.5 h-3.5" />
             </button>
@@ -238,7 +238,7 @@ export default function MergeWizard(props: MergeWizardProps) {
             <button
               onClick={onSubmit}
               disabled={submitting || !step3Valid}
-              className="inline-flex items-center gap-1.5 text-sm font-bold bg-amber-600 hover:bg-amber-700 text-white px-3 py-1.5 rounded disabled:opacity-40"
+              className="inline-flex items-center gap-1.5 text-sm font-bold bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] px-3 py-1.5 rounded disabled:opacity-40"
             >
               {submitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
               Confirm Merge

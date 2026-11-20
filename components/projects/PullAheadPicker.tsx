@@ -147,7 +147,7 @@ export function PullAheadPicker({ items, onLists, next, shiftHours, picked, coun
                 <div className="inline-flex rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-0.5" role="group" aria-label="How far ahead">
                   {WINDOWS.map((w) => (
                     <button key={w.id} type="button" onClick={() => { setWin(w.id); setMore(false); }} aria-pressed={win === w.id}
-                      className={`px-2 py-1 rounded-md font-semibold ${win === w.id ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>{w.label}</button>
+                      className={`px-2 py-1 rounded-md font-semibold ${win === w.id ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>{w.label}</button>
                   ))}
                 </div>
                 <Chip on={readyOnly} onClick={() => setReadyOnly((v) => !v)}>Ready to start</Chip>
@@ -180,7 +180,7 @@ export function PullAheadPicker({ items, onLists, next, shiftHours, picked, coun
                       aria-label={`${on ? "Remove" : "Add"} ${r.leaf.name}${r.parentName ? ` (${r.parentName})` : ""}`}
                       title={cant ? (x.blockedBy ? `Can't start - it waits on ${x.blockedBy}, which is blocked or on hold` : `Blocked or on hold${r.reason ? `: ${r.reason}` : ""}`) : on ? "Remove from the shift" : early ? "Not ready yet - add only if you know it can start" : "Add to the shift"}
                       className={`shrink-0 mt-0.5 inline-flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-[12px] font-bold whitespace-nowrap transition-colors disabled:opacity-40 ${on
-                        ? "border-indigo-500 bg-indigo-600 text-white hover:bg-indigo-700"
+                        ? "border-[var(--color-text)] bg-[var(--color-text)] text-[var(--color-surface)]"
                         : early ? "border-amber-400 text-amber-800 dark:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-950/40"
                           : "border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
                       {on ? <><Check className="w-3.5 h-3.5" /> Added</> : <><Plus className="w-3.5 h-3.5" /> {early && !cant ? "Add anyway" : "Add"}</>}

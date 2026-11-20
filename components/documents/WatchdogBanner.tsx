@@ -30,7 +30,7 @@ export default function WatchdogBanner({ suggestions, busyId, onLink, onDismiss,
               <div className="text-amber-800/90">{s.reason}</div>
             </div>
             <div className="flex items-center gap-1 shrink-0">
-              <button onClick={() => onLink(s)} disabled={busyId === s.targetId} className="inline-flex items-center gap-1 rounded-lg bg-amber-600 text-white px-2 py-1 text-xs font-bold hover:bg-amber-500 disabled:opacity-60">
+              <button onClick={() => onLink(s)} disabled={busyId === s.targetId} className="inline-flex items-center gap-1 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] px-2 py-1 text-xs font-bold hover:bg-[var(--color-accent-hover)] disabled:opacity-60">
                 {busyId === s.targetId ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Link2 className="w-3.5 h-3.5" />} Link it there
               </button>
               <button onClick={() => onDismiss(s)} disabled={busyId === s.targetId} className="rounded-lg border border-amber-300 px-2 py-1 text-xs font-bold text-amber-900 hover:bg-amber-100 disabled:opacity-60">Leave it</button>

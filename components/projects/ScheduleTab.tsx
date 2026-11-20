@@ -487,7 +487,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
             {" "}Undo puts {undoable.kind === "clear" ? "every task back with its notes" : "each task's status, %, times and baseline back as they were"}.
           </span>
           <button onClick={() => void onUndo()} disabled={undoing}
-            className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-amber-600 text-white text-[12px] font-bold hover:bg-amber-700 disabled:opacity-50">
+            className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[12px] font-bold hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
             {undoing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RotateCcw className="w-3.5 h-3.5" />} Undo
           </button>
           <button onClick={() => setUndoable(null)} disabled={undoing} className="px-2 py-1.5 text-[12px] font-bold text-amber-800 dark:text-amber-300 hover:underline">Dismiss</button>

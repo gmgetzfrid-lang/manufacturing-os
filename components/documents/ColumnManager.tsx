@@ -240,7 +240,7 @@ export default function ColumnManager(props: {
                         <button
                           onClick={() => void saveRename()}
                           disabled={savingRename || !editValue.trim()}
-                          className="shrink-0 p-2 rounded-lg border border-emerald-300 bg-emerald-600 text-white hover:bg-emerald-500 disabled:opacity-50"
+                          className="shrink-0 p-2 rounded-lg border border-emerald-300 bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50"
                           title="Save"
                         >
                           {savingRename ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}

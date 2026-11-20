@@ -303,7 +303,7 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
           <div className="mt-3 flex items-center gap-1">
             {STEPS.map((s, i) => (
               <button key={s.key} onClick={() => i < step && setStep(i)} disabled={i > step}
-                className={`h-1.5 flex-1 rounded-full transition-colors ${i < step ? "bg-[var(--color-accent)]" : i === step ? "bg-[var(--color-accent)]/50" : "bg-[var(--color-surface-2)]"}`}
+                className={`h-1.5 flex-1 rounded-full transition-colors ${i < step ? "bg-[var(--color-text)]" : i === step ? "bg-[var(--color-text)]/40" : "bg-[var(--color-surface-2)]"}`}
                 title={s.label} />
             ))}
           </div>

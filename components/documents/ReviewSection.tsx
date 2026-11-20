@@ -252,7 +252,7 @@ export default function ReviewSection({ doc, orgId, canManage, uid, userName, on
               <div className="flex gap-1">
                 {(["document", "collection", "library"] as Level[]).map((lv) => (
                   <button key={lv} onClick={() => setScope(lv)} disabled={lv === "collection" && !doc.collectionId}
-                    className={`flex-1 px-2 py-1 rounded-lg text-[10px] font-bold disabled:opacity-30 ${scope === lv ? "bg-[var(--color-accent)] text-white" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"}`}>
+                    className={`flex-1 px-2 py-1 rounded-lg text-[10px] font-bold disabled:opacity-30 ${scope === lv ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"}`}>
                     {lv === "document" ? "This doc" : lv === "collection" ? "This folder" : "Library"}
                   </button>
                 ))}

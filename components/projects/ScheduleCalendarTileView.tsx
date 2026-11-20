@@ -625,7 +625,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
               {([["all", "All"], ["day", "Day"], ["night", "Night"]] as const).map(([id, label]) => (
                 <button key={id} onClick={() => setCrewFilter(id)} aria-pressed={crewFilter === id}
                   title={id === "all" ? "Day and night work" : id === "day" ? "Only work the day crew does" : "Only work the night crew does"}
-                  className={`inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] font-bold transition-colors ${crewFilter === id ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] shadow-sm" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
+                  className={`inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] font-bold transition-colors ${crewFilter === id ? "bg-[var(--color-text)] text-[var(--color-surface)] shadow-sm" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
                   {id === "day" && <Sun className="w-3 h-3" />}{id === "night" && <Moon className="w-3 h-3" />}{label}
                 </button>
               ))}
@@ -643,7 +643,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
               <button
                 key={id}
                 onClick={() => setShowSubtasks(id === "subtasks")}
-                className={`px-2.5 py-1 rounded text-[11px] font-bold transition-colors ${(id === "subtasks") === showSubtasks ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] shadow-sm" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}
+                className={`px-2.5 py-1 rounded text-[11px] font-bold transition-colors ${(id === "subtasks") === showSubtasks ? "bg-[var(--color-text)] text-[var(--color-surface)] shadow-sm" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}
                 title={id === "subtasks" ? "Break every task into its sub-items so you can drag each one onto its own day" : "Show parent tasks; click a task's ▸ arrow to reach its sub-items"}
               >
                 {label}
@@ -796,8 +796,8 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
                       {isToday && overdueToday.length > 0 && (
                         <button type="button" onClick={() => openShift(key, "day")}
                           title={overdueToday.slice(0, 6).map((w) => `• ${w.leaf.name}`).join("\n") + (overdueToday.length > 6 ? `\n…and ${overdueToday.length - 6} more` : "")}
-                          className="shrink-0 w-full text-left rounded px-1.5 py-1 bg-rose-600 text-white text-[12px] font-semibold hover:bg-rose-700">
-                          ⚠ {overdueToday.length} carried over - not done
+                          className="shrink-0 w-full text-left rounded px-1.5 py-1 border border-rose-300 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/30 text-rose-800 dark:text-rose-300 text-[12px] font-bold hover:bg-rose-100 dark:hover:bg-rose-950/50">
+                          {overdueToday.length} carried over, not done
                         </button>
                       )}
                       <DayScroller fade="from-sky-50 dark:from-sky-950">
@@ -911,9 +911,9 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
                       type="button"
                       onClick={() => setAgendaDay(key)}
                       title={overdueToday.slice(0, 6).map((w) => `• ${w.leaf.name}`).join("\n") + (overdueToday.length > 6 ? `\n…and ${overdueToday.length - 6} more` : "") + "\nOpen the day view to work them"}
-                      className="shrink-0 w-full text-left rounded px-1.5 py-1 bg-rose-600 text-white text-[12px] font-semibold hover:bg-rose-700"
+                      className="shrink-0 w-full text-left rounded px-1.5 py-1 border border-rose-300 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/30 text-rose-800 dark:text-rose-300 text-[12px] font-bold hover:bg-rose-100 dark:hover:bg-rose-950/50"
                     >
-                      ⚠ {overdueToday.length} carried over - not done
+                      {overdueToday.length} carried over, not done
                     </button>
                   )}
                   <DayScroller fade={inMonth ? "from-[var(--color-surface)]" : "from-slate-50"}>
@@ -1228,7 +1228,7 @@ function Chip({
           title={selected ? "Deselect" : "Select for bulk actions"}
           aria-label={selected ? "Deselect" : "Select for bulk actions"}
           aria-pressed={!!selected}
-          className={`absolute top-0.5 right-0.5 z-10 w-4 h-4 pointer-coarse:w-6 pointer-coarse:h-6 rounded border flex items-center justify-center transition-opacity ${selected ? "bg-[var(--color-accent)] border-[var(--color-accent)] text-[var(--color-accent-fg)] opacity-100" : "bg-[var(--color-surface)] border-[var(--color-border-strong)] text-transparent opacity-0 group-hover/chip:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100"}`}
+          className={`absolute top-0.5 right-0.5 z-10 w-4 h-4 pointer-coarse:w-6 pointer-coarse:h-6 rounded border flex items-center justify-center transition-opacity ${selected ? "bg-[var(--color-text)] border-[var(--color-text)] text-[var(--color-surface)] opacity-100" : "bg-[var(--color-surface)] border-[var(--color-border-strong)] text-transparent opacity-0 group-hover/chip:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100"}`}
         >
           <CheckSquare className="w-3 h-3" />
         </button>
@@ -1287,7 +1287,7 @@ function Chip({
                   type="button"
                   onClick={(e) => { e.stopPropagation(); onToggleExpand?.(e); }}
                   title={isExpanded ? "Hide its steps" : "Show its steps for this day"}
-                  className={`inline-flex items-center justify-center w-4 h-4 pointer-coarse:w-6 pointer-coarse:h-6 rounded transition-colors ${isExpanded ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)]" : "text-[var(--color-text-muted)] hover:bg-black/10 hover:text-[var(--color-accent)]"}`}
+                  className={`inline-flex items-center justify-center w-4 h-4 pointer-coarse:w-6 pointer-coarse:h-6 rounded transition-colors ${isExpanded ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "text-[var(--color-text-muted)] hover:bg-black/10 hover:text-[var(--color-accent)]"}`}
                 >
                   <ChevronRight className={`w-3 h-3 transition-transform ${isExpanded ? "rotate-90" : ""}`} strokeWidth={2.5} />
                 </button>

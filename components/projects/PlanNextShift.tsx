@@ -205,7 +205,7 @@ function Picker({ items, out, next, span, onBack, onPick }: {
               <div className="inline-flex rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-0.5" role="group" aria-label="How far ahead">
                 {WINDOWS.map((w) => (
                   <button key={w.id} type="button" onClick={() => { setWin(w.id); setMore(false); }} aria-pressed={win === w.id}
-                    className={`px-2 py-1 rounded-md font-semibold ${win === w.id ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>{w.label}</button>
+                    className={`px-2 py-1 rounded-md font-semibold ${win === w.id ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>{w.label}</button>
                 ))}
               </div>
               <button type="button" onClick={() => setReadyOnly((v) => !v)} aria-pressed={readyOnly}

@@ -140,7 +140,7 @@ export default function AckPolicyModal({ level, id, orgId, name, uid, userName, 
                   <div className="text-[11px] font-bold text-[var(--color-text-muted)]">Whole roles</div>
                   <div className="flex flex-wrap gap-1">
                     {ALL_ROLES.map((r) => (
-                      <button key={r} onClick={() => toggleRole(r)} className={`px-2 py-0.5 rounded-full text-[11px] font-bold border transition-colors ${roles.includes(r) ? "bg-[var(--color-accent)] text-white border-transparent" : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`}>{r}</button>
+                      <button key={r} onClick={() => toggleRole(r)} className={`px-2 py-0.5 rounded-full text-[11px] font-bold border transition-colors ${roles.includes(r) ? "bg-[var(--color-text)] text-[var(--color-surface)] border-transparent" : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`}>{r}</button>
                     ))}
                   </div>
                   <div className="text-[10px] text-[var(--color-text-muted)]">Role members are resolved to individuals each time a revision is issued.</div>
@@ -151,7 +151,7 @@ export default function AckPolicyModal({ level, id, orgId, name, uid, userName, 
                     <div className="text-[11px] font-bold text-[var(--color-text-muted)]">Departments (teams)</div>
                     <div className="flex flex-wrap gap-1">
                       {allTeams.map((t) => (
-                        <button key={t.id} onClick={() => toggleTeam(t.id)} className={`px-2 py-0.5 rounded-full text-[11px] font-bold border transition-colors ${teamIds.includes(t.id) ? "bg-[var(--color-accent)] text-white border-transparent" : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`}>{t.name}</button>
+                        <button key={t.id} onClick={() => toggleTeam(t.id)} className={`px-2 py-0.5 rounded-full text-[11px] font-bold border transition-colors ${teamIds.includes(t.id) ? "bg-[var(--color-text)] text-[var(--color-surface)] border-transparent" : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`}>{t.name}</button>
                       ))}
                     </div>
                     <div className="text-[10px] text-[var(--color-text-muted)]">Department members are resolved to individuals each time a revision is issued.</div>

@@ -242,7 +242,7 @@ export default function AckSection({ doc, orgId, canManage }: {
               <div className="flex gap-1">
                 {(["document", "collection", "library"] as Level[]).map((lv) => (
                   <button key={lv} onClick={() => void changeScope(lv)} disabled={lv === "collection" && !doc.collectionId}
-                    className={`flex-1 px-2 py-1 rounded-lg text-[10px] font-bold disabled:opacity-30 ${scope === lv ? "bg-[var(--color-accent)] text-white" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"}`}>
+                    className={`flex-1 px-2 py-1 rounded-lg text-[10px] font-bold disabled:opacity-30 ${scope === lv ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"}`}>
                     {lv === "document" ? "This doc" : lv === "collection" ? "This folder" : "Library"}
                   </button>
                 ))}
@@ -272,7 +272,7 @@ export default function AckSection({ doc, orgId, canManage }: {
                     <div className="text-[10px] font-bold text-[var(--color-text-muted)]">Whole roles</div>
                     <div className="flex flex-wrap gap-1">
                       {ALL_ROLES.map((r) => (
-                        <button key={r} onClick={() => toggleRole(r)} className={`px-2 py-0.5 rounded-full text-[10px] font-bold border transition-colors ${roles.includes(r) ? "bg-[var(--color-accent)] text-white border-transparent" : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`}>{r}</button>
+                        <button key={r} onClick={() => toggleRole(r)} className={`px-2 py-0.5 rounded-full text-[10px] font-bold border transition-colors ${roles.includes(r) ? "bg-[var(--color-text)] text-[var(--color-surface)] border-transparent" : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`}>{r}</button>
                       ))}
                     </div>
                   </div>
@@ -281,7 +281,7 @@ export default function AckSection({ doc, orgId, canManage }: {
                       <div className="text-[10px] font-bold text-[var(--color-text-muted)]">Departments</div>
                       <div className="flex flex-wrap gap-1">
                         {allTeams.map((t) => (
-                          <button key={t.id} onClick={() => toggleTeam(t.id)} className={`px-2 py-0.5 rounded-full text-[10px] font-bold border transition-colors ${teamIds.includes(t.id) ? "bg-[var(--color-accent)] text-white border-transparent" : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`}>{t.name}</button>
+                          <button key={t.id} onClick={() => toggleTeam(t.id)} className={`px-2 py-0.5 rounded-full text-[10px] font-bold border transition-colors ${teamIds.includes(t.id) ? "bg-[var(--color-text)] text-[var(--color-surface)] border-transparent" : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`}>{t.name}</button>
                         ))}
                       </div>
                     </div>

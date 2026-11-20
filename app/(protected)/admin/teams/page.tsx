@@ -211,7 +211,7 @@ export default function AdminTeamsPage() {
                         return (
                           <button key={l.id} onClick={() => void toggleLibrary(l.id, owned)} disabled={otherTeam}
                             title={otherTeam ? "Owned by another department" : undefined}
-                            className={`px-2 py-0.5 rounded-full text-[11px] font-bold border transition-colors disabled:opacity-40 ${owned ? "bg-[var(--color-accent)] text-white border-transparent" : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`}>
+                            className={`px-2 py-0.5 rounded-full text-[11px] font-bold border transition-colors disabled:opacity-40 ${owned ? "bg-[var(--color-text)] text-[var(--color-surface)] border-transparent" : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`}>
                             {l.name}{otherTeam ? " · other" : ""}
                           </button>
                         );

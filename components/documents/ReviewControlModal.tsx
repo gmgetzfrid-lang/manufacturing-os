@@ -60,7 +60,7 @@ function PickRow({ orgId, label, people, setPeople, roles, setRoles, allTeams, t
       )}
       <div className="flex flex-wrap gap-1">
         {ALL_ROLES.map((r) => (
-          <button key={r} onClick={() => toggleRole(r)} className={`px-2 py-0.5 rounded-full text-[10px] font-bold border transition-colors ${roles.includes(r) ? "bg-[var(--color-accent)] text-white border-transparent" : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`}>{r}</button>
+          <button key={r} onClick={() => toggleRole(r)} className={`px-2 py-0.5 rounded-full text-[10px] font-bold border transition-colors ${roles.includes(r) ? "bg-[var(--color-text)] text-[var(--color-surface)] border-transparent" : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`}>{r}</button>
         ))}
       </div>
       {allTeams && teamIds && setTeamIds && allTeams.length > 0 && (
@@ -69,7 +69,7 @@ function PickRow({ orgId, label, people, setPeople, roles, setRoles, allTeams, t
           <div className="flex flex-wrap gap-1">
             {allTeams.map((t) => (
               <button key={t.id} onClick={() => setTeamIds(teamIds.includes(t.id) ? teamIds.filter((x) => x !== t.id) : [...teamIds, t.id])}
-                className={`px-2 py-0.5 rounded-full text-[10px] font-bold border transition-colors ${teamIds.includes(t.id) ? "bg-[var(--color-accent)] text-white border-transparent" : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`}>{t.name}</button>
+                className={`px-2 py-0.5 rounded-full text-[10px] font-bold border transition-colors ${teamIds.includes(t.id) ? "bg-[var(--color-text)] text-[var(--color-surface)] border-transparent" : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`}>{t.name}</button>
             ))}
           </div>
         </>

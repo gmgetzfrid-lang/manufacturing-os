@@ -232,7 +232,7 @@ export default function BackupViewer({ target }: { target?: ArchiveTarget }) {
                 const active = preview?.name === e.name;
                 return (
                   <button key={e.path} onClick={() => void openEntry(zip, e.path, e.name)}
-                    className={`w-full px-3 py-2 flex items-center gap-2 text-left transition-colors ${active ? "bg-[var(--color-accent)]/10" : "hover:bg-[var(--color-surface-2)]"}`}>
+                    className={`w-full px-3 py-2 flex items-center gap-2 text-left transition-colors ${active ? "bg-[var(--color-surface-2)]" : "hover:bg-[var(--color-surface-2)]"}`}>
                     <Icon className="w-3.5 h-3.5 text-[var(--color-text-muted)] shrink-0" />
                     <span className="text-[11px] text-[var(--color-text)] truncate flex-1" title={e.path}>{e.name}</span>
                   </button>

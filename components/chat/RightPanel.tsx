@@ -137,7 +137,7 @@ export default function RightPanel({
         </div>
         <div className="p-3 border-t border-[var(--color-border)] shrink-0">
           <button onClick={() => onReuse(past)}
-            className="w-full inline-flex items-center justify-center gap-1.5 h-9 rounded-lg bg-violet-600 text-white text-xs font-black hover:bg-violet-500 transition-colors">
+            className="w-full inline-flex items-center justify-center gap-1.5 h-9 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-black hover:bg-[var(--color-accent-hover)] transition-colors">
             <Redo2 className="w-3.5 h-3.5" /> Use this answer here - no AI call
           </button>
         </div>

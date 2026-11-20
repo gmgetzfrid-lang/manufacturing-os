@@ -94,7 +94,7 @@ export default function SignatureCeremony({
   const tabBtn = (m: "draw" | "type", label: string, Icon: typeof TypeIcon) => (
     <button
       onClick={() => switchMode(m)}
-      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors ${mode === m ? "bg-[var(--color-accent)] text-white border-transparent" : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`}
+      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors ${mode === m ? "bg-[var(--color-text)] text-[var(--color-surface)] border-transparent" : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`}
     >
       <Icon className="w-3.5 h-3.5" /> {label}
     </button>
@@ -118,7 +118,7 @@ export default function SignatureCeremony({
                   <button
                     key={it}
                     onClick={() => setIntent(it)}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors ${intent === it ? "bg-[var(--color-accent)] text-white border-transparent" : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors ${intent === it ? "bg-[var(--color-text)] text-[var(--color-surface)] border-transparent" : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`}
                   >
                     {it}
                   </button>
@@ -184,7 +184,7 @@ export default function SignatureCeremony({
               </p>
               <button
                 onClick={() => void reauthWithProvider()}
-                className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-600 text-white text-xs font-bold hover:bg-amber-700"
+                className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-bold hover:bg-[var(--color-accent-hover)]"
               >
                 <KeyRound className="w-3.5 h-3.5" /> Re-authenticate with Microsoft
               </button>

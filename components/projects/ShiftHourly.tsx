@@ -541,7 +541,7 @@ export function MeetingBox({ m, edit }: { m: MeetingCtx; edit: boolean }) {
           <span className="min-w-0 flex-1"><b>Not updated for this shift.</b> Same people and head counts as {m.carried.label}{edit ? ": change anyone who's different." : "."}</span>
           {edit && (
             <button type="button" onClick={() => void save(own).catch(() => undefined)}
-              className="shrink-0 inline-flex items-center gap-1 h-6 px-2 rounded-md bg-amber-600 hover:bg-amber-700 text-white text-[11px] font-bold">
+              className="shrink-0 inline-flex items-center gap-1 h-6 px-2 rounded-md bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-[11px] font-bold">
               <Check className="w-3.5 h-3.5" /> Looks right
             </button>
           )}

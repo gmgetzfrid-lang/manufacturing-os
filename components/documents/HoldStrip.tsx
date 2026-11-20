@@ -200,7 +200,7 @@ export default function HoldStrip({
               <button
                 onClick={() => otherDraft && onOpen(otherDraft)}
                 disabled={!otherDraft?.trim() || busy}
-                className="inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] font-bold bg-amber-600 hover:bg-amber-700 text-white transition-colors disabled:opacity-40"
+                className="inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] font-bold bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] transition-colors disabled:opacity-40"
               >
                 <Check className="w-3 h-3" /> Add
               </button>
