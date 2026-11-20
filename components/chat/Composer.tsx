@@ -150,8 +150,8 @@ export default function Composer({
                   // eslint-disable-next-line @next/next/no-img-element
                   ? <img src={a.previewUrl} alt="" className="w-8 h-8 rounded object-cover shrink-0" />
                   : a.kind === "image"
-                    ? <ImageIcon className="w-4 h-4 shrink-0 text-[var(--color-text-muted)]" />
-                    : <FileText className="w-4 h-4 shrink-0 text-[var(--color-text-muted)]" />}
+                    ? <span aria-hidden className="ui-icon-tile is-sm"><ImageIcon className="w-4 h-4" /></span>
+                    : <span aria-hidden className="ui-icon-tile is-sm"><FileText className="w-4 h-4" /></span>}
               <span className="min-w-0 flex flex-col leading-tight">
                 <span className="truncate">{a.name}</span>
                 <span className={`truncate font-normal text-[12px] ${a.error ? "" : "text-[var(--color-text-muted)]"}`}>

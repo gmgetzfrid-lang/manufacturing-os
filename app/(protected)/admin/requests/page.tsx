@@ -12,7 +12,12 @@ import {
   Save,
   GripVertical,
   ArrowUp,
-  ArrowDown
+  ArrowDown,
+  ClipboardList,
+  Factory,
+  Flag,
+  BellRing,
+  LayoutList,
 } from 'lucide-react';
 import { PageShell } from '@/components/ui/PageShell';
 import { PageHero, PageBody, heroPrimary } from '@/components/ui/PageHero';
@@ -195,6 +200,7 @@ export default function DraftingConfigPage() {
           {/* SECTION: REQUEST TYPES */}
           <ConfigSection 
             title="Request types"
+            icon={ClipboardList}
             desc="Define the categories of work available (e.g. ISO, RFI)."
             config={settings.requestTypes}
             onLabelChange={(val) => updateSection('requestTypes', { label: val })}
@@ -223,6 +229,7 @@ export default function DraftingConfigPage() {
           {/* SECTION: UNITS */}
           <ConfigSection 
             title="Units and areas"
+            icon={Factory}
             desc="Define the list of selectable plant areas or departments."
             config={settings.units}
             onLabelChange={(val) => updateSection('units', { label: val })}
@@ -252,6 +259,7 @@ export default function DraftingConfigPage() {
           {/* SECTION: PRIORITIES */}
           <ConfigSection
             title="Priority levels"
+            icon={Flag}
             desc="Define urgency levels. Value must be numeric (1 = Highest)."
             config={settings.priorities}
             onLabelChange={(val) => updateSection('priorities', { label: val })}
@@ -279,7 +287,7 @@ export default function DraftingConfigPage() {
           />
 
           {/* SECTION: REQUEST ROUTING */}
-          <Section label="Request routing">
+          <Section label="Request routing" icon={BellRing}>
             <div className={sheet}>
               <label className="flex items-start gap-3 cursor-pointer px-4 sm:px-5 py-4">
                 <input
@@ -291,7 +299,7 @@ export default function DraftingConfigPage() {
                       routing: { ...settings.routing, adminsAlsoReceiveWhenSupervisorSet: e.target.checked },
                     })
                   }
-                  className="mt-1 w-4 h-4 accent-[var(--color-text)]"
+                  className="mt-1 w-4 h-4 accent-[var(--color-main)]"
                 />
                 <span>
                   <span className="block text-[15px] font-semibold text-[var(--color-text)]">Keep Admins notified when a Drafting Supervisor is set</span>
@@ -315,6 +323,7 @@ export default function DraftingConfigPage() {
 
 function ConfigSection({
   title, 
+  icon,
   desc, 
   config, 
   onLabelChange, 
@@ -323,6 +332,7 @@ function ConfigSection({
   renderOption
 }: {
   title: string;
+  icon: React.ComponentType<{ className?: string }>;
   desc: string;
   config: FormFieldConfig;
   onLabelChange: (val: string) => void;
@@ -331,7 +341,7 @@ function ConfigSection({
   renderOption: (opt: SelectOption, idx: number) => React.ReactNode;
 }) {
   return (
-    <Section label={title} action={<span className="text-[13px] text-[var(--color-text-muted)] max-sm:hidden">{desc}</span>}>
+    <Section label={title} icon={icon} count={config.options.length} action={<span className="text-[13px] text-[var(--color-text-muted)] max-sm:hidden">{desc}</span>}>
       <div className={sheet}>
         <FormRow label="Form label" htmlFor={`label-${title}`}>
           <input id={`label-${title}`} value={config.label} onChange={(e) => onLabelChange(e.target.value)} className={`${field} font-semibold`} />
@@ -395,7 +405,7 @@ function CustomCategoriesSection({
   };
 
   return (
-    <Section label={<span className="inline-flex items-center gap-2">Custom sections <HelpTooltip>Sections with your own fields (for example Inspection type, Equipment tag, MOC phase). Each one becomes its own section on the request form.</HelpTooltip></span>}
+    <Section icon={LayoutList} count={categories.length} label={<span className="inline-flex items-center gap-2">Custom sections <HelpTooltip>Sections with your own fields (for example Inspection type, Equipment tag, MOC phase). Each one becomes its own section on the request form.</HelpTooltip></span>}
       action={<button type="button" onClick={addCategory} className={btnQuiet}><Plus className="w-3.5 h-3.5" /> Add section</button>}>
       <div className="space-y-4">
         {categories.length === 0 && (
@@ -451,7 +461,7 @@ function CategoryCard({
           placeholder="Section name"
         />
         <label className="inline-flex items-center gap-1.5 text-[14px] text-[var(--color-text)] px-1">
-          <input type="checkbox" checked={cat.enabled} onChange={(e) => onChange({ enabled: e.target.checked })} className="w-4 h-4 accent-[var(--color-text)]" />
+          <input type="checkbox" checked={cat.enabled} onChange={(e) => onChange({ enabled: e.target.checked })} className="w-4 h-4 accent-[var(--color-main)]" />
           Shown on the form
         </label>
         <button type="button" onClick={onMoveUp} disabled={!canMoveUp} aria-label="Move up" className={btnIcon}><ArrowUp className="w-4 h-4" /></button>
@@ -519,7 +529,7 @@ function FieldEditor({
           {FIELD_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
         </select>
         <label className="inline-flex items-center gap-1.5 text-[14px] text-[var(--color-text)] px-1">
-          <input type="checkbox" checked={!!field.required} onChange={(e) => onChange({ required: e.target.checked })} className="w-4 h-4 accent-[var(--color-text)]" />
+          <input type="checkbox" checked={!!field.required} onChange={(e) => onChange({ required: e.target.checked })} className="w-4 h-4 accent-[var(--color-main)]" />
           Required
         </label>
         <button type="button" onClick={onRemove} aria-label={`Remove ${field.label}`} className={`${btnIcon} hover:text-[var(--state-overdue)]`}>

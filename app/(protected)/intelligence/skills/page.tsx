@@ -118,21 +118,29 @@ export default function SkillLibraryPage() {
     r.builtin_key ? "Built-in"
       : `${r.visibility === "org" ? "Org-wide" : "Private"}, by ${r.created_by === uid ? "you" : (r.created_by_name?.split("@")[0] ?? "a teammate")}`;
 
-  // On or off: a real switch, in the accent color when on.
+  // On or off: a real switch, in the brand color when on.
   const toggleButton = (opts: { id: string; name: string; enabled: boolean; mayManage: boolean; onToggle: () => Promise<void> }) =>
     opts.mayManage ? (
       <button type="button" role="switch" aria-checked={opts.enabled} onClick={() => void guard(opts.id, opts.onToggle)} disabled={busyId === opts.id}
         aria-label={`${opts.name}: ${opts.enabled ? "on" : "off"}`}
         title={opts.enabled ? "Turn off: it stops running" : "Turn on"}
         className="inline-flex items-center gap-2 text-[14px] font-semibold text-[var(--color-text)] disabled:opacity-50">
-        <span className={`relative inline-flex w-9 h-5 rounded-full transition-colors ${opts.enabled ? "bg-[var(--color-accent)]" : "bg-[var(--color-border-strong)]"}`}>
+        <span className={`relative inline-flex w-9 h-5 rounded-full transition-colors ${opts.enabled ? "bg-[var(--color-main)]" : "bg-[var(--color-border-strong)]"}`}>
           <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-[var(--color-surface)] shadow transition-transform ${opts.enabled ? "translate-x-4" : ""}`} />
         </span>
         <span className="max-sm:sr-only w-6 text-left">{busyId === opts.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : opts.enabled ? "On" : "Off"}</span>
       </button>
     ) : (
-      <span className="text-[14px] text-[var(--color-text-muted)]">{opts.enabled ? "On" : "Off"}</span>
+      <span className={`ui-pill ${opts.enabled ? "is-good" : "is-muted"}`}>{opts.enabled ? "On" : "Off"}</span>
     );
+
+  // Whose: built-in, or shared org-wide (brand) or private (grey).
+  const whosePill = (r: { builtin_key: string | null; visibility: string; created_by: string | null; created_by_name: string | null }) => (
+    <span className={`ui-pill ${!r.builtin_key && r.visibility === "org" ? "" : "is-muted"}`}>
+      {!r.builtin_key && (r.visibility === "org" ? <Users className="w-3.5 h-3.5" /> : <Lock className="w-3.5 h-3.5" />)}
+      {whose(r)}
+    </span>
+  );
 
   // Share and delete, as icon buttons with a visible hover fill.
   const rowActions = (opts: {
@@ -198,7 +206,7 @@ export default function SkillLibraryPage() {
       ) : notInstalled ? (
         <Card>
           <div className="text-center py-10 space-y-2 max-w-md mx-auto">
-            <Puzzle className="w-6 h-6 mx-auto text-[var(--color-text-faint)]" />
+            <span aria-hidden className="ui-icon-tile mx-auto !grid !w-12 !h-12"><Puzzle className="w-6 h-6" /></span>
             <p className="text-[15px] text-[var(--color-text-muted)]">
               Run the connection-skills and reasoning-skills migrations on your database, then reload.
               The built-ins add themselves.
@@ -211,7 +219,10 @@ export default function SkillLibraryPage() {
           <section>
             <div className="flex items-end gap-3 mb-2.5 min-h-9">
               <div className="min-w-0 flex-1">
-                <h2 className="font-display text-[19px] leading-tight font-semibold text-[var(--color-text)]">Reasoning skills</h2>
+                <h2 className="flex items-center gap-2.5 font-display text-[19px] leading-tight font-semibold text-[var(--color-text)]">
+                  <span aria-hidden className="ui-icon-tile is-sm is-solid"><Sparkles className="w-4 h-4" /></span> Reasoning skills
+                  {rskills && rskills.length > 0 && <span className="ui-count is-solid">{rskills.filter((x) => x.enabled).length} on</span>}
+                </h2>
                 <p className="text-[14px] text-[var(--color-text-muted)]">What the AI carries when it answers. Each names when it applies, so several can be on.</p>
               </div>
               {buildButton("reasoning")}
@@ -230,9 +241,12 @@ export default function SkillLibraryPage() {
                       return (
                         <tr key={r.id} className={`align-top ${r.enabled ? "" : "text-[var(--color-text-muted)]"}`}>
                           <td className="px-4 py-3 min-w-0">
+                            <div className="flex items-start gap-2.5 min-w-0">
+                            <span aria-hidden className={`ui-icon-tile is-sm mt-px ${r.enabled ? "" : "!bg-[var(--color-surface-2)] !text-[var(--color-text-muted)]"}`}><Sparkles className="w-4 h-4" /></span>
+                            <div className="min-w-0 flex-1">
                             <div className={`font-semibold ${r.enabled ? "text-[var(--color-text)]" : ""}`}>{r.name}</div>
                             {r.description && <p className="mt-0.5 text-[14px] text-[var(--color-text-muted)] line-clamp-2 max-w-[80ch]">{r.description}</p>}
-                            <div className="sm:hidden mt-0.5 text-[13px] text-[var(--color-text-muted)]">{whose(r)}</div>
+                            <div className="sm:hidden mt-1">{whosePill(r)}</div>
                             {/* The pack itself, on demand. */}
                             <details className="group mt-1">
                               <summary className="cursor-pointer list-none [&::-webkit-details-marker]:hidden inline-flex text-[14px] text-[var(--color-accent-text)] hover:underline">
@@ -240,9 +254,11 @@ export default function SkillLibraryPage() {
                               </summary>
                               <pre className="mt-1.5 whitespace-pre-wrap text-[14px] leading-relaxed text-[var(--color-text-muted)] border-l-2 border-[var(--color-border-strong)] pl-3 max-h-48 overflow-y-auto font-sans">{r.instructions}</pre>
                             </details>
+                            </div>
+                            </div>
                           </td>
-                          <td className="px-4 py-3 hidden md:table-cell whitespace-nowrap text-[14px] text-[var(--color-text-muted)]">Answer discipline</td>
-                          <td className="px-4 py-3 hidden sm:table-cell text-[14px] text-[var(--color-text-muted)]">{whose(r)}</td>
+                          <td className="px-4 py-3 hidden md:table-cell whitespace-nowrap"><span className="ui-tag">Answer discipline</span></td>
+                          <td className="px-4 py-3 hidden sm:table-cell">{whosePill(r)}</td>
                           <td className="px-2 sm:px-4 py-3">{toggleButton({ id: r.id, name: r.name, enabled: r.enabled, mayManage, onToggle: () => setAnswerSkillEnabled(r.id, !r.enabled) })}</td>
                           <td className="px-1 sm:px-2 py-2">{rowActions({
                             id: r.id, name: r.name, builtin: !!r.builtin_key, mayManage, visibility: r.visibility,
@@ -262,7 +278,10 @@ export default function SkillLibraryPage() {
           <section>
             <div className="flex items-end gap-3 mb-2.5 min-h-9">
               <div className="min-w-0 flex-1">
-                <h2 className="font-display text-[19px] leading-tight font-semibold text-[var(--color-text)]">Connection skills</h2>
+                <h2 className="flex items-center gap-2.5 font-display text-[19px] leading-tight font-semibold text-[var(--color-text)]">
+                  <span aria-hidden className="ui-icon-tile is-sm is-solid"><Puzzle className="w-4 h-4" /></span> Connection skills
+                  {rules && rules.length > 0 && <span className="ui-count is-solid">{rules.filter((x) => x.enabled).length} on</span>}
+                </h2>
                 <p className="text-[14px] text-[var(--color-text-muted)]">
                   Detectors that grow the org graph; they run with &ldquo;Find connections&rdquo; and findings wait for review.{" "}
                   <Link href="/admin/proposed-links" className="inline-flex items-center gap-0.5 text-[var(--color-accent-text)] hover:underline">
@@ -288,24 +307,29 @@ export default function SkillLibraryPage() {
                       return (
                         <tr key={r.id} className={`align-top ${r.enabled ? "" : "text-[var(--color-text-muted)]"}`}>
                           <td className="px-4 py-3 min-w-0">
+                            <div className="flex items-start gap-2.5 min-w-0">
+                            <span aria-hidden className={`ui-icon-tile is-sm mt-px ${r.enabled ? "" : "!bg-[var(--color-surface-2)] !text-[var(--color-text-muted)]"}`}><KindIcon className="w-4 h-4" /></span>
+                            <div className="min-w-0 flex-1">
                             <div className={`font-semibold ${r.enabled ? "text-[var(--color-text)]" : ""}`}>{r.name}</div>
                             {r.description && <p className="mt-0.5 text-[14px] text-[var(--color-text-muted)] line-clamp-2 max-w-[80ch]">{r.description}</p>}
-                            <div className="sm:hidden mt-0.5 text-[13px] text-[var(--color-text-muted)]">{meta.label}, {whose(r).toLowerCase()}</div>
+                            <div className="sm:hidden mt-1 flex flex-wrap gap-1"><span className="ui-tag">{meta.label}</span>{whosePill(r)}</div>
                             {(r.config?.patterns?.length ?? 0) > 0 && (
-                              <div className="mt-1 flex items-center gap-1 flex-wrap">
+                              <div className="mt-1.5 flex items-center gap-1 flex-wrap">
                                 {r.config.patterns!.slice(0, 3).map((pt) => (
-                                  <code key={pt} className="px-1.5 py-0.5 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] text-[12px] font-mono text-[var(--color-text)] max-w-full truncate">{pt}</code>
+                                  <code key={pt} className="ui-tag !font-mono !text-[12.5px] !h-6 max-w-full truncate">{pt}</code>
                                 ))}
                                 {(r.config.patterns!.length > 3) && (
-                                  <span className="text-[13px] text-[var(--color-text-muted)]">+{r.config.patterns!.length - 3} more</span>
+                                  <span className="ui-tag is-more !h-6" title={r.config.patterns!.slice(3).join("\n")}>+{r.config.patterns!.length - 3}</span>
                                 )}
                               </div>
                             )}
+                            </div>
+                            </div>
                           </td>
-                          <td className="px-4 py-3 hidden md:table-cell whitespace-nowrap text-[14px] text-[var(--color-text-muted)]">
-                            <span className="inline-flex items-center gap-1.5"><KindIcon className="w-4 h-4" /> {meta.label}</span>
+                          <td className="px-4 py-3 hidden md:table-cell whitespace-nowrap">
+                            <span className="ui-tag"><KindIcon className="w-3.5 h-3.5" /> {meta.label}</span>
                           </td>
-                          <td className="px-4 py-3 hidden sm:table-cell text-[14px] text-[var(--color-text-muted)]">{whose(r)}</td>
+                          <td className="px-4 py-3 hidden sm:table-cell">{whosePill(r)}</td>
                           <td className="px-2 sm:px-4 py-3">{toggleButton({ id: r.id, name: r.name, enabled: r.enabled, mayManage, onToggle: () => setLinkRuleEnabled(r.id, !r.enabled) })}</td>
                           <td className="px-1 sm:px-2 py-2">{rowActions({
                             id: r.id, name: r.name, builtin: !!r.builtin_key, mayManage, visibility: r.visibility,

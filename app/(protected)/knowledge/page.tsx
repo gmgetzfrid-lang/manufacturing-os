@@ -9,7 +9,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
-  BookOpen, Plus, Loader2, Settings2, AlertTriangle,
+  BookOpen, Plus, Loader2, Settings2, AlertTriangle, MessageSquare,
 } from "lucide-react";
 import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/ui/Modal";
 import LoadingBlock from "@/components/ui/LoadingBlock";
@@ -23,7 +23,6 @@ import { Button } from "@/components/ui/Button";
 import { Input, Textarea } from "@/components/ui/Field";
 import { EmptyState } from "@/components/ui/EmptyState";
 import AiSettingsModal from "@/components/knowledge/AiSettingsModal";
-import { StatusTag } from "@/components/documents/StatusTag";
 import {
   listKnowledgeLibraries, createKnowledgeLibrary, getAiConnections,
   type KnowledgeLibrary,
@@ -161,6 +160,7 @@ export default function KnowledgePage() {
                 <th className="font-semibold px-4 hidden sm:table-cell">Status</th>
                 <th className="font-semibold px-4 hidden md:table-cell">Created</th>
                 <th className="font-semibold px-4 hidden lg:table-cell">By</th>
+                <th className="px-4 hidden sm:table-cell"><span className="sr-only">Ask</span></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[var(--color-border)]">
@@ -169,20 +169,34 @@ export default function KnowledgePage() {
                 return (
                   <tr key={lib.id} onClick={() => router.push(`/knowledge/${lib.id}`)} className="hover:bg-[var(--color-surface-2)] cursor-pointer align-top">
                     <td className="px-4 py-3 min-w-0">
-                      <Link href={`/knowledge/${lib.id}`} onClick={(e) => e.stopPropagation()}
-                        className="font-display text-[17px] font-semibold text-[var(--color-text)] hover:text-[var(--color-accent-text)]">
-                        {lib.name}
-                      </Link>
-                      {lib.description && (
-                        <p className="mt-0.5 text-[14px] text-[var(--color-text-muted)] line-clamp-1 max-w-[70ch]">{lib.description}</p>
-                      )}
+                      <div className="flex items-start gap-3 min-w-0">
+                        <span aria-hidden className="ui-icon-tile is-sm mt-0.5"><BookOpen className="w-4 h-4" /></span>
+                        <div className="min-w-0">
+                          <Link href={`/knowledge/${lib.id}`} onClick={(e) => e.stopPropagation()}
+                            className="font-display text-[17px] font-semibold text-[var(--color-text)] hover:text-[var(--color-accent-text)]">
+                            {lib.name}
+                          </Link>
+                          {lib.description && (
+                            <p className="mt-0.5 text-[14px] text-[var(--color-text-muted)] line-clamp-1 max-w-[70ch]">{lib.description}</p>
+                          )}
+                        </div>
+                      </div>
                     </td>
-                    <td className="px-4 py-3 text-right font-display text-[17px] font-semibold tabular-nums text-[var(--color-text)]">{n.toLocaleString()}</td>
+                    <td className="px-4 py-3 text-right whitespace-nowrap">
+                      <span className={`ui-count !h-7 !px-2.5 !text-[15px] font-display ${n === 0 ? "!bg-[var(--color-surface-2)] !text-[var(--color-text-muted)]" : "is-solid"}`}>{n.toLocaleString()}</span>
+                    </td>
                     <td className="px-4 py-3 hidden sm:table-cell whitespace-nowrap">
-                      <StatusTag tone={n === 0 ? "warn" : "good"}>{n === 0 ? "Empty" : "Has documents"}</StatusTag>
+                      <span className={`ui-pill ${n === 0 ? "is-warn" : "is-good"}`}>{n === 0 ? "Empty" : "Ready to ask"}</span>
                     </td>
                     <td className="px-4 py-3 hidden md:table-cell whitespace-nowrap text-[var(--color-text-muted)]">{when(lib.createdAt)}</td>
                     <td className="px-4 py-3 hidden lg:table-cell whitespace-nowrap text-[var(--color-text-muted)]">{lib.createdByName ? lib.createdByName.split("@")[0] : ""}</td>
+                    {/* Straight to asking this library. */}
+                    <td className="px-4 py-3 text-right whitespace-nowrap hidden sm:table-cell">
+                      {n > 0 && (
+                        <Link href={`/assistant?library=${lib.id}`} onClick={(e) => e.stopPropagation()}
+                          className="ui-tag"><MessageSquare className="w-3.5 h-3.5" /> Ask</Link>
+                      )}
+                    </td>
                   </tr>
                 );
               })}

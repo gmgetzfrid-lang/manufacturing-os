@@ -13,7 +13,7 @@ import {
   Download, FileJson, FileArchive, Loader2, AlertTriangle,
   Plus, Trash2, TestTube, RefreshCw,
   Lock, ExternalLink, Cpu,
-  Webhook, HardDrive, Archive as ArchiveIcon, Edit3, X,
+  Webhook, HardDrive, Archive as ArchiveIcon, Edit3, X, Send, History,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
@@ -21,7 +21,7 @@ import { startGlobalBackup, subscribeBackup, cancelBackup, backupIsRunning, type
 import { PageShell } from "@/components/ui/PageShell";
 import { PageHero, PageBody } from "@/components/ui/PageHero";
 import { bandSeg, bandSegItem } from "@/components/admin/band";
-import { tbl, sheet, link, btnPrimary, btnQuiet, btnRow, btnIcon, FormRow, Section, StatusTag, RowEdge, Problem, shortDateTime } from "@/components/admin/kit";
+import { tbl, sheet, link, btnPrimary, btnQuiet, btnRow, btnIcon, FormRow, Section, StatusTag, Pill, RowEdge, Problem, shortDateTime } from "@/components/admin/kit";
 import HelpTooltip from "@/components/ui/HelpTooltip";
 import { Input, Select } from "@/components/ui/Field";
 import { Spinner } from "@/components/ui/Spinner";
@@ -233,14 +233,14 @@ export default function DataExportPage() {
 
         {/* ──── DIRECT DOWNLOAD ──── */}
         {isAuthorized && (
-          <Section label="Download now">
+          <Section label="Download now" icon={Download}>
             <div className={`${sheet} divide-y divide-[var(--color-border)]`}>
-              <FormRow label={<span className="inline-flex items-center gap-2"><FileJson className="w-4 h-4 text-[var(--color-text-muted)]" /> JSON only</span>} hint="Records, plus a list of files with links that work for 24 hours.">
+              <FormRow label={<span className="inline-flex items-center gap-2"><span aria-hidden className="ui-icon-tile is-sm"><FileJson className="w-4 h-4" /></span> JSON only</span>} hint="Records, plus a list of files with links that work for 24 hours.">
                 <button type="button" onClick={downloadJson} disabled={busyJson || !activeOrgId} className={btnQuiet}>
                   {busyJson ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />} Download JSON
                 </button>
               </FormRow>
-              <FormRow label={<span className="inline-flex items-center gap-2"><FileArchive className="w-4 h-4 text-[var(--color-text-muted)]" /> Full ZIP with files</span>} hint="Records and every PDF and DWG, in parts of about 300 MB. Allow several downloads when the browser asks.">
+              <FormRow label={<span className="inline-flex items-center gap-2"><span aria-hidden className="ui-icon-tile is-sm"><FileArchive className="w-4 h-4" /></span> Full ZIP with files</span>} hint="Records and every PDF and DWG, in parts of about 300 MB. Allow several downloads when the browser asks.">
                 <button type="button" onClick={downloadZip} disabled={busyZip || !activeOrgId} className={btnPrimary}>
                   {busyZip ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
                   {busyZip ? "Building backup…" : "Download full ZIP"}
@@ -277,7 +277,7 @@ export default function DataExportPage() {
 
         {/* ──── DESTINATIONS ──── */}
         {isAuthorized && (
-          <Section label={<span className="inline-flex items-center gap-2">Scheduled destinations <HelpTooltip>Your own S3 or R2 bucket, or a webhook. A fresh export goes there on your schedule. Keys are stored encrypted (AES-256-GCM) and only opened at push time.</HelpTooltip></span>}
+          <Section icon={Send} label={<span className="inline-flex items-center gap-2">Scheduled destinations <HelpTooltip>Your own S3 or R2 bucket, or a webhook. A fresh export goes there on your schedule. Keys are stored encrypted (AES-256-GCM) and only opened at push time.</HelpTooltip></span>}
             action={<button type="button" onClick={() => setCreating(true)} className={btnQuiet}><Plus className="w-3.5 h-3.5" /> New destination</button>}>
             {loading ? (
               <div className={`${sheet} px-4 py-3 flex items-center gap-2 text-[15px] text-[var(--color-text-muted)]`}><Spinner size="sm" /> Loading destinations…</div>
@@ -316,7 +316,7 @@ export default function DataExportPage() {
 
         {/* ──── RUN HISTORY ──── */}
         {isAuthorized && (
-          <Section label="Export history"
+          <Section label="Export history" icon={History}
             action={
               <button type="button" onClick={() => void refresh()} className={btnQuiet}>
                 <RefreshCw className="w-3.5 h-3.5" /> Refresh
@@ -382,9 +382,8 @@ function DestinationRow({
     finally { setTesting(false); }
   };
 
-  const icon = dest.destination_type === "webhook" ? <Webhook className="w-4 h-4 text-[var(--color-text-muted)]" />
-    : dest.destination_type === "r2" ? <HardDrive className="w-4 h-4 text-[var(--color-text-muted)]" />
-    : <ArchiveIcon className="w-4 h-4 text-[var(--color-text-muted)]" />;
+  const Ico = dest.destination_type === "webhook" ? Webhook : dest.destination_type === "r2" ? HardDrive : ArchiveIcon;
+  const icon = <span aria-hidden className={`ui-icon-tile is-sm ${dest.enabled ? "" : "!bg-[var(--color-surface-2)] !text-[var(--color-text-muted)]"}`}><Ico className="w-4 h-4" /></span>;
   const target = dest.destination_type === "webhook"
     ? dest.webhook_url
     : `${dest.endpoint || dest.region || ""} ${dest.bucket || ""}${dest.prefix ? "/" + dest.prefix : ""}`.trim();
@@ -398,22 +397,22 @@ function DestinationRow({
         <div className="flex items-center gap-2 flex-wrap">
           {icon}
           <span className="font-semibold text-[var(--color-text)]">{dest.name}</span>
-          <span className="text-[13px] text-[var(--color-text-muted)]">{dest.destination_type === "webhook" ? "Webhook" : dest.destination_type.toUpperCase()}</span>
-          {!dest.enabled && <StatusTag tone="none">Turned off</StatusTag>}
-          {!dest.include_files && <span className="text-[13px] text-[var(--color-text-muted)]">Records only</span>}
+          <span className="ui-tag">{dest.destination_type === "webhook" ? "Webhook" : dest.destination_type.toUpperCase()}</span>
+          {!dest.enabled && <Pill>Turned off</Pill>}
+          {!dest.include_files && <Pill tone="brand">Records only</Pill>}
         </div>
         <div className="mt-0.5 text-[13px] text-[var(--color-text-muted)] truncate max-w-[52ch]" title={target ?? undefined}>{target}{dest.retention_days ? `, kept ${dest.retention_days} days` : ""}</div>
         {dest.last_run_error && <p className="mt-1 text-[13px] font-semibold text-[var(--state-overdue)]">{dest.last_run_error}</p>}
         {testResult && (
           <p role="status" className="mt-1">
-            {testResult.ok ? <StatusTag tone="good">Connection works.</StatusTag> : <StatusTag tone="bad" colored>Test failed: {testResult.error}</StatusTag>}
+            {testResult.ok ? <Pill tone="good">Connection works</Pill> : <StatusTag tone="bad" colored>Test failed: {testResult.error}</StatusTag>}
           </p>
         )}
       </td>
       <td className={`${tbl.td} align-top max-md:py-1 whitespace-nowrap text-[14px] text-[var(--color-text)]`}>{sched}</td>
       <td className={`${tbl.td} align-top max-lg:hidden whitespace-nowrap`}>
         {dest.last_run_at
-          ? <StatusTag tone={dest.last_run_status === "failed" ? "bad" : "good"} colored={dest.last_run_status === "failed"}>{shortDateTime(dest.last_run_at)}</StatusTag>
+          ? <Pill tone={dest.last_run_status === "failed" ? "bad" : "good"}>{shortDateTime(dest.last_run_at)}</Pill>
           : <span className="text-[14px] text-[var(--color-text-muted)]">Not yet</span>}
       </td>
       <td className={`${tbl.td} align-top max-lg:hidden whitespace-nowrap text-[14px] text-[var(--color-text-muted)]`}>{dest.next_run_at ? shortDateTime(dest.next_run_at) : ""}</td>
@@ -442,10 +441,10 @@ function DestinationRow({
 function RunRow({ run }: { run: Run }) {
   const ago = run.completed_at || run.started_at;
   const dur = run.duration_ms ? `${(run.duration_ms / 1000).toFixed(1)}s` : null;
-  const status = run.status === "succeeded" ? <StatusTag tone="good">Done</StatusTag>
-    : run.status === "failed" ? <StatusTag tone="bad" colored>Failed</StatusTag>
-    : run.status === "running" ? <span className="inline-flex items-center gap-1.5 text-[13px] font-semibold"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Running</span>
-    : <StatusTag tone="none">{run.status}</StatusTag>;
+  const status = run.status === "succeeded" ? <Pill tone="good">Done</Pill>
+    : run.status === "failed" ? <Pill tone="bad">Failed</Pill>
+    : run.status === "running" ? <Pill tone="warn"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Running</Pill>
+    : <Pill>{run.status.charAt(0).toUpperCase() + run.status.slice(1)}</Pill>;
   return (
     <tr className={`${tbl.tr} max-md:flex max-md:flex-col max-md:py-1`}>
       <td className={`${tbl.td} relative align-top max-md:py-0.5 whitespace-nowrap text-[14px] text-[var(--color-text)]`}>
@@ -454,7 +453,7 @@ function RunRow({ run }: { run: Run }) {
       </td>
       <td className={`${tbl.td} align-top max-md:py-0.5`}>
         <span className="font-semibold text-[var(--color-text)]">{run.destination_name || "Direct download"}</span>
-        <span className="ml-2 text-[13px] text-[var(--color-text-muted)]">{run.trigger_type}</span>
+        {run.trigger_type && <span className="ml-2 ui-tag !h-6 !text-[12.5px]">{run.trigger_type}</span>}
         {run.destination_path && <div className="text-[13px] text-[var(--color-text-muted)] truncate max-w-[48ch]" title={run.destination_path}>{run.destination_path}</div>}
         {run.error_message && <p className="mt-0.5 text-[13px] font-semibold text-[var(--state-overdue)]">{run.error_message}</p>}
       </td>

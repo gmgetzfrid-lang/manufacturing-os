@@ -24,7 +24,7 @@ import { appConfirm } from "@/components/providers/DialogProvider";
 import { useFileDrag } from "@/hooks/useFileDrag";
 import FileThumb from "@/components/ui/FileThumb";
 import { PageShell } from "@/components/ui/PageShell";
-import { btnPrimary, btnQuiet, link, StatusTag } from "@/components/admin/kit";
+import { btnPrimary, btnQuiet, link, Pill } from "@/components/admin/kit";
 import { PageHero, PageBody, StepLine, heroQuiet } from "@/components/ui/PageHero";
 import { tryUpload } from "@/lib/uploadRetry";
 import {
@@ -406,7 +406,7 @@ export default function RestorePage() {
             <div className="text-sm font-semibold text-[var(--color-text)]">{drag.say}</div>
           ) : (
             <>
-              <UploadCloud className="w-8 h-8 mx-auto text-[var(--color-text-faint)] mb-2" />
+              <span aria-hidden className="ui-icon-tile mx-auto mb-2.5 !grid !w-12 !h-12"><UploadCloud className="w-6 h-6" /></span>
               <div className="text-[14px] font-semibold text-[var(--color-text)]">Drop a backup .zip or .json here, or tap to choose</div>
               <div className="text-[13px] text-[var(--color-text-muted)] mt-1">Read in your browser. The Full ZIP can also put the files back.</div>
             </>
@@ -425,7 +425,7 @@ export default function RestorePage() {
           {/* Warnings */}
           {plan.warnings.length > 0 && (
             <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4 sm:p-5">
-              <div className="mb-1"><StatusTag tone="warn">Check before restoring</StatusTag></div>
+              <div className="mb-1"><Pill tone="warn">Check before restoring</Pill></div>
               <ul className="space-y-1 list-disc ml-4">
                 {plan.warnings.map((w, i) => (
                   <li key={i} className="text-[14px] text-[var(--color-text)]">{w}</li>
@@ -467,9 +467,9 @@ export default function RestorePage() {
                       <div className="text-[13px] text-[var(--color-text-muted)] truncate">{u.email}{u.role ? ` · ${u.role}` : ""}</div>
                     </div>
                     {u.disposition === "linked" ? (
-                      <StatusTag tone="good">Re-link</StatusTag>
+                      <Pill tone="good">Re-link</Pill>
                     ) : (
-                      <StatusTag tone="none">Restore, then re-invite</StatusTag>
+                      <Pill>Restore, then re-invite</Pill>
                     )}
                   </div>
                 ))}
@@ -486,7 +486,7 @@ export default function RestorePage() {
                   <span className="font-mono text-[13px] text-[var(--color-text)] flex-1 truncate">{t.name}</span>
                   <span className="text-[13px] text-[var(--color-text-muted)]">{fmtNum(t.rows)} rows</span>
                   {t.willImport
-                    ? <StatusTag tone="good">Imports</StatusTag>
+                    ? <Pill tone="good">Imports</Pill>
                     : <span className="text-[13px] text-[var(--color-text-muted)] shrink-0">Skipped</span>}
                 </div>
               ))}
@@ -511,7 +511,7 @@ export default function RestorePage() {
           {/* Apply / result */}
           {applyResult ? (
             <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4 sm:p-5">
-              <div className="mb-1"><StatusTag tone="good">Records restored</StatusTag></div>
+              <div className="mb-1"><Pill tone="good">Records restored</Pill></div>
               <div className="text-[13px] text-[var(--color-text)] leading-relaxed">
                 Imported <b>{fmtNum(applyResult.totalInserted)}</b> record(s) · re-linked <b>{applyResult.linkedUsers}</b> user(s) · created <b>{applyResult.createdUsers}</b> restored placeholder(s).
                 {" "}Restored users are inactive. <Link href="/admin/users" className={link}>Re-invite them in Users</Link> to give access.

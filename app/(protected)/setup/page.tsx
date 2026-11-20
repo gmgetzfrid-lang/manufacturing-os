@@ -22,7 +22,7 @@ import { supabase } from "@/lib/supabase";
 import { PageShell } from "@/components/ui/PageShell";
 import { PageHero, PageBody, Card, StepLine, heroPrimary } from "@/components/ui/PageHero";
 import HelpTooltip from "@/components/ui/HelpTooltip";
-import { StatusTag } from "@/components/requests/RequestBits";
+import { Pill } from "@/components/admin/kit";
 
 interface Facts {
   units: number; equipTypes: number;
@@ -221,7 +221,7 @@ export default function SetupPage() {
       {facts === null ? (
         <Card><p className="flex items-center justify-center gap-2 py-12 text-[15px] text-[var(--color-text-muted)]"><Loader2 className="w-5 h-5 animate-spin" /> Reading where your workspace is…</p></Card>
       ) : (
-        <Card label="Stages" pad={false} className="overflow-hidden">
+        <Card label={<span className="inline-flex items-center gap-2.5"><span aria-hidden className="ui-icon-tile is-sm is-solid"><Compass className="w-4 h-4" /></span>Stages</span>} pad={false} className="overflow-hidden">
           <table className="w-full text-[15px]">
             <thead className="bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text-muted)] text-left max-md:hidden">
               <tr>
@@ -236,18 +236,24 @@ export default function SetupPage() {
               {stages.map((s, i) => {
                 const done = s.checks.every((c) => c.ok);
                 const active = i === firstIncomplete;
+                const StageIcon = s.icon;
                 return (
-                  <tr key={s.key} aria-current={active ? "step" : undefined} className="max-md:flex max-md:flex-col max-md:px-4 max-md:py-3 max-md:gap-1.5">
-                    <td className="md:pl-4 md:pr-2 md:py-3 align-top font-display text-[17px] font-semibold tabular-nums text-[var(--color-text-muted)] max-md:hidden">{i + 1}</td>
+                  // The stage you're on: brand tint with the brand edge.
+                  <tr key={s.key} aria-current={active ? "step" : undefined} className={`relative max-md:flex max-md:flex-col max-md:px-4 max-md:py-3 max-md:gap-1.5 ${active ? "bg-[var(--color-accent-soft)]" : ""}`}>
+                    <td className="relative md:pl-4 md:pr-2 md:py-3 align-top max-md:hidden">
+                      {active && <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] bg-[var(--color-main)]" />}
+                      <span className={`ui-count font-display ${done ? "!bg-[var(--state-released)] !text-white" : active ? "is-solid" : "!bg-[var(--color-surface-2)] !text-[var(--color-text-muted)]"}`}>{i + 1}</span>
+                    </td>
                     <td className="md:px-4 md:py-3 align-top">
-                      <div className="flex items-center gap-1.5">
+                      <div className="flex items-center gap-2.5">
                         <span className="md:hidden font-display tabular-nums text-[var(--color-text-muted)]">{i + 1}.</span>
-                        <span className="font-semibold text-[var(--color-text)]">{s.title}</span>
+                        <span aria-hidden className={`ui-icon-tile is-sm ${active ? "is-solid" : ""}`}><StageIcon className="w-4 h-4" /></span>
+                        <span className={`font-semibold ${active ? "text-[var(--color-accent-text)]" : "text-[var(--color-text)]"}`}>{s.title}</span>
                         <HelpTooltip>{s.blurb}</HelpTooltip>
                       </div>
                     </td>
                     <td className="md:px-4 md:py-3 align-top whitespace-nowrap">
-                      {done ? <StatusTag tone="good">Done</StatusTag> : active ? <StatusTag tone="warn">Next</StatusTag> : <StatusTag>To do</StatusTag>}
+                      {done ? <Pill tone="good"><Check className="w-3.5 h-3.5" /> Done</Pill> : active ? <Pill tone="solid">Next</Pill> : <Pill>To do</Pill>}
                     </td>
                     <td className="md:px-4 md:py-3 align-top">
                       <ul className="space-y-0.5">

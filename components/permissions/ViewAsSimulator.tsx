@@ -132,8 +132,8 @@ export default function ViewAsSimulator({ canEdit = false }: { canEdit?: boolean
   return (
     <section className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] overflow-hidden">
       <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap">
-        <UserSearch className="w-4 h-4 text-[var(--color-text-muted)]" />
-        <h2 className="text-[13px] font-semibold text-[var(--color-text-muted)]">View as</h2>
+        <span aria-hidden className="ui-icon-tile is-sm"><UserSearch className="w-4 h-4" /></span>
+        <h2 className="font-display text-[17px] font-semibold text-[var(--color-heading)]">View as</h2>
         <span className="text-[13px] text-[var(--color-text-muted)]">See what any member can do, using the same checks the app enforces.</span>
         <select value={pick} aria-label="Member to view as" onChange={(e) => setPick(e.target.value)} className="ml-auto h-9 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs min-w-[180px]">
           <option value="">Pick a member…</option>
@@ -143,11 +143,11 @@ export default function ViewAsSimulator({ canEdit = false }: { canEdit?: boolean
       {who && (
         <div className="p-4 grid grid-cols-1 lg:grid-cols-2 gap-4">
           <div>
-            <div className="text-xs font-bold text-[var(--color-text-muted)] mb-1.5">Actions {who.name} can take ({caps.filter((c) => c.ok).length}/{caps.length})</div>
+            <div className="flex items-center gap-1.5 text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5">Actions {who.name} can take <span className="ui-count is-solid !h-5 !text-[12px]">{caps.filter((c) => c.ok).length}</span> of {caps.length}</div>
             <ul className="space-y-0.5">
               {caps.map(({ def, ok }) => (
                 <li key={def.id} className={`text-[11px] flex items-center gap-1.5 ${ok ? "text-[var(--color-text)]" : "text-[var(--color-text-faint)]"}`}>
-                  {ok ? <Check className="w-3 h-3 text-emerald-600 dark:text-emerald-400 shrink-0" /> : <Minus className="w-3 h-3 shrink-0" />}
+                  {ok ? <Check className="w-3 h-3 text-[var(--state-released)] shrink-0" /> : <Minus className="w-3 h-3 shrink-0" />}
                   {def.label} <span className="text-[var(--color-text-faint)]">· {def.area}</span>
                 </li>
               ))}
@@ -166,9 +166,9 @@ export default function ViewAsSimulator({ canEdit = false }: { canEdit?: boolean
                   <li key={l.id} className="text-[11px] flex items-center gap-2">
                     <span className="font-bold text-[var(--color-text)]">{l.name}</span>
                     {sees
-                      ? <span className="inline-flex items-center gap-1 text-emerald-700 dark:text-emerald-300"><Eye className="w-3 h-3" /> visible</span>
-                      : <span className="inline-flex items-center gap-1 text-rose-700 dark:text-rose-300"><EyeOff className="w-3 h-3" /> hidden</span>}
-                    {publishes && <span className="inline-flex items-center gap-1 text-[var(--color-text)] dark:text-[var(--color-text)]"><UploadCloud className="w-3 h-3" /> can publish</span>}
+                      ? <span className="ui-pill is-good !h-5 !px-2 !text-[12px]"><Eye className="w-3 h-3" /> Visible</span>
+                      : <span className="ui-pill is-bad !h-5 !px-2 !text-[12px]"><EyeOff className="w-3 h-3" /> Hidden</span>}
+                    {publishes && <span className="ui-pill !h-5 !px-2 !text-[12px]"><UploadCloud className="w-3 h-3" /> Can publish</span>}
                     <span className="text-[var(--color-text-faint)]">{l.visibility !== "normal" ? l.visibility : ""}</span>
                   </li>
                 );
@@ -184,7 +184,7 @@ export default function ViewAsSimulator({ canEdit = false }: { canEdit?: boolean
       {who && (
         <div className="px-4 pb-4 border-t border-[var(--color-border)] pt-3">
           <div className="flex items-center gap-2 mb-2">
-            <KeyRound className="w-4 h-4 text-[var(--color-text-muted)] dark:text-[var(--color-text)]" />
+            <span aria-hidden className="ui-icon-tile is-sm"><KeyRound className="w-4 h-4" /></span>
             <span className="text-sm font-bold text-[var(--color-text)]">Personal permissions for {who.name}</span>
           </div>
 

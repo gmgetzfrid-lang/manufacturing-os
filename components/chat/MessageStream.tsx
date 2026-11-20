@@ -112,7 +112,7 @@ export default function MessageStream({
             <div className="pt-[6vh] sm:pt-[8vh] max-w-2xl mx-auto animate-rise">
               {/* The one big line on an empty chat: what you can do here. */}
               <h2 className="flex items-center gap-3 font-display text-[30px] sm:text-[38px] leading-[1.05] font-semibold tracking-[-0.01em] text-[var(--color-text)]">
-                <Icon className="w-7 h-7 shrink-0 text-[var(--color-text-muted)]" aria-hidden />
+                <span aria-hidden className="ui-icon-tile is-solid !w-12 !h-12 !rounded-lg"><Icon className="w-6 h-6" /></span>
                 {scope === "library" ? "Ask the library" : scope === "tools" ? "Ask the system" : "Ask the internet"}
               </h2>
               <p className="mt-2 text-[15px] text-[var(--color-text-muted)]">
@@ -125,11 +125,12 @@ export default function MessageStream({
                   <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0 text-[var(--state-held)]" /> {emptyNote}
                 </p>
               )}
-              <h3 className="mt-7 mb-2 font-display text-[17px] font-semibold text-[var(--color-text)]">Try one of these</h3>
+              <h3 className="mt-7 mb-2 font-display text-[17px] font-semibold text-[var(--color-heading)]">Try one of these</h3>
               <div className="flex flex-col divide-y divide-[var(--color-border)] border-y border-[var(--color-border)]">
                 {EXAMPLES[scope].map((e) => (
                   <button key={e} onClick={() => onExample(e)}
-                    className="group -mx-2 px-2 flex items-center gap-3 py-3 text-left text-[15px] text-[var(--color-text)] rounded-md hover:bg-[var(--color-surface-2)] transition-colors">
+                    className="group -mx-2 px-2 flex items-center gap-3 py-3 text-left text-[15px] text-[var(--color-text)] rounded-md hover:bg-[var(--color-accent-soft)] transition-colors">
+                    <span aria-hidden className="ui-icon-tile is-sm"><Icon className="w-4 h-4" /></span>
                     <span className="flex-1">{e}</span>
                     <ArrowDown className="w-4 h-4 -rotate-90 shrink-0 text-[var(--color-text-faint)] group-hover:text-[var(--color-accent-text)] group-hover:translate-x-0.5 transition-transform" />
                   </button>

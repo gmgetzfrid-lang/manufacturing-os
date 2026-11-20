@@ -12,7 +12,7 @@
 
 import React, { useEffect, useState } from "react";
 import {
-  Loader2, Plug, CheckCircle2, AlertTriangle, Trash2, KeyRound, Users,
+  Loader2, Plug, CheckCircle2, AlertTriangle, Trash2, KeyRound, Users, Sparkles, Cpu, Gauge,
 } from "lucide-react";
 import { useToast } from "@/components/providers/ToastProvider";
 import { appConfirm } from "@/components/providers/DialogProvider";
@@ -70,20 +70,21 @@ function Notice({ notice }: { notice: { tone: "ok" | "err"; text: string } | nul
   );
 }
 
-/** A small, quiet status tag: a dot in the status color, graphite words. */
+/** A status as a soft pill: green active, amber missing. */
 const StateTag = ({ tone, children }: { tone: "good" | "warn"; children: React.ReactNode }) => (
-  <span className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-[var(--color-text)] whitespace-nowrap">
-    <span aria-hidden className={`w-2 h-2 rounded-full ${tone === "good" ? "bg-[var(--state-released)]" : "bg-[var(--state-held)]"}`} />{children}
+  <span className={`ui-pill ${tone === "good" ? "is-good" : "is-warn"}`}>
+    {tone === "good" ? <CheckCircle2 className="w-3.5 h-3.5" aria-hidden /> : <AlertTriangle className="w-3.5 h-3.5" aria-hidden />}{children}
   </span>
 );
 
 /** One settings section: its heading on the panel, the form on a white
  *  sheet (the same shape as a page Card). */
-function Section({ title, state, help, children }: { title: string; state?: React.ReactNode; help?: React.ReactNode; children: React.ReactNode }) {
+function Section({ title, icon: Icon, state, help, children }: { title: string; icon?: React.ComponentType<{ className?: string }>; state?: React.ReactNode; help?: React.ReactNode; children: React.ReactNode }) {
   return (
     <section className="min-w-0">
       <div className="flex items-end gap-3 mb-2.5 min-h-8">
         <h2 className="font-display text-[19px] leading-tight font-semibold text-[var(--color-text)] inline-flex items-center gap-1.5">
+          {Icon && <span aria-hidden className="ui-icon-tile is-sm is-solid mr-1"><Icon className="w-4 h-4" /></span>}
           {title}{help && <HelpTooltip>{help}</HelpTooltip>}
         </h2>
         <div className="flex-1" />
@@ -218,7 +219,7 @@ export function KeyEditor({ orgId, current, onChanged }: {
   };
 
   return (
-    <Section title="Your API key"
+    <Section title="Your API key" icon={KeyRound}
       help="Only you use it, only you pay for it. Verify and save makes a live call with the key first, so a key that saves is a key that works. Test only never saves anything. Saving again replaces your key; if your provider runs out of credits it stops answering until you top up."
       state={current && !grandfatheredBlocked
         ? <StateTag tone="good">Active, key ending {current.keyLast4 ?? "????"}</StateTag>
@@ -312,7 +313,7 @@ export function JobModelsEditor({ orgId, current, jobModels, ready, jobUse, onCh
   };
 
   return (
-    <Section title="Model for each job"
+    <Section title="Model for each job" icon={Cpu}
       help={`Each choice shows what one use costs on it, from your own averages once you have a few. Everything else (codebook, flows, links, equipment census, catalog) runs on the main model, ${mainName}.`}>
       {!ready && (
         <p className="relative pl-4 py-0.5 text-[14px] font-semibold text-[var(--color-text)]">
@@ -477,7 +478,7 @@ export function EmbeddingKeyEditor({ orgId, current, onChanged }: {
   };
 
   return (
-    <Section title="Meaning-based search (optional)"
+    <Section title="Meaning-based search (optional)" icon={Sparkles}
       help={<>Finds &ldquo;pipe supports&rdquo; in a standard that says &ldquo;hanger and support details&rdquo;. This is a separate service from your chat key: Anthropic doesn&apos;t make an embeddings model, so Claude answers the questions and this key builds the index. Without it, search stays keyword-only. Verify and save makes a real embed call first. Embedding spend bills to your own account with that provider; the meter&apos;s figure is an estimate, your provider&apos;s invoice is the real number.</>}
       state={saved
         ? <StateTag tone="good">Active, key ending {current?.embeddingKeyLast4 ?? "????"}</StateTag>
@@ -565,7 +566,7 @@ export function UsagePanel({ orgId }: { orgId: string }) {
   if (failed) return <p className={NOTE}>Couldn&apos;t load this month&apos;s AI spend.</p>;
   if (!usage) {
     return (
-      <Section title="Your AI use this month">
+      <Section title="Your AI use this month" icon={Gauge}>
         <p className="text-center text-[14px] text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin inline mr-1.5" /> Loading this month&apos;s AI spend…</p>
       </Section>
     );
@@ -621,7 +622,7 @@ export function UsagePanel({ orgId }: { orgId: string }) {
   const cell = "px-4 sm:px-5 py-3 min-w-0";
   const figure = "font-display text-[24px] leading-none font-semibold tabular-nums text-[var(--color-text)]";
   return (
-    <Section title={`Your AI use, ${usage.monthLabel}`}
+    <Section title={`Your AI use, ${usage.monthLabel}`} icon={Gauge}
       help="These numbers are yours alone: every question you ask, and every indexing or drawing-reading run your key pays for, is metered under your user id with the token counts your provider reported. All of it counts toward the cap. Estimated from provider token counts times published rates. Questions stop at 100% and reset on the 1st (UTC).">
       {/* The month in ruled cells: spent against the cap, then what it bought. */}
       <dl className="-mx-4 sm:-mx-5 -mt-4 sm:-mt-5 grid grid-cols-2 sm:grid-cols-4 divide-x divide-[var(--color-border)] border-b border-[var(--color-border)]">
@@ -671,7 +672,7 @@ export function UsagePanel({ orgId }: { orgId: string }) {
         <div className="pt-4 border-t border-[var(--color-border)] space-y-3">
           <div className="flex items-center gap-x-3 gap-y-2 flex-wrap">
             <h3 className="font-display text-[17px] font-semibold text-[var(--color-text)] inline-flex items-center gap-1.5">
-              <Users className="w-4 h-4 text-[var(--color-text-muted)]" /> Team this month
+              <span aria-hidden className="ui-icon-tile is-sm"><Users className="w-4 h-4" /></span> Team this month <span className="ui-count font-sans">{usage.team.length}</span>
             </h3>
             <div className="ml-auto flex items-center gap-2">
               <label htmlFor="ai-default-cap" className="text-[13px] text-[var(--color-text-muted)]">Default cap, $ per person</label>
@@ -702,7 +703,7 @@ export function UsagePanel({ orgId }: { orgId: string }) {
                   return (
                     <tr key={m.userId}>
                       <td className="px-4 sm:px-5 py-2.5 font-semibold text-[var(--color-text)] max-w-[180px] truncate">{m.name}</td>
-                      <td className="px-3 py-2.5 text-right tabular-nums text-[var(--color-text)]">{fmtUsd(m.spentUsd)}</td>
+                      <td className={`px-3 py-2.5 text-right font-display tabular-nums font-semibold ${pct >= 100 ? "text-[var(--state-overdue)]" : "text-[var(--color-text)]"}`}>{fmtUsd(m.spentUsd)}</td>
                       <td className="px-3 py-2.5 text-right tabular-nums text-[var(--color-text-muted)] hidden sm:table-cell">{m.asks}</td>
                       <td className="px-3 py-2.5 hidden md:table-cell">
                         <div className="flex items-center gap-2">
@@ -710,7 +711,7 @@ export function UsagePanel({ orgId }: { orgId: string }) {
                             <div className={`h-full rounded-full ${pct >= 100 ? "bg-[var(--state-overdue)]" : pct >= 80 ? "bg-[var(--state-held)]" : "bg-[var(--state-released)]"}`}
                               style={{ width: `${pct}%` }} />
                           </div>
-                          <span className="w-10 text-right tabular-nums text-[13px] text-[var(--color-text-muted)]">{pct}%</span>
+                          <span className={`ui-count !h-5 !text-[12px] ${pct >= 100 ? "is-bad" : pct >= 80 ? "is-warn" : ""}`}>{pct}%</span>
                         </div>
                       </td>
                       <td className="px-4 sm:px-5 py-2">
@@ -721,7 +722,7 @@ export function UsagePanel({ orgId }: { orgId: string }) {
                           aria-label={`${m.name}'s monthly cap`}
                           className={`h-8 w-[118px] text-[13px] font-semibold rounded-md border px-2 bg-[var(--color-surface)] cursor-pointer disabled:opacity-50 ${
                             m.hasOverride
-                              ? "border-[var(--color-text)] text-[var(--color-text)]"
+                              ? "border-[var(--color-main)] text-[var(--color-accent-text)] bg-[var(--color-accent-soft)]"
                               : "border-[var(--color-border-strong)] text-[var(--color-text-muted)]"}`}>
                           <option value="default">${usage.orgCapUsd ?? usage.capUsd} default</option>
                           {presets.sort((a, b) => a - b).map((p) => (
@@ -735,7 +736,7 @@ export function UsagePanel({ orgId }: { orgId: string }) {
               </tbody>
             </table>
           </div>
-          <p className={NOTE}>A graphite edge on the cap means that person has their own cap.</p>
+          <p className={NOTE}>A brand-colored cap means that person has their own cap.</p>
         </div>
       )}
     </Section>

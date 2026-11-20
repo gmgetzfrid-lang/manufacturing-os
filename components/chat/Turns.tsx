@@ -62,9 +62,9 @@ export function UserTurn({ m, mine, onOpenAttachment }: {
           {(focus?.length || inputs) ? (
             <div className="mt-1.5 flex flex-wrap gap-1">
               {[...(focus ?? []), ...(inputs ? [inputs] : [])].map((f) => (
-                <span key={f} className={`text-[12px] font-semibold px-1.5 py-0.5 rounded border ${mine
-                  ? "border-[var(--color-ink-line)] bg-[var(--color-ink-2)] text-[var(--color-ink-fg)]"
-                  : "border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)]"}`}>{f}</span>
+                <span key={f} className={mine
+                  ? "text-[12px] font-semibold px-1.5 py-0.5 rounded border border-[var(--color-ink-line)] bg-[var(--color-ink-2)] text-[var(--color-ink-fg)]"
+                  : "ui-tag !h-6 !text-[12.5px]"}>{f}</span>
               ))}
             </div>
           ) : null}
@@ -115,7 +115,7 @@ export function AttachmentCard({ a, onOpen, large }: { a: ChatAttachment; onOpen
         <img src={url} alt={a.name} className={large ? "w-full h-auto" : "h-20 w-28 object-cover"} />
       ) : (
         <div className={`flex items-center gap-2 px-2.5 py-2 ${large ? "" : "max-w-[200px]"}`}>
-          {a.kind === "image" ? <ImageIcon className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" /> : <FileText className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />}
+          <span aria-hidden className="ui-icon-tile is-sm">{a.kind === "image" ? <ImageIcon className="w-4 h-4" /> : <FileText className="w-4 h-4" />}</span>
           <span className="text-[13px] font-semibold text-[var(--color-text)] truncate">{a.name}</span>
         </div>
       )}
@@ -207,10 +207,11 @@ export function AssistantTurn({
     return (
       <article className="max-w-3xl">
         <div className="mb-4 flex items-center gap-x-4 gap-y-1 flex-wrap">
-          <span className="inline-flex items-center gap-1.5 text-[13px] text-[var(--color-text-muted)]"><Globe className="w-3.5 h-3.5 shrink-0" /> Internet answer</span>
-          {/* Not a controlled source: said as a quiet status tag. */}
-          <span className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-[var(--color-text)]">
-            <span aria-hidden className="w-2 h-2 rounded-full bg-[var(--state-held)]" />
+          <span className="inline-flex items-center gap-2 text-[13px] font-semibold text-[var(--color-text-muted)]">
+            <span aria-hidden className="ui-icon-tile is-sm"><Globe className="w-4 h-4" /></span> Internet answer
+          </span>
+          {/* Not a controlled source: said as an amber pill. */}
+          <span className="ui-pill is-warn">
             {answer.liveWeb ? "Live web search" : "Model's general knowledge"}, not your controlled documents
           </span>
         </div>
@@ -305,21 +306,21 @@ function ToolsTurn({ m, payload, actions, onConfirm, latest }: {
             onClick={() => setShowTrace((s) => !s)} aria-expanded={showTrace}
             className="group w-full flex items-center gap-x-3 gap-y-1 flex-wrap text-left"
           >
-            <span className="text-[14px] font-semibold text-[var(--color-text)] group-hover:underline">
-              {steps.length} {steps.length === 1 ? "step" : "steps"} it took
+            <span className="inline-flex items-center gap-1.5 text-[14px] font-semibold text-[var(--color-text)] group-hover:underline">
+              <span className="ui-count">{steps.length}</span> {steps.length === 1 ? "step" : "steps"} it took
             </span>
             {!showTrace && steps.length > 0 && (
               <span aria-hidden className="flex items-center">
                 {steps.slice(0, 12).map((s, i) => (
                   <React.Fragment key={i}>
                     {i > 0 && <span className="w-3 h-0.5 bg-[var(--color-border-strong)]" />}
-                    <span className={`w-2.5 h-2.5 rounded-full ${s.error ? "bg-[var(--state-overdue)]" : "bg-[var(--color-text-muted)]"}`} />
+                    <span className={`w-2.5 h-2.5 rounded-full ${s.error ? "bg-[var(--state-overdue)]" : "bg-[var(--color-main)]"}`} />
                   </React.Fragment>
                 ))}
               </span>
             )}
             {payload.stoppedBecause && (
-              <span className="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[13px] font-semibold whitespace-nowrap leading-[18px] bg-[color-mix(in_srgb,var(--state-held)_16%,transparent)] text-[var(--state-held)]">Stopped early: {payload.stoppedBecause}</span>
+              <span className="ui-pill is-warn">Stopped early: {payload.stoppedBecause}</span>
             )}
             <span className="ml-auto inline-flex items-center gap-1.5 text-[13px] text-[var(--color-text-muted)]">
               {payload.model}
@@ -344,9 +345,9 @@ function StepView({ step, n, last }: { step: RunStep; n: number; last: boolean }
   return (
     <li className="relative pl-9 pb-4 last:pb-0">
       {!last && <span aria-hidden className="absolute left-[11px] top-6 bottom-0 w-0.5 bg-[var(--color-border)]" />}
-      <span className={`absolute left-0 top-0 w-6 h-6 rounded-full border-2 bg-[var(--color-surface)] grid place-items-center font-display tabular-nums text-[13px] font-semibold ${step.error
-        ? "border-[var(--state-overdue)] text-[var(--state-overdue)]"
-        : "border-[var(--color-text-muted)] text-[var(--color-text)]"}`}>{n}</span>
+      <span className={`absolute left-0 top-0 w-6 h-6 rounded-full grid place-items-center font-display tabular-nums text-[13px] font-semibold text-white ${step.error
+        ? "bg-[var(--state-overdue)]"
+        : "bg-[var(--color-main)]"}`}>{n}</span>
       {step.error ? (
         <div className="text-[14px] leading-snug">
           <span className="font-semibold text-[var(--color-text)]">{describeTool(step.tool)}</span>
@@ -383,10 +384,10 @@ function PendingCard({ action, done, outcome, busy, onConfirm, primary }: {
     // it runs, done (green) after.
     <section className="relative pl-4 py-1 space-y-2">
       <span aria-hidden className={`absolute left-0 inset-y-0 w-[3px] rounded-full ${done ? "bg-[var(--state-released)]" : "bg-[var(--state-held)]"}`} />
-      <div className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-[var(--color-text)]">
-        {done ? <Check className="h-3.5 w-3.5 text-[var(--state-released)]" /> : <ShieldAlert className="h-3.5 w-3.5 text-[var(--state-held)]" />}
+      <span className={`ui-pill ${done ? "is-good" : "is-warn"}`}>
+        {done ? <Check className="h-3.5 w-3.5" /> : <ShieldAlert className="h-3.5 w-3.5" />}
         {done ? "Ran with your OK" : "Needs your OK before it runs"}
-      </div>
+      </span>
       <p className="text-[15px] font-semibold leading-snug text-[var(--color-text)]">{action.summary}</p>
       {outcome && !outcome.ok && (
         <p role="alert" className="text-[14px] font-semibold text-[var(--state-overdue)]">It didn&apos;t run: {outcome.note}</p>

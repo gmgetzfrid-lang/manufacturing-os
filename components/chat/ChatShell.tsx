@@ -705,6 +705,7 @@ export default function ChatShell() {
             threads={threads} activeId={active?.id ?? null} libraryNames={libraryNames} uid={uid}
             libraryFilter={libraryFilter}
             onClearLibraryFilter={() => router.replace(active ? `/assistant?thread=${active.id}` : "/assistant")}
+            onFilterLibrary={(id) => router.replace(`/assistant?${active ? `thread=${active.id}&` : ""}library=${encodeURIComponent(id)}`)}
             onOpen={openThread} onNew={() => startNew()}
             onPin={onPin} onSettle={onSettle} onRename={onRename} onDelete={onDelete}
             onClose={() => setRailOpen(false)}

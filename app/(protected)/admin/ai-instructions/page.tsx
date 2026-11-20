@@ -25,7 +25,7 @@ import {
 } from "@/lib/aiInstructions";
 import { PageShell } from "@/components/ui/PageShell";
 import { PageHero, PageBody, heroPrimary } from "@/components/ui/PageHero";
-import { tbl, sheet, field, fieldBox, label, btnRow, btnIcon, btnQuiet, btnPrimary, StatusTag, Problem } from "@/components/admin/kit";
+import { tbl, sheet, field, fieldBox, label, btnRow, btnIcon, btnQuiet, btnPrimary, Pill, Problem } from "@/components/admin/kit";
 import { plural } from "@/components/admin/band";
 import { appConfirm } from "@/components/providers/DialogProvider";
 import LoadingBlock from "@/components/ui/LoadingBlock";
@@ -51,6 +51,8 @@ function AiInstructionsInner() {
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<Partial<AiInstruction> | null>(null);
   const [busy, setBusy] = useState(false);
+  // Show one scope only (its tag on a row, or the filter pills above).
+  const [scopeFilter, setScopeFilter] = useState<AiInstructionScope | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   // A rule sent here by a link arrives prefilled; only a fresh one is a draft.
   const [fromLink, setFromLink] = useState(false);
@@ -125,7 +127,8 @@ function AiInstructionsInner() {
     : rows.length === 0 ? "Nothing taught yet."
     : `${plural(on, "rule")} the AI follows.`;
 
-  const sorted = [...(rows ?? [])].sort((x, y) => SCOPES.indexOf(x.scope) - SCOPES.indexOf(y.scope));
+  const sorted = [...(rows ?? [])].filter((r) => !scopeFilter || r.scope === scopeFilter).sort((x, y) => SCOPES.indexOf(x.scope) - SCOPES.indexOf(y.scope));
+  const scopeCount = (s: AiInstructionScope) => (rows ?? []).filter((r) => r.scope === s).length;
 
   return (
     <PageShell width="work">
@@ -153,12 +156,27 @@ function AiInstructionsInner() {
         <LoadingBlock what="AI instructions" />
       ) : rows.length === 0 ? (
         <div className={`${sheet} px-5 py-10 text-center`}>
-          <div className="font-display text-[19px] font-semibold text-[var(--color-text)]">Teach the first rule</div>
+          <span aria-hidden className="ui-icon-tile mx-auto mb-3 !grid !w-12 !h-12"><GraduationCap className="w-6 h-6" /></span>
+          <div className="font-display text-[19px] font-semibold text-[var(--color-heading)]">Teach the first rule</div>
           <p className="text-[15px] text-[var(--color-text-muted)] mt-1 max-w-md mx-auto">
             For example: &ldquo;equipment descriptions use the P&amp;ID service name, not the vendor model.&rdquo;
           </p>
         </div>
       ) : (
+        <>
+        {/* Where each rule applies, as filters with their counts. */}
+        <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Show rules that apply to">
+          <button type="button" onClick={() => setScopeFilter(null)} aria-pressed={!scopeFilter}
+            className={`ui-tag !h-8 ${!scopeFilter ? "!bg-[var(--color-main)] !text-white !border-[var(--color-main)]" : "is-more"}`}>
+            All <span className={`ui-count !h-5 !min-w-5 !px-1.5 !text-[12px] ${!scopeFilter ? "!bg-white/25 !text-white" : ""}`}>{rows.length}</span>
+          </button>
+          {SCOPES.filter((s) => scopeCount(s) > 0).map((s) => (
+            <button key={s} type="button" onClick={() => setScopeFilter(scopeFilter === s ? null : s)} aria-pressed={scopeFilter === s}
+              className={`ui-tag !h-8 ${scopeFilter === s ? "!bg-[var(--color-main)] !text-white !border-[var(--color-main)]" : "is-more"}`}>
+              {SCOPE_LABELS[s]} <span className={`ui-count !h-5 !min-w-5 !px-1.5 !text-[12px] ${scopeFilter === s ? "!bg-white/25 !text-white" : ""}`}>{scopeCount(s)}</span>
+            </button>
+          ))}
+        </div>
         <div className={tbl.wrap}>
           <table className={tbl.table}>
             <thead className={`${tbl.thead} max-sm:hidden`}>
@@ -174,13 +192,20 @@ function AiInstructionsInner() {
               {sorted.map((r) => (
                 <tr key={r.id} className={`${tbl.tr} max-sm:grid max-sm:grid-cols-[1fr_auto]`}>
                   <td className={`${tbl.td} max-sm:col-span-2 max-sm:pb-0`}>
-                    <div className={`font-semibold ${r.enabled ? "text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>{r.title}</div>
-                    <div className="text-[14px] text-[var(--color-text-muted)] line-clamp-2 max-w-[80ch]" title={r.body}>{r.body}</div>
+                    <div className="flex items-start gap-3 min-w-0">
+                      <span aria-hidden className={`ui-icon-tile is-sm mt-0.5 ${r.enabled ? "" : "!bg-[var(--color-surface-2)] !text-[var(--color-text-muted)]"}`}><GraduationCap className="w-4 h-4" /></span>
+                      <div className="min-w-0">
+                        <div className={`font-semibold ${r.enabled ? "text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>{r.title}</div>
+                        <div className="text-[14px] text-[var(--color-text-muted)] line-clamp-2 max-w-[80ch]" title={r.body}>{r.body}</div>
+                      </div>
+                    </div>
                   </td>
-                  <td className={`${tbl.td} max-md:hidden whitespace-nowrap text-[var(--color-text-muted)]`}>{SCOPE_LABELS[r.scope]}</td>
+                  <td className={`${tbl.td} max-md:hidden whitespace-nowrap`}>
+                    <button type="button" onClick={() => setScopeFilter(scopeFilter === r.scope ? null : r.scope)} title={`Show only rules for ${SCOPE_LABELS[r.scope]}`} className="ui-tag">{SCOPE_LABELS[r.scope]}</button>
+                  </td>
                   <td className={`${tbl.td} max-lg:hidden whitespace-nowrap text-[var(--color-text-muted)]`}>{r.created_by_name ?? ""}</td>
                   <td className={`${tbl.td} whitespace-nowrap`}>
-                    {r.enabled ? <StatusTag tone="good">Followed</StatusTag> : <StatusTag tone="none">Off</StatusTag>}
+                    {r.enabled ? <Pill tone="good">Followed</Pill> : <Pill>Off</Pill>}
                   </td>
                   {canWrite && (
                     <td className={`${tbl.td} text-right`}>
@@ -203,6 +228,7 @@ function AiInstructionsInner() {
             </tbody>
           </table>
         </div>
+        </>
       )}
       </PageBody>
 

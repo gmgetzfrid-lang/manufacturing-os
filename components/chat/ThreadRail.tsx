@@ -24,6 +24,8 @@ export interface RailProps {
   /** Rail is filtered to one library (shell opened from a library page). */
   libraryFilter: { id: string; name: string } | null;
   onClearLibraryFilter: () => void;
+  /** Show only one library's conversations (its tag on a row). */
+  onFilterLibrary?: (libraryId: string) => void;
   onOpen: (t: ChatThread) => void;
   onNew: () => void;
   onPin: (t: ChatThread, pinned: boolean) => void;
@@ -80,13 +82,14 @@ export default function ThreadRail(p: RailProps) {
           )}
         </div>
         <div className="flex items-center gap-1.5 min-w-0">
-          <div className={bandSeg} role="group" aria-label="Whose conversations">
+          <div className={`${bandSeg} shrink-0`} role="group" aria-label="Whose conversations">
             <button onClick={() => setMine(false)} aria-pressed={!mine} className={`${bandSegItem(!mine)} !h-7 !text-[13px]`}>Everyone</button>
             <button onClick={() => setMine(true)} aria-pressed={mine} className={`${bandSegItem(mine)} !h-7 !text-[13px]`}>Mine</button>
           </div>
           {p.libraryFilter && (
+            // The filter as a solid tag: its x shows every conversation again.
             <button onClick={p.onClearLibraryFilter} title="Show every conversation" aria-label={`Stop showing only ${p.libraryFilter.name}`}
-              className="ml-auto inline-flex items-center gap-1 h-8 text-[13px] font-semibold px-2 rounded-md border border-[var(--color-border-strong)] text-[var(--color-text)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] min-w-0 max-w-[55%]">
+              className="ui-tag ml-auto min-w-0 !bg-[var(--color-main)] !text-white !border-[var(--color-main)]">
               <span className="truncate">{p.libraryFilter.name}</span> <X className="w-3.5 h-3.5 shrink-0" />
             </button>
           )}
@@ -107,12 +110,12 @@ export default function ThreadRail(p: RailProps) {
         ) : (
           <>
             {pinned.length > 0 && (
-              <Section label="Pinned">
+              <Section label="Pinned" count={pinned.length}>
                 {pinned.map((t) => <Row key={t.id} t={t} p={p} />)}
               </Section>
             )}
             {active.length > 0 && (
-              <Section label="Active">
+              <Section label="Active" count={active.length}>
                 {active.map((t) => <Row key={t.id} t={t} p={p} />)}
               </Section>
             )}
@@ -122,7 +125,7 @@ export default function ThreadRail(p: RailProps) {
                   aria-expanded={settledOpen}
                   className="w-full flex items-center gap-1.5 px-3 py-1.5 text-[13px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
                   {settledOpen ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
-                  Settled <span className="font-display tabular-nums">{settled.length}</span>
+                  Settled <span className="ui-count !h-5 !min-w-5 !px-1.5 !text-[12px]">{settled.length}</span>
                 </button>
                 {settledOpen && <div className="divide-y divide-[var(--color-border)] border-y border-[var(--color-border)]">{settled.map((t) => <Row key={t.id} t={t} p={p} />)}</div>}
               </div>
@@ -134,10 +137,12 @@ export default function ThreadRail(p: RailProps) {
   );
 }
 
-function Section({ label, children }: { label: string; children: React.ReactNode }) {
+function Section({ label, count, children }: { label: string; count: number; children: React.ReactNode }) {
   return (
     <div className="mt-3">
-      <div className="px-3 pb-1 text-[13px] font-semibold text-[var(--color-text-muted)]">{label}</div>
+      <div className="px-3 pb-1.5 flex items-center gap-1.5 text-[13px] font-semibold text-[var(--color-heading)]">
+        {label} <span className="ui-count !h-5 !min-w-5 !px-1.5 !text-[12px]">{count}</span>
+      </div>
       <div className="divide-y divide-[var(--color-border)] border-y border-[var(--color-border)]">{children}</div>
     </div>
   );
@@ -183,19 +188,30 @@ function Row({ t, p }: { t: ChatThread; p: RailProps }) {
           />
         </div>
       ) : (
-        <button onClick={() => p.onOpen(t)} aria-current={active ? "page" : undefined} className="w-full text-left pl-3 pr-9 py-2.5">
-          <div className="flex items-center gap-2 min-w-0">
-            <Icon className="w-3.5 h-3.5 shrink-0 text-[var(--color-text-muted)]" />
-            <span className={`min-w-0 flex-1 text-[14px] truncate ${active ? "font-semibold text-[var(--color-accent-text)]" : "font-medium text-[var(--color-text)]"}`}>
+        // The whole row opens the conversation (the title button stretches
+        // over it); the library tag on the second line filters by library.
+        <div className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-2.5 pl-3 pr-9 py-2.5">
+          <span aria-hidden className={`ui-icon-tile is-sm row-span-2 ${active ? "is-solid" : ""}`}><Icon className="w-4 h-4" /></span>
+          <button onClick={() => p.onOpen(t)} aria-current={active ? "page" : undefined}
+            className="min-w-0 text-left after:absolute after:inset-0 after:content-['']">
+            <span className={`block text-[14px] truncate ${active ? "font-semibold text-[var(--color-accent-text)]" : "font-medium text-[var(--color-text)]"}`}>
               {t.title || "Untitled"}
             </span>
-          </div>
-          <div className="mt-0.5 pl-[22px] flex items-center gap-2 min-w-0 text-[13px] text-[var(--color-text-muted)]">
+          </button>
+          <div className="mt-1 flex items-center gap-2 min-w-0 text-[13px] text-[var(--color-text-muted)]">
             <span className="shrink-0">{who}</span>
-            {libName && <span className="min-w-0 truncate text-[var(--color-text-faint)]">{libName}</span>}
+            {libName && (p.onFilterLibrary && t.libraryId && p.libraryFilter?.id !== t.libraryId ? (
+              <button type="button" onClick={() => p.onFilterLibrary?.(t.libraryId!)}
+                title={`Show only ${libName}`} aria-label={`Show only ${libName} conversations`}
+                className="ui-tag relative z-[1] min-w-0 !h-[22px] !px-1.5 !text-[12.5px]">
+                <span className="truncate">{libName}</span>
+              </button>
+            ) : (
+              <span className="ui-tag min-w-0 !h-[22px] !px-1.5 !text-[12.5px]"><span className="truncate">{libName}</span></span>
+            ))}
             <span className="ml-auto shrink-0 tabular-nums">{relativeTime(t.lastMessageAt)}</span>
           </div>
-        </button>
+        </div>
       )}
       <button
         onClick={(e) => { e.stopPropagation(); setMenu((m) => !m); }}
@@ -203,7 +219,7 @@ function Row({ t, p }: { t: ChatThread; p: RailProps }) {
         aria-label="More"
         aria-haspopup="menu"
         aria-expanded={menu}
-        className={`absolute right-1.5 top-2 w-7 h-7 grid place-items-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface)] transition-opacity ${menu ? "opacity-100" : "opacity-0 group-hover:opacity-100 focus:opacity-100 [@media(hover:none)]:opacity-100"}`}>
+        className={`absolute z-[1] right-1.5 top-2 w-7 h-7 grid place-items-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface)] transition-opacity ${menu ? "opacity-100" : "opacity-0 group-hover:opacity-100 focus:opacity-100 [@media(hover:none)]:opacity-100"}`}>
         <MoreHorizontal className="w-4 h-4" />
       </button>
       {menu && (

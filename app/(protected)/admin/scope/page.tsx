@@ -29,7 +29,7 @@ import DuplicateAwareInput from "@/components/ui/DuplicateAwareInput";
 import { translatePostgresError } from "@/lib/inputValidation";
 import { PageShell } from "@/components/ui/PageShell";
 import { PageHero, PageBody, heroPrimary, heroQuiet } from "@/components/ui/PageHero";
-import { tbl, sheet, field, btnIcon, btnQuiet, StatusTag, Problem } from "@/components/admin/kit";
+import { tbl, sheet, field, btnIcon, btnQuiet, Pill, Problem } from "@/components/admin/kit";
 import LoadingBlock from "@/components/ui/LoadingBlock";
 import { plural } from "@/components/admin/band";
 import { Button } from "@/components/ui/Button";
@@ -161,7 +161,7 @@ export default function ScopePage() {
               type="checkbox"
               checked={showArchived}
               onChange={(e) => setShowArchived(e.target.checked)}
-              className="w-4 h-4 accent-[var(--color-text)]"
+              className="w-4 h-4 accent-[var(--color-main)]"
             />
             Show archived
           </label>
@@ -192,7 +192,8 @@ export default function ScopePage() {
         <LoadingBlock what="the scope tree" />
       ) : tree.length === 0 ? (
         <div className={`${sheet} py-10 px-5 text-center`}>
-          <div className="font-display text-[19px] font-semibold text-[var(--color-text)]">Start with one plant</div>
+          <span aria-hidden className="ui-icon-tile mx-auto mb-3 !grid !w-12 !h-12"><Factory className="w-6 h-6" /></span>
+          <div className="font-display text-[19px] font-semibold text-[var(--color-heading)]">Start with one plant</div>
           <p className="mt-1 text-[15px] text-[var(--color-text-muted)] max-w-lg mx-auto">
             Plants hold units (crude, FCC), units hold systems (overhead). Then a search like &ldquo;all P&amp;IDs in the FCC&rdquo; just works.
           </p>
@@ -208,7 +209,7 @@ export default function ScopePage() {
               <div key={plant.id}>
                 {/* Plant row */}
                 <ScopeRow
-                  icon={<Factory className="w-4 h-4 text-[var(--color-text-muted)]" />}
+                  icon={<span aria-hidden className="ui-icon-tile is-sm is-solid"><Factory className="w-4 h-4" /></span>}
                   open={plantOpen}
                   onToggle={() => setExpandedPlants((s) => {
                     const next = new Set(s);
@@ -217,7 +218,7 @@ export default function ScopePage() {
                   })}
                   name={plant.name}
                   code={plant.code}
-                  badge={`${units.length} unit${units.length === 1 ? "" : "s"}`}
+                  badge={{ n: units.length, word: units.length === 1 ? "unit" : "units" }}
                   archived={!!plant.archived}
                   canEdit={canEdit}
                   onAdd={() => setAddingChildOf({ kind: "plant", parentId: plant.id })}
@@ -251,7 +252,7 @@ export default function ScopePage() {
                           <div key={unit.id} className="border-t border-[var(--color-border)] first:border-t-0">
                             <ScopeRow
                               indent={1}
-                              icon={<Layers className="w-4 h-4 text-[var(--color-text-muted)]" />}
+                              icon={<span aria-hidden className="ui-icon-tile is-sm"><Layers className="w-4 h-4" /></span>}
                               open={unitOpen}
                               onToggle={() => setExpandedUnits((s) => {
                                 const next = new Set(s);
@@ -260,7 +261,7 @@ export default function ScopePage() {
                               })}
                               name={unit.name}
                               code={unit.code}
-                              badge={`${systems.length} system${systems.length === 1 ? "" : "s"}`}
+                              badge={{ n: systems.length, word: systems.length === 1 ? "system" : "systems" }}
                               archived={!!unit.archived}
                               canEdit={canEdit}
                               onAdd={() => setAddingChildOf({ kind: "unit", parentId: unit.id })}
@@ -287,7 +288,7 @@ export default function ScopePage() {
                                   <ScopeRow
                                     key={sys.id}
                                     indent={2}
-                                    icon={<Cpu className="w-4 h-4 text-[var(--color-text-muted)]" />}
+                                    icon={<span aria-hidden className="ui-icon-tile is-sm !w-6 !h-6"><Cpu className="w-3.5 h-3.5" /></span>}
                                     name={sys.name}
                                     code={sys.code}
                                     archived={!!sys.archived}
@@ -330,7 +331,7 @@ function ScopeRow({
   open, onToggle, canEdit, onAdd, addLabel, onEdit, onArchive,
 }: {
   icon: React.ReactNode; name: string; code: string | null | undefined;
-  badge?: string; archived?: boolean; indent?: number;
+  badge?: { n: number; word: string }; archived?: boolean; indent?: number;
   open?: boolean; onToggle?: () => void;
   canEdit?: boolean;
   onAdd?: () => void; addLabel?: string;
@@ -349,12 +350,24 @@ function ScopeRow({
       <div className="shrink-0">{icon}</div>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
-          {code && <span className="font-display text-[16px] font-semibold tabular-nums text-[var(--color-text)] shrink-0">{code}</span>}
+          {code && <span className="ui-tag shrink-0">{code}</span>}
           <span className={`${indent === 0 ? "font-semibold" : ""} text-[15px] text-[var(--color-text)] truncate`}>{name}</span>
-          {archived && <StatusTag tone="none">Archived</StatusTag>}
+          {archived && <Pill>Archived</Pill>}
         </div>
       </div>
-      {badge && <span className="w-24 text-right text-[14px] text-[var(--color-text-muted)] shrink-0 tabular-nums">{badge}</span>}
+      {/* What it holds: the count opens it. */}
+      {badge && (
+        <span className="w-24 flex justify-end shrink-0">
+          {onToggle ? (
+            <button type="button" onClick={onToggle} aria-expanded={open} title={open ? "Hide" : `Show the ${badge.word}`}
+              className="inline-flex items-center gap-1 text-[14px] text-[var(--color-text-muted)] hover:text-[var(--color-accent-text)]">
+              <span className={`ui-count ${badge.n === 0 ? "!bg-[var(--color-surface-2)] !text-[var(--color-text-muted)]" : open ? "is-solid" : ""}`}>{badge.n}</span> {badge.word}
+            </button>
+          ) : (
+            <span className="inline-flex items-center gap-1 text-[14px] text-[var(--color-text-muted)]"><span className="ui-count">{badge.n}</span> {badge.word}</span>
+          )}
+        </span>
+      )}
       {canEdit && (
         <div className="flex items-center justify-end gap-1 shrink-0 w-[120px]">
           {onAdd && addLabel && (

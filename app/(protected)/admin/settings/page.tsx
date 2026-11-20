@@ -12,7 +12,7 @@
 // org-wide categories from here directly.
 
 import React, { useEffect, useState } from "react";
-import { Loader2, CheckCircle2, RefreshCw, Hash, Save } from "lucide-react";
+import { Loader2, CheckCircle2, RefreshCw, Hash, Save, Building2, Mail, Database } from "lucide-react";
 import Link from "next/link";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
@@ -20,7 +20,7 @@ import { kickEmailDrain } from "@/lib/notifications";
 import { formatTicketNumber, getTicketNumberConfig, TICKET_NUMBER_DEFAULTS, type TicketNumberConfig } from "@/lib/ticketNumber";
 import { PageShell } from "@/components/ui/PageShell";
 import { PageHero, PageBody } from "@/components/ui/PageHero";
-import { tbl, sheet, field, link, btnPrimary, btnQuiet, FormRow, Section, StatusTag, Problem } from "@/components/admin/kit";
+import { tbl, sheet, field, link, btnPrimary, btnQuiet, FormRow, Section, Pill, Problem } from "@/components/admin/kit";
 import { plural } from "@/components/admin/band";
 import LoadingBlock from "@/components/ui/LoadingBlock";
 import { appAlert } from "@/components/providers/DialogProvider";
@@ -170,7 +170,7 @@ export default function WorkspaceSettingsPage() {
 
         <div className="grid grid-cols-1 xl:grid-cols-2 gap-x-6 gap-y-8 items-start">
           {/* Identity */}
-          <Section label="Workspace">
+          <Section label="Workspace" icon={Building2}>
             <div className={`${sheet} divide-y divide-[var(--color-border)]`}>
               <FormRow label="Name"><div className="@xl:pt-2 text-[15px] text-[var(--color-text)]">{org?.name ?? "-"}</div></FormRow>
               {org?.subscribed_plan && <FormRow label="Plan"><div className="@xl:pt-2 text-[15px] text-[var(--color-text)] capitalize">{org.subscribed_plan}</div></FormRow>}
@@ -182,7 +182,7 @@ export default function WorkspaceSettingsPage() {
           </Section>
 
           {/* Request numbering */}
-          <Section label={<span className="inline-flex items-center gap-1.5"><Hash className="w-4 h-4" /> Request numbering</span>}>
+          <Section label="Request numbering" icon={Hash}>
             <div className={`${sheet} divide-y divide-[var(--color-border)]`}>
               <FormRow label="Workspace code" htmlFor="num-prefix">
                 <input id="num-prefix" value={numbering.prefix}
@@ -201,7 +201,7 @@ export default function WorkspaceSettingsPage() {
               </FormRow>
               <FormRow label="Next number looks like" hint="The count restarts each year and never repeats.">
                 <div className="flex flex-wrap items-center gap-x-5 gap-y-3">
-                  <span className="font-display text-[22px] font-semibold tabular-nums text-[var(--color-text)]">{preview}</span>
+                  <span className="ui-id text-[22px]">{preview}</span>
                   <button onClick={() => void saveNumbering()} disabled={savingNum} type="button" className={`${btnPrimary} ml-auto`}>
                     {savingNum ? <Loader2 className="w-4 h-4 animate-spin" /> : numSaved ? <CheckCircle2 className="w-4 h-4" /> : <Save className="w-4 h-4" />}
                     {numSaved ? "Saved" : "Save numbering"}
@@ -213,25 +213,25 @@ export default function WorkspaceSettingsPage() {
         </div>
 
         {/* Email delivery */}
-        <Section label="Email delivery" action={<Link href="/settings/notifications" className={`text-[14px] ${link}`}>My notification preferences</Link>}>
+        <Section label="Email delivery" icon={Mail} action={<Link href="/settings/notifications" className={`text-[14px] ${link}`}>My notification preferences</Link>}>
           <div className={`${sheet} divide-y divide-[var(--color-border)]`}>
             <FormRow label="Outbound email" hint="Sent through Resend. Each person picks what they get.">
               <div className="@xl:pt-2">
-                {emailQueueStatus === "ok" && <StatusTag tone="good">Set up</StatusTag>}
+                {emailQueueStatus === "ok" && <Pill tone="good">Set up</Pill>}
                 {emailQueueStatus === "no-key" && (
                   <>
-                    <StatusTag tone="warn">Not set up: no RESEND_API_KEY</StatusTag>
+                    <Pill tone="warn">Not set up: no RESEND_API_KEY</Pill>
                     <p className="mt-1 text-[14px] text-[var(--color-text-muted)]">Emails wait as <code className="font-mono text-[13px]">queued</code> until <code className="font-mono text-[13px]">RESEND_API_KEY</code> and <code className="font-mono text-[13px]">RESEND_FROM_EMAIL</code> are set on the server, then all go out.</p>
                   </>
                 )}
-                {emailQueueStatus === "unknown" && <span className="text-[15px] text-[var(--color-text-muted)]">Not checked yet</span>}
+                {emailQueueStatus === "unknown" && <Pill>Not checked yet</Pill>}
               </div>
             </FormRow>
             {/* Dead-letter requeue — failed past the auto-retry cap. */}
             {failedEmails !== null && (
               <FormRow label="Didn't send" hint={failedEmails > 0 ? "Each was tried 5 times. Send them again once the cause is fixed." : undefined}>
                 <div className="@xl:pt-1 flex flex-wrap items-center gap-4">
-                  <span className={`font-display text-[22px] font-semibold tabular-nums ${failedEmails > 0 ? "text-[var(--state-overdue)]" : "text-[var(--color-text)]"}`}>{failedEmails}</span>
+                  <span className={`ui-count !h-7 !min-w-7 !text-[15px] ${failedEmails > 0 ? "is-bad" : "is-solid"}`}>{failedEmails}</span>
                   {failedEmails > 0 ? (
                     <button type="button" onClick={() => void requeueFailed()} disabled={requeuing} className={btnQuiet}>
                       <RefreshCw className={`w-3.5 h-3.5 ${requeuing ? "animate-spin" : ""}`} /> Send again
@@ -289,7 +289,7 @@ function SchemaHealthCard({ orgId }: { orgId: string | null }) {
 
   const missing = state.phase === "done" ? state.missingTables.length + state.missingColumns.length : 0;
   return (
-    <Section label="Database health" action={
+    <Section label="Database health" icon={Database} action={
         <button type="button" onClick={() => void check()} disabled={state.phase === "loading"} className={btnQuiet}>
           <RefreshCw className={`w-3.5 h-3.5 ${state.phase === "loading" ? "animate-spin" : ""}`} /> Check again
         </button>
@@ -299,11 +299,11 @@ function SchemaHealthCard({ orgId }: { orgId: string | null }) {
       ) : state.phase === "error" ? (
         <Problem>Couldn&apos;t check: {state.message}</Problem>
       ) : state.healthy ? (
-        <div className={`${sheet} px-4 py-3`}><StatusTag tone="good">All {state.checkedTables} expected tables are there.</StatusTag></div>
+        <div className={`${sheet} px-4 py-3`}><Pill tone="good"><CheckCircle2 className="w-3.5 h-3.5" /> All {state.checkedTables} expected tables are there</Pill></div>
       ) : (
         <div className={tbl.wrap}>
           <div className="px-4 py-3 border-b border-[var(--color-border)]">
-            <StatusTag tone="warn">{missing} missing piece{missing === 1 ? "" : "s"}</StatusTag>
+            <Pill tone="warn">{missing} missing piece{missing === 1 ? "" : "s"}</Pill>
             <span className="ml-2 text-[14px] text-[var(--color-text-muted)]">Features that use them show nothing until their migration runs.</span>
           </div>
           <table className={tbl.table}>

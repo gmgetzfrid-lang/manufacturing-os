@@ -11,7 +11,7 @@
 import React, { useEffect, useState } from "react";
 import {
   Save, Check, Loader2,
-  AtSign, UserPlus, Activity, AlertOctagon, Briefcase,
+  AtSign, UserPlus, Activity, AlertOctagon, Briefcase, Mail, ListChecks, Clock,
 } from "lucide-react";
 import { bandSeg, bandSegItem } from "@/components/admin/band";
 import { useRole } from "@/components/providers/RoleContext";
@@ -126,7 +126,7 @@ export default function NotificationSettingsPage() {
 
         <PageBody>
         {/* Master switch */}
-        <Card label="Email">
+        <Card label={<CardTitle icon={Mail}>Email</CardTitle>}>
           {error && (
             <p role="alert" className="mb-3 relative pl-3 text-[15px] text-[var(--color-text)]">
               <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] bg-[var(--state-overdue)]" />{error}
@@ -134,7 +134,7 @@ export default function NotificationSettingsPage() {
           )}
           <div className="flex items-start gap-3">
             <div className="flex-1">
-              <div className="text-[15px] font-semibold text-[var(--color-text)]">Email notifications</div>
+              <div className="flex items-center gap-2 text-[15px] font-semibold text-[var(--color-text)]">Email notifications <span className={`ui-pill ${prefs.email_enabled ? "is-good" : "is-muted"}`}>{prefs.email_enabled ? "On" : "Off"}</span></div>
               <div className="text-[13px] text-[var(--color-text-muted)] mt-0.5">Off means no email at all, whatever is set below.</div>
             </div>
             <Toggle label="Email notifications" on={prefs.email_enabled} onChange={(v) => setPrefs({ ...prefs, email_enabled: v })} />
@@ -142,7 +142,7 @@ export default function NotificationSettingsPage() {
         </Card>
 
         {/* Per-event */}
-        <Card label="Email me when" pad={false} className={`overflow-hidden ${prefs.email_enabled ? "" : "opacity-50 pointer-events-none"}`}>
+        <Card label={<CardTitle icon={ListChecks}>Email me when</CardTitle>} pad={false} className={`overflow-hidden ${prefs.email_enabled ? "" : "opacity-50 pointer-events-none"}`}>
         <div className="divide-y divide-[var(--color-border)] border-t border-[var(--color-border)]">
           <PrefRow icon={AtSign} title="Mentions" hint="Someone @-mentions you in a comment." on={prefs.email_on_mention} onChange={(v) => setPrefs({ ...prefs, email_on_mention: v })} />
           <PrefRow icon={UserPlus} title="Assignments" hint="You were assigned as drafter or engineer reviewer on a request." on={prefs.email_on_assignment} onChange={(v) => setPrefs({ ...prefs, email_on_assignment: v })} />
@@ -153,7 +153,7 @@ export default function NotificationSettingsPage() {
         </Card>
 
         {/* Digest cadence */}
-        <Card label="How often">
+        <Card label={<CardTitle icon={Clock}>How often</CardTitle>}>
           <div className={bandSeg} role="radiogroup" aria-label="How often to email">
             {(["immediate", "hourly", "daily", "never"] as const).map((opt) => (
               <button
@@ -176,6 +176,15 @@ export default function NotificationSettingsPage() {
   );
 }
 
+/** A section heading with its icon on a solid brand tile. */
+function CardTitle({ icon: Icon, children }: { icon: React.ComponentType<{ className?: string }>; children: React.ReactNode }) {
+  return (
+    <span className="inline-flex items-center gap-2.5">
+      <span aria-hidden className="ui-icon-tile is-sm is-solid"><Icon className="w-4 h-4" /></span>{children}
+    </span>
+  );
+}
+
 interface PrefRowProps {
   icon: React.ComponentType<{ className?: string }>;
   title: string;
@@ -186,7 +195,7 @@ interface PrefRowProps {
 function PrefRow({ icon: Icon, title, hint, on, onChange }: PrefRowProps) {
   return (
     <div className="px-5 py-4 flex items-start gap-3">
-      <Icon className="w-4 h-4 text-[var(--color-text-faint)] mt-1 shrink-0" />
+      <span aria-hidden className="ui-icon-tile is-sm"><Icon className="w-4 h-4" /></span>
       <div className="flex-1 min-w-0">
         <div className="text-[15px] font-semibold text-[var(--color-text)]">{title}</div>
         <div className="text-[13px] text-[var(--color-text-muted)] mt-0.5">{hint}</div>
@@ -204,7 +213,7 @@ function Toggle({ on, onChange, label }: { on: boolean; onChange: (v: boolean) =
       aria-checked={on}
       aria-label={label}
       onClick={() => onChange(!on)}
-      className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent-ring)] focus-visible:ring-offset-2 ${on ? "bg-[var(--color-text)]" : "bg-[var(--color-border-strong)]"}`}
+      className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent-ring)] focus-visible:ring-offset-2 ${on ? "bg-[var(--color-main)]" : "bg-[var(--color-border-strong)]"}`}
     >
       <span className={`inline-block h-5 w-5 transform rounded-full bg-[var(--color-surface)] shadow transition-transform ${on ? "translate-x-5" : "translate-x-1"}`} />
     </button>

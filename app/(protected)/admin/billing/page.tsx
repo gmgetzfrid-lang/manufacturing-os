@@ -14,7 +14,7 @@ import React, { useState } from "react";
 import { useSearchParams } from "next/navigation";
 import {
   CheckCircle2, Lock, Loader2,
-  ExternalLink, ArrowRight,
+  ExternalLink, ArrowRight, CreditCard, Layers,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { useSubscription } from "@/components/providers/SubscriptionProvider";
@@ -22,7 +22,7 @@ import { trialDaysRemaining, isTrialExpired } from "@/lib/subscription";
 import { supabase } from "@/lib/supabase";
 import { PageShell } from "@/components/ui/PageShell";
 import { PageHero, PageBody, heroPrimary, type HeroFact } from "@/components/ui/PageHero";
-import { sheet, link, btnPrimary, btnQuiet, FormRow, Section, StatusTag, Problem, shortDate } from "@/components/admin/kit";
+import { sheet, link, btnPrimary, btnQuiet, FormRow, Section, Pill, Problem, shortDate } from "@/components/admin/kit";
 import { Spinner } from "@/components/ui/Spinner";
 
 export default function BillingPage() {
@@ -126,7 +126,7 @@ export default function BillingPage() {
       <PageBody>
         {checkoutResult === "success" && (
           <p role="status" className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[15px]">
-            <StatusTag tone="good">Subscription started.</StatusTag>
+            <Pill tone="good">Subscription started</Pill>
             <span className="text-[var(--color-text-muted)]">Your status can take a few seconds to update.</span>
             <button type="button" onClick={() => void refresh()} className={link}>Refresh now</button>
           </p>
@@ -136,7 +136,7 @@ export default function BillingPage() {
         )}
         {error && <Problem>{error}</Problem>}
 
-        <Section label="Subscription">
+        <Section label="Subscription" icon={CreditCard}>
           {loading ? (
             <div className={`${sheet} px-4 py-3 text-[15px] text-[var(--color-text-muted)] flex items-center gap-2`}><Spinner size="sm" /> Loading your subscription…</div>
           ) : !info ? (
@@ -145,7 +145,7 @@ export default function BillingPage() {
             <div className={`${sheet} divide-y divide-[var(--color-border)]`}>
               <FormRow label="Status">
                 <div className="@xl:pt-2">
-                  <StatusTag tone={bad ? "bad" : info.status === "past_due" ? "warn" : "none"} colored={bad}>
+                  <Pill tone={bad ? "bad" : info.status === "past_due" ? "warn" : info.status === "active" || info.status === "trialing" ? "good" : "none"}>
                     {info.status === "trialing" && !expired ? (days != null ? `Free trial, ${days} day${days === 1 ? "" : "s"} left` : "Free trial")
                       : info.status === "active" ? "Active"
                       : info.status === "past_due" ? "Payment past due"
@@ -153,7 +153,7 @@ export default function BillingPage() {
                       : info.status === "unpaid" ? "Payment failed"
                       : info.status === "paused" ? "Paused"
                       : expired ? "Trial ended" : "Action required"}
-                  </StatusTag>
+                  </Pill>
                 </div>
               </FormRow>
               <FormRow label="Plan"><div className="@xl:pt-2 text-[15px] text-[var(--color-text)]">{planName ?? "None yet"}</div></FormRow>
@@ -172,7 +172,7 @@ export default function BillingPage() {
 
         {/* Plans side by side on one sheet */}
         {isAuthorized && info?.status !== "active" && (
-          <Section label="Plans">
+          <Section label="Plans" icon={Layers}>
             <div className={`${sheet} grid grid-cols-1 md:grid-cols-3 md:divide-x max-md:divide-y divide-[var(--color-border)]`}>
               <Plan
                 name="Starter" planKey="starter" price="$299" tagline="For small teams"
@@ -207,14 +207,14 @@ function Plan({
     <div className="p-5 flex flex-col">
       <div className="flex items-baseline justify-between gap-2">
         <h3 className="font-display text-[19px] font-semibold text-[var(--color-text)]">{name}</h3>
-        {featured && <span className="text-[13px] text-[var(--color-text-muted)]">Most picked</span>}
+        {featured && <span className="ui-pill is-solid">Most picked</span>}
       </div>
       <div className="text-[14px] text-[var(--color-text-muted)]">{tagline}</div>
       <div className="mt-3 font-display text-[28px] leading-none font-semibold tabular-nums text-[var(--color-text)]">{price}{price !== "Contact" && <span className="font-sans text-[14px] font-normal text-[var(--color-text-muted)]"> a month</span>}</div>
       <ul className="mt-4 space-y-1.5 text-[15px] flex-1 text-[var(--color-text)]">
         {features.map((f) => (
           <li key={f} className="flex items-start gap-2">
-            <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5 text-[var(--color-text-muted)]" />
+            <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5 text-[var(--color-main)]" />
             <span>{f}</span>
           </li>
         ))}

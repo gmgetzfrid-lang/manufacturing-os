@@ -142,7 +142,7 @@ function FieldInput({ field: f, value, onChange, needsYou }: {
         <textarea id={id} value={value} onChange={(e) => onChange(e.target.value)} rows={Math.min(14, Math.max(4, Math.ceil(value.length / 90)))} className={`${base} leading-relaxed`} />
       ) : f.kind === "check" ? (
         <label className="inline-flex items-center gap-2 text-[14px] text-[var(--color-text)]">
-          <input id={id} type="checkbox" checked={/^(y|yes|true|x|checked|on|1)$/i.test(value)} onChange={(e) => onChange(e.target.checked ? "Yes" : "")} className="w-4 h-4 accent-[var(--color-text)]" />
+          <input id={id} type="checkbox" checked={/^(y|yes|true|x|checked|on|1)$/i.test(value)} onChange={(e) => onChange(e.target.checked ? "Yes" : "")} className="w-4 h-4 accent-[var(--color-main)]" />
           {f.label}
         </label>
       ) : f.kind === "choice" && f.options && f.options.length > 0 ? (

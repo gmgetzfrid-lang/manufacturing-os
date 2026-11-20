@@ -14,10 +14,10 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { Check } from "lucide-react";
+import { Check, PauseCircle, BarChart3 } from "lucide-react";
 import { PageShell } from "@/components/ui/PageShell";
 import { PageHero, PageBody } from "@/components/ui/PageHero";
-import { tbl, sheet, fieldBox, btnPrimary, btnQuiet, btnRow, StatusTag, RowEdge, Section, Problem } from "@/components/admin/kit";
+import { tbl, sheet, fieldBox, btnPrimary, btnQuiet, btnRow, Pill, RowEdge, Section, Problem } from "@/components/admin/kit";
 import LoadingBlock from "@/components/ui/LoadingBlock";
 import { plural } from "@/components/admin/band";
 import { useRole } from "@/components/providers/RoleContext";
@@ -146,12 +146,13 @@ export default function HoldsPage() {
           <Problem retry={busy ? undefined : () => void refresh()}>{error}</Problem>
         ) : (
           <div className={`${sheet} px-5 py-8 text-center`}>
-            <StatusTag tone="good">Every document is free to move.</StatusTag>
+            <span aria-hidden className="ui-icon-tile mx-auto mb-3 !grid !w-12 !h-12"><Check className="w-6 h-6" /></span>
+            <Pill tone="good">Every document is free to move</Pill>
             <p className="mt-1 text-[15px] text-[var(--color-text-muted)]">Holds are placed from a document&apos;s side panel, for example while waiting on sign-off or vendor data.</p>
           </div>
         )
       ) : (
-        <Section label="On hold">
+        <Section label="On hold" icon={PauseCircle} count={holds.length}>
           {error && <Problem className="mb-3" retry={busy ? undefined : () => void refresh()}>{error}</Problem>}
           <div className={tbl.wrap}>
             <table className={tbl.table}>
@@ -178,7 +179,7 @@ export default function HoldsPage() {
                           <RowEdge tone={lateDays > 0 ? "bad" : "warn"} />
                           {meta ? (
                             <Link href={`/documents/${meta.libraryId}?doc=${h.documentId}`} className="group block min-w-0">
-                              {meta.documentNumber && <span className="font-display text-[16px] font-semibold tabular-nums text-[var(--color-text)] group-hover:text-[var(--color-accent-text)]">{meta.documentNumber}</span>}
+                              {meta.documentNumber && <span className="ui-id text-[16px] group-hover:text-[var(--color-accent-text)] group-hover:underline underline-offset-[3px]">{meta.documentNumber}</span>}
                               {meta.title && meta.title !== meta.documentNumber && <span className="block text-[14px] text-[var(--color-text-muted)] truncate max-w-[42ch]">{meta.title}</span>}
                             </Link>
                           ) : (
@@ -186,12 +187,12 @@ export default function HoldsPage() {
                           )}
                         </td>
                         <td className={`${tbl.td} max-sm:col-span-2 max-sm:row-start-2 max-sm:py-1`}>
-                          <StatusTag tone="warn">{h.reason}</StatusTag>
+                          <Pill tone="warn">{h.reason}</Pill>
                           <span className="sm:hidden ml-2 text-[13px] text-[var(--color-text-muted)]">{ageDays === 0 ? "today" : `${ageDays}d`}{lateDays > 0 && <span className="font-semibold text-[var(--state-overdue)]">, {lateDays}d late</span>}</span>
                         </td>
                         <td className={`${tbl.td} max-sm:hidden text-right whitespace-nowrap`}>
                           <span className="font-display text-[16px] font-semibold tabular-nums">{ageDays === 0 ? "Today" : `${ageDays}d`}</span>
-                          {lateDays > 0 && <span className="block text-[13px] font-semibold text-[var(--state-overdue)]">{lateDays}d late</span>}
+                          {lateDays > 0 && <span className="mt-1 flex justify-end"><span className="ui-count is-bad">{lateDays}d late</span></span>}
                         </td>
                         <td className={`${tbl.td} max-lg:hidden text-[var(--color-text-muted)]`}>{h.openedByName ?? ""}</td>
                         <td className={`${tbl.td} max-xl:hidden text-[14px] text-[var(--color-text-muted)] max-w-[32ch]`}><span className="line-clamp-2">{h.notes ?? ""}</span></td>
@@ -239,7 +240,7 @@ export default function HoldsPage() {
 
       {/* By reason */}
       {totalByReason.length > 0 && (
-        <Section label="By reason">
+        <Section label="By reason" icon={BarChart3}>
           <div className={`${sheet} divide-y divide-[var(--color-border)]`}>
             {totalByReason.map((r) => (
               <div key={r.reason} className="flex items-center gap-4 px-4 py-2.5">
@@ -247,7 +248,7 @@ export default function HoldsPage() {
                 <div className="flex-1 bg-[var(--color-surface-2)] rounded-sm h-2.5 overflow-hidden">
                   <div className="h-full bg-[var(--state-held)]" style={{ width: `${(r.count / maxBarCount) * 100}%` }} />
                 </div>
-                <div className="w-10 text-right font-display text-[16px] font-semibold tabular-nums text-[var(--color-text)]">{r.count}</div>
+                <div className="w-10 flex justify-end"><span className="ui-count is-warn">{r.count}</span></div>
               </div>
             ))}
           </div>

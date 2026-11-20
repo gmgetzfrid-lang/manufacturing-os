@@ -241,8 +241,8 @@ function Item({ active, icon: Icon, label, sub, onClick }: {
 }) {
   return (
     <button type="button" onClick={onClick} disabled={!onClick}
-      className={`w-full flex items-start gap-2 px-2 py-1.5 rounded-md text-left ${active ? "bg-[var(--color-surface-2)]" : "hover:bg-[var(--color-surface-2)]"}`}>
-      <Icon className="w-3.5 h-3.5 mt-1 shrink-0 text-[var(--color-text-muted)]" />
+      className={`w-full flex items-start gap-2.5 px-2 py-1.5 rounded-md text-left ${active ? "bg-[var(--color-accent-soft)]" : "hover:bg-[var(--color-surface-2)]"}`}>
+      <span aria-hidden className={`ui-icon-tile is-sm ${active ? "is-solid" : ""}`}><Icon className="w-4 h-4" /></span>
       <span className="min-w-0 flex-1">
         <span className="block text-[14px] font-semibold text-[var(--color-text)] truncate">{label}</span>
         {sub && <span className="block text-[12px] text-[var(--color-text-muted)] truncate">{sub}</span>}

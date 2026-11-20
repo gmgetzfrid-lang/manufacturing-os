@@ -5,11 +5,11 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { useRole } from "@/components/providers/RoleContext";
 import Link from "next/link";
-import { Plus, Search, Trash2 } from "lucide-react";
+import { Plus, Search, Trash2, Library } from "lucide-react";
 import LoadingBlock from "@/components/ui/LoadingBlock";
 import { PageShell } from "@/components/ui/PageShell";
 import { PageHero, PageBody, heroPrimary } from "@/components/ui/PageHero";
-import { tbl, btnRow, btnIcon, Problem } from "@/components/admin/kit";
+import { tbl, btnRow, btnIcon, Problem, Pill } from "@/components/admin/kit";
 import { bandInput, bandInputIcon, bandSelect, plural } from "@/components/admin/band";
 import MoreMenu from "@/components/ui/MoreMenu";
 import LibraryWizard, { newLibraryDraftKey } from "./LibraryWizard";
@@ -317,15 +317,32 @@ export default function LibraryAdminPage() {
               </thead>
               <tbody className={tbl.tbody}>
                 {filteredLibraries.map((lib) => {
-                  const readers = lib.readAccess === "ALL" || !lib.readAccess ? "Everyone" : plural(lib.readAccess.length, "role");
+                  const roles = lib.readAccess === "ALL" || !lib.readAccess ? null : lib.readAccess;
                   return (
                     <tr key={lib.id} className={`${tbl.tr} max-sm:grid max-sm:grid-cols-[1fr_auto]`}>
                       <td className={`${tbl.td} min-w-0`}>
-                        <Link href={`/documents/${lib.id}`} title={`Open ${lib.name}`} className="font-semibold text-[var(--color-text)] hover:text-[var(--color-accent-text)]">{lib.name}</Link>
-                        {lib.description && <div className="text-[14px] text-[var(--color-text-muted)] line-clamp-1 max-w-[60ch]">{lib.description}</div>}
+                        <div className="flex items-center gap-3 min-w-0">
+                          <span aria-hidden className="ui-icon-tile is-sm"><Library className="w-4 h-4" /></span>
+                          <div className="min-w-0">
+                            <Link href={`/documents/${lib.id}`} title={`Open ${lib.name}`} className="font-semibold text-[var(--color-text)] hover:text-[var(--color-accent-text)]">{lib.name}</Link>
+                            {lib.description && <div className="text-[14px] text-[var(--color-text-muted)] line-clamp-1 max-w-[60ch]">{lib.description}</div>}
+                          </div>
+                        </div>
                       </td>
-                      <td className={`${tbl.td} max-lg:hidden text-[var(--color-text-muted)] capitalize whitespace-nowrap`}>{String(lib.type ?? "").replace(/_/g, " ").toLowerCase()}</td>
-                      <td className={`${tbl.td} max-md:hidden text-[var(--color-text-muted)] whitespace-nowrap`}>{readers}</td>
+                      <td className={`${tbl.td} max-lg:hidden whitespace-nowrap`}>
+                        {lib.type ? <span className="ui-tag capitalize">{String(lib.type).replace(/_/g, " ").toLowerCase()}</span> : null}
+                      </td>
+                      <td className={`${tbl.td} max-md:hidden`}>
+                        {/* Who can read: everyone, or the roles as tags; +N opens the library's settings. */}
+                        {!roles ? <Pill tone="brand">Everyone</Pill> : roles.length === 0 ? <Pill tone="warn">Nobody yet</Pill> : (
+                          <div className="flex flex-wrap items-center gap-1 max-w-[260px]">
+                            {roles.slice(0, 3).map((ro) => <span key={ro} className="ui-tag">{ro}</span>)}
+                            {roles.length > 3 && (
+                              <button type="button" onClick={() => openEdit(lib)} title={`${roles.join(", ")}: change who can read`} className="ui-tag is-more">+{roles.length - 3}</button>
+                            )}
+                          </div>
+                        )}
+                      </td>
                       <td className={`${tbl.td} max-md:hidden`}>
                         {activeOrgId && (
                           <LibraryAiSwitch compact orgId={activeOrgId} libraryId={lib.id!} libraryName={lib.name} excluded={neverAi.has(lib.id!)} canChange={canManageAi}

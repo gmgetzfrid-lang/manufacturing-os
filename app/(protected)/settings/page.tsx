@@ -36,7 +36,7 @@ function Rows({ rows }: { rows: Row[] }) {
         return (
           <li key={r.href}>
             <Link href={r.href} className="group flex items-center gap-4 px-4 sm:px-5 py-3.5 hover:bg-[var(--color-surface-2)]">
-              <span className="w-9 h-9 shrink-0 rounded-md grid place-items-center bg-[var(--color-accent-soft)] text-[var(--color-accent-text)]">
+              <span aria-hidden className="ui-icon-tile group-hover:!bg-[var(--color-main)] group-hover:!text-white transition-colors">
                 <Icon className="w-[18px] h-[18px]" />
               </span>
               <span className="min-w-0 flex-1">
@@ -60,7 +60,7 @@ export default function SettingsPage() {
     <PageShell width="form">
       <PageHero kicker="Settings" title="Settings." sub={isAdmin ? "Your own settings, then the workspace's." : "Your own settings. An admin sets the workspace's."} />
       <PageBody>
-        <Card label="Yours" pad={false}>
+        <Card label={<span className="inline-flex items-center gap-2.5"><span aria-hidden className="ui-icon-tile is-sm is-solid"><User className="w-4 h-4" /></span>Yours</span>} pad={false}>
           <Rows rows={YOURS} />
           <div className="flex items-center gap-4 px-4 sm:px-5 py-3.5 border-t border-[var(--color-border)]">
             <span className="w-9 h-9 shrink-0 rounded-md grid place-items-center bg-[var(--color-accent-soft)] text-[var(--color-accent-text)]">
@@ -73,7 +73,7 @@ export default function SettingsPage() {
             <div role="radiogroup" aria-label="Light or dark" className="inline-flex h-9 rounded-md border border-[var(--color-border-strong)] overflow-hidden text-[14px] font-semibold">
               {(["light", "dark"] as const).map((m) => (
                 <button key={m} type="button" role="radio" aria-checked={mode === m} onClick={() => mode !== m && toggleMode()}
-                  className={`px-3.5 ${mode === m ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
+                  className={`px-3.5 ${mode === m ? "bg-[var(--color-main)] text-white" : "bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
                   {m === "light" ? "Light" : "Dark"}
                 </button>
               ))}
@@ -81,7 +81,7 @@ export default function SettingsPage() {
           </div>
         </Card>
         {isAdmin && (
-          <Card label="Workspace" pad={false}>
+          <Card label={<span className="inline-flex items-center gap-2.5"><span aria-hidden className="ui-icon-tile is-sm is-solid"><Settings2 className="w-4 h-4" /></span>Workspace</span>} pad={false}>
             <Rows rows={WORKSPACE} />
           </Card>
         )}

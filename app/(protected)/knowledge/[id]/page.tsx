@@ -514,7 +514,9 @@ export default function KnowledgeLibraryPage() {
           <div className="flex items-center gap-x-3 gap-y-1 flex-wrap text-[14px] text-[var(--color-text-muted)]">
             <span>Also searches</span>
             {links.map((l) => (
-              <span key={l.id} className="font-semibold text-[var(--color-text)]">{l.linkedLibraryName} <span className="font-normal text-[var(--color-text-muted)]">(reference)</span></span>
+              <Link key={l.id} href={`/knowledge/${l.linkedLibraryId}`} title={`Open ${l.linkedLibraryName}, a reference library`} className="ui-tag">
+                {l.linkedLibraryName} <span className="font-sans font-normal opacity-75">reference</span>
+              </Link>
             ))}
             <span>This library governs; answers say which document won.</span>
           </div>
@@ -559,7 +561,11 @@ export default function KnowledgeLibraryPage() {
       <section>
         {/* ── Documents ──────────────────────────────────────────────────── */}
         <div className="flex items-end gap-3 mb-2.5 min-h-8">
-          <h2 className="font-display text-[19px] leading-tight font-semibold text-[var(--color-text)]">Documents</h2>
+          <h2 className="flex items-center gap-2.5 font-display text-[19px] leading-tight font-semibold text-[var(--color-text)]">
+            <span aria-hidden className="ui-icon-tile is-sm is-solid"><FileText className="w-4 h-4" /></span>
+            Documents
+            {docs.length > 0 && <span className="ui-count is-solid">{docs.length.toLocaleString()}</span>}
+          </h2>
         </div>
         {/* The whole sheet is a drop target: files or folders (every PDF
             inside, any depth), straight from the desktop. */}
@@ -577,7 +583,10 @@ export default function KnowledgeLibraryPage() {
             <button onClick={() => setDocsOpen((v) => !v)} aria-expanded={docsOpen}
               className="flex items-center gap-1.5 text-[15px] font-semibold text-[var(--color-text)] hover:underline mr-auto">
               {docsOpen ? <ChevronDown className="w-4 h-4 text-[var(--color-text-muted)]" /> : <ChevronRight className="w-4 h-4 text-[var(--color-text-muted)]" />}
-              <span>{readyDocs.toLocaleString()} of {docs.length.toLocaleString()} indexed{indexingDocs > 0 && <span className="font-normal text-[var(--color-text-muted)]">, {indexingDocs} in progress</span>}</span>
+              <span className="inline-flex items-center gap-1.5 flex-wrap">
+                <span className={`ui-count ${readyDocs === docs.length && docs.length > 0 ? "is-solid" : ""}`}>{readyDocs.toLocaleString()}</span> of {docs.length.toLocaleString()} indexed
+                {indexingDocs > 0 && <span className="ui-pill is-warn ml-1"><Loader2 className="w-3 h-3 animate-spin" /> {indexingDocs} in progress</span>}
+              </span>
             </button>
             {/* Re-index lives HERE, with the documents — not inside Drawing
                 Intelligence, where gating that panel to drawing sets briefly
@@ -685,7 +694,7 @@ export default function KnowledgeLibraryPage() {
 
           {!docsOpen && docs.length > 0 ? null : docs.length === 0 && !uploadState ? (
             <div className="rounded-md border border-dashed border-[var(--color-border-strong)] p-8 text-center text-[15px] text-[var(--color-text-muted)]">
-              <FileText className="w-6 h-6 mx-auto mb-2 opacity-50" />
+              <span aria-hidden className="ui-icon-tile mx-auto mb-2 !grid !w-11 !h-11"><FileText className="w-5 h-5" /></span>
               {isController ? "Drag PDFs or whole folders here to build the shelf." : "No documents yet. Admin or Doc Control can add PDFs."}
             </div>
           ) : (
@@ -704,9 +713,7 @@ export default function KnowledgeLibraryPage() {
                 ] as const).filter(([k]) => k === "all" || docGroups[k] > 0).map(([k, label]) => (
                   <button key={k} onClick={() => { setDocFilter(k); setDocLimit(200); }} aria-pressed={docFilter === k}
                     className={`${bandSegItem(docFilter === k)} !h-7 !text-[13px]`}>
-                    {k === "failed" && <span aria-hidden className="w-2 h-2 rounded-full bg-[var(--state-overdue)]" />}
-                    {k === "partial" && <span aria-hidden className="w-2 h-2 rounded-full bg-[var(--state-held)]" />}
-                    {label} <span className="font-display tabular-nums">{docGroups[k].toLocaleString()}</span>
+                    {label} <span className={`ui-count !h-5 !min-w-5 !px-1.5 !text-[12px] ${k === "failed" ? "is-bad" : k === "partial" ? "is-warn" : docFilter === k ? "is-solid" : ""}`}>{docGroups[k].toLocaleString()}</span>
                   </button>
                 ))}
               </div>
@@ -719,7 +726,7 @@ export default function KnowledgeLibraryPage() {
             </div>
             {isController && selected.size > 0 && (
               <div className="mb-2 flex items-center gap-3 text-[14px]">
-                <span className="font-semibold text-[var(--color-text)]">{selected.size} selected</span>
+                <span className="inline-flex items-center gap-1.5 font-semibold text-[var(--color-text)]"><span className="ui-count is-solid">{selected.size}</span> selected</span>
                 <Button size="sm" variant="danger" onClick={() => void removeDocs([...selected])} disabled={removing !== null}>
                   <Trash2 className="w-3.5 h-3.5" /> Remove {selected.size}
                 </Button>
@@ -739,7 +746,7 @@ export default function KnowledgeLibraryPage() {
                   {isController && (
                     <th className="pl-4 sm:pl-5 w-8 h-10">
                       {removable.length > 0 && (
-                        <input type="checkbox" className="accent-[var(--color-text)] align-middle" aria-label="Select all documents"
+                        <input type="checkbox" className="accent-[var(--color-main)] align-middle" aria-label="Select all documents"
                           checked={selected.size > 0 && selected.size === removable.length}
                           ref={(el) => { if (el) el.indeterminate = selected.size > 0 && selected.size < removable.length; }}
                           onChange={() => setSelected(selected.size === removable.length ? new Set() : new Set(removable.map((d) => d.id)))} />
@@ -761,15 +768,15 @@ export default function KnowledgeLibraryPage() {
                   // Pages actually READ, against the file's page count — "28 pages
                   // indexed" used to show the file's total even when reading
                   // had stopped part-way.
-                  <span className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-[var(--color-text)]"
+                  <span className={`ui-pill ${bad ? "is-bad" : warn ? "is-warn" : fullyRead ? "is-good" : "is-muted"}`}
                     title={bad ? doc.error ?? undefined : doc.status === "ready" && !fullyRead ? "Reading stopped before the last page. Repair in Library health, at the top of this page, resumes it - pages already read aren't paid for again." : undefined}>
-                    <span aria-hidden className={`w-2 h-2 rounded-full shrink-0 ${bad ? "bg-[var(--state-overdue)]" : warn ? "bg-[var(--state-held)]" : fullyRead ? "bg-[var(--state-released)]" : "bg-[var(--color-text-faint)]"}`} />
+                    {doc.status === "indexing" && <Loader2 className="w-3 h-3 animate-spin" aria-hidden />}
                     {fullyRead && "Indexed"}
                     {doc.status === "ready" && !fullyRead && "Partly read"}
                     {doc.status === "indexing" && "Indexing"}
                     {doc.status === "pending" && "Waiting to index"}
                     {doc.status === "stale" && "New revision, waiting"}
-                    {bad && <span className="text-[var(--state-overdue)]">Failed</span>}
+                    {bad && "Failed"}
                   </span>
                 );
                 return (
@@ -777,7 +784,7 @@ export default function KnowledgeLibraryPage() {
                   {isController && (
                     <td className="relative pl-4 sm:pl-5 py-3 w-8">
                       {bad && <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] bg-[var(--state-overdue)]" />}
-                      <input type="checkbox" className="accent-[var(--color-text)] mt-1" aria-label={`Select ${doc.name}`}
+                      <input type="checkbox" className="accent-[var(--color-main)] mt-1.5" aria-label={`Select ${doc.name}`}
                         disabled={!!doc.sourceDocumentId} checked={selected.has(doc.id)}
                         title={doc.sourceDocumentId ? "Mirrored from Document Control - remove it by unlinking the source" : undefined}
                         onChange={() => toggleSelect(doc.id)} />
@@ -785,10 +792,13 @@ export default function KnowledgeLibraryPage() {
                   )}
                   <td className={`py-3 min-w-0 relative ${isController ? "px-3" : "px-4 sm:px-5"}`}>
                     {bad && !isController && <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] bg-[var(--state-overdue)]" />}
-                    <div className="font-display text-[16px] font-semibold text-[var(--color-text)] break-words">{doc.name.replace(/\.pdf$/i, "")}</div>
-                    <div className="flex items-center gap-x-3 gap-y-0.5 flex-wrap text-[13px] text-[var(--color-text-muted)]">
+                    <div className="flex items-start gap-2.5 min-w-0">
+                    <span aria-hidden className="ui-icon-tile is-sm !w-6 !h-6 mt-px"><FileText className="w-3.5 h-3.5" /></span>
+                    <div className="min-w-0 flex-1">
+                    <div className="ui-id text-[16px] break-words">{doc.name.replace(/\.pdf$/i, "")}</div>
+                    <div className="mt-0.5 flex items-center gap-x-3 gap-y-1 flex-wrap text-[13px] text-[var(--color-text-muted)]">
                       {doc.sourceDocumentId && (
-                        <span title="Mirrors a controlled document - kept current by the source sync">
+                        <span className="ui-tag !h-6 !text-[12.5px]" title="Mirrors a controlled document - kept current by the source sync">
                           From Doc Control{doc.sourceRev ? `, Rev ${doc.sourceRev}` : ""}
                         </span>
                       )}
@@ -802,8 +812,10 @@ export default function KnowledgeLibraryPage() {
                         <div className="h-full bg-[var(--state-held)] transition-all" style={{ width: `${Math.round((doc.pagesIndexed / doc.pageCount) * 100)}%` }} />
                       </div>
                     ) : null}
+                    </div>
+                    </div>
                   </td>
-                  <td className="px-3 py-3 text-right font-display tabular-nums text-[15px] text-[var(--color-text)] hidden sm:table-cell whitespace-nowrap">{doc.pageCount ?? "?"}</td>
+                  <td className="px-3 py-3 text-right font-display tabular-nums font-semibold text-[15px] text-[var(--color-text)] hidden sm:table-cell whitespace-nowrap">{doc.pageCount ?? "?"}</td>
                   <td className="px-3 py-3 hidden md:table-cell whitespace-nowrap">{statusTag}</td>
                   <td className="px-2 py-2 whitespace-nowrap text-right">
                     {isController && doc.status !== "ready" && (
@@ -925,12 +937,14 @@ function AskEntry({ orgId, libraryId, libraryName, readyDocs, docsTotal }: {
     <section>
       <div className="flex items-end gap-x-3 gap-y-1 flex-wrap mb-2.5 min-h-8">
         <div className="min-w-0 flex-1 basis-[16rem]">
-          <h2 className="font-display text-[19px] leading-tight font-semibold text-[var(--color-text)]">Ask this library</h2>
+          <h2 className="flex items-center gap-2.5 font-display text-[19px] leading-tight font-semibold text-[var(--color-text)]">
+            <span aria-hidden className="ui-icon-tile is-sm is-solid"><MessageSquare className="w-4 h-4" /></span> Ask this library
+          </h2>
           <div className="text-[14px] text-[var(--color-text-muted)]">
             Answers come only from the indexed documents, cited to the page.
             {instructionCount > 0 && (
-              <Link href="/admin/ai-instructions" className="ml-1.5 text-[var(--color-accent-text)] hover:underline">
-                {instructionCount} standing instruction{instructionCount === 1 ? "" : "s"} apply
+              <Link href="/admin/ai-instructions" className="ml-1.5 inline-flex items-center gap-1 text-[var(--color-accent-text)] hover:underline">
+                <span className="ui-count !h-5 !min-w-5 !px-1.5 !text-[12px]">{instructionCount}</span> standing instruction{instructionCount === 1 ? "" : "s"} apply
               </Link>
             )}
           </div>
@@ -971,23 +985,23 @@ function AskEntry({ orgId, libraryId, libraryName, readyDocs, docsTotal }: {
       )}
       {recent && recent.length > 0 && (
         <div className="mt-4">
-          <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-1 flex items-center gap-1.5">
-            <History className="w-3.5 h-3.5" /> Recent conversations
+          <div className="text-[13px] font-semibold text-[var(--color-heading)] mb-1.5 flex items-center gap-1.5">
+            <History className="w-3.5 h-3.5" /> Recent conversations <span className="ui-count !h-5 !min-w-5 !px-1.5 !text-[12px]">{recent.length}</span>
           </div>
           <ul className="divide-y divide-[var(--color-border)] border-t border-[var(--color-border)] -mx-4 sm:-mx-5">
             {recent.map((t) => (
               <li key={t.id}>
                 <Link href={`/assistant?thread=${t.id}&library=${libraryId}`}
                   className="flex items-center gap-2.5 px-4 sm:px-5 py-2.5 hover:bg-[var(--color-surface-2)] transition-colors group">
-                  {t.scope === "internet" ? <Globe className="w-3.5 h-3.5 text-[var(--color-text-muted)] shrink-0" />
-                    : t.scope === "tools" ? <Bot className="w-3.5 h-3.5 text-[var(--color-text-muted)] shrink-0" />
-                    : <MessageSquare className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" />}
+                  <span aria-hidden className="ui-icon-tile is-sm">
+                    {t.scope === "internet" ? <Globe className="w-4 h-4" /> : t.scope === "tools" ? <Bot className="w-4 h-4" /> : <MessageSquare className="w-4 h-4" />}
+                  </span>
                   <span className="min-w-0 flex-1">
                     <span className="block text-[15px] font-semibold text-[var(--color-text)] group-hover:text-[var(--color-accent-text)] truncate">{t.title || "Untitled"}</span>
                     <span className="flex gap-3 text-[13px] text-[var(--color-text-muted)]">
                       <span>{(t.createdByName ?? "Someone").split("@")[0]}</span>
                       <span>{new Date(t.lastMessageAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}, {new Date(t.lastMessageAt).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}</span>
-                      {t.settledAt && <span>Settled</span>}
+                      {t.settledAt && <span className="ui-pill is-good !h-5 !text-[12px]">Settled</span>}
                     </span>
                   </span>
                   <ArrowRight className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />

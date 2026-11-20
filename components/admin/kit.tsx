@@ -81,6 +81,28 @@ export function StatusTag({ tone = "none", colored = false, children, className 
   );
 }
 
+/** A status as a soft colored pill (the `ui-pill` recipe): done green,
+ *  waiting amber, late or failed red, not set grey, the current one solid
+ *  brand, and `brand` a plain brand tint. */
+export function Pill({ tone = "none", children, className = "", title }: {
+  tone?: Tone | "brand" | "solid"; children: React.ReactNode; className?: string; title?: string;
+}) {
+  const mod = tone === "good" ? "is-good" : tone === "bad" ? "is-bad" : tone === "warn" ? "is-warn"
+    : tone === "solid" ? "is-solid" : tone === "brand" ? "" : "is-muted";
+  return <span title={title} className={`ui-pill ${mod} ${className}`}>{children}</span>;
+}
+
+/** An icon on a brand-tinted tile (the `ui-icon-tile` recipe). */
+export function IconTile({ icon: Icon, size = "sm", solid = false, className = "" }: {
+  icon: React.ComponentType<{ className?: string }>; size?: "sm" | "md"; solid?: boolean; className?: string;
+}) {
+  return (
+    <span aria-hidden className={`ui-icon-tile ${size === "sm" ? "is-sm" : ""} ${solid ? "is-solid" : ""} ${className}`}>
+      <Icon className={size === "sm" ? "w-4 h-4" : "w-[18px] h-[18px]"} />
+    </span>
+  );
+}
+
 /** The 3px left edge on a late or waiting row. Put it in a `relative` cell. */
 export function RowEdge({ tone }: { tone: Exclude<Tone, "none"> }) {
   return <span aria-hidden className="absolute left-0 inset-y-0 w-[3px]" style={{ background: TONE_VAR[tone] }} />;
@@ -126,13 +148,20 @@ export function Problem({ children, retry, className = "" }: {
 
 /** A section whose content brings its own sheet (a table, a list): the
  *  heading on the panel, `action` on its right, and the content as given. */
-export function Section({ label: text, action, children, className = "", id }: {
+export function Section({ label: text, icon, count, action, children, className = "", id }: {
   label: React.ReactNode; action?: React.ReactNode; children: React.ReactNode; className?: string; id?: string;
+  /** The section's icon, set on a brand tile beside the heading. */
+  icon?: React.ComponentType<{ className?: string }>;
+  /** A count badge after the heading. */
+  count?: number;
 }) {
   return (
     <section className={`min-w-0 ${className}`} aria-labelledby={id}>
       <div className="flex flex-wrap items-end gap-x-3 gap-y-2 mb-2.5 min-h-8">
+        {/* On the grey panel a tinted tile would vanish: headings get the solid one. */}
+        {icon && <IconTile icon={icon} solid className="self-center" />}
         <h2 id={id} className="font-display text-[19px] leading-tight font-semibold text-[var(--color-text)] [&_svg]:inline [&_svg]:align-[-2px]">{text}</h2>
+        {count !== undefined && count > 0 && <span className="ui-count is-solid self-center">{count.toLocaleString()}</span>}
         <div className="flex-1" />
         {action}
       </div>

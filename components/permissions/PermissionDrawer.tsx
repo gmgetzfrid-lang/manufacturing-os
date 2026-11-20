@@ -408,7 +408,7 @@ export default function PermissionsDrawer(props: {
                     disabled={!canEdit}
                     checked={inherit}
                     onChange={(e) => setInherit(e.target.checked)}
-                    className="h-4 w-4 accent-[var(--color-text)]"
+                    className="h-4 w-4 accent-[var(--color-main)]"
                   />
                   Inherit ACL rules
                 </label>

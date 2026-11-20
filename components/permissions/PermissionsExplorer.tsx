@@ -106,8 +106,8 @@ export default function PermissionsExplorer() {
   return (
     <section className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] overflow-hidden">
       <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap">
-        <ShieldCheck className="w-4 h-4 text-[var(--color-text-muted)]" />
-        <h2 className="text-[13px] font-semibold text-[var(--color-text-muted)]">App-wide permissions</h2>
+        <span aria-hidden className="ui-icon-tile is-sm"><ShieldCheck className="w-4 h-4" /></span>
+        <h2 className="font-display text-[17px] font-semibold text-[var(--color-heading)]">App-wide permissions</h2>
         <span className="text-[12px] text-[var(--color-text-muted)]">✓ can do · ◐ conditional (hover for why) · - cannot · ⚠ known gap</span>
         <div className="ml-auto flex items-center gap-2 flex-wrap">
           <div className="relative">
@@ -130,7 +130,7 @@ export default function PermissionsExplorer() {
             <tr className="bg-[var(--color-surface-2)]">
               <th className="sticky left-0 bg-[var(--color-surface-2)] text-left font-semibold px-3 py-2 min-w-[240px]">Capability</th>
               {ROLES.map((r, i) => (
-                <th key={r} className={`px-2 py-2 font-semibold whitespace-nowrap ${role === i ? "text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>{r}</th>
+                <th key={r} className={`px-2 py-2 font-semibold whitespace-nowrap ${role === i ? "bg-[var(--color-main)] text-white" : "text-[var(--color-text-muted)]"}`}>{r}</th>
               ))}
             </tr>
           </thead>
@@ -139,14 +139,14 @@ export default function PermissionsExplorer() {
               return (
                 <React.Fragment key={`${r.area}:${r.cap}`}>
                   {r.first && (
-                    <tr><td colSpan={ROLES.length + 1} className="sticky left-0 bg-[var(--color-surface)] px-3 pt-3 pb-1 text-[13px] font-semibold text-[var(--color-text)]">{r.area}</td></tr>
+                    <tr><td colSpan={ROLES.length + 1} className="sticky left-0 bg-[var(--color-surface)] px-3 pt-3 pb-1 font-display text-[15px] font-semibold text-[var(--color-heading)]">{r.area}</td></tr>
                   )}
                   <tr className="border-t border-[var(--color-border)] hover:bg-[var(--color-surface-2)]/50">
                     <td className="sticky left-0 bg-[var(--color-surface)] px-3 py-1.5 font-medium text-[var(--color-text)]">
                       {r.cap}
                       {r.warn && <span className="ml-1.5 cursor-help text-amber-600 dark:text-amber-400" title={r.warn}>⚠</span>}
                     </td>
-                    {ROLES.map((_, i) => <td key={i} className={`px-2 py-1.5 text-center ${role === i ? "bg-[var(--color-surface-2)]" : ""}`}>{cell(r, i)}</td>)}
+                    {ROLES.map((_, i) => <td key={i} className={`px-2 py-1.5 text-center ${role === i ? "bg-[var(--color-accent-soft)]" : ""}`}>{cell(r, i)}</td>)}
                   </tr>
                 </React.Fragment>
               );

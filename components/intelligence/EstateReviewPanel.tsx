@@ -12,11 +12,10 @@
 
 import React, { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { Link2, Check, X, Loader2, RefreshCw, Factory, Briefcase, Cpu, FolderOpen, Quote } from "lucide-react";
+import { Link2, Check, X, Loader2, RefreshCw, Factory, Briefcase, Cpu, FolderOpen, Quote, Network } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import HelpTooltip from "@/components/ui/HelpTooltip";
-import { Section, tbl, sheet, btnRow, btnQuiet } from "@/components/admin/kit";
-import { StatusTag } from "@/components/documents/StatusTag";
+import { Section, tbl, sheet, btnRow, btnQuiet, Pill } from "@/components/admin/kit";
 import { listPendingEdges, decideEdge, declareEdge, estatePost } from "@/lib/estate/client";
 import { labelNodes, type NodeLabel } from "@/lib/estate/labels";
 import { addFinderAlias } from "@/lib/fileFinder/stores";
@@ -103,13 +102,14 @@ export default function EstateReviewPanel() {
       : <span className="font-semibold text-[var(--color-text)]">{l.label}</span>;
     return <span className="min-w-0">{name}{l.sub ? <span className="text-[14px] text-[var(--color-text-muted)]"> ({l.sub})</span> : null}</span>;
   };
-  const sure = (e: EstateEdge) => e.tier === "strong" ? <StatusTag tone="none">Likely</StatusTag>
-    : e.tier === "inferred" ? <StatusTag tone="warn">A guess</StatusTag>
-    : <StatusTag tone="good">Proven</StatusTag>;
+  const sure = (e: EstateEdge) => e.tier === "strong" ? <Pill tone="brand">Likely</Pill>
+    : e.tier === "inferred" ? <Pill tone="warn">A guess</Pill>
+    : <Pill tone="good">Proven</Pill>;
 
   return (
     <Section
-      label={<span className="inline-flex items-center gap-2">Links waiting for you{rows && rows.length > 0 && <span className="font-sans text-[14px] font-normal text-[var(--color-text-muted)] tabular-nums">{rows.length}</span>}
+      icon={Network}
+      label={<span className="inline-flex items-center gap-2">Links waiting for you{rows && rows.length > 0 && <span className="ui-count is-warn font-sans">{rows.length}</span>}
         <span className="font-sans font-normal text-[14px] leading-snug"><HelpTooltip>
           Only what is proven links by itself: a unit&apos;s number and name together (&ldquo;20 - Crude&rdquo;), a drawing number, a folder under a linked folder. A name on its own is asked here.
           <span className="block mt-1.5"><b>Belongs to</b>: it is that unit&apos;s own. <b>Applies to</b>: a standard or reference filed elsewhere that covers it.</span>
@@ -126,7 +126,7 @@ export default function EstateReviewPanel() {
         <div className={`${sheet} px-4 py-4 text-[14px] text-[var(--color-text-muted)] inline-flex items-center gap-2 w-full`}><Loader2 className="w-4 h-4 animate-spin" /> Loading the links…</div>
       ) : rows.length === 0 ? (
         <div className={`${sheet} px-4 py-4 flex flex-wrap items-center gap-x-3 gap-y-1`}>
-          <StatusTag tone="good">Nothing waiting</StatusTag>
+          <Pill tone="good">Nothing waiting</Pill>
           <span className="text-[14px] text-[var(--color-text-muted)]">Check again after teaching aliases or adding units to the codebook.</span>
         </div>
       ) : (
@@ -147,7 +147,7 @@ export default function EstateReviewPanel() {
                   <tr key={e.id} className={`${tbl.tr} max-md:flex max-md:flex-col max-md:py-1.5`}>
                     <td className={`${tbl.td} max-md:py-1 align-top`}>
                       <div className="flex items-start gap-2.5">
-                        <I className="w-4 h-4 mt-1 shrink-0 text-[var(--color-text-muted)]" />
+                        <span aria-hidden className="ui-icon-tile is-sm"><I className="w-4 h-4" /></span>
                         <div className="min-w-0 flex flex-wrap items-baseline gap-x-1.5">
                           <Node id={e.a} />
                           <span className="text-[14px] text-[var(--color-text-muted)]">{e.type === "belongs_to_unit" ? "and" : TYPE_LABEL[e.type] ?? e.type}</span>

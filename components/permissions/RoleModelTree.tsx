@@ -125,7 +125,7 @@ function Fold({ label, count, children, tone }: { label: React.ReactNode; count?
       <summary className={`cursor-pointer list-none flex items-center gap-2 px-1 py-1.5 text-sm font-bold select-none ${tone === "warn" ? "text-amber-700 dark:text-amber-300" : "text-[var(--color-text)]"} hover:underline`}>
         <ChevronRight className="w-4 h-4 transition-transform group-open/rm:rotate-90 shrink-0" />
         {label}
-        {typeof count === "number" && <span className="text-[13px] font-semibold tabular-nums text-[var(--color-text-muted)]">{count}</span>}
+        {typeof count === "number" && <span className="ui-count">{count}</span>}
       </summary>
       <div className="ml-5 pl-2 border-l border-[var(--color-border)] space-y-1.5 pb-2">{children}</div>
     </details>
@@ -179,14 +179,14 @@ export default function RoleModelTree({ orgId }: { orgId: string }) {
   return (
     <section className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5 mt-3">
       <div className="flex items-center gap-2 mb-1">
-        <GitBranch className="w-4 h-4 text-[var(--color-text-muted)]" />
+        <span aria-hidden className="ui-icon-tile is-sm"><GitBranch className="w-4 h-4" /></span>
         <h2 className="text-[13px] font-semibold text-[var(--color-text-muted)]">Role model: who can do what</h2>
       </div>
       <p className="text-xs text-[var(--color-text-muted)] mb-3">
         Generated from a code audit of every enforcement point. Two kinds of authority exist: <b>base roles</b> (set in Users) and <b>situational authority</b> (ownership, per-library grants, review rosters) that applies regardless of role.
       </p>
 
-      <Fold label={<span className="inline-flex items-center gap-1.5"><Users className="w-4 h-4 text-[var(--color-text-muted)] dark:text-[var(--color-text)]" /> Base roles</span>} count={members.length}>
+      <Fold label={<span className="inline-flex items-center gap-1.5"><span aria-hidden className="ui-icon-tile is-sm"><Users className="w-4 h-4" /></span> Base roles</span>} count={members.length}>
         {TIERS.map((tier) => (
           <Fold key={tier.tier} label={tier.tier}>
             <p className="text-[11px] text-[var(--color-text-muted)] px-1">{tier.blurb}</p>
@@ -218,7 +218,7 @@ export default function RoleModelTree({ orgId }: { orgId: string }) {
         ))}
       </Fold>
 
-      <Fold label={<span className="inline-flex items-center gap-1.5"><KeyRound className="w-4 h-4 text-[var(--color-text-muted)] dark:text-[var(--color-text)]" /> Situational authority (beyond the role field)</span>}>
+      <Fold label={<span className="inline-flex items-center gap-1.5"><span aria-hidden className="ui-icon-tile is-sm"><KeyRound className="w-4 h-4" /></span> Situational authority (beyond the role field)</span>}>
         {SITUATIONAL.map((s) => (
           <Fold key={s.title} label={<span className="text-sm">{s.title}</span>}>
             {s.body.map((b, i) => <p key={i} className="text-[11px] text-[var(--color-text)] px-1">{b}</p>)}

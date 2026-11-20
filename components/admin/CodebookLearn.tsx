@@ -101,7 +101,7 @@ export default function CodebookLearn({ orgId, uid, book, canWrite, onChanged, o
       {numberingNew && best && (
         <div className={card}>
           <div className="flex items-start gap-2 flex-wrap">
-            <Lightbulb className="w-4 h-4 mt-0.5 shrink-0 text-[var(--color-text-muted)]" />
+            <span aria-hidden className="ui-icon-tile is-sm"><Lightbulb className="w-4 h-4" /></span>
             <div className="min-w-0 flex-1 basis-64 text-[15px] text-[var(--color-text)]">
               <div className="font-display text-[17px] font-semibold">Your drawing numbers already follow a pattern</div>
               <p className="mt-1 text-[var(--color-text-muted)]">
@@ -132,7 +132,7 @@ export default function CodebookLearn({ orgId, uid, book, canWrite, onChanged, o
       {found.letters.length > 0 && (
         <div className={card}>
           <div className="flex items-start gap-2 flex-wrap">
-            <Lightbulb className="w-4 h-4 mt-0.5 shrink-0 text-[var(--color-text-muted)]" />
+            <span aria-hidden className="ui-icon-tile is-sm"><Lightbulb className="w-4 h-4" /></span>
             <div className="min-w-0 flex-1 basis-64 text-[15px] text-[var(--color-text)]">
               <div className="font-display text-[17px] font-semibold">Tag letters, from your equipment list</div>
               <p className="mt-1 text-[var(--color-text-muted)]">Each ID says the type (5530.29 is type 30) and each tag says the letter (E-22). A letter is listed only when it belongs to one type.</p>

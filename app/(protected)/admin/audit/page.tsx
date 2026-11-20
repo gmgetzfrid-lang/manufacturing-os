@@ -19,7 +19,7 @@ import IsoGuidance from "@/components/ui/IsoGuidance";
 import ViewTabs, { ACTIVITY_VIEWS } from "@/components/navigation/ViewTabs";
 import { PageShell } from "@/components/ui/PageShell";
 import { PageHero, PageBody, heroPrimary, heroQuiet } from "@/components/ui/PageHero";
-import { tbl, btnRow, link, StatusTag, RowEdge, Problem, shortDateTime, type Tone } from "@/components/admin/kit";
+import { tbl, btnRow, link, RowEdge, Problem, shortDateTime, type Tone } from "@/components/admin/kit";
 import { bandInput, bandInputIcon, bandSelect, plural } from "@/components/admin/band";
 import LoadingBlock from "@/components/ui/LoadingBlock";
 
@@ -309,6 +309,9 @@ export default function AuditLogPage() {
                 <tbody className={tbl.tbody}>
                   {filtered.map((r) => (
                     <AuditRowItem key={r.id} row={r} docMeta={docMeta.get(r.resourceId)}
+                      onFilterAction={ACTION_STYLE[r.action] ? (a) => { setActionFilter(a); setLimit(200); } : undefined}
+                      onFilterResource={RESOURCE_ICON[r.resourceType] ? (t) => { setResourceFilter(t); setLimit(200); } : undefined}
+                      onFilterUser={(u) => setUserQuery(u)}
                       open={openIds.has(r.id)} onToggle={() => setOpenIds((prev) => { const n = new Set(prev); if (n.has(r.id)) n.delete(r.id); else n.add(r.id); return n; })} />
                   ))}
                 </tbody>
@@ -349,8 +352,13 @@ interface AuditRowItemProps {
   docMeta?: { documentNumber: string | null; title: string | null; libraryId: string };
   open: boolean;
   onToggle: () => void;
+  /** Tap the action pill, the item's kind or the person: show only those. */
+  onFilterAction?: (action: string) => void;
+  onFilterResource?: (type: string) => void;
+  onFilterUser?: (email: string) => void;
 }
-function AuditRowItem({ row, docMeta, open, onToggle }: AuditRowItemProps) {
+const PILL_TONE: Record<Tone, string> = { bad: "is-bad", warn: "is-warn", good: "is-good", none: "" };
+function AuditRowItem({ row, docMeta, open, onToggle, onFilterAction, onFilterResource, onFilterUser }: AuditRowItemProps) {
   const style = ACTION_STYLE[row.action] ?? { icon: ScrollText, tone: "none" as Tone };
   const ResIcon = RESOURCE_ICON[row.resourceType] ?? FileText;
   const Icon = style.icon;
@@ -364,8 +372,13 @@ function AuditRowItem({ row, docMeta, open, onToggle }: AuditRowItemProps) {
     return null;
   })();
   const itemLabel = docMeta
-    ? <><span className="font-display text-[16px] font-semibold tabular-nums">{docMeta.documentNumber ?? ""}</span>{docMeta.title && docMeta.title !== docMeta.documentNumber && <span className="text-[var(--color-text-muted)]"> {docMeta.title}</span>}</>
+    ? <><span className="ui-id text-[16px]">{docMeta.documentNumber ?? ""}</span>{docMeta.title && docMeta.title !== docMeta.documentNumber && <span className="text-[var(--color-text-muted)]"> {docMeta.title}</span>}</>
     : <span className="text-[var(--color-text-muted)] capitalize">{row.resourceType}</span>;
+  const actionPill = (
+    <>
+      <Icon className="w-3.5 h-3.5" /> {prettyAction(row.action)}
+    </>
+  );
 
   return (
     <>
@@ -376,21 +389,33 @@ function AuditRowItem({ row, docMeta, open, onToggle }: AuditRowItemProps) {
         </td>
         <td className={`${tbl.td} relative max-md:py-1 whitespace-nowrap`}>
           {style.tone === "bad" && <span className="md:hidden"><RowEdge tone="bad" /></span>}
-          {style.tone === "none"
-            ? <span className="inline-flex items-center gap-2 text-[15px] text-[var(--color-text)]"><Icon className="w-4 h-4 text-[var(--color-text-muted)]" /> {prettyAction(row.action)}</span>
-            : <StatusTag tone={style.tone} colored={style.tone === "bad"} className="text-[15px]">{prettyAction(row.action)}</StatusTag>}
+          {/* The action as a pill in its state color; tap it to see only that action. */}
+          {onFilterAction ? (
+            <button type="button" onClick={() => onFilterAction(row.action)} title={`Show only "${prettyAction(row.action)}"`}
+              className={`ui-pill ${PILL_TONE[style.tone]} !h-7 !text-[14px] hover:ring-2 hover:ring-[color-mix(in_srgb,var(--color-main)_30%,transparent)] transition-shadow`}>
+              {actionPill}
+            </button>
+          ) : <span className={`ui-pill ${PILL_TONE[style.tone]} !h-7 !text-[14px]`}>{actionPill}</span>}
           <span className="md:hidden ml-2 text-[13px] text-[var(--color-text-muted)]">{formatTime(row.timestamp)}</span>
         </td>
         <td className={`${tbl.td} max-md:col-span-2 max-md:row-start-2 max-md:py-0.5 min-w-0`}>
-          <span className="inline-flex items-baseline gap-1.5 min-w-0 max-w-[48ch]">
-            <ResIcon className="w-3.5 h-3.5 shrink-0 self-center text-[var(--color-text-faint)]" />
+          <span className="inline-flex items-center gap-2 min-w-0 max-w-[48ch]">
+            {onFilterResource ? (
+              <button type="button" onClick={() => onFilterResource(row.resourceType)} title={`Show only ${row.resourceType} events`} aria-label={`Show only ${row.resourceType} events`}
+                className="ui-icon-tile is-sm !w-6 !h-6 hover:!bg-[var(--color-main)] hover:!text-white transition-colors"><ResIcon className="w-3.5 h-3.5" /></button>
+            ) : <span aria-hidden className="ui-icon-tile is-sm !w-6 !h-6"><ResIcon className="w-3.5 h-3.5" /></span>}
             {resourceHref
               ? <Link href={resourceHref} className="truncate hover:text-[var(--color-accent-text)] hover:underline underline-offset-2">{itemLabel}</Link>
               : <span className="truncate">{itemLabel}</span>}
           </span>
         </td>
         <td className={`${tbl.td} max-md:col-span-2 max-md:row-start-3 max-md:pt-0.5 text-[14px] text-[var(--color-text-muted)]`}>
-          <span className="text-[var(--color-text)]">{row.userEmail || row.userId}</span>{row.userRole ? <span> ({row.userRole})</span> : null}
+          <span className="inline-flex flex-wrap items-center gap-1.5">
+            {row.userEmail && onFilterUser
+              ? <button type="button" onClick={() => onFilterUser(row.userEmail!)} title={`Show only ${row.userEmail}`} className="text-[var(--color-text)] hover:text-[var(--color-accent-text)] hover:underline underline-offset-2">{row.userEmail}</button>
+              : <span className="text-[var(--color-text)]">{row.userEmail || row.userId}</span>}
+            {row.userRole ? <span className="ui-tag !h-6 !text-[12.5px]">{row.userRole}</span> : null}
+          </span>
         </td>
         <td className={`${tbl.td} max-md:col-start-2 max-md:row-start-1 max-md:py-1 text-right`}>
           {hasDetails && (

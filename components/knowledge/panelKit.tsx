@@ -13,7 +13,7 @@ const TONE_TEXT: Record<PanelTone, string> = {
   good: "text-[var(--state-released)]",
   warn: "text-[var(--state-held)]",
   bad: "text-[var(--state-overdue)]",
-  none: "text-[var(--color-text)]",
+  none: "text-[var(--color-heading)]",
 };
 const TONE_RULE: Record<PanelTone, string> = {
   good: "bg-[var(--state-released)]",

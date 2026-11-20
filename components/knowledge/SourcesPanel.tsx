@@ -155,7 +155,7 @@ function AddSourcesModal({ orgId, libraryId, existing, onClose, onAdded }: {
             <input type="checkbox" disabled={already || covered}
               checked={already || covered || selected.has(folderId)}
               onChange={() => toggle(folderId, "folder")}
-              className="accent-[var(--color-text)] w-4 h-4" />
+              className="accent-[var(--color-main)] w-4 h-4" />
             <FolderOpen className="w-3.5 h-3.5 text-[var(--color-text-muted)] shrink-0" />
             <span className="font-bold text-[var(--color-text)] truncate">{f.name}</span>
           </label>
@@ -205,7 +205,7 @@ function AddSourcesModal({ orgId, libraryId, existing, onClose, onAdded }: {
                           <input type="checkbox" disabled={already}
                             checked={already || selected.has(l.id)}
                             onChange={() => toggle(l.id, "library")}
-                            className="accent-[var(--color-text)] w-4 h-4" />
+                            className="accent-[var(--color-main)] w-4 h-4" />
                           <Library className="w-3.5 h-3.5 text-[var(--color-text-muted)] shrink-0" />
                           <span className="font-bold text-[var(--color-text)] flex-1 truncate">{l.name}</span>
                           <span className="text-[13px] font-semibold px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] border border-[var(--color-border)] text-[var(--color-text-muted)]">
@@ -224,7 +224,7 @@ function AddSourcesModal({ orgId, libraryId, existing, onClose, onAdded }: {
                           <input type="checkbox" disabled={already || covered}
                             checked={already || covered || selected.has(f.id)}
                             onChange={() => toggle(f.id, "folder")}
-                            className="accent-[var(--color-text)] w-4 h-4" />
+                            className="accent-[var(--color-main)] w-4 h-4" />
                           <FolderOpen className="w-3.5 h-3.5 text-[var(--color-text-muted)] shrink-0" />
                           <span className="font-bold text-[var(--color-text)] flex-1 truncate" title={path}>{path}</span>
                           <span className="text-[13px] font-semibold px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] border border-[var(--color-border)] text-[var(--color-text-muted)]">
@@ -260,7 +260,7 @@ function AddSourcesModal({ orgId, libraryId, existing, onClose, onAdded }: {
                               <input type="checkbox" disabled={already}
                                 checked={already || selected.has(l.id)}
                                 onChange={() => toggle(l.id, "library")}
-                                className="accent-[var(--color-text)] w-4 h-4" />
+                                className="accent-[var(--color-main)] w-4 h-4" />
                               <Library className="w-3.5 h-3.5 text-[var(--color-text-muted)] shrink-0" />
                               <span className="font-semibold text-[var(--color-text)] truncate">{l.name}</span>
                             </label>

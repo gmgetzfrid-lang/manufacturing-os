@@ -226,9 +226,9 @@ function InstructionsPane({
 
   const flash = (what: string) => { setSaved(what); setTimeout(() => setSaved(null), 1800); };
   const field = "w-full px-3 py-2 text-[15px] rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none focus:border-[var(--color-main)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40";
-  const label = "font-display text-[17px] font-semibold text-[var(--color-text)] mb-0.5";
+  const label = "font-display text-[17px] font-semibold text-[var(--color-heading)] mb-0.5";
   const quiet = "inline-flex items-center gap-1.5 h-9 px-3.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-[14px] font-semibold hover:bg-[var(--color-surface-2)] disabled:opacity-40 transition-colors";
-  const savedTag = <span className="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[13px] font-semibold whitespace-nowrap leading-[18px] bg-[color-mix(in_srgb,var(--state-released)_14%,transparent)] text-[var(--state-released)]">Saved</span>;
+  const savedTag = <span className="ui-pill is-good">Saved</span>;
   const own = instructions.trim() ? 1 : 0;
   const total = own + standingCount;
 
@@ -266,7 +266,7 @@ function InstructionsPane({
         </section>
 
         <section className="py-4">
-          <div className={label}>Standing instructions</div>
+          <div className={`${label} flex items-center gap-2`}>Standing instructions <span className={`ui-count ${standingCount > 0 ? "is-solid" : ""}`}>{standingCount}</span></div>
           <p className="text-[14px] text-[var(--color-text-muted)]">
             {standingCount > 0
               ? <>{standingCount} org playbook instruction{standingCount === 1 ? "" : "s"} appl{standingCount === 1 ? "ies" : "y"} to every library answer. </>

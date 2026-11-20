@@ -13,10 +13,9 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { Plus, Loader2, Trash2, Lock, Users, ArrowUpRight } from "lucide-react";
+import { Plus, Loader2, Trash2, Lock, Users, ArrowUpRight, Puzzle } from "lucide-react";
 import HelpTooltip from "@/components/ui/HelpTooltip";
-import { Section, Problem, tbl, sheet, btnQuiet, btnIcon, link } from "@/components/admin/kit";
-import { StatusTag } from "@/components/documents/StatusTag";
+import { Section, Problem, tbl, sheet, btnQuiet, btnIcon, link, Pill } from "@/components/admin/kit";
 import SkillStudio from "@/components/intelligence/SkillStudio";
 import { useRole } from "@/components/providers/RoleContext";
 import {
@@ -81,7 +80,7 @@ export default function ConnectionSkillsPanel() {
 
   if (rules === undefined) {
     return (
-      <Section label="Connection skills">
+      <Section label="Connection skills" icon={Puzzle}>
         <div className={`${sheet} px-4 py-4 text-[14px] text-[var(--color-text-muted)] flex items-center gap-2`}><Loader2 className="w-4 h-4 animate-spin" /> Loading connection skills…</div>
       </Section>
     );
@@ -89,8 +88,9 @@ export default function ConnectionSkillsPanel() {
 
   return (
     <Section
+      icon={Puzzle}
       label={<span className="inline-flex items-center gap-2">Connection skills
-        {rules && rules.length > 0 && <span className="font-sans text-[14px] font-normal text-[var(--color-text-muted)] tabular-nums">{enabledCount} of {rules.length} on</span>}
+        {rules && rules.length > 0 && <span className="inline-flex items-center gap-1 font-sans text-[14px] font-normal text-[var(--color-text-muted)]"><span className="ui-count is-solid">{enabledCount}</span> of {rules.length} on</span>}
         <span className="font-sans font-normal text-[14px] leading-snug"><HelpTooltip>
           The detectors Find connections runs: the built-ins, and ones you write for your own numbering (work orders, permit numbers, ISO sheets).
         </HelpTooltip></span>
@@ -105,7 +105,7 @@ export default function ConnectionSkillsPanel() {
       {error && <Problem className="mb-2.5" retry={() => void refresh()}>{error}</Problem>}
       {rules === null ? (
         <div className={`${sheet} px-4 py-4 flex flex-wrap items-center gap-x-3 gap-y-1`}>
-          <StatusTag tone="warn">Not set up</StatusTag>
+          <Pill tone="warn">Not set up</Pill>
           <span className="text-[14px] text-[var(--color-text-muted)]">Run the connection-skills migration to write your own detectors.</span>
         </div>
       ) : rules.length === 0 ? (
@@ -131,22 +131,35 @@ export default function ConnectionSkillsPanel() {
                 return (
                   <tr key={r.id} className={`${tbl.tr} max-md:grid max-md:grid-cols-[1fr_auto_auto] max-md:items-start max-md:py-1.5`}>
                     <td className={`${tbl.td} max-md:py-1 align-top min-w-0`}>
-                      <div className={`font-semibold ${r.enabled ? "text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>{r.name}</div>
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <span aria-hidden className={`ui-icon-tile is-sm ${r.enabled ? "" : "!bg-[var(--color-surface-2)] !text-[var(--color-text-muted)]"}`}><Puzzle className="w-4 h-4" /></span>
+                        <span className={`font-semibold ${r.enabled ? "text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>{r.name}</span>
+                      </div>
                       {r.description && <div className="text-[14px] text-[var(--color-text-muted)] line-clamp-1 max-w-[70ch]" title={r.description}>{r.description}</div>}
                       {(r.config?.patterns?.length ?? 0) > 0 && (
                         <div className="flex items-center gap-1 flex-wrap mt-1">
                           {r.config.patterns!.slice(0, 4).map((p) => (
-                            <code key={p} className="px-1.5 rounded bg-[var(--color-surface-2)] text-[13px] font-mono text-[var(--color-text)]">{p}</code>
+                            <code key={p} className="ui-tag !font-mono !text-[12.5px] !h-6">{p}</code>
                           ))}
+                          {r.config.patterns!.length > 4 && <span className="ui-tag is-more !h-6" title={r.config.patterns!.slice(4).join("\n")}>+{r.config.patterns!.length - 4}</span>}
                         </div>
                       )}
                       <div className="md:hidden mt-0.5 text-[13px] text-[var(--color-text-muted)]">{kind}, {who.toLowerCase()}</div>
                     </td>
-                    <td className={`${tbl.td} align-top max-md:hidden whitespace-nowrap text-[var(--color-text-muted)]`}>{kind}</td>
-                    <td className={`${tbl.td} align-top max-lg:hidden whitespace-nowrap text-[var(--color-text-muted)]`}>
-                      <span className="inline-flex items-center gap-1.5">
-                        {!r.builtin_key && (r.visibility === "org" ? <Users className="w-3.5 h-3.5" /> : <Lock className="w-3.5 h-3.5" />)}{who}
-                      </span>
+                    <td className={`${tbl.td} align-top max-md:hidden whitespace-nowrap`}><span className="ui-tag">{kind}</span></td>
+                    <td className={`${tbl.td} align-top max-lg:hidden whitespace-nowrap`}>
+                      {/* Who sees it; for your own skill the pill flips it. */}
+                      {!r.builtin_key && mayManage ? (
+                        <button type="button" onClick={() => void flipVisibility(r)} disabled={busyId === r.id}
+                          title={r.visibility === "org" ? "Make private: only you see it; what it finds still waits for review" : "Share with everyone"}
+                          className={`ui-pill ${r.visibility === "org" ? "" : "is-muted"} hover:ring-2 hover:ring-[color-mix(in_srgb,var(--color-main)_30%,transparent)] transition-shadow`}>
+                          {r.visibility === "org" ? <Users className="w-3.5 h-3.5" /> : <Lock className="w-3.5 h-3.5" />}{who}
+                        </button>
+                      ) : (
+                        <Pill tone={!r.builtin_key && r.visibility === "org" ? "brand" : "none"}>
+                          {!r.builtin_key && (r.visibility === "org" ? <Users className="w-3.5 h-3.5" /> : <Lock className="w-3.5 h-3.5" />)}{who}
+                        </Pill>
+                      )}
                     </td>
                     <td className={`${tbl.td} max-md:py-1 align-top`}>
                       {mayManage ? (
@@ -154,7 +167,7 @@ export default function ConnectionSkillsPanel() {
                           aria-label={`${r.name}: ${r.enabled ? "on" : "off"}`}
                           title={r.enabled ? "Turn off: the engine skips this skill" : "Turn on"}
                           className="inline-flex items-center gap-2 h-8 rounded-md disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent-ring)]">
-                          <span className={`relative inline-flex w-9 h-5 rounded-full transition-colors ${r.enabled ? "bg-[var(--color-accent)]" : "bg-[var(--color-border-strong)]"}`}>
+                          <span className={`relative inline-flex w-9 h-5 rounded-full transition-colors ${r.enabled ? "bg-[var(--color-main)]" : "bg-[var(--color-border-strong)]"}`}>
                             <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-[var(--color-surface)] shadow grid place-items-center transition-transform ${r.enabled ? "translate-x-4" : ""}`}>
                               {busyId === r.id && <Loader2 className="w-3 h-3 animate-spin text-[var(--color-text-muted)]" />}
                             </span>

@@ -17,7 +17,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import {
   Loader2, Check, X, RefreshCw,
-  ShieldCheck, Info,
+  ShieldCheck, Info, ScanSearch, GitPullRequest, ArrowLeftRight,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
@@ -28,7 +28,7 @@ import {
 } from "@/lib/linkProposals";
 import { PageShell } from "@/components/ui/PageShell";
 import { PageHero, PageBody, heroPrimary } from "@/components/ui/PageHero";
-import { tbl, sheet, btnRow, StatusTag, Section, Problem, type Tone } from "@/components/admin/kit";
+import { tbl, sheet, btnRow, Pill, Section, Problem, type Tone } from "@/components/admin/kit";
 import { plural } from "@/components/admin/band";
 import ViewTabs, { INTELLIGENCE_VIEWS } from "@/components/navigation/ViewTabs";
 import ConnectionSkillsPanel from "@/components/intelligence/ConnectionSkillsPanel";
@@ -183,20 +183,23 @@ export default function ProposedLinksPage() {
       <PageBody>
       {error && <Problem>{error}</Problem>}
       {lastRun && (
-        <Section label="Last scan">
+        <Section label="Last scan" icon={ScanSearch}>
           <div className={sheet}>
             <dl className="grid grid-cols-3 divide-x divide-[var(--color-border)]">
               {[["Documents scanned", lastRun.scanned], ["Linked for you", lastRun.autoApplied], ["Waiting for review", lastRun.proposed]].map(([l, v]) => (
                 <div key={String(l)} className="px-4 py-3">
                   <dt className="text-[13px] text-[var(--color-text-muted)]">{l}</dt>
-                  <dd className="font-display text-[24px] leading-tight font-semibold tabular-nums text-[var(--color-text)]">{v}</dd>
+                  <dd className={`font-display text-[24px] leading-tight font-semibold tabular-nums ${l === "Waiting for review" && Number(v) > 0 ? "text-[var(--state-held)]" : l === "Linked for you" && Number(v) > 0 ? "text-[var(--state-released)]" : "text-[var(--color-heading)]"}`}>{v}</dd>
                 </div>
               ))}
             </dl>
             {(lastRun.evidenceLost > 0 || lastRun.notes.length > 0 || (lastRun.proposed === 0 && lastRun.autoApplied === 0 && lastRun.inputs)) && (
               <div className="border-t border-[var(--color-border)] px-4 py-3 space-y-1 text-[14px]">
                 {lastRun.evidenceLost > 0 && (
-                  <StatusTag tone="warn">{lastRun.evidenceLost} existing system link{lastRun.evidenceLost === 1 ? " no longer matches" : "s no longer match"} its reason. Marked, not removed.</StatusTag>
+                  <div className="flex items-start gap-2 text-[var(--color-text)]">
+                    <span className="ui-count is-warn shrink-0">{lastRun.evidenceLost}</span>
+                    <span>existing system link{lastRun.evidenceLost === 1 ? " no longer matches" : "s no longer match"} its reason. Marked, not removed.</span>
+                  </div>
                 )}
                 {lastRun.notes.map((n) => (
                   <div key={n} className="text-[var(--color-text-muted)] flex items-center gap-1.5"><Info className="w-3.5 h-3.5 shrink-0" /> {n}</div>
@@ -225,7 +228,8 @@ export default function ProposedLinksPage() {
         <LoadingBlock what="proposed connections" />
       ) : rows.length === 0 ? (
         <div className={`${sheet} px-5 py-8 text-center`}>
-          <StatusTag tone="good">All decided.</StatusTag>
+          <span aria-hidden className="ui-icon-tile mx-auto mb-3 !grid !w-12 !h-12"><Check className="w-6 h-6" /></span>
+          <Pill tone="good">All decided</Pill>
           <p className="mt-1 text-[15px] text-[var(--color-text-muted)] max-w-xl mx-auto">
             {canRun
               ? "Find connections reads off-page connectors, equipment tags and aliases. Sure links are made for you; the rest wait here."
@@ -233,7 +237,7 @@ export default function ProposedLinksPage() {
           </p>
         </div>
       ) : (
-        <Section label="Waiting for a decision" action={<span className="text-[13px] text-[var(--color-text-muted)] inline-flex items-center gap-1.5"><ShieldCheck className="w-3.5 h-3.5" /> &ldquo;Not related&rdquo; sticks until a new revision gives a new reason</span>}>
+        <Section label="Waiting for a decision" icon={GitPullRequest} count={rows.length} action={<span className="text-[13px] text-[var(--color-text-muted)] inline-flex items-center gap-1.5"><ShieldCheck className="w-3.5 h-3.5" /> &ldquo;Not related&rdquo; sticks until a new revision gives a new reason</span>}>
           <div className={tbl.wrap}>
             <table className={tbl.table}>
               <thead className={`${tbl.thead} max-md:hidden`}>
@@ -249,9 +253,9 @@ export default function ProposedLinksPage() {
                   <tr key={p.id} className={`${tbl.tr} max-md:flex max-md:flex-col max-md:py-1`}>
                     <td className={`${tbl.td} max-md:py-1 align-top`}>
                       <div className="flex items-center gap-2 flex-wrap">
-                        <Link href={docLink(p.doc)} className="font-display text-[16px] font-semibold tabular-nums text-[var(--color-text)] hover:text-[var(--color-accent-text)]">{docLabel(p.doc)}</Link>
-                        <span aria-label="and" className="text-[var(--color-text-muted)]">↔</span>
-                        <Link href={docLink(p.target)} className="font-display text-[16px] font-semibold tabular-nums text-[var(--color-text)] hover:text-[var(--color-accent-text)]">{docLabel(p.target)}</Link>
+                        <Link href={docLink(p.doc)} className="ui-id text-[16px]">{docLabel(p.doc)}</Link>
+                        <span aria-label="and" className="ui-icon-tile is-sm !w-6 !h-6"><ArrowLeftRight className="w-3.5 h-3.5" /></span>
+                        <Link href={docLink(p.target)} className="ui-id text-[16px]">{docLabel(p.target)}</Link>
                       </div>
                     </td>
                     <td className={`${tbl.td} max-md:py-1 align-top`}>
@@ -259,8 +263,8 @@ export default function ProposedLinksPage() {
                       {p.evidence?.detail && <div className="text-[14px] text-[var(--color-text-muted)]">{p.evidence.detail}</div>}
                     </td>
                     <td className={`${tbl.td} max-md:py-1 align-top max-lg:hidden`}>
-                      <StatusTag tone={TIER_TONE[p.tier]}>{TIER_LABELS[p.tier]}</StatusTag>
-                      <div className="text-[13px] text-[var(--color-text-muted)]">{proposerLabel(p.proposer, p.evidence)}{p.source_rev ? `, from rev ${p.source_rev}` : ""}</div>
+                      <Pill tone={TIER_TONE[p.tier] === "none" ? "brand" : TIER_TONE[p.tier]}>{TIER_LABELS[p.tier]}</Pill>
+                      <div className="mt-1 text-[13px] text-[var(--color-text-muted)]">{proposerLabel(p.proposer, p.evidence)}{p.source_rev ? `, from rev ${p.source_rev}` : ""}</div>
                     </td>
                     {canDecide && (
                       <td className={`${tbl.td} max-md:py-1 align-top`}>

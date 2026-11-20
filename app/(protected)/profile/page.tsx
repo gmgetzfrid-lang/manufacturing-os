@@ -6,13 +6,13 @@
 
 import React, { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { Bell, LogOut, Check, Camera, Loader2 } from "lucide-react";
+import { Bell, LogOut, Check, Camera, Loader2, UserRound, Building2 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase, setPreferMicrosoft } from "@/lib/supabase";
 import { useRouter } from "next/navigation";
 import { PageShell } from "@/components/ui/PageShell";
 import { PageHero, PageBody, Card, heroPrimary, heroQuiet } from "@/components/ui/PageHero";
-import { StatusTag } from "@/components/requests/RequestBits";
+import { Pill } from "@/components/admin/kit";
 import LoadingBlock from "@/components/ui/LoadingBlock";
 import FileThumb from "@/components/ui/FileThumb";
 import { useFileDrag } from "@/hooks/useFileDrag";
@@ -134,7 +134,7 @@ export default function ProfilePage() {
         />
 
         <PageBody>
-        <Card label="Your details" pad={false}>
+        <Card label={<span className="inline-flex items-center gap-2.5"><span aria-hidden className="ui-icon-tile is-sm is-solid"><UserRound className="w-4 h-4" /></span>Your details</span>} pad={false}>
           <form onSubmit={(e) => { e.preventDefault(); void save(); }}>
             <div className="px-5 sm:px-6 py-5 space-y-5">
               {error && (
@@ -235,7 +235,7 @@ export default function ProfilePage() {
           </form>
         </Card>
 
-        <Card label="Workspaces" pad={false} className="overflow-hidden">
+        <Card label={<span className="inline-flex items-center gap-2.5"><span aria-hidden className="ui-icon-tile is-sm is-solid"><Building2 className="w-4 h-4" /></span>Workspaces{orgs.length > 1 ? <span className="ui-count is-solid">{orgs.length}</span> : null}</span>} pad={false} className="overflow-hidden">
           {orgs.length === 0 ? (
             <p className="px-5 py-4 text-[15px] text-[var(--color-text-muted)]">You aren&apos;t in any workspace.</p>
           ) : (
@@ -250,9 +250,14 @@ export default function ProfilePage() {
               <tbody className="divide-y divide-[var(--color-border)]">
                 {orgs.map((o) => (
                   <tr key={o.org_id}>
-                    <td className="px-4 sm:px-5 py-3 font-semibold text-[var(--color-text)] max-w-0 truncate">{o.org_name}</td>
-                    <td className="px-4 py-3 whitespace-nowrap text-[var(--color-text)]">{o.role}</td>
-                    <td className="pr-4 sm:pr-5 py-3 whitespace-nowrap text-right">{o.org_id === activeOrgId && <StatusTag tone="good">Current</StatusTag>}</td>
+                    <td className="px-4 sm:px-5 py-3 font-semibold text-[var(--color-text)] max-w-0">
+                      <span className="flex items-center gap-3 min-w-0">
+                        <span aria-hidden className={`ui-icon-tile is-sm ${o.org_id === activeOrgId ? "is-solid" : ""}`}><Building2 className="w-4 h-4" /></span>
+                        <span className="truncate">{o.org_name}</span>
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 whitespace-nowrap"><span className="ui-tag">{o.role}</span></td>
+                    <td className="pr-4 sm:pr-5 py-3 whitespace-nowrap text-right">{o.org_id === activeOrgId && <Pill tone="solid">Current</Pill>}</td>
                   </tr>
                 ))}
               </tbody>

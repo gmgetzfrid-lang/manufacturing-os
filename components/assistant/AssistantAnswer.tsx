@@ -25,8 +25,8 @@ function Inline({ text, docs }: { text: string; docs: MentionedDoc[] }) {
   const linkFor = (s: string) => docs.find((d) => d.mention === s);
   const chip = (d: MentionedDoc, label: string, key: number) => (
     <Link key={key} href={d.openUrl} title={`Open ${d.title || d.number || label}`}
-      className="inline-flex items-center gap-1 align-baseline mx-0.5 px-1.5 py-0.5 rounded border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-accent-text)] font-display font-semibold text-[0.92em] leading-none hover:bg-[var(--color-surface-2)] transition-colors">
-      <FileText className="w-3 h-3 shrink-0" />{label}
+      className="ui-id inline-flex items-center gap-1 align-baseline mx-0.5 underline decoration-[color-mix(in_srgb,var(--color-heading)_40%,transparent)] underline-offset-[3px]">
+      <FileText className="w-3.5 h-3.5 shrink-0" />{label}
     </Link>
   );
   return (
@@ -73,7 +73,7 @@ export default function AssistantAnswer({ answer, mentionedDocs }: {
       {rest.map((b, i) => {
         if (b.type === "label") {
           return (
-            <h4 key={i} className="pt-4 first:pt-0 font-display text-[17px] font-semibold text-[var(--color-text)]">{b.text}</h4>
+            <h4 key={i} className="pt-4 first:pt-0 font-display text-[17px] font-semibold text-[var(--color-heading)]">{b.text}</h4>
           );
         }
         if (b.type === "important") {
@@ -90,7 +90,7 @@ export default function AssistantAnswer({ answer, mentionedDocs }: {
         if (b.type === "bullet") {
           return (
             <div key={i} className="flex items-start gap-2.5 text-[15px] text-[var(--color-text)] leading-relaxed">
-              <span className="mt-[10px] w-1.5 h-1.5 rounded-full bg-[var(--color-text-muted)] shrink-0" />
+              <span className="mt-[10px] w-1.5 h-1.5 rounded-full bg-[var(--color-main)] shrink-0" />
               <span><Inline text={b.text} docs={docs} /></span>
             </div>
           );

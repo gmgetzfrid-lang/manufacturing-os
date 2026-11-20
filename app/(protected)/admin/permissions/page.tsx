@@ -18,15 +18,14 @@
 import React, { useCallback, useEffect, useState } from "react";
 import {
   RefreshCw, ChevronRight, FolderOpen, FileText,
-  EyeOff, Lock, Loader2,
+  EyeOff, Lock, Loader2, Library, ShieldCheck,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
 import type { AccessControl } from "@/types/schema";
 import { PageShell } from "@/components/ui/PageShell";
 import { PageHero, PageBody, heroQuiet } from "@/components/ui/PageHero";
-import { tbl, btnRow, btnQuiet, Section, Problem } from "@/components/admin/kit";
-import { plural } from "@/components/admin/band";
+import { tbl, btnRow, btnQuiet, Section, Problem, Pill } from "@/components/admin/kit";
 import LoadingBlock from "@/components/ui/LoadingBlock";
 import RoleModelTree from "@/components/permissions/RoleModelTree";
 import PermissionsExplorer from "@/components/permissions/PermissionsExplorer";
@@ -50,13 +49,13 @@ function ruleCount(acl: AccessControl | null): number {
 }
 
 function VisBadge({ v }: { v: string }) {
-  if (v === "private") return <span className="inline-flex items-center gap-1 text-[13px] font-semibold text-[var(--color-text)]"><Lock className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> Private</span>;
-  if (v === "hidden") return <span className="inline-flex items-center gap-1 text-[13px] font-semibold text-[var(--color-text)]"><EyeOff className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> Hidden</span>;
+  if (v === "private") return <Pill tone="bad"><Lock className="w-3.5 h-3.5" /> Private</Pill>;
+  if (v === "hidden") return <Pill tone="warn"><EyeOff className="w-3.5 h-3.5" /> Hidden</Pill>;
   return null;
 }
 
 function Rules({ n }: { n: number }) {
-  return n > 0 ? <span className="text-[13px] text-[var(--color-text-muted)]">{n} rule{n === 1 ? "" : "s"}</span> : null;
+  return n > 0 ? <span className="inline-flex items-center gap-1 text-[13px] text-[var(--color-text-muted)]"><span className="ui-count">{n}</span> rule{n === 1 ? "" : "s"}</span> : null;
 }
 
 export default function PermissionsConsolePage() {
@@ -133,7 +132,7 @@ export default function PermissionsConsolePage() {
   const nodeRow = (node: NodeRow, nodeType: NodeType, chain: (AccessControl | undefined)[], icon: React.ReactNode, indent: string) => (
     <div key={node.id} className={`flex items-center gap-2.5 ${indent} pl-1 pr-4 py-1.5 border-t border-[var(--color-border)] hover:bg-[var(--color-surface-2)]`}>
       {icon}
-      <span className="font-display text-[15px] font-semibold tabular-nums text-[var(--color-text)] truncate">{node.name}</span>
+      <span className="ui-id text-[15px] truncate">{node.name}</span>
       <VisBadge v={node.visibility} />
       <Rules n={ruleCount(node.acl)} />
       <button type="button" onClick={() => openDrawer(nodeType, node, node.name, chain)} className={`ml-auto shrink-0 ${btnRow}`}>
@@ -170,7 +169,7 @@ export default function PermissionsConsolePage() {
 
       <PageBody>
       {/* ── Content permissions: the real editor ── */}
-      <Section label="Content permissions" action={<span className="text-[13px] text-[var(--color-text-muted)]">Library, then folder, then document</span>}>
+      <Section label="Content permissions" icon={ShieldCheck} action={<span className="text-[13px] text-[var(--color-text-muted)]">Library, then folder, then document</span>}>
         {loading && libs.length === 0 ? (
           <LoadingBlock what="libraries and folders" />
         ) : loadError ? (
@@ -183,8 +182,9 @@ export default function PermissionsConsolePage() {
               <details key={lib.id} className="group/lib" open={libs.length <= 3}>
                 <summary className="cursor-pointer list-none flex items-center gap-2.5 px-4 h-12 select-none hover:bg-[var(--color-surface-2)]">
                   <ChevronRight className="w-4 h-4 text-[var(--color-text-muted)] transition-transform group-open/lib:rotate-90" />
+                  <span aria-hidden className="ui-icon-tile is-sm"><Library className="w-4 h-4" /></span>
                   <span className="font-semibold text-[var(--color-text)]">{lib.name}</span>
-                  <span className="text-[13px] text-[var(--color-text-muted)] max-sm:hidden">{plural(folders.filter((f) => f.libraryId === lib.id).length, "folder")}</span>
+                  <span className="inline-flex items-center gap-1 text-[13px] text-[var(--color-text-muted)] max-sm:hidden"><span className="ui-count">{folders.filter((f) => f.libraryId === lib.id).length.toLocaleString()}</span> {folders.filter((f) => f.libraryId === lib.id).length === 1 ? "folder" : "folders"}</span>
                   <VisBadge v={lib.visibility} />
                   <Rules n={ruleCount(lib.acl)} />
                   <button type="button" onClick={(e) => { e.preventDefault(); openDrawer("library", lib, lib.name, []); }} className={`ml-auto shrink-0 ${btnRow}`}>
@@ -196,7 +196,7 @@ export default function PermissionsConsolePage() {
                     <details key={f.id} className="group/fold" onToggle={(e) => { if ((e.target as HTMLDetailsElement).open) void loadDocs(f.id, lib.id); }}>
                       <summary className="cursor-pointer list-none flex items-center gap-2.5 pl-2 pr-4 py-1.5 select-none border-t border-[var(--color-border)] hover:bg-[var(--color-surface-2)]">
                         <ChevronRight className="w-3.5 h-3.5 text-[var(--color-text-muted)] transition-transform group-open/fold:rotate-90" />
-                        <FolderOpen className="w-4 h-4 text-[var(--color-text-muted)]" />
+                        <span aria-hidden className="ui-icon-tile is-sm !w-6 !h-6"><FolderOpen className="w-3.5 h-3.5" /></span>
                         <span className="text-[15px] text-[var(--color-text)]">{f.name}</span>
                         <VisBadge v={f.visibility} />
                         <Rules n={ruleCount(f.acl)} />
@@ -208,7 +208,7 @@ export default function PermissionsConsolePage() {
                         {loadingDocsFor === f.id && <div className="py-2 text-[13px] text-[var(--color-text-muted)]"><Loader2 className="w-3.5 h-3.5 animate-spin inline mr-1.5" />Loading documents…</div>}
                         {(docsByFolder.get(f.id) ?? []).map((d) =>
                           nodeRow(d, "document", [lib.acl ?? undefined, f.acl ?? undefined],
-                            <FileText className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />, ""),
+                            <span aria-hidden className="ui-icon-tile is-sm !w-6 !h-6"><FileText className="w-3.5 h-3.5" /></span>, ""),
                         )}
                         {docsFailed.has(f.id) && (
                           <Problem className="py-1.5">Couldn&apos;t load this folder&apos;s documents. Close and open it again.</Problem>

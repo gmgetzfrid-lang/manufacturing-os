@@ -12,7 +12,7 @@
 // an untouched policy changes nothing.
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { SlidersHorizontal, Loader2, RotateCcw, Check, AlertTriangle } from "lucide-react";
+import { SlidersHorizontal, Loader2, RotateCcw, Check, AlertTriangle, Lock } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { appConfirm } from "@/components/providers/DialogProvider";
 import {
@@ -118,8 +118,8 @@ export default function CapabilityPolicyEditor({ canEdit }: { canEdit: boolean }
   return (
     <section className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] overflow-hidden">
       <div className="px-4 sm:px-5 py-3.5 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap">
-        <SlidersHorizontal className="w-4 h-4 text-[var(--color-text-muted)]" />
-        <h2 className="text-[13px] font-semibold text-[var(--color-text-muted)]">Action permissions</h2>
+        <span aria-hidden className="ui-icon-tile is-sm"><SlidersHorizontal className="w-4 h-4" /></span>
+        <h2 className="font-display text-[17px] font-semibold text-[var(--color-heading)]">Action permissions</h2>
         <span className="text-[13px] text-[var(--color-text-muted)]">Who may do each workflow action. Checked on the server, logged on save.</span>
         {canEdit && (
           <div className="ml-auto flex items-center gap-2">
@@ -151,12 +151,12 @@ export default function CapabilityPolicyEditor({ canEdit }: { canEdit: boolean }
           <tbody>
             {areas.map((area) => (
               <React.Fragment key={area}>
-                <tr><td colSpan={TOKENS.length + 1} className="sticky left-0 bg-[var(--color-surface)] px-4 pt-3 pb-1 text-[13px] font-semibold text-[var(--color-text)]">{area}</td></tr>
+                <tr><td colSpan={TOKENS.length + 1} className="sticky left-0 bg-[var(--color-surface)] px-4 pt-3 pb-1 font-display text-[15px] font-semibold text-[var(--color-heading)]">{area}</td></tr>
                 {CAPABILITY_DEFS.filter((d) => d.area === area).map((d) => (
                   <tr key={d.id} className="border-t border-[var(--color-border)] hover:bg-[var(--color-surface-2)]/50">
                     <td className="sticky left-0 bg-[var(--color-surface)] px-4 py-1.5">
                       <span className="font-medium text-[var(--color-text)]">{d.label}</span>
-                      {d.critical && <span className="ml-1.5 text-[13px] font-semibold text-[var(--state-held)] cursor-help" title="Admin always keeps this one">Locked for Admin</span>}
+                      {d.critical && <span className="ml-1.5 ui-pill is-warn !h-5 !px-2 !text-[12px] cursor-help" title="Admin always keeps this one"><Lock className="w-3 h-3" aria-hidden /> Locked for Admin</span>}
                       <div className="text-[11px] text-[var(--color-text-faint)]">{d.description}</div>
                     </td>
                     {TOKENS.map((t) => {
@@ -170,7 +170,7 @@ export default function CapabilityPolicyEditor({ canEdit }: { canEdit: boolean }
                             title={locked && on ? "Admin is locked on critical capabilities" : undefined}
                             aria-pressed={on}
                             aria-label={`${d.label}: ${TOKEN_LABEL[t] ?? t}`}
-                            className={`w-5 h-5 rounded border inline-flex items-center justify-center transition-colors ${on ? "bg-[var(--color-text)] border-transparent text-[var(--color-surface)]" : "border-[var(--color-border-strong)] hover:border-[var(--color-text-muted)]"} ${locked ? "opacity-70 cursor-not-allowed" : ""}`}
+                            className={`w-5 h-5 rounded border inline-flex items-center justify-center transition-colors ${on ? "bg-[var(--color-main)] border-transparent text-white" : "border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:border-[var(--color-main)]"} ${locked ? "opacity-70 cursor-not-allowed" : ""}`}
                           >
                             {on && <Check className="w-3 h-3" />}
                           </button>

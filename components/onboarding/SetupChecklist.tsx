@@ -76,7 +76,7 @@ export default function SetupChecklist() {
     <section className="min-w-0">
       <div className="flex flex-wrap items-end gap-x-3 gap-y-2 mb-2.5 min-h-8">
         <h2 className="font-display text-[19px] leading-tight font-semibold text-[var(--color-text)]">Get your workspace ready</h2>
-        <span className="text-[13px] text-[var(--color-text-muted)] tabular-nums">{doneCount} of {steps.length} done</span>
+        <span className="inline-flex items-center gap-1 text-[13px] text-[var(--color-text-muted)]"><span className={`ui-count ${doneCount === steps.length ? "!bg-[var(--state-released)] !text-white" : "is-solid"}`}>{doneCount}</span> of {steps.length} done</span>
         <div className="flex-1" />
         {next && (
           <Link href={next.href} className={heroQuiet}>
@@ -99,7 +99,7 @@ export default function SetupChecklist() {
                   <div className={`text-[15px] font-semibold ${s.done ? "text-[var(--color-text-muted)]" : "text-[var(--color-text)]"}`}>{s.label}</div>
                   {!s.done && <div className="text-[13px] text-[var(--color-text-muted)] truncate">{s.blurb}</div>}
                 </div>
-                {!s.done && <Icon className="w-4 h-4 text-[var(--color-text-faint)] shrink-0" />}
+                {!s.done && <span aria-hidden className="ui-icon-tile is-sm"><Icon className="w-4 h-4" /></span>}
               </Link>
             </li>
           );

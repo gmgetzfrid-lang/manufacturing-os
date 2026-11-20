@@ -29,7 +29,7 @@ import FileThumb from "@/components/ui/FileThumb";
 import { tryUpload } from "@/lib/uploadRetry";
 import { PageShell } from "@/components/ui/PageShell";
 import { PageHero, PageBody, Card, heroPrimary, heroQuiet } from "@/components/ui/PageHero";
-import { fieldBox, btnQuiet, btnRow, btnDanger, FormRow, Section, StatusTag, Problem, shortDateTime } from "@/components/admin/kit";
+import { fieldBox, btnQuiet, btnRow, btnDanger, FormRow, Section, Pill, Problem, shortDateTime } from "@/components/admin/kit";
 
 interface TableRow {
   name: string; rows: number; bytes: number;
@@ -102,7 +102,7 @@ const CATEGORY_META: Record<DataClass, { icon: typeof Recycle; tint: string; bar
     blurb: "Real records. Never deleted. Kept live, then archived offline when old.",
   },
   reference: {
-    icon: ShieldCheck, tint: "text-[var(--color-text)]", bar: "bg-[var(--color-text-muted)]",
+    icon: ShieldCheck, tint: "text-[var(--color-accent-text)]", bar: "bg-[var(--color-main)]",
     blurb: "Small settings and lookup data. Kept live. Not a cost concern.",
   },
 };
@@ -867,12 +867,12 @@ export default function StorageBackupPage() {
       ) : stats ? (
         <>
           {/* ── Where it stands: the limit, the database, the files ─────── */}
-          <Section label="Where it stands">
+          <Section label="Where it stands" icon={Gauge}>
           <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] divide-y divide-[var(--color-border)]">
             <FormRow label="Storage limit" hint={isRealQuota ? "Admins are alerted at 70% and 90%." : "A guide until you set your plan's real limit."}>
               <div className="@xl:pt-1.5 flex items-center gap-3 flex-wrap">
-                <span className="font-display text-[20px] font-semibold tabular-nums text-[var(--color-text)]">{fmtBytes(budgetBytes)}</span>
-                <StatusTag tone={health === "crit" ? "bad" : health === "warn" ? "warn" : "good"}>{health === "crit" ? "Act now" : health === "warn" ? "Plan a backup" : "Healthy"}</StatusTag>
+                <span className="font-display text-[20px] font-semibold tabular-nums text-[var(--color-heading)]">{fmtBytes(budgetBytes)}</span>
+                <Pill tone={health === "crit" ? "bad" : health === "warn" ? "warn" : "good"}>{health === "crit" ? "Act now" : health === "warn" ? "Plan a backup" : "Healthy"}</Pill>
                 {canPurge && (editingQuota ? (
                   <span className="inline-flex items-center gap-2 flex-wrap">
                     <label className="text-[14px] text-[var(--color-text-muted)]" htmlFor="quota-gb">Limit in GB</label>
@@ -890,10 +890,10 @@ export default function StorageBackupPage() {
                 ))}
               </div>
             </FormRow>
-            <FormRow label={<span className="inline-flex items-center gap-2"><Database className="w-4 h-4 text-[var(--color-text-muted)]" /> Database</span>} hint="Postgres">
+            <FormRow label={<span className="inline-flex items-center gap-2"><span aria-hidden className="ui-icon-tile is-sm"><Database className="w-4 h-4" /></span> Database</span>} hint="Postgres">
               <div className="@xl:pt-1.5"><span className="font-display text-[20px] font-semibold tabular-nums">{fmtBytes(stats.db.totalBytes)}</span> <span className="text-[14px] text-[var(--color-text-muted)]">in {tables.length} tables</span></div>
             </FormRow>
-            <FormRow label={<span className="inline-flex items-center gap-2"><HardDrive className="w-4 h-4 text-[var(--color-text-muted)]" /> Files</span>} hint={stats.r2Real ? "Cloudflare R2, measured" : "Cloudflare R2, estimated"}>
+            <FormRow label={<span className="inline-flex items-center gap-2"><span aria-hidden className="ui-icon-tile is-sm"><HardDrive className="w-4 h-4" /></span> Files</span>} hint={stats.r2Real ? "Cloudflare R2, measured" : "Cloudflare R2, estimated"}>
               <div className="@xl:pt-1.5">
                 <span className="font-display text-[20px] font-semibold tabular-nums">{stats.r2Real ? fmtBytes(stats.r2Real.bytes) : `~${fmtBytes(stats.r2Estimate.totalBytes)}`}</span>{" "}
                 <span className="text-[14px] text-[var(--color-text-muted)]">
@@ -954,7 +954,7 @@ export default function StorageBackupPage() {
                         </span>
                       </div>
                       <div className="mt-1 h-1.5 rounded-full bg-[var(--color-surface-2)] overflow-hidden">
-                        <div className="h-full rounded-full bg-[var(--color-text-muted)]" style={{ width: `${Math.max(1, share)}%` }} />
+                        <div className="h-full rounded-full bg-[var(--color-main)]" style={{ width: `${Math.max(1, share)}%` }} />
                       </div>
                     </div>
                   );

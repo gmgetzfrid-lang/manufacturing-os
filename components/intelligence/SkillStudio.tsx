@@ -135,7 +135,7 @@ export default function SkillStudio({ orgId, userId, userName, kind = "connectio
               <ArrowLeft className="w-4 h-4" />
             </button>
           )}
-          <Sparkles className="w-4 h-4 text-[var(--color-text-muted)]" />
+          <span aria-hidden className="ui-icon-tile is-sm"><Sparkles className="w-4 h-4" /></span>
           <div className="flex-1">
             <div className="font-display text-[17px] font-semibold text-[var(--color-text)]">
               {phase === "describe"

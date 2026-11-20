@@ -21,7 +21,7 @@ export default function MemoryStrip({ past, changed, onReview, onReuse, onDismis
   const stale = (changed?.length ?? 0) > 0;
   return (
     <div className="mb-2 flex items-center gap-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)] pl-3 pr-1.5 py-1.5 text-[13px] animate-rise">
-      <History className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
+      <span aria-hidden className="ui-icon-tile is-sm"><History className="w-4 h-4" /></span>
       <span className="min-w-0 flex-1 truncate text-[var(--color-text)]">
         <span className="font-semibold">Asked before</span>
         <span className="text-[var(--color-text-muted)]"> by {(past.userName ?? "someone").split("@")[0]}, {relativeTime(past.createdAt)}: </span>
@@ -29,8 +29,8 @@ export default function MemoryStrip({ past, changed, onReview, onReuse, onDismis
       </span>
       {stale && (
         <span title={changed!.join("\n")}
-          className="hidden sm:inline-flex items-center gap-1.5 shrink-0 font-semibold text-[var(--color-text)]">
-          <AlertTriangle className="w-3.5 h-3.5 text-[var(--state-held)]" /> Sources changed
+          className="hidden sm:inline-flex ui-pill is-warn shrink-0">
+          <AlertTriangle className="w-3.5 h-3.5" /> Sources changed
         </span>
       )}
       <button onClick={onReview} className="shrink-0 inline-flex items-center gap-1 h-8 px-2.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">

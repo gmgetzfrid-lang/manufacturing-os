@@ -92,7 +92,10 @@ export default function LibraryMapPanel({ orgId, libraryId, libraryName, docs }:
     <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4 sm:p-5">
       <div className="flex items-center gap-3 flex-wrap">
         <div className="min-w-0 flex-1">
-          <div className="font-display text-[17px] font-semibold text-[var(--color-text)]">Library map</div>
+          <div className="flex items-center gap-2.5 font-display text-[17px] font-semibold text-[var(--color-heading)]">
+            <span aria-hidden className="ui-icon-tile is-sm"><MapIcon className="w-4 h-4" /></span> Library map
+            {entries.length > 0 && <span className="ui-count font-sans">{entries.length}</span>}
+          </div>
           <div className="text-[13px] text-[var(--color-text-muted)]">
             What the assistant knows is here, so it can point you to the right form, checklist or spec.
           </div>
@@ -307,11 +310,11 @@ function MarkCatalogModal({ orgId, libraryId, libraryName, docs, onClose, onDone
               <span className="block text-[13px] font-semibold text-[var(--color-text-muted)] mb-1">Where is it?</span>
               <div className="space-y-1.5">
                 <label className="flex items-start gap-2 text-[13px] text-[var(--color-text)] cursor-pointer">
-                  <input type="radio" className="mt-1 accent-[var(--color-text)]" checked={scope === "document"} onChange={() => setScope("document")} />
+                  <input type="radio" className="mt-1 accent-[var(--color-main)]" checked={scope === "document"} onChange={() => setScope("document")} />
                   <span><b>One document holds all of it</b><span className="block text-[13px] text-[var(--color-text-muted)]">Each section is an entry - found by the code that repeats on its pages.</span></span>
                 </label>
                 <label className="flex items-start gap-2 text-[13px] text-[var(--color-text)] cursor-pointer">
-                  <input type="radio" className="mt-1 accent-[var(--color-text)]" checked={scope === "library"} onChange={() => setScope("library")} />
+                  <input type="radio" className="mt-1 accent-[var(--color-main)]" checked={scope === "library"} onChange={() => setScope("library")} />
                   <span><b>Every document in {libraryName} is one entry</b><span className="block text-[13px] text-[var(--color-text-muted)]">A folder of separate sheets - {ready.length.toLocaleString()} indexed documents.</span></span>
                 </label>
               </div>

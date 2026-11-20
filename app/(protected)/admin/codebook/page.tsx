@@ -156,6 +156,10 @@ export default function CodebookPage() {
             <button key={t.key} type="button" role="tab" aria-selected={tab === t.key} onClick={() => setTab(t.key)}
               className={bandSegItem(tab === t.key)}>
               <t.icon className="w-3.5 h-3.5" /> {t.label}
+              {(() => {
+                const n = t.key === "units" ? book.units.length : t.key === "equipment" ? book.equipmentTypes.length : t.key === "drawings" ? book.drawingTypes.length : null;
+                return n !== null && n > 0 ? <span className={`ui-count !h-5 !min-w-5 !px-1.5 !text-[12px] ${tab === t.key ? "is-solid" : ""}`}>{n}</span> : null;
+              })()}
             </button>
           ))}
         </div>
@@ -235,7 +239,7 @@ function EntryTable({ kind, title, entries, canWrite, codeHint, labelHint, withP
   };
 
   return (
-    <Section label={title} action={<span className="text-[13px] text-[var(--color-text-muted)]">{plural(entries.length, "code")}</span>}>
+    <Section label={title} icon={kind === "unit" ? Factory : kind === "equipment_type" ? Boxes : FileDigit} count={entries.length} action={<span className="text-[13px] text-[var(--color-text-muted)]">{plural(entries.length, "code")}</span>}>
     <div className={tbl.wrap}>
       <table className={tbl.table}>
         <thead className={tbl.thead}>
@@ -297,21 +301,31 @@ function EntryRow({ entry, withPrefixes, canWrite, orgId, uid, onChanged, onErro
 
   return (
     <tr className={tbl.tr}>
-      <td className={`${tbl.td} font-display text-[16px] font-semibold tabular-nums text-[var(--color-text)]`}>{entry.code}</td>
+      <td className={tbl.td}><span className="ui-tag !text-[15px]">{entry.code}</span></td>
       <td className={tbl.td}>
         {editing
           ? <input value={label} onChange={(e) => setLabel(e.target.value)} aria-label="Label" className={`${fieldBox} h-9 text-[15px] w-full`} autoFocus />
-          : <span className="text-[var(--color-text)]">{entry.label}</span>}
+          : canWrite
+            // Tap the meaning to change it, as before.
+            ? <button type="button" onClick={() => setEditing(true)} title="Change what this code means" className="text-left text-[var(--color-text)] hover:text-[var(--color-accent-text)] hover:underline underline-offset-2">{entry.label}</button>
+            : <span className="text-[var(--color-text)]">{entry.label}</span>}
       </td>
       {withPrefixes && (
         <td className={`${tbl.td} max-sm:hidden`}>
           {editing
             ? <input value={prefixes} onChange={(e) => setPrefixes(e.target.value)} aria-label="Tag prefixes" className={`${fieldBox} h-9 text-[15px] w-full`} />
-            : <span className="text-[var(--color-text)] tabular-nums">{(entry.meta.tagPrefixes ?? []).map((p) => `${p}-`).join(", ")}</span>}
+            : (
+              <span className="flex flex-wrap gap-1">
+                {(entry.meta.tagPrefixes ?? []).slice(0, 4).map((p) => <span key={p} className="ui-tag">{p}-</span>)}
+                {(entry.meta.tagPrefixes ?? []).length > 4 && (
+                  <button type="button" onClick={() => canWrite && setEditing(true)} title={(entry.meta.tagPrefixes ?? []).map((p) => `${p}-`).join(", ")} className="ui-tag is-more">+{(entry.meta.tagPrefixes ?? []).length - 4}</button>
+                )}
+              </span>
+            )}
         </td>
       )}
       <td className={`${tbl.td} max-sm:hidden text-[14px] text-[var(--color-text-muted)]`}>
-        {entry.origin === "import" ? "Imported" : "Typed in"}
+        <span className={`ui-pill ${entry.origin === "import" ? "" : "is-muted"}`}>{entry.origin === "import" ? "Imported" : "Typed in"}</span>
       </td>
       {canWrite && (
         <td className={`${tbl.td} text-right`}>
@@ -446,7 +460,7 @@ function NumberingTab({ book, canWrite, orgId, uid, onChanged, onError }: {
           <p className="text-[13px] text-[var(--color-text-muted)]">Is it the tag&apos;s number (E-5 is 2030.05)? If not, equipment IDs are never worked out from the name: they come from the schedule or are typed in.</p>
         </div>
         <label className="text-[13px] text-[var(--color-text-muted)] inline-flex items-center gap-1.5">
-          <input type="checkbox" checked={mirrors} disabled={!canWrite} onChange={(e) => setMirrors(e.target.checked)} className="w-4 h-4 accent-[var(--color-text)]" /> it&apos;s the tag&apos;s number
+          <input type="checkbox" checked={mirrors} disabled={!canWrite} onChange={(e) => setMirrors(e.target.checked)} className="w-4 h-4 accent-[var(--color-main)]" /> it&apos;s the tag&apos;s number
         </label>
         <label className={`text-[13px] text-[var(--color-text-muted)] inline-flex items-center gap-1.5 ${mirrors ? "" : "opacity-40"}`}>
           pad to <Input type="number" value={padTo} disabled={!canWrite || !mirrors} min={0} max={6}
@@ -860,7 +874,7 @@ function ImportModal({ orgId, uid, book, onClose, onApplied }: {
                   const k = keyOf(p);
                   return (
                     <label key={k} className="flex items-center gap-2.5 px-3 py-2 text-[14px] cursor-pointer hover:bg-[var(--color-surface-2)]/60">
-                      <input type="checkbox" checked={accepted.has(k)} onChange={() => toggle(k)} className="w-3.5 h-3.5 accent-[var(--color-text)]" />
+                      <input type="checkbox" checked={accepted.has(k)} onChange={() => toggle(k)} className="w-3.5 h-3.5 accent-[var(--color-main)]" />
                       <span className="text-[13px] font-semibold text-[var(--color-text-faint)] w-16">{KIND_LABEL[p.kind]}</span>
                       <span className="font-display font-semibold tabular-nums text-[var(--color-text)] w-14">{p.code}</span>
                       <span className="font-semibold text-[var(--color-text)] flex-1">{p.label}</span>

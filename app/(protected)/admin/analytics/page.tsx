@@ -4,11 +4,11 @@ import React, { useEffect, useState, useMemo } from 'react';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
 import { useRole } from '@/components/providers/RoleContext';
-import { AlertTriangle, ChevronRight, X } from 'lucide-react';
+import { AlertTriangle, ChevronRight, X, BarChart3, RotateCcw, Users, ListX } from 'lucide-react';
 import { Ticket, DocumentRecord } from '@/types/schema';
 import { PageShell } from '@/components/ui/PageShell';
 import { PageHero, PageBody } from '@/components/ui/PageHero';
-import { tbl, sheet, btnQuiet, btnIcon, StatusTag, Section, Problem } from '@/components/admin/kit';
+import { tbl, sheet, btnQuiet, btnIcon, Pill, Section, Problem } from '@/components/admin/kit';
 import { plural, bandSeg, bandSegItem } from '@/components/admin/band';
 import UserAvatar from '@/components/ui/UserAvatar';
 import LoadingBlock from '@/components/ui/LoadingBlock';
@@ -378,7 +378,7 @@ export default function AnalyticsPage() {
                         <tr key={idx} className={`${tbl.tr} max-sm:flex max-sm:flex-col`}>
                           <td className={`${tbl.td} align-top max-sm:pb-1`}>
                             <Link href={`/requests/${item.id}`} target="_blank" className="group block">
-                              <span className="font-display text-[16px] font-semibold tabular-nums text-[var(--color-text)] group-hover:text-[var(--color-accent-text)]">{item.ticketId}</span>
+                              <span className="ui-id text-[16px] group-hover:text-[var(--color-accent-text)]">{item.ticketId}</span>
                               <span className="block text-[14px] text-[var(--color-text-muted)] line-clamp-2">{item.ticketTitle}</span>
                             </Link>
                           </td>
@@ -425,7 +425,7 @@ export default function AnalyticsPage() {
 
             <div className="flex-1 overflow-y-auto p-5 sm:p-6 bg-[var(--color-canvas)]">
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                <Section label="Why it came back" className="lg:col-span-1">
+                <Section label="Why it came back" icon={RotateCcw} className="lg:col-span-1">
                   <div className={`${sheet} p-4`}>
                     {userProfile.causes.length === 0 ? (
                       <p className="text-[15px] text-[var(--color-text-muted)]">No revisions recorded.</p>
@@ -438,7 +438,7 @@ export default function AnalyticsPage() {
                               <span className="shrink-0 tabular-nums font-semibold">{formatPercent(c.percent)}</span>
                             </div>
                             <div className="w-full bg-[var(--color-surface-2)] h-2 rounded-sm overflow-hidden">
-                              <div className="bg-[var(--color-text-muted)] h-full" style={{ width: `${c.percent * 100}%` }} />
+                              <div className="bg-[var(--color-main)] h-full" style={{ width: `${c.percent * 100}%` }} />
                             </div>
                           </div>
                         ))}
@@ -447,9 +447,9 @@ export default function AnalyticsPage() {
                   </div>
                 </Section>
 
-                <Section label="Requests sent back" className="lg:col-span-2">
+                <Section label="Requests sent back" icon={ListX} className="lg:col-span-2">
                   {userProfile.tickets.length === 0 ? (
-                    <div className={`${sheet} p-6 text-center`}><StatusTag tone="good">No revisions found.</StatusTag></div>
+                    <div className={`${sheet} p-6 text-center`}><Pill tone="good">No revisions found</Pill></div>
                   ) : (
                     <div className={`${tbl.wrap} max-h-[420px] overflow-y-auto`}>
                       <table className={tbl.table}>
@@ -461,11 +461,11 @@ export default function AnalyticsPage() {
                             <tr key={t.id} className={tbl.tr}>
                               <td className={tbl.td}>
                                 <Link href={`/requests/${t.id}`} target="_blank" className="group block min-w-0">
-                                  <span className="font-display text-[16px] font-semibold tabular-nums text-[var(--color-text)] group-hover:text-[var(--color-accent-text)]">{t.ticketId}</span>
+                                  <span className="ui-id text-[16px] group-hover:text-[var(--color-accent-text)]">{t.ticketId}</span>
                                   <span className="block text-[14px] text-[var(--color-text-muted)] truncate max-w-[40ch]">{t.title}</span>
                                 </Link>
                               </td>
-                              <td className={`${tbl.td} max-sm:hidden`}><StatusTag tone={t.status === 'CLOSED' ? 'none' : 'warn'}>{t.status === 'CLOSED' ? 'Closed' : 'Open'}</StatusTag></td>
+                              <td className={`${tbl.td} max-sm:hidden`}><Pill tone={t.status === 'CLOSED' ? 'good' : 'warn'}>{t.status === 'CLOSED' ? 'Closed' : 'Open'}</Pill></td>
                               <td className={`${tbl.td} text-right font-display text-[16px] font-semibold tabular-nums`}>{t.revisionCount}</td>
                             </tr>
                           ))}
@@ -494,7 +494,7 @@ export default function AnalyticsPage() {
       {loadError && <Problem>Couldn&apos;t load the numbers, so these may be empty: {loadError}</Problem>}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-x-6 gap-y-8">
-        <Section label="Request volume" className="lg:col-span-2" action={
+        <Section label="Request volume" icon={BarChart3} className="lg:col-span-2" action={
           <div className={bandSeg} role="group" aria-label="Time range">
             {(['1M', '3M', '6M', '1Y'] as TimeRange[]).map(r => (
               <button key={r} type="button" aria-pressed={timeRange === r} onClick={() => setTimeRange(r)} className={bandSegItem(timeRange === r)}>
@@ -508,7 +508,7 @@ export default function AnalyticsPage() {
               {metrics.volumeData.map((d, i) => (
                 <div key={i} className="flex-1 min-w-0 h-full flex flex-col justify-end items-center group" title={`${d.label}: ${d.count}`}>
                   <span className="text-[12px] font-semibold tabular-nums text-[var(--color-text-muted)] mb-1">{d.count > 0 ? d.count : ""}</span>
-                  <div className="w-full max-w-[44px] bg-[var(--color-text-muted)] group-hover:bg-[var(--color-text)] transition-colors min-h-[2px]" style={{ height: `${(d.count / maxVol) * 85}%` }} />
+                  <div className="w-full max-w-[44px] rounded-t-sm bg-[var(--color-main)] group-hover:bg-[var(--color-heading)] transition-colors min-h-[2px]" style={{ height: `${(d.count / maxVol) * 85}%` }} />
                 </div>
               ))}
             </div>
@@ -520,7 +520,7 @@ export default function AnalyticsPage() {
           </div>
         </Section>
 
-        <Section label="Why work came back" action={<span className="text-[13px] text-[var(--color-text-muted)]">{plural(totalRevisions, "revision")}</span>}>
+        <Section label="Why work came back" icon={RotateCcw} action={<span className="text-[13px] text-[var(--color-text-muted)]">{plural(totalRevisions, "revision")}</span>}>
           {metrics.rootCauseData.length === 0 ? (
             <div className={`${sheet} px-4 py-8 text-center text-[15px] text-[var(--color-text-muted)]`}>No revisions recorded yet.</div>
           ) : (
@@ -533,7 +533,7 @@ export default function AnalyticsPage() {
                       <span className="shrink-0 tabular-nums"><b className="font-semibold">{item.count}</b> <span className="text-[var(--color-text-muted)]">({formatPercent(item.percentage)})</span></span>
                     </div>
                     <div className="w-full bg-[var(--color-surface-2)] h-2 rounded-sm overflow-hidden">
-                      <div className="h-full bg-[var(--color-text-muted)] group-hover:bg-[var(--color-text)]" style={{ width: `${item.percentage * 100}%` }} />
+                      <div className="h-full bg-[var(--color-main)] group-hover:bg-[var(--color-heading)]" style={{ width: `${item.percentage * 100}%` }} />
                     </div>
                   </button>
                 </li>
@@ -543,7 +543,7 @@ export default function AnalyticsPage() {
         </Section>
       </div>
 
-      <Section label={viewMode === 'drafter' ? 'Drafters' : 'Requesters'} action={
+      <Section label={viewMode === 'drafter' ? 'Drafters' : 'Requesters'} icon={Users} count={people.length} action={
         <div className={bandSeg} role="group" aria-label="Whose work">
           <button type="button" aria-pressed={viewMode === 'drafter'} onClick={() => setViewMode('drafter')} className={bandSegItem(viewMode === 'drafter')}>Drafters</button>
           <button type="button" aria-pressed={viewMode === 'requester'} onClick={() => setViewMode('requester')} className={bandSegItem(viewMode === 'requester')}>Requesters</button>
@@ -575,19 +575,21 @@ export default function AnalyticsPage() {
                         {d.name}
                       </button>
                     </td>
-                    <td className={`${tbl.td} text-right tabular-nums`}>{d.totalAssigned}</td>
-                    <td className={`${tbl.td} text-right tabular-nums max-sm:hidden`}>{d.completed}</td>
+                    <td className={`${tbl.td} text-right font-display tabular-nums font-semibold`}>{d.totalAssigned}</td>
+                    <td className={`${tbl.td} text-right font-display tabular-nums font-semibold max-sm:hidden`}>{d.completed}</td>
                     <td className={`${tbl.td} max-md:hidden`}>
                       <div className="flex items-center gap-2">
                         <span className={`tabular-nums w-8 ${d.avgRevisions > 2 ? 'font-semibold text-[var(--state-held)]' : 'text-[var(--color-text)]'}`}>{d.avgRevisions.toFixed(1)}</span>
                         <div className="w-20 h-1.5 bg-[var(--color-surface-2)] rounded-sm overflow-hidden">
-                          <div className={`h-full ${d.avgRevisions > 2 ? 'bg-[var(--state-held)]' : 'bg-[var(--color-text-muted)]'}`} style={{ width: `${Math.min(100, d.avgRevisions * 20)}%` }} />
+                          <div className={`h-full ${d.avgRevisions > 2 ? 'bg-[var(--state-held)]' : 'bg-[var(--color-main)]'}`} style={{ width: `${Math.min(100, d.avgRevisions * 20)}%` }} />
                         </div>
                       </div>
                     </td>
-                    <td className={`${tbl.td} text-right tabular-nums ${d.revisionRate > 0.3 ? 'font-semibold text-[var(--state-held)]' : ''}`}>{formatPercent(d.revisionRate)}</td>
-                    <td className={`${tbl.td} text-right max-md:hidden`}>
-                      <span className="font-display text-[16px] font-semibold tabular-nums">{score.toFixed(0)}</span>
+                    <td className={`${tbl.td} text-right`}>
+                      <span className={`ui-pill ${d.revisionRate > 0.3 ? 'is-warn' : d.revisionRate === 0 ? 'is-good' : 'is-muted'} font-display tabular-nums`}>{formatPercent(d.revisionRate)}</span>
+                    </td>
+                    <td className={`${tbl.td} text-right max-md:hidden whitespace-nowrap`}>
+                      <span className={`ui-count !h-7 !text-[15px] font-display ${score >= 80 ? 'is-solid' : score >= 60 ? 'is-warn' : 'is-bad'}`}>{score.toFixed(0)}</span>
                       <span className="text-[13px] text-[var(--color-text-muted)]"> / 100</span>
                     </td>
                   </tr>

@@ -76,7 +76,7 @@ export default function IntelligenceSetupPage() {
         )}
 
         {/* Org-level teaching + health, for the roles that hold them. */}
-        <Card label="Teach the workspace" pad={false} className="overflow-hidden">
+        <Card label={<span className="inline-flex items-center gap-2.5"><span aria-hidden className="ui-icon-tile is-sm is-solid"><GraduationCap className="w-4 h-4" /></span>Teach the workspace</span>} pad={false} className="overflow-hidden">
           <div className="divide-y divide-[var(--color-border)]">
           {isController && (
             <SetupLink href="/admin/ai-instructions" icon={GraduationCap}
@@ -110,12 +110,12 @@ function SetupLink({ href, icon: Icon, title, body }: {
 }) {
   return (
     <Link href={href} className="group flex items-start gap-3 px-4 py-3 hover:bg-[var(--color-surface-2)] transition-colors">
-      <Icon className="w-4 h-4 text-[var(--color-text-muted)] mt-1 shrink-0" />
+      <span aria-hidden className="ui-icon-tile is-sm mt-0.5 group-hover:!bg-[var(--color-main)] group-hover:!text-white transition-colors"><Icon className="w-4 h-4" /></span>
       <div className="flex-1 min-w-0">
         <div className="text-[15px] font-semibold text-[var(--color-text)] group-hover:text-[var(--color-accent-text)]">{title}</div>
         <p className="text-[14px] text-[var(--color-text-muted)]">{body}</p>
       </div>
-      <ArrowRight className="w-4 h-4 text-[var(--color-text-muted)] mt-1 shrink-0" />
+      <ArrowRight className="w-4 h-4 text-[var(--color-text-muted)] group-hover:text-[var(--color-accent-text)] mt-1.5 shrink-0" />
     </Link>
   );
 }

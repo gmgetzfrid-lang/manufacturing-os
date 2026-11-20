@@ -183,7 +183,7 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
                             if (next.has(d.id)) next.delete(d.id); else next.add(d.id);
                             return next;
                           })}
-                          className="accent-[var(--color-text)] w-4 h-4" />
+                          className="accent-[var(--color-main)] w-4 h-4" />
                         <span className="text-[13px] font-bold text-[var(--color-text)] flex-1 truncate">{d.name}</span>
                         {on && (
                           <span className="text-[13px] font-semibold px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] border border-[var(--color-border)] dark:border-[var(--color-border)] text-[var(--color-text)] dark:text-[var(--color-text)]">Pinned</span>
@@ -202,7 +202,7 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
             </div>
             <label className="flex items-start gap-2.5 rounded-lg border border-[var(--color-border)] px-3 py-2.5 cursor-pointer hover:bg-[var(--color-surface-2)] transition-colors">
               <input type="checkbox" checked={clarifyFacets} onChange={(e) => setClarifyFacets(e.target.checked)}
-                className="accent-[var(--color-text)] w-4 h-4 mt-0.5" />
+                className="accent-[var(--color-main)] w-4 h-4 mt-0.5" />
               <span className="min-w-0">
                 <span className="block text-[13px] font-bold text-[var(--color-text)]">Ask before broad answers</span>
                 <span className="block text-[13px] text-[var(--color-text-muted)] mt-0.5">
@@ -214,7 +214,7 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
             </label>
             <label className="mt-1.5 flex items-start gap-2.5 rounded-lg border border-[var(--color-border)] px-3 py-2.5 cursor-pointer hover:bg-[var(--color-surface-2)] transition-colors">
               <input type="checkbox" checked={visionPages} onChange={(e) => setVisionPages(e.target.checked)}
-                className="accent-[var(--color-text)] w-4 h-4 mt-0.5" />
+                className="accent-[var(--color-main)] w-4 h-4 mt-0.5" />
               <span className="min-w-0">
                 <span className="block text-[13px] font-bold text-[var(--color-text)]">Deep read - see pages as printed (ON by default)</span>
                 <span className="block text-[13px] text-[var(--color-text-muted)] mt-0.5">
@@ -227,7 +227,7 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
             </label>
             <label className="mt-1.5 flex items-start gap-2.5 rounded-lg border border-[var(--color-border)] px-3 py-2.5 cursor-pointer hover:bg-[var(--color-surface-2)] transition-colors">
               <input type="checkbox" checked={visionAllPages} onChange={(e) => setVisionAllPages(e.target.checked)}
-                className="accent-[var(--color-text)] w-4 h-4 mt-0.5" />
+                className="accent-[var(--color-main)] w-4 h-4 mt-0.5" />
               <span className="min-w-0">
                 <span className="block text-[13px] font-bold text-[var(--color-text)]">
                   Text doesn&apos;t extract from these files - index every page as an image
@@ -246,7 +246,7 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
             </label>
             <label className="mt-1.5 flex items-start gap-2.5 rounded-lg border border-[var(--color-border)] px-3 py-2.5 cursor-pointer hover:bg-[var(--color-surface-2)] transition-colors">
               <input type="checkbox" checked={drawingIntel} onChange={(e) => setDrawingIntel(e.target.checked)}
-                className="accent-[var(--color-text)] w-4 h-4 mt-0.5" />
+                className="accent-[var(--color-main)] w-4 h-4 mt-0.5" />
               <span className="min-w-0">
                 <span className="block text-[13px] font-bold text-[var(--color-text)]">
                   This is a drawing set - enable Drawing Intelligence
@@ -282,7 +282,7 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
                   <li key={l.id}>
                     <label className="flex items-center gap-2.5 rounded-lg border border-[var(--color-border)] px-3 py-2 cursor-pointer hover:bg-[var(--color-surface-2)] transition-colors">
                       <input type="checkbox" checked={linked.has(l.id)} onChange={() => toggle(l.id)}
-                        className="accent-[var(--color-text)] w-4 h-4" />
+                        className="accent-[var(--color-main)] w-4 h-4" />
                       <span className="text-[13px] font-bold text-[var(--color-text)] flex-1">{l.name}</span>
                       {linked.has(l.id) && (
                         <span className="text-[13px] font-semibold px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] border border-[var(--color-border)] text-[var(--color-text-muted)]">Reference</span>

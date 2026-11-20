@@ -13,12 +13,12 @@ import {
   listTeamMembers, addTeamMember, removeTeamMember, type Team,
 } from "@/lib/teams";
 import { setLibraryOwnerTeam } from "@/lib/ownership";
-import { Plus, Trash2, Loader2, Check, Search, ShieldAlert } from "lucide-react";
+import { Plus, Trash2, Loader2, Check, Search, ShieldAlert, Users } from "lucide-react";
 import { appAlert, appConfirm } from "@/components/providers/DialogProvider";
 import LoadingBlock from "@/components/ui/LoadingBlock";
 import { PageShell } from "@/components/ui/PageShell";
 import { PageHero, PageBody, heroPrimary } from "@/components/ui/PageHero";
-import { tbl, sheet, field, label, btnQuiet, btnIcon, FormRow, Section, Problem } from "@/components/admin/kit";
+import { tbl, sheet, field, label, btnQuiet, btnIcon, FormRow, Section, Problem, Pill } from "@/components/admin/kit";
 import { plural } from "@/components/admin/band";
 
 interface OrgMember { uid: string; display_name: string | null; email: string | null; role: string }
@@ -186,7 +186,7 @@ export default function AdminTeamsPage() {
         <Problem retry={() => void refresh()}>Couldn&apos;t load teams: {loadError}</Problem>
       ) : (
         <>
-          <Section label="Teams">
+          <Section label="Teams" icon={Users} count={teams.length}>
             {creating && (
               <div className={`${sheet} mb-3 p-4 flex flex-wrap items-end gap-3`}>
                 <div className="flex-1 min-w-[220px]">
@@ -226,19 +226,20 @@ export default function AdminTeamsPage() {
                     {teams.map((t) => {
                       const on = selected?.id === t.id;
                       return (
-                        <tr key={t.id} onClick={() => void openTeam(t)} className={`${tbl.tr} cursor-pointer ${on ? "bg-[var(--color-surface-2)]" : ""}`}>
+                        <tr key={t.id} onClick={() => void openTeam(t)} className={`${tbl.tr} cursor-pointer ${on ? "!bg-[var(--color-accent-soft)]" : ""}`}>
                           <td className={`${tbl.td} relative`}>
-                            {on && <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] bg-[var(--color-text)]" />}
+                            {on && <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] bg-[var(--color-main)]" />}
                             <button type="button" onClick={(e) => { e.stopPropagation(); void openTeam(t); }} aria-current={on ? "true" : undefined}
-                              className="inline-flex items-center gap-2.5 text-left font-semibold text-[var(--color-text)] hover:text-[var(--color-accent-text)]">
-                              <span aria-hidden className="w-2.5 h-2.5 rounded-sm shrink-0" style={{ backgroundColor: t.color ?? "#64748b" }} />
+                              className={`inline-flex items-center gap-2.5 text-left font-semibold hover:text-[var(--color-accent-text)] ${on ? "text-[var(--color-accent-text)]" : "text-[var(--color-text)]"}`}>
+                              {/* The team's own color on its tile. */}
+                              <span aria-hidden className="ui-icon-tile is-sm" style={{ backgroundColor: `color-mix(in srgb, ${t.color ?? "#64748b"} 16%, transparent)`, color: t.color ?? "#64748b" }}><Users className="w-4 h-4" /></span>
                               {t.name}
                             </button>
                             <span className="sm:hidden ml-2 text-[13px] text-[var(--color-text-muted)]">{plural(t.memberCount ?? 0, "person", "people")}</span>
                           </td>
-                          <td className={`${tbl.td} max-sm:hidden text-right font-display text-[16px] font-semibold tabular-nums`}>{t.memberCount ?? 0}</td>
-                          <td className={`${tbl.td} max-md:hidden text-[var(--color-text-muted)]`}>{nameOf(t.supervisorUserId) ?? "None"}</td>
-                          <td className={`${tbl.td} max-md:hidden text-right font-display text-[16px] font-semibold tabular-nums`}>{ownedCount(t.id)}</td>
+                          <td className={`${tbl.td} max-sm:hidden text-right`}><span className={`ui-count ${(t.memberCount ?? 0) > 0 ? (on ? "is-solid" : "") : "!bg-[var(--color-surface-2)] !text-[var(--color-text-muted)]"}`}>{t.memberCount ?? 0}</span></td>
+                          <td className={`${tbl.td} max-md:hidden`}>{nameOf(t.supervisorUserId) ?? <Pill>Not set</Pill>}</td>
+                          <td className={`${tbl.td} max-md:hidden text-right`}><span className={`ui-count ${ownedCount(t.id) > 0 ? (on ? "is-solid" : "") : "!bg-[var(--color-surface-2)] !text-[var(--color-text-muted)]"}`}>{ownedCount(t.id)}</span></td>
                           <td className={`${tbl.td} text-right`}>
                             <button type="button" aria-label={`Delete ${t.name}`} onClick={(e) => { e.stopPropagation(); void handleDelete(t); }} className={`${btnIcon} hover:text-[var(--state-overdue)]`}>
                               <Trash2 className="w-4 h-4" />
@@ -258,10 +259,10 @@ export default function AdminTeamsPage() {
           ) : (
             <section className="min-w-0" aria-label={`Team ${selected.name}`}>
               <div className="flex flex-wrap items-center gap-3 mb-2.5">
-                <span aria-hidden className="w-3 h-3 rounded-sm shrink-0" style={{ backgroundColor: selected.color ?? "#64748b" }} />
+                <span aria-hidden className="ui-icon-tile" style={{ backgroundColor: selected.color ?? "var(--color-main)", color: "#ffffff" }}><Users className="w-[18px] h-[18px]" /></span>
                 <input key={selected.id} defaultValue={selected.name} aria-label="Team name" onBlur={(e) => { if (e.target.value.trim() && e.target.value !== selected.name) { void rename(selected, e.target.value.trim()); } }}
                   className="font-display text-[22px] font-semibold text-[var(--color-text)] bg-transparent min-w-0 flex-1 rounded-md px-1.5 -ml-1.5 border border-transparent hover:border-[var(--color-border-strong)] focus:border-[var(--color-main)] focus:bg-[var(--color-surface)] outline-none" />
-                <span className="text-[14px] text-[var(--color-text-muted)]">{plural(teamMemberIds.length, "person", "people")} in this team</span>
+                <span className="inline-flex items-center gap-1.5 text-[14px] text-[var(--color-text-muted)]"><span className="ui-count is-solid">{teamMemberIds.length}</span> {teamMemberIds.length === 1 ? "person" : "people"} in this team</span>
               </div>
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
                 <div className={sheet}>
@@ -280,7 +281,7 @@ export default function AdminTeamsPage() {
                         return (
                           <button key={l.id} type="button" onClick={() => void toggleLibrary(l.id, owned)} disabled={otherTeam} aria-pressed={owned}
                             title={otherTeam ? "Owned by another department" : undefined}
-                            className={`inline-flex items-center gap-1 h-8 px-2.5 rounded-md text-[13px] border transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${owned ? "font-semibold bg-[var(--color-surface)] text-[var(--color-text)] border-[var(--color-text)]" : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border-strong)] hover:bg-[var(--color-surface-2)]"}`}>
+                            className={`ui-tag !h-8 disabled:opacity-50 disabled:!cursor-not-allowed ${owned ? "!bg-[var(--color-main)] !text-white !border-[var(--color-main)]" : "is-more"}`}>
                             {owned && <Check className="w-3.5 h-3.5" />}{l.name}{otherTeam ? " (another team)" : ""}
                           </button>
                         );
@@ -303,14 +304,14 @@ export default function AdminTeamsPage() {
                       const inTeam = teamMemberIds.includes(m.uid);
                       return (
                         <button key={m.uid} type="button" onClick={() => toggleMember(m.uid)} aria-pressed={inTeam} className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-[var(--color-surface-2)] text-left">
-                          <span aria-hidden className={`w-5 h-5 rounded grid place-items-center shrink-0 ${inTeam ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "border border-[var(--color-border-strong)] bg-[var(--color-surface)]"}`}>
+                          <span aria-hidden className={`w-5 h-5 rounded grid place-items-center shrink-0 ${inTeam ? "bg-[var(--color-main)] text-white" : "border border-[var(--color-border-strong)] bg-[var(--color-surface)]"}`}>
                             {inTeam && <Check className="w-3.5 h-3.5" />}
                           </span>
                           <span className="min-w-0 flex-1">
                             <span className="block font-semibold text-[var(--color-text)] truncate">{m.display_name || m.email || m.uid}</span>
                             <span className="block text-[13px] text-[var(--color-text-muted)] truncate">{m.email}</span>
                           </span>
-                          <span className="text-[13px] text-[var(--color-text-muted)] shrink-0">{m.role}</span>
+                          {m.role && <span className="ui-tag shrink-0">{m.role}</span>}
                         </button>
                       );
                     })}

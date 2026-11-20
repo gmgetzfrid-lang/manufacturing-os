@@ -13,10 +13,11 @@ import {
   Building2,
   Plus,
   X,
+  ShieldCheck,
 } from 'lucide-react';
 import { PageShell } from '@/components/ui/PageShell';
 import { PageHero, PageBody, heroPrimary } from '@/components/ui/PageHero';
-import { tbl, StatusTag, Problem, btnIcon, link, shortDate } from '@/components/admin/kit';
+import { tbl, Pill, Problem, btnIcon, link, shortDate } from '@/components/admin/kit';
 import { plural } from '@/components/admin/band';
 import { Button } from '@/components/ui/Button';
 import { Input, Select } from '@/components/ui/Field';
@@ -303,8 +304,8 @@ export default function AdminUsersPage() {
                   const isSelf = !!uid && m.uid === uid;
                   const locked = isSelf || savingRoleId === m.id;
                   const status = m.status === 'active'
-                    ? <StatusTag tone="none">Active</StatusTag>
-                    : <StatusTag tone="warn">{m.status.charAt(0).toUpperCase() + m.status.slice(1)}</StatusTag>;
+                    ? <Pill tone="good">Active</Pill>
+                    : <Pill tone={m.status === 'disabled' || m.status === 'removed' ? 'bad' : 'warn'}>{m.status.charAt(0).toUpperCase() + m.status.slice(1)}</Pill>;
                   return (
                     <tr key={m.id} className={`${tbl.tr} max-sm:grid max-sm:grid-cols-[1fr_auto] max-sm:py-1`}>
                       <td className={`${tbl.td} max-sm:pb-1`}>
@@ -321,11 +322,14 @@ export default function AdminUsersPage() {
                           {memberRoles.map((r) => {
                             const canRemove = !locked && memberRoles.length > 1;
                             return (
+                              // A role is a tag; the primary one (highest access)
+                              // is solid. Its x takes the role off.
                               <span
                                 key={r}
                                 title={r === headline ? 'Primary role (highest access)' : undefined}
-                                className={`inline-flex items-center gap-1 h-7 pl-2 ${canRemove ? 'pr-0.5' : 'pr-2'} rounded-md border text-[13px] ${r === headline ? 'font-semibold text-[var(--color-text)] border-[var(--color-border-strong)] bg-[var(--color-surface)]' : 'text-[var(--color-text-muted)] border-[var(--color-border)] bg-[var(--color-surface-2)]'}`}
+                                className={`ui-tag !h-7 ${canRemove ? '!pr-0.5' : ''} ${r === headline ? '!bg-[var(--color-main)] !text-white !border-[var(--color-main)]' : ''}`}
                               >
+                                {r === headline && <ShieldCheck className="w-3.5 h-3.5" aria-hidden />}
                                 {r}
                                 {canRemove && (
                                   <button
@@ -333,7 +337,7 @@ export default function AdminUsersPage() {
                                     onClick={() => removeRole(m, r)}
                                     title={`Remove ${r}`}
                                     aria-label={`Remove ${r}`}
-                                    className="w-6 h-6 grid place-items-center rounded text-[var(--color-text-muted)] hover:bg-[var(--color-border)] hover:text-[var(--color-text)]"
+                                    className={`w-6 h-6 grid place-items-center rounded transition-colors ${r === headline ? 'hover:bg-white/20' : 'hover:bg-[var(--color-main)] hover:text-white'}`}
                                   >
                                     <X className="w-3.5 h-3.5" />
                                   </button>
@@ -479,7 +483,7 @@ function RoleAddPicker({
 
   // Nothing left that would grant new access — the guardrail in action.
   if (options.length === 0) {
-    return <span className="text-[13px] text-[var(--color-text-muted)] px-1">Full access</span>;
+    return <span className="ui-pill is-good">Full access</span>;
   }
 
   return (
@@ -490,9 +494,9 @@ function RoleAddPicker({
         onClick={() => setOpen((o) => !o)}
         aria-haspopup="menu"
         aria-expanded={open}
-        className="inline-flex items-center gap-1 h-7 px-2 rounded-md text-[13px] font-semibold border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+        className="ui-tag is-more !h-7 hover:!bg-[var(--color-accent-soft)] hover:!text-[var(--color-accent-text)] hover:!border-[var(--color-main)] disabled:opacity-40 disabled:cursor-not-allowed"
       >
-        <Plus className="w-3 h-3" /> Add role
+        <Plus className="w-3.5 h-3.5" /> Add role
       </button>
       {open && !disabled && (
         <>
