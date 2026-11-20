@@ -1,17 +1,15 @@
 "use client";
 
-// /inbox — personal cockpit. Aggregates every meaningful "needs your
-// attention" surface across the product: tickets assigned to me,
-// tickets with unread activity, tickets I'm watching, documents I
-// hold checked out (with stale warnings), holds I opened, markup
-// requests waiting on me, milestones due this week, unread notifs.
-//
-// Designed so a daily-user opens this first thing in the morning and
-// can see everything outstanding without bouncing between five pages.
+// /inbox: everything that waits on you, in one place. The header says how
+// many things need you and backs it up with counts; then the "Needs you"
+// table (the same feed as the bell), suggested next steps, your queue (one
+// ruled table: markups, requests, holds, transmittals, reviews, sign-offs,
+// acknowledgments, access recertifications, milestones) and what you have
+// checked out.
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { Briefcase, AlertOctagon, FileSignature, Lock, Bell, AlertTriangle, MessageSquare, Clock, Flag, ChevronRight, Calendar, Send, XCircle, ShieldCheck, RefreshCw, Download } from "lucide-react";
+import { Send, XCircle, RefreshCw, Download } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { loadInbox, type InboxSnapshot } from "@/lib/inbox";
 import { useTicketNotifications } from "@/hooks/useTicketNotifications";
@@ -22,19 +20,19 @@ import ViewTabs, { HOME_VIEWS } from "@/components/navigation/ViewTabs";
 import LoadingBlock from "@/components/ui/LoadingBlock";
 import { PageShell } from "@/components/ui/PageShell";
 import { PageHero, PageBody, Card as Panel, heroPrimary, heroQuiet } from "@/components/ui/PageHero";
-import { badgeText } from "@/lib/badge";
-import DocThumb from "@/components/documents/DocThumb";
-import DocHoverPreview from "@/components/documents/DocHoverPreview";
 import MyDeskPanel from "@/components/cockpit/MyDeskPanel";
 import { formatAgo, exportInboxCsv } from "@/components/cockpit/CommandDeck";
 import { AttentionFeed, type AttnFilter } from "@/components/cockpit/AttentionFeed";
+import GroupedTable, { type Group } from "@/components/cockpit/GroupedTable";
+import { buildNeeds, needsFacts } from "@/components/cockpit/needsYou";
+import { StatusTag, rowBtn, link, humanDate } from "@/components/cockpit/ui";
 
 export default function InboxPage() {
   const { uid, userEmail, activeRole, activeOrgId } = useRole();
   // Same unified feed the sidebar badge + header bell use, so all three agree.
   const {
     items: attentionItems, count: attentionCount,
-    actionRequiredCount, markRead, markAllRead,
+    markRead, markAllRead,
   } = useTicketNotifications();
   const { showToast } = useToast();
   const [data, setData] = useState<InboxSnapshot | null>(null);
@@ -137,6 +135,10 @@ export default function InboxPage() {
     }
   };
 
+  const needs = buildNeeds(attentionItems);
+  const facts = needsFacts(needs);
+  const lead = needs[0];
+
   if (loading && !data) {
     return (
       <PageShell width="work">
@@ -150,29 +152,149 @@ export default function InboxPage() {
     );
   }
 
-  // One attention count (action-required + unread tickets + notifications) shared
-  // with the sidebar + bell, plus the inbox-only buckets (watching/checkouts/…).
-  const total = attentionCount
-    + (data ? data.ticketsWatching.length + data.myCheckouts.length + data.myOpenHolds.length
-      + data.markupRequestsToMe.length + data.milestonesUpcoming.length + data.transmittalsAwaitingAck.length
-      + data.acknowledgmentsPendingOnMe.length + data.reviewsPendingOnMe.length + data.accessRecertsDue.length : 0);
+  const ago = (iso: unknown) => {
+    const a = formatAgo(typeof iso === "string" ? iso : undefined);
+    return a === "-" ? "–" : a === "now" ? "Just now" : /^\d+[mhd]$/.test(a) ? `${a.replace(/m$/, " min").replace(/h$/, " h").replace(/d$/, " days")} ago` : a;
+  };
+  const ageTag = (d: number | undefined) => {
+    const words = d === 0 ? "Today" : `${d ?? 0} day${d === 1 ? "" : "s"}`;
+    return (d ?? 0) >= 14 ? <StatusTag tone="overdue">{words}</StatusTag> : (d ?? 0) >= 7 ? <StatusTag tone="held">{words}</StatusTag> : <>{words}</>;
+  };
+  const docLink = (href: string, label: string) => (
+    <Link href={href} className="font-display font-semibold tabular-nums text-[var(--color-text)] hover:text-[var(--color-accent-text)]">{label}</Link>
+  );
+  const ticketRows = (list: TicketListItem[]) => list.slice(0, 6).map((t, i) => ({
+    key: t.id ?? `t-${i}`,
+    item: <Link href={`/requests/${t.id ?? ""}`} className="text-[var(--color-text)] hover:text-[var(--color-accent-text)]"><span className="font-display font-semibold tabular-nums mr-2">{t.ticketId ?? "–"}</span>{t.title ?? "Untitled"}</Link>,
+    detail: statusWords(t.status),
+    when: ago(t.lastModified),
+  }));
+  const ticketMore = (n: number) => (n > 6 ? { href: "/requests", label: `See all ${n} in Drafting Requests` } : undefined);
 
-  // The rest of your desk, in words: every bucket that has something in it.
-  const desk = data ? ([
-    [data.myCheckouts.length, "checkout", "checkouts"],
-    [data.markupRequestsToMe.length, "markup request", "markup requests"],
-    [data.reviewsPendingOnMe.length, "sign-off", "sign-offs"],
-    [data.reviewCyclesDueOnMe.length, "periodic review", "periodic reviews"],
-    [data.acknowledgmentsPendingOnMe.length + data.distributionAcksPendingOnMe.length, "acknowledgment", "acknowledgments"],
-    [data.accessRecertsDue.length, "access recertification", "access recertifications"],
-    [data.myOpenHolds.length, "hold", "holds"],
-    [data.transmittalsAwaitingAck.length, "transmittal awaiting receipt", "transmittals awaiting receipt"],
-    [data.milestonesUpcoming.length, "milestone this week", "milestones this week"],
-  ] as Array<[number, string, string]>).filter(([n]) => n > 0).map(([n, one, many]) => `${n} ${n === 1 ? one : many}`) : [];
-  const lead = attentionItems.find((i) => i.actionRequired) ?? attentionItems[0];
-  const answer = actionRequiredCount > 0
-    ? `${actionRequiredCount} ${actionRequiredCount === 1 ? "thing needs" : "things need"} you.`
-    : attentionCount > 0 ? `${attentionCount} new ${attentionCount === 1 ? "update" : "updates"}.` : "Nothing needs you right now.";
+  // Your queue: every bucket with something in it, one ruled table.
+  // (What you have checked out is in its own section below, with Release.)
+  const groups: Group[] = !data ? [] : [
+    {
+      key: "markups", title: "Markup requests for you", count: data.markupRequestsToMe.length,
+      rows: data.markupRequestsToMe.slice(0, 6).map((mr) => ({
+        key: mr.id,
+        item: docLink(mr.libraryId ? `/documents/${mr.libraryId}?doc=${mr.documentId}` : "/documents", mr.documentNumber || mr.documentTitle || mr.documentId.slice(0, 8)),
+        detail: <>{mr.requestedByName ? `From ${mr.requestedByName}` : ""}{mr.message ? `${mr.requestedByName ? ": " : ""}“${mr.message}”` : ""}</>,
+        when: ago(mr.createdAt),
+        action: (
+          <span className="inline-flex gap-2">
+            <button type="button" onClick={() => respondToMarkup(mr, "shared")} disabled={resolvingId === mr.id} className={rowBtn}><Send className="w-3.5 h-3.5" /> Mark shared</button>
+            <button type="button" onClick={() => respondToMarkup(mr, "declined")} disabled={resolvingId === mr.id} className={rowBtn}><XCircle className="w-3.5 h-3.5" /> Decline</button>
+          </span>
+        ),
+      })),
+    },
+    { key: "assigned", title: "Requests assigned to you", count: data.ticketsAssigned.length, rows: ticketRows(data.ticketsAssigned), more: ticketMore(data.ticketsAssigned.length) },
+    { key: "unread", title: "Requests with new activity", count: data.ticketsUnread.length, rows: ticketRows(data.ticketsUnread), more: ticketMore(data.ticketsUnread.length) },
+    { key: "watching", title: "Requests you watch", count: data.ticketsWatching.length, rows: ticketRows(data.ticketsWatching), more: ticketMore(data.ticketsWatching.length) },
+    {
+      key: "reviews", title: "Waiting for your review sign-off", count: data.reviewsPendingOnMe.length,
+      help: "Drafts in review that need your sign-off before they can publish.",
+      rows: data.reviewsPendingOnMe.slice(0, 6).map((r) => ({
+        key: r.signoffId, late: (r.__ageDays ?? 0) >= 14,
+        item: docLink(`/documents/${r.libraryId}?doc=${r.documentId}`, r.label),
+        detail: r.revisionLabel ? `Draft ${r.revisionLabel}` : "Draft",
+        when: ageTag(r.__ageDays),
+      })),
+    },
+    {
+      key: "cycles", title: "Periodic reviews you owe", count: data.reviewCyclesDueOnMe.length,
+      help: "Documents whose scheduled review is due. Open each, check it is still right, and mark it reviewed.",
+      rows: [...data.reviewCyclesDueOnMe].sort((a, b) => Number(b.overdue) - Number(a.overdue) || String(a.nextReviewDate ?? "").localeCompare(String(b.nextReviewDate ?? ""))).slice(0, 6).map((r) => ({
+        key: r.documentId, late: r.overdue,
+        item: docLink(`/documents/${r.libraryId}?doc=${r.documentId}`, r.label),
+        detail: "Periodic review",
+        when: r.overdue
+          ? <StatusTag tone="overdue">Overdue{r.nextReviewDate ? `, due ${humanDate(r.nextReviewDate.slice(0, 10))}` : ""}</StatusTag>
+          : <>Due {r.nextReviewDate ? humanDate(r.nextReviewDate.slice(0, 10)) : "now"}</>,
+      })),
+      more: data.reviewCyclesDueOnMe.length > 6 ? { href: "/register", label: `See all ${data.reviewCyclesDueOnMe.length.toLocaleString()} in the register` } : undefined,
+    },
+    {
+      key: "dist", title: "Confirm you have these revisions", count: data.distributionAcksPendingOnMe.length,
+      help: "Someone sent you a revision and needs your confirmation for the record. Open the document and select “I have this revision”.",
+      rows: data.distributionAcksPendingOnMe.slice(0, 6).map((a) => ({
+        key: a.ackId,
+        item: docLink(a.libraryId ? `/documents/${a.libraryId}?doc=${a.documentId}` : "/documents", a.label),
+        detail: [a.revLabel ? `Rev ${a.revLabel}` : null, a.requestedByName ? `from ${a.requestedByName}` : null].filter(Boolean).join(", "),
+        when: ago(a.requestedAt),
+      })),
+    },
+    {
+      key: "acks", title: "Waiting for your acknowledgment", count: data.acknowledgmentsPendingOnMe.length,
+      help: "Controlled revisions you must confirm you have read and understood. Open each and sign.",
+      rows: data.acknowledgmentsPendingOnMe.slice(0, 6).map((a) => ({
+        key: a.rosterId, late: (a.__ageDays ?? 0) >= 14,
+        item: docLink(`/documents/${a.libraryId}?doc=${a.documentId}`, a.label),
+        detail: a.revisionLabel ? `Rev ${a.revisionLabel}` : "",
+        when: ageTag(a.__ageDays),
+      })),
+    },
+    {
+      key: "recerts", title: "Access recertification due", count: data.accessRecertsDue.length,
+      help: "Check who has access to these libraries and recertify it.",
+      rows: data.accessRecertsDue.slice(0, 6).map((r) => ({
+        key: r.libraryId, late: r.overdue,
+        item: <Link href={`/documents/${r.libraryId}`} className="font-semibold text-[var(--color-text)] hover:text-[var(--color-accent-text)]">{r.name}</Link>,
+        detail: "Access recertification",
+        when: r.overdue
+          ? <StatusTag tone="overdue">Overdue{r.nextDate ? `, due ${humanDate(r.nextDate.slice(0, 10))}` : ""}</StatusTag>
+          : <>Due {r.nextDate ? humanDate(r.nextDate.slice(0, 10)) : "now"}</>,
+      })),
+    },
+    {
+      key: "holds", title: "Holds you opened", count: data.myOpenHolds.length,
+      rows: data.myOpenHolds.slice(0, 6).map((h, i) => ({
+        key: h.id ?? `h-${i}`,
+        item: <StatusTag tone="overdue">{h.reason}</StatusTag>,
+        detail: h.notes ? `“${h.notes}”` : "",
+        when: <>Opened {ago(h.openedAt).toLowerCase()}</>,
+      })),
+      more: { href: "/admin/holds", label: "Hold queue" },
+    },
+    {
+      key: "transmittals", title: "Transmittals waiting for receipt", count: data.transmittalsAwaitingAck.length,
+      help: "Issued to someone who hasn't confirmed receipt yet. Follow up for a clean paper trail.",
+      rows: data.transmittalsAwaitingAck.slice(0, 6).map((t) => ({
+        key: t.id, late: (t.__ageDays ?? 0) >= 14,
+        item: docLink("/transmittals", t.number),
+        detail: t.subject || [t.recipientName, t.recipientCompany].filter(Boolean).join(", ") || `${t.documentCount} doc${t.documentCount === 1 ? "" : "s"}`,
+        when: ageTag(t.__ageDays),
+      })),
+      more: { href: "/transmittals", label: "Transmittal register" },
+    },
+    {
+      key: "late-ms", title: "Milestones past their date", count: data.milestonesOverdue.length,
+      rows: data.milestonesOverdue.slice(0, 6).map((m, i) => ({
+        key: m.id ?? `mo-${i}`, late: true,
+        item: m.projectId ? <Link href={`/projects/${m.projectId}?tab=plan`} className="font-semibold text-[var(--color-text)] hover:text-[var(--color-accent-text)]">{m.name}</Link> : <span className="font-semibold">{m.name}</span>,
+        detail: m.__projectName ?? "",
+        when: <StatusTag tone="overdue">{m.__overdueDays ?? 0} day{m.__overdueDays === 1 ? "" : "s"} late</StatusTag>,
+      })),
+    },
+    {
+      key: "ms", title: "Milestones due this week", count: data.milestonesUpcoming.length,
+      rows: data.milestonesUpcoming.slice(0, 8).map((m, i) => {
+        const d = m.__dueInDays ?? 0;
+        return {
+          key: m.id ?? `m-${i}`,
+          item: m.projectId ? <Link href={`/projects/${m.projectId}?tab=plan`} className="font-semibold text-[var(--color-text)] hover:text-[var(--color-accent-text)]">{m.name}</Link> : <span className="font-semibold">{m.name}</span>,
+          detail: m.__projectName ?? "",
+          when: d <= 2 ? <StatusTag tone="held">{d === 0 ? "Due today" : `In ${d} day${d === 1 ? "" : "s"}`}</StatusTag> : <>In {d} days</>,
+        };
+      }),
+    },
+  ];
+  const deskCount = groups.reduce((n, g) => n + g.count, 0);
+  const nudges = data ? computeNudges(data) : [];
+  const answer = attentionCount > 0
+    ? `${attentionCount.toLocaleString()} ${attentionCount === 1 ? "thing needs" : "things need"} you.`
+    : "Nothing needs you right now.";
 
   return (
     <PageShell width="work">
@@ -180,313 +302,73 @@ export default function InboxPage() {
         kicker="Home · Inbox"
         title={answer}
         sub={error
-          ? <span className="text-amber-300">Your desk didn&apos;t load: {error}</span>
-          : desk.length > 0 ? <>Also on your desk: {desk.join(", ")}.</> : data ? "Nothing else on your desk." : null}
+          ? <span role="alert" className="text-[var(--state-overdue)] font-semibold">Your queue didn&apos;t load: {error}</span>
+          : lead ? <>First up: {lead.ref ? <span className="font-display font-semibold tabular-nums text-[var(--color-text)]">{lead.ref} </span> : null}<span className="text-[var(--color-text)]">{lead.name}</span>.</> : null}
+        facts={[
+          { label: "Overdue", value: facts.overdue, tone: facts.overdue > 0 ? "bad" : undefined },
+          { label: "Waiting on you", value: facts.yourTurn },
+          { label: "Due this week", value: facts.dueSoon, tone: facts.dueSoon > 0 ? "warn" : undefined },
+        ]}
         tools={
           <>
             <button type="button" onClick={() => void refresh()} disabled={loading || refreshing} className={heroQuiet} aria-label="Refresh">
-              <RefreshCw className={`w-4 h-4 ${loading || refreshing ? "animate-spin" : ""}`} /><span className="max-sm:hidden">{loading || refreshing ? "Refreshing…" : "Refresh"}</span>
+              <RefreshCw className={`w-4 h-4 ${loading || refreshing ? "animate-spin" : ""}`} /><span className="max-sm:hidden">{loading || refreshing ? "Refreshing" : "Refresh"}</span>
             </button>
-            {!!data && total > 0 && (
-              <button type="button" onClick={() => exportInboxCsv(data, userEmail ?? undefined)} className={heroQuiet} aria-label="Export" title="Download your desk as a spreadsheet (CSV)">
+            {!!data && (attentionCount + deskCount) > 0 && (
+              <button type="button" onClick={() => exportInboxCsv(data, userEmail ?? undefined)} className={heroQuiet} aria-label="Export" title="Download your queue as a spreadsheet (CSV)">
                 <Download className="w-4 h-4" /><span className="max-sm:hidden">Export</span>
               </button>
             )}
           </>
         }
-        primary={lead ? <Link href={lead.link} onClick={() => { if (lead.notificationId) void markRead(lead.notificationId); }} className={heroPrimary}>Open it</Link> : undefined}
+        primary={lead ? <Link href={lead.link} onClick={() => { if (lead.notificationId) void markRead(lead.notificationId); }} className={heroPrimary}>{attentionCount === 1 ? "Open it" : "Open the first one"}</Link> : undefined}
       >
         <ViewTabs tabs={HOME_VIEWS} variant="dark" />
       </PageHero>
 
       <PageBody>
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-          {/* Left rail (2/3): the brief + the rich attention feed. */}
-          <div className="lg:col-span-2 space-y-4">
-            {/* Rich, filterable, actionable attention feed. */}
-            <AttentionFeed
-              items={filteredAttention}
-              counts={attnCounts}
-              filter={attnFilter}
-              onFilter={setAttnFilter}
-              onMarkRead={(id) => { void markRead(id); }}
-              onMarkAll={handleMarkAll}
-              markingAll={markingAll}
-            />
+        <section aria-label="Needs you">
+          <h2 className="font-display text-[19px] leading-tight font-semibold text-[var(--color-text)] mb-1">Needs you</h2>
+          <AttentionFeed
+            items={filteredAttention}
+            counts={attnCounts}
+            filter={attnFilter}
+            onFilter={setAttnFilter}
+            onMarkRead={(id) => { void markRead(id); }}
+            onMarkAll={handleMarkAll}
+            markingAll={markingAll}
+          />
+        </section>
 
-          </div>
+        {nudges.length > 0 && (
+          <Panel label="Suggested next steps" pad={false}>
+            <ul className="divide-y divide-[var(--color-border)]">
+              {nudges.map((n) => (
+                <li key={n.id} className="px-4 py-3 flex items-baseline gap-3 text-[15px] text-[var(--color-text)]">
+                  <span aria-hidden className={`w-2 h-2 rounded-full shrink-0 translate-y-[-1px] ${n.severity === "high" ? "bg-[var(--state-overdue)]" : "bg-[var(--state-held)]"}`} />
+                  <span className="flex-1 min-w-0">{n.message}</span>
+                  {n.actionLabel && n.href && <Link href={n.href} className={`shrink-0 text-[14px] ${link}`}>{n.actionLabel}</Link>}
+                </li>
+              ))}
+            </ul>
+          </Panel>
+        )}
 
-          {/* Right rail (1/3): what to do next + my desk. */}
-          <div className="space-y-4">
-            {/* Proactive nudges — what to DO, derived from the snapshot. */}
-            {data && (() => {
-              const nudges = computeNudges(data);
-              if (nudges.length === 0) return null;
-              return (
-                <Panel label="Suggested actions">
-                  <ul className="space-y-2">
-                    {nudges.map((n) => (
-                      <li key={n.id} className="text-[13.5px] text-[var(--color-text)] flex items-start gap-2">
-                        <span className={`mt-1.5 w-1.5 h-1.5 rounded-full shrink-0 ${n.severity === "high" ? "bg-rose-500" : "bg-amber-500"}`} />
-                        <span className="flex-1">{n.message}</span>
-                        {n.actionLabel && n.href && (
-                          <Link href={n.href} className="font-bold text-[var(--color-accent-text)] hover:text-[var(--color-accent-hover)] inline-flex items-center gap-0.5 shrink-0">
-                            {n.actionLabel} <ChevronRight className="w-3 h-3" />
-                          </Link>
-                        )}
-                      </li>
-                    ))}
-                  </ul>
-                </Panel>
-              );
-            })()}
+        {deskCount > 0 && (
+          <section aria-label="Your queue">
+            <div className="flex items-center gap-2 mb-2.5 min-h-9">
+              <h2 className="font-display text-[19px] leading-tight font-semibold text-[var(--color-text)]">Your queue</h2>
+              <span className="text-[15px] text-[var(--color-text-muted)] tabular-nums">{deskCount.toLocaleString()}</span>
+            </div>
+            <GroupedTable groups={groups} label="Your queue" />
+          </section>
+        )}
 
-            {activeOrgId && uid && (
-              <MyDeskPanel orgId={activeOrgId} uid={uid} userEmail={userEmail} />
-            )}
-          </div>
-        </div>
-
-        {!data || total === 0 ? null : (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            {data.markupRequestsToMe.length > 0 && (
-              <Card icon={FileSignature} tone="violet" title="Markup requests for you" count={data.markupRequestsToMe.length}>
-                <ul className="space-y-1.5">
-                  {data.markupRequestsToMe.slice(0, 6).map((mr) => (
-                    <li key={mr.id} className="text-xs">
-                      <Link href={mr.libraryId ? `/documents/${mr.libraryId}?doc=${mr.documentId}` : `/documents`} className="text-[var(--color-text)] hover:underline font-bold">
-                        {mr.documentNumber || mr.documentTitle || mr.documentId.slice(0, 8)}
-                      </Link>
-                      {mr.requestedByName && <span className="text-[var(--color-text-muted)]"> · from {mr.requestedByName}</span>}
-                      {mr.message && <div className="text-[var(--color-text-faint)] truncate mt-0.5 italic">&quot;{mr.message}&quot;</div>}
-                      <div className="mt-1 flex items-center gap-1.5">
-                        <button
-                          onClick={() => respondToMarkup(mr, "shared")}
-                          disabled={resolvingId === mr.id}
-                          className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] text-[11px] font-bold disabled:opacity-50"
-                        >
-                          <Send className="w-3 h-3" /> Mark shared
-                        </button>
-                        <button
-                          onClick={() => respondToMarkup(mr, "declined")}
-                          disabled={resolvingId === mr.id}
-                          className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-canvas)] text-[var(--color-text-faint)] text-[11px] font-bold disabled:opacity-50"
-                        >
-                          <XCircle className="w-3 h-3" /> Decline
-                        </button>
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              </Card>
-            )}
-
-            {data.ticketsAssigned.length > 0 && (
-              <Card icon={Briefcase} tone="indigo" title="Tickets assigned to you" count={data.ticketsAssigned.length}>
-                <TicketList tickets={data.ticketsAssigned} />
-              </Card>
-            )}
-
-            {data.ticketsUnread.length > 0 && (
-              <Card icon={MessageSquare} tone="orange" title="Unread activity" count={data.ticketsUnread.length}>
-                <TicketList tickets={data.ticketsUnread} />
-              </Card>
-            )}
-
-            {data.ticketsWatching.length > 0 && (
-              <Card icon={Bell} tone="slate" title="Watching" count={data.ticketsWatching.length}>
-                <TicketList tickets={data.ticketsWatching} />
-              </Card>
-            )}
-
-            {data.myCheckouts.length > 0 && (
-              <Card icon={Lock} tone={data.myStaleCheckouts.length > 0 ? "rose" : "blue"} title="Your active checkouts" count={data.myCheckouts.length}>
-                {data.myStaleCheckouts.length > 0 && (
-                  <div className="mb-2 text-[11px] font-semibold text-rose-700 dark:text-rose-400 border-l-2 border-rose-500 pl-2">
-                    <AlertTriangle className="inline w-3 h-3 mr-1" />
-                    {data.myStaleCheckouts.length} past the expected release. Check in or extend.
-                  </div>
-                )}
-                <ul className="space-y-1.5">
-                  {data.myCheckouts.slice(0, 6).map((s) => (
-                    <li key={s.id} className="text-xs flex items-center gap-2">
-                      <DocHoverPreview documentId={s.documentId}>
-                        <DocThumb documentId={s.documentId} width={28} />
-                      </DocHoverPreview>
-                      <span className="font-mono text-[var(--color-text-muted)]">{s.mode}</span>
-                      <Link href={`/documents/${s.libraryId ?? ""}?doc=${s.documentId}`} className="text-[var(--color-accent-text)] hover:underline font-bold">
-                        {s.documentId.slice(0, 8)}
-                      </Link>
-                      {s.purpose && <span className="text-[var(--color-text-faint)] truncate">- {s.purpose}</span>}
-                      <span className="ml-auto text-[11px] text-[var(--color-text-muted)]">{formatAgo(typeof s.startedAt === "string" ? s.startedAt : undefined)}</span>
-                    </li>
-                  ))}
-                </ul>
-              </Card>
-            )}
-
-            {data.myOpenHolds.length > 0 && (
-              <Card icon={AlertOctagon} tone="rose" title="Holds you opened" count={data.myOpenHolds.length}>
-                <ul className="space-y-1.5">
-                  {data.myOpenHolds.slice(0, 6).map((h) => (
-                    <li key={h.id} className="text-xs">
-                      <span className="font-bold text-rose-700">{h.reason}</span>
-                      {h.notes && <div className="text-[var(--color-text-faint)] truncate mt-0.5 italic">&quot;{h.notes}&quot;</div>}
-                      <div className="text-[11px] text-[var(--color-text-muted)]">opened {formatAgo(typeof h.openedAt === "string" ? h.openedAt : undefined)}</div>
-                    </li>
-                  ))}
-                </ul>
-                <Link href="/admin/holds" className="mt-2 inline-flex items-center gap-1 text-xs font-bold text-[var(--color-accent-text)] hover:underline">
-                  Hold queue <ChevronRight className="w-3 h-3" />
-                </Link>
-              </Card>
-            )}
-
-            {data.transmittalsAwaitingAck.length > 0 && (
-              <Card icon={Send} tone="blue" title="Transmittals awaiting receipt" count={data.transmittalsAwaitingAck.length}>
-                <p className="text-xs text-[var(--color-text-faint)] mb-2">Issued to a recipient who hasn&apos;t acknowledged yet - chase the receipt for a clean paper trail.</p>
-                <ul className="space-y-1.5">
-                  {data.transmittalsAwaitingAck.slice(0, 6).map((t) => (
-                    <li key={t.id} className="text-xs flex items-center gap-2">
-                      <Link href="/transmittals" className="font-mono font-bold text-[var(--color-text)] hover:underline shrink-0">{t.number}</Link>
-                      <span className="text-[var(--color-text-faint)] truncate flex-1">{t.subject || [t.recipientName, t.recipientCompany].filter(Boolean).join(" · ") || `${t.documentCount} doc${t.documentCount === 1 ? "" : "s"}`}</span>
-                      <span className={`text-[11px] font-bold px-1.5 py-0.5 rounded shrink-0 ${
-                        (t.__ageDays ?? 0) >= 14 ? "bg-rose-100 text-rose-800"
-                        : (t.__ageDays ?? 0) >= 7 ? "bg-amber-100 text-amber-800"
-                        : "bg-[var(--color-surface-2)] text-[var(--color-text-faint)]"
-                      }`}>{t.__ageDays === 0 ? "today" : `${t.__ageDays}d`}</span>
-                    </li>
-                  ))}
-                </ul>
-                <Link href="/transmittals" className="mt-2 inline-flex items-center gap-1 text-xs font-bold text-[var(--color-accent-text)] hover:underline">
-                  Transmittal register <ChevronRight className="w-3 h-3" />
-                </Link>
-              </Card>
-            )}
-
-            {data.reviewsPendingOnMe.length > 0 && (
-              <Card icon={ShieldCheck} tone="violet" title="Awaiting your review sign-off" count={data.reviewsPendingOnMe.length}>
-                <p className="text-xs text-[var(--color-text-faint)] mb-2">In-review drafts that need your sign-off before they can publish. Open each and review.</p>
-                <ul className="space-y-1.5">
-                  {data.reviewsPendingOnMe.slice(0, 6).map((r) => (
-                    <li key={r.signoffId} className="text-xs flex items-center gap-2">
-                      <Link href={`/documents/${r.libraryId}?doc=${r.documentId}`} className="font-mono font-bold text-[var(--color-text)] hover:underline shrink-0">{r.label}</Link>
-                      <span className="text-[var(--color-text-faint)] truncate flex-1">{r.revisionLabel ? `Draft ${r.revisionLabel}` : ""}</span>
-                      <span className={`text-[11px] font-bold px-1.5 py-0.5 rounded shrink-0 ${
-                        (r.__ageDays ?? 0) >= 14 ? "bg-rose-100 text-rose-800"
-                        : (r.__ageDays ?? 0) >= 7 ? "bg-amber-100 text-amber-800"
-                        : "bg-[var(--color-surface-2)] text-[var(--color-text-faint)]"
-                      }`}>{r.__ageDays === 0 ? "today" : `${r.__ageDays}d`}</span>
-                    </li>
-                  ))}
-                </ul>
-              </Card>
-            )}
-
-            {data.reviewCyclesDueOnMe.length > 0 && (
-              <Card icon={ShieldCheck} tone="amber" title="Periodic reviews you owe" count={data.reviewCyclesDueOnMe.length}>
-                <p className="text-xs text-[var(--color-text-faint)] mb-2">Documents whose scheduled review is due - open each, verify it&apos;s still correct, and mark it reviewed.</p>
-                <ul className="space-y-1.5">
-                  {data.reviewCyclesDueOnMe.slice(0, 6).map((r) => (
-                    <li key={r.documentId} className="text-xs flex items-center gap-2">
-                      <Link href={`/documents/${r.libraryId}?doc=${r.documentId}`} className="font-mono font-bold text-[var(--color-text)] hover:underline shrink-0">{r.label}</Link>
-                      <span className={`ml-auto text-[11px] font-bold px-1.5 py-0.5 rounded shrink-0 ${r.overdue ? "bg-rose-100 text-rose-800" : "bg-amber-100 text-amber-800"}`}>
-                        {r.overdue ? "overdue" : "due"}{r.nextReviewDate ? ` ${r.nextReviewDate.slice(0, 10)}` : ""}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              </Card>
-            )}
-
-            {data.distributionAcksPendingOnMe.length > 0 && (
-              <Card icon={FileSignature} tone="blue" title="Confirm you have these revisions" count={data.distributionAcksPendingOnMe.length}>
-                <p className="text-xs text-[var(--color-text-faint)] mb-2">Someone distributed a revision to you and needs a one-tap confirmation for the record. Open the document and tap &ldquo;I have this revision&rdquo;.</p>
-                <ul className="space-y-1.5">
-                  {data.distributionAcksPendingOnMe.slice(0, 6).map((a) => (
-                    <li key={a.ackId} className="text-xs flex items-center gap-2">
-                      <Link href={a.libraryId ? `/documents/${a.libraryId}?doc=${a.documentId}` : "#"} className="font-mono font-bold text-[var(--color-text)] hover:underline shrink-0">{a.label}</Link>
-                      <span className="text-[var(--color-text-faint)] truncate flex-1">{a.revLabel ? `Rev ${a.revLabel}` : ""}{a.requestedByName ? ` · from ${a.requestedByName}` : ""}</span>
-                    </li>
-                  ))}
-                </ul>
-              </Card>
-            )}
-
-            {data.accessRecertsDue.length > 0 && (
-              <Card icon={Lock} tone="amber" title="Access recertification due" count={data.accessRecertsDue.length}>
-                <p className="text-xs text-[var(--color-text-faint)] mb-2">Review who has access to these libraries and recertify it.</p>
-                <ul className="space-y-1.5">
-                  {data.accessRecertsDue.slice(0, 6).map((r) => (
-                    <li key={r.libraryId} className="text-xs flex items-center gap-2">
-                      <Link href={`/documents/${r.libraryId}`} className="font-bold text-[var(--color-text)] hover:underline shrink-0 truncate">{r.name}</Link>
-                      <span className="ml-auto text-[11px] font-bold px-1.5 py-0.5 rounded shrink-0 bg-rose-100 text-rose-800">due{r.nextDate ? ` ${r.nextDate.slice(0, 10)}` : ""}</span>
-                    </li>
-                  ))}
-                </ul>
-              </Card>
-            )}
-
-            {data.acknowledgmentsPendingOnMe.length > 0 && (
-              <Card icon={FileSignature} tone="violet" title="Awaiting your acknowledgment" count={data.acknowledgmentsPendingOnMe.length}>
-                <p className="text-xs text-[var(--color-text-faint)] mb-2">Controlled revisions you must confirm you&apos;ve read &amp; understood. Open each and sign.</p>
-                <ul className="space-y-1.5">
-                  {data.acknowledgmentsPendingOnMe.slice(0, 6).map((a) => (
-                    <li key={a.rosterId} className="text-xs flex items-center gap-2">
-                      <Link href={`/documents/${a.libraryId}?doc=${a.documentId}`} className="font-mono font-bold text-[var(--color-text)] hover:underline shrink-0">{a.label}</Link>
-                      <span className="text-[var(--color-text-faint)] truncate flex-1">{a.revisionLabel ? `Rev ${a.revisionLabel}` : ""}</span>
-                      <span className={`text-[11px] font-bold px-1.5 py-0.5 rounded shrink-0 ${
-                        (a.__ageDays ?? 0) >= 14 ? "bg-rose-100 text-rose-800"
-                        : (a.__ageDays ?? 0) >= 7 ? "bg-amber-100 text-amber-800"
-                        : "bg-[var(--color-surface-2)] text-[var(--color-text-faint)]"
-                      }`}>{a.__ageDays === 0 ? "today" : `${a.__ageDays}d`}</span>
-                    </li>
-                  ))}
-                </ul>
-              </Card>
-            )}
-
-            {data.milestonesUpcoming.length > 0 && (
-              <Card icon={Flag} tone="emerald" title="Milestones due this week" count={data.milestonesUpcoming.length}>
-                <ul className="space-y-1.5">
-                  {data.milestonesUpcoming.slice(0, 8).map((m) => (
-                    <li key={m.id} className="text-xs flex items-center gap-2">
-                      <Calendar className="w-3 h-3 text-emerald-600 dark:text-emerald-500 shrink-0" />
-                      <span className="font-bold text-[var(--color-text)] truncate flex-1">{m.name}</span>
-                      <span className={`text-[11px] font-bold px-1.5 py-0.5 rounded ${
-                        (m.__dueInDays ?? 0) === 0 ? "bg-rose-100 text-rose-800"
-                        : (m.__dueInDays ?? 0) <= 2 ? "bg-amber-100 text-amber-800"
-                        : "bg-emerald-100 text-emerald-800"
-                      }`}>
-                        {(m.__dueInDays ?? 0) === 0 ? "today" : `${m.__dueInDays}d`}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              </Card>
-            )}
-          </div>
+        {activeOrgId && uid && (
+          <MyDeskPanel orgId={activeOrgId} uid={uid} userEmail={userEmail} />
         )}
       </PageBody>
     </PageShell>
-  );
-}
-
-interface CardProps {
-  icon: React.ComponentType<{ className?: string }>;
-  title: string;
-  count: number;
-  tone: "indigo" | "orange" | "amber" | "rose" | "blue" | "emerald" | "violet" | "slate";
-  children: React.ReactNode;
-}
-function Card({ icon: Icon, title, count, children }: CardProps) {
-  return (
-    <Panel
-      label={<span className="inline-flex items-center gap-1.5"><Icon className="w-3.5 h-3.5" />{title}</span>}
-      action={<span className="text-[12px] font-bold text-[var(--color-text-muted)] tabular-nums">{badgeText(count)}</span>}
-    >
-      <div className="text-[13.5px] [&_li]:text-[13.5px] [&_p]:text-[13px]">{children}</div>
-    </Panel>
   );
 }
 
@@ -497,29 +379,9 @@ interface TicketListItem {
   status?: string;
   lastModified?: unknown;
 }
-function TicketList({ tickets }: { tickets: TicketListItem[] }) {
-  return (
-    <ul className="divide-y divide-[var(--color-border)] -my-1">
-      {tickets.slice(0, 6).map((t, i) => (
-        <li key={t.id ?? `t-${i}`}>
-          <Link href={`/requests/${t.id ?? ""}`} className="flex items-center gap-3 py-2.5 hover:bg-[var(--color-surface-2)] -mx-2 px-2 rounded-lg">
-            <span className="font-mono text-[12px] text-[var(--color-text-muted)] shrink-0">{t.ticketId ?? "-"}</span>
-            <span className="text-[var(--color-text)] font-semibold truncate flex-1">{t.title ?? "(untitled)"}</span>
-            <span className="max-sm:hidden text-[12px] text-[var(--color-text-muted)] shrink-0">{statusWords(t.status)}</span>
-            <span className="text-[12px] text-[var(--color-text-muted)] shrink-0 tabular-nums"><Clock className="inline w-3 h-3 mr-0.5 -mt-0.5" />{formatAgo(typeof t.lastModified === "string" ? t.lastModified : undefined)}</span>
-          </Link>
-        </li>
-      ))}
-      {tickets.length > 6 && (
-        <li className="pt-2.5"><Link href="/requests" className="text-[13px] font-bold text-[var(--color-accent-text)] hover:text-[var(--color-accent-hover)]">Show {tickets.length - 6} more</Link></li>
-      )}
-    </ul>
-  );
-}
 
 /** "PENDING_IFC" → "Pending IFC". */
 function statusWords(status?: string): string {
-  if (!status) return "-";
+  if (!status) return "–";
   return status.split("_").map((w, i) => (["IFC", "ENG"].includes(w) ? w : i === 0 ? w.charAt(0) + w.slice(1).toLowerCase() : w.toLowerCase())).join(" ");
 }
-

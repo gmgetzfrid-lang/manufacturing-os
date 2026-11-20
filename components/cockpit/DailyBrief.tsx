@@ -9,8 +9,9 @@
 
 import React from "react";
 import Link from "next/link";
-import { Zap, ChevronRight } from "lucide-react";
+import { ChevronRight } from "lucide-react";
 import type { InboxSnapshot } from "@/lib/inbox";
+import { StatusTag, rowBtn } from "./ui";
 
 // Builds the short "what's on your plate" sentences, most-urgent first.
 export function buildBriefSentences(d: InboxSnapshot): string[] {
@@ -94,37 +95,28 @@ export function DailyBrief({ data }: { data: InboxSnapshot }) {
   const next = topAction(data);
 
   const narrative = sentences.length === 0
-    ? "Your queue is clear - nothing needs you right now. Good time to get ahead on something."
+    ? "Your queue is clear. Nothing needs you right now."
     : `You have ${sentences[0]}${sentences.length > 1 ? `, plus ${sentences.length - 1} more thing${sentences.length - 1 === 1 ? "" : "s"} below` : ""}.`;
 
   return (
-    <div className="rounded-2xl border border-[var(--color-border)] shadow-sm p-5 bg-[var(--color-surface-2)]">
-      <div className="flex items-start gap-3">
-        <div className="w-10 h-10 rounded-xl flex items-center justify-center shadow-sm shrink-0 bg-[var(--color-text)]">
-          <Zap className="w-5 h-5 text-[var(--color-surface)]" />
-        </div>
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <h2 className="text-sm font-semibold text-[var(--color-text-muted)]">Daily brief</h2>
-            {urgent > 0 && <span className="inline-flex items-center gap-1 text-[13px] font-semibold text-rose-600 bg-rose-50 border border-rose-100 rounded-full px-2 py-0.5">{urgent} urgent</span>}
-          </div>
-          <p className="text-sm text-[var(--color-text-muted)] mt-1 leading-relaxed">{narrative}</p>
-          {next && (
-            <Link href={next.href} className="inline-flex items-center gap-1.5 mt-3 px-3 py-1.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-xs font-bold hover:bg-[var(--color-surface-2)] transition-colors">
-              <span className="text-[13px] font-semibold opacity-80">Start here</span>
-              {next.label}
-              <ChevronRight className="w-3.5 h-3.5" />
-            </Link>
-          )}
-          {sentences.length > 0 && (
-            <div className="flex flex-wrap gap-1.5 mt-3">
-              {sentences.map((line, i) => (
-                <span key={i} className="inline-flex items-center text-[11px] font-bold text-[var(--color-text-muted)] bg-[var(--color-surface)] border border-[var(--color-border)] rounded-full px-2.5 py-1">{line}</span>
-              ))}
-            </div>
-          )}
-        </div>
+    <div className="min-w-0">
+      <div className="flex items-baseline gap-3 flex-wrap">
+        <p className="min-w-0 flex-1 text-[15px] text-[var(--color-text)] leading-relaxed">{narrative}</p>
+        {urgent > 0 && <StatusTag tone="overdue">{urgent} urgent</StatusTag>}
       </div>
+      {next && (
+        <Link href={next.href} className={`mt-3 ${rowBtn}`}>
+          Start here: {next.label}
+          <ChevronRight className="w-3.5 h-3.5" />
+        </Link>
+      )}
+      {sentences.length > 0 && (
+        <ul className="mt-3 divide-y divide-[var(--color-border)] border-t border-[var(--color-border)]">
+          {sentences.map((line, i) => (
+            <li key={i} className="py-2 text-[14px] text-[var(--color-text)]">{line.charAt(0).toUpperCase() + line.slice(1)}</li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

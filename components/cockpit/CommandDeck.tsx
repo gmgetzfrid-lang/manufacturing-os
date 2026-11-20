@@ -1,22 +1,23 @@
 "use client";
 
-// ─── COMMAND DECK ──────────────────────────────────────────────────────────
-// Home's top card: "Needs you". The page's band above it says how many things
-// wait on you and names the first; this card lists them, the first one on its
-// own line and the rest under "Also open", then a quiet row of the three main
-// tools (requests, documents, projects) with their live counts.
+// ─── NEEDS YOU (Home's first section) ─────────────────────────────────────
+// The page's header says how many things wait on you and backs it up with
+// the counts; this section lists them as a ruled table (item, what to do,
+// status, date, one button), late rows first with a red edge, and closes
+// with a row of the three main tools and their live counts.
 //
-// The customizable dashboard renders <CommandDeck fill /> as a widget (see the
-// `commandDeck` entry in the widget catalog).
+// The customizable dashboard renders it as the `commandDeck` widget.
 
 import React from "react";
-import Link from "next/link";
-import { RefreshCw, Download, ChevronRight } from "lucide-react";
+import { RefreshCw, Download } from "lucide-react";
 import type { InboxSnapshot } from "@/lib/inbox";
 import type { AttentionItem } from "@/hooks/useTicketNotifications";
 import { useNotificationCenter } from "@/components/notifications/NotificationCenter";
+import { buildNeeds } from "./needsYou";
+import NeedsTable from "./NeedsTable";
+import { sheet, iconBtn, rowBtn, FactRow, humanTime } from "./ui";
 
-// Headline counts for the three tools in the card's last row. Fetched
+// Headline counts for the three tools in the section's last row. Fetched
 // separately from the personal inbox snapshot (org-wide numbers), each guarded
 // so a missing table/column degrades that one stat to 0 instead of blanking it.
 export interface PillarStats {
@@ -40,8 +41,11 @@ export interface CommandDeckProps {
   canExport: boolean;
   onRefresh: () => void;
   onExport: () => void;
-  /** When true, the card fills its parent's height (and scrolls inside if
-   *  cramped). Used while the dashboard is being arranged. */
+  /** Opening a row (marks its notification read). */
+  onOpenItem?: (notificationId: string) => void;
+  /** When true, the section fills its parent's height (and scrolls inside
+   *  if cramped), and its tools step aside for the editor's. Used while the
+   *  dashboard is being arranged. */
   fill?: boolean;
 }
 
@@ -56,99 +60,62 @@ export function shortDate(iso: string | undefined): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "";
   const sameYear = d.getFullYear() === new Date().getFullYear();
-  return d.toLocaleDateString(undefined, sameYear ? { month: "short", day: "numeric" } : { month: "short", day: "numeric", year: "numeric" });
+  return d.toLocaleDateString("en-US", sameYear ? { month: "short", day: "numeric" } : { month: "short", day: "numeric", year: "numeric" });
 }
 
-const SHOWN = 4;
+const SHOWN = 8;
 
 export function CommandDeck({
-  data, pillars, attentionCount, actionCount, items = [], focus,
-  lastLoadedAt, refreshing, canExport, onRefresh, onExport, fill = false,
+  data, pillars, items = [], focus,
+  lastLoadedAt, refreshing, canExport, onRefresh, onExport, onOpenItem, fill = false,
 }: CommandDeckProps) {
   const stale = data?.myStaleCheckouts.length ?? 0;
   const { open: openCenter } = useNotificationCenter();
-  const first = items.find((i) => i.actionRequired) ?? items[0];
-  const rest = items.filter((i) => i !== first);
-  const more = Math.max(0, rest.length - (SHOWN - 1));
-  const iconBtn = "h-8 w-8 inline-flex items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40";
-  const tool = "flex items-center gap-2 min-w-0 py-2.5 text-[13px] text-[var(--color-text)] hover:text-[var(--color-accent-text)]";
-
-  const row = (it: AttentionItem, lead: boolean) => {
-    const [ref, rest] = it.source === "ticket" ? splitRef(it.title) : [null, it.title];
-    return (
-      <Link key={it.key} href={it.link}
-        className={`group flex items-center gap-3 sm:gap-4 border-t border-[var(--color-border)] ${lead ? "py-3.5" : "py-3"} text-[var(--color-text)] hover:bg-[var(--color-surface-2)] -mx-4 sm:-mx-5 px-4 sm:px-5`}>
-        <span className="min-w-0 flex-1 flex flex-col sm:flex-row sm:items-center gap-x-4 gap-y-0.5">
-          {ref && <span className="sm:w-36 shrink-0 font-mono text-[12px] font-semibold text-[var(--color-text-muted)] truncate">{ref}</span>}
-          <span className={`min-w-0 flex-1 truncate text-[14px] ${lead ? "font-semibold" : ""}`}>
-            {rest || it.title}
-            {it.subtitle && <span className="font-normal text-[var(--color-text-muted)]"> · {it.subtitle}</span>}
-          </span>
-        </span>
-        {it.when && <span className={`shrink-0 text-[12px] ${it.actionRequired ? "font-bold text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>{shortDate(it.when)}</span>}
-        <ChevronRight className="w-4 h-4 text-[var(--color-text-faint)] shrink-0" />
-      </Link>
-    );
-  };
+  const rows = React.useMemo(() => buildNeeds(items), [items]);
+  const more = Math.max(0, rows.length - SHOWN);
+  const n = (v: number | undefined) => (pillars.loaded ? (v ?? 0).toLocaleString() : "–");
 
   return (
-    <section aria-label="Needs you"
-      className={`rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] text-[var(--color-text)] ${fill ? "h-full flex flex-col" : ""}`}>
-      <div className={`p-4 sm:p-5 ${fill ? "flex-1 min-h-0 overflow-y-auto" : ""}`}>
-        <div className="flex items-center gap-2">
-          <h2 className="text-[13px] font-semibold text-[var(--color-text-muted)]">
-            {first ? (actionCount > 0 && actionCount < attentionCount ? `Needs you · ${actionCount} to act on` : "Needs you") : "Nothing waiting"}
-          </h2>
-          <div className="flex-1" />
-          {items.length > 0 && (
-            <button type="button" onClick={() => openCenter("all")}
-              className="h-8 px-2.5 rounded-lg text-[12.5px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
-              Show all
-            </button>
-          )}
-          <button type="button" onClick={onRefresh} disabled={refreshing} aria-label="Refresh" title={lastLoadedAt ? `Updated ${formatAgo(new Date(lastLoadedAt).toISOString())}` : "Refresh"} className={iconBtn}>
-            <RefreshCw className={`w-4 h-4 ${refreshing ? "animate-spin" : ""}`} />
+    <section aria-label="Needs you" className={`min-w-0 ${fill ? "h-full flex flex-col" : ""}`}>
+      <div className="flex items-center gap-2 mb-2.5 min-h-9">
+        <h2 className="font-display text-[19px] leading-tight font-semibold text-[var(--color-text)]">Needs you</h2>
+        {rows.length > 0 && <span className="text-[15px] text-[var(--color-text-muted)] tabular-nums">{rows.length.toLocaleString()}</span>}
+        <div className="flex-1" />
+        {!fill && (<>
+        <button type="button" onClick={onRefresh} disabled={refreshing} aria-label="Refresh" title={lastLoadedAt ? `Updated ${humanTime(new Date(lastLoadedAt).toISOString())}` : "Refresh"} className={iconBtn}>
+          <RefreshCw className={`w-4 h-4 ${refreshing ? "animate-spin" : ""}`} />
+        </button>
+        <button type="button" onClick={onExport} disabled={!canExport} aria-label="Export" title="Download what needs you as a spreadsheet (CSV)" className={iconBtn}>
+          <Download className="w-4 h-4" />
+        </button>
+        {rows.length > 0 && (
+          <button type="button" onClick={() => openCenter("all")} className={rowBtn}>
+            {more > 0 ? `Show all ${rows.length.toLocaleString()}` : "Show all"}
           </button>
-          <button type="button" onClick={onExport} disabled={!canExport} aria-label="Export" title="Download what needs you as a spreadsheet (CSV)" className={iconBtn}>
-            <Download className="w-4 h-4" />
-          </button>
-        </div>
+        )}
+        </>)}
+      </div>
 
-        {first ? (
-          <div className="mt-2">
-            {row(first, true)}
-            {rest.length > 0 && (
-              <>
-                <div className="mt-3 mb-1 text-[13px] font-semibold text-[var(--color-text-muted)]">Also open</div>
-                {rest.slice(0, SHOWN - 1).map((it) => row(it, false))}
-                {more > 0 && (
-                  <button type="button" onClick={() => openCenter("all")}
-                    className="w-full text-left border-t border-[var(--color-border)] pt-2.5 pb-1 text-[13px] font-bold text-[var(--color-accent-text)] hover:text-[var(--color-accent-hover)]">
-                    Show {more} more
-                  </button>
-                )}
-              </>
-            )}
-          </div>
+      <div className={`${sheet} ${fill ? "flex-1 min-h-0 overflow-y-auto" : ""}`}>
+        {rows.length > 0 ? (
+          <NeedsTable rows={rows} limit={SHOWN} onOpen={(r) => { if (r.notificationId) onOpenItem?.(r.notificationId); }} />
         ) : (
-          <p className="mt-2 text-[14px] text-[var(--color-text-muted)]">
+          <p className="px-4 py-4 text-[15px] text-[var(--color-text-muted)]">
             {focus ?? "No requests, reviews or alerts are waiting on you."}
           </p>
         )}
-
+        {more > 0 && (
+          <div className="border-t border-[var(--color-border)] px-4 py-2.5 text-[13px] text-[var(--color-text-muted)]">
+            Showing {SHOWN} of {rows.length.toLocaleString()}, late ones first.
+          </div>
+        )}
         {/* The three main tools, with their live counts. */}
-        <div className="mt-3 pt-1 border-t border-[var(--color-border)] grid grid-cols-1 sm:grid-cols-3 sm:gap-4">
-          <Link href="/requests" className={tool}>
-            <span className="min-w-0 truncate"><b>Drafting requests</b> <span className="text-[var(--color-text-muted)]">{pillars.loaded ? `${pillars.openRequests} open` : ""}{data ? `${pillars.loaded ? ", " : ""}${data.ticketsAssigned.length} yours` : ""}</span></span>
-          </Link>
-          <Link href="/checkouts" className={tool}>
-            <span className="min-w-0 truncate"><b>Documents</b> <span className="text-[var(--color-text-muted)]">{pillars.loaded ? `${pillars.lockedDocs} checked out` : ""}{data ? `${pillars.loaded ? ", " : ""}${data.myCheckouts.length} by you` : ""}</span>
-              {stale > 0 && <span className="ml-1 font-bold text-rose-700 dark:text-rose-400">{stale} past due</span>}</span>
-          </Link>
-          <Link href="/projects" className={tool}>
-            <span className="min-w-0 truncate"><b>Projects</b> <span className="text-[var(--color-text-muted)]">{pillars.loaded ? `${pillars.activeProjects} active` : ""}{data && data.milestonesUpcoming.length ? `, ${data.milestonesUpcoming.length} milestones this week` : ""}</span></span>
-          </Link>
-        </div>
+        <FactRow className="border-t border-[var(--color-border-strong)] bg-[var(--color-surface-2)]/50" cells={[
+          { label: "Open drafting requests", value: n(pillars.openRequests), href: "/requests", note: data ? `${data.ticketsAssigned.length} yours` : undefined },
+          { label: "Documents checked out", value: n(pillars.lockedDocs), href: "/checkouts", tone: stale > 0 ? "bad" : undefined,
+            note: data ? (stale > 0 ? `${stale} past due` : `${data.myCheckouts.length} by you`) : undefined },
+          { label: "Active projects", value: n(pillars.activeProjects), href: "/projects", note: data && data.milestonesUpcoming.length ? `${data.milestonesUpcoming.length} milestones this week` : undefined },
+        ]} />
       </div>
     </section>
   );
@@ -164,9 +131,9 @@ export function roleFocus(role: string | null | undefined, d: InboxSnapshot): st
   const markups = d.markupRequestsToMe.length;
   const milestones = d.milestonesUpcoming.length;
   if (r.includes("draft")) {
-    if (assigned > 0) return `You have ${assigned} request${assigned === 1 ? "" : "s"} assigned - drafting is your lane today.`;
+    if (assigned > 0) return `You have ${assigned} request${assigned === 1 ? "" : "s"} assigned to you.`;
     if (markups > 0) return `${markups} markup request${markups === 1 ? "" : "s"} waiting on you.`;
-    return "No requests assigned - check the pool for work to claim.";
+    return "No requests assigned to you. The unassigned ones are on Drafting Requests.";
   }
   if (r.includes("engineer")) {
     if (assigned > 0) return `${assigned} item${assigned === 1 ? "" : "s"} need your engineering review or approval.`;
@@ -178,7 +145,7 @@ export function roleFocus(role: string | null | undefined, d: InboxSnapshot): st
     return null;
   }
   // Requester / other
-  if (assigned > 0 || d.ticketsUnread.length > 0) return `Track your requests - ${d.ticketsUnread.length} ha${d.ticketsUnread.length === 1 ? "s" : "ve"} new activity.`;
+  if (assigned > 0 || d.ticketsUnread.length > 0) return `${d.ticketsUnread.length} of your requests ha${d.ticketsUnread.length === 1 ? "s" : "ve"} new activity.`;
   return null;
 }
 
@@ -191,7 +158,7 @@ export function formatAgo(iso: string | undefined): string {
     if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m`;
     if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h`;
     if (diff < 7 * 86_400_000) return `${Math.floor(diff / 86_400_000)}d`;
-    return d.toLocaleDateString();
+    return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
   } catch {
     return "";
   }

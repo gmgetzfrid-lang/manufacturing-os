@@ -20,8 +20,8 @@ import Link from "next/link";
 import {
   FileStack, MailPlus, Inbox as InboxIcon, Briefcase, Activity as ActivityIcon,
   Tag, Users, BarChart3, ScrollText, ChevronRight, Settings2,
-  Plus, Zap, Rocket, Loader2, Bell, Layers, FileSignature, Send,
-  XCircle, AlertTriangle, AlertOctagon, Lock, Flag, Calendar, LayoutDashboard,
+  Plus, Zap, Rocket, Loader2, Bell, Layers, Send,
+  XCircle, LayoutDashboard,
   Sparkles,
   type LucideIcon, History,
 } from "lucide-react";
@@ -39,7 +39,8 @@ import { AttentionFeed, type AttnFilter } from "@/components/cockpit/AttentionFe
 import {
   CommandDeck, roleFocus, exportInboxCsv, formatAgo, type PillarStats,
 } from "@/components/cockpit/CommandDeck";
-import { MiniBars, TrendChip, dayBuckets, vizCat } from "./viz";
+import { MiniBars, TrendChip, dayBuckets } from "./viz";
+import { FactRow, StatusTag, rowBtn, link } from "@/components/cockpit/ui";
 import AskKnowledgeBody from "./bodies/AskKnowledgeBody";
 import DocBrowserBody from "./bodies/DocBrowserBody";
 import {
@@ -101,12 +102,20 @@ export interface WidgetMeta {
 }
 
 // ─── small shared bits (the rest live in ./kit) ───────────────────
-// A count in a sentence, not a big number on a tile: "3 requests".
-function Stat({ value, label }: { value: React.ReactNode; label: string }) {
+/** A suggested action: a dot in its status color, the words, and a link. */
+function NudgeList({ nudges }: { nudges: ReturnType<typeof computeNudges> }) {
   return (
-    <div className="text-[13px] text-[var(--color-text-muted)]">
-      <span className="text-[14px] font-bold text-[var(--color-text)] tabular-nums">{value}</span> {label.toLowerCase()}
-    </div>
+    <ul className="divide-y divide-[var(--color-border)]">
+      {nudges.map((n) => (
+        <li key={n.id} className="py-2.5 flex items-baseline gap-2.5 text-[15px] text-[var(--color-text)]">
+          <span aria-hidden className={`w-2 h-2 rounded-full shrink-0 translate-y-[-1px] ${n.severity === "high" ? "bg-[var(--state-overdue)]" : "bg-[var(--state-held)]"}`} />
+          <span className="flex-1 min-w-0">{n.message}</span>
+          {n.actionLabel && n.href && (
+            <Link href={n.href} className={`shrink-0 text-[14px] ${link}`}>{n.actionLabel}</Link>
+          )}
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -136,42 +145,24 @@ function InboxBody() {
   const buckets = dayBuckets(data?.notifDates ?? [], 14);
   const wk = weekSplit(data?.notifDates ?? []);
   return (
-    // FILL + SCROLL: on phones the card height is fixed, and without the
-    // scroll chain overflow-hidden clipped the last DeckLink unreachable.
-    <div className={`${FILL} ${SCROLL}`}>
-      <div className="grid grid-cols-3 gap-2 shrink-0">
-        <Stat value={data?.openRequests ?? 0} label="Requests" />
-        <Stat value={data?.lockedDocs ?? 0} label="Checked out" />
-        <Stat value={data?.activeProjects ?? 0} label="Projects" />
-      </div>
-      {/* Your notification pulse — is this week louder than last? */}
+    // FILL + SCROLL: on phones the height is capped; the list scrolls.
+    <div className="-m-4 p-4 flex-1 min-h-0 overflow-y-auto flex flex-col">
+      <FactRow className="-mx-4 -mt-4 border-b border-[var(--color-border)]" cells={[
+        { label: "Open requests", value: (data?.openRequests ?? 0).toLocaleString(), href: "/requests" },
+        { label: "Checked out", value: (data?.lockedDocs ?? 0).toLocaleString(), href: "/documents" },
+        { label: "Active projects", value: (data?.activeProjects ?? 0).toLocaleString(), href: "/projects" },
+      ]} />
+      {/* Your notifications over two weeks. */}
       <div className="mt-4 shrink-0">
-        <div className="flex items-center justify-between mb-1.5">
-          <span className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">Your notifications · 14 days</span>
-          <TrendChip current={wk.cur} previous={wk.prev} />
+        <div className="flex items-baseline justify-between gap-3 mb-1.5">
+          <span className="text-[13px] text-[var(--color-text-muted)]">Your notifications, last 14 days</span>
+          <TrendChip current={wk.cur} previous={wk.prev} what="notifications" />
         </div>
         {sum(buckets.counts) > 0
           ? <MiniBars values={buckets.counts} labels={buckets.labels} height={36} />
-          : <Quiet label="Nothing has pinged you in 14 days - enjoy it." />}
-      </div>
-      <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-2">
-        <DeckLink href="/requests" label="Requests" sub="Open portal" />
-        <DeckLink href="/documents" label="Documents" sub="Browse & lock" />
-        <DeckLink href="/projects" label="Projects" sub="Work packages" />
+          : <Quiet label="Nothing has notified you in 14 days." />}
       </div>
     </div>
-  );
-}
-
-function DeckLink({ href, label, sub }: { href: string; label: string; sub: string }) {
-  return (
-    <Link href={href} className="group flex items-center justify-between gap-2 px-3 py-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] hover:border-[var(--color-accent)] transition-colors">
-      <div className="min-w-0">
-        <div className="text-[13px] font-bold text-[var(--color-text)] truncate group-hover:text-[var(--color-text)] transition-colors">{label}</div>
-        <div className="text-[11px] text-[var(--color-text-muted)] truncate">{sub}</div>
-      </div>
-      <ChevronRight className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
-    </Link>
   );
 }
 
@@ -188,23 +179,8 @@ function DailyBriefBody() {
       <DailyBrief data={snap} />
       {nudges.length > 0 && (
         <div className="border-t border-[var(--color-border)] pt-3">
-          <div className="flex items-center gap-1.5 mb-2">
-            <Zap className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
-            <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Suggested actions</span>
-          </div>
-          <ul className="space-y-1.5">
-            {nudges.map((n) => (
-              <li key={n.id} className="text-[13px] text-[var(--color-text)] flex items-start gap-2">
-                <span className={`mt-1.5 w-1.5 h-1.5 rounded-full shrink-0 ${n.severity === "high" ? "bg-rose-500" : "bg-amber-500"}`} />
-                <span className="flex-1">{n.message}</span>
-                {n.actionLabel && n.href && (
-                  <Link href={n.href} className="font-bold text-[var(--color-accent-text)] hover:text-[var(--color-accent-hover)] inline-flex items-center gap-0.5 shrink-0">
-                    {n.actionLabel} <ChevronRight className="w-3 h-3" />
-                  </Link>
-                )}
-              </li>
-            ))}
-          </ul>
+          <h3 className="text-[15px] font-semibold text-[var(--color-text)]">Suggested actions</h3>
+          <NudgeList nudges={nudges} />
         </div>
       )}
     </div>
@@ -214,7 +190,7 @@ function DailyBriefBody() {
 // ── Quick Launch widget — the shared cockpit launcher.
 function QuickLaunchBody() {
   return (
-    <div className={`${FILL} ${SCROLL}`}>
+    <div className="flex-1 min-h-0 overflow-y-auto -m-4">
       <QuickLaunch />
     </div>
   );
@@ -274,7 +250,8 @@ function AttentionBody() {
   if (loading && items.length === 0) return <Skeleton />;
 
   return (
-    <div className={`${FILL} ${SCROLL}`}>
+    // Edge to edge in the sheet: the rows carry their own side padding.
+    <div className="flex-1 min-h-0 overflow-y-auto -m-4">
       <AttentionFeed
         plain
         items={filtered}
@@ -297,25 +274,11 @@ function SuggestedActionsBody() {
   if (!snap) return <BodyShell>Couldn&apos;t load suggestions right now.</BodyShell>;
   const nudges = computeNudges(snap);
   if (nudges.length === 0) {
-    return <BodyShell>Nothing to suggest - you&apos;re ahead of the work. Nice.</BodyShell>;
+    return <BodyShell>Nothing to suggest. You&apos;re ahead of the work.</BodyShell>;
   }
   return (
-    <div className={`${FILL}`}>
-      <div className={SCROLL}>
-        <ul className="space-y-1.5">
-          {nudges.map((n) => (
-            <li key={n.id} className="text-xs text-[var(--color-text-faint)] flex items-start gap-2">
-              <span className={`mt-1.5 w-1.5 h-1.5 rounded-full shrink-0 ${n.severity === "high" ? "bg-rose-500" : "bg-amber-500"}`} />
-              <span className="flex-1">{n.message}</span>
-              {n.actionLabel && n.href && (
-                <Link href={n.href} className="font-bold text-[var(--color-accent-text)] hover:text-[var(--color-accent-hover)] inline-flex items-center gap-0.5 shrink-0">
-                  {n.actionLabel} <ChevronRight className="w-3 h-3" />
-                </Link>
-              )}
-            </li>
-          ))}
-        </ul>
-      </div>
+    <div className={`${FILL} ${SCROLL} -my-2.5`}>
+      <NudgeList nudges={nudges} />
     </div>
   );
 }
@@ -325,35 +288,27 @@ function SuggestedActionsBody() {
 // stale warning), holds I opened, transmittals awaiting receipt, and milestones
 // due this week. Interactive markup respond is preserved via resolveMarkupRequest.
 function WidgetCard({
-  icon: Icon, title, count, tone, children,
+  title, count, children,
 }: {
-  icon: LucideIcon;
+  icon?: LucideIcon;
   title: string;
   count: number;
-  tone: "indigo" | "orange" | "amber" | "rose" | "blue" | "emerald" | "violet" | "slate";
+  tone?: string;
   children: React.ReactNode;
 }) {
-  // Neutral cards; only a problem (rose) or a warning (amber) gets a thin
-  // left edge, so status keeps its one meaning.
-  const edge = tone === "rose" ? "border-l-2 border-l-rose-500" : tone === "amber" ? "border-l-2 border-l-amber-500" : "";
-  const iconTones: Record<string, string> = {
-    indigo: "text-[var(--color-text-muted)]", orange: "text-[var(--color-text-muted)]", amber: "text-amber-700 dark:text-amber-400",
-    rose: "text-rose-700 dark:text-rose-400", blue: "text-[var(--color-text-muted)]", emerald: "text-[var(--color-text-muted)]",
-    violet: "text-[var(--color-text-muted)]", slate: "text-[var(--color-text-faint)]",
-  };
   return (
-    <div className={`border-t border-[var(--color-border)] pt-3 ${edge ? `${edge} pl-3` : ""}`}>
-      <div className="flex items-center justify-between mb-2">
-        <h2 className="text-[13px] font-semibold text-[var(--color-text-muted)] inline-flex items-center gap-1.5">
-          <Icon className={`w-3.5 h-3.5 ${iconTones[tone]}`} />
-          {title}
-        </h2>
-        <span className="text-[12px] font-bold text-[var(--color-text-muted)] tabular-nums">{badgeText(count)}</span>
+    <section className="pt-1">
+      <div className="flex items-baseline gap-2 pb-1.5 border-b border-[var(--color-border-strong)]">
+        <h3 className="text-[15px] font-semibold text-[var(--color-text)]">{title}</h3>
+        <span className="font-display text-[15px] text-[var(--color-text-muted)] tabular-nums">{badgeText(count)}</span>
       </div>
       {children}
-    </div>
+    </section>
   );
 }
+
+const ageTone = (d: number | undefined): "overdue" | "held" | null => ((d ?? 0) >= 14 ? "overdue" : (d ?? 0) >= 7 ? "held" : null);
+const ageWords = (d: number | undefined) => (d === 0 ? "Today" : `${d ?? 0} days`);
 
 function OutstandingBody() {
   const { uid, userEmail, activeRole, activeOrgId } = useRole();
@@ -393,39 +348,34 @@ function OutstandingBody() {
     + snap.myOpenHolds.length + snap.transmittalsAwaitingAck.length + snap.milestonesUpcoming.length;
 
   if (total === 0) {
-    return <BodyShell>Nothing outstanding - no markups, checkouts, holds, transmittals or milestones pending.</BodyShell>;
+    return <BodyShell>Nothing outstanding: no markups, checkouts, holds, transmittals or milestones waiting.</BodyShell>;
   }
+  const row = "py-2.5 flex items-center gap-3 min-w-0 text-[15px]";
 
   return (
     <div className={FILL}>
-      <div className={`space-y-3 ${SCROLL}`}>
+      <div className={`space-y-5 ${SCROLL}`}>
         {snap.markupRequestsToMe.length > 0 && (
-          <WidgetCard icon={FileSignature} tone="violet" title="Markup requests for you" count={snap.markupRequestsToMe.length}>
-            {resolveError && <p role="alert" className="mb-1.5 text-[11px] font-semibold text-red-700 dark:text-red-400">{resolveError}</p>}
-            <ul className="space-y-1.5">
+          <WidgetCard title="Markup requests for you" count={snap.markupRequestsToMe.length}>
+            {resolveError && <p role="alert" className="mt-2 text-[13px] font-semibold text-[var(--state-overdue)]">{resolveError}</p>}
+            <ul className="divide-y divide-[var(--color-border)]">
               {snap.markupRequestsToMe.slice(0, 6).map((mr) => (
-                <li key={mr.id} className="text-xs">
-                  <Link href="/documents" className="text-[var(--color-accent-text)] hover:underline font-bold">
-                    {mr.documentNumber || mr.documentTitle || mr.documentId.slice(0, 8)}
-                  </Link>
-                  {mr.requestedByName && <span className="text-[var(--color-text-muted)]"> · from {mr.requestedByName}</span>}
-                  {mr.message && <div className="text-[var(--color-text-faint)] truncate mt-0.5 italic">&quot;{mr.message}&quot;</div>}
-                  <div className="mt-1 flex items-center gap-2.5 sm:gap-1.5">
-                    <button
-                      onClick={() => respondToMarkup(mr, "shared")}
-                      disabled={resolvingId === mr.id}
-                      className="inline-flex items-center gap-1 px-2.5 py-2 sm:py-1 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] text-[11px] font-bold disabled:opacity-50"
-                    >
-                      <Send className="w-3 h-3" /> Mark shared
+                <li key={mr.id} className={`${row} flex-wrap`}>
+                  <span className="min-w-0 flex-1">
+                    <Link href={mr.libraryId ? `/documents/${mr.libraryId}?doc=${mr.documentId}` : "/documents"} className="font-display font-semibold tabular-nums text-[var(--color-text)] hover:text-[var(--color-accent-text)]">
+                      {mr.documentNumber || mr.documentTitle || mr.documentId.slice(0, 8)}
+                    </Link>
+                    {mr.requestedByName && <span className="text-[var(--color-text-muted)]"> from {mr.requestedByName}</span>}
+                    {mr.message && <span className="block text-[13px] text-[var(--color-text-muted)] truncate">&ldquo;{mr.message}&rdquo;</span>}
+                  </span>
+                  <span className="shrink-0 flex items-center gap-2">
+                    <button type="button" onClick={() => respondToMarkup(mr, "shared")} disabled={resolvingId === mr.id} className={rowBtn}>
+                      <Send className="w-3.5 h-3.5" /> Mark shared
                     </button>
-                    <button
-                      onClick={() => respondToMarkup(mr, "declined")}
-                      disabled={resolvingId === mr.id}
-                      className="inline-flex items-center gap-1 px-2.5 py-2 sm:py-1 rounded-md bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-canvas)] text-[var(--color-text-faint)] text-[11px] font-bold disabled:opacity-50"
-                    >
-                      <XCircle className="w-3 h-3" /> Decline
+                    <button type="button" onClick={() => respondToMarkup(mr, "declined")} disabled={resolvingId === mr.id} className={rowBtn}>
+                      <XCircle className="w-3.5 h-3.5" /> Decline
                     </button>
-                  </div>
+                  </span>
                 </li>
               ))}
             </ul>
@@ -433,25 +383,21 @@ function OutstandingBody() {
         )}
 
         {snap.myCheckouts.length > 0 && (
-          <WidgetCard icon={Lock} tone={snap.myStaleCheckouts.length > 0 ? "rose" : "blue"} title="Your active checkouts" count={snap.myCheckouts.length}>
+          <WidgetCard title="Your checkouts" count={snap.myCheckouts.length}>
             {snap.myStaleCheckouts.length > 0 && (
-              <div className="mb-2 text-[11px] font-semibold text-rose-700 dark:text-rose-400 border-l-2 border-rose-500 pl-2">
-                <AlertTriangle className="inline w-3 h-3 mr-1" />
-                {snap.myStaleCheckouts.length} past the expected release. Check in or extend.
-              </div>
+              <p className="pt-2.5"><StatusTag tone="overdue">{snap.myStaleCheckouts.length} past the expected release. Check in or extend.</StatusTag></p>
             )}
-            <ul className="space-y-1.5">
+            <ul className="divide-y divide-[var(--color-border)]">
               {snap.myCheckouts.slice(0, 6).map((s) => (
-                <li key={s.id} className="text-xs flex items-center gap-2">
+                <li key={s.id} className={row}>
                   <DocHoverPreview documentId={s.documentId}>
                     <DocThumb documentId={s.documentId} width={28} />
                   </DocHoverPreview>
-                  <span className="font-mono text-[var(--color-text-muted)]">{s.mode}</span>
-                  <Link href={`/documents/${s.libraryId ?? ""}?doc=${s.documentId}`} className="text-[var(--color-accent-text)] hover:underline font-bold">
-                    {s.documentId.slice(0, 8)}
+                  <Link href={`/documents/${s.libraryId ?? ""}?doc=${s.documentId}`} className="min-w-0 flex-1 truncate font-semibold text-[var(--color-text)] hover:text-[var(--color-accent-text)]">
+                    {s.purpose || "Checked-out document"}
                   </Link>
-                  {s.purpose && <span className="text-[var(--color-text-faint)] truncate">- {s.purpose}</span>}
-                  <span className="ml-auto text-[11px] text-[var(--color-text-muted)]">{formatAgo(typeof s.startedAt === "string" ? s.startedAt : undefined)}</span>
+                  <span className="shrink-0 text-[13px] text-[var(--color-text-muted)] capitalize">{String(s.mode).replace(/_/g, " ")}</span>
+                  <span className="shrink-0 w-16 text-right text-[13px] text-[var(--color-text-muted)] tabular-nums">{formatAgo(typeof s.startedAt === "string" ? s.startedAt : undefined)}</span>
                 </li>
               ))}
             </ul>
@@ -459,59 +405,54 @@ function OutstandingBody() {
         )}
 
         {snap.myOpenHolds.length > 0 && (
-          <WidgetCard icon={AlertOctagon} tone="rose" title="Holds you opened" count={snap.myOpenHolds.length}>
-            <ul className="space-y-1.5">
+          <WidgetCard title="Holds you opened" count={snap.myOpenHolds.length}>
+            <ul className="divide-y divide-[var(--color-border)]">
               {snap.myOpenHolds.slice(0, 6).map((h) => (
-                <li key={h.id} className="text-xs">
-                  <span className="font-bold text-rose-700">{h.reason}</span>
-                  {h.notes && <div className="text-[var(--color-text-faint)] truncate mt-0.5 italic">&quot;{h.notes}&quot;</div>}
-                  <div className="text-[11px] text-[var(--color-text-muted)]">opened {formatAgo(typeof h.openedAt === "string" ? h.openedAt : undefined)}</div>
+                <li key={h.id} className={row}>
+                  <span className="min-w-0 flex-1">
+                    <StatusTag tone="overdue">{h.reason}</StatusTag>
+                    {h.notes && <span className="block text-[13px] text-[var(--color-text-muted)] truncate">&ldquo;{h.notes}&rdquo;</span>}
+                  </span>
+                  <span className="shrink-0 text-[13px] text-[var(--color-text-muted)]">Opened {formatAgo(typeof h.openedAt === "string" ? h.openedAt : undefined)}</span>
                 </li>
               ))}
             </ul>
-            <Link href="/admin/holds" className="mt-2 inline-flex items-center gap-1 text-xs font-bold text-rose-700 hover:text-rose-900">
-              Hold queue <ChevronRight className="w-3 h-3" />
-            </Link>
+            <Link href="/admin/holds" className={`mt-1 inline-block text-[14px] ${link}`}>Hold queue</Link>
           </WidgetCard>
         )}
 
         {snap.transmittalsAwaitingAck.length > 0 && (
-          <WidgetCard icon={Send} tone="blue" title="Transmittals awaiting receipt" count={snap.transmittalsAwaitingAck.length}>
-            <ul className="space-y-1.5">
-              {snap.transmittalsAwaitingAck.slice(0, 6).map((t) => (
-                <li key={t.id} className="text-xs flex items-center gap-2">
-                  <Link href="/transmittals" className="font-mono font-bold text-[var(--color-accent-text)] hover:underline shrink-0">{t.number}</Link>
-                  <span className="text-[var(--color-text-faint)] truncate flex-1">{t.subject || [t.recipientName, t.recipientCompany].filter(Boolean).join(" · ") || `${t.documentCount} doc${t.documentCount === 1 ? "" : "s"}`}</span>
-                  <span className={`text-[11px] font-bold px-1.5 py-0.5 rounded shrink-0 ${
-                    (t.__ageDays ?? 0) >= 14 ? "bg-rose-100 text-rose-800"
-                    : (t.__ageDays ?? 0) >= 7 ? "bg-amber-100 text-amber-800"
-                    : "bg-[var(--color-surface-2)] text-[var(--color-text-faint)]"
-                  }`}>{t.__ageDays === 0 ? "today" : `${t.__ageDays}d`}</span>
-                </li>
-              ))}
+          <WidgetCard title="Transmittals awaiting receipt" count={snap.transmittalsAwaitingAck.length}>
+            <ul className="divide-y divide-[var(--color-border)]">
+              {snap.transmittalsAwaitingAck.slice(0, 6).map((t) => {
+                const tone = ageTone(t.__ageDays);
+                return (
+                  <li key={t.id} className={row}>
+                    <Link href="/transmittals" className="shrink-0 font-display font-semibold tabular-nums text-[var(--color-text)] hover:text-[var(--color-accent-text)]">{t.number}</Link>
+                    <span className="min-w-0 flex-1 truncate text-[var(--color-text-muted)]">{t.subject || [t.recipientName, t.recipientCompany].filter(Boolean).join(", ") || `${t.documentCount} doc${t.documentCount === 1 ? "" : "s"}`}</span>
+                    {tone ? <StatusTag tone={tone}>{ageWords(t.__ageDays)}</StatusTag> : <span className="shrink-0 text-[13px] text-[var(--color-text-muted)]">{ageWords(t.__ageDays)}</span>}
+                  </li>
+                );
+              })}
             </ul>
-            <Link href="/transmittals" className="mt-2 inline-flex items-center gap-1 text-xs font-bold text-[var(--color-accent-text)] hover:text-[var(--color-accent-hover)]">
-              Transmittal register <ChevronRight className="w-3 h-3" />
-            </Link>
+            <Link href="/transmittals" className={`mt-1 inline-block text-[14px] ${link}`}>Transmittal register</Link>
           </WidgetCard>
         )}
 
         {snap.milestonesUpcoming.length > 0 && (
-          <WidgetCard icon={Flag} tone="emerald" title="Milestones due this week" count={snap.milestonesUpcoming.length}>
-            <ul className="space-y-1.5">
-              {snap.milestonesUpcoming.slice(0, 8).map((m) => (
-                <li key={m.id} className="text-xs flex items-center gap-2">
-                  <Calendar className="w-3 h-3 text-[var(--color-text-muted)] shrink-0" />
-                  <span className="font-bold text-[var(--color-text)] truncate flex-1">{m.name}</span>
-                  <span className={`text-[11px] font-bold px-1.5 py-0.5 rounded ${
-                    (m.__dueInDays ?? 0) === 0 ? "bg-rose-100 text-rose-800"
-                    : (m.__dueInDays ?? 0) <= 2 ? "bg-amber-100 text-amber-800"
-                    : "bg-emerald-100 text-emerald-800"
-                  }`}>
-                    {(m.__dueInDays ?? 0) === 0 ? "today" : `${m.__dueInDays}d`}
-                  </span>
-                </li>
-              ))}
+          <WidgetCard title="Milestones due this week" count={snap.milestonesUpcoming.length}>
+            <ul className="divide-y divide-[var(--color-border)]">
+              {snap.milestonesUpcoming.slice(0, 8).map((m) => {
+                const d = m.__dueInDays ?? 0;
+                return (
+                  <li key={m.id} className={row}>
+                    <span className="min-w-0 flex-1 truncate font-semibold text-[var(--color-text)]">{m.name}</span>
+                    {d <= 2
+                      ? <StatusTag tone="held">{d === 0 ? "Due today" : `In ${d} day${d === 1 ? "" : "s"}`}</StatusTag>
+                      : <span className="shrink-0 text-[13px] text-[var(--color-text-muted)]">In {d} days</span>}
+                  </li>
+                );
+              })}
             </ul>
           </WidgetCard>
         )}
@@ -556,48 +497,43 @@ function AdminAnalyticsBody() {
   return (
     // FILL + SCROLL: at the 300px mobile floor this body overflows and the
     // whole 'Busiest libraries' block was clipped with no scroll path.
-    <div className={`${FILL} ${SCROLL}`}>
-      {/* Headline stats — each one is a doorway into its tool. */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 shrink-0">
-        {([
-          { label: "Documents", value: data?.totalDocs ?? 0, href: "/documents" },
-          { label: "Revisions", value: data?.totalRevs ?? 0, href: "/register" },
-          { label: "Open requests", value: data?.openReqs ?? 0, href: "/requests" },
-          { label: "Members", value: data?.members ?? 0, href: "/admin/users" },
-        ] as const).map((s) => (
-          <Link key={s.label} href={s.href} className="group rounded-xl bg-[var(--color-surface-2)] px-2.5 py-2 hover:bg-[var(--color-border)] transition-colors">
-            <div className="text-[14px] font-bold leading-tight text-[var(--color-text)] tabular-nums">{s.value.toLocaleString()}</div>
-            <div className="text-[12px] text-[var(--color-text-muted)] truncate">{s.label}</div>
-          </Link>
-        ))}
-      </div>
+    <div className="-m-4 p-4 flex-1 min-h-0 overflow-y-auto flex flex-col">
+      {/* Headline counts: each one opens its tool. */}
+      <FactRow className="-mx-4 -mt-4 border-b border-[var(--color-border)] shrink-0" cells={[
+        { label: "Documents", value: (data?.totalDocs ?? 0).toLocaleString(), href: "/documents" },
+        { label: "Revisions", value: (data?.totalRevs ?? 0).toLocaleString(), href: "/register" },
+        { label: "Open requests", value: (data?.openReqs ?? 0).toLocaleString(), href: "/requests" },
+        { label: "Members", value: (data?.members ?? 0).toLocaleString(), href: "/admin/users" },
+      ]} />
 
-      {/* Workspace heartbeat — 30 days of change volume. */}
-      <div className="mt-3 shrink-0">
-        <div className="flex items-center justify-between mb-1">
-          <span className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">Workspace activity · 30d</span>
-          <TrendChip current={wk.cur} previous={wk.prev} />
+      {/* Workspace activity: 30 days of recorded changes. */}
+      <div className="mt-4 shrink-0">
+        <div className="flex items-baseline justify-between gap-3 mb-1.5">
+          <span className="text-[13px] text-[var(--color-text-muted)]">Workspace activity, last 30 days</span>
+          <TrendChip current={wk.cur} previous={wk.prev} what="changes" />
         </div>
         {sum(audit.counts) > 0
           ? <MiniBars values={audit.counts} labels={audit.labels} height={36} />
           : <Quiet label="No recorded activity in the last 30 days." />}
       </div>
 
-      {/* Busiest libraries — where the documents actually live. */}
+      {/* Busiest libraries: where the documents live. */}
       {(data?.topLibs?.length ?? 0) > 0 && (
-        <div className="mt-3 shrink-0">
-          <div className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)] mb-1.5">Busiest libraries</div>
-          <div className="space-y-1.5">
-            {data!.topLibs.map((l, i) => (
-              <Link key={l.id} href={`/documents/${l.id}`} className="group flex items-center gap-2">
-                <span className="text-xs font-bold text-[var(--color-text)] truncate w-32 group-hover:text-[var(--color-text)] transition-colors">{l.name}</span>
-                <span className="flex-1 h-2 rounded-full bg-[var(--viz-track)] overflow-hidden">
-                  <span className="block h-full rounded-full transition-all" style={{ width: `${(l.count / maxLib) * 100}%`, background: vizCat(i) }} />
-                </span>
-                <span className="text-[11px] tabular-nums text-[var(--color-text-muted)] w-10 text-right">{l.count.toLocaleString()}</span>
-              </Link>
+        <div className="mt-4 shrink-0">
+          <div className="text-[13px] text-[var(--color-text-muted)] mb-1">Busiest libraries</div>
+          <ul className="divide-y divide-[var(--color-border)]">
+            {data!.topLibs.map((l) => (
+              <li key={l.id}>
+                <Link href={`/documents/${l.id}`} className="group flex items-center gap-3 py-2">
+                  <span className="text-[15px] font-semibold text-[var(--color-text)] truncate w-40 group-hover:text-[var(--color-accent-text)]">{l.name}</span>
+                  <span className="flex-1 h-2 rounded-sm bg-[var(--color-surface-2)] overflow-hidden">
+                    <span className="block h-full rounded-sm bg-[var(--color-text-muted)]" style={{ width: `${(l.count / maxLib) * 100}%` }} />
+                  </span>
+                  <span className="font-display text-[15px] tabular-nums text-[var(--color-text)] w-14 text-right">{l.count.toLocaleString()}</span>
+                </Link>
+              </li>
             ))}
-          </div>
+          </ul>
         </div>
       )}
     </div>
@@ -615,7 +551,8 @@ function AdminAnalyticsBody() {
 // body — to satisfy react-hooks/set-state-in-effect.
 function CommandDeckBody() {
   const { uid, userEmail, activeRole, activeOrgId } = useRole();
-  const { count: attentionCount, actionRequiredCount, items: attentionItems } = useTicketNotifications();
+  const { count: attentionCount, actionRequiredCount, items: attentionItems, markRead } = useTicketNotifications();
+  const { editing } = useWidget();
 
   const [data, setData] = useState<InboxSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
@@ -657,16 +594,19 @@ function CommandDeckBody() {
     return () => { alive = false; };
   }, [activeOrgId, reloadKey]);
 
-  // First paint, before any data: the card's outline, quietly loading.
+  // First paint, before any data: the section's outline, quietly loading.
   if (loading && !data) {
     return (
-      <div className="h-full rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5" aria-busy="true">
-        <div className="flex items-center gap-2 text-[13px] font-semibold text-[var(--color-text-muted)]">
-          <Loader2 className="w-3.5 h-3.5 animate-spin" /> Needs you
+      <section aria-label="Needs you" aria-busy="true" className="h-full">
+        <div className="flex items-end gap-2 mb-2.5 min-h-9">
+          <h2 className="font-display text-[19px] leading-tight font-semibold text-[var(--color-text)]">Needs you</h2>
+          <Loader2 className="w-4 h-4 mb-1 animate-spin text-[var(--color-text-muted)]" />
         </div>
-        <div className="mt-4 h-4 w-2/3 rounded bg-[var(--color-surface-2)] animate-pulse" />
-        <div className="mt-3 h-4 w-1/2 rounded bg-[var(--color-surface-2)] animate-pulse" />
-      </div>
+        <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4 space-y-3">
+          <div className="h-4 w-2/3 rounded bg-[var(--color-surface-2)] animate-pulse" />
+          <div className="h-4 w-1/2 rounded bg-[var(--color-surface-2)] animate-pulse" />
+        </div>
+      </section>
     );
   }
 
@@ -676,7 +616,7 @@ function CommandDeckBody() {
 
   return (
     <CommandDeck
-      fill
+      fill={!!editing}
       userEmail={userEmail ?? undefined}
       data={data}
       pillars={pillars}
@@ -689,6 +629,7 @@ function CommandDeckBody() {
       canExport={!!data && total > 0}
       onRefresh={() => { setRefreshing(true); setReloadKey((k) => k + 1); }}
       onExport={() => data && exportInboxCsv(data, userEmail ?? undefined)}
+      onOpenItem={(id) => { void markRead(id).catch(() => { /* it stays in the list */ }); }}
     />
   );
 }
@@ -696,12 +637,12 @@ function CommandDeckBody() {
 // ─── catalog ─────────────────────────────────────────────────────
 export const WIDGET_CATALOG: Record<WidgetType, WidgetMeta> = {
   commandDeck: {
-    type: "commandDeck", title: "Command Deck", description: "Mission-control hero - greeting, live status & the three pillars.",
+    type: "commandDeck", title: "Needs you", description: "What needs you, as a table, with the three main tools and their counts.",
     icon: LayoutDashboard, tone: "indigo", href: "/inbox", cta: "Open command deck", category: "You",
     defaultW: 12, defaultH: 3, minW: 6, minH: 2, maxW: 12, bare: true, Body: CommandDeckBody,
   },
   askKnowledge: {
-    type: "askKnowledge", title: "Ask Knowledge", description: "Ask a library - answer first, proof to the page.",
+    type: "askKnowledge", title: "Ask Knowledge", description: "Ask a library. The answer first, the proof to the page.",
     icon: Sparkles, tone: "orange", href: "/assistant", cta: "Open the Assistant", category: "Knowledge", isNew: true,
     defaultW: 6, defaultH: 5, minW: 4, minH: 4, multi: true,
     settings: [
@@ -724,7 +665,7 @@ export const WIDGET_CATALOG: Record<WidgetType, WidgetMeta> = {
     Body: DocBrowserBody,
   },
   draftingRequests: {
-    type: "draftingRequests", title: "Drafting Requests", description: "Open requests - yours, assigned, unassigned.",
+    type: "draftingRequests", title: "Drafting Requests", description: "Open requests: yours, assigned to you, unassigned.",
     icon: MailPlus, tone: "orange", href: "/requests", cta: "Open request portal", category: "Work",
     defaultW: 6, defaultH: 5, minW: 4, minH: 3, multi: true,
     settings: [
@@ -741,34 +682,34 @@ export const WIDGET_CATALOG: Record<WidgetType, WidgetMeta> = {
     defaultW: 6, defaultH: 4, minW: 3, minH: 3, Body: InboxBody,
   },
   dailyBrief: {
-    type: "dailyBrief", title: "Daily Brief", description: "Your day, narrated + what to do next.",
+    type: "dailyBrief", title: "Daily brief", description: "Your day in a few lines, and where to start.",
     icon: Zap, tone: "amber", href: "/inbox", cta: "Open command deck", category: "You",
     defaultW: 6, defaultH: 5, minW: 4, minH: 3, Body: DailyBriefBody,
   },
   recentDocs: {
-    type: "recentDocs", title: "Recently Viewed", description: "Pick up where you left off.",
+    type: "recentDocs", title: "Recently viewed", description: "Pick up where you left off.",
     icon: History, tone: "blue", href: "/documents", cta: "Open documents", category: "Documents",
     defaultW: 3, defaultH: 5, minW: 2, minH: 3,
     settings: [{ key: "count", type: "number", label: "How many to show", min: 5, max: 50, default: 12 }],
     Body: RecentDocsBody,
   },
   quickLaunch: {
-    type: "quickLaunch", title: "Quick Launch", description: "Jump straight into common actions.",
+    type: "quickLaunch", title: "Quick launch", description: "Jump straight into common actions.",
     icon: Rocket, tone: "orange", href: "/inbox", cta: "Open command deck", category: "You",
     defaultW: 3, defaultH: 5, minW: 2, minH: 3, Body: QuickLaunchBody,
   },
   attention: {
-    type: "attention", title: "Needs You", description: "Everything waiting on your attention.",
+    type: "attention", title: "Notifications", description: "Everything waiting on you, with filters.",
     icon: Bell, tone: "rose", href: "/inbox", cta: "Open command deck", category: "You",
     defaultW: 6, defaultH: 6, minW: 4, minH: 4, Body: AttentionBody,
   },
   suggestedActions: {
-    type: "suggestedActions", title: "Suggested Actions", description: "Proactive nudges - what to do next.",
+    type: "suggestedActions", title: "Suggested actions", description: "What to do next, from your open work.",
     icon: Zap, tone: "amber", href: "/inbox", cta: "Open command deck", category: "You",
     defaultW: 6, defaultH: 4, minW: 3, minH: 3, Body: SuggestedActionsBody,
   },
   outstanding: {
-    type: "outstanding", title: "Outstanding", description: "Markups, checkouts, holds & milestones.",
+    type: "outstanding", title: "Outstanding", description: "Markups, checkouts, holds, transmittals and milestones.",
     icon: Layers, tone: "indigo", href: "/inbox", cta: "Open command deck", category: "Work",
     defaultW: 6, defaultH: 6, minW: 4, minH: 4, Body: OutstandingBody,
   },
@@ -785,7 +726,7 @@ export const WIDGET_CATALOG: Record<WidgetType, WidgetMeta> = {
     Body: ProjectsBody,
   },
   activity: {
-    type: "activity", title: "Activity", description: "Who changed what - linked to the item.",
+    type: "activity", title: "Activity", description: "Who changed what, linked to the item.",
     icon: ActivityIcon, tone: "emerald", href: "/activity", cta: "Open activity", category: "Work",
     defaultW: 6, defaultH: 4, minW: 3, minH: 3, multi: true,
     settings: [{ key: "onlyMine", type: "toggle", label: "Only my activity", default: false }],
@@ -797,17 +738,17 @@ export const WIDGET_CATALOG: Record<WidgetType, WidgetMeta> = {
     defaultW: 6, defaultH: 4, minW: 3, minH: 3, Body: EquipmentBody,
   },
   adminUsers: {
-    type: "adminUsers", title: "Users", description: "Members, roles & pending invites.",
+    type: "adminUsers", title: "Users", description: "Members, roles and pending invites.",
     icon: Users, tone: "cyan", href: "/admin/users", cta: "Manage users", category: "Admin",
     defaultW: 6, defaultH: 4, minW: 3, minH: 3, adminOnly: true, Body: AdminUsersBody,
   },
   adminAnalytics: {
-    type: "adminAnalytics", title: "Analytics", description: "Workspace metrics & trends.",
+    type: "adminAnalytics", title: "Analytics", description: "Workspace counts and activity.",
     icon: BarChart3, tone: "violet", href: "/admin/analytics", cta: "Open analytics", category: "Admin",
     defaultW: 6, defaultH: 3, minW: 3, minH: 2, adminOnly: true, Body: AdminAnalyticsBody,
   },
   adminAudit: {
-    type: "adminAudit", title: "Audit Log", description: "Immutable change history, filterable.",
+    type: "adminAudit", title: "Audit log", description: "Immutable change history, filterable.",
     icon: ScrollText, tone: "rose", href: "/admin/audit", cta: "Open audit log", category: "Admin",
     defaultW: 6, defaultH: 4, minW: 3, minH: 3, adminOnly: true,
     settings: [{ key: "onlyMine", type: "toggle", label: "Only my activity", default: false }],

@@ -28,6 +28,8 @@ export interface WidgetCtx {
   updateSettings: (patch: Record<string, unknown>) => void;
   /** Rendering inside the expanded (full-size) view. */
   expanded: boolean;
+  /** Home is being customized (the body is shown, not used). */
+  editing?: boolean;
 }
 
 const Ctx = createContext<WidgetCtx | null>(null);
@@ -110,40 +112,41 @@ export function useWidgetData<T>(
 
 // ─── layout constants ─────────────────────────────────────────────
 /** A body root that fills the widget's height so content can flex/scroll. */
-export const FILL = "mt-3 flex-1 min-h-0 flex flex-col";
+export const FILL = "flex-1 min-h-0 flex flex-col";
 // NOTE: no `overscroll-contain` here — it turns every widget into a wheel
 // trap: page scrolling DIES whenever the cursor happens to be over a card.
 export const SCROLL = "flex-1 min-h-0 overflow-y-auto pr-1 -mr-1";
 
 export function BodyShell({ children }: { children: React.ReactNode }) {
-  return <div className="mt-2 text-sm text-[var(--color-text-muted)]">{children}</div>;
+  return <div className="text-[15px] text-[var(--color-text-muted)]">{children}</div>;
 }
 
 export function Skeleton({ rows = 3 }: { rows?: number }) {
   return (
-    <div className="mt-3 flex-1 min-h-0 space-y-2" aria-busy="true">
+    <div className="flex-1 min-h-0 divide-y divide-[var(--color-border)]" aria-busy="true">
       {Array.from({ length: rows }).map((_, i) => (
-        <div key={i} className="h-8 rounded-lg bg-[var(--color-surface-2)] animate-pulse" />
+        <div key={i} className="py-2.5"><div className="h-4 rounded bg-[var(--color-surface-2)] animate-pulse" style={{ width: `${70 - i * 12}%` }} /></div>
       ))}
-      <p className="text-[11px] text-[var(--color-text-muted)]">Loading…</p>
+      <p className="pt-2 text-[13px] text-[var(--color-text-muted)]">Loading…</p>
     </div>
   );
 }
 
 /** Honest empty-state for a chart slot. */
 export function Quiet({ label }: { label: string }) {
-  return <div className="text-[11px] text-[var(--color-text-faint)] italic py-1.5">{label}</div>;
+  return <div className="text-[13px] text-[var(--color-text-muted)] py-1.5">{label}</div>;
 }
 
 export function Empty({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex-1 min-h-[4rem] grid place-items-center text-center px-4 text-[12px] text-[var(--color-text-muted)]">
-      <div>{children}</div>
+    <div className="flex-1 py-4 text-[15px] text-[var(--color-text-muted)]">
+      {children}
     </div>
   );
 }
 
-/** Segmented tabs inside a widget. Counts are optional. */
+/** Tabs inside a section: the current one is underlined in the signal
+ *  color. Counts are optional. */
 export function Tabs<T extends string>({ value, onChange, options, className = "" }: {
   value: T;
   onChange: (v: T) => void;
@@ -151,19 +154,19 @@ export function Tabs<T extends string>({ value, onChange, options, className = "
   className?: string;
 }) {
   return (
-    <div role="tablist" className={`flex items-center gap-1 overflow-x-auto no-scrollbar ${className}`}>
+    <div role="tablist" className={`flex items-end gap-4 overflow-x-auto no-scrollbar border-b border-[var(--color-border)] ${className}`}>
       {options.map((o) => {
         const on = o.value === value;
         return (
           <button key={o.value} role="tab" aria-selected={on} type="button" onClick={() => onChange(o.value)}
-            className={`shrink-0 inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold transition-colors ${
+            className={`shrink-0 -mb-px inline-flex items-center gap-1.5 h-9 border-b-2 text-[14px] transition-colors ${
               on
-                ? "bg-[var(--color-text)] text-[var(--color-surface)]"
-                : "text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] hover:text-[var(--color-text)]"
+                ? "border-[var(--color-accent)] font-semibold text-[var(--color-text)]"
+                : "border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
             }`}>
             {o.label}
             {o.count !== undefined && (
-              <span className={`tabular-nums text-[11px] px-1 rounded ${on ? "bg-white/20" : "bg-[var(--color-surface-2)]"}`}>{o.count}</span>
+              <span className="font-display tabular-nums text-[14px] text-[var(--color-text-muted)]">{o.count}</span>
             )}
           </button>
         );
@@ -184,16 +187,17 @@ export function SearchField({ value, onChange, onSubmit, placeholder, title, aut
   return (
     <form
       onSubmit={(e) => { e.preventDefault(); const v = value.trim(); if (v && onSubmit) onSubmit(v); }}
-      className="flex items-center gap-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)]/60 px-2 py-1 focus-within:border-[var(--color-border-strong)] focus-within:bg-[var(--color-surface)] transition-colors"
+      className="flex items-center gap-2 h-9 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 focus-within:border-[var(--color-text-faint)] focus-within:ring-2 focus-within:ring-[var(--color-accent-ring)]/40 transition-colors"
       title={title}
     >
-      <Search className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" />
+      <Search className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
       <input
         value={value}
         autoFocus={autoFocus}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
-        className="flex-1 min-w-0 bg-transparent text-xs text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] outline-none"
+        aria-label={placeholder}
+        className="flex-1 min-w-0 bg-transparent text-[14px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] outline-none"
       />
     </form>
   );

@@ -15,10 +15,12 @@ import React, { createContext, useCallback, useContext, useEffect, useState, use
 import { appAlert } from "@/components/providers/DialogProvider";
 import { createPortal } from "react-dom";
 import Link from "next/link";
-import { X, BellRing, Inbox } from "lucide-react";
+import { X } from "lucide-react";
 import LoadingBlock from "@/components/ui/LoadingBlock";
 import { useTicketNotifications } from "@/hooks/useTicketNotifications";
 import { AttentionFeed, type AttnFilter } from "@/components/cockpit/AttentionFeed";
+import { buildNeeds, needsFacts } from "@/components/cockpit/needsYou";
+import { heroPrimary, heroQuiet } from "@/components/ui/PageHero";
 
 interface CenterCtx {
   /** Open the center (optionally pre-filtered, e.g. "action"). */
@@ -104,7 +106,9 @@ function CenterPanel({
       ? items.filter((i) => !i.actionRequired)
       : items;
 
-  const lead = items.find((i) => i.actionRequired) ?? items[0];
+  const needs = buildNeeds(items);
+  const nf = needsFacts(needs);
+  const leadRow = needs[0];
   const answer = loading && items.length === 0
     ? "Notifications"
     : counts.all === 0 ? "All caught up." : `${counts.all} ${counts.all === 1 ? "thing needs" : "things need"} you.`;
@@ -126,69 +130,74 @@ function CenterPanel({
         aria-hidden={isOpen ? undefined : true}
         inert={!isOpen}
         aria-label="Notification center"
-        className={`fixed top-0 sm:top-3.5 right-0 sm:right-3.5 bottom-0 z-[241] w-[480px] max-w-[94vw] bg-[var(--color-surface)] rounded-l-[20px] sm:rounded-[20px] sm:rounded-b-none shadow-[-30px_0_60px_-30px_rgb(0_0_0/0.6)] flex flex-col transition-transform duration-500 ${
+        className={`fixed top-0 right-0 bottom-0 z-[241] w-[480px] max-w-[94vw] bg-[var(--color-canvas)] border-l border-[var(--color-border-strong)] shadow-[-30px_0_60px_-30px_rgb(0_0_0/0.6)] flex flex-col transition-transform duration-500 ${
           isOpen ? "translate-x-0" : "translate-x-[110%]"
         }`}
         style={{ transitionTimingFunction: "var(--ease-spring)" }}
       >
-        <div className="px-5 sm:px-6 pt-5 pb-4 shrink-0">
+        <div className="px-5 pt-4 pb-4 shrink-0 border-b border-[var(--color-border-strong)]">
           <div className="flex items-center gap-2">
-            <BellRing className="w-3.5 h-3.5 text-[var(--color-text-muted)]" aria-hidden />
-            <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">Notifications</div>
+            <div className="text-[14px] font-medium text-[var(--color-text-muted)]">Notifications</div>
             <div className="flex-1" />
             <button
+              type="button"
               onClick={onClose}
               title="Close (Esc)"
               aria-label="Close"
-              className="w-9 h-9 grid place-items-center rounded-[10px] bg-[var(--color-surface-2)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors"
+              className="w-9 h-9 grid place-items-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface)] transition-colors"
             >
               <X className="w-4 h-4" />
             </button>
           </div>
-          <h2 className="mt-3 text-[30px] sm:text-[36px] leading-[1.05] font-black tracking-[-0.03em] text-[var(--color-text)]">{answer}</h2>
+          <h2 className="mt-1 font-display text-[30px] leading-[1.05] font-semibold tracking-[-0.01em] text-[var(--color-text)]">{answer}</h2>
           {counts.all > 0 && (
-            <p className="mt-2 text-[14px] text-[var(--color-text-muted)]">
-              {`${counts.action > 0 ? `${counts.action} waiting on you` : ""}${counts.action > 0 && counts.unread > 0 ? " · " : ""}${counts.unread > 0 ? `${counts.unread} new` : ""}`}
-            </p>
+            <dl className="mt-3 flex border-t border-[var(--color-border-strong)] pt-2.5">
+              {[
+                { label: "Overdue", value: nf.overdue, bad: nf.overdue > 0 },
+                { label: "Waiting on you", value: nf.yourTurn, bad: false },
+                { label: "Updates", value: nf.news, bad: false },
+              ].map((f, i) => (
+                <div key={f.label} className={`pr-5 ${i ? "pl-5 border-l border-[var(--color-border-strong)]" : ""}`}>
+                  <dt className="text-[13px] text-[var(--color-text-muted)]">{f.label}</dt>
+                  <dd className={`font-display text-[24px] leading-none mt-1 font-semibold tabular-nums ${f.bad ? "text-[var(--state-overdue)]" : "text-[var(--color-text)]"}`}>{f.value}</dd>
+                </div>
+              ))}
+            </dl>
           )}
-          {lead && (
-            <Link href={lead.link} onClick={() => { if (lead.notificationId) void markRead(lead.notificationId).catch(() => {}); onClose(); }}
-              className="mt-4 inline-flex items-center justify-center gap-2 h-11 px-5 rounded-xl bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[14px] font-extrabold hover:bg-[var(--color-accent-hover)] shadow-[0_12px_24px_-12px_var(--color-accent)] transition-colors">
-              {counts.all === 1 ? "Open it" : lead.actionRequired ? "Open the first one" : "Open the newest"}
+          {leadRow && (
+            <Link href={leadRow.link} onClick={() => { if (leadRow.notificationId) void markRead(leadRow.notificationId).catch(() => {}); onClose(); }}
+              className={`mt-4 ${heroPrimary}`}>
+              {counts.all === 1 ? "Open it" : "Open the first one"}
             </Link>
           )}
         </div>
 
-        <div className="flex-1 min-h-0 overflow-y-auto px-5 sm:px-6 pb-4 border-t border-[var(--color-border)] pt-3">
+        <div className="flex-1 min-h-0 overflow-y-auto bg-[var(--color-surface)]">
           {loadError && (
-            <p role="alert" className="mb-3 text-[13px] text-rose-800 dark:text-rose-300">
+            <p role="alert" className="mx-4 mt-3 border-l-[3px] border-[var(--state-overdue)] pl-2.5 text-[14px] text-[var(--state-overdue)]">
               Some of this couldn&apos;t load, so the list may be missing items: {loadError}
             </p>
           )}
           {loading && items.length === 0 ? (
-            <LoadingBlock what="notifications" rows={4} />
+            <div className="p-4"><LoadingBlock what="notifications" rows={4} /></div>
           ) : (
-            <AttentionFeed
-              plain
-              items={filtered}
-              counts={counts}
-              filter={filter}
-              onFilter={onFilter}
-              onMarkRead={(id) => { void markRead(id).catch((e: unknown) => appAlert({ title: "Couldn't mark it read", message: e instanceof Error ? e.message : String(e), tone: "danger" })); }}
-              onMarkAll={handleMarkAll}
-              markingAll={markingAll}
-            />
+            <div className="pt-1">
+              <AttentionFeed
+                plain
+                items={filtered}
+                counts={counts}
+                filter={filter}
+                onFilter={onFilter}
+                onMarkRead={(id) => { void markRead(id).catch((e: unknown) => appAlert({ title: "Couldn't mark it read", message: e instanceof Error ? e.message : String(e), tone: "danger" })); }}
+                onMarkAll={handleMarkAll}
+                markingAll={markingAll}
+              />
+            </div>
           )}
         </div>
 
-        <div className="px-5 sm:px-6 py-3 border-t border-[var(--color-border)] shrink-0 pb-[calc(12px+env(safe-area-inset-bottom))]">
-          <Link
-            href="/inbox"
-            onClick={onClose}
-            className="inline-flex items-center gap-1.5 text-[13px] font-bold text-[var(--color-accent-text)] hover:text-[var(--color-accent-hover)] transition-colors"
-          >
-            <Inbox className="w-3.5 h-3.5" /> Open the full inbox
-          </Link>
+        <div className="px-5 py-3 border-t border-[var(--color-border-strong)] shrink-0 pb-[calc(12px+env(safe-area-inset-bottom))]">
+          <Link href="/inbox" onClick={onClose} className={heroQuiet}>Open the full inbox</Link>
         </div>
       </aside>
     </>,

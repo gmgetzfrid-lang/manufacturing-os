@@ -9,14 +9,21 @@
 //   • recessive tracks/grids; TEXT always wears text tokens, never series color
 //   • identity never color-alone (legend rows with labels+counts; trend chips
 //     carry ▲/▼ glyphs; every mark has a <title> hover tooltip)
-//   • categorical colors come from --viz-cat-1..6 (validated, fixed order,
-//     never cycled; dark mode has its own validated steps in globals.css)
+//   • no separate chart palette: marks are graphite, parts of a whole are
+//     steps of graphite (identity is carried by the legend's labels), and a
+//     trend is shown only against a real previous period
 
 import React from "react";
 
-/** Fixed-order categorical color for slot i (0-based). Never cycles — callers
- *  must fold overflow into "Other" before slot 6. */
+/** Fixed-order categorical color for slot i (0-based). Kept for the shared
+ *  chart kit (components/ui/ChartKit); the dashboard itself draws in
+ *  graphite (neutralStep). */
 export const vizCat = (i: number) => `var(--viz-cat-${Math.min(i + 1, 6)})`;
+
+/** The fill for part i (0-based) of a whole: steps of graphite, darkest
+ *  first. Callers fold overflow into "Other" before slot 6. */
+const STEPS = [100, 70, 50, 36, 26, 18];
+export const neutralStep = (i: number) => `color-mix(in srgb, var(--color-text) ${STEPS[Math.min(i, 5)]}%, var(--color-surface))`;
 
 // ── Day bucketing (shared by sparkline/bars callers) ─────────────────────────
 
@@ -117,23 +124,19 @@ export function MiniBars({
   );
 }
 
-// ── TrendChip — this period vs last, with a glyph (never color-alone) ───────
+// ── TrendChip — this week against last week, in words ──────────────────────
+// Only when there is a real previous week to compare against: with nothing
+// last week, "▲ 100%" says nothing, so it shows nothing.
 
-export function TrendChip({ current, previous, unit = "" }: { current: number; previous: number; unit?: string }) {
+export function TrendChip({ current, previous, what = "" }: { current: number; previous: number; unit?: string; what?: string }) {
+  if (!(previous > 0)) return null;
   const diff = current - previous;
-  const pct = previous > 0 ? Math.round((diff / previous) * 100) : (current > 0 ? 100 : 0);
-  const flat = diff === 0;
-  const up = diff > 0;
-  const color = flat ? "var(--color-text-faint)" : up ? "var(--viz-up)" : "var(--viz-down)";
+  const glyph = diff === 0 ? "" : diff > 0 ? "▲" : "▼";
   return (
-    <span
-      className="inline-flex items-center gap-1 text-[11px] font-bold tabular-nums"
-      style={{ color }}
-      title={`${current}${unit} this period vs ${previous}${unit} last`}
-    >
-      <span aria-hidden>{flat ? "―" : up ? "▲" : "▼"}</span>
-      {flat ? "flat" : `${Math.abs(pct)}%`}
-      <span className="font-semibold text-[var(--color-text-faint)]">vs last wk</span>
+    <span className="inline-flex items-center gap-1 text-[13px] text-[var(--color-text-muted)] tabular-nums whitespace-nowrap"
+      title={`${current}${what ? ` ${what}` : ""} in the last 7 days, ${previous} in the 7 days before`}>
+      {glyph && <span aria-hidden className="text-[var(--color-text)]">{glyph}</span>}
+      <span><span className="font-semibold text-[var(--color-text)]">{current}</span>{what ? ` ${what}` : ""} this week, {previous} last week</span>
     </span>
   );
 }
@@ -189,7 +192,7 @@ export function SegmentBar({ segments, className = "" }: { segments: Segment[]; 
             <div
               key={s.label}
               className="min-w-[6px] first:rounded-l-full last:rounded-r-full"
-              style={{ width: `${(s.count / total) * 100}%`, background: vizCat(slot) }}
+              style={{ width: `${(s.count / total) * 100}%`, background: neutralStep(slot) }}
               title={`${s.label} · ${s.count}`}
             />
           );
@@ -199,10 +202,10 @@ export function SegmentBar({ segments, className = "" }: { segments: Segment[]; 
         {shown.map((s) => {
           const slot = segments.indexOf(s);
           return (
-            <span key={s.label} className="inline-flex items-center gap-1.5 text-[11px] text-[var(--color-text-muted)]">
-              <span aria-hidden className="w-2 h-2 rounded-full shrink-0" style={{ background: vizCat(slot) }} />
+            <span key={s.label} className="inline-flex items-center gap-1.5 text-[13px] text-[var(--color-text-muted)]">
+              <span aria-hidden className="w-2 h-2 rounded-full shrink-0" style={{ background: neutralStep(slot) }} />
               {s.label}
-              <b className="text-[var(--color-text)] tabular-nums">{s.count}</b>
+              <span className="font-display font-semibold text-[var(--color-text)] tabular-nums">{s.count}</span>
             </span>
           );
         })}

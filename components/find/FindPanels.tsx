@@ -25,7 +25,7 @@ export function EntityStrip({ entities }: { entities: FindEntity[] }) {
   const Icon = (k: FindEntity["kind"]) => (k === "asset" ? Cpu : k === "unit" ? Factory : k === "tag" ? Tag : FolderKanban);
   return (
     <div className="flex flex-wrap items-center gap-1.5 text-xs">
-      <span className="text-[11px] font-bold uppercase tracking-wide text-[var(--color-text-muted)]">Looking at</span>
+      <span className="text-[13px] text-[var(--color-text-muted)]">Looking at</span>
       {entities.map((e) => {
         const I = Icon(e.kind);
         const body = (

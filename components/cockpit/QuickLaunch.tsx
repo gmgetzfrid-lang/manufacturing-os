@@ -8,40 +8,38 @@
 
 import React from "react";
 import Link from "next/link";
-import { Send, Briefcase, Zap, RefreshCw, ArrowRight } from "lucide-react";
+import { Send, Briefcase, Zap, Search, ChevronRight } from "lucide-react";
 
 export const QUICK_ACTIONS: Array<{ label: string; sub: string; href?: string; icon: React.ComponentType<{ className?: string }>; tone: string; action?: "search" }> = [
-  { label: "New request", sub: "Drafting / design", href: "/requests/new", icon: Send, tone: "text-[var(--color-text)] bg-[var(--color-surface-2)]" },
-  { label: "Documents", sub: "Browse & check out", href: "/documents", icon: Briefcase, tone: "text-[var(--color-text)] bg-[var(--color-surface-2)]" },
-  { label: "Coordination", sub: "Collisions & blockers", href: "/coordination", icon: Zap, tone: "text-[var(--color-text)] bg-[var(--color-surface-2)]" },
-  { label: "Search", sub: "⌘K everything", action: "search", icon: RefreshCw, tone: "text-[var(--color-text-faint)] bg-[var(--color-surface-2)]" },
+  { label: "New request", sub: "Drafting or design", href: "/requests/new", icon: Send, tone: "text-[var(--color-text)] bg-[var(--color-surface-2)]" },
+  { label: "Documents", sub: "Browse and check out", href: "/documents", icon: Briefcase, tone: "text-[var(--color-text)] bg-[var(--color-surface-2)]" },
+  { label: "Coordination", sub: "Collisions and blockers", href: "/coordination", icon: Zap, tone: "text-[var(--color-text)] bg-[var(--color-surface-2)]" },
+  { label: "Search", sub: "Everything, ⌘K", action: "search", icon: Search, tone: "text-[var(--color-text)] bg-[var(--color-surface-2)]" },
 ];
 
 export function QuickLaunch() {
   const openSearch = () => window.dispatchEvent(new KeyboardEvent("keydown", { key: "k", metaKey: true, bubbles: true }));
   return (
-    <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm overflow-hidden">
-      <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2">
-        <Zap className="w-4 h-4 text-[var(--color-text-muted)]" />
-        <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Quick launch</span>
-      </div>
-      <div className="p-2">
-        {QUICK_ACTIONS.map((a) => {
-          const inner = (
-            <div className="group flex items-center gap-3 rounded-xl p-2.5 hover:bg-[var(--color-canvas)] transition-colors">
-              <div className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${a.tone}`}><a.icon className="w-4 h-4" /></div>
-              <div className="min-w-0 flex-1">
-                <div className="text-sm font-bold text-[var(--color-text)] truncate">{a.label}</div>
-                <div className="text-[11px] text-[var(--color-text-muted)] truncate">{a.sub}</div>
-              </div>
-              <ArrowRight className="w-4 h-4 text-[var(--color-text)] group-hover:text-[var(--color-text-muted)] group-hover:translate-x-0.5 transition-all shrink-0" />
-            </div>
-          );
-          return a.href
-            ? <Link key={a.label} href={a.href} className="block">{inner}</Link>
-            : <button key={a.label} onClick={openSearch} className="text-left w-full block">{inner}</button>;
-        })}
-      </div>
-    </div>
+    <ul className="divide-y divide-[var(--color-border)]">
+      {QUICK_ACTIONS.map((a) => {
+        const inner = (
+          <span className="flex items-center gap-3 px-4 py-3 hover:bg-[var(--color-surface-2)] transition-colors">
+            <span className={`w-9 h-9 rounded-md flex items-center justify-center shrink-0 ${a.tone}`}><a.icon className="w-4 h-4" /></span>
+            <span className="min-w-0 flex-1">
+              <span className="block text-[15px] font-semibold text-[var(--color-text)] truncate">{a.label}</span>
+              <span className="block text-[13px] text-[var(--color-text-muted)] truncate">{a.sub}</span>
+            </span>
+            <ChevronRight className="w-4 h-4 text-[var(--color-text-faint)] shrink-0" />
+          </span>
+        );
+        return (
+          <li key={a.label}>
+            {a.href
+              ? <Link href={a.href} className="block">{inner}</Link>
+              : <button type="button" onClick={openSearch} className="text-left w-full block">{inner}</button>}
+          </li>
+        );
+      })}
+    </ul>
   );
 }

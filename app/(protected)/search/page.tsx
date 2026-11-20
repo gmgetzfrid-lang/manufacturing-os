@@ -13,6 +13,7 @@ import { useRole } from "@/components/providers/RoleContext";
 import { isControllerRole } from "@/lib/permissions";
 import { PageShell } from "@/components/ui/PageShell";
 import { PageHero, PageBody, Card } from "@/components/ui/PageHero";
+import { sheet, thead, th } from "@/components/cockpit/ui";
 import { globalSearch, type GlobalHit, type GlobalHitKind } from "@/lib/globalSearch";
 import { useFind } from "@/components/find/useFind";
 import FindPanel from "@/components/find/FindPanel";
@@ -24,6 +25,12 @@ const OTHER_ICON: Partial<Record<GlobalHitKind, React.ComponentType<{ className?
 const OTHER_LABEL: Partial<Record<GlobalHitKind, string>> = {
   ticket: "Drafting request", project: "Project", note: "Note", transmittal: "Transmittal",
 };
+
+/** "PENDING_IFC" → "Pending IFC". */
+function badgeWords(b: string): string {
+  if (!/^[A-Z0-9_]+$/.test(b)) return b;
+  return b.split("_").map((w, i) => (["IFC", "ENG", "MOC"].includes(w) ? w : i === 0 ? w.charAt(0) + w.slice(1).toLowerCase() : w.toLowerCase())).join(" ");
+}
 
 export default function SearchPage() {
   const params = useSearchParams();
@@ -72,13 +79,18 @@ export default function SearchPage() {
         .filter(Boolean).join(", ") + (nDocs + nEq === 0 ? plural(others.length, "match", "matches") : "") + ".";
   const answerSub = q.length < 2
     ? "Tags, equipment IDs, drawing numbers, words from the drawings, and the requests, projects and notes that mention them."
-    : `For “${q}”.${others.length > 0 ? ` ${plural(others.length, "request, project or note", "requests, projects and notes")} too.` : ""}`;
+    : `For “${q}”.`;
+  const searchFacts = q.length >= 2 && found ? [
+    { label: "Documents", value: nDocs.toLocaleString() },
+    { label: "Equipment", value: nEq.toLocaleString() },
+    { label: "Requests, projects, notes", value: others.length.toLocaleString() },
+  ] : undefined;
 
   return (
     <PageShell width="work">
-      <PageHero kicker="Search" title={answer} sub={answerSub}>
+      <PageHero kicker="Search" title={answer} sub={answerSub} facts={searchFacts}>
         <form onSubmit={(e) => e.preventDefault()} className="relative" role="search">
-          <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--color-ink-muted)] pointer-events-none" />
+          <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--color-text-faint)] pointer-events-none" />
           <input
             autoFocus
             value={query}
@@ -86,11 +98,11 @@ export default function SearchPage() {
             placeholder="Tag, equipment ID, drawing number, words from the drawing"
             aria-label="Search"
             data-find-input
-            className="w-full h-12 pl-11 pr-11 rounded-xl border border-[var(--color-ink-line)] bg-[var(--color-ink-2)] text-white placeholder:text-[var(--color-ink-muted)] text-base sm:text-[15px] focus:outline-none focus:border-[var(--color-ink-muted)] focus:ring-2 focus:ring-[var(--color-accent)]/40 transition-colors"
+            className="w-full h-12 pl-11 pr-11 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] text-base sm:text-[15px] focus:outline-none focus:border-[var(--color-accent)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40 transition-colors"
           />
           {query && (
             <button type="button" onClick={() => { setQuery(""); router.replace("/search"); }} title="Clear the search" aria-label="Clear the search"
-              className="absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 grid place-items-center rounded-lg text-[var(--color-ink-muted)] hover:text-white hover:bg-[var(--color-ink-line)] transition-colors">
+              className="absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 grid place-items-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
               <X className="w-4 h-4" />
             </button>
           )}
@@ -110,32 +122,50 @@ export default function SearchPage() {
 
       {othersFailed && (
         <Card>
-          <p role="alert" className="text-[14px] text-rose-700 dark:text-rose-300">
+          <p role="alert" className="text-[15px] text-[var(--state-overdue)]">
             Couldn&apos;t search requests, projects and notes. Change the search to try again.
           </p>
         </Card>
       )}
       {others.length > 0 && (
-        <Card label="Requests, projects, notes" pad={false} className="overflow-hidden">
-          <ul className="border-t border-[var(--color-border)] divide-y divide-[var(--color-border)]">
-            {others.map((h) => {
-              const Icon = OTHER_ICON[h.kind] ?? Search;
-              return (
-                <li key={`${h.kind}-${h.id}`}>
-                  <Link href={h.href} className="px-4 sm:px-5 py-3 flex items-start gap-3 hover:bg-[var(--color-surface-2)] transition-colors">
-                    <span className="shrink-0 w-9 h-9 rounded-[9px] bg-[var(--color-surface-2)] text-[var(--color-text-muted)] flex items-center justify-center"><Icon className="w-4 h-4" /></span>
-                    <span className="flex-1 min-w-0">
-                      <span className="block text-[14px] font-bold text-[var(--color-text)] truncate">{h.title}</span>
-                      {h.subtitle && <span className="block text-[13px] text-[var(--color-text-muted)] truncate mt-0.5">{h.subtitle}</span>}
-                      <span className="block text-[13px] font-semibold text-[var(--color-text-muted)] mt-1">{OTHER_LABEL[h.kind]}</span>
-                    </span>
-                    {h.badge && <span className="text-[11px] font-bold uppercase text-[var(--color-text-muted)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded shrink-0">{h.badge}</span>}
-                  </Link>
-                </li>
-              );
-            })}
-          </ul>
-        </Card>
+        <section aria-label="Requests, projects, notes">
+          <div className="flex items-center gap-2 mb-2.5 min-h-9">
+            <h2 className="font-display text-[19px] leading-tight font-semibold text-[var(--color-text)]">Requests, projects, notes</h2>
+            <span className="text-[15px] text-[var(--color-text-muted)] tabular-nums">{others.length}</span>
+          </div>
+          <div className={sheet}>
+            <table className="w-full text-[15px]">
+              <thead className={thead}>
+                <tr>
+                  <th className={th}>Match</th>
+                  <th className={`${th} hidden sm:table-cell`}>Kind</th>
+                  <th className={`${th} hidden md:table-cell`}>Status</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[var(--color-border)]">
+                {others.map((h) => {
+                  const Icon = OTHER_ICON[h.kind] ?? Search;
+                  return (
+                    <tr key={`${h.kind}-${h.id}`} className="hover:bg-[var(--color-surface-2)] cursor-pointer" onClick={() => router.push(h.href)}>
+                      <td className="px-4 py-2.5 max-w-0 w-full">
+                        <span className="flex items-start gap-3 min-w-0">
+                          <Icon className="w-4 h-4 mt-1 shrink-0 text-[var(--color-text-muted)]" />
+                          <span className="min-w-0">
+                            <Link href={h.href} onClick={(e) => e.stopPropagation()} className="block truncate font-semibold text-[var(--color-text)] hover:text-[var(--color-accent-text)]">{h.title}</Link>
+                            {h.subtitle && <span className="block text-[13px] text-[var(--color-text-muted)] truncate">{h.subtitle}</span>}
+                            <span className="sm:hidden block text-[13px] text-[var(--color-text-muted)]">{OTHER_LABEL[h.kind]}{h.badge ? `, ${badgeWords(h.badge)}` : ""}</span>
+                          </span>
+                        </span>
+                      </td>
+                      <td className="px-4 py-2.5 hidden sm:table-cell whitespace-nowrap text-[var(--color-text-muted)]">{OTHER_LABEL[h.kind]}</td>
+                      <td className="px-4 py-2.5 hidden md:table-cell whitespace-nowrap text-[14px] text-[var(--color-text)]">{h.badge ? badgeWords(h.badge) : "–"}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </section>
       )}
       </PageBody>
     </PageShell>

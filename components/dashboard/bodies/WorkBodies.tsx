@@ -5,9 +5,8 @@
 
 import React, { useMemo, useState } from "react";
 import Link from "next/link";
-import {
-  Plus, ChevronRight, Tag, FileText, Briefcase, MailPlus, Users, Shield, User, BookOpen,
-} from "lucide-react";
+import { useRouter } from "next/navigation";
+import { Plus } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { phasesOfRow, projectDue, projectDueWords } from "@/lib/projectPhases";
 import { dayKey } from "@/lib/scheduleTz";
@@ -15,29 +14,50 @@ import { useRole } from "@/components/providers/RoleContext";
 import DocThumb from "@/components/documents/DocThumb";
 import DocHoverPreview from "@/components/documents/DocHoverPreview";
 import { TrendChip, MiniBars, Sparkline, SegmentBar, dayBuckets, type Segment } from "../viz";
+import { StatusTag, LateEdge, rowBtn, link, thead, th, humanDate, humanTime } from "@/components/cockpit/ui";
 import {
   useWidget, useSetting, useWidgetData, Tabs, SearchField, useDebounced, Skeleton, Empty, timeAgo,
-  headCount, fetchRecentDates, weekSplit, sum, FILL, SCROLL,
+  headCount, fetchRecentDates, weekSplit, sum, FILL,
 } from "../kit";
 
 // ─── Drafting requests ───────────────────────────────────────────
 
-const TICKET_STATUS: Record<string, { label: string; cls: string }> = {
-  NEW: { label: "New", cls: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]" },
-  PENDING_ENG_INITIAL: { label: "Eng review", cls: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]" },
-  PENDING_ENG_TEAM: { label: "Eng team", cls: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]" },
-  PENDING_ASSIGNMENT: { label: "Unassigned", cls: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]" },
-  DRAFTING: { label: "Drafting", cls: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]" },
-  PENDING_REVIEW: { label: "In review", cls: "bg-amber-50 text-amber-700 border-amber-200" },
-  REVISION_REQ: { label: "Revisions", cls: "bg-amber-50 text-amber-700 border-amber-200" },
-  PENDING_IFC: { label: "Pending IFC", cls: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]" },
-  FINAL_DRAFT: { label: "Final draft", cls: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]" },
-  PENDING_FINAL_APPROVAL: { label: "Final appr.", cls: "bg-amber-50 text-amber-700 border-amber-200" },
-  CLOSED: { label: "Closed", cls: "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]" },
-  CANCELED: { label: "Canceled", cls: "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]" },
+// A request's status as a quiet tag: amber where it waits on a review or an
+// approval, plain otherwise.
+const TICKET_STATUS: Record<string, { label: string; tone: "held" | "neutral" }> = {
+  NEW: { label: "New", tone: "neutral" },
+  PENDING_ENG_INITIAL: { label: "Eng review", tone: "held" },
+  PENDING_ENG_TEAM: { label: "Eng team", tone: "held" },
+  PENDING_ASSIGNMENT: { label: "Unassigned", tone: "held" },
+  DRAFTING: { label: "Drafting", tone: "neutral" },
+  PENDING_REVIEW: { label: "In review", tone: "held" },
+  REVISION_REQ: { label: "Revisions", tone: "held" },
+  PENDING_IFC: { label: "Pending IFC", tone: "neutral" },
+  FINAL_DRAFT: { label: "Final draft", tone: "neutral" },
+  PENDING_FINAL_APPROVAL: { label: "Final approval", tone: "held" },
+  CLOSED: { label: "Closed", tone: "neutral" },
+  CANCELED: { label: "Canceled", tone: "neutral" },
 };
 const ticketStatus = (s: string | null | undefined) =>
-  (s && TICKET_STATUS[s]) || { label: s ?? "-", cls: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]" };
+  (s && TICKET_STATUS[s]) || { label: s ?? "–", tone: "neutral" as const };
+
+/** "3d" → "3 days ago"; for the cells that say how long ago. */
+const agoWords = (iso: string | null | undefined) => {
+  const t = timeAgo(iso);
+  if (!t) return "–";
+  if (t === "now") return "Just now";
+  const n = parseInt(t, 10);
+  const unit = t.endsWith("m") ? "min" : t.endsWith("h") ? "h" : "d";
+  if (unit === "d" && n >= 14 && iso) return humanDate(iso);
+  return unit === "min" ? `${n} min ago` : unit === "h" ? `${n} h ago` : `${n} day${n === 1 ? "" : "s"} ago`;
+};
+
+const agoLower = (iso: string | null | undefined) => { const a = agoWords(iso); return a === "Just now" ? "just now" : a; };
+
+/** A widget's table: ruled rows, edge to edge in the sheet. */
+const wTable = "w-full text-[14px]";
+const wRow = "hover:bg-[var(--color-surface-2)] cursor-pointer transition-colors";
+const td = "px-4 py-2.5";
 
 // Pipeline stages in FIXED order (slot ↔ color assignment never shifts).
 const STAGES: Array<{ key: string; label: string; statuses: string[] }> = [
@@ -60,6 +80,7 @@ type ReqScope = "mine" | "assigned" | "unassigned" | "all";
 
 export function DraftingRequestsBody() {
   const { uid } = useRole();
+  const router = useRouter();
   const { expanded } = useWidget();
   const [scope, setScope] = useSetting<ReqScope>("scope", "all");
   const [stage, setStage] = useState<string | null>(null);
@@ -99,70 +120,104 @@ export function DraftingRequestsBody() {
 
   if (loading) return <Skeleton />;
   const wk = weekSplit(data?.newDates ?? []);
+  const stagesOn = stageCounts.filter((s) => s.count > 0);
 
   return (
     <div className={FILL}>
-      <div className="flex items-center justify-between gap-2 shrink-0">
-        <Tabs<ReqScope> value={scope} onChange={(v) => { setScope(v); setStage(null); }}
+      <div className="flex items-end justify-between gap-x-4 gap-y-2 flex-wrap shrink-0">
+        <Tabs<ReqScope> value={scope} onChange={(v) => { setScope(v); setStage(null); }} className="min-w-0"
           options={[
             { value: "all", label: "All open", count: counts.all },
             { value: "assigned", label: "Assigned to me", count: counts.assigned },
             { value: "mine", label: "I asked", count: counts.mine },
             { value: "unassigned", label: "Unassigned", count: counts.unassigned },
           ]} />
-        <div className="flex items-center gap-2 shrink-0">
-          <TrendChip current={wk.cur} previous={wk.prev} />
-          <Link href="/requests/new" className="inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-[var(--color-border-strong)] text-[11px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
-            <Plus className="w-3 h-3" /> New
-          </Link>
+        <div className="flex items-center gap-3 pb-1">
+          <TrendChip current={wk.cur} previous={wk.prev} what="new" />
+          <Link href="/requests/new" className={rowBtn}><Plus className="w-3.5 h-3.5" /> New request</Link>
         </div>
       </div>
-      {/* The pipeline — tap a stage to see just those. */}
-      {inScope.length > 0 && (
-        <div className="mt-2 shrink-0 flex flex-wrap gap-1">
-          {stageCounts.filter((s) => s.count > 0).map((s) => (
-            <button key={s.key} type="button" onClick={() => setStage(stage === s.key ? null : s.key)}
-              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-bold border transition-colors ${
-                stage === s.key ? "bg-[var(--color-text)] text-[var(--color-surface)] border-transparent" : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-accent)]"}`}>
-              {s.label} <span className="tabular-nums">{s.count}</span>
-            </button>
-          ))}
+      {(stagesOn.length > 1 || inScope.length > 4) && (
+        <div className="mt-3 shrink-0 flex items-center gap-2 flex-wrap">
+          {stagesOn.length > 1 && (
+            <select value={stage ?? ""} onChange={(e) => setStage(e.target.value || null)} aria-label="Stage"
+              className="h-9 px-2.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] text-[var(--color-text)]">
+              <option value="">Every stage ({inScope.length})</option>
+              {stagesOn.map((s) => <option key={s.key} value={s.key}>{s.label} ({s.count})</option>)}
+            </select>
+          )}
+          {inScope.length > 4 && <div className="flex-1 min-w-[12rem]"><SearchField value={q} onChange={setQ} placeholder="Filter by number, title, person" /></div>}
         </div>
       )}
-      {inScope.length > 4 && <div className="mt-2 shrink-0"><SearchField value={q} onChange={setQ} placeholder="Filter by number, title, person…" /></div>}
 
       {shown.length === 0 ? (
         <Empty>
           {inScope.length === 0
             ? scope === "assigned" ? "Nothing assigned to you right now." : scope === "mine" ? "You have no open requests." : "No open requests."
             : "Nothing matches that filter."}{" "}
-          <Link href="/requests/new" className="font-semibold text-[var(--color-accent-text)] hover:underline">Raise one →</Link>
+          <Link href="/requests/new" className={link}>Raise one</Link>
         </Empty>
       ) : (
-        <div className={`mt-2 space-y-0.5 ${SCROLL}`}>
-          {shown.slice(0, expanded ? 200 : 40).map((t) => {
-            const st = ticketStatus(t.status);
-            return (
-              <Link key={t.id} href={`/requests/${t.id}`} className="group block p-2 rounded-lg hover:bg-[var(--color-surface-2)] transition-colors">
-                <div className="flex items-center gap-2">
-                  <span className="font-mono text-[11px] px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] border border-[var(--color-border)] text-[var(--color-text-muted)] shrink-0">{t.ticket_id ?? "-"}</span>
-                  <span className="flex-1 min-w-0 text-[13px] font-semibold text-[var(--color-text)] truncate group-hover:text-[var(--color-text)]">{t.title ?? "Untitled request"}</span>
-                  {t.priority === 1 && <span className="shrink-0 text-[11px] font-black px-1 rounded bg-rose-600 text-white" title="Urgent">P1</span>}
-                  <span className={`shrink-0 text-[11px] font-bold px-1.5 py-0.5 rounded border ${st.cls}`}>{st.label}</span>
-                </div>
-                <div className="mt-0.5 pl-0.5 flex items-center gap-1.5 text-[11px] text-[var(--color-text-muted)] min-w-0">
-                  <span className="truncate">{t.requester_id === uid ? "You" : t.requester_name || "Unknown requester"}</span>
-                  <span className="text-[var(--color-text-faint)] shrink-0">→</span>
-                  <span className={`truncate ${t.assigned_drafter_name ? "font-semibold text-[var(--color-text)]" : "italic text-amber-700 dark:text-amber-500"}`}>
-                    {t.assigned_drafter_id === uid ? "you" : t.assigned_drafter_name || "unassigned"}
-                  </span>
-                  <span className="ml-auto shrink-0 text-[11px] text-[var(--color-text-faint)] tabular-nums">
-                    {timeAgo(t.created_at)}{t.updated_at && t.updated_at !== t.created_at ? ` · touched ${timeAgo(t.updated_at)}` : ""}
-                  </span>
-                </div>
-              </Link>
-            );
-          })}
+        <div className="@container -mx-4 -mb-4 mt-3 flex-1 min-h-0 overflow-y-auto border-t border-[var(--color-border)]">
+          <table className={`hidden @[40rem]:table ${wTable}`}>
+            <thead className={`${thead} sticky top-0 z-[1]`}>
+              <tr>
+                <th className={th}>Request</th>
+                <th className={th}>Title</th>
+                <th className={th}>Requester</th>
+                <th className={th}>Drafter</th>
+                <th className={th}>Status</th>
+                <th className={th}>Opened</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-[var(--color-border)]">
+              {shown.slice(0, expanded ? 200 : 40).map((t) => {
+                const st = ticketStatus(t.status);
+                return (
+                  <tr key={t.id} className={wRow} onClick={() => router.push(`/requests/${t.id}`)}>
+                    <td className={`${td} relative whitespace-nowrap`}>
+                      {t.priority === 1 && <LateEdge />}
+                      <Link href={`/requests/${t.id}`} onClick={(e) => e.stopPropagation()} className="font-display font-semibold tabular-nums text-[var(--color-text)] hover:text-[var(--color-accent-text)]">{t.ticket_id ?? "–"}</Link>
+                    </td>
+                    <td className={`${td} max-w-0 w-full`}>
+                      <span className="block truncate text-[var(--color-text)]">{t.title ?? "Untitled request"}</span>
+                    </td>
+                    <td className={`${td} whitespace-nowrap text-[var(--color-text-muted)]`}>{t.requester_id === uid ? "You" : t.requester_name || "Unknown"}</td>
+                    <td className={`${td} whitespace-nowrap`}>
+                      {t.assigned_drafter_name || t.assigned_drafter_id
+                        ? <span className="text-[var(--color-text)]">{t.assigned_drafter_id === uid ? "You" : t.assigned_drafter_name}</span>
+                        : <StatusTag tone="held">Unassigned</StatusTag>}
+                    </td>
+                    <td className={`${td} whitespace-nowrap`}>
+                      {t.priority === 1 ? <StatusTag tone="overdue">Urgent, {st.label.toLowerCase()}</StatusTag> : <StatusTag tone={st.tone}>{st.label}</StatusTag>}
+                    </td>
+                    <td className={`${td} whitespace-nowrap text-[var(--color-text-muted)] tabular-nums`} title={t.updated_at && t.updated_at !== t.created_at ? `Last change ${agoLower(t.updated_at)}` : undefined}>{agoWords(t.created_at)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          <ul className="@[40rem]:hidden divide-y divide-[var(--color-border)]">
+            {shown.slice(0, expanded ? 200 : 40).map((t) => {
+              const st = ticketStatus(t.status);
+              return (
+                <li key={t.id} className="relative">
+                  {t.priority === 1 && <LateEdge />}
+                  <Link href={`/requests/${t.id}`} className="block px-4 py-2.5 hover:bg-[var(--color-surface-2)]">
+                    <span className="flex items-baseline gap-3">
+                      <span className="min-w-0 flex-1 truncate text-[15px]">
+                        <span className="font-display font-semibold tabular-nums mr-2">{t.ticket_id ?? "–"}</span>{t.title ?? "Untitled request"}
+                      </span>
+                      <StatusTag tone={t.priority === 1 ? "overdue" : st.tone}>{st.label}</StatusTag>
+                    </span>
+                    <span className="mt-0.5 block text-[13px] text-[var(--color-text-muted)] truncate">
+                      {t.requester_id === uid ? "You" : t.requester_name || "Unknown"} to {t.assigned_drafter_id === uid ? "you" : t.assigned_drafter_name || "nobody yet"}, opened {agoLower(t.created_at)}
+                    </span>
+                  </Link>
+                </li>
+              );
+            })}
+          </ul>
         </div>
       )}
     </div>
@@ -180,6 +235,7 @@ type ProjScope = "active" | "mine" | "quiet" | "due";
 
 export function ProjectsBody() {
   const { uid } = useRole();
+  const router = useRouter();
   const [scope, setScope] = useSetting<ProjScope>("scope", "active");
   const [q, setQ] = useState("");
   const dq = useDebounced(q.trim().toLowerCase(), 150);
@@ -216,48 +272,80 @@ export function ProjectsBody() {
   const shown = rows.filter(filters[scope]).filter((p) => !dq || `${p.name ?? ""} ${p.moc_reference ?? ""} ${p.owner_user_name ?? ""}`.toLowerCase().includes(dq));
   const buckets = dayBuckets(data?.activityDates ?? [], 14);
   const wk = weekSplit(data?.activityDates ?? []);
+  const dueTag = (p: (typeof rows)[number]) => {
+    if (!p.due) return <span className="text-[var(--color-text-muted)]">–</span>;
+    const words = projectDueWords(p.due);
+    if (p.due.kind === "past target") return <StatusTag tone="overdue">{words}</StatusTag>;
+    if ((p.due.kind === "ends" || p.due.kind === "target") && p.due.days <= 7) return <StatusTag tone="held">{words}</StatusTag>;
+    return <span className="text-[var(--color-text)]">{words}</span>;
+  };
+  // Only a project going quiet gets a mark; activity itself isn't news.
+  const quiet = (p: (typeof rows)[number]) => p.quietDays != null && p.quietDays > 7;
   return (
     <div className={FILL}>
-      <div className="flex items-center justify-between gap-2 shrink-0">
-        <Tabs<ProjScope> value={scope} onChange={setScope} options={[
+      <div className="flex items-end justify-between gap-x-4 gap-y-2 flex-wrap shrink-0">
+        <Tabs<ProjScope> value={scope} onChange={setScope} className="min-w-0" options={[
           { value: "active", label: "Active", count: rows.length },
           { value: "mine", label: "Mine", count: rows.filter(isMine).length },
           { value: "due", label: "Due soon", count: rows.filter(filters.due).length },
           { value: "quiet", label: "Going quiet", count: rows.filter(filters.quiet).length },
         ]} />
-        <div className="flex items-center gap-2 shrink-0">
-          <TrendChip current={wk.cur} previous={wk.prev} />
-          {sum(buckets.counts) > 0 && <div className="w-20 hidden lg:block"><MiniBars values={buckets.counts} labels={buckets.labels} height={22} /></div>}
-          <Link href="/projects" className="inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-[var(--color-border-strong)] text-[11px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
-            <Plus className="w-3 h-3" /> New
-          </Link>
+        <div className="flex items-center gap-3 pb-1">
+          <TrendChip current={wk.cur} previous={wk.prev} what="updates" />
+          {sum(buckets.counts) > 0 && <div className="w-24 hidden lg:block"><MiniBars values={buckets.counts} labels={buckets.labels} height={22} /></div>}
+          <Link href="/projects" className={rowBtn}><Plus className="w-3.5 h-3.5" /> New</Link>
         </div>
       </div>
-      {rows.length > 5 && <div className="mt-2 shrink-0"><SearchField value={q} onChange={setQ} placeholder="Filter projects - name, MOC, owner…" /></div>}
+      {rows.length > 5 && <div className="mt-3 shrink-0"><SearchField value={q} onChange={setQ} placeholder="Filter projects by name, MOC, owner" /></div>}
       {shown.length === 0 ? (
         <Empty>{rows.length === 0 ? "No active projects." : "No projects match."}</Empty>
       ) : (
-        <div className={`mt-2 space-y-0.5 ${SCROLL}`}>
-          {shown.map((p) => (
-            <Link key={p.id} href={`/projects/${p.id}`} className="group flex items-center gap-2 p-2 rounded-lg hover:bg-[var(--color-surface-2)] transition-colors">
-              {/* Only a project going quiet gets a mark; activity itself isn't news. */}
-              <span aria-hidden className={`w-2 h-2 rounded-full shrink-0 ${p.quietDays != null && p.quietDays > 7 && p.quietDays <= 14 ? "bg-amber-500" : "bg-[var(--color-border-strong)]"}`} />
-              <span className="min-w-0 flex-1">
-                <span className="block text-[13px] font-semibold text-[var(--color-text)] truncate group-hover:text-[var(--color-text)]">{p.name ?? "Untitled project"}</span>
-                <span className="block text-[11px] text-[var(--color-text-muted)] truncate">
-                  {p.owner_user_id === uid ? "You" : p.owner_user_name ?? "-"}{p.moc_reference ? ` · MOC ${p.moc_reference}` : ""}
-                  {p.last_activity_at ? ` · active ${timeAgo(p.last_activity_at)} ago` : ""}
-                </span>
-              </span>
-              {p.due && (
-                <span data-project-due className={`shrink-0 text-[11px] font-black px-1.5 py-0.5 rounded ${
-                  p.due.kind === "past target" ? "bg-rose-600 text-white" : (p.due.kind === "ends" || p.due.kind === "target") && p.due.days <= 7 ? "bg-amber-100 text-amber-800" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"}`}>
-                  {projectDueWords(p.due)}
-                </span>
-              )}
-              <ChevronRight className="w-4 h-4 text-[var(--color-text-muted)] opacity-60 sm:opacity-0 group-hover:opacity-100 shrink-0" />
-            </Link>
-          ))}
+        <div className="@container -mx-4 -mb-4 mt-3 flex-1 min-h-0 overflow-y-auto border-t border-[var(--color-border)]">
+          <table className={`hidden @[40rem]:table ${wTable}`}>
+            <thead className={`${thead} sticky top-0 z-[1]`}>
+              <tr>
+                <th className={th}>Project</th>
+                <th className={th}>Owner</th>
+                <th className={th}>MOC</th>
+                <th className={th}>Dates</th>
+                <th className={th}>Last activity</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-[var(--color-border)]">
+              {shown.map((p) => (
+                <tr key={p.id} className={wRow} onClick={() => router.push(`/projects/${p.id}`)}>
+                  <td className={`${td} relative max-w-0 w-full`}>
+                    {p.due?.kind === "past target" && <LateEdge />}
+                    <Link href={`/projects/${p.id}`} onClick={(e) => e.stopPropagation()} className="block truncate font-semibold text-[var(--color-text)] hover:text-[var(--color-accent-text)]">{p.name ?? "Untitled project"}</Link>
+                  </td>
+                  <td className={`${td} whitespace-nowrap text-[var(--color-text-muted)]`}>{p.owner_user_id === uid ? "You" : p.owner_user_name ?? "–"}</td>
+                  <td className={`${td} whitespace-nowrap font-display tabular-nums text-[var(--color-text-muted)]`}>{p.moc_reference ?? "–"}</td>
+                  <td className={`${td} whitespace-nowrap`} data-project-due>{dueTag(p)}</td>
+                  <td className={`${td} whitespace-nowrap`}>
+                    {quiet(p) && p.quietDays! <= 14
+                      ? <StatusTag tone="held">{agoWords(p.last_activity_at)}</StatusTag>
+                      : <span className="text-[var(--color-text-muted)]">{agoWords(p.last_activity_at)}</span>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <ul className="@[40rem]:hidden divide-y divide-[var(--color-border)]">
+            {shown.map((p) => (
+              <li key={p.id} className="relative">
+                {p.due?.kind === "past target" && <LateEdge />}
+                <Link href={`/projects/${p.id}`} className="block px-4 py-2.5 hover:bg-[var(--color-surface-2)]">
+                  <span className="flex items-baseline gap-3">
+                    <span className="min-w-0 flex-1 truncate font-semibold text-[15px] text-[var(--color-text)]">{p.name ?? "Untitled project"}</span>
+                    <span className="shrink-0 text-[13px]" data-project-due>{dueTag(p)}</span>
+                  </span>
+                  <span className="mt-0.5 block text-[13px] text-[var(--color-text-muted)] truncate">
+                    {[p.owner_user_id === uid ? "You" : p.owner_user_name, p.moc_reference ? `MOC ${p.moc_reference}` : null, p.last_activity_at ? `last activity ${agoLower(p.last_activity_at)}` : null].filter(Boolean).join(", ")}
+                  </span>
+                </Link>
+              </li>
+            ))}
+          </ul>
         </div>
       )}
     </div>
@@ -280,9 +368,6 @@ const KIND_OF = (r: AuditRow): Exclude<ActKind, "all"> => {
   if (t.includes("document") || t.includes("collection") || t.includes("library") || t.includes("version") || a.includes("DOCUMENT") || a.includes("FOLDER")) return "documents";
   return "admin";
 };
-const KIND_ICON: Record<Exclude<ActKind, "all">, typeof FileText> = {
-  documents: FileText, requests: MailPlus, projects: Briefcase, knowledge: BookOpen, admin: Shield,
-};
 
 /** "DOCUMENT_REV_UP" → "Document rev up". */
 const humanize = (a: string | null) => {
@@ -292,6 +377,7 @@ const humanize = (a: string | null) => {
 
 function ActivityFeed({ adminView }: { adminView: boolean }) {
   const { uid } = useRole();
+  const router = useRouter();
   const { expanded } = useWidget();
   const [kind, setKind] = useState<ActKind>("all");
   const [onlyMine, setOnlyMine] = useSetting<boolean>("onlyMine", false);
@@ -333,10 +419,15 @@ function ActivityFeed({ adminView }: { adminView: boolean }) {
     if (t === "library") return { href: `/documents/${id}`, label: name ?? null };
     return { href: null, label: name ?? null };
   };
+  const when = (iso: string | null) => {
+    if (!iso) return "–";
+    const d = new Date(iso);
+    return d.toDateString() === new Date().toDateString() ? humanTime(iso) : `${humanDate(iso)}, ${humanTime(iso)}`;
+  };
   return (
     <div className={FILL}>
-      <div className="shrink-0 flex items-center gap-2">
-        <Tabs<ActKind> value={kind} onChange={setKind} className="min-w-0 flex-1" options={[
+      <div className="shrink-0 flex items-end gap-x-4 gap-y-2 flex-wrap">
+        <Tabs<ActKind> value={kind} onChange={setKind} className="min-w-0" options={[
           { value: "all", label: "All" },
           { value: "documents", label: "Documents", count: count("documents") },
           { value: "requests", label: "Requests", count: count("requests") },
@@ -344,50 +435,75 @@ function ActivityFeed({ adminView }: { adminView: boolean }) {
           { value: "knowledge", label: "Knowledge", count: count("knowledge") },
           { value: "admin", label: "Admin", count: count("admin") },
         ]} />
-        <label className="shrink-0 inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-text-muted)] cursor-pointer select-none">
-          <input type="checkbox" checked={onlyMine} onChange={(e) => setOnlyMine(e.target.checked)} className="accent-[var(--color-text)]" />
+        <label className="ml-auto pb-2 shrink-0 inline-flex items-center gap-2 text-[14px] text-[var(--color-text)] cursor-pointer select-none">
+          <input type="checkbox" checked={onlyMine} onChange={(e) => setOnlyMine(e.target.checked)} className="w-4 h-4 accent-[var(--color-accent)]" />
           Only mine
         </label>
       </div>
       {sum(buckets.counts) > 0 && (
-        <div className="shrink-0 mt-2 flex items-center gap-2">
+        <div className="shrink-0 mt-3 flex items-center gap-3">
+          <span className="shrink-0 text-[13px] text-[var(--color-text-muted)]">Last 14 days</span>
           <div className="flex-1"><Sparkline values={buckets.counts} labels={buckets.labels} height={28} /></div>
-          {adminView && <span className="shrink-0 text-[11px] font-bold text-[var(--color-text-muted)] tabular-nums">{(data?.total ?? 0).toLocaleString()} events on record</span>}
+          {adminView && <span className="shrink-0 text-[13px] text-[var(--color-text-muted)]"><span className="font-display font-semibold text-[var(--color-text)] tabular-nums">{(data?.total ?? 0).toLocaleString()}</span> events on record</span>}
         </div>
       )}
       {shown.length === 0 ? (
         <Empty>No {kind === "all" ? "" : `${kind} `}activity{onlyMine ? " of yours" : ""} yet.</Empty>
       ) : (
-        <ul className={`mt-1 space-y-0.5 ${SCROLL}`}>
-          {shown.map((r) => {
-            const k = KIND_OF(r);
-            const Icon = KIND_ICON[k];
-            const { href, label } = linkFor(r);
-            const who = r.user_id === uid ? "You" : (r.user_email ?? "").split("@")[0] || "Someone";
-            const inner = (
-              <>
-                <Icon className="w-3.5 h-3.5 shrink-0 text-[var(--color-text-faint)]" />
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-[12px] text-[var(--color-text)]">
-                    <span className="font-semibold">{humanize(r.action)}</span>
-                    {label ? <span className="text-[var(--color-text-muted)]"> · <span className="font-mono">{label}</span></span> : null}
+        <div className="@container -mx-4 -mb-4 mt-3 flex-1 min-h-0 overflow-y-auto border-t border-[var(--color-border)]">
+          <table className={`hidden @[40rem]:table ${wTable}`}>
+            <thead className={`${thead} sticky top-0 z-[1]`}>
+              <tr>
+                <th className={th}>When</th>
+                <th className={th}>Who</th>
+                <th className={th}>What</th>
+                <th className={th}>Item</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-[var(--color-border)]">
+              {shown.map((r) => {
+                const { href, label } = linkFor(r);
+                const who = r.user_id === uid ? "You" : (r.user_email ?? "").split("@")[0] || "Someone";
+                return (
+                  <tr key={r.id} className={href ? wRow : ""} onClick={href ? () => router.push(href) : undefined}>
+                    <td className={`${td} whitespace-nowrap text-[var(--color-text-muted)] tabular-nums`} title={r.timestamp ? new Date(r.timestamp).toLocaleString("en-US") : undefined}>{when(r.timestamp)}</td>
+                    <td className={`${td} whitespace-nowrap text-[var(--color-text)]`}>{who}</td>
+                    <td className={`${td} whitespace-nowrap text-[var(--color-text)]`}>{humanize(r.action)}</td>
+                    <td className={`${td} max-w-0 w-full`}>
+                      {href
+                        ? <Link href={href} onClick={(e) => e.stopPropagation()} className="block truncate font-display font-semibold tabular-nums text-[var(--color-text)] hover:text-[var(--color-accent-text)]">{label ?? "Open"}</Link>
+                        : <span className="block truncate text-[var(--color-text-muted)]">{label ?? "–"}</span>}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          <ul className="@[40rem]:hidden divide-y divide-[var(--color-border)]">
+            {shown.map((r) => {
+              const { href, label } = linkFor(r);
+              const who = r.user_id === uid ? "You" : (r.user_email ?? "").split("@")[0] || "Someone";
+              const inner = (
+                <>
+                  <span className="flex items-baseline gap-3">
+                    <span className="min-w-0 flex-1 truncate text-[15px] text-[var(--color-text)]">
+                      {humanize(r.action)}{label ? <span className="font-display font-semibold tabular-nums"> {label}</span> : null}
+                    </span>
+                    <span className="shrink-0 text-[13px] text-[var(--color-text-muted)] tabular-nums">{when(r.timestamp)}</span>
                   </span>
-                  <span className="block text-[11px] text-[var(--color-text-faint)] truncate">{who}</span>
-                </span>
-                <span className="shrink-0 text-[11px] text-[var(--color-text-muted)] tabular-nums" title={r.timestamp ? new Date(r.timestamp).toLocaleString() : undefined}>{timeAgo(r.timestamp)}</span>
-              </>
-            );
-            return (
-              <li key={r.id}>
-                {href ? (
-                  <Link href={href} className="group flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-[var(--color-surface-2)]">{inner}</Link>
-                ) : (
-                  <div className="flex items-center gap-2 px-2 py-1.5 rounded-lg">{inner}</div>
-                )}
-              </li>
-            );
-          })}
-        </ul>
+                  <span className="mt-0.5 block text-[13px] text-[var(--color-text-muted)]">{who}</span>
+                </>
+              );
+              return (
+                <li key={r.id}>
+                  {href
+                    ? <Link href={href} className="block px-4 py-2.5 hover:bg-[var(--color-surface-2)]">{inner}</Link>
+                    : <div className="px-4 py-2.5">{inner}</div>}
+                </li>
+              );
+            })}
+          </ul>
+        </div>
       )}
     </div>
   );
@@ -406,6 +522,7 @@ export function AdminAuditBody() {
 interface AssetRow { id: string; tag: string; description: string | null; location: string | null; updated_at?: string | null }
 
 export function EquipmentBody() {
+  const router = useRouter();
   const [q, setQ] = useState("");
   const dq = useDebounced(q.trim(), 200);
   const { data, loading } = useWidgetData(async (orgId) => {
@@ -425,31 +542,39 @@ export function EquipmentBody() {
   const rows = data?.rows ?? [];
   return (
     <div className={FILL}>
-      <div className="flex items-center gap-2 shrink-0">
-        <span className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold bg-[var(--color-surface-2)] text-[var(--color-text)]">
-          {(data?.count ?? 0).toLocaleString()}<span className="font-medium opacity-80">assets</span>
+      <div className="flex items-center gap-3 shrink-0">
+        <span className="shrink-0 text-[14px] text-[var(--color-text-muted)]">
+          <span className="font-display text-[18px] font-semibold text-[var(--color-text)] tabular-nums">{(data?.count ?? 0).toLocaleString()}</span> in the registry
         </span>
         <div className="flex-1 min-w-0">
-          <SearchField value={q} onChange={setQ} placeholder="Find a tag, description or location - e.g. P-101"
+          <SearchField value={q} onChange={setQ} placeholder="Find a tag, description or location, like P-101"
             onSubmit={(v) => { const hit = rows.find((r) => r.tag.toLowerCase() === v.toLowerCase()) ?? rows[0]; if (hit) window.location.href = `/assets/${encodeURIComponent(hit.tag)}`; }} />
         </div>
       </div>
       {rows.length === 0 ? (
-        <Empty>{dq ? `No assets match “${dq}”.` : "No assets in the registry yet."}</Empty>
+        <Empty>{dq ? `No equipment matches “${dq}”.` : "No equipment in the registry yet."}</Empty>
       ) : (
-        <div className={`mt-2 space-y-0.5 ${SCROLL}`}>
-          {!dq && <div className="px-2 text-[13px] font-semibold text-[var(--color-text-faint)]">Newest in the registry</div>}
-          {rows.map((a) => (
-            <Link key={a.id} href={`/assets/${encodeURIComponent(a.tag)}`}
-              className="group flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-[var(--color-surface-2)]">
-              <Tag className="w-3.5 h-3.5 shrink-0 text-[var(--color-text-muted)]" />
-              <span className="shrink-0 font-mono text-[12px] font-black text-[var(--color-text)] group-hover:text-[var(--color-text)]">{a.tag}</span>
-              <span className="min-w-0 flex-1 truncate text-[11px] text-[var(--color-text-muted)]">
-                {a.description ?? ""}{a.location ? <span className="text-[var(--color-text-faint)]"> · {a.location}</span> : null}
-              </span>
-              <ChevronRight className="w-3.5 h-3.5 shrink-0 text-[var(--color-text-faint)] opacity-0 group-hover:opacity-100" />
-            </Link>
-          ))}
+        <div className="-mx-4 -mb-4 mt-3 flex-1 min-h-0 overflow-y-auto border-t border-[var(--color-border)]">
+          <table className={wTable} aria-label={dq ? "Matching equipment" : "Newest in the registry"}>
+            <thead className={`${thead} sticky top-0 z-[1]`}>
+              <tr>
+                <th className={th}>Tag</th>
+                <th className={th}>Description</th>
+                <th className={`${th} hidden sm:table-cell`}>Location</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-[var(--color-border)]">
+              {rows.map((a) => (
+                <tr key={a.id} className={wRow} onClick={() => router.push(`/assets/${encodeURIComponent(a.tag)}`)}>
+                  <td className={`${td} whitespace-nowrap`}>
+                    <Link href={`/assets/${encodeURIComponent(a.tag)}`} onClick={(e) => e.stopPropagation()} className="font-display font-semibold tabular-nums text-[var(--color-text)] hover:text-[var(--color-accent-text)]">{a.tag}</Link>
+                  </td>
+                  <td className={`${td} max-w-0 w-full`}><span className="block truncate text-[var(--color-text-muted)]">{a.description ?? "–"}</span></td>
+                  <td className={`${td} hidden sm:table-cell whitespace-nowrap text-[var(--color-text-muted)]`}>{a.location ?? "–"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
     </div>
@@ -468,24 +593,26 @@ export function RecentDocsBody() {
   }, [expanded, count]);
   if (loading) return <Skeleton />;
   const rows = data ?? [];
-  if (rows.length === 0) return <Empty>Nothing viewed yet - open a document and it lands here.</Empty>;
+  if (rows.length === 0) return <Empty>Nothing viewed yet. Open a document and it shows here.</Empty>;
   return (
-    <div className={`mt-3 space-y-0.5 ${SCROLL}`}>
+    <ul className="-m-4 flex-1 min-h-0 overflow-y-auto divide-y divide-[var(--color-border)]">
       {rows.map((r) => (
-        <Link key={r.documentId} href={`/documents/${r.libraryId}?doc=${r.documentId}`}
-          className="group flex items-center gap-2 p-1.5 rounded-lg hover:bg-[var(--color-surface-2)] transition-colors">
-          <DocHoverPreview documentId={r.documentId}>
-            <DocThumb documentId={r.documentId} width={28} />
-          </DocHoverPreview>
-          <span className="min-w-0 flex-1">
-            <span className="block text-[12px] font-bold text-[var(--color-text)] truncate group-hover:text-[var(--color-text)]">{r.documentNumber || r.title || "Document"}</span>
-            {r.title && r.title !== r.documentNumber && <span className="block text-[11px] text-[var(--color-text-muted)] truncate">{r.title}</span>}
-          </span>
-          {r.rev && <span className="shrink-0 text-[11px] font-bold text-[var(--color-text-muted)]">Rev {r.rev}</span>}
-          <span className="shrink-0 text-[11px] text-[var(--color-text-faint)] tabular-nums">{timeAgo(r.viewedAt)}</span>
-        </Link>
+        <li key={r.documentId}>
+          <Link href={`/documents/${r.libraryId}?doc=${r.documentId}`}
+            className="flex items-center gap-3 px-4 py-2.5 hover:bg-[var(--color-surface-2)] transition-colors">
+            <DocHoverPreview documentId={r.documentId}>
+              <DocThumb documentId={r.documentId} width={28} />
+            </DocHoverPreview>
+            <span className="min-w-0 flex-1">
+              <span className="block font-display text-[15px] font-semibold tabular-nums text-[var(--color-text)] truncate">{r.documentNumber || r.title || "Document"}</span>
+              {r.title && r.title !== r.documentNumber && <span className="block text-[13px] text-[var(--color-text-muted)] truncate">{r.title}</span>}
+            </span>
+            {r.rev && <span className="shrink-0 text-[13px] text-[var(--color-text)]">Rev <span className="font-display font-semibold tabular-nums">{r.rev}</span></span>}
+            <span className="shrink-0 w-24 text-right text-[13px] text-[var(--color-text-muted)] tabular-nums">{agoWords(r.viewedAt)}</span>
+          </Link>
+        </li>
       ))}
-    </div>
+    </ul>
   );
 }
 
@@ -517,40 +644,38 @@ export function AdminUsersBody() {
     .filter((m) => !dq || `${m.email ?? ""} ${m.display_name ?? ""} ${m.role ?? ""}`.toLowerCase().includes(dq));
   return (
     <div className={FILL}>
-      <div className="flex items-end justify-between gap-2 shrink-0">
-        <div className="flex items-baseline gap-1.5">
-          <span className="text-[14px] font-bold text-[var(--color-text)] tabular-nums">{active.length}</span>
-          <span className="text-[13px] text-[var(--color-text-muted)]">active members</span>
-        </div>
+      <div className="flex items-baseline justify-between gap-3 shrink-0">
+        <span className="text-[14px] text-[var(--color-text-muted)]">
+          <span className="font-display text-[18px] font-semibold text-[var(--color-text)] tabular-nums">{active.length}</span> active members
+        </span>
         {pending.length > 0 && (
-          <Link href="/admin/users" className="text-[11px] font-bold text-amber-700 dark:text-amber-400 hover:underline">{pending.length} pending →</Link>
+          <Link href="/admin/users" className={`text-[14px] ${link}`}>{pending.length} invite{pending.length === 1 ? "" : "s"} pending</Link>
         )}
       </div>
       {segments.length > 0 && <SegmentBar segments={segments} className="mt-2 shrink-0" />}
-      <div className="mt-2 shrink-0 flex items-center gap-2">
-        <select value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)}
-          className="shrink-0 text-[11px] font-bold bg-transparent border border-[var(--color-border)] rounded-lg px-1.5 py-1 text-[var(--color-text)]">
+      <div className="mt-3 shrink-0 flex items-center gap-2">
+        <select value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)} aria-label="Role"
+          className="shrink-0 h-9 px-2.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] text-[var(--color-text)]">
           <option value="all">All roles</option>
           {entries.map(([r]) => <option key={r} value={r}>{r}</option>)}
         </select>
-        <div className="flex-1 min-w-0"><SearchField value={q} onChange={setQ} placeholder="Find a member…" /></div>
+        <div className="flex-1 min-w-0"><SearchField value={q} onChange={setQ} placeholder="Find a member" /></div>
       </div>
-      <ul className={`mt-2 space-y-0.5 ${SCROLL}`}>
-        {shown.map((m) => (
-          <li key={m.uid}>
-            <Link href="/admin/users" className="group flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-[var(--color-surface-2)]">
-              <User className="w-3.5 h-3.5 shrink-0 text-[var(--color-text-faint)]" />
-              <span className="min-w-0 flex-1 truncate text-[12px] font-semibold text-[var(--color-text)]">{m.display_name || m.email || m.uid.slice(0, 8)}</span>
-              <span className="shrink-0 text-[11px] font-bold px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text-muted)]">{m.role || "Member"}</span>
-              {(m.roles ?? []).filter((r) => r !== m.role).slice(0, 2).map((r) => (
-                <span key={r} className="shrink-0 text-[11px] font-bold px-1 py-0.5 rounded border border-[var(--color-border)] text-[var(--color-text-faint)]">+{r}</span>
-              ))}
-            </Link>
-          </li>
-        ))}
-        {shown.length === 0 && <Empty><Users className="w-4 h-4 mx-auto mb-1" />No members match.</Empty>}
-      </ul>
+      {shown.length === 0 ? <Empty>No members match.</Empty> : (
+        <ul className="-mx-4 -mb-4 mt-3 flex-1 min-h-0 overflow-y-auto border-t border-[var(--color-border)] divide-y divide-[var(--color-border)]">
+          {shown.map((m) => (
+            <li key={m.uid}>
+              <Link href="/admin/users" className="flex items-center gap-3 px-4 py-2.5 hover:bg-[var(--color-surface-2)]">
+                <span className="min-w-0 flex-1 truncate text-[15px] text-[var(--color-text)]">{m.display_name || m.email || m.uid.slice(0, 8)}</span>
+                <span className="shrink-0 text-[14px] font-semibold text-[var(--color-text)]">{m.role || "Member"}</span>
+                {(m.roles ?? []).filter((r) => r !== m.role).slice(0, 2).map((r) => (
+                  <span key={r} className="shrink-0 text-[13px] text-[var(--color-text-muted)]">and {r}</span>
+                ))}
+              </Link>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }
-

@@ -1,6 +1,6 @@
 "use client";
 
-// MyDeskPanel — "what am I sitting on right now?" in one glance.
+// MyDeskPanel: "what am I sitting on right now?" in one ruled table.
 //
 //   * Everything I have checked out (with its clock and a one-click release)
 //   * Downloaded copies of mine that have since gone stale (re-pull links)
@@ -12,9 +12,10 @@
 
 import React, { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { KeyRound, FileDown, GitBranch, Check, Loader2, Clock } from "lucide-react";
+import { FileDown, GitBranch, Check, Loader2, Clock } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { listMyStaleCopies, type StaleCopy } from "@/lib/staleCopies";
+import { StatusTag, rowBtn } from "./ui";
 
 interface MyCheckout {
   sessionId: string;
@@ -151,7 +152,7 @@ export default function MyDeskPanel({ orgId, uid, userEmail }: MyDeskPanelProps)
 
   const total = checkouts.length + staleCopies.length + branches.length;
   if (loading && total === 0) {
-    return <p className="flex items-center gap-1.5 px-1 text-[13px] text-[var(--color-text-muted)]"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading your desk…</p>;
+    return <p className="flex items-center gap-1.5 text-[14px] text-[var(--color-text-muted)]"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading what you have checked out…</p>;
   }
   if (total === 0) return null;
 
@@ -172,78 +173,85 @@ export default function MyDeskPanel({ orgId, uid, userEmail }: MyDeskPanelProps)
   const docHref = (libraryId: string | null, docId: string) =>
     libraryId ? `/documents/${libraryId}?doc=${docId}` : "/documents";
 
-  return (
-    <section className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] overflow-hidden">
-      <div className="px-4 sm:px-5 pt-4 pb-2 flex items-center gap-2">
-        <h2 className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-[var(--color-text-muted)]">
-          <KeyRound className="w-3.5 h-3.5" aria-hidden /> My desk
-        </h2>
-        <span className="text-[12px] font-bold text-[var(--color-text-muted)] ml-auto">{total} item{total === 1 ? "" : "s"}</span>
-      </div>
+  const band = "px-4 h-10 flex items-center gap-2 bg-[var(--color-surface-2)] text-[14px] font-semibold text-[var(--color-text)] border-t border-[var(--color-border-strong)] first:border-t-0";
+  const count = (n: number) => <span className="font-display font-normal tabular-nums text-[var(--color-text-muted)]">{n}</span>;
 
-      <div className="px-2 sm:px-3 pb-3 space-y-3 divide-y divide-[var(--color-border)] [&>*+*]:pt-3">
-        {releaseError && <p role="alert" className="border-l-2 border-red-500 pl-2 text-[11px] font-semibold text-red-700 dark:text-red-400">{releaseError}</p>}
+  return (
+    <section aria-label="Checked out to you">
+      <div className="flex items-center gap-2 mb-2.5 min-h-9">
+        <h2 className="font-display text-[19px] leading-tight font-semibold text-[var(--color-text)]">Checked out to you</h2>
+        <span className="text-[15px] text-[var(--color-text-muted)] tabular-nums">{total}</span>
+      </div>
+      {releaseError && <p role="alert" className="mb-2 border-l-[3px] border-[var(--state-overdue)] pl-2.5 text-[14px] font-semibold text-[var(--state-overdue)]">{releaseError}</p>}
+      <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
         {checkouts.length > 0 && (
-          <div className="space-y-1">
-            <div className="px-2 text-[13px] font-semibold text-[var(--color-text-muted)]">Checked out to me</div>
-            {checkouts.map((c) => {
-              const k = clock(c);
-              return (
-                <div key={c.sessionId} className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-[var(--color-surface-2)] group">
-                  <Link href={docHref(c.libraryId, c.documentId)} className="flex-1 min-w-0">
-                    <span className="text-[13.5px] font-semibold text-[var(--color-text)] truncate block">{c.docLabel}</span>
-                    <span className="text-[12px] text-[var(--color-text-muted)] flex items-center gap-1">
-                      <Clock className="w-2.5 h-2.5" />
-                      <span className={k.hot ? "text-amber-700 dark:text-amber-400 font-bold" : ""}>{k.text}</span>
-                      {c.purpose && <> · {c.purpose}</>}
+          <>
+            <h3 className={band}>Your checkouts {count(checkouts.length)}</h3>
+            <ul className="divide-y divide-[var(--color-border)]">
+              {checkouts.map((c) => {
+                const k = clock(c);
+                return (
+                  <li key={c.sessionId} className="relative flex items-center gap-3 px-4 py-2.5">
+                    {k.hot && <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] bg-[var(--state-held)]" />}
+                    <Link href={docHref(c.libraryId, c.documentId)} className="min-w-0 flex-1">
+                      <span className="block font-display text-[15px] font-semibold tabular-nums text-[var(--color-text)] truncate hover:text-[var(--color-accent-text)]">{c.docLabel}</span>
+                      {c.purpose && <span className="block text-[13px] text-[var(--color-text-muted)] truncate">{c.purpose}</span>}
+                    </Link>
+                    <span className="shrink-0 text-[14px] tabular-nums">
+                      {k.hot ? <StatusTag tone="held"><Clock className="w-3.5 h-3.5" aria-hidden />{k.text}</StatusTag> : <span className="text-[var(--color-text-muted)]">{k.text}</span>}
                     </span>
-                  </Link>
-                  <button
-                    onClick={() => void release(c)}
-                    disabled={releasingId === c.sessionId}
-                    title="Release: no changes"
-                    className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1.5 sm:py-1 rounded-md text-[12px] font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border-strong)] opacity-100 sm:opacity-0 group-hover:opacity-100 focus:opacity-100 hover:bg-[var(--color-surface-2)] transition-all disabled:opacity-50"
-                  >
-                    {releasingId === c.sessionId ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
-                    Release
-                  </button>
-                </div>
-              );
-            })}
-          </div>
+                    <button
+                      type="button"
+                      onClick={() => void release(c)}
+                      disabled={releasingId === c.sessionId}
+                      title="Release it with no changes"
+                      className={rowBtn}
+                    >
+                      {releasingId === c.sessionId ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                      Release
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </>
         )}
 
         {staleCopies.length > 0 && (
-          <div className="space-y-1">
-            <div className="px-2 text-[13px] font-semibold text-[var(--color-text-muted)]">My copies that went stale</div>
-            {staleCopies.slice(0, 5).map((s) => (
-              <Link key={s.documentId} href={docHref(s.libraryId, s.documentId)} className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-[var(--color-surface-2)] group">
-                <FileDown className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-                <span className="text-[13.5px] text-[var(--color-text)] truncate flex-1">{s.docLabel}</span>
-                <span className="text-[12px] font-bold text-amber-700 dark:text-amber-400 shrink-0">
-                  you have Rev {s.downloadedRev ?? "?"} → now Rev {s.currentRev ?? "?"}
-                </span>
-              </Link>
-            ))}
-            {staleCopies.length > 5 && (
-              <div className="text-[12px] text-[var(--color-text-muted)] px-2">and {staleCopies.length - 5} more</div>
-            )}
-          </div>
+          <>
+            <h3 className={band}><FileDown className="w-4 h-4 text-[var(--color-text-muted)]" aria-hidden />Your copies that are out of date {count(staleCopies.length)}</h3>
+            <ul className="divide-y divide-[var(--color-border)]">
+              {staleCopies.slice(0, 5).map((s) => (
+                <li key={s.documentId}>
+                  <Link href={docHref(s.libraryId, s.documentId)} className="flex items-center gap-3 px-4 py-2.5 hover:bg-[var(--color-surface-2)]">
+                    <span className="min-w-0 flex-1 font-display text-[15px] font-semibold tabular-nums text-[var(--color-text)] truncate">{s.docLabel}</span>
+                    <StatusTag tone="held">You have Rev {s.downloadedRev ?? "?"}, now Rev {s.currentRev ?? "?"}</StatusTag>
+                  </Link>
+                </li>
+              ))}
+              {staleCopies.length > 5 && (
+                <li className="px-4 py-2.5 text-[13px] text-[var(--color-text-muted)]">and {staleCopies.length - 5} more</li>
+              )}
+            </ul>
+          </>
         )}
 
         {branches.length > 0 && (
-          <div className="space-y-1">
-            <div className="px-2 text-[13px] font-semibold text-[var(--color-text-muted)]">My branches awaiting reconciliation</div>
-            {branches.map((b) => (
-              <Link key={b.id} href={docHref(b.libraryId, b.documentId)} className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-[var(--color-surface-2)] group">
-                <GitBranch className="w-3 h-3 text-[var(--color-text-muted)] shrink-0" />
-                <span className="text-[13.5px] text-[var(--color-text)] truncate flex-1">{b.docLabel}</span>
-                <span className="text-[12px] text-[var(--color-text-muted)] shrink-0">
-                  since {new Date(b.createdAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
-                </span>
-              </Link>
-            ))}
-          </div>
+          <>
+            <h3 className={band}><GitBranch className="w-4 h-4 text-[var(--color-text-muted)]" aria-hidden />Your branches to reconcile {count(branches.length)}</h3>
+            <ul className="divide-y divide-[var(--color-border)]">
+              {branches.map((b) => (
+                <li key={b.id}>
+                  <Link href={docHref(b.libraryId, b.documentId)} className="flex items-center gap-3 px-4 py-2.5 hover:bg-[var(--color-surface-2)]">
+                    <span className="min-w-0 flex-1 font-display text-[15px] font-semibold tabular-nums text-[var(--color-text)] truncate">{b.docLabel}</span>
+                    <span className="shrink-0 text-[13px] text-[var(--color-text-muted)]">
+                      Since {new Date(b.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+                    </span>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </>
         )}
       </div>
     </section>

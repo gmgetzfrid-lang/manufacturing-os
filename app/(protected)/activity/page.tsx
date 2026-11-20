@@ -13,7 +13,7 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { Activity, RefreshCw, AlertTriangle, FileText, Briefcase, Lock, Unlock, AlertOctagon, GitBranch, Zap, Pencil, Trash2, FileSignature, Layers, Download } from "lucide-react";
+import { RefreshCw } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
 import { PageShell } from "@/components/ui/PageShell";
@@ -22,6 +22,7 @@ import LoadingBlock from "@/components/ui/LoadingBlock";
 import ViewTabs, { ACTIVITY_VIEWS } from "@/components/navigation/ViewTabs";
 import DocThumb from "@/components/documents/DocThumb";
 import DocHoverPreview from "@/components/documents/DocHoverPreview";
+import { sheet, thead, th, rowBtn, humanTime } from "@/components/cockpit/ui";
 
 interface ActivityRow {
   id: string;
@@ -34,43 +35,34 @@ interface ActivityRow {
   timestamp: string;
 }
 
-const ACTION_VERBS: Record<string, { verb: string; emoji?: string; icon: React.ComponentType<{ className?: string }>; tone: string }> = {
-  CHECK_OUT:           { verb: "checked out", icon: Lock, tone: "indigo" },
-  CHECK_IN:            { verb: "checked in", icon: Unlock, tone: "emerald" },
-  ABANDON:             { verb: "abandoned checkout on", icon: Unlock, tone: "amber" },
-  FORCE_RELEASE:       { verb: "force-released the lock on", icon: AlertOctagon, tone: "rose" },
-  VIEW:                { verb: "viewed", icon: FileText, tone: "slate" },
-  DOWNLOAD:            { verb: "downloaded", icon: Download, tone: "sky" },
-  REV_UP:              { verb: "published a new revision of", icon: GitBranch, tone: "blue" },
-  REV_BACKFILL:        { verb: "backfilled a revision of", icon: GitBranch, tone: "blue" },
-  SUPERSEDE_DOC:       { verb: "superseded", icon: GitBranch, tone: "violet" },
-  ARCHIVE_DOC:         { verb: "archived", icon: Trash2, tone: "slate" },
-  DOC_SPLIT:           { verb: "split", icon: GitBranch, tone: "fuchsia" },
-  DOC_MERGED:          { verb: "merged", icon: GitBranch, tone: "fuchsia" },
-  DOC_RENUMBERED:      { verb: "renumbered", icon: Pencil, tone: "slate" },
-  HOLD_OPENED:         { verb: "opened a hold on", icon: AlertOctagon, tone: "rose" },
-  HOLD_RELEASED:       { verb: "released the hold on", icon: Unlock, tone: "emerald" },
-  MILESTONE_CREATED:   { verb: "added a milestone to", icon: Zap, tone: "slate" },
-  MILESTONE_COMPLETED: { verb: "completed a milestone for", icon: Zap, tone: "emerald" },
-  MILESTONE_MISSED:    { verb: "missed a milestone for", icon: AlertOctagon, tone: "amber" },
-  MILESTONE_BLOCKED:   { verb: "blocked a milestone for", icon: AlertOctagon, tone: "rose" },
-  EQUIPMENT_STATE_CHANGED: { verb: "changed the equipment state of", icon: Layers, tone: "slate" },
-  NOTE_CREATED:        { verb: "added a note to", icon: Pencil, tone: "slate" },
-  NOTE_DELETED:        { verb: "deleted a note from", icon: Trash2, tone: "slate" },
-  PROJECT_CREATED:     { verb: "created project", icon: Briefcase, tone: "indigo" },
-  MARKUP_REQUESTED:    { verb: "requested markups on", icon: FileSignature, tone: "violet" },
-  DATA_EXPORT:         { verb: "exported data from", icon: Download, tone: "sky" },
-};
-const TONE_BG: Record<string, string> = {
-  slate: "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]",
-  indigo: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]",
-  emerald: "bg-emerald-50 text-emerald-700 border-emerald-200",
-  amber: "bg-amber-50 text-amber-700 border-amber-200",
-  rose: "bg-rose-50 text-rose-700 border-rose-200",
-  sky: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]",
-  blue: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]",
-  violet: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]",
-  fuchsia: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]",
+// What each recorded action reads as, and whether it is bad news (a forced
+// release, a hold, a missed or blocked milestone gets a red edge).
+const ACTION_VERBS: Record<string, { verb: string; bad?: boolean }> = {
+  CHECK_OUT:           { verb: "checked out" },
+  CHECK_IN:            { verb: "checked in" },
+  ABANDON:             { verb: "abandoned the checkout on" },
+  FORCE_RELEASE:       { verb: "force-released the lock on", bad: true },
+  VIEW:                { verb: "viewed" },
+  DOWNLOAD:            { verb: "downloaded" },
+  REV_UP:              { verb: "published a new revision of" },
+  REV_BACKFILL:        { verb: "backfilled a revision of" },
+  SUPERSEDE_DOC:       { verb: "superseded" },
+  ARCHIVE_DOC:         { verb: "archived" },
+  DOC_SPLIT:           { verb: "split" },
+  DOC_MERGED:          { verb: "merged" },
+  DOC_RENUMBERED:      { verb: "renumbered" },
+  HOLD_OPENED:         { verb: "opened a hold on", bad: true },
+  HOLD_RELEASED:       { verb: "released the hold on" },
+  MILESTONE_CREATED:   { verb: "added a milestone to" },
+  MILESTONE_COMPLETED: { verb: "completed a milestone for" },
+  MILESTONE_MISSED:    { verb: "missed a milestone for", bad: true },
+  MILESTONE_BLOCKED:   { verb: "blocked a milestone for", bad: true },
+  EQUIPMENT_STATE_CHANGED: { verb: "changed the equipment state of" },
+  NOTE_CREATED:        { verb: "added a note to" },
+  NOTE_DELETED:        { verb: "deleted a note from" },
+  PROJECT_CREATED:     { verb: "created project" },
+  MARKUP_REQUESTED:    { verb: "requested markups on" },
+  DATA_EXPORT:         { verb: "exported data from" },
 };
 
 const RESOURCE_LABEL: Record<string, string> = {
@@ -172,7 +164,8 @@ export default function ActivityFeedPage() {
     const out: Array<{ day: string; rows: ActivityRow[] }> = [];
     const map = new Map<string, ActivityRow[]>();
     for (const r of rows) {
-      const day = new Date(r.timestamp).toLocaleDateString(undefined, { weekday: "long", year: "numeric", month: "long", day: "numeric" });
+      const d = new Date(r.timestamp);
+      const day = d.toLocaleDateString("en-US", d.getFullYear() === new Date().getFullYear() ? { weekday: "long", month: "short", day: "numeric" } : { weekday: "long", month: "short", day: "numeric", year: "numeric" });
       const list = map.get(day) || [];
       list.push(r);
       map.set(day, list);
@@ -200,17 +193,12 @@ export default function ActivityFeedPage() {
     return { today, actors: actors.size, ...cat };
   }, [rows]);
 
-  // The pulse, said in words: what kinds of change happened in the window.
-  const kinds = ([
-    [pulse.revisions, "revision", "revisions"],
-    [pulse.locks, "checkout", "checkouts"],
-    [pulse.holds, "hold", "holds"],
-    [pulse.milestones, "milestone update", "milestone updates"],
-    [pulse.equipment, "equipment change", "equipment changes"],
-  ] as Array<[number, string, string]>).filter(([n]) => n > 0).map(([n, one, many]) => `${n} ${n === 1 ? one : many}`);
   const answer = loading && rows.length === 0 ? "Activity"
     : rows.length === 0 ? (error ? "The activity didn't load." : "Nothing has happened yet.")
       : pulse.today === 0 ? "Quiet today." : `${pulse.today} ${pulse.today === 1 ? "change" : "changes"} today.`;
+
+  const today = new Date().toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" });
+  const yesterday = new Date(Date.now() - 86_400_000).toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" });
 
   return (
     <PageShell width="work">
@@ -219,13 +207,15 @@ export default function ActivityFeedPage() {
           title={answer}
           sub={
             <>
-              {rows.length > 0
-                ? <>{rows.length.toLocaleString()} loaded, {pulse.actors} {pulse.actors === 1 ? "person" : "people"} active{kinds.length ? `: ${kinds.join(", ")}` : ""}. </>
-                : null}
-              What happened in the workspace, in plain words. The Audit log has the raw detail.
-              {error && <span role="alert" className="block mt-1 text-rose-200 font-semibold"><AlertTriangle className="inline w-3.5 h-3.5 -mt-0.5 mr-1" />{error}</span>}
+              {rows.length > 0 ? `The last ${rows.length.toLocaleString()} changes, by ${pulse.actors} ${pulse.actors === 1 ? "person" : "people"}, newest first.` : "What happened in the workspace, in plain words."}
+              {error && <span role="alert" className="block mt-1 text-[var(--state-overdue)] font-semibold">The activity didn&apos;t load: {error}</span>}
             </>
           }
+          facts={rows.length > 0 ? [
+            { label: "Today", value: pulse.today },
+            { label: "Revisions", value: pulse.revisions },
+            { label: "Checkouts", value: pulse.locks },
+          ] : undefined}
           tools={
             <button type="button" className={heroQuiet} onClick={refresh} disabled={loading} aria-label="Refresh">
               <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} /><span className="max-sm:hidden">Refresh</span>
@@ -239,60 +229,97 @@ export default function ActivityFeedPage() {
         {loading && rows.length === 0 ? (
           <Card><LoadingBlock what="activity" rows={6} className="border-0 p-0" /></Card>
         ) : rows.length === 0 ? (
-          <Card><p className="py-8 text-center text-[14px] text-[var(--color-text-muted)]">No activity recorded yet.</p></Card>
+          <Card><p className="text-[15px] text-[var(--color-text-muted)]">No activity recorded yet.</p></Card>
         ) : (
           <>
-            {grouped.map((group) => (
-              <Card key={group.day} label={group.day}>
-                <div className="divide-y divide-[var(--color-border)] -mx-4 sm:-mx-5 border-t border-[var(--color-border)]">
-                  {group.rows.map((r) => {
-                    const meta = ACTION_VERBS[r.action];
-                    const Icon = meta?.icon ?? Activity;
-                    const tone = TONE_BG[meta?.tone ?? "slate"];
-                    const verb = meta?.verb ?? r.action.toLowerCase().replace(/_/g, " ");
-                    const dm = r.resourceType === "document" ? docMeta.get(r.resourceId) : undefined;
-                    const xm = !dm ? extraMeta.get(`${r.resourceType}:${r.resourceId}`) : undefined;
-                    const resourceLabel = dm
-                      ? `${dm.documentNumber ?? ""}${dm.documentNumber ? " · " : ""}${dm.title ?? dm.documentNumber ?? r.resourceId.slice(0, 8)}`
-                      : xm
-                      ? xm.label
-                      : `${RESOURCE_LABEL[r.resourceType] || r.resourceType} ${r.resourceId.slice(0, 8)}`;
-                    const href = dm?.libraryId ? `/documents/${dm.libraryId}?doc=${r.resourceId}`
-                      : xm?.href ?? null;
-                    const filePath = dm ? docFile.get(r.resourceId) : undefined;
-                    return (
-                      <div key={r.id} className="flex items-start gap-3 px-4 sm:px-5 py-2.5 hover:bg-[var(--color-surface-2)] transition-colors">
-                        {filePath ? (
-                          <DocHoverPreview documentId={r.resourceId} filePath={filePath} label={resourceLabel}>
-                            <DocThumb filePath={filePath} width={36} className="mt-0.5" />
-                          </DocHoverPreview>
-                        ) : (
-                          <div className={`shrink-0 w-8 h-8 rounded-[9px] flex items-center justify-center ${tone.replace(/border-\S+/g, "")}`}>
-                            <Icon className="w-3.5 h-3.5" />
-                          </div>
-                        )}
-                        <div className="flex-1 min-w-0 text-[13.5px] leading-relaxed pt-1">
-                          <span className="font-bold text-[var(--color-text)]">{r.userEmail?.split("@")[0] ?? "Someone"}</span>
-                          {" "}<span className="text-[var(--color-text-muted)]">{verb}</span>{" "}
-                          {href ? (
-                            <Link href={href} className="font-bold text-[var(--color-text)] hover:text-[var(--color-accent-text)] underline-offset-2 hover:underline transition-colors">
-                              {resourceLabel}
-                            </Link>
-                          ) : (
-                            <span className="font-bold text-[var(--color-text)]">{resourceLabel}</span>
-                          )}
-                          <span className="text-[var(--color-text-muted)] ml-1">· {new Date(r.timestamp).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}</span>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </Card>
-            ))}
+            {grouped.map((group) => {
+              const items = group.rows.map((r) => {
+                const meta = ACTION_VERBS[r.action];
+                const verb = meta?.verb ?? r.action.toLowerCase().replace(/_/g, " ");
+                const dm = r.resourceType === "document" ? docMeta.get(r.resourceId) : undefined;
+                const xm = !dm ? extraMeta.get(`${r.resourceType}:${r.resourceId}`) : undefined;
+                const number = dm?.documentNumber ?? null;
+                const name = dm ? (dm.title && dm.title !== number ? dm.title : null) : null;
+                const resourceLabel = dm ? (number ?? dm.title ?? r.resourceId.slice(0, 8))
+                  : xm ? xm.label
+                  : `${RESOURCE_LABEL[r.resourceType] || r.resourceType} ${r.resourceId.slice(0, 8)}`;
+                const href = dm?.libraryId ? `/documents/${dm.libraryId}?doc=${r.resourceId}` : xm?.href ?? null;
+                const filePath = dm ? docFile.get(r.resourceId) : undefined;
+                return { r, meta, verb, number, name, resourceLabel, href, filePath, who: r.userEmail?.split("@")[0] ?? "Someone", time: humanTime(r.timestamp) };
+              });
+              return (
+                <section key={group.day} aria-label={group.day}>
+                  <div className="flex items-center gap-2 mb-2.5 min-h-9">
+                    <h2 className="font-display text-[19px] leading-tight font-semibold text-[var(--color-text)]">
+                      {group.day === today ? `Today, ${group.day.split(", ").slice(1).join(", ")}` : group.day === yesterday ? `Yesterday, ${group.day.split(", ").slice(1).join(", ")}` : group.day}
+                    </h2>
+                    <span className="text-[15px] text-[var(--color-text-muted)] tabular-nums">{group.rows.length}</span>
+                  </div>
+                  <div className={`${sheet} @container`}>
+                    <table className="hidden @[40rem]:table w-full table-fixed text-[15px]">
+                      <thead className={thead}>
+                        <tr>
+                          <th className={`${th} w-[7.5rem]`}>Time</th>
+                          <th className={`${th} w-[9rem]`}>Who</th>
+                          <th className={`${th} w-[16rem]`}>What</th>
+                          <th className={th}>Item</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-[var(--color-border)]">
+                        {items.map((it) => (
+                          <tr key={it.r.id} className={it.href ? "hover:bg-[var(--color-surface-2)]" : ""}>
+                            <td className="relative px-4 py-2.5 whitespace-nowrap tabular-nums text-[var(--color-text-muted)]">
+                              {it.meta?.bad && <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] bg-[var(--state-overdue)]" />}
+                              {it.time}
+                            </td>
+                            <td className="px-4 py-2.5 truncate text-[var(--color-text)]">{it.who}</td>
+                            <td className={`px-4 py-2.5 truncate ${it.meta?.bad ? "text-[var(--state-overdue)] font-semibold" : "text-[var(--color-text)]"}`}>{it.verb}</td>
+                            <td className="px-4 py-2">
+                              <span className="flex items-center gap-3 min-w-0">
+                                {it.filePath && (
+                                  <DocHoverPreview documentId={it.r.resourceId} filePath={it.filePath} label={it.resourceLabel}>
+                                    <DocThumb filePath={it.filePath} width={28} />
+                                  </DocHoverPreview>
+                                )}
+                                {it.href ? (
+                                  <Link href={it.href} className="min-w-0 truncate font-display font-semibold tabular-nums text-[var(--color-text)] hover:text-[var(--color-accent-text)] hover:underline underline-offset-2">{it.resourceLabel}</Link>
+                                ) : (
+                                  <span className="min-w-0 truncate font-display font-semibold tabular-nums text-[var(--color-text)]">{it.resourceLabel}</span>
+                                )}
+                                {it.name && <span className="min-w-0 truncate text-[14px] text-[var(--color-text-muted)]">{it.name}</span>}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    <ul className="@[40rem]:hidden divide-y divide-[var(--color-border)]">
+                      {items.map((it) => {
+                        const inner = (
+                          <>
+                            <span className="flex items-baseline gap-3">
+                              <span className="min-w-0 flex-1 truncate font-display text-[15px] font-semibold tabular-nums text-[var(--color-text)]">{it.resourceLabel}</span>
+                              <span className="shrink-0 text-[13px] text-[var(--color-text-muted)] tabular-nums">{it.time}</span>
+                            </span>
+                            <span className={`mt-0.5 block text-[13px] truncate ${it.meta?.bad ? "text-[var(--state-overdue)] font-semibold" : "text-[var(--color-text-muted)]"}`}>{it.who} {it.verb}</span>
+                          </>
+                        );
+                        return (
+                          <li key={it.r.id} className="relative">
+                            {it.meta?.bad && <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] bg-[var(--state-overdue)]" />}
+                            {it.href ? <Link href={it.href} className="block px-4 py-2.5 hover:bg-[var(--color-surface-2)]">{inner}</Link> : <div className="px-4 py-2.5">{inner}</div>}
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </div>
+                </section>
+              );
+            })}
 
             {rows.length >= limit && (
-              <div className="px-1">
-                <button type="button" onClick={() => setLimit((n) => n + 200)} className="text-[13px] font-bold text-[var(--color-accent-text)] hover:text-[var(--color-accent-hover)]">
+              <div>
+                <button type="button" onClick={() => setLimit((n) => n + 200)} className={rowBtn}>
                   Show 200 more
                 </button>
               </div>

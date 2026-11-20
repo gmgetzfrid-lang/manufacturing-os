@@ -13,7 +13,7 @@
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowUp, ChevronRight, Folder, FileText, ArrowUpRight, Home, Loader2 } from "lucide-react";
+import { ArrowUp, ChevronRight, Folder, Loader2 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { useRole } from "@/components/providers/RoleContext";
 import { isControllerRole } from "@/lib/permissions";
@@ -23,8 +23,9 @@ import FindPanel, { findMapState } from "@/components/find/FindPanel";
 import FindMap from "@/components/find/FindMap";
 import { folderUnit, folderForUnit } from "@/lib/findEverywhere";
 import { TrendChip, MiniBars, dayBuckets } from "../viz";
+import { StatusTag, rowBtn, link, humanDate, type StatusTone } from "@/components/cockpit/ui";
 import {
-  useWidget, useSetting, useSessionState, useWidgetData, SearchField, Skeleton, Empty, timeAgo,
+  useWidget, useSetting, useSessionState, useWidgetData, SearchField, Skeleton, Empty,
   headCount, fetchRecentDates, weekSplit, sum,
 } from "../kit";
 
@@ -34,32 +35,28 @@ interface DocRow { id: string; document_number: string | null; title: string | n
 
 const DOC_COLS = "id, document_number, title, name, rev, status, updated_at, collection_id, library_id, sheet_meta:metadata->>sheet";
 
-const STATUS_CLS: Record<string, string> = {
-  Issued: "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/30 dark:text-emerald-300 dark:border-emerald-800",
-  IFC: "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/30 dark:text-emerald-300 dark:border-emerald-800",
-  Draft: "bg-slate-50 text-slate-600 border-slate-200 dark:bg-slate-900/40 dark:text-slate-300 dark:border-slate-700",
-  "In Review": "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/30 dark:text-amber-300 dark:border-amber-800",
-  Superseded: "bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-950/30 dark:text-rose-300 dark:border-rose-800",
+// A document's status as a quiet tag: green once issued, amber in review.
+const STATUS_TONE: Record<string, StatusTone> = {
+  Issued: "released", IFC: "released", "In Review": "held",
 };
 
 function DocLine({ d, folderName }: { d: DocRow; folderName?: string | null }) {
   // Its folder opens with it picked, not the top of the library.
   const href = `/documents/${d.library_id ?? ""}?${d.collection_id ? `folderId=${d.collection_id}&` : ""}doc=${d.id}`;
   return (
-    <Link href={href} className="group flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-[var(--color-surface-2)] transition-colors">
-      <FileText className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" />
+    <Link href={href} className="flex items-center gap-3 px-4 py-2.5 hover:bg-[var(--color-surface-2)] transition-colors">
       <span className="min-w-0 flex-1">
-        <span className="flex items-center gap-1.5 min-w-0">
-          <span className="font-mono text-[11px] font-bold text-[var(--color-text)] truncate group-hover:text-[var(--color-text)]">{d.document_number || d.name || "Document"}</span>
-          {d.rev && <span className="shrink-0 text-[11px] font-black text-[var(--color-text-muted)]">R{d.rev}</span>}
+        <span className="flex items-baseline gap-2 min-w-0">
+          <span className="font-display text-[15px] font-semibold tabular-nums text-[var(--color-text)] truncate">{d.document_number || d.name || "Document"}</span>
+          {d.rev && <span className="shrink-0 text-[13px] text-[var(--color-text-muted)]">Rev <span className="font-display tabular-nums">{d.rev}</span></span>}
         </span>
-        <span className="block text-[11px] text-[var(--color-text-muted)] truncate">
+        <span className="block text-[13px] text-[var(--color-text-muted)] truncate">
           {d.title && d.title !== d.document_number ? d.title : (d.name ?? "")}
-          {folderName ? <span className="text-[var(--color-text-faint)]"> · {folderName}</span> : null}
+          {folderName ? `, in ${folderName}` : null}
         </span>
       </span>
-      {d.status && <span className={`shrink-0 text-[11px] font-black px-1.5 py-0.5 rounded border ${STATUS_CLS[d.status] ?? "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]"}`}>{d.status}</span>}
-      <span className="shrink-0 w-6 text-right text-[11px] text-[var(--color-text-faint)] tabular-nums">{timeAgo(d.updated_at)}</span>
+      {d.status && <StatusTag tone={STATUS_TONE[d.status] ?? "neutral"}>{d.status}</StatusTag>}
+      <span className="shrink-0 w-20 text-right text-[13px] text-[var(--color-text-muted)] tabular-nums">{d.updated_at ? humanDate(d.updated_at) : ""}</span>
     </Link>
   );
 }
@@ -131,7 +128,7 @@ export default function DocBrowserBody() {
 
   if (topLoading) return <Skeleton />;
   if (libs.length === 0) {
-    return <Empty><Link href="/admin/libraries" className="font-bold text-[var(--color-accent-text)] hover:underline">No libraries yet - create your first library →</Link></Empty>;
+    return <Empty>No libraries yet. <Link href="/admin/libraries" className={link}>Create your first library</Link></Empty>;
   }
 
   // ── The map: always beside the list, showing where you are ────────
@@ -177,12 +174,12 @@ export default function DocBrowserBody() {
 
   // List on the left, map on the right at full height; stacked when narrow.
   const shell = (head: React.ReactNode, left: React.ReactNode) => (
-    <div className="mt-3 flex-1 min-h-0 flex flex-col">
+    <div className="flex-1 min-h-0 flex flex-col">
       {head}
       <div className="shrink-0">{search}</div>
-      <div className="mt-2 flex-1 min-h-0 @container">
-        <div className="h-full flex flex-col @min-[34rem]:flex-row gap-3">
-          <div className="flex-1 min-h-0 min-w-0 overflow-y-auto overscroll-contain pr-0.5" data-widget-list>{left}</div>
+      <div className="mt-3 flex-1 min-h-0 @container">
+        <div className="h-full flex flex-col @min-[34rem]:flex-row gap-4">
+          <div className="flex-1 min-h-0 min-w-0 overflow-y-auto overscroll-contain rounded-md border border-[var(--color-border)]" data-widget-list>{left}</div>
           <div className="h-56 shrink-0 @min-[34rem]:h-auto @min-[34rem]:w-[44%]">{map}</div>
         </div>
       </div>
@@ -190,7 +187,7 @@ export default function DocBrowserBody() {
   );
 
   const results = searching && activeOrgId ? (
-    <div data-widget-find>
+    <div className="p-3" data-widget-find>
       <FindPanel orgId={activeOrgId} f={finder} unit={unit} compact hideMap
         onOpenFolder={(fo) => { setLibId(fo.libraryId); setPath([{ id: fo.id, name: fo.name, parent_id: null }]); setQ(""); }}
         onOpenHref={(href) => router.push(href)} />
@@ -203,64 +200,57 @@ export default function DocBrowserBody() {
     const buckets = dayBuckets(top?.newDates ?? [], 14);
     const wk = weekSplit(top?.newDates ?? []);
     const head = (
-      <div className="mb-2 flex items-end justify-between gap-4 shrink-0">
-        <div className="flex items-baseline gap-1.5">
-          <span className="text-[14px] font-bold text-[var(--color-text)] tabular-nums">{(top?.totalDocs ?? 0).toLocaleString()}</span>
-          <span className="text-[13px] text-[var(--color-text-muted)]">controlled documents</span>
-        </div>
+      <div className="mb-3 flex items-end justify-between gap-4 shrink-0">
+        <span className="text-[14px] text-[var(--color-text-muted)]">
+          <span className="font-display text-[18px] font-semibold text-[var(--color-text)] tabular-nums">{(top?.totalDocs ?? 0).toLocaleString()}</span> controlled documents
+        </span>
         <div className="flex items-center gap-3 min-w-0">
-          <TrendChip current={wk.cur} previous={wk.prev} />
-          {sum(buckets.counts) > 0 && <div className="w-28 hidden sm:block"><MiniBars values={buckets.counts} labels={buckets.labels} height={28} /></div>}
+          <TrendChip current={wk.cur} previous={wk.prev} what="new" />
+          {sum(buckets.counts) > 0 && <div className="w-28 hidden sm:block" title="New documents, last 14 days"><MiniBars values={buckets.counts} labels={buckets.labels} height={24} /></div>}
         </div>
       </div>
     );
     return shell(head, results ?? (
-      <div className="rounded-xl border border-[var(--color-border)] divide-y divide-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
+      <ul className="divide-y divide-[var(--color-border)]">
         {chosen.map((l) => (
-          <button key={l.id} type="button" onClick={() => go(l.id)} data-widget-lib={l.id}
-            className="group w-full text-left flex items-center gap-3 px-3 py-2 hover:bg-[var(--color-surface-2)] transition-colors">
-            <NodeCover appearance={{ color: l.color, icon: l.icon, coverImageUrl: l.cover_image_url, coverTint: l.cover_tint }}
-              className="w-7 h-7 shrink-0" rounded="rounded-md" iconSize="w-3.5 h-3.5" />
-            <span className="min-w-0 flex-1 text-[13px] font-bold text-[var(--color-text)] truncate group-hover:text-[var(--color-text)]">{l.name}</span>
-            <span className="shrink-0 text-[12px] tabular-nums text-[var(--color-text-muted)]">{l.count != null ? `${l.count.toLocaleString()} doc${l.count === 1 ? "" : "s"}` : ""}</span>
-            <ChevronRight className="w-4 h-4 shrink-0 text-[var(--color-text-faint)] group-hover:text-[var(--color-text-muted)]" />
-          </button>
+          <li key={l.id}>
+            <button type="button" onClick={() => go(l.id)} data-widget-lib={l.id}
+              className="w-full text-left flex items-center gap-3 px-4 py-2.5 hover:bg-[var(--color-surface-2)] transition-colors">
+              <NodeCover appearance={{ color: l.color, icon: l.icon, coverImageUrl: l.cover_image_url, coverTint: l.cover_tint }}
+                className="w-7 h-7 shrink-0" rounded="rounded-md" iconSize="w-3.5 h-3.5" />
+              <span className="min-w-0 flex-1 text-[15px] font-semibold text-[var(--color-text)] truncate">{l.name}</span>
+              <span className="shrink-0 text-[14px] text-[var(--color-text-muted)]">{l.count != null ? <><span className="font-display tabular-nums text-[var(--color-text)]">{l.count.toLocaleString()}</span> doc{l.count === 1 ? "" : "s"}</> : ""}</span>
+              <ChevronRight className="w-4 h-4 shrink-0 text-[var(--color-text-faint)]" />
+            </button>
+          </li>
         ))}
-      </div>
+      </ul>
     ));
   }
 
   // ── Inside a library ──────────────────────────────────────────────
   const crumbs = (
-    <div className="mb-2 shrink-0 flex items-center gap-1 min-w-0">
-      <button type="button" onClick={up} title={path.length ? "Up one folder" : "Back to all libraries"}
-        className="shrink-0 inline-flex items-center gap-1 h-7 px-2 rounded-lg border border-[var(--color-border)] text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-accent)]">
+    <div className="mb-3 shrink-0 flex items-center gap-2 min-w-0">
+      <button type="button" onClick={up} title={path.length ? "Up one folder" : "Back to all libraries"} className={rowBtn}>
         <ArrowUp className="w-3.5 h-3.5" /> Up
       </button>
-      <nav className="min-w-0 flex-1 flex items-center gap-0.5 overflow-x-auto no-scrollbar text-[11px] font-bold">
-        <button type="button" onClick={() => go(null)} className="shrink-0 p-1 rounded text-[var(--color-text-muted)] hover:text-[var(--color-accent-text)]" title="All libraries">
-          <Home className="w-3.5 h-3.5" />
-        </button>
-        <ChevronRight className="w-3 h-3 shrink-0 text-[var(--color-text-faint)]" />
-        <button type="button" onClick={() => { setPath([]); setQ(""); }}
-          className={`shrink-0 px-1 rounded truncate max-w-[10rem] ${path.length ? "text-[var(--color-text-muted)] hover:text-[var(--color-accent-text)]" : "text-[var(--color-text)]"}`}>
-          {lib?.name ?? "Library"}
-        </button>
+      <nav aria-label="Where you are" className="min-w-0 flex-1 flex items-center gap-1 overflow-x-auto no-scrollbar text-[14px]">
+        <button type="button" onClick={() => go(null)} className={`shrink-0 ${link}`}>All libraries</button>
+        <ChevronRight className="w-3.5 h-3.5 shrink-0 text-[var(--color-text-faint)]" />
+        {path.length ? (
+          <button type="button" onClick={() => { setPath([]); setQ(""); }} className={`shrink-0 truncate max-w-[10rem] ${link}`}>{lib?.name ?? "Library"}</button>
+        ) : <span className="shrink-0 truncate max-w-[12rem] font-semibold text-[var(--color-text)]" aria-current="location">{lib?.name ?? "Library"}</span>}
         {path.map((f, i) => (
           <React.Fragment key={f.id}>
-            <ChevronRight className="w-3 h-3 shrink-0 text-[var(--color-text-faint)]" />
-            <button type="button" onClick={() => { setPath((p) => p.slice(0, i + 1)); setQ(""); }}
-              className={`shrink-0 px-1 rounded truncate max-w-[10rem] ${i === path.length - 1 ? "text-[var(--color-text)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-accent-text)]"}`}>
-              {f.name}
-            </button>
+            <ChevronRight className="w-3.5 h-3.5 shrink-0 text-[var(--color-text-faint)]" />
+            {i === path.length - 1
+              ? <span className="shrink-0 truncate max-w-[12rem] font-semibold text-[var(--color-text)]" aria-current="location">{f.name}</span>
+              : <button type="button" onClick={() => { setPath((p) => p.slice(0, i + 1)); setQ(""); }} className={`shrink-0 truncate max-w-[10rem] ${link}`}>{f.name}</button>}
           </React.Fragment>
         ))}
-        {refreshing && <Loader2 className="w-3 h-3 ml-1 shrink-0 animate-spin text-[var(--color-text-faint)]" />}
+        {refreshing && <Loader2 className="w-3.5 h-3.5 ml-1 shrink-0 animate-spin text-[var(--color-text-faint)]" />}
       </nav>
-      <Link href={openHere} title="Open this folder in Documents"
-        className="shrink-0 inline-flex items-center gap-1 h-7 px-2 rounded-lg text-[11px] font-bold text-[var(--color-accent-text)] hover:bg-[var(--color-surface-2)]">
-        Open here <ArrowUpRight className="w-3.5 h-3.5" />
-      </Link>
+      <Link href={openHere} title="Open this folder in Documents" className={`shrink-0 text-[14px] ${link}`}>Open in Documents</Link>
     </div>
   );
 
@@ -268,33 +258,35 @@ export default function DocBrowserBody() {
     // Never show the previous folder's contents under the new crumb.
     !here || here.at !== `${libId}|${folderId ?? ""}` ? <Skeleton /> : (
       here.folders.length === 0 && here.docs.length === 0 ? (
-        <Empty>This folder is empty.</Empty>
+        <p className="px-4 py-3 text-[15px] text-[var(--color-text-muted)]">This folder is empty.</p>
       ) : (
-        <div className="space-y-2">
+        <div className="divide-y divide-[var(--color-border)]">
           {here.folders.length > 0 && (
-            <div className="rounded-xl border border-[var(--color-border)] divide-y divide-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
+            <ul className="divide-y divide-[var(--color-border)]">
               {here.folders.map((f) => (
-                <button key={f.id} type="button" onClick={() => { setPath((p) => [...p, f]); setQ(""); }} data-widget-folder={f.id}
-                  className="group w-full flex items-center gap-2.5 px-3 py-2 text-left hover:bg-[var(--color-surface-2)] transition-colors">
-                  <Folder className="w-4 h-4 shrink-0 text-[var(--color-text-muted)]" fill="currentColor" fillOpacity={0.2} />
-                  <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-[var(--color-text)] group-hover:text-[var(--color-text)]">{f.name}</span>
-                  <ChevronRight className="w-3.5 h-3.5 shrink-0 text-[var(--color-text-faint)]" />
-                </button>
+                <li key={f.id}>
+                  <button type="button" onClick={() => { setPath((p) => [...p, f]); setQ(""); }} data-widget-folder={f.id}
+                    className="w-full flex items-center gap-3 px-4 py-2.5 text-left hover:bg-[var(--color-surface-2)] transition-colors">
+                    <Folder className="w-4 h-4 shrink-0 text-[var(--color-text-muted)]" fill="currentColor" fillOpacity={0.2} />
+                    <span className="min-w-0 flex-1 truncate text-[15px] font-semibold text-[var(--color-text)]">{f.name}</span>
+                    <ChevronRight className="w-4 h-4 shrink-0 text-[var(--color-text-faint)]" />
+                  </button>
+                </li>
               ))}
-            </div>
+            </ul>
           )}
           {here.docs.length > 0 && (
             <div>
-              <div className="px-1 pb-1 text-[13px] font-semibold text-[var(--color-text-faint)]">
-                {here.docCount.toLocaleString()} document{here.docCount === 1 ? "" : "s"} here{here.docCount > here.docs.length ? ` · newest ${here.docs.length}` : ""}
+              <div className="px-4 py-2 bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text-muted)]">
+                {here.docCount.toLocaleString()} document{here.docCount === 1 ? "" : "s"} here{here.docCount > here.docs.length ? `, newest ${here.docs.length} shown` : ""}
               </div>
-              <div className="space-y-0.5">
+              <div className="divide-y divide-[var(--color-border)]">
                 {here.docs.map((d) => <DocLine key={d.id} d={{ ...d, library_id: d.library_id ?? libId }} />)}
               </div>
               {here.docCount > here.docs.length && (
-                <Link href={openHere} className="mt-1 block px-2 py-1.5 text-[11px] font-bold text-[var(--color-accent-text)] hover:underline">
-                  See all {here.docCount.toLocaleString()} in Documents →
-                </Link>
+                <div className="px-4 py-2.5 border-t border-[var(--color-border)]">
+                  <Link href={openHere} className={`text-[14px] ${link}`}>See all {here.docCount.toLocaleString()} in Documents</Link>
+                </div>
               )}
             </div>
           )}
