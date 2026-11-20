@@ -129,7 +129,7 @@ export default function AdminBrandingPage() {
       <PageHero
         kicker="Admin · Branding"
         title={savedAt && !touched ? "Saved for everyone." : logoPreview ? "Your logo is set." : "No logo yet."}
-        sub={savedAt && !touched ? "Everyone in the workspace sees it now." : `${palette.name}. Your logo and colors go to everyone in this workspace. Light or dark stays each person's choice.`}
+        sub={savedAt && !touched ? "Everyone in the workspace sees it now." : "Your logo and brand color go to everyone in this workspace. Light or dark stays each person's choice."}
         primary={
           <button type="button" onClick={handleSave} disabled={saving || uploading} className={heroPrimary}>
             {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} Save branding
