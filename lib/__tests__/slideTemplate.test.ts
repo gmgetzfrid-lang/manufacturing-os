@@ -69,13 +69,13 @@ describe("a company slide template", () => {
     const out = await deckOnTemplate(testSlides(info), { info, data, look: lookFromTemplate({ colors: templateColors(l), fonts: templateFonts(l) }), title: "Test deck" });
     const z = await JSZip.loadAsync(out);
     const slides = Object.keys(z.files).filter((n) => /^ppt\/slides\/slide\d+\.xml$/.test(n));
-    // Cover, the measures table, two part openers, the table, the actions.
-    expect(slides.length).toBe(6);
+    // Cover, the measures table, the table, the actions. No agenda, no part openers.
+    expect(slides.length).toBe(4);
     const pres = await z.file("ppt/presentation.xml")!.async("string");
-    expect(pres.match(/<p:sldId /g)?.length).toBe(6);
+    expect(pres.match(/<p:sldId /g)?.length).toBe(4);
     const presRels = await z.file("ppt/_rels/presentation.xml.rels")!.async("string");
     const types = await z.file("[Content_Types].xml")!.async("string");
-    for (let i = 1; i <= 6; i++) {
+    for (let i = 1; i <= 4; i++) {
       const rels = await z.file(`ppt/slides/_rels/slide${i}.xml.rels`)!.async("string");
       const layout = rels.match(/slideLayouts\/(slideLayout\d+\.xml)/)![1];
       expect(z.file(`ppt/slideLayouts/${layout}`)).toBeTruthy();
@@ -87,12 +87,12 @@ describe("a company slide template", () => {
     expect(cover).toMatch(/<p:ph type="title"/);
     expect(await z.file("ppt/notesSlides/notesSlide1.xml")!.async("string")).toContain("Each kind of slide");
     // The table is drawn in the template's main color.
-    const table = await z.file("ppt/slides/slide4.xml")!.async("string");
+    const table = await z.file("ppt/slides/slide3.xml")!.async("string");
     expect(table).toContain("<a:tbl>");
     expect(table).toMatch(/<p:ph type="title"/);
     expect(table).toContain(`<a:srgbClr val="${templateColors(l).main}"/>`);
-    // Each part opens on the section layout with its number.
-    expect(await z.file("ppt/slides/slide5.xml")!.async("string")).toContain("Part 2 of 2");
+    // Nothing on any slide is only a heading.
+    for (let i = 1; i <= 4; i++) expect(await z.file(`ppt/slides/slide${i}.xml`)!.async("string")).not.toMatch(/Part \d of \d/);
   });
 
   it("takes a .potx template and writes a presentation", async () => {
@@ -160,13 +160,13 @@ describe("the slides on screen are the file's slides", () => {
     const l = layoutFor(info, "content")!;
     const out = await deckOnTemplate(testSlides(info), { info, data, look: lookFromTemplate({ colors: templateColors(l), fonts: templateFonts(l) }), title: "Test deck", forScreen: true, slideOf: [] });
     const view = await renderDeck(out, (part) => `blob:${part}`);
-    expect(view.slides.length).toBe(6);
+    expect(view.slides.length).toBe(4);
     expect(view.w).toBeCloseTo(1280, 0);
     expect(view.slides[0]).toContain("Your template, laid out by the app");
     // The content layout's gold mark is drawn on every content slide.
-    expect(view.slides[3]).toContain("rgba(212,160,23,1.000)");
-    expect(view.slides[3]).toContain("<table");
-    expect(view.slides[3]).toMatch(/<tr data-row="0"/);
+    expect(view.slides[2]).toContain("rgba(212,160,23,1.000)");
+    expect(view.slides[2]).toContain("<table");
+    expect(view.slides[2]).toMatch(/<tr data-row="0"/);
     // Text is escaped, never markup.
     expect(view.slides.join("")).not.toMatch(/<script/i);
   });

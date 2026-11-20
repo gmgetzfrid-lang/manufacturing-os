@@ -2,8 +2,7 @@
 // company's own PowerPoint template (lib/slideTemplate).
 //
 // The same slides as always (lib/reviewFiles deckSlides), placed on the
-// layouts the app picked: the cover on the cover layout, the agenda on the
-// agenda layout, each part opened on the section layout, and the tables
+// layouts the app picked: the cover on the cover layout, and the tables
 // and text on the content layout, in the room it leaves. Sizes follow the
 // template's slide size, so a wide 20 inch template reads the same as a
 // standard one.
@@ -19,7 +18,7 @@ export interface TemplateDeckOpts {
   pick?: Partial<Record<LayoutRole, string>>;
   title: string;
   /** For the screen: written unpacked, and `slideOf` filled with each
-   *  slide's place in `specs` (null: an agenda or a part's opening slide). */
+   *  slide's place in `specs` (null: a slide of its own, like what the review measures). */
   forScreen?: boolean;
   slideOf?: Array<number | null>;
 }
@@ -31,8 +30,7 @@ export async function deckOnTemplate(specs: SlideSpec[], o: TemplateDeckOpts): P
   const PT = (design: number) => Math.round(design * k * 2) / 2;
   const content = layoutFor(info, "content", o.pick) ?? layoutFor(info, "cover", o.pick) ?? info.layouts[0];
   const cover = layoutFor(info, "cover", o.pick) ?? content;
-  const agenda = layoutFor(info, "agenda", o.pick);
-  const section = layoutFor(info, "section", o.pick);
+  // Every slide carries content: no agenda slide and no part openers.
   const slides: SlideDraft[] = [];
   const font = look.font;
   const run = (text: string, pt: number, more: { b?: boolean; color?: string } = {}) => ({ text, pt, font, color: more.color ?? look.ink, b: more.b });
@@ -128,7 +126,6 @@ export async function deckOnTemplate(specs: SlideSpec[], o: TemplateDeckOpts): P
     }
   };
 
-  let partNo = 0;
   for (const [si, spec] of specs.entries()) {
     const b = spec.body;
     if (b.k === "cover") {
@@ -152,21 +149,6 @@ export async function deckOnTemplate(specs: SlideSpec[], o: TemplateDeckOpts): P
       if (!tb?.rect) head(d, spec.kicker, spec.title, PT(36));
       d.notes = spec.notes;
       slides.push(d); o.slideOf?.push(si);
-      // The agenda: the parts, in order.
-      if (agenda && b.agenda.length) {
-        const a = new SlideDraft(agenda);
-        const at = titleBox(agenda);
-        if (at) a.fill(at, [{ runs: [{ text: "Agenda", pt: Math.min(at.pt ?? 40, PT(32)) }] }]);
-        const ab = bodyBoxes(agenda)[0];
-        if (ab?.rect) {
-          const pt = fitPt(b.agenda.join("\n"), ab.rect, Math.min(ab.pt ?? 24, PT(20)), PT(12), 0.5, 1.5);
-          a.fill(ab, b.agenda.map((t) => ({ runs: [{ text: t, pt }], keepBullets: true, after: 8 * k })));
-        } else {
-          const r = roomOf(agenda);
-          a.text(r, b.agenda.map((t, i) => ({ runs: [run(`${i + 1}.  ${t}`, PT(18))], after: 10 * k })), { name: "Agenda" });
-        }
-        slides.push(a); o.slideOf?.push(null);
-      }
       // What the review measures, on a slide of its own.
       if (b.table) {
         const m = new SlideDraft(content);
@@ -175,21 +157,6 @@ export async function deckOnTemplate(specs: SlideSpec[], o: TemplateDeckOpts): P
         slides.push(m); o.slideOf?.push(null);
       }
       continue;
-    }
-    // A new part opens on the section layout.
-    if (spec.part && spec.part.n !== partNo) {
-      partNo = spec.part.n;
-      if (section) {
-        const s = new SlideDraft(section);
-        const st = titleBox(section);
-        if (st?.rect) s.fill(st, [{ runs: [{ text: spec.part.name, pt: fitPt(spec.part.name, st.rect, Math.min(st.pt ?? 44, PT(32)), PT(16), 0.6, 1.25) }] }]);
-        else head(s, "", spec.part.name, PT(32));
-        // "Part 1 of 3" in the layout's smallest box (a label, not a subtitle).
-        const sb = bodyBoxes(section).at(-1);
-        const label = `Part ${spec.part.n} of ${spec.part.of}`;
-        if (sb?.rect) s.fill(sb, [{ runs: [{ text: label, pt: fitPt(label, sb.rect, Math.min(sb.pt ?? 20, PT(16)), PT(10)) }] }]);
-        slides.push(s); o.slideOf?.push(null);
-      }
     }
     const d = new SlideDraft(content);
     let room = head(d, spec.kicker, spec.title, PT(spec.title.length > 70 ? 21 : 25));
@@ -235,8 +202,6 @@ export function testSlides(info: TemplateInfo, pick?: Partial<Record<LayoutRole,
       body: { k: "cover", sub: "Each kind of slide the app writes, on the layout picked for it.", meta: "Change a pick in Branding, then make this deck again.", agenda: parts, tableTitle: "Which layout each slide goes on",
         table: { head: ["Slide", "Layout", "What goes on it"], widths: [1.6, 2.2, 4.2], rows: [
           ["Cover", nameOf("cover"), "The title, what it covers, who wrote it and when"],
-          ["Agenda", nameOf("agenda"), "The parts of the meeting, in order"],
-          ["Start of each part", nameOf("section"), "The part's name and its number"],
           ["Tables and text", nameOf("content"), "A label, the title, then tables and lists in the room left"],
         ] } } },
     { kicker: "1 · A table", part: part(1), title: "A table fills the room the layout leaves", notes: "Type sizes fit the room, never under 9 pt.",

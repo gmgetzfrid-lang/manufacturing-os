@@ -25,7 +25,9 @@ import { noEmDash } from "@/lib/noEmDash";
 export const EMU = 914400;
 /** The kinds of slide the app writes. */
 export type LayoutRole = "cover" | "agenda" | "section" | "content";
-export const LAYOUT_ROLES: LayoutRole[] = ["cover", "agenda", "section", "content"];
+/** The kinds of slide the app writes now. Agenda and part-opener slides
+ *  carried nothing of their own, so the app doesn't make them. */
+export const LAYOUT_ROLES: LayoutRole[] = ["cover", "content"];
 export const ROLE_WORD: Record<LayoutRole, string> = { cover: "Cover", agenda: "Agenda", section: "Start of each part", content: "Tables and text" };
 
 export interface Rect { x: number; y: number; w: number; h: number }
