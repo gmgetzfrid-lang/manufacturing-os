@@ -10,6 +10,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { Loader2, X, FileText } from "lucide-react";
+import { Card } from "@/components/ui/PageHero";
 import { listStaleCheckoutsForUser } from "@/lib/projects";
 import { reconcileDocumentCheckoutState } from "@/lib/checkoutEpisodes";
 import { supabase } from "@/lib/supabase";
@@ -104,43 +105,42 @@ export default function StaleCheckoutBanner({ userId }: StaleCheckoutBannerProps
 
   // A plain warning in the page, not a banner: an amber line, then each
   // checkout with Open and a quiet Release.
+  // A card of its own (not a colored box above the page): each checkout
+  // says on its own row that it's past its release date.
   return (
-    <section className="mb-4 border-l-2 border-amber-500 pl-3" aria-label="Checkouts past their release date">
-      <div className="flex items-center justify-between gap-3">
-        <p className="text-sm font-bold text-amber-800 dark:text-amber-300">
-          {rows.length} of your checkout{rows.length === 1 ? " is" : "s are"} past the expected release date
-        </p>
+    <Card as="section" pad={false} className="overflow-hidden" label={`Your checkouts held too long · ${rows.length}`}
+      action={
         <button onClick={dismissForToday} aria-label="Hide for today" title="Hide for today"
-          className="p-1 rounded-md text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
+          className="w-8 h-8 -my-1 -mr-1 inline-flex items-center justify-center rounded-lg text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
           <X className="w-4 h-4" />
         </button>
-      </div>
+      }>
       {releaseError && (
-        <p role="alert" className="mt-1 text-[12px] font-bold text-rose-700 dark:text-rose-300">{releaseError}</p>
+        <p role="alert" className="px-4 sm:px-5 pb-2 text-[13px] font-bold text-rose-700 dark:text-rose-300">{releaseError}</p>
       )}
-      <ul className="mt-1 divide-y divide-[var(--color-border)]">
+      <ul className="divide-y divide-[var(--color-border)] border-t border-[var(--color-border)]">
         {rows.map((r) => (
-          <li key={r.id} className="py-2 flex items-center gap-3">
-            <FileText className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" />
+          <li key={r.id} className="px-4 sm:px-5 py-2.5 flex items-center gap-3">
+            <FileText className="w-4 h-4 text-[var(--color-text-faint)] shrink-0" />
             <div className="flex-1 min-w-0">
-              <div className="text-xs font-bold text-[var(--color-text)] truncate">
+              <div className="text-[14px] font-bold text-[var(--color-text)] truncate">
                 <span className="font-mono">{r.docNumber || "-"}</span>
                 {r.docTitle && <span className="ml-2 text-[var(--color-text-muted)] font-medium">{r.docTitle}</span>}
               </div>
-              <div className="text-[11px] text-[var(--color-text-muted)]">
-                Started {formatRelative(r.startedAt)} · expected release {formatRelative(r.expectedReleaseAt)}
+              <div className="text-[12px] text-[var(--color-text-muted)]">
+                Started {formatRelative(r.startedAt)} · <span className="font-semibold text-amber-800 dark:text-amber-300">expected release {formatRelative(r.expectedReleaseAt)}</span>
               </div>
             </div>
             {r.libraryId && (
               <Link href={`/documents/${r.libraryId}?doc=${r.documentId}`}
-                className="text-[12px] font-bold text-[var(--color-accent)] hover:underline">
+                className="inline-flex items-center h-9 px-2 text-[13px] font-bold text-[var(--color-text)] hover:underline">
                 Open
               </Link>
             )}
             <button
               onClick={() => void release(r)}
               disabled={releasingId === r.id}
-              className="inline-flex items-center gap-1 h-8 px-2.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-[12px] font-bold hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors"
+              className="inline-flex items-center gap-1 h-9 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-[13px] font-bold hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors"
             >
               {releasingId === r.id ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
               Release
@@ -148,7 +148,7 @@ export default function StaleCheckoutBanner({ userId }: StaleCheckoutBannerProps
           </li>
         ))}
       </ul>
-    </section>
+    </Card>
   );
 }
 

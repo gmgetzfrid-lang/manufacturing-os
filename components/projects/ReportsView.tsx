@@ -608,7 +608,7 @@ export default function ReportsView(p: Props) {
         <button type="button" onClick={() => setPhoneOpen(false)} className="sm:hidden mb-2 inline-flex items-center gap-1 text-[13px] font-bold text-[var(--color-accent)]">
           <ChevronLeft className="w-4 h-4" /> Reports
         </button>
-        <h2 className="text-[18px] font-black text-[var(--color-text)]">{meta.name}</h2>
+        <h2 className="text-[15px] font-extrabold text-[var(--color-text)]">{meta.name}</h2>
         <p className="text-[13px] text-[var(--color-text-muted)] mt-0.5">{DESCRIBE[sel]}</p>
       </div>
       {sel === "schedule" ? (
@@ -631,7 +631,7 @@ export default function ReportsView(p: Props) {
             {actions}
             {madeHere.length > 0 && (
               <div>
-                <div className="text-[12px] font-bold text-[var(--color-text-muted)] mb-1">Made lately</div>
+                <div className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)] mb-1">Made lately</div>
                 <ul className="divide-y divide-[var(--color-border)] border-y border-[var(--color-border)]">
                   {madeHere.map((m) => (
                     <li key={`${m.label}:${m.at}`}>
@@ -652,14 +652,14 @@ export default function ReportsView(p: Props) {
 
   const base = { milestones: p.milestones, cancelled: p.cancelled, userId: p.userId, userName: p.userName, canEdit: p.canEdit, progress: p.progress, projectId, projectName: p.projectName, pathNow: p.pathNow };
   return (
-    <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm sm:flex min-h-[520px]">
+    <div className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] sm:flex min-h-[520px]">
       {/* The update a meeting sends, made off screen for the preview. */}
       {meeting && <ShiftReportView key={sel} {...base} docOnly meetingFixed={meeting} shiftPick={meeting === "turnover" ? shiftPick : undefined} onDoc={setDoc} />}
       <nav aria-label="Reports" className={`${phoneOpen ? "hidden sm:block" : ""} sm:w-[280px] shrink-0 sm:border-r border-[var(--color-border)] py-3`}>
         {[{ head: "Reports", sub: "filled in from the project", items: REPORTS.filter((r) => !r.form && (r.id !== "phase" || ph.phases.length > 0)) }, { head: "Forms", sub: "blank, filled in by hand", items: REPORTS.filter((r) => r.form) }].map((g) => (
           <div key={g.head} className="mb-2">
             <div className="px-4 pt-1 pb-1">
-              <div className="text-[12px] font-semibold text-[var(--color-text-muted)]">{g.head}</div>
+              <div className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">{g.head}</div>
               <div className="text-[11.5px] text-[var(--color-text-faint)]">{g.sub}</div>
             </div>
             {g.items.map((r) => {

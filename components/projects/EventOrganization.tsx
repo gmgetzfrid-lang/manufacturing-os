@@ -5,6 +5,7 @@
 // with; change the list to your own, tick the ones that are required, and
 // name a person for each. The post-event review reads it.
 
+import { Card } from "@/components/ui/PageHero";
 import React, { useEffect, useMemo, useState } from "react";
 import { Check, Loader2, Plus, X } from "lucide-react";
 import { defaultRoles, loadOrg, orgStanding, saveOrg, type OrgRole } from "@/lib/eventOrganization";
@@ -32,7 +33,7 @@ export default function EventOrganization({ projectId, canManage, actor, people 
     return () => { live = false; };
   }, [projectId]);
   const st = useMemo(() => orgStanding(roles), [roles]);
-  if (!roles) return <div className="py-6 flex items-center justify-center gap-2 text-[12.5px] text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin" /> Loading the event organization…</div>;
+  if (!roles) return <Card label="Event organization"><div className="py-4 flex items-center gap-2 text-[13px] text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin" /> Loading the event organization…</div></Card>;
 
   const change = (id: string, patch: Partial<OrgRole>) => { setRoles((rs) => (rs ?? []).map((r) => (r.id === id ? { ...r, ...patch } : r))); setDirty(true); };
   const add = () => { setRoles((rs) => [...(rs ?? []), { id: `r${Date.now()}`, role: "", does: "", person: "", required: true }]); setDirty(true); };
@@ -46,20 +47,15 @@ export default function EventOrganization({ projectId, canManage, actor, people 
   const all = st.required > 0 && st.missing.length === 0;
 
   return (
-    <section className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden" data-event-organization>
-      <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-start gap-x-3 gap-y-1 flex-wrap">
-        <div className="min-w-0 flex-1 basis-64">
-          <b className="block text-[14.5px] text-[var(--color-text)]">Event organization</b>
-          <span className="text-[12.5px] text-[var(--color-text-muted)]">The roles this event requires and who fills each.</span>
-        </div>
-        <span className={`text-[11.5px] font-black px-2 py-1 rounded-full whitespace-nowrap ${!recorded ? "bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300" : all ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300" : "bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300"}`}>
-          {!recorded ? "Not recorded yet" : `${st.filled} of ${st.required} required roles named`}
-        </span>
-      </div>
-      {err && <div role="alert" className="mx-4 mt-3 border-l-2 border-rose-500 pl-3 py-1 text-[12.5px] font-semibold text-rose-800 dark:text-rose-300">{err}</div>}
+    <Card as="section" pad={false} className="overflow-hidden" label="Event organization"
+      action={<span className={`text-[12px] font-bold whitespace-nowrap ${!recorded ? "text-amber-800 dark:text-amber-300" : all ? "text-emerald-700 dark:text-emerald-300" : "text-rose-700 dark:text-rose-300"}`}>
+        {!recorded ? "Not recorded yet" : `${st.filled} of ${st.required} required roles named`}
+      </span>}>
+      <p className="px-4 sm:px-5 -mt-1 pb-3 text-[13px] text-[var(--color-text-muted)] border-b border-[var(--color-border)]" data-event-organization>The roles this event requires and who fills each.</p>
+      {err && <div role="alert" className="mx-4 sm:mx-5 mt-3 text-[13px] font-semibold text-rose-800 dark:text-rose-300">{err}</div>}
       {recorded && !editing ? (
         <>
-          <ul className="px-4 py-2 divide-y divide-[var(--color-border)]">
+          <ul className="px-4 sm:px-5 py-1 divide-y divide-[var(--color-border)]">
             {roles.map((r) => (
               <li key={r.id} className="py-2 flex flex-wrap items-baseline gap-x-3 gap-y-0.5 text-[13.5px]">
                 <b className="min-w-[180px] text-[var(--color-text)]">{r.role}</b>
@@ -68,15 +64,15 @@ export default function EventOrganization({ projectId, canManage, actor, people 
               </li>
             ))}
           </ul>
-          {canManage && <div className="px-4 pb-3.5"><button type="button" onClick={() => setEditing(true)} className={btn}>Edit roles</button></div>}
+          {canManage && <div className="px-4 sm:px-5 pb-4"><button type="button" onClick={() => setEditing(true)} className={btn}>Edit roles</button></div>}
         </>
       ) : (<>
-      <div className="hidden md:grid grid-cols-[minmax(0,1.1fr)_minmax(0,1.4fr)_minmax(0,1fr)_76px_32px] gap-2 px-4 pt-3">
+      <div className="hidden md:grid grid-cols-[minmax(0,1.1fr)_minmax(0,1.4fr)_minmax(0,1fr)_76px_32px] gap-2 px-4 sm:px-5 pt-3">
         <span className={label}>Role</span><span className={label}>Responsible for</span><span className={label}>Who</span><span className={label}>Required</span><span />
       </div>
-      <ul className="px-4 py-2 space-y-2">
+      <ul className="px-4 sm:px-5 py-2 space-y-2 max-md:divide-y max-md:divide-[var(--color-border)]">
         {roles.map((r) => (
-          <li key={r.id} className="grid gap-2 md:grid-cols-[minmax(0,1.1fr)_minmax(0,1.4fr)_minmax(0,1fr)_76px_32px] md:items-center rounded-xl md:rounded-none border md:border-0 border-[var(--color-border)] p-2.5 md:p-0">
+          <li key={r.id} className="grid gap-2 md:grid-cols-[minmax(0,1.1fr)_minmax(0,1.4fr)_minmax(0,1fr)_76px_32px] md:items-center max-md:pt-2">
             <input aria-label="Role" disabled={!canManage} value={r.role} onChange={(e) => change(r.id, { role: e.target.value })} placeholder="Role" className={`${field} font-bold`} />
             <input aria-label="Responsible for" disabled={!canManage} value={r.does} onChange={(e) => change(r.id, { does: e.target.value })} placeholder="What this role is responsible for" className={field} />
             <input aria-label={`Who fills ${r.role || "this role"}`} list="eo-people" disabled={!canManage} value={r.person} onChange={(e) => change(r.id, { person: e.target.value })} placeholder={r.required ? "Name (required)" : "Name"} className={`${field} ${r.required && !r.person.trim() ? "border-rose-400" : ""}`} />
@@ -86,13 +82,13 @@ export default function EventOrganization({ projectId, canManage, actor, people 
         ))}
       </ul>
       <datalist id="eo-people">{people.map((p) => <option key={p} value={p} />)}</datalist>
-      <div className="px-4 pb-3.5 flex items-center gap-2 flex-wrap">
+      <div className="px-4 sm:px-5 pb-4 flex items-center gap-2 flex-wrap">
         {canManage && <button type="button" onClick={add} className={btn}><Plus className="w-4 h-4" /> Add a role</button>}
         {canManage && <button type="button" disabled={busy || (!dirty && recorded)} onClick={() => void save()} className={pri}>{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} {recorded ? "Save changes" : "Save as this event's organization"}</button>}
         {recorded && <button type="button" onClick={() => { setEditing(false); setDirty(false); void loadOrg(projectId).then((r) => { if (r) setRoles(r); }).catch((e) => setErr((e as Error).message)); }} className={btn}>Cancel</button>}
         <span className="text-[12px] text-[var(--color-text-muted)]">{!recorded ? "This is the starting list. Nothing counts until you save it." : st.missing.length ? `Not named: ${st.missing.join(", ")}.` : "Every required role has a name."}</span>
       </div>
       </>)}
-    </section>
+    </Card>
   );
 }

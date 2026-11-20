@@ -9,9 +9,10 @@
 // A link that ran out (or is about to) can be extended instead of making
 // the company a new one.
 
+import { Card } from "@/components/ui/PageHero";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
-  Link2, Loader2, Check, X, UploadCloud, Copy, Ban, ShieldCheck, Clock,
+  Link2, Loader2, Check, X, Copy, Ban, ShieldCheck, Clock,
   FilePlus2, Search, CalendarPlus,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
@@ -322,43 +323,37 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
       : (res.error ?? "Couldn't flag the collision."));
   };
 
-  if (loading) return <LoadingBlock what="intake" />;
+  if (loading) return <Card><LoadingBlock what="intake" className="border-0 p-0" /></Card>;
 
   return (
     <div className="space-y-4">
-      {msg && <div role="status" className="border-l-2 border-[var(--color-border-strong)] pl-3 py-1 text-xs font-bold text-[var(--color-text)] flex items-center gap-2"><span className="min-w-0 flex-1">{msg}</span><button onClick={() => setMsg(null)} aria-label="Dismiss" className="shrink-0 p-1 text-[var(--color-text-faint)] hover:text-[var(--color-text)]"><X className="w-3.5 h-3.5" /></button></div>}
-
-      {/* Review queue — the point of the whole system. */}
-      <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
-        <div className="flex items-center gap-2 mb-2">
-          <UploadCloud className="w-4 h-4 text-[var(--color-text-muted)]" />
-          <span className="text-base font-bold text-[var(--color-text)]">Submissions awaiting review</span>
-          <span className={`text-base font-black tabular-nums ${pending.length ? "text-amber-600" : "text-[var(--color-text-faint)]"}`}>{pending.length}</span>
-        </div>
-        {pending.length === 0 && <div className="text-xs italic text-[var(--color-text-faint)]">Nothing waiting for review.</div>}
-        <ul className="space-y-2">
+      {/* Review queue: the point of the whole system. */}
+      <Card label={`Submissions awaiting review · ${pending.length}`}>
+        {msg && <div role="status" className="mb-2 text-[13px] font-bold text-[var(--color-text)] flex items-center gap-2"><span className="min-w-0 flex-1">{msg}</span><button onClick={() => setMsg(null)} aria-label="Dismiss" className="shrink-0 p-1 text-[var(--color-text-faint)] hover:text-[var(--color-text)]"><X className="w-3.5 h-3.5" /></button></div>}
+        {pending.length === 0 && <div className="text-[14px] text-[var(--color-text-muted)]">Nothing waiting for review.</div>}
+        <ul className="divide-y divide-[var(--color-border)]">
           {pending.map((p) => (
-            <li key={p.docId} className="rounded-xl border border-amber-500/30 bg-amber-500/[0.05] px-3 py-2">
+            <li key={p.docId} className="py-2.5">
               <div className="flex items-center gap-2 flex-wrap">
                 <Clock className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-                <span className="text-sm font-bold text-[var(--color-text)]">{p.label}</span>
-                <span className="text-xs text-[var(--color-text-muted)]">Rev {p.revLabel ?? "-"} · {p.company ?? "external"}{p.submittedAt ? ` · ${new Date(p.submittedAt).toLocaleDateString()}` : ""}</span>
+                <span className="text-[14px] font-bold text-[var(--color-text)]">{p.label}</span>
+                <span className="text-[13px] text-[var(--color-text-muted)]">Rev {p.revLabel ?? "-"} · {p.company ?? "external"}{p.submittedAt ? ` · ${new Date(p.submittedAt).toLocaleDateString()}` : ""}</span>
                 {canManage && (
                   <span className="ml-auto flex items-center gap-1.5">
-                    <button onClick={() => void approve(p)} disabled={busy === p.docId} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[var(--color-text)] text-[var(--color-surface)] text-[11px] font-black disabled:opacity-50">
+                    <button onClick={() => void approve(p)} disabled={busy === p.docId} className="inline-flex items-center gap-1 h-9 px-3 rounded-lg bg-[var(--color-text)] text-[var(--color-surface)] text-[13px] font-bold disabled:opacity-50">
                       {busy === p.docId ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />} Approve
                     </button>
-                    <button onClick={() => void reject(p)} disabled={busy === p.docId} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-rose-500/40 text-rose-700 dark:text-rose-300 text-[11px] font-black hover:bg-rose-500/10 disabled:opacity-50">
+                    <button onClick={() => void reject(p)} disabled={busy === p.docId} className="inline-flex items-center gap-1 h-9 px-3 rounded-lg border border-rose-500/40 text-rose-700 dark:text-rose-300 text-[13px] font-bold hover:bg-rose-500/10 disabled:opacity-50">
                       <X className="w-3 h-3" /> Reject
                     </button>
                   </span>
                 )}
               </div>
-              {p.changeLog && <div className="mt-1 text-[11px] text-[var(--color-text-muted)] italic">&ldquo;{p.changeLog}&rdquo;</div>}
+              {p.changeLog && <div className="mt-1 text-[12px] text-[var(--color-text-muted)] italic">&ldquo;{p.changeLog}&rdquo;</div>}
             </li>
           ))}
         </ul>
-      </div>
+      </Card>
 
       {/* Transition-in: adopt intake sheets into the controlled register. */}
       {intakeCollectionId && (
@@ -370,15 +365,11 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
       )}
 
       {/* Submit links */}
-      <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
-        <div className="flex items-center gap-2 mb-2">
-          <Link2 className="w-4 h-4 text-[var(--color-text-muted)]" />
-          <span className="text-base font-bold text-[var(--color-text)]">Contractor submit links</span>
-          <span className="text-xs text-[var(--color-text-muted)]">no account needed, upload only</span>
-        </div>
-        <ul className="space-y-1.5 mb-3">
+      <Card label="Contractor submit links">
+        <p className="-mt-1 mb-2 text-[13px] text-[var(--color-text-muted)]">No account needed, upload only.</p>
+        <ul className="divide-y divide-[var(--color-border)] mb-3">
           {links.map((l) => (
-            <li key={l.id} className={`text-xs rounded-lg border px-2.5 py-1.5 ${l.revokedAt ? "border-[var(--color-border)] opacity-60" : "border-[var(--color-border-strong)]"}`}>
+            <li key={l.id} className={`text-[13px] py-2 ${l.revokedAt ? "opacity-60" : ""}`}>
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="font-bold text-[var(--color-text)]">{l.companyName}</span>
                 {l.allowAutoSupersede && <span className="inline-flex items-center gap-0.5 text-[11px] font-bold text-[var(--color-text)] dark:text-[var(--color-text)]"><ShieldCheck className="w-3 h-3" /> trusted</span>}
@@ -476,33 +467,33 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
               )}
             </li>
           ))}
-          {links.length === 0 && <li className="text-xs italic text-[var(--color-text-faint)]">No links yet.</li>}
+          {links.length === 0 && <li className="py-1 text-[14px] text-[var(--color-text-muted)]">No links yet.</li>}
         </ul>
 
         {canManage && (
-          <div className="rounded-xl border border-[var(--color-border-strong)] bg-[var(--color-surface-2)]/40 p-3 space-y-2">
-            <div className="text-[11px] font-bold text-[var(--color-text-muted)]">New submit link</div>
+          <div className="pt-3 border-t border-[var(--color-border)] space-y-2">
+            <div className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">New submit link</div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              <input value={company} onChange={(e) => setCompany(e.target.value)} placeholder="Company name (stamped on every submission)" className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
-              <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Contact email (optional)" className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
+              <input value={company} onChange={(e) => setCompany(e.target.value)} placeholder="Company name (stamped on every submission)" className="h-9 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-[13px]" />
+              <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Contact email (optional)" className="h-9 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-[13px]" />
               {!intakeLibraryId && (
-                <select value={libPick} onChange={(e) => setLibPick(e.target.value)} className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs">
+                <select value={libPick} onChange={(e) => setLibPick(e.target.value)} className="h-9 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-[13px]">
                   <option value="">Intake documents live in library…</option>
                   {libs.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
                 </select>
               )}
-              <input type="date" value={expires} onChange={(e) => setExpires(e.target.value)} min={new Date().toISOString().slice(0, 10)} className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs [color-scheme:light] dark:[color-scheme:dark]" title="Expiry (optional)" />
+              <input type="date" value={expires} onChange={(e) => setExpires(e.target.value)} min={new Date().toISOString().slice(0, 10)} className="h-9 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-[13px] [color-scheme:light] dark:[color-scheme:dark]" title="Expiry (optional)" />
             </div>
             <label className="flex items-center gap-2 text-xs text-[var(--color-text)]">
               <input type="checkbox" checked={trusted} onChange={(e) => setTrusted(e.target.checked)} />
               Trusted: their revisions of <b>their own documents</b> publish immediately (skip review)
             </label>
-            <button onClick={() => void createLink()} disabled={busy === "create"} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
+            <button onClick={() => void createLink()} disabled={busy === "create"} className="inline-flex items-center gap-1.5 h-9 px-3.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[13px] font-bold hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
               {busy === "create" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Link2 className="w-3.5 h-3.5" />} Create link
             </button>
           </div>
         )}
-      </div>
+      </Card>
     </div>
   );
 }

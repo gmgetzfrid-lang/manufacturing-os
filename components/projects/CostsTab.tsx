@@ -14,11 +14,12 @@
 // 20261013); everyone on the project reads the same picture.
 
 import { activeOnly } from "@/lib/activeMilestones";
+import { Card } from "@/components/ui/PageHero";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Plus, X, Loader2, Check, ChevronDown, ChevronRight,
-  Landmark, HardHat, Scale, TrendingUp, TrendingDown, AlertTriangle, Ban,
-  LayoutDashboard, ScanSearch, Receipt, GitPullRequestArrow, FileCheck2, FileUp, Gauge, Hourglass,
+  Landmark, HardHat, AlertTriangle, Ban,
+  LayoutDashboard, ScanSearch, Receipt, GitPullRequestArrow, FileCheck2, FileUp, Hourglass,
   Pencil, RotateCcw,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
@@ -201,27 +202,14 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
   const basisDoc = basis?.docId ? docs.find((d) => d.id === basis.docId) ?? null : null;
 
 
-  if (loading) return <LoadingBlock what="costs" />;
+  if (loading) return <Card><LoadingBlock what="costs" className="border-0 p-0" /></Card>;
 
   return (
     <div className="space-y-4">
       {preview && <FilePreviewModal file={preview} onClose={() => setPreview(null)} />}
-      {err && (
-        <div role="alert" className="flex items-center gap-2 border-l-2 border-rose-500 pl-3 py-1 text-xs font-bold text-rose-700 dark:text-rose-300">
-          <span className="min-w-0 flex-1">{err}</span>
-          <button onClick={() => setErr(null)} aria-label="Dismiss" className="shrink-0 p-1 text-[var(--color-text-faint)] hover:text-[var(--color-text)]"><X className="w-3.5 h-3.5" /></button>
-        </div>
-      )}
-
-      {notice && (
-        <div role="status" className="flex items-center gap-2 border-l-2 border-emerald-500 pl-3 py-1 text-xs font-bold text-emerald-800 dark:text-emerald-300">
-          <Check className="w-4 h-4 shrink-0" /> <span className="min-w-0 flex-1">{notice}</span>
-          <button onClick={() => setNotice(null)} aria-label="Dismiss" className="shrink-0 p-1 text-[var(--color-text-faint)] hover:text-[var(--color-text)]"><X className="w-3.5 h-3.5" /></button>
-        </div>
-      )}
-
-      {/* ── Sub-tabs: one job per screen ── */}
-      <div className="flex items-center gap-1 overflow-x-auto rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-1">
+      {/* ── Sub-tabs: one job per screen; what just happened, under them ── */}
+      <Card pad={false} className="p-1.5">
+      <div className="flex items-center gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         <SubTab active={view === "overview"} onClick={() => setView("overview")} icon={<LayoutDashboard className="w-3.5 h-3.5" />} label="Overview" />
         <SubTab active={view === "contractors"} onClick={() => { setAsked(null); setView("contractors"); }} icon={<HardHat className="w-3.5 h-3.5" />} label="Contractors" />
         <SubTab active={view === "budget"} onClick={() => setView("budget")} icon={<Landmark className="w-3.5 h-3.5" />} label="Budget" count={accounts.length} />
@@ -229,54 +217,55 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
         <SubTab active={view === "invoices"} onClick={() => setView("invoices")} icon={<Receipt className="w-3.5 h-3.5" />} label="Invoices" count={invoiceOpen} attention={invoiceOpen > 0} />
         <SubTab active={view === "changes"} onClick={() => setView("changes")} icon={<GitPullRequestArrow className="w-3.5 h-3.5" />} label="Change orders" />
       </div>
+      {err && (
+        <div role="alert" className="mx-2 mt-1.5 mb-1 flex items-center gap-2 text-[13px] font-bold text-rose-700 dark:text-rose-300">
+          <span className="min-w-0 flex-1">{err}</span>
+          <button onClick={() => setErr(null)} aria-label="Dismiss" className="shrink-0 p-1 text-[var(--color-text-faint)] hover:text-[var(--color-text)]"><X className="w-3.5 h-3.5" /></button>
+        </div>
+      )}
+      {notice && (
+        <div role="status" className="mx-2 mt-1.5 mb-1 flex items-center gap-2 text-[13px] font-bold text-emerald-800 dark:text-emerald-300">
+          <Check className="w-4 h-4 shrink-0" /> <span className="min-w-0 flex-1">{notice}</span>
+          <button onClick={() => setNotice(null)} aria-label="Dismiss" className="shrink-0 p-1 text-[var(--color-text-faint)] hover:text-[var(--color-text)]"><X className="w-3.5 h-3.5" /></button>
+        </div>
+      )}
+      </Card>
 
       {view === "overview" && (<>
       {phaseMoney && (
-        <div className="rounded-2xl border-2 border-[var(--color-border-strong)] bg-[var(--color-surface)] px-4 py-3">
-          <div className="text-[12px] font-semibold text-[var(--color-text-muted)]">{phaseMoney.phase.name} · {phaseMoney.phase.share}% of the {basis?.authorized != null ? "AFE" : "budget"}</div>
-          <div className="mt-1 grid grid-cols-2 sm:grid-cols-4 gap-3">
-            {[["Phase budget", phaseMoney.s.budget], ["Committed", phaseMoney.s.committed], ["Spent", phaseMoney.s.spent], [phaseMoney.s.budget - phaseMoney.s.spent >= 0 ? "Left" : "Over", Math.abs(phaseMoney.s.budget - phaseMoney.s.spent)]].map(([k, v]) => (
-              <div key={String(k)}><div className="text-[11px] text-[var(--color-text-muted)]">{k}</div><div className={`text-lg font-black tabular-nums ${k === "Over" ? "text-rose-700 dark:text-rose-400" : "text-[var(--color-text)]"}`}>{fmtMoney(Number(v), cur)}</div></div>
-            ))}
-          </div>
-          <div className="mt-1 text-[11.5px] text-[var(--color-text-muted)]">Lines kept for {phaseMoney.phase.name} count whole; every other line counts its {phaseMoney.phase.share}% share. Spending counts where it was booked, else by its date. The totals below are the whole project.</div>
-        </div>
+        <Card label={`${phaseMoney.phase.name} · ${phaseMoney.phase.share}% of the ${basis?.authorized != null ? "AFE" : "budget"}`}>
+          <MoneyRow items={[["Phase budget", fmtMoney(phaseMoney.s.budget, cur)], ["Committed", fmtMoney(phaseMoney.s.committed, cur)], ["Spent", fmtMoney(phaseMoney.s.spent, cur)],
+            [phaseMoney.s.budget - phaseMoney.s.spent >= 0 ? "Left" : "Over", fmtMoney(Math.abs(phaseMoney.s.budget - phaseMoney.s.spent), cur), phaseMoney.s.budget - phaseMoney.s.spent >= 0 ? undefined : "bad"]]} />
+          <div className="mt-2 text-[12px] text-[var(--color-text-muted)]">Lines kept for {phaseMoney.phase.name} count whole; every other line counts its {phaseMoney.phase.share}% share. Spending counts where it was booked, else by its date. The totals below are the whole project.</div>
+        </Card>
       )}
       {phaseMoney && phaseMoney.s.lines.length > 0 && <LinesChart rows={phaseMoney.s.lines} cur={cur} />}
-      {/* ── Stat strip ── */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <StatCard icon={<Landmark className="w-4 h-4" />} label="Budget" value={fmtMoney(rollup.budget, cur)} />
-        <StatCard icon={<Scale className="w-4 h-4" />} label="Quoted (awarded)" value={fmtMoney(rollup.committed, cur)}
-          sub={rollup.budget > 0 ? `${Math.round(outlook.quotedCoverage * 100)}% of the budget has a quote` : undefined} />
-        <StatCard icon={<HardHat className="w-4 h-4" />} label="Cost to date (est.)" value={fmtMoney(outlook.estimatedToDate, cur)}
-          sub={`${fmtMoney(outlook.invoiced, cur)} invoiced${outlook.unbilled >= 1 ? ` · ${fmtMoney(outlook.unbilled, cur)} not billed yet` : ""}`} />
-        <StatCard
-          icon={outlook.variance > 0 ? <TrendingDown className="w-4 h-4" /> : <TrendingUp className="w-4 h-4" />}
-          label="Forecast at finish" value={fmtMoney(outlook.forecast, cur)}
-          tone={outlook.variance > 0 ? "bad" : "good"}
-          sub={rollup.budget <= 0 ? undefined
-            : Math.abs(outlook.variance) < 1 ? "on budget"
-            : `${fmtMoney(Math.abs(outlook.variance), cur)} ${outlook.variance > 0 ? "over" : "under"} budget`}
-        />
-      </div>
-
-      {basis && (basis.afeNumber || basis.authorized != null) && (
-        <BasisLine basis={basis} budget={rollup.budget} spent={outlook.estimatedToDate} cur={cur} onOpen={basisDoc?.fileUrl ? () => setPreview(fileOfDoc(basisDoc)) : undefined} />
-      )}
-
-      {/* ── Burn bar: spent (solid) + committed (hatched ghost) vs budget ── */}
-      {rollup.budget > 0 && (
-        <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3">
-          <div className="flex items-center justify-between text-[11px] font-bold text-[var(--color-text-muted)] mb-1.5">
-            <span>Budget burn (estimated from quotes × schedule progress)</span>
-            <span className="tabular-nums">{fmtMoney(outlook.estimatedToDate, cur)} est. to date · {fmtMoney(rollup.committed, cur)} quoted · {fmtMoney(rollup.budget, cur)} budget</span>
+      {/* ── The money in one card: the four figures, the AFE, the burn ── */}
+      <Card label="The money">
+        <MoneyRow items={[
+          ["Budget", fmtMoney(rollup.budget, cur)],
+          ["Quoted (awarded)", fmtMoney(rollup.committed, cur), undefined, rollup.budget > 0 ? `${Math.round(outlook.quotedCoverage * 100)}% of the budget has a quote` : undefined],
+          ["Cost to date (est.)", fmtMoney(outlook.estimatedToDate, cur), undefined, `${fmtMoney(outlook.invoiced, cur)} invoiced${outlook.unbilled >= 1 ? ` · ${fmtMoney(outlook.unbilled, cur)} not billed yet` : ""}`],
+          ["Forecast at finish", fmtMoney(outlook.forecast, cur), rollup.budget > 0 && outlook.variance >= 1 ? "bad" : undefined,
+            rollup.budget <= 0 ? undefined : Math.abs(outlook.variance) < 1 ? "on budget" : `${fmtMoney(Math.abs(outlook.variance), cur)} ${outlook.variance > 0 ? "over" : "under"} budget`],
+        ]} />
+        {basis && (basis.afeNumber || basis.authorized != null) && (
+          <BasisLine basis={basis} budget={rollup.budget} spent={outlook.estimatedToDate} cur={cur} onOpen={basisDoc?.fileUrl ? () => setPreview(fileOfDoc(basisDoc)) : undefined} />
+        )}
+        {/* ── Burn bar: spent (solid) + committed (ghost) vs budget ── */}
+        {rollup.budget > 0 && (
+          <div className="mt-3 pt-3 border-t border-[var(--color-border)]">
+            <div className="flex items-center justify-between gap-2 flex-wrap text-[12px] text-[var(--color-text-muted)] mb-1.5">
+              <span className="font-semibold">Budget burn (estimated from quotes × schedule progress)</span>
+              <span className="tabular-nums">{fmtMoney(outlook.estimatedToDate, cur)} est. to date · {fmtMoney(rollup.committed, cur)} quoted · {fmtMoney(rollup.budget, cur)} budget</span>
+            </div>
+            <div className="relative h-2.5 rounded-full bg-[var(--color-surface-2)] overflow-hidden">
+              <div className="absolute inset-y-0 left-0 rounded-full bg-[var(--color-border-strong)] transition-all duration-700" style={{ width: `${commitPct}%` }} />
+              <div className={`absolute inset-y-0 left-0 rounded-full transition-all duration-700 ${burnPct >= 100 ? "bg-rose-500" : "bg-[var(--color-text)]"}`} style={{ width: `${burnPct}%` }} />
+            </div>
           </div>
-          <div className="relative h-2.5 rounded-full bg-[var(--color-surface-2)] overflow-hidden">
-            <div className="absolute inset-y-0 left-0 rounded-full bg-[var(--color-border-strong)] transition-all duration-700" style={{ width: `${commitPct}%` }} />
-            <div className={`absolute inset-y-0 left-0 rounded-full transition-all duration-700 ${burnPct >= 100 ? "bg-rose-500" : "bg-[var(--color-text)]"}`} style={{ width: `${burnPct}%` }} />
-          </div>
-        </div>
-      )}
+        )}
+      </Card>
 
       {rollup.budget > 0 && (
         <OutlookCard outlook={outlook} rollup={rollup} cur={cur} authorized={basis?.authorized ?? null}
@@ -288,7 +277,7 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
       )}
 
       {mixedCurrency && (
-        <p className="border-l-2 border-amber-500 pl-3 text-[11px] font-bold text-amber-800 dark:text-amber-300">
+        <p className="px-1 text-[13px] font-bold text-amber-800 dark:text-amber-300">
           Accounts use mixed currencies ({rollup.currencies.join(", ")}). The totals above add raw numbers. Keep one currency per project.
         </p>
       )}
@@ -324,19 +313,15 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
 
       {view === "budget" && (<>
       {/* ── Budget basis + build-from-document ── */}
-      <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] overflow-hidden shadow-sm">
-        <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap">
-          <FileCheck2 className="w-4 h-4 text-[var(--color-text-muted)]" />
-          <span className="text-sm font-bold text-[var(--color-text)]">Budget basis</span>
-          {canManage && !importing && accounts.length > 0 && (
-            <button onClick={() => setShowDrop((v) => !v)}
-              className="ml-auto inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-[var(--color-border-strong)] text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
-              <FileUp className="w-3 h-3" /> Read a revised AFE or budget sheet
-            </button>
-          )}
-        </div>
+      <Card pad={false} className="overflow-hidden" label="Budget basis"
+        action={canManage && !importing && accounts.length > 0 ? (
+          <button onClick={() => setShowDrop((v) => !v)}
+            className="inline-flex items-center gap-1.5 h-9 px-3 rounded-lg border border-[var(--color-border-strong)] text-[13px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
+            <FileUp className="w-3.5 h-3.5" /> Read a revised AFE or budget sheet
+          </button>
+        ) : undefined}>
         {/* How the money is tracked, in one line. */}
-        <div className="px-4 pt-2.5 text-[11.5px] text-[var(--color-text-muted)]">
+        <div className="px-4 sm:px-5 text-[12px] text-[var(--color-text-muted)]">
           <b className="text-[var(--color-text)]">AFE</b> (what&apos;s authorized) → <b className="text-[var(--color-text)]">Budget lines</b> (how it&apos;s split, by contractor or scope) → <b className="text-[var(--color-text)]">Quotes / POs</b> (awarded, committed) → <b className="text-[var(--color-text)]">Invoices</b> (spent). Each can be changed; every change is kept with why.
         </div>
         <AfeCard orgId={orgId} projectId={projectId} afe={basis} linesTotal={rollup.budget} cur={cur} canManage={canManage} actor={actor}
@@ -353,7 +338,7 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
               label={accounts.length === 0 ? "Drop the AFE, estimate or budget sheet to build the budget" : undefined} />
           </div>
         ) : null}
-      </div>
+      </Card>
 
       {/* ── Budget lines: the table, each line opening to its entries ── */}
       <BudgetTable orgId={orgId} projectId={projectId} accounts={accounts} numbers={lineNumbers} entries={entries} parties={parties}
@@ -387,17 +372,16 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
         }} />
 
       {/* ── Parties ── */}
-      <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] overflow-hidden shadow-sm">
-        <button onClick={() => setShowParties((v) => !v)} className="w-full px-4 py-3 flex items-center gap-2 text-left hover:bg-[var(--color-surface-2)]/40 transition-colors">
+      <Card pad={false} className="overflow-hidden">
+        <button onClick={() => setShowParties((v) => !v)} aria-expanded={showParties} className="w-full px-4 sm:px-5 py-3.5 flex items-center gap-2 text-left hover:bg-[var(--color-surface-2)]/40 transition-colors">
+          <span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Contractors &amp; vendors · {parties.length}</span>
+          <span className="flex-1" />
           {showParties ? <ChevronDown className="w-4 h-4 text-[var(--color-text-faint)]" /> : <ChevronRight className="w-4 h-4 text-[var(--color-text-faint)]" />}
-          <HardHat className="w-4 h-4 text-[var(--color-text-muted)]" />
-          <span className="text-sm font-bold text-[var(--color-text)]">Contractors &amp; vendors</span>
-          <span className="text-[11px] font-mono text-[var(--color-text-muted)]">{parties.length}</span>
         </button>
         {showParties && (
           <PartiesPanel orgId={orgId} projectId={projectId} actor={actor} parties={parties} canManage={canManage} onChanged={() => void refresh()} />
         )}
-      </div>
+      </Card>
 
       </>)}
     </div>
@@ -418,13 +402,9 @@ export function OutlookCard({ outlook: o, rollup, cur, authorized, onQuotes }: {
   const unquoted = o.accounts.filter((a) => a.basis === "budget").length;
   const vsAuth = authorized != null ? o.forecast - authorized : null;
   return (
-    <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3 space-y-2">
-      <div className="flex items-center gap-2">
-        <Gauge className="w-4 h-4 text-[var(--color-text-muted)]" />
-        <span className="text-sm font-bold text-[var(--color-text)]">Where this job lands</span>
-        <span className="text-[11px] text-[var(--color-text-muted)]">from awarded quotes and schedule progress, no invoices needed</span>
-      </div>
-      <ul className="text-xs text-[var(--color-text)] space-y-1">
+    <Card label="Where this job lands">
+      <p className="-mt-1 mb-2 text-[12px] text-[var(--color-text-muted)]">From awarded quotes and schedule progress, no invoices needed.</p>
+      <ul className="text-[13px] text-[var(--color-text)] space-y-1.5">
         <li>
           {o.quoted > 0
             ? <>Awarded quotes plus the budget for unquoted lines put the finish at <b className="tabular-nums">{fmtMoney(o.forecast, cur)}</b>
@@ -451,12 +431,12 @@ export function OutlookCard({ outlook: o, rollup, cur, authorized, onQuotes }: {
           </li>
         )}
         {o.quoted > 0 && unquoted > 0 && (
-          <li className="text-[11px] text-[var(--color-text-muted)]">
+          <li className="text-[12px] text-[var(--color-text-muted)]">
             {unquoted} budget line{unquoted === 1 ? " has" : "s have"} no awarded quote, so {unquoted === 1 ? "it's" : "they're"} forecast at budget.
           </li>
         )}
       </ul>
-    </div>
+    </Card>
   );
 }
 
@@ -465,7 +445,7 @@ function SubTab({ active, onClick, icon, label, count, attention }: {
 }) {
   return (
     <button onClick={onClick} aria-pressed={active}
-      className={`shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${
+      className={`shrink-0 inline-flex items-center gap-1.5 h-9 px-3 rounded-lg text-[13px] font-bold transition-colors ${
         active ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
       {icon} {label}
       {count != null && count > 0 && (
@@ -484,7 +464,7 @@ function BasisLine({ basis, budget, spent, cur, onOpen }: {
   const auth = basis.authorized;
   const gap = auth != null ? auth - budget : null;
   return (
-    <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-2.5 flex items-center gap-x-3 gap-y-1 flex-wrap text-[11px] text-[var(--color-text-muted)]">
+    <div className="mt-3 pt-3 border-t border-[var(--color-border)] flex items-center gap-x-3 gap-y-1 flex-wrap text-[12px] text-[var(--color-text-muted)]">
       <FileCheck2 className="w-4 h-4 text-[var(--color-text-muted)]" />
       {basis.afeNumber && <span className="font-black text-[var(--color-text)]">{basis.afeNumber}</span>}
       {auth != null && <span><span className="font-black tabular-nums text-[var(--color-text)]">{fmtMoney(auth, cur)}</span> authorized</span>}
@@ -498,32 +478,26 @@ function BasisLine({ basis, budget, spent, cur, onOpen }: {
           {Math.round((spent / auth) * 100)}% of authorization spent
         </span>
       )}
-      {onOpen && <button onClick={onOpen} className="ml-auto font-bold text-[var(--color-accent)] hover:underline">view document</button>}
+      {onOpen && <button onClick={onOpen} className="ml-auto font-bold text-[var(--color-text)] hover:underline">View the document</button>}
     </div>
   );
 }
 
 // ── pieces ──────────────────────────────────────────────────────────────
 
-function StatCard({ icon, label, value, sub, tone = "neutral" }: {
-  icon: React.ReactNode; label: string; value: string; sub?: string;
-  /** Good or bad news on the number; most are neutral. */
-  tone?: "neutral" | "good" | "bad";
-}) {
-  const tones: Record<string, string> = {
-    neutral: "text-[var(--color-text)] bg-[var(--color-surface-2)]",
-    good: "text-emerald-600 bg-emerald-500/10",
-    bad: "text-rose-600 bg-rose-500/10",
-  };
+/** A few figures in one row: the name small, the figure bold, what backs
+ *  it under. No tiles: one line the eye runs along. */
+function MoneyRow({ items }: { items: Array<[label: string, value: string, tone?: "bad" | "good", sub?: string]> }) {
   return (
-    <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3.5 shadow-sm">
-      <div className="flex items-center gap-2">
-        <span className={`p-1.5 rounded-lg ${tones[tone]}`}>{icon}</span>
-        <span className="text-[12px] font-semibold text-[var(--color-text-muted)]">{label}</span>
-      </div>
-      <div className="mt-2 text-lg font-black tabular-nums text-[var(--color-text)] truncate">{value}</div>
-      {sub && <div className="text-[11px] font-bold text-[var(--color-text-muted)] mt-0.5">{sub}</div>}
-    </div>
+    <dl className="grid grid-cols-2 lg:grid-cols-4 gap-x-6 gap-y-3">
+      {items.map(([k, v, tone, sub]) => (
+        <div key={k} className="min-w-0">
+          <dt className="text-[12px] text-[var(--color-text-muted)]">{k}</dt>
+          <dd className={`text-[15px] font-extrabold tabular-nums truncate ${tone === "bad" ? "text-rose-700 dark:text-rose-400" : tone === "good" ? "text-emerald-700 dark:text-emerald-400" : "text-[var(--color-text)]"}`}>{v}</dd>
+          {sub && <dd className="text-[12px] text-[var(--color-text-muted)]">{sub}</dd>}
+        </div>
+      ))}
+    </dl>
   );
 }
 

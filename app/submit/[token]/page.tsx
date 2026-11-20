@@ -9,8 +9,9 @@
 
 import React, { useCallback, useEffect, useState } from "react";
 import {
-  UploadCloud, FileText, Loader2, AlertTriangle, CheckCircle2, Clock, Building2, Pen, X,
+  UploadCloud, FileText, Loader2, AlertTriangle, CheckCircle2, Clock, X,
 } from "lucide-react";
+import { PageHero, PageBody, Card } from "@/components/ui/PageHero";
 import { useFileDrag } from "@/hooks/useFileDrag";
 import { tryUpload } from "@/lib/uploadRetry";
 import FileThumb from "@/components/ui/FileThumb";
@@ -73,13 +74,19 @@ interface Resolved {
 // Module-level so its identity is stable across renders — defined inside the
 // component it would remount the whole form (and drop input focus) on every
 // keystroke.
-function Shell({ children }: { children: React.ReactNode }) {
+function Shell({ kicker, title, sub, children }: { kicker: React.ReactNode; title: React.ReactNode; sub?: React.ReactNode; children: React.ReactNode }) {
   return (
-    <div className="min-h-dvh bg-[var(--color-surface-2)] flex items-start justify-center p-4 sm:p-8">
-      <div className="w-full max-w-2xl bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-lg p-6">{children}</div>
+    <div className="min-h-dvh bg-[var(--color-canvas)]">
+      <div className="mx-auto w-full max-w-3xl px-2 sm:px-6 pt-2 sm:pt-8 pb-16">
+        <PageHero kicker={kicker} title={title} sub={sub} size="md" />
+        <PageBody>{children}</PageBody>
+      </div>
     </div>
   );
 }
+
+const field = "h-10 rounded-lg border border-[var(--color-border-strong)] px-3 text-[14px] bg-[var(--color-surface)]";
+const plural = (n: number, one: string) => `${n} ${one}${n === 1 ? "" : "s"}`;
 
 export default function IntakePortal({ params }: { params: Promise<{ token: string }> }) {
   const { token } = React.use(params);
@@ -156,19 +163,18 @@ export default function IntakePortal({ params }: { params: Promise<{ token: stri
     } finally { setRedlineBusy(null); }
   };
 
-  if (state === "loading") return <Shell><div role="status" className="text-center text-[var(--color-text-muted)]"><Loader2 className="w-5 h-5 animate-spin inline mr-2" />Opening your submission portal…</div></Shell>;
+  if (state === "loading") return <Shell kicker="Submission portal" title="Opening…"><Card><div role="status" className="text-[14px] text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin inline mr-2" />Opening your submission portal…</div></Card></Shell>;
   if (state !== "ok" || !data) {
     const text = state === "revoked" ? "This link has been turned off. Ask your project contact for a new one."
       : state === "expired" ? "This link has expired. Ask your project contact for a new one."
       : state === "notfound" ? "This link wasn't found. Check it was copied in full."
       : "This link couldn't be opened just now.";
     return (
-      <Shell>
-        <div className="text-center">
-          <AlertTriangle className="w-8 h-8 text-amber-500 mx-auto mb-2" />
-          <p className="text-sm text-[var(--color-text-muted)]">{text}</p>
-          {state === "error" && <button onClick={() => { setState("loading"); void refresh(); }} className="mt-3 h-9 px-4 rounded-lg border border-[var(--color-border-strong)] text-sm font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">Try again</button>}
-        </div>
+      <Shell kicker="Submission portal" title={state === "revoked" ? "This link is turned off." : state === "expired" ? "This link has expired." : state === "notfound" ? "Link not found." : "Couldn't open the link."}>
+        <Card>
+          <p className="text-[14px] text-[var(--color-text)]">{text}</p>
+          {state === "error" && <button onClick={() => { setState("loading"); void refresh(); }} className="mt-3 h-9 px-4 rounded-lg border border-[var(--color-border-strong)] text-[13px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">Try again</button>}
+        </Card>
       </Shell>
     );
   }
@@ -191,42 +197,34 @@ export default function IntakePortal({ params }: { params: Promise<{ token: stri
         setMsg({ tone: "err", text: `${file.name} didn't go through (${(e as Error).message.replace(/\.$/, "")}). Tap Try again.` });
       } finally { setBusy(false); }
     };
+    const quotes = data.quotes ?? [];
+    const reviewing = quotes.filter((q) => q.status === "under_review").length;
     return (
-      <Shell>
-        <div className="flex items-center gap-3 mb-1">
-          <div className="p-2.5 rounded-lg bg-[var(--color-surface-2)] text-[var(--color-text)] border border-[var(--color-border)]"><Building2 className="w-5 h-5" /></div>
-          <div className="min-w-0">
-            <div className="text-[11px] font-black text-[var(--color-text-muted)] uppercase tracking-widest">Quote submission portal</div>
-            <h1 className="text-base font-black text-[var(--color-text)] truncate">{data.projectName}{data.orgName ? ` · ${data.orgName}` : ""}</h1>
-            <div className="text-xs text-[var(--color-text-muted)]">
-              Submitting as <b>{data.companyName}</b>{data.rfqGroup ? <> · scope: <b>{data.rfqGroup}</b></> : null}
-            </div>
-          </div>
-        </div>
-
-        <div className="mt-4 rounded-xl border border-[var(--color-border-strong)] p-4 space-y-2">
-          <div className="text-xs text-[var(--color-text-muted)]">
+      <Shell kicker={<>Quote submission · {data.projectName}{data.orgName ? ` · ${data.orgName}` : ""}</>}
+        title={quotes.length ? <>{plural(quotes.length, "quote")} sent.{reviewing ? <span className="text-[var(--color-ink-muted)]"> {reviewing} under review.</span> : null}</> : "No quote sent yet."}
+        sub={<>Submitting as <b className="text-white">{data.companyName}</b>{data.rfqGroup ? <> · scope: <b className="text-white">{data.rfqGroup}</b></> : null}</>}>
+        <Card label="Send your quote" className="space-y-2">
+          <div className="text-[13px] text-[var(--color-text-muted)]">
             Upload your quote as a PDF. Include your <b>price breakdown</b>, <b>labor hours and crew size</b>,
             and any <b>exclusions</b>. Bids are compared on all three.
           </div>
           <FileDrop file={file} onFile={(f) => { setFile(f); setMsg(null); }} accept=".pdf,application/pdf" disabled={busy} hint="Drop your quote here or choose it (PDF, up to 100 MB)" />
-          <input value={changeNote} onChange={(e) => setChangeNote(e.target.value)} placeholder="Note to the project team (optional)"
-            className="w-full h-9 rounded-lg border border-[var(--color-border-strong)] px-2.5 text-sm bg-[var(--color-surface)]" />
+          <input value={changeNote} onChange={(e) => setChangeNote(e.target.value)} placeholder="Note to the project team (optional)" aria-label="Note to the project team"
+            className={`w-full ${field}`} />
           <button onClick={() => void submitQuote()} disabled={busy}
-            className="w-full inline-flex items-center justify-center gap-2 h-10 rounded-xl bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-sm font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
+            className="w-full inline-flex items-center justify-center gap-2 h-11 rounded-xl bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[14px] font-extrabold hover:bg-[var(--color-accent-hover)] shadow-[0_12px_24px_-12px_var(--color-accent)] disabled:opacity-50">
             {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <UploadCloud className="w-4 h-4" />} {busy ? `Sending ${file?.name ?? "it"}…` : msg?.tone === "err" && file ? "Try again" : "Submit quote"}
           </button>
           {msg && (
-            <div role={msg.tone === "err" ? "alert" : "status"} className={`text-xs border-l-2 pl-3 py-1 ${msg.tone === "ok" ? "border-emerald-500 text-emerald-700 dark:text-emerald-300" : "border-rose-500 text-rose-700 dark:text-rose-300"}`}>{msg.text}</div>
+            <div role={msg.tone === "err" ? "alert" : "status"} className={`text-[13px] font-semibold ${msg.tone === "ok" ? "text-emerald-700 dark:text-emerald-300" : "text-rose-700 dark:text-rose-300"}`}>{msg.text}</div>
           )}
-        </div>
+        </Card>
 
-        <div className="mt-4">
-          <div className="text-xs font-bold text-[var(--color-text-muted)] mb-1.5">Your submitted quotes</div>
-          {(data.quotes?.length ?? 0) === 0 && <div className="text-xs italic text-[var(--color-text-faint)]">Nothing yet. Your first quote shows here with its status.</div>}
-          <ul className="divide-y divide-[var(--color-border)] rounded-xl border border-[var(--color-border)] overflow-hidden">
-            {(data.quotes ?? []).map((q) => (
-              <li key={q.id} className="flex items-center gap-2 px-3 py-2 text-sm">
+        <Card label="Your submitted quotes">
+          {quotes.length === 0 && <div className="text-[14px] text-[var(--color-text-muted)]">Nothing yet. Your first quote shows here with its status.</div>}
+          <ul className="divide-y divide-[var(--color-border)]">
+            {quotes.map((q) => (
+              <li key={q.id} className="flex items-center gap-2 py-2.5 text-[14px]">
                 <FileText className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
                 <span className="font-bold text-[var(--color-text)] truncate">{q.fileName}</span>
                 {q.submittedAt && <span className="text-xs text-[var(--color-text-muted)]">{new Date(q.submittedAt).toLocaleDateString()}</span>}
@@ -238,82 +236,76 @@ export default function IntakePortal({ params }: { params: Promise<{ token: stri
               </li>
             ))}
           </ul>
-          <div className="mt-3 text-[11px] text-[var(--color-text-faint)]">Quotes go straight to {data.orgName ?? "the client"}&apos;s bid tabulation. This portal is upload-only.</div>
-        </div>
+          <div className="mt-3 text-[12px] text-[var(--color-text-muted)]">Quotes go straight to {data.orgName ?? "the client"}&apos;s bid tabulation. This portal is upload-only.</div>
+        </Card>
       </Shell>
     );
   }
 
+  // The answer: what they've sent and where it stands.
+  const inReview = data.items.filter((i) => i.pendingReview).length;
+  const redlines = data.redlineRequests?.length ?? 0;
+  const answer = redlines ? <>{plural(redlines, "redline request")}.<span className="text-[var(--color-ink-muted)]"> Waiting on your markups.</span></>
+    : data.items.length ? <>{plural(data.items.length, "submission")}.{inReview ? <span className="text-[var(--color-ink-muted)]"> {inReview} in review.</span> : <span className="text-[var(--color-ink-muted)]"> All current.</span>}</>
+      : "Nothing submitted yet.";
   return (
-    <Shell>
-      <div className="flex items-center gap-3 mb-1">
-        <div className="p-2.5 rounded-lg bg-[var(--color-surface-2)] text-[var(--color-text)] border border-[var(--color-border)]"><Building2 className="w-5 h-5" /></div>
-        <div className="min-w-0">
-          <div className="text-[11px] font-black text-[var(--color-text-muted)] uppercase tracking-widest">Drawing &amp; file submission portal</div>
-          <h1 className="text-base font-black text-[var(--color-text)] truncate">{data.projectName}{data.orgName ? ` · ${data.orgName}` : ""}</h1>
-          <div className="text-xs text-[var(--color-text-muted)]">Submitting as <b>{data.companyName}</b>{data.allowAutoSupersede ? " · trusted: your revisions publish immediately" : " · submissions are reviewed before becoming current"}</div>
-        </div>
-      </div>
+    <Shell kicker={<>Drawing &amp; file submission · {data.projectName}{data.orgName ? ` · ${data.orgName}` : ""}</>} title={answer}
+      sub={<>Submitting as <b className="text-white">{data.companyName}</b>{data.allowAutoSupersede ? " · trusted: your revisions publish immediately" : " · submissions are reviewed before becoming current"}</>}>
 
       {/* Submit form */}
-      <div className="mt-4 rounded-xl border border-[var(--color-border-strong)] p-4">
-        <div className="flex items-center gap-1 mb-3 rounded-lg border border-[var(--color-border)] p-0.5 w-fit">
-          <button onClick={() => setMode("new")} className={`px-3 py-1 rounded-md text-xs font-bold ${mode === "new" ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "text-[var(--color-text-muted)]"}`}>New document</button>
-          <button onClick={() => setMode("rev")} disabled={data.items.length === 0} className={`px-3 py-1 rounded-md text-xs font-bold disabled:opacity-40 ${mode === "rev" ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "text-[var(--color-text-muted)]"}`}>Revision of ours</button>
+      <Card label="Send a file">
+        <div role="group" aria-label="What you're sending" className="flex items-center gap-1 mb-3 rounded-lg bg-[var(--color-surface-2)] p-0.5 w-fit">
+          <button type="button" aria-pressed={mode === "new"} onClick={() => setMode("new")} className={`h-8 px-3 rounded-md text-[13px] font-bold ${mode === "new" ? "bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm" : "text-[var(--color-text-muted)]"}`}>New document</button>
+          <button type="button" aria-pressed={mode === "rev"} onClick={() => setMode("rev")} disabled={data.items.length === 0} className={`h-8 px-3 rounded-md text-[13px] font-bold disabled:opacity-40 ${mode === "rev" ? "bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm" : "text-[var(--color-text-muted)]"}`}>Revision of ours</button>
         </div>
         <div className="space-y-2">
           {mode === "new" ? (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Title (required)" className="h-9 rounded-lg border border-[var(--color-border-strong)] px-2.5 text-sm bg-[var(--color-surface)]" />
-              <input value={number} onChange={(e) => setNumber(e.target.value)} placeholder="Drawing number (optional)" className="h-9 rounded-lg border border-[var(--color-border-strong)] px-2.5 text-sm bg-[var(--color-surface)]" />
+              <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Title (required)" aria-label="Title" className={field} />
+              <input value={number} onChange={(e) => setNumber(e.target.value)} placeholder="Drawing number (optional)" aria-label="Drawing number" className={field} />
             </div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              <select value={targetDoc} onChange={(e) => setTargetDoc(e.target.value)} className="h-9 rounded-lg border border-[var(--color-border-strong)] px-2 text-sm bg-[var(--color-surface)]">
+              <select value={targetDoc} onChange={(e) => setTargetDoc(e.target.value)} aria-label="Your document" className={field}>
                 <option value="">Pick your document…</option>
                 {data.items.map((i) => <option key={i.docId} value={i.docId}>{i.label} (Rev {i.rev ?? "-"})</option>)}
               </select>
-              <input value={revLabel} onChange={(e) => setRevLabel(e.target.value)} placeholder="New revision label, e.g. B" className="h-9 rounded-lg border border-[var(--color-border-strong)] px-2.5 text-sm bg-[var(--color-surface)]" />
+              <input value={revLabel} onChange={(e) => setRevLabel(e.target.value)} placeholder="New revision label, e.g. B" aria-label="New revision label" className={field} />
             </div>
           )}
-          <input value={changeNote} onChange={(e) => setChangeNote(e.target.value)} placeholder="What changed? (goes on the record)" className="w-full h-9 rounded-lg border border-[var(--color-border-strong)] px-2.5 text-sm bg-[var(--color-surface)]" />
+          <input value={changeNote} onChange={(e) => setChangeNote(e.target.value)} placeholder="What changed? (goes on the record)" aria-label="What changed" className={`w-full ${field}`} />
           <FileDrop file={file} onFile={(f) => { setFile(f); setMsg(null); }} disabled={busy} hint="Drop the file here or choose it (PDF, DWG, ZIP… up to 100 MB)" />
-          <button onClick={() => void submit()} disabled={busy} className="w-full inline-flex items-center justify-center gap-2 h-10 rounded-xl bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-sm font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
+          <button onClick={() => void submit()} disabled={busy} className="w-full inline-flex items-center justify-center gap-2 h-11 rounded-xl bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[14px] font-extrabold hover:bg-[var(--color-accent-hover)] shadow-[0_12px_24px_-12px_var(--color-accent)] disabled:opacity-50">
             {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <UploadCloud className="w-4 h-4" />} {busy ? `Sending ${file?.name ?? "it"}…` : msg?.tone === "err" && file ? "Try again" : "Submit"}
           </button>
           {msg && (
-            <div role={msg.tone === "err" ? "alert" : "status"} className={`text-xs border-l-2 pl-3 py-1 ${msg.tone === "ok" ? "border-emerald-500 text-emerald-700 dark:text-emerald-300" : "border-rose-500 text-rose-700 dark:text-rose-300"}`}>{msg.text}</div>
+            <div role={msg.tone === "err" ? "alert" : "status"} className={`text-[13px] font-semibold ${msg.tone === "ok" ? "text-emerald-700 dark:text-emerald-300" : "text-rose-700 dark:text-rose-300"}`}>{msg.text}</div>
           )}
         </div>
-      </div>
+      </Card>
 
-      {/* Redlines requested — collision tickets waiting on their markups */}
+      {/* Redlines requested: collision tickets waiting on their markups */}
       {(data.redlineRequests?.length ?? 0) > 0 && (
-        <div className="mt-4 border-l-2 border-amber-500 pl-3">
-          <div className="flex items-center gap-2 mb-1">
-            <Pen className="w-4 h-4 text-[var(--color-text-muted)]" />
-            <span className="text-sm font-black text-amber-800 dark:text-amber-300">Redlines requested</span>
-          </div>
-          <p className="text-xs text-[var(--color-text-muted)] mb-2">
+        <Card label="Redlines requested">
+          <p className="text-[13px] text-[var(--color-text-muted)] mb-2">
             One of your sheets conflicts with existing drawings. Upload your markups here: they go straight to the drafting ticket.
           </p>
-          <ul className="space-y-1.5">
+          <ul className="divide-y divide-[var(--color-border)]">
             {(data.redlineRequests ?? []).map((r) => (
               <RedlineRow key={r.ticketRef} r={r} busy={redlineBusy === r.ticketRef}
                 failed={redlineFailed?.ticketRef === r.ticketRef ? redlineFailed : null}
                 onFile={(f) => void submitRedline(r.ticketRef, f)} />
             ))}
           </ul>
-        </div>
+        </Card>
       )}
 
       {/* Their register */}
-      <div className="mt-4">
-        <div className="text-xs font-bold text-[var(--color-text-muted)] mb-1.5">Your submissions on this project</div>
-        {data.items.length === 0 && <div className="text-xs italic text-[var(--color-text-faint)]">Nothing yet. Your first submission shows here.</div>}
-        <ul className="divide-y divide-[var(--color-border)] rounded-xl border border-[var(--color-border)] overflow-hidden">
+      <Card label="Your submissions on this project">
+        {data.items.length === 0 && <div className="text-[14px] text-[var(--color-text-muted)]">Nothing yet. Your first submission shows here.</div>}
+        <ul className="divide-y divide-[var(--color-border)]">
           {data.items.map((i) => (
-            <li key={i.docId} className="flex items-center gap-2 px-3 py-2 text-sm">
+            <li key={i.docId} className="flex items-center gap-2 py-2.5 text-[14px] flex-wrap">
               <FileText className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
               <span className="font-bold text-[var(--color-text)] truncate">{i.label}</span>
               <span className="text-xs text-[var(--color-text-muted)]">Rev {i.rev ?? "-"}</span>
@@ -325,8 +317,8 @@ export default function IntakePortal({ params }: { params: Promise<{ token: stri
             </li>
           ))}
         </ul>
-        <div className="mt-3 text-[11px] text-[var(--color-text-faint)]">Every submission is recorded with your company name on {data.orgName ?? "the client"}&apos;s revision history. This portal is upload-only.</div>
-      </div>
+        <div className="mt-3 text-[12px] text-[var(--color-text-muted)]">Every submission is recorded with your company name on {data.orgName ?? "the client"}&apos;s revision history. This portal is upload-only.</div>
+      </Card>
     </Shell>
   );
 }
@@ -336,11 +328,11 @@ export default function IntakePortal({ params }: { params: Promise<{ token: stri
 function RedlineRow({ r, busy, failed, onFile }: { r: RedlineRequest; busy: boolean; failed: { file: File; error: string } | null; onFile: (f: File) => void }) {
   const drag = useFileDrag((fs) => onFile(fs[0]), busy);
   return (
-    <li {...drag.bind} className={`rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 py-1.5 text-xs ${drag.ring}`}>
+    <li {...drag.bind} className={`py-2 text-[13px] ${drag.ring}`}>
       <div className="flex items-center gap-2 flex-wrap">
         <span className="font-bold text-[var(--color-text)]">{r.title}</span>
         <span className="text-[var(--color-text-faint)]">{r.ticketNumber ?? ""}{r.docLabel ? ` · ${r.docLabel}` : ""}</span>
-        <label className={`ml-auto inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-[var(--color-border-strong)] text-[var(--color-text)] font-black cursor-pointer hover:bg-[var(--color-surface-2)] ${busy ? "opacity-50 pointer-events-none" : ""}`}>
+        <label className={`ml-auto inline-flex items-center gap-1 h-9 px-3 rounded-lg border border-[var(--color-border-strong)] text-[var(--color-text)] font-bold cursor-pointer hover:bg-[var(--color-surface-2)] ${busy ? "opacity-50 pointer-events-none" : ""}`}>
           {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <UploadCloud className="w-3 h-3" />}
           {drag.over ? drag.say : busy ? "Sending…" : "Upload redlines"}
           <input type="file" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) onFile(f); }} />

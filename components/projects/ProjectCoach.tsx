@@ -56,34 +56,34 @@ export default function ProjectCoach({ orgId, projectId, refreshKey }: {
   }, [health]);
 
   if (!health) return (
-    <div role="status" className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-2.5 mb-4 flex items-center gap-2 text-sm">
+    <div role="status" className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] px-4 sm:px-5 py-3 flex items-center gap-2 text-[14px]">
       <Sparkles className="w-4 h-4 text-[var(--color-text-muted)]" />
       <span className="font-bold text-[var(--color-text)]">Health</span>
-      <span className="text-[12px] text-[var(--color-text-muted)]">{failed ? "Couldn't be checked right now." : "Checking…"}</span>
+      <span className="text-[13px] text-[var(--color-text-muted)]">{failed ? "Couldn't be checked right now." : "Checking…"}</span>
     </div>
   );
   const shown = showAll ? items : items.slice(0, 4);
 
   return (
-    <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden shadow-sm mb-4">
-      <button onClick={() => setOpen((v) => !v)} className="w-full px-4 py-2.5 flex items-center gap-2 text-left hover:bg-[var(--color-surface-2)]/40 transition-colors">
+    <div className="rounded-2xl bg-[var(--color-surface)] overflow-hidden shadow-[var(--shadow-card)]">
+      <button onClick={() => setOpen((v) => !v)} aria-expanded={open} className="w-full px-4 sm:px-5 py-3 flex items-center gap-2 text-left hover:bg-[var(--color-surface-2)]/40 transition-colors">
         {open ? <ChevronDown className="w-4 h-4 text-[var(--color-text-faint)]" /> : <ChevronRight className="w-4 h-4 text-[var(--color-text-faint)]" />}
         <Sparkles className="w-4 h-4 text-[var(--color-text-muted)]" />
-        <span className="text-sm font-bold text-[var(--color-text)]">Health</span>
+        <span className="text-[14px] font-bold text-[var(--color-text)]">Health</span>
         {health.score != null && (
-          <span className="text-[12px] font-black tabular-nums" style={{ color: scoreBandColor(health.score) }}>
+          <span className="text-[12px] font-black tabular-nums whitespace-nowrap" style={{ color: scoreBandColor(health.score) }}>
             {health.score} · {band}
           </span>
         )}
         {items.length > 0 && (
-          <span className="ml-auto text-[12px] font-semibold text-[var(--color-text-muted)]">
-            {items.length} thing{items.length === 1 ? "" : "s"} not set up yet
+          <span className="ml-auto text-[13px] font-semibold text-[var(--color-text-muted)] whitespace-nowrap">
+            {items.length} <span className="max-sm:hidden">thing{items.length === 1 ? "" : "s"} not set up yet</span><span className="sm:hidden">to set up</span>
           </span>
         )}
       </button>
 
       {open && (
-        <div className="px-4 pb-4 pt-1 border-t border-[var(--color-border)] grid grid-cols-1 md:grid-cols-[auto_minmax(0,1fr)] gap-x-6 gap-y-3">
+        <div className="px-4 sm:px-5 pb-4 pt-1 border-t border-[var(--color-border)] grid grid-cols-1 md:grid-cols-[auto_minmax(0,1fr)] gap-x-6 gap-y-3">
           {/* Health: the dial + each part showing its work. */}
           <div className="flex items-center gap-4 pt-2 min-w-0">
             <ScoreDial score={health.score} size={72} label={band} />
@@ -117,11 +117,11 @@ export default function ProjectCoach({ orgId, projectId, refreshKey }: {
                 {shown.map((it) => (
                   <li key={it.id}>
                     <Link href={it.href}
-                      className="group flex items-start gap-2 rounded-lg border border-[var(--color-border)] px-2.5 py-1.5 hover:border-[var(--color-accent-ring)] hover:bg-[var(--color-surface-2)] transition-colors">
+                      className="group flex items-start gap-2 rounded-lg px-2.5 py-2 hover:bg-[var(--color-surface-2)] transition-colors">
                       <ArrowRight className="w-3.5 h-3.5 mt-0.5 text-[var(--color-text-muted)] shrink-0 group-hover:translate-x-0.5 transition-transform" />
                       <span className="min-w-0">
-                        <span className="block text-xs font-bold text-[var(--color-text)]">{it.title}</span>
-                        <span className="block text-[11px] text-[var(--color-text-muted)]">{it.payoff}</span>
+                        <span className="block text-[13px] font-bold text-[var(--color-text)]">{it.title}</span>
+                        <span className="block text-[12px] text-[var(--color-text-muted)]">{it.payoff}</span>
                       </span>
                     </Link>
                   </li>
@@ -129,8 +129,8 @@ export default function ProjectCoach({ orgId, projectId, refreshKey }: {
               </ul>
             )}
             {items.length > 4 && (
-              <button onClick={() => setShowAll((v) => !v)} className="mt-1.5 text-[11px] font-bold text-[var(--color-accent)] hover:underline">
-                {showAll ? "Show fewer" : `Show all ${items.length}`}
+              <button onClick={() => setShowAll((v) => !v)} className="mt-1.5 px-2.5 text-[13px] font-bold text-[var(--color-text)] hover:underline">
+                {showAll ? "Show fewer" : `Show ${items.length - 4} more`}
               </button>
             )}
           </div>

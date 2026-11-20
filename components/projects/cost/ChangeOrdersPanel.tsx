@@ -116,10 +116,10 @@ export default function ChangeOrdersPanel({ orgId, projectId, canManage, actor, 
   const decided = (cos ?? []).filter((c) => c.status !== "proposed");
 
   return (
-    <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] overflow-hidden shadow-sm">
+    <div className="bg-[var(--color-surface)] rounded-2xl overflow-hidden shadow-[var(--shadow-card)]">
       <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap">
         <GitPullRequestArrow className="w-4 h-4 text-[var(--color-text-muted)]" />
-        <span className="text-sm font-bold text-[var(--color-text)]">Change orders</span>
+        <span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Change orders</span>
         {open.length > 0 && (
           <span className="text-[11px] font-black px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/40">
             {open.length} awaiting decision
@@ -132,7 +132,7 @@ export default function ChangeOrdersPanel({ orgId, projectId, canManage, actor, 
         )}
         {canManage && (
           <button onClick={() => setShowForm((v) => !v)} aria-expanded={showForm}
-            className={`ml-auto inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-black transition-colors ${showForm ? "border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] text-[var(--color-text)]" : "bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]"}`}>
+            className={`ml-auto inline-flex items-center gap-1 h-9 px-3 rounded-lg text-[13px] font-bold transition-colors ${showForm ? "border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] text-[var(--color-text)]" : "bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]"}`}>
             <Plus className="w-3 h-3" /> Propose change
           </button>
         )}

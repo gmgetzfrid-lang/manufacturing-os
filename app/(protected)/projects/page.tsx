@@ -12,15 +12,15 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
-  Briefcase, Plus, Search, Lock,
-  Calendar, User as UserIcon, Layers, ChevronRight, ChevronDown, Download,
+  Plus, Search, Lock,
+  User as UserIcon, Layers, ChevronRight, ChevronDown, Download,
 } from "lucide-react";
 import { listedTypeOf, typePlural, typeOrder } from "@/lib/projectType";
 import { loadProjectUnits, type UnitChoice } from "@/lib/projectEquipment";
 import { useRole } from "@/components/providers/RoleContext";
 import { appAlert } from "@/components/providers/DialogProvider";
-import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
-import { Button } from "@/components/ui/Button";
+import { PageShell } from "@/components/ui/PageShell";
+import { PageHero, PageBody, Card, heroPrimary, heroQuiet } from "@/components/ui/PageHero";
 import LoadingBlock from "@/components/ui/LoadingBlock";
 import MoreMenu from "@/components/ui/MoreMenu";
 import { badgeText } from "@/lib/badge";
@@ -148,139 +148,125 @@ export default function ProjectsPage() {
     return n;
   });
 
+  // The answer: how many projects are running, in plain words.
+  const nActive = tabCounts.active ?? 0, nPaused = tabCounts.paused ?? 0;
+  const answer = loading ? "Projects"
+    : (tabCounts.all ?? 0) === 0 ? "No projects yet."
+      : <>{nActive} active project{nActive === 1 ? "" : "s"}.{nPaused > 0 && <span className="text-[var(--color-ink-muted)]"> {nPaused} paused.</span>}</>;
+  const shownCount = shownGroups.reduce((n, g) => n + g.items.length, 0);
+  const chip = (on: boolean) => `shrink-0 whitespace-nowrap inline-flex items-center gap-1.5 h-8 px-3 rounded-lg text-[13px] font-semibold transition-colors ${on ? "bg-[var(--color-ink-fg)] text-[var(--color-ink)]" : "text-[var(--color-ink-muted)] hover:text-white"}`;
+  const count = (on: boolean) => `text-[11px] tabular-nums ${on ? "text-[var(--color-ink)]/60" : "text-[var(--color-ink-muted)]"}`;
+
   return (
     <PageShell width="work">
-        <StaleCheckoutBanner userId={uid ?? undefined} />
-        {/* HEADER */}
-        <PageHeaderBar
-          icon={Briefcase}
-          title="Projects"
-          subtitle={loading ? "Loading…" : `${tabCounts.active ?? 0} active project${(tabCounts.active ?? 0) === 1 ? "" : "s"}${tabCounts.paused ? `, ${tabCounts.paused} paused` : ""}.`}
-          actions={
-            <>
-              <Button onClick={() => setShowCreate(true)}>
-                <Plus className="w-4 h-4" /> New project
-              </Button>
-              {activeOrgId && (tabCounts.all ?? 0) > 0 && (
-                <MoreMenu items={[{ icon: <Download className="w-4 h-4" />, label: "Export all to CSV", onClick: async () => {
-                  try { await exportAllProjectsToCsv(activeOrgId); }
-                  catch (e) { await appAlert({ message: (e as Error).message, tone: "danger" }); }
-                } }]} />
-              )}
-            </>
-          }
-        />
-
-        {/* STATUS TABS */}
-        <div className="flex flex-wrap items-center gap-1.5 mb-4">
-          {STATUS_TABS.map((t) => (
-            <button
-              key={t.value}
-              onClick={() => setStatusFilter(t.value)}
-              aria-pressed={statusFilter === t.value}
-              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${
-                statusFilter === t.value
-                  ? "bg-[var(--color-text)] text-[var(--color-surface)]"
-                  : "bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
-              }`}
-            >
-              {t.label}
-              {typeof tabCounts[t.value] === "number" && tabCounts[t.value] > 0 && (
-                <span className={`text-[11px] px-1.5 py-0.5 rounded-full font-mono ${
-                  statusFilter === t.value ? "bg-[var(--color-surface)]/20 text-[var(--color-surface)]" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"
-                }`}>{badgeText(tabCounts[t.value])}</span>
-              )}
-            </button>
-          ))}
-        </div>
-
-        {/* UNIT */}
-        {unitChoices.some((u) => u.code !== "-") && (
-          <div className="flex flex-wrap items-center gap-2 mb-3">
-            <select value={unitPick} onChange={(e) => setUnitPick(e.target.value)} aria-label="Unit"
-              className={`h-8 rounded-lg border px-2 text-xs font-bold bg-[var(--color-surface)] text-[var(--color-text)] ${unitPick ? "border-[var(--color-text)]" : "border-[var(--color-border)]"}`}>
-              <option value="">All units</option>
-              {unitChoices.map((u) => <option key={u.code} value={u.code}>{u.label} · {u.n}</option>)}
-            </select>
-          </div>
-        )}
-
-        {/* KINDS OF PROJECT */}
-        {groups.length > 1 && (
-          <div className="flex flex-wrap items-center gap-1.5 mb-3" role="group" aria-label="Kind of project">
-            <button onClick={() => setTypeFilter(null)} aria-pressed={!typeFilter}
-              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${!typeFilter ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"}`}>
-              All kinds
-            </button>
-            {groups.map((g) => (
-              <button key={g.key} onClick={() => setTypeFilter(typeFilter === g.key ? null : g.key)} aria-pressed={typeFilter === g.key}
-                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${typeFilter === g.key ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"}`}>
-                {g.label}
-                <span className={`text-[11px] px-1.5 py-0.5 rounded-full font-mono ${typeFilter === g.key ? "bg-[var(--color-surface)]/20" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"}`}>{badgeText(g.items.length)}</span>
+      <PageHero
+        kicker="Work · Projects"
+        title={answer}
+        tools={activeOrgId && (tabCounts.all ?? 0) > 0 ? (
+          <MoreMenu triggerClass={heroQuiet} items={[{ icon: <Download className="w-4 h-4" />, label: "Export all to CSV", onClick: async () => {
+            try { await exportAllProjectsToCsv(activeOrgId); }
+            catch (e) { await appAlert({ message: (e as Error).message, tone: "danger" }); }
+          } }]} />
+        ) : undefined}
+        primary={<button type="button" onClick={() => setShowCreate(true)} className={heroPrimary}><Plus className="w-4 h-4" /> New project</button>}
+      >
+        {/* What steers the list: status, search, unit and kind. */}
+        <div className="space-y-3">
+          <div role="group" aria-label="Status" className="inline-flex max-w-full items-center gap-1 p-1 rounded-xl border border-[var(--color-ink-line)] bg-[var(--color-ink-2)] overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+            {STATUS_TABS.map((t) => (
+              <button key={t.value} type="button" onClick={() => setStatusFilter(t.value)} aria-pressed={statusFilter === t.value} className={chip(statusFilter === t.value)}>
+                {t.label}
+                {typeof tabCounts[t.value] === "number" && tabCounts[t.value] > 0 && <span className={count(statusFilter === t.value)}>{badgeText(tabCounts[t.value])}</span>}
               </button>
             ))}
           </div>
-        )}
-
-        {/* SEARCH */}
-        <div className="mb-6 relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--color-text-faint)]" />
-          <input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search projects by name…"
-            className="w-full pl-9 pr-3 py-2.5 bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] text-sm focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
-          />
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="relative flex-1 min-w-[220px] max-w-xl">
+              <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--color-ink-muted)] pointer-events-none" />
+              <input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search projects by name…"
+                aria-label="Search projects"
+                className="w-full h-11 pl-10 pr-3 rounded-xl border border-[var(--color-ink-line)] bg-[var(--color-ink-2)] text-white text-[15px] placeholder:text-[var(--color-ink-muted)] outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]"
+              />
+            </div>
+            {unitChoices.some((u) => u.code !== "-") && (
+              <select value={unitPick} onChange={(e) => setUnitPick(e.target.value)} aria-label="Unit"
+                className="h-11 px-3 rounded-xl border border-[var(--color-ink-line)] bg-[var(--color-ink-2)] text-[var(--color-ink-fg)] text-[13px] font-semibold outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)] [&_option]:bg-[var(--color-surface)] [&_option]:text-[var(--color-text)]">
+                <option value="">All units</option>
+                {unitChoices.map((u) => <option key={u.code} value={u.code}>{u.label} · {u.n}</option>)}
+              </select>
+            )}
+          </div>
+          {/* Kinds of project */}
+          {groups.length > 1 && (
+            <div role="group" aria-label="Kind of project" className="flex flex-wrap items-center gap-1">
+              <button type="button" onClick={() => setTypeFilter(null)} aria-pressed={!typeFilter} className={chip(!typeFilter)}>All kinds</button>
+              {groups.map((g) => (
+                <button key={g.key} type="button" onClick={() => setTypeFilter(typeFilter === g.key ? null : g.key)} aria-pressed={typeFilter === g.key} className={chip(typeFilter === g.key)}>
+                  {g.label} <span className={count(typeFilter === g.key)}>{badgeText(g.items.length)}</span>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
+      </PageHero>
 
+      <PageBody>
         {/* RESULTS */}
         {loading ? (
-          <LoadingBlock what="projects" rows={6} />
+          <Card><LoadingBlock what="projects" rows={6} className="border-0 p-0" /></Card>
         ) : error ? (
-          <div role="alert" className="border-l-2 border-rose-500 pl-3 py-1 text-sm text-rose-700 dark:text-rose-300 flex flex-wrap items-center gap-x-3 gap-y-1">
-            <span>Couldn&apos;t load projects: {error}</span>
-            <button onClick={() => void refresh()} className="text-xs font-bold text-[var(--color-accent)] hover:underline">Try again</button>
-          </div>
+          <Card>
+            <div role="alert" className="text-[14px] text-rose-700 dark:text-rose-300 flex flex-wrap items-center gap-x-3 gap-y-1">
+              <span>Couldn&apos;t load projects: {error}</span>
+              <button onClick={() => void refresh()} className="text-[13px] font-bold text-[var(--color-accent)] hover:underline">Try again</button>
+            </div>
+          </Card>
         ) : projects.length === 0 ? (
           filterActive && (tabCounts.all ?? 0) > 0 ? (
-            <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-10 text-center animate-in fade-in">
-              <Search className="w-8 h-8 mx-auto text-[var(--color-text-faint)] mb-2" />
-              <div className="text-sm font-bold text-[var(--color-text)]">No projects match</div>
-              <div className="text-xs text-[var(--color-text-muted)] mt-1">
+            <Card label="No projects match">
+              <p className="text-[14px] text-[var(--color-text-muted)]">
                 {searchQ ? <>Nothing named &ldquo;{searchQ}&rdquo; {statusFilter !== "all" ? `in ${statusFilter}` : ""}.</> : `Nothing in ${statusFilter}.`}
-              </div>
-              <button onClick={() => { setSearch(""); setStatusFilter("all"); }} className="mt-3 text-xs font-bold text-[var(--color-accent)] hover:underline">
+              </p>
+              <button onClick={() => { setSearch(""); setStatusFilter("all"); }} className="mt-2 text-[13px] font-bold text-[var(--color-accent)] hover:underline">
                 Clear filters
               </button>
-            </div>
+            </Card>
           ) : (
             <EmptyState />
           )
         ) : (
-          <div className="space-y-6">
+          <>
             {shownGroups.map((g) => {
               const open = !folded.has(g.key) || !!typeFilter;
               return (
-                <section key={g.key} aria-label={g.label}>
-                  <button onClick={() => toggleFold(g.key)} aria-expanded={open}
-                    className="w-full flex items-center gap-2 mb-3 pb-1.5 border-b border-[var(--color-border)] text-left">
-                    {open ? <ChevronDown className="w-4 h-4 text-[var(--color-text-muted)]" /> : <ChevronRight className="w-4 h-4 text-[var(--color-text-muted)]" />}
-                    <h2 className="text-sm font-black text-[var(--color-text)]">{g.label}</h2>
-                    <span className="text-[11px] font-mono text-[var(--color-text-muted)]">{g.items.length}</span>
-                  </button>
+                <Card key={g.key} as="section" pad={false} className="overflow-hidden" label={`${g.label} · ${g.items.length}`}
+                  action={
+                    <button type="button" onClick={() => toggleFold(g.key)} aria-expanded={open} aria-label={open ? `Fold ${g.label}` : `Show ${g.label}`}
+                      className="w-8 h-8 -my-1 -mr-1 inline-flex items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+                      {open ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                    </button>
+                  }>
                   {open && (
-                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                    <ul className="divide-y divide-[var(--color-border)] border-t border-[var(--color-border)]">
                       {g.items.map((p) => <ProjectCard key={p.id} project={p} />)}
-                    </div>
+                    </ul>
                   )}
-                </section>
+                </Card>
               );
             })}
-            {groups.some((g) => g.label === "Other projects") && (
-              <p className="text-[11px] text-[var(--color-text-faint)]">A project goes under its kind from its name, or from Setup › Project type on the project.</p>
+            {shownCount === 0 && (
+              <Card><p className="text-[14px] text-[var(--color-text-muted)]">No projects on that unit.</p></Card>
             )}
-          </div>
+            {groups.some((g) => g.label === "Other projects") && (
+              <p className="px-1 text-[12px] text-[var(--color-text-muted)]">A project goes under its kind from its name, or from Setup › Project type on the project.</p>
+            )}
+          </>
         )}
+        <StaleCheckoutBanner userId={uid ?? undefined} />
+      </PageBody>
 
       {showCreate && activeOrgId && uid && (
         <ProjectWizard
@@ -298,76 +284,58 @@ export default function ProjectsPage() {
 }
 
 function ProjectCard({ project }: { project: Project }) {
-  // Today, read once when the card is first drawn.
+  // Today, read once when the row is first drawn.
   const [nowMs] = useState(() => Date.now());
   // In phases: the phase running now and its end, never the typed target.
   const due = project.phases?.length ? projectDue(project.phases, null, dayKey(nowMs, project.timezone || "America/Los_Angeles")) : null;
-  const statusColors: Record<ProjectStatus, string> = {
-    active:    "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-500/30",
-    paused:    "bg-amber-500/10 text-amber-700 dark:text-amber-300 border-amber-500/30",
-    completed: "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]",
-    cancelled: "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]",
-    archived:  "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]",
-  };
+  const dueWords = project.phases?.length ? (due ? projectDueWords(due) : null) : project.targetCompletionDate ? `due ${formatDate(project.targetCompletionDate)}` : null;
+  const statusWord = project.status[0].toUpperCase() + project.status.slice(1);
+  // Where it stands, in one line: its status, then what's due.
+  const state = [statusWord, dueWords ? dueWords[0].toUpperCase() + dueWords.slice(1) : null, project.phases?.length ? `${project.phases.length} phases` : null].filter(Boolean).join(" · ");
+  const late = due?.kind === "past target";
 
   return (
-    <Link
-      href={`/projects/${project.id}`}
-      className="group block bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] p-5 shadow-sm hover-lift hover:border-[var(--color-accent-ring)] cursor-pointer"
-    >
-      <div className="flex items-start justify-between gap-3 mb-2">
+    <li>
+      <Link
+        href={`/projects/${project.id}`}
+        className="group flex items-start gap-3 px-4 sm:px-5 py-3.5 hover:bg-[var(--color-surface-2)] transition-colors"
+      >
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-1.5 mb-1">
-            <span className={`inline-flex items-center gap-1 text-[12px] font-semibold px-2 py-0.5 rounded-full border ${statusColors[project.status]}`}>
-              {project.status[0].toUpperCase() + project.status.slice(1)}
-            </span>
+          <div className="flex items-baseline gap-2 min-w-0">
+            <h3 className="min-w-0 truncate text-[15px] font-bold text-[var(--color-text)]">{project.name}</h3>
             {project.visibility === "private" && (
-              <span className="inline-flex items-center gap-1 text-[12px] font-semibold text-[var(--color-text-muted)]">
-                <Lock className="w-3.5 h-3.5" /> Private
-              </span>
+              <span className="shrink-0 inline-flex items-center gap-1 text-[12px] text-[var(--color-text-muted)]"><Lock className="w-3 h-3" /> Private</span>
             )}
           </div>
-          <h3 className="text-base font-black text-[var(--color-text)] truncate group-hover:text-[var(--color-text)] transition-colors">
-            {project.name}
-          </h3>
+          <div className={`mt-0.5 text-[13px] font-semibold ${late ? "text-rose-700 dark:text-rose-400" : project.status === "paused" ? "text-amber-800 dark:text-amber-300" : "text-[var(--color-text)]"}`}>{state}</div>
           {project.description && (
-            <p className="text-xs text-[var(--color-text-muted)] mt-1 line-clamp-2">{project.description}</p>
+            <p className="text-[13px] text-[var(--color-text-muted)] mt-0.5 line-clamp-1">{project.description}</p>
           )}
+          <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[12px] text-[var(--color-text-muted)]">
+            {project.ownerUserName && (
+              <span className="inline-flex items-center gap-1"><UserIcon className="w-3 h-3" /> {project.ownerUserName}</span>
+            )}
+            {project.mocReference && (
+              <span className="inline-flex items-center gap-1 font-mono text-[var(--color-text)]">
+                <Layers className="w-3 h-3" /> {project.mocReference}
+              </span>
+            )}
+            <span>Last activity {formatRelative(project.lastActivityAt)}</span>
+          </div>
         </div>
         <ChevronRight className="w-4 h-4 text-[var(--color-text-faint)] group-hover:text-[var(--color-text-muted)] transition-colors shrink-0 mt-1" />
-      </div>
-
-      <div className="mt-3 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-[var(--color-text-muted)]">
-        {project.ownerUserName && (
-          <span className="inline-flex items-center gap-1"><UserIcon className="w-3 h-3" /> {project.ownerUserName}</span>
-        )}
-        {project.phases?.length ? (due && <span className="inline-flex items-center gap-1"><Calendar className="w-3 h-3" /> {projectDueWords(due)}</span>) : project.targetCompletionDate && (
-          <span className="inline-flex items-center gap-1">
-            <Calendar className="w-3 h-3" /> Due {formatDate(project.targetCompletionDate)}
-          </span>
-        )}
-        {project.mocReference && (
-          <span className="inline-flex items-center gap-1 font-mono text-[var(--color-text)]">
-            <Layers className="w-3 h-3" /> {project.mocReference}
-          </span>
-        )}
-      </div>
-
-      <div className="mt-2 text-[11px] text-[var(--color-text-faint)]">
-        Last activity {formatRelative(project.lastActivityAt)}
-      </div>
-    </Link>
+      </Link>
+    </li>
   );
 }
 
 // The one way in is New project, up top.
 function EmptyState() {
   return (
-    <div className="bg-[var(--color-surface)] border border-dashed border-[var(--color-border-strong)] rounded-2xl p-12 text-center">
-      <Briefcase className="w-10 h-10 mx-auto text-[var(--color-text-faint)] mb-3" />
-      <h3 className="text-base font-black text-[var(--color-text)] mb-1">No projects yet</h3>
-      <p className="text-xs text-[var(--color-text-muted)] max-w-md mx-auto">Start one with New project. Its schedule, reports, costs and checkouts live there.</p>
-    </div>
+    <Card label="Projects">
+      <p className="text-[14px] text-[var(--color-text)]">Start one with New project.</p>
+      <p className="text-[13px] text-[var(--color-text-muted)] mt-1">Its schedule, reports, costs and checkouts live there.</p>
+    </Card>
   );
 }
 

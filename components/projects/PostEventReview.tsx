@@ -14,6 +14,7 @@
 // report and as the meeting slides, and the slides open on screen (View
 // slides) on a computer or a phone.
 
+import { Card } from "@/components/ui/PageHero";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Check, Download, FileText, Loader2, Pencil, Plus, Presentation, RefreshCw, RotateCcw, Trash2, X } from "lucide-react";
 import type { Milestone, MilestoneNote } from "@/types/schema";
@@ -346,23 +347,8 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
 
   return (
     <div className="space-y-4" data-post-event-review>
-      {phases.length > 0 && (
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className={label}>Phase</span>
-          {phases.map((p) => (
-            <button key={p.id} type="button" onClick={() => { setPhaseId(p.id); setEditing(null); setAdding(false); setAnswers({}); }} aria-pressed={p.id === phaseId}
-              className={`h-8 px-3 rounded-full border text-[12.5px] font-extrabold ${p.id === phaseId ? "bg-[var(--color-text)] text-[var(--color-surface)] border-[var(--color-text)]" : "bg-[var(--color-surface)] text-[var(--color-text)] border-[var(--color-border)]"}`}>{p.name}</button>
-          ))}
-          <span className="text-[12px] text-[var(--color-text-muted)]">One phase at a time; each has its own review.</span>
-        </div>
-      )}
-
-      <div className="flex items-start justify-between gap-3 flex-wrap">
-        <div className="min-w-0 flex-1 basis-72">
-          <h2 className="text-[19px] font-black text-[var(--color-text)]">Post-event review{phase ? ` · ${phase.name}` : ""}</h2>
-          <p className="text-[13px] text-[var(--color-text-muted)]">A suggested finding goes on the slides only when you accept it.{!m.done && m.steps ? ` ${m.steps - m.stepsDone} of ${m.steps} activities are not done yet, so these numbers are to date.` : ""}</p>
-        </div>
-        <div className="flex gap-1.5 flex-wrap">
+      <Card label={`Post-event review${phase ? ` · ${phase.name}` : ""}`}
+        action={<div className="flex gap-1.5 flex-wrap">
           <button type="button" onClick={() => setViewing(true)} disabled={!m.steps} className={dark}><Presentation className="w-4 h-4" /> View slides</button>
           <MoreMenu items={[
             { icon: <RefreshCw className="w-4 h-4" />, label: "Re-analyze", onClick: () => { if (!busy) reanalyze(); } },
@@ -371,17 +357,27 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
               { icon: <Download className="w-4 h-4" />, label: "Download Word report", onClick: () => { if (!busy) void download("word"); } },
             ] : []),
           ]} />
+        </div>}>
+      {phases.length > 0 && (
+        <div className="mb-2 flex items-center gap-2 flex-wrap">
+          <span className={label}>Phase</span>
+          {phases.map((p) => (
+            <button key={p.id} type="button" onClick={() => { setPhaseId(p.id); setEditing(null); setAdding(false); setAnswers({}); }} aria-pressed={p.id === phaseId}
+              className={`h-8 px-3 rounded-full border text-[12.5px] font-extrabold ${p.id === phaseId ? "bg-[var(--color-text)] text-[var(--color-surface)] border-[var(--color-text)]" : "bg-[var(--color-surface)] text-[var(--color-text)] border-[var(--color-border)]"}`}>{p.name}</button>
+          ))}
+          <span className="text-[12px] text-[var(--color-text-muted)]">One phase at a time; each has its own review.</span>
         </div>
-      </div>
-      {(busy === "slides" || busy === "word") && <p role="status" className="text-[12.5px] text-[var(--color-text-muted)]"><Loader2 className="w-3.5 h-3.5 animate-spin inline mr-1.5" />Making the {busy === "word" ? "Word report" : "PowerPoint"}…</p>}
-
-      {err && <div role="alert" className="border-l-2 border-rose-500 pl-3 py-1 text-[12.5px] font-semibold text-rose-800 dark:text-rose-300">{err}</div>}
-      {msg && <div role="status" className="border-l-2 border-amber-500 pl-3 py-1 text-[12.5px] font-semibold text-amber-900 dark:text-amber-200">{msg}</div>}
-      {held && !viewing && <div role="status" className="border-l-2 border-[var(--color-border-strong)] pl-3 py-1 flex items-center gap-2 flex-wrap text-[12.5px] font-semibold text-[var(--color-text)]" data-file-ready><span className="min-w-0 flex-1 basis-40">The file is ready.</span><button type="button" onClick={() => void saveHeld()} className={pri}><Download className="w-4 h-4" /> Save file</button></div>}
+      )}
+      <p className="text-[13px] text-[var(--color-text-muted)]">A suggested finding goes on the slides only when you accept it.{!m.done && m.steps ? ` ${m.steps - m.stepsDone} of ${m.steps} activities are not done yet, so these numbers are to date.` : ""}</p>
+      {(busy === "slides" || busy === "word") && <p role="status" className="mt-2 text-[13px] text-[var(--color-text-muted)]"><Loader2 className="w-3.5 h-3.5 animate-spin inline mr-1.5" />Making the {busy === "word" ? "Word report" : "PowerPoint"}…</p>}
+      {err && <div role="alert" className="mt-2 text-[13px] font-semibold text-rose-800 dark:text-rose-300">{err}</div>}
+      {msg && <div role="status" className="mt-2 text-[13px] font-semibold text-amber-900 dark:text-amber-200">{msg}</div>}
+      {held && !viewing && <div role="status" className="mt-2 flex items-center gap-2 flex-wrap text-[13px] font-semibold text-[var(--color-text)]" data-file-ready><span className="min-w-0 flex-1 basis-40">The file is ready.</span><button type="button" onClick={() => void saveHeld()} className={pri}><Download className="w-4 h-4" /> Save file</button></div>}
+      </Card>
       {viewing && <ReviewSlides slides={deckSlides(review, fileOpts())} name={`${phase?.name ?? projectName} post-event review`} onClose={() => setViewing(false)} onDownload={() => void download("slides")} downloading={busy === "slides"} ready={held ? { name: held.name, onSave: () => void saveHeld() } : null} />}
 
       {carried.map(({ phase: p, actions }) => (
-        <section key={p.id} className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4" data-review-carried={p.id}>
+        <section key={p.id} className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5" data-review-carried={p.id}>
           <b className="block text-[14px] text-[var(--color-text)]">Open actions from the {p.name} review: {actions.length}</b>
           <p className="text-[12px] text-[var(--color-text-muted)]">They stay here until each is closed.</p>
           <ul className="mt-2 space-y-2">
@@ -397,9 +393,9 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
 
       {m.steps > 0 && <CloseNeeds needs={needs} onGo={goNeed} />}
 
-      {!m.steps ? <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-8 text-center text-[13px] text-[var(--color-text-muted)]">No schedule{phase ? ` for ${phase.name}` : ""} yet, so there is nothing to review.</div> : <>
-        <section className="rounded-2xl border-2 border-[var(--color-text)] bg-[var(--color-surface)] p-4" data-review-point>
-          <h3 className="text-[18px] sm:text-[20px] font-black leading-snug text-[var(--color-text)]">{pt.headline}</h3>
+      {!m.steps ? <div className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] px-4 sm:px-5 py-5 text-[14px] text-[var(--color-text-muted)]">No schedule{phase ? ` for ${phase.name}` : ""} yet, so there is nothing to review.</div> : <>
+        <section className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5" data-review-point>
+          <h3 className="text-[15px] font-extrabold leading-snug text-[var(--color-text)]">{pt.headline}</h3>
           <p className="text-[12.5px] text-[var(--color-text-muted)]">{pt.span}</p>
           {pt.delay && <p className="mt-1 text-[14px] font-bold text-[var(--color-text)]" data-review-delay>{pt.delay}</p>}
 
@@ -458,15 +454,15 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
             </div>
             <p className="text-[11.5px] text-[var(--color-text-muted)]">{RATING_MEANS}</p>
 
-            {adding && <div className="rounded-2xl border-2 border-[var(--color-border-strong)] bg-[var(--color-surface)] p-4"><FindingForm title="Add a finding" draftKey={`review-add:${projectId}:${scope}`} pickCategory busy={busy === "add"} onCancel={() => setAdding(false)} onSave={(e, c) => addFinding(e, c ?? "materials")} /></div>}
+            {adding && <div className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5"><FindingForm title="Add a finding" draftKey={`review-add:${projectId}:${scope}`} pickCategory busy={busy === "add"} onCancel={() => setAdding(false)} onSave={(e, c) => addFinding(e, c ?? "materials")} /></div>}
 
-            {shown.length === 0 && <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-6 text-center text-[13px] text-[var(--color-text-muted)]">Nothing here.</div>}
+            {shown.length === 0 && <div className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] px-4 sm:px-5 py-5 text-[14px] text-[var(--color-text-muted)]">Nothing here.</div>}
             {shown.map((f) => {
               const c = areaOf(f.category);
               const closes = f.rating === "gap" || f.rating === "opportunity";
               const asks = review.questions.filter((q) => q.findingKey === f.key).length;
               return (
-                <article key={f.key} data-finding={f.key} className={`rounded-2xl border bg-[var(--color-surface)] p-4 ${f.status === "discarded" ? "opacity-70 border-[var(--color-border)]" : "border-[var(--color-border)]"}`}>
+                <article key={f.key} data-finding={f.key} className={`rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5 ${f.status === "discarded" ? "opacity-70" : ""}`}>
                   {editing === f.key ? (
                     <FindingForm title={`Change: ${c.name}`} init={f} pickCategory={f.source === "person"} busy={busy === `edit:${f.key}`} onCancel={() => setEditing(null)} onSave={(e, cat) => saveEdit(f, e, cat)} />
                   ) : <>
@@ -543,7 +539,7 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
 
           <aside className="space-y-3">
             {review.questions.length > 0 ? (
-              <div className="rounded-2xl border border-[var(--color-border)] border-l-2 border-l-amber-500 bg-[var(--color-surface)] p-3.5" data-review-questions>
+              <div className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5" data-review-questions>
                 <h3 className="text-[14px] font-black text-[var(--color-text)]">Fill in what the records don&rsquo;t say ({review.questions.length})</h3>
                 <div className="mt-2 space-y-2">
                   {review.questions.map((q) => {
@@ -575,7 +571,7 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
             ) : (
               <div className="border-l-2 border-emerald-500 pl-3 py-1 text-[12.5px] text-emerald-900 dark:text-emerald-200"><b>No open questions.</b> Every stuck shift has a reason{review.answeredCount ? ` (${review.answeredCount} answered here)` : ""}.</div>
             )}
-            <details className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3.5 text-[12.5px] text-[var(--color-text-muted)]">
+            <details className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] px-4 sm:px-5 py-3.5 text-[13px] text-[var(--color-text-muted)]">
               <summary className="cursor-pointer text-[13px] font-bold text-[var(--color-text)]">How a finding is drafted</summary>
               <p className="mt-1">Every number is counted from what was entered. Each finding lists the records behind it. What you kept or changed is never overwritten, and kept findings go to the lessons register.</p>
               <div className="mt-2 flex gap-1.5 flex-wrap"><button type="button" onClick={() => onTab("reports:asbuilt")} className={btn}><FileText className="w-4 h-4" /> As-built schedule</button></div>
@@ -583,7 +579,7 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
           </aside>
         </div>
 
-        <section className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4" data-review-measures>
+        <section className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5" data-review-measures>
           <h3 className="text-[14px] font-black text-[var(--color-text)]">Targets for the next event</h3>
           <p className="text-[12.5px] text-[var(--color-text-muted)]">Nothing is judged against a target until you set it.</p>
           <div className="mt-2 space-y-2">
@@ -608,7 +604,7 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
           {canManage && targets && <div className="mt-2.5 flex gap-1.5"><button type="button" disabled={!!busy} onClick={saveTargets} className={pri}>{busy === "targets" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} Save targets</button><button type="button" onClick={() => setTargets(null)} className={btn}>Cancel</button></div>}
         </section>
 
-        <details className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)]">
+        <details className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)]">
           <summary className="cursor-pointer px-4 py-3 text-[14px] font-black text-[var(--color-text)]">The records behind it: every job that waited, by name</summary>
           <div className="px-4 pb-4 space-y-4">
             {review.flows.filter(overloaded).map((f) => (

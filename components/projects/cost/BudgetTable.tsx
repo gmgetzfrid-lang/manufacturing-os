@@ -124,9 +124,9 @@ export default function BudgetTable({ orgId, projectId, accounts, numbers, entri
   const sharePhase = phase ? phases.find((p) => p.id === phase) ?? null : null;
 
   return (
-    <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm overflow-hidden">
+    <div className="bg-[var(--color-surface)] rounded-2xl shadow-[var(--shadow-card)] overflow-hidden">
       <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap">
-        <span className="text-sm font-bold text-[var(--color-text)]">Budget lines</span>
+        <span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Budget lines</span>
         <span className="text-[11px] text-[var(--color-text-muted)]">{accounts.length - closedCount} open{closedCount ? ` · ${closedCount} closed` : ""}</span>
         <span className="relative ml-auto">
           <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[var(--color-text-faint)]" />
@@ -318,14 +318,16 @@ function Cell({ value, display, onSave, disabled, numeric, aria, className = "" 
 }
 
 /** Each line: budget, committed and spent, side by side (the Overview). */
-export function LinesChart({ rows, cur }: { rows: Array<{ name: string; budget: number; committed: number; spent: number }>; cur: string }) {
+export function LinesChart({ rows, cur, bare }: { rows: Array<{ name: string; budget: number; committed: number; spent: number }>; cur: string;
+  /** Inside another card: no card of its own. */
+  bare?: boolean }) {
   const shown = rows.filter((r) => r.budget || r.committed || r.spent).sort((a, b) => b.budget - a.budget).slice(0, 14);
   if (!shown.length) return null;
   const max = Math.max(...shown.map((r) => Math.max(r.budget, r.committed, r.spent)), 1);
   return (
-    <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3">
+    <div className={bare ? "" : "rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] px-4 sm:px-5 py-4"}>
       <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
-        <span className="text-sm font-bold text-[var(--color-text)]">Each budget line</span>
+        <span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Each budget line</span>
         <span className="flex items-center gap-3 text-[11px] text-[var(--color-text-muted)]">
           <span className="inline-flex items-center gap-1"><span className="w-3 h-2 rounded-sm bg-[var(--color-border-strong)]" /> Budget</span>
           <span className="inline-flex items-center gap-1"><span className="w-3 h-2 rounded-sm bg-[var(--color-text-muted)]" /> Committed</span>

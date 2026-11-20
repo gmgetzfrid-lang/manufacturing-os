@@ -120,11 +120,11 @@ export default function QuotesPanel({ orgId, projectId, canManage, actor, accoun
   };
 
   return (
-    <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] overflow-hidden shadow-sm">
+    <div className="bg-[var(--color-surface)] rounded-2xl overflow-hidden shadow-[var(--shadow-card)]">
       {section !== "invoices" && (<>
       <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap">
         <ScanSearch className="w-4 h-4 text-[var(--color-text-muted)]" />
-        <span className="text-sm font-bold text-[var(--color-text)]">Quotes &amp; bid tabulation</span>
+        <span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Quotes &amp; bid tabulation</span>
         {canManage && (
           <button onClick={() => setShowLinks((v) => !v)}
             className="ml-auto inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-[var(--color-border-strong)] text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
@@ -145,7 +145,7 @@ export default function QuotesPanel({ orgId, projectId, canManage, actor, accoun
       {groups.length === 0 ? (
         <div className="px-4 py-8 text-center">
           <FileText className="w-7 h-7 mx-auto text-[var(--color-text-faint)] mb-2" />
-          <div className="text-sm font-bold text-[var(--color-text)]">No quotes yet</div>
+          <div className="text-[14px] font-bold text-[var(--color-text)]">No quotes yet</div>
           <div className="text-xs text-[var(--color-text-muted)] mt-1 max-w-lg mx-auto">
             Upload the quotes vendors sent you. Quotes with the same RFQ group are compared side by side.
           </div>
@@ -260,7 +260,7 @@ function InvoicesSection({ orgId, projectId, canManage, actor, accounts, parties
     <div className={framed ? "border-t border-[var(--color-border)]" : undefined}>
       <div className="px-4 py-2.5 flex items-center gap-2 flex-wrap">
         <Receipt className="w-4 h-4 text-[var(--color-text-muted)]" />
-        <span className="text-sm font-bold text-[var(--color-text)]">Invoices</span>
+        <span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Invoices</span>
         {canManage && ready.length > 0 && (
           <button onClick={() => void postReady()} disabled={!!batch}
             className="ml-auto inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50 transition-colors"

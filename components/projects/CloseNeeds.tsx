@@ -21,10 +21,10 @@ export default function CloseNeeds({ needs, onGo }: { needs: Need[]; onGo: (go: 
     </button>
   );
   return (
-    <section className={`rounded-2xl border border-[var(--color-border)] border-l-2 bg-[var(--color-surface)] p-4 ${all ? "border-l-emerald-500" : "border-l-amber-500"}`} data-close-needs>
+    <section className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5" data-close-needs>
       <div className="flex items-center gap-3 flex-wrap">
         <div className="min-w-0 flex-1 basis-56">
-          <b className="block text-[15px] text-[var(--color-text)]">What the review needs from you</b>
+          <b className="block text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">What the review needs from you</b>
           <div className="mt-1.5 flex items-center gap-2">
             <div className="h-1.5 flex-1 max-w-[220px] rounded-full bg-[var(--color-border)] overflow-hidden" aria-hidden>
               <div className={`h-full rounded-full ${all ? "bg-emerald-600" : "bg-amber-500"}`} style={{ width: `${Math.round((done / Math.max(1, needs.length)) * 100)}%` }} />
@@ -37,7 +37,7 @@ export default function CloseNeeds({ needs, onGo }: { needs: Need[]; onGo: (go: 
         </button>
       </div>
       {!open && next && (
-        <div className="mt-3 flex items-center gap-3 flex-wrap rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2.5" data-need-next={next.id}>
+        <div className="mt-3 pt-3 border-t border-[var(--color-border)] flex items-center gap-3 flex-wrap" data-need-next={next.id}>
           <span className="min-w-0 flex-1 basis-56">
             <span className="block text-[12px] font-semibold text-[var(--color-text-muted)]">Next</span>
             <b className="block text-[13.5px] leading-snug text-[var(--color-text)]">{next.title}</b>
@@ -47,7 +47,7 @@ export default function CloseNeeds({ needs, onGo }: { needs: Need[]; onGo: (go: 
         </div>
       )}
       {open && (
-        <ol className="mt-3 grid lg:grid-cols-2 gap-px rounded-xl border border-[var(--color-border)] bg-[var(--color-border)] overflow-hidden">
+        <ol className="mt-3 grid lg:grid-cols-2 gap-px border-y border-[var(--color-border)] bg-[var(--color-border)] overflow-hidden">
           {needs.map((n) => (
             <li key={n.id} className="flex items-start gap-3 px-3 py-2.5 flex-wrap bg-[var(--color-surface)]" data-need={n.id} data-need-done={n.done ? "1" : "0"}>
               <span className={`mt-0.5 w-6 h-6 rounded-full flex items-center justify-center shrink-0 ${n.done ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300" : "bg-amber-500/15 text-amber-800 dark:text-amber-300"}`}>

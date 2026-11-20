@@ -30,10 +30,12 @@ import React, { Suspense, useCallback, useEffect, useMemo, useState } from "reac
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import {
-  Network, RefreshCw, Lock, AlertOctagon, Map as MapIcon, ChevronRight,
-  ShieldCheck, AlertTriangle, Users, Boxes, Clock, MailPlus, ArrowDownRight, ArrowUpRight,
-  Radar, Info, Tag, Layers, LayoutGrid,
+  RefreshCw, Map as MapIcon, ChevronRight,
+  ShieldCheck, AlertTriangle, Users, Boxes, Clock, ArrowDownRight, ArrowUpRight,
+  Radar, Info, Tag, LayoutGrid,
 } from "lucide-react";
+import { PageHero, PageBody, Card, heroQuiet } from "@/components/ui/PageHero";
+import { PageShell } from "@/components/ui/PageShell";
 import LifecycleBoard from "@/components/documents/LifecycleBoard";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
@@ -64,7 +66,7 @@ type CoordView = "collisions" | "flow";
 // default export is that thin wrapper.
 export default function CoordinationPage() {
   return (
-    <Suspense fallback={<div className="p-6 max-w-7xl mx-auto"><LoadingBlock what="the coordination board" /></div>}>
+    <Suspense fallback={<PageShell><PageHero kicker="Home · Coordination" title="Coordination" /><PageBody><Card><LoadingBlock what="the coordination board" className="border-0 p-0" /></Card></PageBody></PageShell>}>
       <CoordinationInner />
     </Suspense>
   );
@@ -140,17 +142,40 @@ function CoordinationInner() {
     return m;
   }, [snap?.checkouts]);
 
+  const band = (title: React.ReactNode, sub?: React.ReactNode, tools?: React.ReactNode) => (
+    <PageHero kicker="Home · Coordination" title={title} sub={sub} tools={tools}>
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-3">
+        <div className="[&>div]:mb-0"><ViewTabs tabs={HOME_VIEWS} variant="dark" /></div>
+        {/* The two situational boards, one page. */}
+        <div role="group" aria-label="Board" className="inline-flex items-center gap-1 p-1 rounded-xl border border-[var(--color-ink-line)] bg-[var(--color-ink-2)]">
+          {([
+            { key: "collisions" as const, label: "Collisions", icon: Radar },
+            { key: "flow" as const, label: "Document flow", icon: LayoutGrid },
+          ]).map((t) => (
+            <button key={t.key} type="button" onClick={() => switchView(t.key)} aria-pressed={view === t.key}
+              className={`inline-flex items-center gap-1.5 h-8 px-3 rounded-lg text-[13px] font-semibold transition-colors ${view === t.key ? "bg-[var(--color-ink-fg)] text-[var(--color-ink)]" : "text-[var(--color-ink-muted)] hover:text-white"}`}>
+              <t.icon className="w-3.5 h-3.5" /> {t.label}
+            </button>
+          ))}
+        </div>
+      </div>
+    </PageHero>
+  );
+
   if (loading && !snap) {
-    return <div className="min-h-full bg-[var(--color-canvas)] p-6"><div className="max-w-7xl mx-auto"><LoadingBlock what="the coordination board" rows={6} /></div></div>;
+    return <PageShell>{band("Coordination")}<PageBody><Card><LoadingBlock what="the coordination board" rows={6} className="border-0 p-0" /></Card></PageBody></PageShell>;
   }
   if (!snap) {
     return (
-      <div className="min-h-full bg-[var(--color-canvas)] flex flex-col items-center justify-center text-center p-6">
-        <Network className="w-10 h-10 text-[var(--color-text-muted)] mb-3" />
-        <h1 className="text-lg font-black text-[var(--color-text)]">Coordination</h1>
-        <p className="text-sm text-[var(--color-text-muted)] mt-2 max-w-sm">Couldn&apos;t load the board. If it keeps failing, the database updates may not be applied yet.</p>
-        <button onClick={() => void load()} className="mt-4 px-4 py-2 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-sm font-bold hover:bg-[var(--color-accent-hover)]">Try again</button>
-      </div>
+      <PageShell>
+        {band("Couldn't load the board.")}
+        <PageBody>
+          <Card>
+            <p className="text-[14px] text-[var(--color-text-muted)]">If it keeps failing, the database updates may not be applied yet.</p>
+            <button onClick={() => void load()} className="mt-3 inline-flex items-center h-9 px-3.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[13px] font-bold hover:bg-[var(--color-accent-hover)]">Try again</button>
+          </Card>
+        </PageBody>
+      </PageShell>
     );
   }
 
@@ -159,115 +184,77 @@ function CoordinationInner() {
   const lockCount = snap.checkouts.length;
   const isEmpty = totalEquip === 0 && lockCount === 0 && snap.holds.activeCount === 0 && snap.openRequests === 0 && snap.plotPlans.length === 0 && snap.failed.length === 0;
   const collisions = snap.coordination.overlaps.length;
+  const holds = snap.holds.activeCount;
   // The one line that matters: collisions first, then what's blocked.
-  const headline = collisions
-    ? `${collisions} place${collisions === 1 ? "" : "s"} where two people are working the same scope right now.`
-    : snap.holds.activeCount
-      ? `No scope collisions. ${snap.holds.activeCount} hold${snap.holds.activeCount === 1 ? " is" : "s are"} blocking work.`
-      : lockCount ? `No scope collisions across ${lockCount} active checkout${lockCount === 1 ? "" : "s"}, and nothing blocked.` : "No active work to compare right now.";
+  const answer = collisions
+    ? <>{collisions} collision{collisions === 1 ? "" : "s"}. <span className="text-[var(--color-ink-muted)]">Two people on the same scope.</span></>
+    : holds
+      ? <>No collisions. <span className="text-[var(--color-ink-muted)]">{holds} hold{holds === 1 ? "" : "s"} blocking work.</span></>
+      : lockCount ? <>No collisions. <span className="text-[var(--color-ink-muted)]">Nothing blocked.</span></> : "No active work to compare.";
+  const sub = view === "flow" ? "Every controlled document by where it is in its life."
+    : <>
+        <Link href="/requests" className="hover:text-white"><b className="text-white">{snap.openRequests}</b> open request{snap.openRequests === 1 ? "" : "s"}</Link>
+        <span className="mx-2 text-[var(--color-ink-muted)]">·</span>
+        <Link href="/checkouts" className="hover:text-white"><b className="text-white">{lockCount}</b> active checkout{lockCount === 1 ? "" : "s"}</Link>
+        <span className="max-sm:hidden text-[var(--color-ink-muted)]"> · personal queues live on Home</span>
+      </>;
+  const refresh = view === "collisions" ? (
+    <button type="button" onClick={() => void load()} className={heroQuiet}>
+      <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
+      {refreshedAt ? `Updated ${new Date(refreshedAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}` : "Refresh"}
+    </button>
+  ) : undefined;
 
   return (
-    <div className="min-h-full bg-[var(--color-canvas)] text-[var(--color-text)] p-6">
-      <div className="max-w-7xl mx-auto">
-        <ViewTabs title="Home" tabs={HOME_VIEWS} />
-        <div className="flex items-start justify-between mb-2 flex-wrap gap-3">
-          <div>
-            <h1 className="text-2xl font-black text-[var(--color-text)] flex items-center gap-3">
-              <Network className="w-7 h-7 text-[var(--color-text-muted)]" /> Coordination
-            </h1>
-            <p className={`text-sm mt-1 ${collisions ? "font-bold text-amber-800 dark:text-amber-300" : "text-[var(--color-text-muted)]"}`}>{view === "collisions" ? headline : "Every controlled document by where it is in its life."}</p>
-          </div>
-          {view === "collisions" && (
-            <button onClick={() => void load()} className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-[var(--color-surface)] border border-[var(--color-border)] text-xs font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
-              <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
-              {refreshedAt ? `Updated ${new Date(refreshedAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}` : "Refresh"}
-            </button>
-          )}
-        </div>
-
-        {/* View switch — the two situational boards, one page. */}
-        <div className="inline-flex items-center gap-1 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-1 mb-4">
-          {([
-            { key: "collisions" as const, label: "Collisions", icon: Radar },
-            { key: "flow" as const, label: "Document flow", icon: LayoutGrid },
-          ]).map((t) => (
-            <button
-              key={t.key}
-              onClick={() => switchView(t.key)}
-              aria-pressed={view === t.key}
-              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${
-                view === t.key
-                  ? "bg-[var(--color-text)] text-[var(--color-surface)]"
-                  : "text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
-              }`}
-            >
-              <t.icon className="w-3.5 h-3.5" /> {t.label}
-            </button>
-          ))}
-        </div>
-
-        {view === "flow" && <LifecycleBoard />}
+    <PageShell>
+      {band(view === "flow" ? "Document flow." : answer, sub, refresh)}
+      <PageBody>
+        {view === "flow" && <Card pad={false} className="p-3 sm:p-4 overflow-hidden"><LifecycleBoard /></Card>}
 
         {view === "collisions" && (<>
-        {/* Demoted context strip — the plain totals (these are Home's job now). */}
-        <div className="flex flex-wrap items-center gap-x-5 gap-y-1 mb-5 text-[11px] text-[var(--color-text-muted)]">
-          <Link href="/requests" className="inline-flex items-center gap-1.5 hover:text-[var(--color-text)]">
-            <MailPlus className="w-3 h-3" /> <span className="font-bold text-[var(--color-text)]">{snap.openRequests}</span> open requests
-          </Link>
-          <Link href="/checkouts" className="inline-flex items-center gap-1.5 hover:text-[var(--color-text)]">
-            <Lock className="w-3 h-3" /> <span className="font-bold text-[var(--color-text)]">{lockCount}</span> active locks
-          </Link>
-          <span className="text-[var(--color-text-faint)] hidden sm:inline">Personal queues live on Home</span>
-        </div>
-
-        {setupNeeded && (
-          <p className="mb-4 border-l-2 border-amber-500 pl-3 text-sm text-amber-800 dark:text-amber-200">
-            <span className="font-black">Not set up yet.</span> Equipment state and plot plans aren&apos;t turned on for this workspace. Ask your Admin to finish setup (Admin › Settings › Database updates).
-          </p>
-        )}
-
-        {snap.failed.length > 0 && (
-          <div role="alert" className="mb-4 border-l-2 border-rose-500 pl-3 text-sm text-rose-700 dark:text-rose-300 flex flex-wrap items-center gap-x-3">
-            <span>Couldn&apos;t load {snap.failed.join(", ")}. The numbers for {snap.failed.length === 1 ? "it" : "them"} below may be missing.</span>
-            <button onClick={() => void load()} className="text-xs font-bold text-[var(--color-accent)] hover:underline">Try again</button>
-          </div>
-        )}
-
-        {isEmpty && !setupNeeded && (
-          <div className="mb-4 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
-            <p className="text-sm text-[var(--color-text-muted)] mb-3">
-              Quiet because there&apos;s no active work. It fills in once documents are checked out against tagged equipment.
+        {/* The collision radar: the signal only this page produces. Always
+            says what it watches and what it could compare. */}
+        <CoordinationRadar analysis={snap.coordination} sessionById={sessionById} notes={<>
+          {setupNeeded && (
+            <p className="mb-3 text-[13px] text-amber-800 dark:text-amber-200">
+              <b>Not set up yet.</b> Equipment state and plot plans aren&apos;t turned on for this workspace. Ask your Admin to finish setup (Admin › Settings › Database updates).
             </p>
-            <div className="flex flex-wrap gap-2">
-              <Link href="/admin/assets" className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--color-surface-2)] text-[var(--color-text)] text-xs font-bold hover:bg-[var(--color-border-strong)]">Register equipment</Link>
-              <Link href="/plot-plans" className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--color-surface-2)] text-[var(--color-text)] text-xs font-bold hover:bg-[var(--color-border-strong)]">Create a plot plan</Link>
-              <Link href="/documents" className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--color-surface-2)] text-[var(--color-text)] text-xs font-bold hover:bg-[var(--color-border-strong)]">Check out a document</Link>
+          )}
+          {snap.failed.length > 0 && (
+            <div role="alert" className="mb-3 text-[13px] text-rose-700 dark:text-rose-300 flex flex-wrap items-center gap-x-3">
+              <span>Couldn&apos;t load {snap.failed.join(", ")}. The numbers for {snap.failed.length === 1 ? "it" : "them"} below may be missing.</span>
+              <button onClick={() => void load()} className="text-[13px] font-bold text-[var(--color-accent)] hover:underline">Try again</button>
             </div>
-          </div>
-        )}
+          )}
+          {isEmpty && !setupNeeded && (
+            <div className="mb-3 pb-3 border-b border-[var(--color-border)]">
+              <p className="text-[13px] text-[var(--color-text-muted)] mb-2">
+                Quiet because there&apos;s no active work. It fills in once documents are checked out against tagged equipment.
+              </p>
+              <div className="flex flex-wrap gap-2">
+                <Link href="/admin/assets" className={QUIET_LINK}>Register equipment</Link>
+                <Link href="/plot-plans" className={QUIET_LINK}>Create a plot plan</Link>
+                <Link href="/documents" className={QUIET_LINK}>Check out a document</Link>
+              </div>
+            </div>
+          )}
+        </>} />
 
-        {/* ── HERO: collision radar — the signal only this page produces.
-            Always self-explaining + reports exactly what it could compare. ── */}
-        <CoordinationRadar analysis={snap.coordination} sessionById={sessionById} />
-
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mt-4">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           {/* Equipment state distribution */}
-          <Panel title="Equipment state" icon={Boxes} accent="text-[var(--color-text-muted)]" span={2}>
+          <Panel title="Equipment state" span={2}>
             {totalEquip === 0 ? (
-              <div className="text-xs text-[var(--color-text-muted)]">No equipment tracked yet. <Link href="/admin/assets" className="text-[var(--color-accent)] font-bold hover:underline">Register assets</Link> to see how it&apos;s tracking.</div>
+              <div className="text-[13px] text-[var(--color-text-muted)]">No equipment tracked yet. <Link href="/admin/assets" className="text-[var(--color-accent)] font-bold hover:underline">Register assets</Link> to see how it&apos;s tracking.</div>
             ) : (
               <>
-                <div className="flex items-end gap-4 mb-3">
-                  <div className="text-4xl font-black text-[var(--color-text)]">{totalEquip}</div>
-                  <div className="text-xs text-[var(--color-text-muted)] pb-1">tracked equipment items{blocked > 0 && <span className="ml-2 text-rose-600 dark:text-rose-400 font-bold">· {blocked} blocked</span>}</div>
-                </div>
+                <p className="text-[14px] mb-3"><b>{totalEquip} tracked equipment item{totalEquip === 1 ? "" : "s"}.</b>{blocked > 0 && <span className="ml-1 text-rose-700 dark:text-rose-400 font-bold">{blocked} blocked.</span>}</p>
                 <MiniBars
                   height={12}
                   segments={WHITEBOARD_STATES.map((s) => ({ value: snap.states[s], color: STATE_CONFIG[s].hex, label: STATE_CONFIG[s].label }))}
                 />
                 <div className="flex flex-wrap gap-3 mt-3">
                   {WHITEBOARD_STATES.map((s) => (
-                    <span key={s} className="inline-flex items-center gap-1.5 text-[11px] font-bold text-[var(--color-text-muted)]">
+                    <span key={s} className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-[var(--color-text-muted)]">
                       <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: STATE_CONFIG[s].hex }} />
                       {STATE_CONFIG[s].label} <span className="text-[var(--color-text)]">{snap.states[s]}</span>
                     </span>
@@ -277,59 +264,58 @@ function CoordinationInner() {
             )}
           </Panel>
 
-          {/* Blockers (holds) — framed around health, not just a count. */}
-          <Panel title="Blockers" icon={AlertOctagon} accent="text-rose-600 dark:text-rose-400" href="/admin/holds">
-            <div className="flex items-end gap-3">
-              <div className="text-4xl font-black text-[var(--color-text)]">{snap.holds.activeCount}</div>
-              <div className="text-xs text-[var(--color-text-muted)] pb-1">active hold{snap.holds.activeCount === 1 ? "" : "s"}</div>
-            </div>
-            <div className="mt-3 space-y-1.5 text-[11px]">
+          {/* Blockers (holds): framed around health, not just a count. */}
+          <Panel title="Blockers" href="/admin/holds">
+            {snap.failed.includes("holds")
+              ? <p className="text-[13px] text-rose-700 dark:text-rose-300 font-bold">Couldn&apos;t read the holds</p>
+              : <p className="text-[14px] font-bold text-[var(--color-text)]">{holds === 0 ? "Nothing blocked right now." : `${holds} active hold${holds === 1 ? "" : "s"}.`}</p>}
+            <div className="mt-2 space-y-1.5 text-[12px]">
               {snap.holds.longestActiveDays > 0 && (
                 <div className="flex items-center gap-1.5 text-[var(--color-text-muted)]"><Clock className="w-3 h-3 text-amber-600 dark:text-amber-400" /> Longest open <span className="text-[var(--color-text)] font-bold">{snap.holds.longestActiveDays}d</span></div>
               )}
               {snap.holds.avgClosedDurationDays > 0 && (
-                <div className="flex items-center gap-1.5 text-[var(--color-text-muted)]"><ShieldCheck className="w-3 h-3 text-emerald-600 dark:text-emerald-400" /> Avg resolution <span className="text-[var(--color-text)] font-bold">{snap.holds.avgClosedDurationDays}d</span></div>
+                <div className="flex items-center gap-1.5 text-[var(--color-text-muted)]"><ShieldCheck className="w-3 h-3 text-emerald-600 dark:text-emerald-400" /> Average to clear <span className="text-[var(--color-text)] font-bold">{snap.holds.avgClosedDurationDays}d</span></div>
               )}
-              <div className="flex items-center gap-3 pt-1">
-                <span className="inline-flex items-center gap-1 text-rose-700 dark:text-rose-300"><ArrowUpRight className="w-3 h-3" /> {snap.holds.openedLast7Days} opened/7d</span>
-                <span className="inline-flex items-center gap-1 text-emerald-700 dark:text-emerald-300"><ArrowDownRight className="w-3 h-3" /> {snap.holds.releasedLast7Days} cleared/7d</span>
+              <div className="flex items-center gap-3">
+                <span className="inline-flex items-center gap-1 text-[var(--color-text-muted)]"><ArrowUpRight className="w-3 h-3" /> {snap.holds.openedLast7Days} opened in 7 days</span>
+                <span className="inline-flex items-center gap-1 text-[var(--color-text-muted)]"><ArrowDownRight className="w-3 h-3" /> {snap.holds.releasedLast7Days} cleared</span>
               </div>
             </div>
             {snap.holds.activeByReason.length > 0 && (
               <div className="mt-3 flex flex-wrap gap-1.5">
                 {snap.holds.activeByReason.slice(0, 4).map((r) => (
-                  <span key={r.reason} className="inline-flex items-center gap-1 text-[11px] font-bold px-1.5 py-0.5 rounded-md bg-rose-500/10 text-rose-700 dark:text-rose-300 border border-rose-500/20">
+                  <span key={r.reason} className="inline-flex items-center gap-1 text-[12px] font-bold px-1.5 py-0.5 rounded-md bg-rose-500/10 text-rose-700 dark:text-rose-300">
                     {r.reason} <span className="text-rose-800 dark:text-rose-200">{r.count}</span>
                   </span>
                 ))}
               </div>
             )}
-            {snap.holds.activeCount === 0 && !snap.failed.includes("holds") && (
-              <div className="mt-3 text-xs text-emerald-600 dark:text-emerald-400 font-bold">Nothing blocked right now</div>
-            )}
-            {snap.failed.includes("holds") && <div className="mt-3 text-xs text-rose-700 dark:text-rose-300 font-bold">Couldn&apos;t read the holds</div>}
           </Panel>
 
           {/* Plot plans */}
-          <Panel title="Spatial boards" icon={MapIcon} accent="text-[var(--color-text-muted)]" span={3}>
+          <Panel title="Spatial boards" span={3}>
             {snap.plotPlans.length === 0 ? (
-              <div className="text-xs text-[var(--color-text-muted)]">No plot plans yet. <Link href="/plot-plans" className="text-[var(--color-accent)] font-bold hover:underline">Create one</Link> to find equipment on a map.</div>
+              <div className="text-[13px] text-[var(--color-text-muted)]">No plot plans yet. <Link href="/plot-plans" className="text-[var(--color-accent)] font-bold hover:underline">Create one</Link> to find equipment on a map.</div>
             ) : (
               <div className="flex flex-wrap gap-2">
                 {snap.plotPlans.slice(0, 8).map((p) => (
-                  <Link key={p.id} href={`/plot-plans/${p.id}`} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] text-xs font-bold text-[var(--color-text)] hover:border-[var(--color-border-strong)]">
+                  <Link key={p.id} href={`/plot-plans/${p.id}`} className={QUIET_LINK}>
                     <MapIcon className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> {p.name} <span className="text-[var(--color-text-muted)]">{p.markers.length}</span>
                   </Link>
                 ))}
+                {snap.plotPlans.length > 8 && <Link href="/plot-plans" className="inline-flex items-center h-9 px-2 text-[13px] font-bold text-[var(--color-accent)] hover:underline">Show {snap.plotPlans.length - 8} more</Link>}
               </div>
             )}
           </Panel>
         </div>
         </>)}
-      </div>
-    </div>
+      </PageBody>
+    </PageShell>
   );
 }
+
+/** A quiet link that looks like a button (ink on a warm fill). */
+const QUIET_LINK = "inline-flex items-center gap-1.5 h-9 px-3 rounded-lg bg-[var(--color-surface-2)] text-[var(--color-text)] text-[13px] font-bold hover:bg-[var(--color-border)]";
 
 // ─── Coordination radar ─────────────────────────────────────────────────────
 // The crown jewel — and the page's most-misunderstood feature, so it explains
@@ -345,48 +331,36 @@ function CoordinationInner() {
 //                    feed it)
 
 function CoordinationRadar({
-  analysis, sessionById,
+  analysis, sessionById, notes,
 }: {
   analysis: CoordinationAnalysis;
   sessionById: Map<string, CheckoutSession>;
+  /** What's wrong with the board itself (not set up, couldn't load), said first. */
+  notes?: React.ReactNode;
 }) {
   const { overlaps, activeCheckouts, documents, comparableDocuments, assetLinkedDocuments, scopedDocuments } = analysis;
   const canCompare = comparableDocuments >= 2;
 
-  // Shared "what this is + what it can see" header — present in every state so
-  // the feature is legible even at a glance.
+  // What it watches and what it could see: in every state, so the feature
+  // is legible even at a glance.
   const Header = (
-    <div className="px-5 pt-4 pb-3">
-      <div className="flex items-center gap-2">
-        <Radar className="w-5 h-5 text-[var(--color-text-muted)]" />
-        <span className="text-base font-black text-[var(--color-text)]">Collision radar</span>
-        <span className="ml-auto text-[11px] font-bold text-[var(--color-text-muted)]">Updates every 45 seconds</span>
-      </div>
-      <p className="text-xs text-[var(--color-text-muted)] mt-1.5 leading-relaxed">
-        Two people with different documents checked out on the same equipment tag, unit or system.
+    <div className="mb-3">
+      <p className="text-[13px] text-[var(--color-text-muted)] leading-relaxed">
+        Two people with different documents checked out on the same equipment tag, unit or system. Checked every 45 seconds.
       </p>
-      {/* Coverage readout — proof of what it actually examined. */}
-      <div className="mt-3 flex flex-wrap gap-1.5">
-        <Coverage icon={Lock} label="checkouts scanned" value={activeCheckouts} />
-        <Coverage icon={Boxes} label="documents" value={documents} />
-        <Coverage icon={Tag} label="asset-linked" value={assetLinkedDocuments} />
-        <Coverage icon={Layers} label="unit/system-scoped" value={scopedDocuments} />
-        <Coverage icon={Radar} label="comparable" value={comparableDocuments} highlight />
-      </div>
+      {/* Coverage: proof of what it actually examined. */}
+      <p className="mt-1.5 text-[12px] text-[var(--color-text-muted)]">
+        <b className="text-[var(--color-text)]">{activeCheckouts}</b> checkouts scanned · <b className="text-[var(--color-text)]">{documents}</b> documents · <b className="text-[var(--color-text)]">{assetLinkedDocuments}</b> on equipment · <b className="text-[var(--color-text)]">{scopedDocuments}</b> on a unit or system · <b className="text-[var(--color-text)]">{comparableDocuments}</b> comparable
+      </p>
     </div>
   );
 
-  // STATE 1 — collisions found.
+  // STATE 1: collisions found.
   if (overlaps.length > 0) {
     return (
-      <div className="rounded-2xl border border-amber-500/40 overflow-hidden bg-[var(--color-surface-2)]">
-        {Header}
-        <div className="px-5 pb-2 flex items-center gap-2">
-          <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400" />
-          <span className="text-sm font-black text-amber-800 dark:text-amber-200">{overlaps.length} active collision{overlaps.length === 1 ? "" : "s"}</span>
-          <span className="ml-auto text-[11px] text-amber-800 dark:text-amber-200 hidden sm:inline">Talk before conflicting revisions land</span>
-        </div>
-        <div className="border-t border-amber-500/20 divide-y divide-amber-500/10">
+      <Card label="Collision radar" pad={false} className="overflow-hidden" action={<span className="text-[12px] font-bold text-amber-800 dark:text-amber-300">{overlaps.length} active</span>}>
+        <div className="px-4 sm:px-5">{notes}{Header}</div>
+        <div className="border-t border-[var(--color-border)] divide-y divide-[var(--color-border)]">
           {overlaps.slice(0, 8).map((o, i) => {
             const people = Array.from(new Set(
               o.checkoutIds.map((id) => sessionById.get(id)?.userName).filter((n): n is string => !!n),
@@ -398,14 +372,14 @@ function CoordinationRadar({
             const first = o.checkoutIds.map((id) => sessionById.get(id)).find((x) => x?.libraryId && x.documentId);
             const href = first ? `/documents/${first.libraryId}?doc=${first.documentId}` : "/checkouts";
             return (
-              <Link key={i} href={href} className="flex items-center gap-3 px-5 py-3 hover:bg-amber-500/[0.06] transition-colors">
+              <Link key={i} href={href} className="flex items-center gap-3 px-4 sm:px-5 py-3 hover:bg-[var(--color-surface-2)] transition-colors">
                 <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
                 <div className="min-w-0 flex-1">
-                  <div className="text-sm font-bold text-[var(--color-text)] truncate">
-                    <span className="text-[11px] font-black uppercase tracking-wider text-amber-700/80 dark:text-amber-300/80 mr-1.5">{scope.kind}</span>
+                  <div className="text-[14px] font-bold text-[var(--color-text)] truncate">
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-[var(--color-text-muted)] mr-1.5">{scope.kind}</span>
                     {scope.tag}
                   </div>
-                  <div className="text-[11px] text-[var(--color-text-muted)] flex items-center gap-1.5 mt-0.5">
+                  <div className="text-[12px] text-[var(--color-text-muted)] flex items-center gap-1.5 mt-0.5">
                     <Users className="w-3 h-3" />
                     {people.length > 0 ? people.join(", ") : `${o.checkoutIds.length} people`}
                     <span className="text-[var(--color-text-faint)]">·</span>
@@ -418,95 +392,73 @@ function CoordinationRadar({
           })}
         </div>
         {overlaps.length > 8 && (
-          <div className="px-5 py-2 border-t border-amber-500/10">
-            <Link href="/checkouts" className="text-xs font-bold text-[var(--color-accent)] hover:underline">See all {overlaps.length} collisions</Link>
+          <div className="px-4 sm:px-5 py-3 border-t border-[var(--color-border)]">
+            <Link href="/checkouts" className="text-[13px] font-bold text-[var(--color-accent)] hover:underline">Show {overlaps.length - 8} more</Link>
           </div>
         )}
-      </div>
+      </Card>
     );
   }
 
-  // STATE 2 — genuinely clear: it had enough to compare, found no overlap.
+  // STATE 2: genuinely clear: it had enough to compare, found no overlap.
   if (canCompare) {
     return (
-      <div className="rounded-2xl border border-emerald-500/30 overflow-hidden bg-[var(--color-surface-2)]">
-        {Header}
-        <div className="px-5 pb-4 pt-1 flex items-center gap-3 border-t border-emerald-500/15">
-          <div className="w-10 h-10 rounded-xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center shrink-0 mt-1">
-            <ShieldCheck className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
-          </div>
+      <Card label="Collision radar">
+        {notes}{Header}
+        <div className="pt-3 border-t border-[var(--color-border)] flex items-start gap-3">
+          <ShieldCheck className="w-5 h-5 mt-0.5 shrink-0 text-emerald-600 dark:text-emerald-400" />
           <div>
-            <div className="text-sm font-black text-[var(--color-text)]">All clear: no scope collisions</div>
-            <div className="text-xs text-[var(--color-text-muted)] mt-0.5">
+            <div className="text-[14px] font-bold text-[var(--color-text)]">All clear: no scope collisions</div>
+            <div className="text-[13px] text-[var(--color-text-muted)] mt-0.5">
               Compared {comparableDocuments} scope-linked document{comparableDocuments === 1 ? "" : "s"} across {activeCheckouts} active checkout{activeCheckouts === 1 ? "" : "s"}. No two crews are working overlapping asset, unit, or system scope.
             </div>
           </div>
         </div>
-      </div>
+      </Card>
     );
   }
 
-  // STATE 3 — standing by: not enough scope-linked docs to compare. Explain how
-  // to light it up instead of implying everything's fine.
+  // STATE 3: standing by: not enough scope-linked docs to compare. Explain
+  // how to light it up instead of implying everything's fine.
   return (
-    <div className="rounded-2xl border border-[var(--color-border)] overflow-hidden bg-[var(--color-surface-2)]">
-      {Header}
-      <div className="px-5 pb-4 pt-1 border-t border-[var(--color-border)]">
-        <div className="flex items-start gap-3">
-          <div className="w-10 h-10 rounded-xl bg-[var(--color-surface-2)] border border-[var(--color-border-strong)] flex items-center justify-center shrink-0 mt-0.5">
-            <Info className="w-5 h-5 text-[var(--color-text-muted)]" />
+    <Card label="Collision radar">
+      {notes}{Header}
+      <div className="pt-3 border-t border-[var(--color-border)] flex items-start gap-3">
+        <Info className="w-5 h-5 mt-0.5 shrink-0 text-[var(--color-text-muted)]" />
+        <div className="min-w-0">
+          <div className="text-[14px] font-bold text-[var(--color-text)]">Nothing to compare yet</div>
+          <div className="text-[13px] text-[var(--color-text-muted)] mt-0.5 leading-relaxed">
+            {documents === 0
+              ? "No documents are checked out."
+              : <>Of the {documents} checked-out document{documents === 1 ? "" : "s"}, only <span className="text-[var(--color-text)] font-bold">{comparableDocuments}</span> {comparableDocuments === 1 ? "is" : "are"} tied to equipment or a unit or system. It needs at least two.</>}
           </div>
-          <div className="min-w-0">
-            <div className="text-sm font-black text-[var(--color-text)]">Nothing to compare yet</div>
-            <div className="text-xs text-[var(--color-text-muted)] mt-1 leading-relaxed">
-              {documents === 0
-                ? "No documents are checked out."
-                : <>Of the {documents} checked-out document{documents === 1 ? "" : "s"}, only <span className="text-[var(--color-text)] font-bold">{comparableDocuments}</span> {comparableDocuments === 1 ? "is" : "are"} tied to equipment or a unit or system. It needs at least two.</>}
-            </div>
-            <div className="mt-3 flex flex-wrap gap-2">
-              <Link href="/documents" className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--color-surface-2)] text-[var(--color-text)] text-xs font-bold hover:bg-[var(--color-border-strong)]">
-                <Tag className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> Tag documents to equipment
-              </Link>
-              <Link href="/admin/assets" className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--color-surface-2)] text-[var(--color-text)] text-xs font-bold hover:bg-[var(--color-border-strong)]">
-                <Boxes className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> Equipment registry
-              </Link>
-            </div>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Link href="/documents" className={QUIET_LINK}>
+              <Tag className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> Tag documents to equipment
+            </Link>
+            <Link href="/admin/assets" className={QUIET_LINK}>
+              <Boxes className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> Equipment registry
+            </Link>
           </div>
         </div>
       </div>
-    </div>
-  );
-}
-
-function Coverage({ icon: Icon, label, value, highlight }: { icon: React.ComponentType<{ className?: string }>; label: string; value: number; highlight?: boolean }) {
-  return (
-    <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-lg border text-[11px] font-bold text-[var(--color-text-muted)] ${highlight ? "bg-[var(--color-surface-2)] border-[var(--color-border-strong)]" : "bg-[var(--color-surface)] border-[var(--color-border)]"}`}>
-      <Icon className="w-3 h-3" />
-      <span className="text-[var(--color-text)]">{value}</span> {label}
-    </span>
+    </Card>
   );
 }
 
 function Panel({
-  title, icon: Icon, accent, children, span = 1, href,
+  title, children, span = 1, href,
 }: {
   title: string;
-  icon: React.ComponentType<{ className?: string }>;
-  accent: string;
   children: React.ReactNode;
   span?: 1 | 2 | 3;
   href?: string;
 }) {
   const spanCls = span === 3 ? "lg:col-span-3" : span === 2 ? "lg:col-span-2" : "";
-  const body = (
-    <div className={`rounded-2xl bg-[var(--color-surface)] border border-[var(--color-border)] p-5 h-full ${href ? "hover:border-[var(--color-border-strong)] hover:bg-[var(--color-surface-2)] transition-colors" : ""}`}>
-      <div className="flex items-center gap-2 mb-3">
-        <Icon className={`w-4 h-4 ${accent}`} />
-        <span className="text-xs font-black uppercase tracking-wider text-[var(--color-text-muted)]">{title}</span>
-        {href && <ChevronRight className="w-3.5 h-3.5 text-[var(--color-text-faint)] ml-auto" />}
-      </div>
+  return (
+    <Card label={title} className={`${spanCls} h-full`}
+      action={href ? <Link href={href} aria-label={`Open ${title.toLowerCase()}`} className="w-8 h-8 -my-1 -mr-1 inline-flex items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><ChevronRight className="w-4 h-4" /></Link> : undefined}>
       {children}
-    </div>
+    </Card>
   );
-  return <div className={spanCls}>{href ? <Link href={href} className="block h-full">{body}</Link> : body}</div>;
 }

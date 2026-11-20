@@ -8,6 +8,7 @@
 // provenance untouched. Anything with a collision stays put until a human
 // resolves it — a single source of truth is the whole point.
 
+import { Card } from "@/components/ui/PageHero";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ArrowRightCircle, Loader2, ShieldAlert, ShieldCheck, Cable, Layers,
@@ -141,14 +142,13 @@ export default function TransitionInPanel({ orgId, projectId, intakeCollectionId
     return <div className="py-6 flex items-center justify-center gap-2 text-xs text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin" /> Checking the intake folder…</div>;
   }
   // Nothing to transition: stay out of the way, unless the read failed.
-  if (candidates.length === 0) return msg ? <div role="alert" className="border-l-2 border-rose-500 pl-3 text-xs font-bold text-rose-700 dark:text-rose-300">{msg}</div> : null;
+  if (candidates.length === 0) return msg ? <Card><div role="alert" className="text-[13px] font-bold text-rose-700 dark:text-rose-300">{msg}</div></Card> : null;
 
   return (
-    <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 space-y-3">
+    <div className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5 space-y-3">
       <div className="flex items-center gap-2 flex-wrap">
-        <ArrowRightCircle className="w-4 h-4 text-[var(--color-text-muted)]" />
-        <span className="text-base font-bold text-[var(--color-text)]">Transition in</span>
-        <span className="text-xs text-[var(--color-text-muted)]">
+        <span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Transition in</span>
+        <span className="text-[13px] text-[var(--color-text-muted)]">
           {candidates.length} sheet{candidates.length === 1 ? "" : "s"} in intake ·{" "}
           <b className="text-emerald-700 dark:text-emerald-400">{cleanCount} clean</b>
           {flaggedCount > 0 && <> · <b className="text-amber-700 dark:text-amber-400">{flaggedCount} need review</b></>}
@@ -188,7 +188,7 @@ export default function TransitionInPanel({ orgId, projectId, intakeCollectionId
             <li key={c.docId} className={`rounded-xl border px-2.5 py-1.5 ${!impact ? "border-[var(--color-border)]" : impact.clean ? "border-emerald-500/30 bg-emerald-500/[0.04]" : "border-amber-500/40 bg-amber-500/[0.05]"}`}>
               <button onClick={() => setOpen(expanded ? null : c.docId)} className="w-full flex items-center gap-2 text-left">
                 {expanded ? <ChevronDown className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" /> : <ChevronRight className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" />}
-                <span className="text-sm font-bold text-[var(--color-text)] truncate">{c.label}</span>
+                <span className="text-[14px] font-bold text-[var(--color-text)] truncate">{c.label}</span>
                 <span className="text-xs text-[var(--color-text-muted)] shrink-0">Rev {c.rev ?? "-"}{c.company ? ` · ${c.company}` : ""}</span>
                 <span className="ml-auto flex items-center gap-1.5 shrink-0">
                   {!impact && <Loader2 className="w-3 h-3 animate-spin text-[var(--color-text-faint)]" />}

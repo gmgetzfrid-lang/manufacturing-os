@@ -23,6 +23,7 @@
 // taken back, an accepted or waived turnover item reopens, and a punch item
 // can be edited, reopened, or voided (with a confirm and an Undo).
 
+import { Card } from "@/components/ui/PageHero";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useFileDrag } from "@/hooks/useFileDrag";
 import Link from "next/link";
@@ -107,7 +108,7 @@ export default function QualityTab({ orgId, projectId, canManage, canEditPunch, 
   }, [orgId, projectId]);
   useEffect(() => { void refresh(); }, [refresh]);
 
-  if (loading) return <LoadingBlock what="checklists, turnover and punch list" />;
+  if (loading) return <Card><LoadingBlock what="checklists, turnover and punch list" className="border-0 p-0" /></Card>;
   // Where quality stands, in one line, before the three lists.
   const punchOpen = punch.filter((i) => i.status === "open").length;
   const tp = computeTurnoverProgress(turnover);
@@ -115,16 +116,18 @@ export default function QualityTab({ orgId, projectId, canManage, canEditPunch, 
 
   return (
     <div className="space-y-4">
-      <p className="text-[13px] text-[var(--color-text)]">
-        <b className={punchOpen ? "text-amber-800 dark:text-amber-300" : ""}>{punchOpen ? `${punchOpen} punch item${punchOpen === 1 ? "" : "s"} open` : "Punch list clear"}</b>
-        <span className="text-[var(--color-text-muted)]"> · {tp.required ? `turnover ${tp.accepted} of ${tp.required} accepted` : "no turnover items set"} · {lists.length ? `${lists.length} checklist${lists.length === 1 ? "" : "s"}, ${lists.filter((c) => c.status === "complete").length} complete` : "no checklists yet"}</span>
-      </p>
-      {err && (
-        <div role="alert" className="flex items-center gap-2 border-l-2 border-rose-500 pl-3 py-1 text-xs font-bold text-rose-700 dark:text-rose-300">
-          <span className="min-w-0 flex-1">{err}</span>
-          <button onClick={() => setErr(null)} aria-label="Dismiss" className="shrink-0 p-1 text-[var(--color-text-faint)] hover:text-[var(--color-text)]"><X className="w-3.5 h-3.5" /></button>
-        </div>
-      )}
+      <Card label="Quality">
+        <p className="text-[14px] text-[var(--color-text)]">
+          <b className={punchOpen ? "text-amber-800 dark:text-amber-300" : ""}>{punchOpen ? `${punchOpen} punch item${punchOpen === 1 ? "" : "s"} open` : "Punch list clear"}</b>
+          <span className="text-[var(--color-text-muted)]"> · {tp.required ? `turnover ${tp.accepted} of ${tp.required} accepted` : "no turnover items set"} · {lists.length ? `${lists.length} checklist${lists.length === 1 ? "" : "s"}, ${lists.filter((c) => c.status === "complete").length} complete` : "no checklists yet"}</span>
+        </p>
+        {err && (
+          <div role="alert" className="mt-2 flex items-center gap-2 text-[13px] font-bold text-rose-700 dark:text-rose-300">
+            <span className="min-w-0 flex-1">{err}</span>
+            <button onClick={() => setErr(null)} aria-label="Dismiss" className="shrink-0 p-1 text-[var(--color-text-faint)] hover:text-[var(--color-text)]"><X className="w-3.5 h-3.5" /></button>
+          </div>
+        )}
+      </Card>
 
       <ChecklistsSection orgId={orgId} projectId={projectId} canManage={canManage} actor={actor}
         checklists={checklists} onChanged={() => void refresh()} setErr={setErr} announce={announce} />
@@ -150,14 +153,14 @@ function ChecklistsSection({ orgId, projectId, canManage, actor, checklists, onC
   const [showNew, setShowNew] = useState(false);
   const none = checklists.filter((c) => c.status !== "void").length === 0;
   return (
-    <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] overflow-hidden shadow-sm">
+    <div className="bg-[var(--color-surface)] rounded-2xl overflow-hidden shadow-[var(--shadow-card)]">
       <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2">
         <ClipboardCheck className="w-4 h-4 text-[var(--color-text-muted)]" />
-        <span className="text-sm font-bold text-[var(--color-text)]">Checklists: PSSR, MI, QA/QC</span>
+        <span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Checklists: PSSR, MI, QA/QC</span>
         {canManage && (
           // Orange only while there's none yet and the form isn't open.
           <button onClick={() => setShowNew((v) => !v)} aria-expanded={showNew}
-            className={`ml-auto inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-black transition-colors ${none && !showNew ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]" : showNew ? "bg-[var(--color-surface-2)] text-[var(--color-text)] border border-[var(--color-border-strong)]" : "border border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
+            className={`ml-auto inline-flex items-center gap-1 h-9 px-3 rounded-lg text-[13px] font-bold transition-colors ${none && !showNew ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]" : showNew ? "bg-[var(--color-surface-2)] text-[var(--color-text)] border border-[var(--color-border-strong)]" : "border border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
             <Plus className="w-3 h-3" /> New checklist
           </button>
         )}
@@ -171,7 +174,7 @@ function ChecklistsSection({ orgId, projectId, canManage, actor, checklists, onC
       {checklists.filter((c) => c.status !== "void").length === 0 ? (
         <div className="px-4 py-8 text-center">
           <ClipboardCheck className="w-7 h-7 mx-auto text-[var(--color-text-faint)] mb-2" />
-          <div className="text-sm font-bold text-[var(--color-text)]">No checklists yet</div>
+          <div className="text-[14px] font-bold text-[var(--color-text)]">No checklists yet</div>
           <div className="text-xs text-[var(--color-text-muted)] mt-1 max-w-lg mx-auto">
             Upload your PSSR or QA/QC checklist (PDF) with New checklist. It&apos;s read into items you check off.
           </div>
@@ -743,10 +746,10 @@ function TurnoverSection({ orgId, projectId, canManage, actor, items, jobKind, p
   };
 
   return (
-    <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] overflow-hidden shadow-sm">
+    <div className="bg-[var(--color-surface)] rounded-2xl overflow-hidden shadow-[var(--shadow-card)]">
       <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap">
         <PackageCheck className="w-4 h-4 text-[var(--color-text-muted)]" />
-        <span className="text-sm font-bold text-[var(--color-text)]">Turnover package: QA/QC sign-off</span>
+        <span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Turnover package: QA/QC sign-off</span>
         {progress.required > 0 && (
           <span className="text-[11px] font-bold tabular-nums text-[var(--color-text-muted)]">
             {progress.accepted}/{progress.required} accepted{progress.received > 0 ? ` · ${progress.received} awaiting review` : ""}
@@ -1017,10 +1020,10 @@ function PunchSection({ orgId, projectId, canManage, actor, items, parties, peop
   };
 
   return (
-    <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] overflow-hidden shadow-sm">
+    <div className="bg-[var(--color-surface)] rounded-2xl overflow-hidden shadow-[var(--shadow-card)]">
       <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2">
         <ListChecks className="w-4 h-4 text-[var(--color-text-muted)]" />
-        <span className="text-sm font-bold text-[var(--color-text)]">Punch list</span>
+        <span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Punch list</span>
         {open.length > 0 && (
           <span className="ml-auto text-[11px] font-black px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/40">{open.length} open</span>
         )}

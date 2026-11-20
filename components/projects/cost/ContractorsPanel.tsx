@@ -37,7 +37,7 @@ const btn = "inline-flex items-center justify-center gap-1.5 h-9 px-3 rounded-lg
 const pri = "inline-flex items-center justify-center gap-1.5 h-9 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[12.5px] font-black whitespace-nowrap disabled:opacity-50";
 const field = "rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 h-9 text-[13px] text-[var(--color-text)]";
 const label = "text-[12px] font-semibold text-[var(--color-text-muted)]";
-const card = "rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4";
+const card = "rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5";
 const errLine = "border-l-2 border-rose-500 pl-3 py-1 text-[12.5px] font-semibold text-rose-800 dark:text-rose-300";
 
 /** A sheet to read (Excel or CSV): drop it on the button or pick it. */
@@ -288,7 +288,7 @@ function ContractorPage(p: ContractorsProps & {
     <div className="space-y-4" data-contractor-page={co}>
       <div className="flex items-center gap-2 flex-wrap">
         <button type="button" onClick={p.onBack} className={btn}><ArrowLeft className="w-4 h-4" /> {p.mode === "staffing" ? "Staffing plans" : "Contractors"}</button>
-        <h3 className="min-w-0 flex-1 text-[18px] font-black text-[var(--color-text)] truncate">{co}</h3>
+        <h3 className="min-w-0 flex-1 text-[15px] font-extrabold text-[var(--color-text)] truncate">{co}</h3>
       </div>
       {err && <div role="alert" className={errLine}>{err}</div>}
 
@@ -327,13 +327,13 @@ function Answer({ x, scope }: { x: Crew; scope: ProjectPhase | null }) {
   if (!x.plan && !x.sheet && !s.counted) return null;
   const lastCounted = [...x.rows].reverse().find((r) => r.counted != null);
   return (
-    <section className="rounded-2xl border-2 border-[var(--color-text)] bg-[var(--color-surface)] p-4" data-crew-answer>
+    <section className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5" data-crew-answer>
       {s.paidToDate != null && s.counted ? (
-        <b className="block text-[17px] sm:text-[19px] leading-snug text-[var(--color-text)]">Through {shiftLabel(lastCounted!.key)}: paid about {money(s.paidToDate)} for {plural(s.countedHeads, "head")}; the plan was {money(s.planOnCounted)}{s.plannedOnCounted ? ` for ${s.plannedOnCounted}` : ""}.</b>
+        <b className="block text-[15px] leading-snug text-[var(--color-text)]">Through {shiftLabel(lastCounted!.key)}: paid about {money(s.paidToDate)} for {plural(s.countedHeads, "head")}; the plan was {money(s.planOnCounted)}{s.plannedOnCounted ? ` for ${s.plannedOnCounted}` : ""}.</b>
       ) : s.planTotal != null ? (
-        <b className="block text-[17px] sm:text-[19px] leading-snug text-[var(--color-text)]">{x.c.company}&apos;s plan {p2 ? `for ${p2} ` : ""}costs {money(s.planTotal)}.</b>
+        <b className="block text-[15px] leading-snug text-[var(--color-text)]">{x.c.company}&apos;s plan {p2 ? `for ${p2} ` : ""}costs {money(s.planTotal)}.</b>
       ) : (
-        <b className="block text-[17px] leading-snug text-[var(--color-text)]">{s.counted ? `${plural(s.countedHeads, "head")} counted on ${plural(s.counted, "shift")}; the plan had ${s.plannedOnCounted}.` : "No head counts yet."} {x.sheet ? "" : "Add the rate sheet to see what they cost."}</b>
+        <b className="block text-[15px] leading-snug text-[var(--color-text)]">{s.counted ? `${plural(s.countedHeads, "head")} counted on ${plural(s.counted, "shift")}; the plan had ${s.plannedOnCounted}.` : "No head counts yet."} {x.sheet ? "" : "Add the rate sheet to see what they cost."}</b>
       )}
       {(() => {
         const parts = [s.counted && x.plan ? (s.short ? `${plural(s.short, "shift")} came in short of the plan` : "No shift came in short of the plan") : "",
@@ -788,7 +788,7 @@ function DailySection({ x, scope }: { x: Crew; scope: ProjectPhase | null }) {
         {priced && (
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-2" data-crew-kpis>
             {[["Heads counted", x.sum.counted ? `${x.sum.countedHeads} of ${x.sum.plannedOnCounted}` : "None yet", x.sum.counted ? "against the plan, on the counted shifts" : "counted at the shift meeting"], ["Paid to date (estimate)", x.sum.counted ? money(x.sum.paidToDate) : "-", "head counts at the rate sheet"], ["Overtime to date", x.sum.overtime ? money(x.sum.overtime) : "None", "crews held over"], ["Forecast", money(x.sum.forecast), x.sum.counted ? `plan ${money(x.sum.planTotal)}` : "the plan, until heads are counted"]].map(([k, v, s]) => (
-              <div key={k} className="rounded-xl border border-[var(--color-border)] px-3 py-2"><div className={label}>{k}</div><div className="text-[18px] font-black tabular-nums text-[var(--color-text)]">{v}</div><div className="text-[11.5px] text-[var(--color-text-muted)]">{s}</div></div>
+              <div key={k} className="rounded-xl border border-[var(--color-border)] px-3 py-2"><div className={label}>{k}</div><div className="text-[15px] font-extrabold tabular-nums text-[var(--color-text)]">{v}</div><div className="text-[11.5px] text-[var(--color-text-muted)]">{s}</div></div>
             ))}
           </div>
         )}

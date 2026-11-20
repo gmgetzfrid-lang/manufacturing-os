@@ -6,6 +6,7 @@
 // missing can't be marked ready to order, and a question nobody has
 // answered in 24 hours shows in red until it is.
 
+import { Card } from "@/components/ui/PageHero";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Loader2, Plus, Trash2 } from "lucide-react";
 import type { ProjectPhase } from "@/lib/projectPhases";
@@ -89,17 +90,17 @@ export default function MaterialsRegister({ orgId, projectId, phases, canManage,
     finally { setBusy(false); }
   };
 
-  if (!rows) return <LoadingBlock what="the materials register" />;
+  if (!rows) return <Card><LoadingBlock what="the materials register" className="border-0 p-0" /></Card>;
 
   const Pill = ({ id, children }: { id: Filter; children: React.ReactNode }) => (
     <button type="button" onClick={() => setFilter(id)} aria-pressed={filter === id} className={`h-8 px-3 rounded-full border text-[12.5px] font-extrabold whitespace-nowrap ${filter === id ? "bg-[var(--color-text)] text-[var(--color-surface)] border-[var(--color-text)]" : "bg-[var(--color-surface)] text-[var(--color-text)] border-[var(--color-border)]"}`}>{children}</button>
   );
+  // The counts in one line the eye runs along; a bad count in red.
   const Kpi = ({ name, value, detail, bad }: { name: string; value: number; detail: string; bad?: boolean }) => (
-    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2.5">
-      <div className={label}>{name}</div>
-      <div className={`text-[22px] font-black leading-tight ${bad && value > 0 ? "text-rose-700 dark:text-rose-400" : "text-[var(--color-text)]"}`}>{value}</div>
-      <div className="text-[12px] text-[var(--color-text-muted)]">{detail}</div>
-    </div>
+    <span className="inline-flex items-baseline gap-1 whitespace-nowrap" title={detail}>
+      <b className={`tabular-nums ${bad && value > 0 ? "text-rose-700 dark:text-rose-400" : "text-[var(--color-text)]"}`}>{value}</b>
+      <span className="text-[var(--color-text-muted)]">{name.toLowerCase()}</span>
+    </span>
   );
   const question = (r: Material) => {
     if (!r.question.trim()) return null;
@@ -112,34 +113,30 @@ export default function MaterialsRegister({ orgId, projectId, phases, canManage,
 
   return (
     <div className="space-y-4" data-materials-register>
-      <div className="flex items-start justify-between gap-3 flex-wrap">
-        <div className="min-w-0 flex-1 basis-72">
-          <h2 className="text-[19px] font-black text-[var(--color-text)]">Materials register</h2>
-          <p className="text-[13px] text-[var(--color-text-muted)]">{sum.lines === 0 ? "Nothing on it yet. Open it at scope freeze." : sum.needAttention ? `${sum.needAttention} line${sum.needAttention === 1 ? " needs" : "s need"} someone.` : "Every line is on track."}</p>
-        </div>
-        {canManage && <button type="button" onClick={() => setOpen({ row: null, fields: blankMaterial(phaseId) })} className={pri}><Plus className="w-4 h-4" /> Add item</button>}
-      </div>
-      {err && <div role="alert" className="border-l-2 border-rose-500 pl-3 py-1 text-[12.5px] font-semibold text-rose-800 dark:text-rose-300">{err}</div>}
+      <Card label="Materials register" action={canManage ? <button type="button" onClick={() => setOpen({ row: null, fields: blankMaterial(phaseId) })} className={pri}><Plus className="w-4 h-4" /> Add item</button> : undefined}>
+      <p className="text-[14px] font-bold text-[var(--color-text)]">{sum.lines === 0 ? "Nothing on it yet. Open it at scope freeze." : sum.needAttention ? `${sum.needAttention} line${sum.needAttention === 1 ? " needs" : "s need"} someone.` : "Every line is on track."}</p>
+      {err && <div role="alert" className="mt-1 text-[13px] font-semibold text-rose-800 dark:text-rose-300">{err}</div>}
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5">
+      <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-[13px]">
         <Kpi name="Lines" value={sum.lines} detail={`${sum.materials} material${sum.materials === 1 ? "" : "s"} · ${sum.offsite} off-site repair${sum.offsite === 1 ? "" : "s"}`} />
         <Kpi name="Spec incomplete" value={sum.specIncomplete} bad detail="can't be ordered yet" />
         <Kpi name={`Questions open over ${QUESTION_LIMIT_H} h`} value={sum.openQuestions} bad detail="waiting on an answer" />
         <Kpi name="Short or late" value={sum.late} bad detail="against the need-by date" />
       </div>
 
-      <div className="flex gap-1.5 flex-wrap items-center">
+      <div className="mt-3 pt-3 border-t border-[var(--color-border)] flex gap-1.5 flex-wrap items-center">
         <Pill id="all">All {scoped.length}</Pill>
         <Pill id="attention">Needs attention {sum.needAttention}</Pill>
         <Pill id="offsite">Off-site repairs {sum.offsite}</Pill>
         <Pill id="received">Received {sum.received}</Pill>
         {phases.length > 0 && <select aria-label="Phase" value={phaseId ?? ""} onChange={(e) => setPhaseId(e.target.value || null)} className={`${field} !w-auto ml-auto h-8 !py-0`}><option value="">All phases</option>{phases.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select>}
       </div>
+      </Card>
 
       {shown.length === 0 ? (
-        <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-8 text-center text-[13px] text-[var(--color-text-muted)]">{scoped.length ? "Nothing under this filter." : "No lines yet. Add each material and each item sent out for repair, with who owns it and when it's needed."}</div>
-      ) : <>
-        <div className="hidden md:block rounded-xl border border-[var(--color-border)] overflow-x-auto bg-[var(--color-surface)]">
+        <Card><p className="text-[14px] text-[var(--color-text-muted)]">{scoped.length ? "Nothing under this filter." : "No lines yet. Add each material and each item sent out for repair, with who owns it and when it's needed."}</p></Card>
+      ) : <Card pad={false} className="overflow-hidden">
+        <div className="hidden md:block overflow-x-auto">
           <table className="w-full text-[12.5px] border-collapse">
             <thead><tr>{["Item", "Spec", "Work order", "Owner", "Status", "Need-by", "ETA / return", "Open question"].map((h) => <th key={h} className="text-left px-2.5 py-2 bg-[var(--color-surface-2)] text-[12px] font-semibold text-[var(--color-text-muted)] border-b border-[var(--color-border)]">{h}</th>)}</tr></thead>
             <tbody>
@@ -161,12 +158,12 @@ export default function MaterialsRegister({ orgId, projectId, phases, canManage,
             </tbody>
           </table>
         </div>
-        <ul className="md:hidden space-y-2">
+        <ul className="md:hidden divide-y divide-[var(--color-border)]">
           {shown.map((r) => {
             const why = attention(r, now);
             return (
               <li key={r.id}>
-                <button type="button" disabled={!canManage} onClick={() => setOpen({ row: r, fields: { ...r } })} className={`w-full text-left rounded-xl border px-3 py-2.5 text-[12.5px] ${why.length ? "border-[var(--color-text)] bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)]" : "border-[var(--color-border)] bg-[var(--color-surface)]"}`}>
+                <button type="button" disabled={!canManage} onClick={() => setOpen({ row: r, fields: { ...r } })} className={`w-full text-left px-4 py-3 text-[13px] ${why.length ? "bg-[var(--color-surface-2)]" : ""}`}>
                   <div className="flex items-start gap-2"><b className="min-w-0 flex-1 text-[13.5px] text-[var(--color-text)]">{r.item}</b><span className={`${tag} ${statusTone(r.status)}`}>{STATUS_WORD[r.status]}</span></div>
                   <div className="text-[var(--color-text-muted)]">{[r.kind === "offsite" ? "Off-site repair" : null, r.vendor, r.workOrder].filter(Boolean).join(" · ")}</div>
                   <div className="mt-1 text-[var(--color-text)]"><span className="text-[var(--color-text-muted)]">Spec: </span>{specCell(r)}</div>
@@ -177,8 +174,8 @@ export default function MaterialsRegister({ orgId, projectId, phases, canManage,
             );
           })}
         </ul>
-        <p className="text-[11.5px] text-[var(--color-text-muted)]">Shaded rows need someone: a specification that isn&rsquo;t complete, a question open over {QUESTION_LIMIT_H} hours, short or late against the need-by date, or no owner. A line with something missing from its specification stays at &ldquo;Spec incomplete&rdquo; until that is filled in.</p>
-      </>}
+        <p className="px-4 sm:px-5 py-3 border-t border-[var(--color-border)] text-[12px] text-[var(--color-text-muted)]">Shaded rows need someone: a specification that isn&rsquo;t complete, a question open over {QUESTION_LIMIT_H} hours, short or late against the need-by date, or no owner. A line with something missing from its specification stays at &ldquo;Spec incomplete&rdquo; until that is filled in.</p>
+      </Card>}
 
       {open && (
         <Modal onClose={() => !busy && setOpen(null)} size="lg">
