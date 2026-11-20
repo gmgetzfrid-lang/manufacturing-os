@@ -378,7 +378,7 @@ export function TimeLogButton({ busy, msg, onExport, shiftLabel }: { busy: boole
     <span className="relative inline-flex">
       <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open} disabled={busy}
         title="Every work order and step with the time each thing was done: its own file for the project, not part of the update"
-        className="inline-flex items-center gap-1.5 text-[11px] font-bold px-3 py-1.5 rounded-lg border border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-60">
+        className="inline-flex items-center gap-1.5 h-9 px-3 rounded-[10px] bg-[var(--color-surface-2)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-border)] disabled:opacity-60">
         <FileSpreadsheet className="w-3.5 h-3.5" /> {busy ? "Exporting…" : "Time log"}
       </button>
       {open && (

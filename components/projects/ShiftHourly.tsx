@@ -193,7 +193,8 @@ export function ShiftHourlyBox({ h, edit, print, tz, meetings }: {
 
   return (
     <div className="space-y-1.5">
-      <ul className="divide-y divide-[var(--color-border)] rounded-lg border border-[var(--color-border)]">
+      {/* On the report's card: the hours as rows split by hairlines, no frame. */}
+      <ul className="divide-y divide-[var(--color-border)] border-y border-[var(--color-border)]">
         {rows.map((r, i) => {
           const typed = r.typed;
           const m = meetingOf(r.slot);
@@ -238,12 +239,12 @@ export function ShiftHourlyBox({ h, edit, print, tz, meetings }: {
                       <>
                       <button type="button" onClick={() => h.onAddWork?.(hr.start)} aria-label={`Add discovery or added scope at ${clocks[i]}`}
                         title="Add discovery or added scope at this hour: it goes into the schedule"
-                        className="shrink-0 inline-flex items-center gap-0.5 h-6 px-1.5 rounded-md border border-[var(--color-border-strong)] text-[11px] font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]">
+                        className="shrink-0 inline-flex items-center gap-0.5 h-7 px-2 rounded-lg bg-[var(--color-surface-2)] text-[12px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-border)]">
                         <Plus className="w-3 h-3" /> Add work
                       </button>
                     <button type="button" onClick={() => newFinding({ at: hr.start })} aria-label={`Add a finding at ${clocks[i]}`}
                       title="A problem, a lesson, a material shortfall or missed scope, kept for the next job"
-                      className="shrink-0 inline-flex items-center gap-0.5 h-6 px-1.5 rounded-md border border-[var(--color-border-strong)] text-[11px] font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]">
+                      className="shrink-0 inline-flex items-center gap-0.5 h-7 px-2 rounded-lg bg-[var(--color-surface-2)] text-[12px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-border)]">
                       <Plus className="w-3 h-3" /> Finding
                     </button>
                       </>
@@ -304,12 +305,12 @@ export function ShiftHourlyBox({ h, edit, print, tz, meetings }: {
                 <>
                 <button type="button" onClick={() => h.onAddWork?.(r.slot.start)} aria-label={`Add discovery or added scope at ${clocks[i]}`}
                   title="Add discovery or added scope at this hour: it goes into the schedule"
-                  className="shrink-0 inline-flex items-center gap-0.5 h-6 px-1.5 rounded-md border border-[var(--color-border-strong)] text-[11px] font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]">
+                  className="shrink-0 inline-flex items-center gap-0.5 h-7 px-2 rounded-lg bg-[var(--color-surface-2)] text-[12px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-border)]">
                   <Plus className="w-3 h-3" /> Add work
                 </button>
                     <button type="button" onClick={() => newFinding({ at: r.slot.start })} aria-label={`Add a finding at ${clocks[i]}`}
                       title="A problem, a lesson, a material shortfall or missed scope, kept for the next job"
-                      className="shrink-0 inline-flex items-center gap-0.5 h-6 px-1.5 rounded-md border border-[var(--color-border-strong)] text-[11px] font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]">
+                      className="shrink-0 inline-flex items-center gap-0.5 h-7 px-2 rounded-lg bg-[var(--color-surface-2)] text-[12px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-border)]">
                       <Plus className="w-3 h-3" /> Finding
                     </button>
                 </>
@@ -339,7 +340,7 @@ export function ShiftHourlyBox({ h, edit, print, tz, meetings }: {
           ? <HoldOverForm ot={h.overtime} adding={otForm === "new"} onDone={() => setOtForm(null)} onError={setMsg} />
           : !h.overtime.list.length && (
             <button type="button" onClick={() => setOtForm("new")}
-              className="inline-flex items-center gap-1 h-7 px-2.5 rounded-md border border-[var(--color-border-strong)] text-[11.5px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+              className="inline-flex items-center gap-1 h-9 px-3 rounded-[10px] bg-[var(--color-surface-2)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-border)]">
               <Plus className="w-3.5 h-3.5" /> Hold a crew over (overtime)
             </button>
           ))}
@@ -543,7 +544,7 @@ export function MeetingBox({ m, edit }: { m: MeetingCtx; edit: boolean }) {
           <span className="min-w-0 flex-1"><b>Not updated for this shift.</b> Same people and head counts as {m.carried.label}{edit ? ": change anyone who's different." : "."}</span>
           {edit && (
             <button type="button" onClick={() => void save(own).catch(() => undefined)}
-              className="shrink-0 inline-flex items-center gap-1 h-6 px-2 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] text-[11px] font-bold">
+              className="shrink-0 inline-flex items-center gap-1 h-7 px-2.5 rounded-lg bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-border)] text-[12px] font-semibold shadow-[0_1px_2px_rgb(11_18_32/0.08)]">
               <Check className="w-3.5 h-3.5" /> Looks right
             </button>
           )}
@@ -551,8 +552,8 @@ export function MeetingBox({ m, edit }: { m: MeetingCtx; edit: boolean }) {
       ) : edit && entered ? (
         <div className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700 dark:text-emerald-400"><Check className="w-3.5 h-3.5" aria-hidden /> Updated for this shift</div>
       ) : null}
-      <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface)]">
-        <div className={`${grid} px-2 py-0.5 text-[12px] font-semibold text-[var(--color-text-muted)]`}>
+      <div className="rounded-lg bg-[var(--color-surface-2)]/60">
+        <div className={`${grid} px-2 py-1 text-[11px] font-extrabold uppercase tracking-[0.1em] text-[var(--color-text-muted)]`}>
           <span className="max-sm:hidden">Resource</span><span>Meeting attendees</span><span className="w-[6.5rem] text-right" title="Everyone on site from the resource. Split gives direct (on the tools) and indirect (supervision, safety, hole and fire watch, QC, tool room).">On site</span>
         </div>
         {list.length === 0 && <div className="px-2 py-1 text-[12px] italic text-[var(--color-text-muted)]">No crews on the plan{edit ? ". Add a company below." : ""}</div>}
@@ -811,7 +812,7 @@ function SafetyTopic({ value, topics, edit, onSave }: { value?: string; topics?:
           )}
         </>
       ) : edit ? (
-        <button type="button" onClick={open} aria-label="Add the safety topic" className="inline-flex items-center gap-0.5 h-6 px-1.5 rounded-md border border-[var(--color-border-strong)] text-[11px] font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]">
+        <button type="button" onClick={open} aria-label="Add the safety topic" className="inline-flex items-center gap-0.5 h-7 px-2 rounded-lg bg-[var(--color-surface-2)] text-[12px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-border)]">
           <Plus className="w-3 h-3" /> Add
         </button>
       ) : <span className="text-[var(--color-text-faint)]">-</span>}

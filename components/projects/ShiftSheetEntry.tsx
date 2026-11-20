@@ -194,7 +194,7 @@ export default function ShiftSheetEntry({ milestones, progress, tz, times, targe
             return (
               <div key={g.key} className="border-b-2 border-[var(--color-border-strong)]">
                 <div className="flex items-baseline gap-2 px-3 pt-2.5 pb-1 bg-[var(--color-surface-2)]/60">
-                  <span className="text-[17px] font-black text-[var(--color-text)]">{t.tag ?? (g.wo ? `WO ${g.wo}` : "No WO")}</span>
+                  <span className="text-[14px] font-extrabold text-[var(--color-text)]">{t.tag ?? (g.wo ? `WO ${g.wo}` : "No WO")}</span>
                   <span className="min-w-0 truncate text-[12px] text-[var(--color-text-muted)]">{t.tag && g.wo ? `WO ${g.wo} · ` : ""}{t.rest}</span>
                   {g.key.startsWith("added:") && <span className="text-[12px] font-semibold text-[var(--color-text)]">added</span>}
                 </div>

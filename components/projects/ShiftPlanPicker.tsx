@@ -141,7 +141,7 @@ export function ShiftPlanPicker({ next, groups, pool, byId, plan, locked, fmt, b
       <ModalHeader icon={ListChecks} title={`Plan the ${kind} shift`}
         subtitle={`${fmt.D(next.start)} ${fmt.T(next.start)} to ${fmt.T(next.end)} · tick the work you're giving it. The schedule's dates don't move.`} onClose={busy ? undefined : onClose} />
       <ModalBody className="p-0">
-        <div className="px-4 py-2.5 border-b border-[var(--color-border)] bg-slate-50/60 dark:bg-[var(--color-surface-2)]">
+        <div className="px-4 py-2.5 border-b border-[var(--color-border)]">
           <label className="relative block">
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--color-text-faint)]" />
             <input ref={searchRef} value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Search the job for a step"

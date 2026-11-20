@@ -30,7 +30,7 @@ function Tile({ label, sub, big, small, tone }: { label: string; sub?: string; b
   return (
     <div className={`min-w-0 rounded-lg border px-2 py-1.5 sm:px-3 sm:py-2 ${tone === "accent" ? "border-[var(--color-border-strong)] bg-[var(--color-surface-2)] dark:border-[var(--color-border)] dark:bg-[var(--color-surface-2)]" : "border-[var(--color-border)] bg-[var(--color-surface-2)]"}`}>
       <div className="text-[11px] sm:text-[12px] font-semibold text-[var(--color-text-muted)]">{label}{sub && <span className="hidden sm:inline normal-case font-semibold tracking-normal"> · {sub}</span>}</div>
-      <div className="text-[13px] sm:text-[18px] font-black leading-tight text-[var(--color-text)] tabular-nums">{big}</div>
+      <div className="text-[13px] sm:text-[14px] font-bold leading-tight text-[var(--color-text)] tabular-nums">{big}</div>
       {small && <div className="text-[11px] sm:text-[11.5px] leading-snug text-[var(--color-text-muted)]">{small}</div>}
     </div>
   );
@@ -38,7 +38,7 @@ function Tile({ label, sub, big, small, tone }: { label: string; sub?: string; b
 
 function Heading({ children, hint }: { children: React.ReactNode; hint?: string }) {
   return (
-    <h3 className="mt-4 mb-1.5 text-[12px] font-semibold text-[var(--color-text-muted)]">
+    <h3 className="mt-4 mb-1.5 text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">
       {children}{hint && <span className="ml-1.5 normal-case font-semibold tracking-normal text-[var(--color-text-faint)]">{hint}</span>}
     </h3>
   );

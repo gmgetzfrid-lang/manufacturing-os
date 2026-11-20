@@ -393,18 +393,20 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
   }
 
   return (
-    <div className={open ? "basis-full rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm" : ""}>
+    // Closed: one quiet button on the card's toolbar. Open: its own row
+    // under the toolbar, split off by a hairline (never a box in a box).
+    <div className={open ? "basis-full order-last border-t border-[var(--color-border)] pt-1" : ""}>
       {!open ? (
         // One quiet button until it's wanted: the work stays on screen.
         <button type="button" onClick={() => setOpen(true)} title="Type or say what happened on the job. You check every line before it saves."
-          className="inline-flex items-center gap-2 h-10 px-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[13px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+          className="inline-flex items-center gap-1.5 h-9 px-3 rounded-[10px] bg-[var(--color-surface-2)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-border)] transition-colors">
           <NotebookPen className="w-4 h-4 shrink-0 text-[var(--color-text-muted)]" /> Update by note
         </button>
       ) : (
-        <div className="p-3 space-y-2">
+        <div className="py-2 space-y-2">
           <div className="flex items-center gap-2">
             <NotebookPen className="w-4 h-4 text-[var(--color-text-muted)]" />
-            <span className="flex-1 text-[13px] font-bold text-[var(--color-text)]">Update by note</span>
+            <span className="flex-1 text-[14px] font-bold text-[var(--color-text)]">Update by note</span>
             <button type="button" onClick={() => { recRef.current?.stop(); setOpen(false); }} aria-label="Close" className="p-1 rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
           </div>
           <div {...drag.bind} className={`relative rounded-lg ${drag.ring}`}>

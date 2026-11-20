@@ -40,11 +40,12 @@ export default function PhaseLines({ rows, print }: { rows: PhaseStanding[]; pri
   const when = (iso: string) => { const t = Date.parse(iso); return `${fmtInTz(t, tz, { weekday: "short", month: "short", day: "numeric" })}, ${clockLabel(t, tz)}`; };
   return (
     <div data-phase-lines>
-      <div className="flex items-baseline justify-between gap-2 mb-2">
-        <div className="text-[12px] font-semibold text-[var(--color-text-muted)]">By phase</div>
-        <div className="text-[11px] text-[var(--color-text-muted)]">Each phase against its own plan</div>
+      <div className={`flex items-baseline justify-between gap-2 ${print ? "mb-2" : "mb-1"}`}>
+        <div className={print ? "text-[12px] font-semibold text-[var(--color-text-muted)]" : "text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]"}>By phase</div>
+        <div className={`${print ? "text-[11px]" : "text-[12px]"} text-[var(--color-text-muted)]`}>Each phase against its own plan</div>
       </div>
-      <ul className="divide-y divide-[var(--color-border)] rounded-xl border border-[var(--color-border)]">
+      {/* On screen the phases are rows on the card, split by hairlines; on paper, a framed list. */}
+      <ul className={`divide-y divide-[var(--color-border)] ${print ? "rounded-xl border border-[var(--color-border)]" : "-mx-2"}`}>
         {rows.map((s) => {
           const w = standingWords(s, when);
           const p = ph.phases.find((x) => x.id === s.id);
@@ -52,9 +53,9 @@ export default function PhaseLines({ rows, print }: { rows: PhaseStanding[]; pri
           const body = (
             <>
               <span className="flex items-baseline gap-2 flex-wrap">
-                <b className="text-[13.5px] text-[var(--color-text)]">{s.name}</b>
-                {p && <span className="text-[11.5px] text-[var(--color-text-muted)]">{phaseDates(p)}</span>}
-                {s.steps > 0 && <span className="text-[11.5px] text-[var(--color-text-muted)]">{s.done} of {s.steps} steps</span>}
+                <b className={`${print ? "text-[13.5px]" : "text-[14px]"} text-[var(--color-text)]`}>{s.name}</b>
+                {p && <span className={`${print ? "text-[11.5px]" : "text-[12px]"} text-[var(--color-text-muted)]`}>{phaseDates(p)}</span>}
+                {s.steps > 0 && <span className={`${print ? "text-[11.5px]" : "text-[12px]"} text-[var(--color-text-muted)]`}>{s.done} of {s.steps} steps</span>}
               </span>
               {s.steps > 0 && (
                 <span className="relative mt-1.5 block h-1.5 rounded-full bg-[var(--color-surface-2)]">
@@ -70,11 +71,11 @@ export default function PhaseLines({ rows, print }: { rows: PhaseStanding[]; pri
           return (
             <li key={s.id} data-phase-line={s.id}>
               {pick ? (
-                <button type="button" onClick={pick} title={`Open ${s.name}`} className="group flex w-full items-center gap-2 px-3 py-2.5 text-left hover:bg-[var(--color-surface-2)] transition-colors">
+                <button type="button" onClick={pick} title={`Open ${s.name}`} className="group flex w-full items-center gap-2 px-2 py-2.5 text-left rounded-lg hover:bg-[var(--color-surface-2)] transition-colors">
                   <span className="min-w-0 flex-1">{body}</span>
                   <ChevronRight className="w-4 h-4 shrink-0 text-[var(--color-text-faint)] group-hover:text-[var(--color-text-muted)]" />
                 </button>
-              ) : <div className="px-3 py-2.5">{body}</div>}
+              ) : <div className={print ? "px-3 py-2.5" : "px-2 py-2.5"}>{body}</div>}
             </li>
           );
         })}

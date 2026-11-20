@@ -341,13 +341,13 @@ export default function ScheduleImportModal({
   return (
     <div className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
       <div className="w-full max-w-3xl bg-[var(--color-surface)] rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[88vh] animate-in fade-in zoom-in-95">
-        <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center justify-between bg-[var(--color-surface-2)]">
+        <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-[var(--color-surface)] border border-[var(--color-border)] flex items-center justify-center">
               <Upload className="w-5 h-5 text-[var(--color-text-muted)]" />
             </div>
             <div className="min-w-0">
-              <h2 className="font-black text-[var(--color-text)]">Import schedule</h2>
+              <h2 className="text-[15px] font-bold text-[var(--color-text)]">Import schedule</h2>
               <div className="text-[11px] text-[var(--color-text-muted)] inline-flex items-center gap-1.5">
                 <span>Importing into</span>
                 <span className="font-bold text-[var(--color-text)] truncate max-w-[200px]">{projectName ?? `Project ${projectId.slice(0,8)}`}</span>
@@ -394,7 +394,7 @@ export default function ScheduleImportModal({
                 onChange={(e) => { const f = e.target.files?.[0]; if (f) void handleFile(f); }}
               />
               {drag.over ? (
-                <div className="text-base font-black text-[var(--color-text)] py-6">{drag.say}</div>
+                <div className="text-[14px] font-bold text-[var(--color-text)] py-6">{drag.say}</div>
               ) : parsing ? (
                 <div className="flex flex-col items-center gap-2">
                   <Spinner size="lg" />
@@ -405,7 +405,7 @@ export default function ScheduleImportModal({
                   <div className="w-16 h-16 mx-auto rounded-2xl bg-[var(--color-surface-2)] flex items-center justify-center mb-3 border border-[var(--color-border)]">
                     <FileUp className="w-8 h-8 text-[var(--color-text-muted)]" />
                   </div>
-                  <div className="text-base font-black text-[var(--color-text)]">Drop your schedule here</div>
+                  <div className="text-[14px] font-bold text-[var(--color-text)]">Drop your schedule here</div>
                   <div className="text-sm text-[var(--color-text-muted)] mt-1">or tap to pick a file</div>
                   <div className="mt-4 flex items-center justify-center gap-2 flex-wrap">
                     <FormatBadge label=".xml" hint="MS Project / P6 XML" />

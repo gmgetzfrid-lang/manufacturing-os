@@ -83,6 +83,7 @@ import MovePreviewSheet from "@/components/projects/MovePreviewSheet";
 import UndoToastHost from "@/components/projects/UndoToastHost";
 import { useUndoableActions } from "@/components/projects/useUndoableActions";
 import ScheduleFilterBar from "@/components/projects/ScheduleFilterBar";
+import { Card } from "@/components/ui/PageHero";
 import { Select } from "@/components/ui/Field";
 import { filterMilestones, isFilterActive, EMPTY_FILTER, type ScheduleFilter } from "@/lib/scheduleFilter";
 
@@ -121,7 +122,19 @@ interface Props {
   /** Undo: put tasks back exactly as they were — status, %, hold reason,
    *  actual times — in one write each. */
   onRestore?: (states: MilestoneState[]) => Promise<boolean>;
+  /** Quiet tools for the board's first card (Update by note). */
+  tools?: React.ReactNode;
+  /** Rows on top of the first card: setup still to finish, undo. */
+  notice?: React.ReactNode;
+  /** Work: the jobs taken off this schedule, as a row on the card. */
+  cancelledBar?: React.ReactNode;
+  /** The page's one orange action is in the band above: the views' own
+   *  main buttons are quiet. */
+  quietMain?: boolean;
 }
+
+// A quiet button on a white card.
+const QUIET = "inline-flex items-center justify-center gap-1.5 h-9 px-3 rounded-[10px] bg-[var(--color-surface-2)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-border)] disabled:opacity-50 transition-colors";
 
 // Day-width bounds (px). Auto-fit fills the available width; we never
 // shrink a day below MIN_PX_PER_DAY (so labels stay legible — scroll
@@ -147,7 +160,7 @@ interface FlatRow {
 
 export default function ExecutionView({
   milestones, cancelled, canEdit, orgId, projectId, projectName, userId, userName, userEmail, userRole,
-  onRefresh, onMoveMany, onSetStatus, onSetProgress, onRestore, mode = "work", onMode,
+  onRefresh, onMoveMany, onSetStatus, onSetProgress, onRestore, mode = "work", onMode, tools, notice, cancelledBar, quietMain = false,
 }: Props) {
   const tz = useScheduleTz();
   const projectWord = useProjectWord();
@@ -1281,40 +1294,22 @@ export default function ExecutionView({
     <CrewChoices.Provider value={crewNames}>
     <ShiftClockContext.Provider value={shiftClock}>
     <JobStartContext.Provider value={jobStart}>
-    <div className="space-y-3">
-
-      {/* Non-member feedback: the status dots and bars still render (they
-          signal state), but edits are disabled — say why so it doesn't feel
-          broken. */}
-      {!canEdit && (
-        <div className="flex items-center gap-2 border-l-2 border-amber-500 pl-3 py-0.5 text-[12px] text-amber-800 dark:text-amber-300">
-          <Eye className="w-4 h-4 shrink-0" />
-          <span>
-            <b>View only.</b> You&apos;re a viewer on this project, or not on it. To update the work, ask its owner or a co-owner to make you an editor (Members).
-          </span>
-        </div>
-      )}
-
-      {/* The full summary is on the Plan tab; here it is one line, so the work is on screen. */}
-      {mode !== "work" ? null : !showCards ? (
-        <CompactSummary items={items} now={nowDate} shiftTimes={shiftTimes} projectId={projectId} onOpen={() => setShowCards(true)} />
-      ) : (
-        <>
-          {/* The job at a glance, once: done, verdict, forecast, and what needs you. */}
-          <ScheduleProgress milestones={items} metrics={metrics} projectId={projectId}
-            onShowOverdue={() => { setLayout("timeline"); setFilter((f) => ({ ...EMPTY_FILTER, overdueOnly: true, query: f.query })); }}
-            onShowBlocked={() => { setLayout("timeline"); setFilter((f) => ({ ...EMPTY_FILTER, blockedOnly: true, query: f.query })); }} />
-          <button onClick={() => setShowCards(false)} className="text-[12px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Fold the summary</button>
-        </>
-      )}
-
-      {mode === "work" && <div className="flex items-center gap-2 flex-wrap">
-        <div className="inline-flex items-center bg-[var(--color-surface-2)] rounded-lg p-0.5 gap-0.5">
+    <div className="space-y-4">
+      {/* Work: one card. Its first row is the board's quiet toolbar (which
+          view, the critical path, Update by note, Change on many), then the
+          summary in a line, what's still to set up, the jobs taken off, the
+          search, and the view itself under a hairline. */}
+      {mode === "work" ? (
+      <Card pad={false}>
+      <div className="px-3 sm:px-4 pt-3 pb-2.5 flex items-center gap-2 flex-wrap">
+        <div className="inline-flex items-center bg-[var(--color-surface-2)] rounded-[10px] p-0.5 gap-0.5" role="tablist" aria-label="View">
           {([["timeline", "Timeline"], ["calendar", "Calendar"], ["wo", "Work orders"]] as const).map(([id, label]) => (
             <button
               key={id}
+              role="tab"
+              aria-selected={layout === id}
               onClick={() => setLayout(id)}
-              className={`px-3 py-1.5 rounded-md text-xs font-bold transition-colors ${layout === id ? "bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}
+              className={`h-8 px-3 rounded-lg text-[13px] font-semibold transition-colors ${layout === id ? "bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}
             >
               {label}
             </button>
@@ -1325,71 +1320,105 @@ export default function ExecutionView({
             onClick={() => setShowCritical((v) => !v)}
             aria-pressed={showCritical}
             title="Show the critical path, and mark tasks on or off it"
-            className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold border transition-colors ${showCritical ? "bg-[var(--color-text)] text-[var(--color-surface)] border-[var(--color-text)]" : "bg-[var(--color-surface)] text-[var(--color-text)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`}
+            className={`inline-flex items-center gap-1.5 h-9 px-3 rounded-[10px] text-[13px] font-semibold transition-colors ${showCritical ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "bg-[var(--color-surface-2)] text-[var(--color-text)] hover:bg-[var(--color-border)]"}`}
           >
-            <Zap className={`w-3.5 h-3.5 ${showCritical ? "" : "text-rose-600 dark:text-rose-400"}`} /> Critical path <span className="font-mono opacity-80">{critical.ids.size}</span>
+            <Zap className={`w-3.5 h-3.5 ${showCritical ? "" : "text-rose-600 dark:text-rose-400"}`} /> Critical path <span className="tabular-nums opacity-70">{critical.ids.size}</span>
           </button>
         )}
-        {layout === "timeline" && showCritical && (
-          <div className="inline-flex flex-wrap items-center gap-2 text-[11px] text-[var(--color-text-muted)]">
-            <label className="inline-flex items-center gap-1">
-              From
-              <select value={critical.mode} disabled={!canEdit} onChange={(e) => void setCriticalSource(e.target.value as CriticalMode)}
-                title={CRITICAL_MODES.find((x) => x.value === critical.mode)?.hint}
-                className="rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1.5 py-1 text-[11px] font-semibold text-[var(--color-text)]">
-                {CRITICAL_MODES.map((x) => <option key={x.value} value={x.value}>{x.label}</option>)}
-              </select>
-            </label>
-            {canEdit && <span>Tap <Zap className="inline w-3 h-3 text-rose-600" /> on a row to mark it on or off</span>}
-            {canEdit && handMarked.length > 0 && (
-              <button onClick={() => void clearMarks()} className="font-bold text-[var(--color-accent)] hover:underline">
-                Clear {handMarked.length} hand mark{handMarked.length === 1 ? "" : "s"}
-              </button>
-            )}
-          </div>
-        )}
         <span className="ml-auto" />
+        {tools}
         <ExecutionGuide />
         {canEdit && (
           <button onClick={() => setBulkMode("replace")}
             title="Swap a contractor, crew, company or location on every task at once"
-            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+            className={QUIET}>
             <Replace className="w-3.5 h-3.5" /> Change on many
           </button>
         )}
-      </div>}
+      </div>
 
-      {/* Find anything — applies to Timeline & Calendar. */}
-      {(layout === "timeline" || layout === "calendar") && (
-        <ScheduleFilterBar
-          filter={filter}
-          onChange={setFilter}
-          groups={topGroups}
-          matchCount={matchStats.shown}
-          totalCount={matchStats.total}
-          classSelects={<WoClassSelects c={woClasses} units={filter.units ?? []} types={filter.types ?? []}
-            onUnits={(v) => setFilter((f) => ({ ...f, units: v }))} onTypes={(v) => setFilter((f) => ({ ...f, types: v }))} />}
-        />
-      )}
-
-      {/* Group color key — decodes the phase hues. Uses the color anchors
-          (which, under a single overarching project, are its first-level
-          phases) so the key shows even for a one-root schedule. */}
-      {(layout === "timeline" || layout === "calendar") && colors.groups.length > 1 && (
-        <div className="flex items-center gap-x-3 gap-y-1 flex-wrap px-1 text-[11px]">
-          <span className="font-semibold text-[var(--color-text-muted)]">Phases</span>
-          {colors.groups.map((g) => {
-            const c = colors.colorOf(g);
-            return (
-              <span key={g.id} className="inline-flex items-center gap-1.5">
-                <span className={`w-2.5 h-2.5 rounded-sm ${c.rail}`} />
-                <span className="font-medium text-[var(--color-text-muted)] truncate max-w-[160px]">{g.name}</span>
-              </span>
-            );
-          })}
+      {layout === "timeline" && showCritical && (
+        <div className="px-3 sm:px-4 pb-2.5 inline-flex flex-wrap items-center gap-2 text-[12px] text-[var(--color-text-muted)]">
+          <label className="inline-flex items-center gap-1.5">
+            From
+            <select value={critical.mode} disabled={!canEdit} onChange={(e) => void setCriticalSource(e.target.value as CriticalMode)}
+              title={CRITICAL_MODES.find((x) => x.value === critical.mode)?.hint}
+              className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12px] font-semibold text-[var(--color-text)]">
+              {CRITICAL_MODES.map((x) => <option key={x.value} value={x.value}>{x.label}</option>)}
+            </select>
+          </label>
+          {canEdit && <span>Tap <Zap className="inline w-3 h-3 text-rose-600" /> on a row to mark it on or off</span>}
+          {canEdit && handMarked.length > 0 && (
+            <button onClick={() => void clearMarks()} className="font-bold text-[var(--color-text)] underline underline-offset-2">
+              Clear {handMarked.length} hand mark{handMarked.length === 1 ? "" : "s"}
+            </button>
+          )}
         </div>
       )}
 
+      {/* Rows on the card, split by hairlines: view only, the summary in a
+          line, setup still to finish, the jobs taken off this schedule. */}
+      <div className="px-3 sm:px-4 border-t border-[var(--color-border)] divide-y divide-[var(--color-border)]">
+        {/* Non-member feedback: the status dots and bars still render (they
+            signal state), but edits are disabled — say why so it doesn't feel
+            broken. */}
+        {!canEdit && (
+          <div className="flex items-center gap-2 py-2.5 text-[13px] text-[var(--color-text)]">
+            <Eye className="w-4 h-4 shrink-0 text-[var(--color-text-muted)]" />
+            <span>
+              <b>View only.</b> You&apos;re a viewer on this project, or not on it. To update the work, ask its owner or a co-owner to make you an editor (Members).
+            </span>
+          </div>
+        )}
+        {/* The full summary is on the Plan tab; here it is one line, so the work is on screen. */}
+        {!showCards ? (
+          <CompactSummary items={items} now={nowDate} shiftTimes={shiftTimes} projectId={projectId} onOpen={() => setShowCards(true)} />
+        ) : (
+          <div className="py-3">
+            {/* The job at a glance, once: done, verdict, forecast, and what needs you. */}
+            <ScheduleProgress bare milestones={items} metrics={metrics} projectId={projectId}
+              onShowOverdue={() => { setLayout("timeline"); setFilter((f) => ({ ...EMPTY_FILTER, overdueOnly: true, query: f.query })); }}
+              onShowBlocked={() => { setLayout("timeline"); setFilter((f) => ({ ...EMPTY_FILTER, blockedOnly: true, query: f.query })); }} />
+            <button onClick={() => setShowCards(false)} className="mt-2 text-[13px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Fold the summary</button>
+          </div>
+        )}
+        {notice}
+        {cancelledBar && <div className="py-1.5">{cancelledBar}</div>}
+      </div>
+
+      {/* Find anything — applies to Timeline & Calendar. */}
+      {(layout === "timeline" || layout === "calendar") && (
+        <div className="px-3 sm:px-4 py-3 border-t border-[var(--color-border)]">
+          <ScheduleFilterBar
+            filter={filter}
+            onChange={setFilter}
+            groups={topGroups}
+            matchCount={matchStats.shown}
+            totalCount={matchStats.total}
+            classSelects={<WoClassSelects c={woClasses} units={filter.units ?? []} types={filter.types ?? []}
+              onUnits={(v) => setFilter((f) => ({ ...f, units: v }))} onTypes={(v) => setFilter((f) => ({ ...f, types: v }))} />}
+          />
+          {/* Group color key — decodes the phase hues. Uses the color anchors
+              (which, under a single overarching project, are its first-level
+              phases) so the key shows even for a one-root schedule. */}
+          {colors.groups.length > 1 && (
+            <div className="mt-2.5 flex items-center gap-x-3 gap-y-1 flex-wrap text-[12px]">
+              <span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Phases</span>
+              {colors.groups.map((g) => {
+                const c = colors.colorOf(g);
+                return (
+                  <span key={g.id} className="inline-flex items-center gap-1.5 min-w-0">
+                    <span className={`w-2.5 h-2.5 rounded-sm shrink-0 ${c.rail}`} />
+                    <span className="font-medium text-[var(--color-text-muted)] truncate max-w-[220px]">{g.name}</span>
+                  </span>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      <div className="border-t border-[var(--color-border)]">
       {layout === "wo" ? (
         <WorkOrdersView milestones={items} cancelled={cancelled} childrenByParent={childrenOf} tz={tz} times={shiftTimes} progress={progressIndex} canEdit={canEdit} marks={marks}
           projectId={projectId} projectName={projectName}
@@ -1397,15 +1426,10 @@ export default function ExecutionView({
           onUpdate={canEdit ? updateStep : undefined} onFixTimes={canEdit ? fixTimes : undefined}
           onOpenDetail={(m) => m.id && setDetailId(m.id)}
           onMoveDays={(id, days) => { const target = byId.get(id); if (target) void moveByDays(target, days); }}
-          onDiscovery={canEdit ? openDiscovery : undefined} onNewWorkOrder={canEdit ? openNewWorkOrder : undefined} onOpenReport={onMode ? openReport : undefined} />
-      ) : layout === "reports" ? (
-        <ReportsView milestones={items} cancelled={cancelled} childrenByParent={childrenOf} progress={progressIndex} shiftTimes={shiftTimes} projectId={projectId} projectName={projectName}
-          canEdit={canEdit} userId={userId} userName={userName ?? userEmail} critical={critical} criticalSource={criticalSourceLabel} marks={marks} pathNow={cpClock} link={reportLink} onLinkUsed={() => setReportLink(null)} />
-      ) : layout === "shift" ? (
-        <ShiftReportView milestones={items} cancelled={cancelled} userId={userId} userName={userName ?? userEmail} canEdit={canEdit} progress={progressIndex} projectId={projectId} projectName={projectName} onUpdateStep={updateStep} onDiscovery={canEdit ? openDiscovery : undefined} onNewWorkOrder={canEdit ? openNewWorkOrder : undefined} pathNow={cpClock} onPlanNext={canEdit && onMoveMany ? setPlanNext : undefined} onFixTimes={canEdit ? fixTimes : undefined}
-          meetingFixed="turnover" onOpenReport={onMode ? openReport : undefined} />
+          onDiscovery={canEdit ? openDiscovery : undefined} onNewWorkOrder={canEdit ? openNewWorkOrder : undefined} onOpenReport={onMode ? openReport : undefined} quietMain={quietMain} />
       ) : layout === "calendar" ? (
         <ScheduleCalendarTileView
+          quietMain={quietMain}
           onDiscovery={canEdit ? openDiscovery : undefined}
           onNewWorkOrder={canEdit ? openNewWorkOrder : undefined}
           onPlanNext={canEdit && onMoveMany ? setPlanNext : undefined}
@@ -1435,7 +1459,7 @@ export default function ExecutionView({
           onUpdateStep={updateStep}
         />
       ) : (
-      <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm ring-1 ring-slate-900/[0.03] overflow-hidden flex flex-col">
+      <div className="overflow-hidden rounded-b-2xl flex flex-col">
         <Toolbar
           canEdit={canEdit}
           isAutoFit={zoomFactor == null}
@@ -1476,7 +1500,7 @@ export default function ExecutionView({
                   onDoubleClick={() => { setUserLeftW(LEFT_W); try { localStorage.removeItem("timeline:leftW"); } catch { /* private mode */ } }}
                   className="absolute top-0 -right-1 z-30 h-full w-2 cursor-col-resize hover:bg-[var(--color-accent)]/30 active:bg-[var(--color-accent)]/50" />
               )}
-              <div className="sticky top-0 z-10 bg-slate-50/95 dark:bg-[var(--color-surface-2)]/95 backdrop-blur border-b border-[var(--color-border)] flex items-center px-3 text-[12px] font-semibold text-[var(--color-text-muted)]" style={{ height: AXIS_H }}>
+              <div className="sticky top-0 z-10 bg-[var(--color-surface)]/95 backdrop-blur border-b border-[var(--color-border)] flex items-center px-3 text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]" style={{ height: AXIS_H }}>
                 <ListTree className="w-3.5 h-3.5 mr-1.5 text-[var(--color-text-muted)]" /> Work breakdown
               </div>
               {win.first > 0 && <div style={{ height: win.first * ROW_H }} aria-hidden />}
@@ -1486,6 +1510,7 @@ export default function ExecutionView({
                   row={r}
                   span={spanOf(r.ms)}
                   work={r.hasChildren ? null : workShiftOf(r.ms, tz, shiftTimes)}
+                  late={!r.hasChildren && isOverdue(r.ms, nowMs, tz, r.pct, shiftTimes)}
                   color={colors.colorOf(r.ms)}
                   collapsed={!!r.ms.id && collapsed.has(r.ms.id)}
                   selected={!!r.ms.id && selectedIds.has(r.ms.id)}
@@ -1553,6 +1578,26 @@ export default function ExecutionView({
 
         <Legend />
       </div>
+      )}
+      </div>
+      </Card>
+      ) : layout === "reports" ? (
+        <ReportsView milestones={items} cancelled={cancelled} childrenByParent={childrenOf} progress={progressIndex} shiftTimes={shiftTimes} projectId={projectId} projectName={projectName}
+          canEdit={canEdit} userId={userId} userName={userName ?? userEmail} critical={critical} criticalSource={criticalSourceLabel} marks={marks} pathNow={cpClock} link={reportLink} onLinkUsed={() => setReportLink(null)} />
+      ) : (
+        <>
+        <ShiftReportView milestones={items} cancelled={cancelled} userId={userId} userName={userName ?? userEmail} canEdit={canEdit} progress={progressIndex} projectId={projectId} projectName={projectName} onUpdateStep={updateStep} onDiscovery={canEdit ? openDiscovery : undefined} onNewWorkOrder={canEdit ? openNewWorkOrder : undefined} pathNow={cpClock} onPlanNext={canEdit && onMoveMany ? setPlanNext : undefined} onFixTimes={canEdit ? fixTimes : undefined}
+          meetingFixed="turnover" onOpenReport={onMode ? openReport : undefined} tools={tools} notice={notice} quietMain={quietMain} />
+        {/* Non-member feedback, under the report. */}
+        {!canEdit && (
+          <div className="flex items-center gap-2 px-1 text-[13px] text-[var(--color-text-muted)]">
+            <Eye className="w-4 h-4 shrink-0" />
+            <span>
+              <b className="text-[var(--color-text)]">View only.</b> You&apos;re a viewer on this project, or not on it. To update the work, ask its owner or a co-owner to make you an editor (Members).
+            </span>
+          </div>
+        )}
+        </>
       )}
 
       {pendingMove && pendingMove.ids.length > 0 && (
@@ -1686,7 +1731,8 @@ function CompactSummary({ items, now, shiftTimes, projectId, onOpen }: { items: 
   const fin = r.allDone ? standingOf(items, { now: now.getTime(), tz, shiftTimes }) : null;
   const finLate = fin ? lateWords(fin.lateHours) : null;
   return (
-    <button onClick={onOpen} className="w-full flex items-center gap-2 flex-wrap rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-[12px] text-left">
+    // A row on the board's card: where the job stands, problems in their colour.
+    <button onClick={onOpen} aria-label="Show the summary" className="group w-full flex items-center gap-x-3 gap-y-1 flex-wrap py-2.5 text-[13px] text-left">
       {byPhase ? byPhase.map((s) => (
         <span key={s.id} className={s.state === "finished" && (s.lateHours ?? 0) >= 0.5 || s.standing === "behind" ? "font-bold text-rose-700 dark:text-rose-300" : "font-bold text-[var(--color-text)]"}>{standingShort(s)}</span>
       )) : fin ? (
@@ -1704,7 +1750,7 @@ function CompactSummary({ items, now, shiftTimes, projectId, onOpen }: { items: 
       )}
       {r.overdue > 0 && <span className="font-bold text-rose-700 dark:text-rose-300">{r.overdue} overdue</span>}
       {r.blocked + r.onHold > 0 && <span className="font-bold text-amber-700 dark:text-amber-300">{r.blocked + r.onHold} stuck</span>}
-      <span className="ml-auto text-[11px] text-[var(--color-text-faint)]">Details</span>
+      <span className="ml-auto inline-flex items-center gap-0.5 text-[12px] font-semibold text-[var(--color-text-muted)] group-hover:text-[var(--color-text)]">Summary <ChevronRightIcon className="w-3.5 h-3.5" /></span>
     </button>
   );
 }
@@ -1726,7 +1772,7 @@ function Toolbar({
   onBulkDelete: () => void;
 }) {
   return (
-    <div className="px-3 py-2 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap bg-[var(--color-surface-2)]">
+    <div className="px-3 sm:px-4 py-2 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap bg-[var(--color-surface)]">
       {selectedCount > 0 ? (
         <div className="flex items-center gap-2 flex-1 flex-wrap">
           <span className="text-xs font-bold text-[var(--color-text)]">{selectedCount} selected</span>
@@ -1764,12 +1810,12 @@ function Toolbar({
         </div>
       ) : (
         <>
-          <button onClick={onToday} className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-[var(--color-text)] hover:text-[var(--color-text)] px-2 py-1 rounded-md hover:bg-[var(--color-surface-2)] border border-[var(--color-border)]">
+          <button onClick={onToday} className="inline-flex items-center gap-1.5 h-8 px-2.5 rounded-lg text-[12px] font-semibold text-[var(--color-text)] bg-[var(--color-surface-2)] hover:bg-[var(--color-border)]">
             <Crosshair className="w-3.5 h-3.5 text-rose-500" /> Today
           </button>
           <div className="w-px h-5 bg-[var(--color-border)]" />
-          <button onClick={onExpandAll} className="text-[11px] font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-2 py-1 rounded-md hover:bg-[var(--color-surface-2)]">Expand all</button>
-          <button onClick={onCollapseAll} className="text-[11px] font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-2 py-1 rounded-md hover:bg-[var(--color-surface-2)]">Collapse all</button>
+          <button onClick={onExpandAll} className="h-8 text-[12px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-2 rounded-lg hover:bg-[var(--color-surface-2)]">Expand all</button>
+          <button onClick={onCollapseAll} className="h-8 text-[12px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-2 rounded-lg hover:bg-[var(--color-surface-2)]">Collapse all</button>
           <div className="ml-auto inline-flex items-center gap-1">
             <button
               onClick={onZoomOut}
@@ -1781,7 +1827,8 @@ function Toolbar({
             </button>
             <button
               onClick={onFit}
-              className={`text-[11px] font-bold px-2 py-1 rounded-md border transition-colors ${isAutoFit ? "bg-[var(--color-text)] border-[var(--color-text)] text-[var(--color-surface)]" : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"}`}
+              aria-pressed={isAutoFit}
+              className={`h-8 text-[12px] font-semibold px-2.5 rounded-lg transition-colors ${isAutoFit ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] hover:bg-[var(--color-border)]"}`}
               title="Fit the whole schedule to the screen width"
             >
               Fit
@@ -1804,10 +1851,13 @@ function Toolbar({
 // ─── Outline row (left, frozen) ────────────────────────────────
 
 function OutlineRow({
-  row, span, work, color, collapsed, selected, focused, canEdit, busy,
+  row, span, work, late, color, collapsed, selected, focused, canEdit, busy,
   onToggleCollapse, onToggleSelected, onSetStatus, onSetProgress, onSetProgressNote, onStartNote, onSetDuration, onOpenDetail, onViewOnly, onSequence, criticalMark,
 }: {
-  row: FlatRow; span: { start: number; finish: number }; work: WorkShift | null; color: GroupColor; collapsed: boolean; selected: boolean; focused?: boolean; canEdit: boolean; busy: boolean;
+  row: FlatRow; span: { start: number; finish: number }; work: WorkShift | null;
+  /** Past its finish and not done: said on the row itself. */
+  late?: boolean;
+  color: GroupColor; collapsed: boolean; selected: boolean; focused?: boolean; canEdit: boolean; busy: boolean;
   onToggleCollapse: () => void; onToggleSelected: () => void;
   onSetStatus: (s: MilestoneStatus, reason?: string, percent?: number, forShift?: ShiftCredit) => void; onSetProgress: (percent: number) => void;
   onSetProgressNote: (percent: number, note: string, forShift?: ShiftCredit) => Promise<boolean> | boolean;
@@ -1833,15 +1883,15 @@ function OutlineRow({
       // name / date range from bleeding over the row below — the rows must stay
       // pixel-aligned with the absolutely-positioned timeline bars on the right.
       // (The status picker is portaled, so it isn't clipped by this.)
-      className={`group relative flex items-center gap-1.5 border-b border-[var(--color-border)] pr-2 overflow-hidden transition-colors ${focused ? "ring-2 ring-inset ring-[var(--color-accent-ring)] bg-[var(--color-surface-2)]" : selected ? "bg-[var(--color-surface-2)]" : checked ? "bg-emerald-50/30 dark:bg-emerald-950/20" : depth === 0 ? color.tint : "hover:bg-[var(--color-surface-2)]"}`}
+      className={`group relative flex items-center gap-1.5 border-b border-[var(--color-border)] pr-2 overflow-hidden transition-colors ${focused ? "ring-2 ring-inset ring-[var(--color-accent-ring)] bg-[var(--color-surface-2)]" : selected ? "bg-[var(--color-surface-2)]" : "hover:bg-[var(--color-surface-2)]/70"}`}
       style={{ height: ROW_H, paddingLeft: indent }}
     >
       {/* Group color rail — same hue for a phase and all its children,
           so identity reads instantly down the column. */}
-      <span className={`absolute left-0 top-0 bottom-0 w-1 ${color.rail} ${depth === 0 ? "" : "opacity-60"}`} aria-hidden />
+      <span className={`absolute left-0 top-0 bottom-0 w-[3px] ${color.rail} ${depth === 0 ? "" : "opacity-40"}`} aria-hidden />
       {/* Depth guide lines — faint verticals mark each nesting level. */}
       {Array.from({ length: depth }).map((_, i) => (
-        <span key={i} className="absolute top-0 bottom-0 w-px bg-slate-200/70" style={{ left: 12 + i * 16 }} aria-hidden />
+        <span key={i} className="absolute top-0 bottom-0 w-px bg-[var(--color-border)]" style={{ left: 12 + i * 16 }} aria-hidden />
       ))}
       {canEdit && (
         <button onClick={onToggleSelected} className="shrink-0 text-slate-300 hover:text-[var(--color-accent)] transition-colors" title={selected ? "Deselect" : "Select"}>
@@ -1878,6 +1928,12 @@ function OutlineRow({
           {ms.name}
         </div>
         <div className="flex items-center gap-1.5 text-[11px] text-[var(--color-text-faint)] font-mono leading-tight min-w-0">
+          {/* A problem sits on its own row: held, blocked, missed or late. */}
+          {!hasChildren && (ms.status === "blocked" || ms.status === "missed" || ms.status === "on_hold" || late) && (
+            <span className={`shrink-0 font-sans font-bold ${ms.status === "on_hold" ? "text-amber-700 dark:text-amber-300" : "text-rose-700 dark:text-rose-300"}`}>
+              {ms.status === "blocked" ? "Blocked" : ms.status === "missed" ? "Missed" : ms.status === "on_hold" ? "On hold" : "Late"}
+            </span>
+          )}
           {work && <ShiftMark work={work} />}
           <DiscoveryTag m={ms} tz={tz} className="shrink-0" />
           {ms.wbs && <span className="text-[var(--color-text-faint)] shrink-0">{ms.wbs}</span>}
@@ -1887,7 +1943,7 @@ function OutlineRow({
               <Link2 className="w-2.5 h-2.5" />{ms.dependsOn!.length}
             </span>
           )}
-          {hasChildren && <span className={`${color.text} font-bold shrink-0`}>{done}/{total}</span>}
+          {hasChildren && <span className="text-[var(--color-text-muted)] font-bold shrink-0">{done}/{total}</span>}
         </div>
       </button>
 
@@ -1895,7 +1951,7 @@ function OutlineRow({
         // Summary: read-only rolled-up progress bar.
         <div className="shrink-0 flex items-center gap-1" title={`${pct}% complete (rolled up from ${done}/${total} sub-tasks)`}>
           <div className="w-9 h-1.5 rounded-full bg-[var(--color-surface-2)] overflow-hidden">
-            <div className={`h-full ${pct === 100 ? "bg-emerald-500" : color.rail}`} style={{ width: `${pct}%` }} />
+            <div className={`h-full ${pct === 100 ? "bg-emerald-500" : "bg-[var(--color-text)]"}`} style={{ width: `${pct}%` }} />
           </div>
           <span className="text-[11px] font-bold tabular-nums text-[var(--color-text-faint)] w-7 text-right">{pct}%</span>
         </div>
@@ -2155,7 +2211,7 @@ function Axis({ domain, pxPerDay, shiftTimes }: { domain: { start: Date; totalDa
     }
   }
   return (
-    <div className="sticky top-0 z-10 bg-slate-50/95 dark:bg-[var(--color-surface-2)]/95 backdrop-blur border-b border-[var(--color-border)] overflow-hidden" style={{ height: AXIS_H }}>
+    <div className="sticky top-0 z-10 bg-[var(--color-surface)]/95 backdrop-blur border-b border-[var(--color-border)] overflow-hidden" style={{ height: AXIS_H }}>
       {/* Days */}
       <div className="absolute inset-x-0 top-0" style={{ height: showShifts ? DAY_ROW : AXIS_H }}>
         {ticks.map((t) => (
@@ -2169,7 +2225,7 @@ function Axis({ domain, pxPerDay, shiftTimes }: { domain: { start: Date; totalDa
       {showShifts && (
         <div className="absolute inset-x-0 bottom-0 border-t border-slate-200 dark:border-slate-700" style={{ height: AXIS_H - DAY_ROW }}>
           {bands.map((b, i) => (
-            <div key={i} className={`absolute top-0 flex items-center gap-1 overflow-hidden border-b border-slate-200 dark:border-slate-700 ${b.night ? "bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] text-[var(--color-text)] dark:text-[var(--color-text)]" : "bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300"}`}
+            <div key={i} className={`absolute top-0 flex items-center gap-1 overflow-hidden border-b border-slate-200 dark:border-slate-700 ${b.night ? "bg-[var(--color-surface-2)] text-[var(--color-text)]" : "bg-[var(--color-surface)] text-[var(--color-text-muted)]"}`}
               style={{ left: b.x, width: b.w, height: SHIFT_ROW }} title={`${b.night ? "Night" : "Day"} shift from ${clock12(b.label)}`}>
               <div className="absolute top-0 bottom-0 left-0 w-px bg-slate-300 dark:bg-slate-600" />
               <span className="pl-1 text-[11px] font-black whitespace-nowrap">{b.night ? "☾" : "☀"}{pxPerDay >= 110 ? ` ${b.night ? "Night" : "Day"} ${clock12(b.label)}` : ""}</span>
@@ -2311,10 +2367,10 @@ function Legend() {
     ["planned", "Planned"], ["in_progress", "In progress"], ["completed", "Done"], ["on_hold", "On hold"], ["blocked", "Blocked"], ["missed", "Missed"],
   ];
   return (
-    <div className="px-3 py-2 border-t border-[var(--color-border)] bg-slate-50/60 dark:bg-[var(--color-surface-2)] space-y-1.5">
+    <div className="px-3 sm:px-4 py-2.5 border-t border-[var(--color-border)] bg-[var(--color-surface)] space-y-1.5">
       {/* Status colours */}
       <div className="flex items-center gap-3 flex-wrap">
-        <span className="text-[11px] font-semibold text-[var(--color-text-muted)]">Status</span>
+        <span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Status</span>
         {entries.map(([s, label]) => (
           <span key={s} className="inline-flex items-center gap-1.5 text-[11px] text-[var(--color-text-muted)]">
             <span className={`w-2.5 h-2.5 rounded-sm ${statusTone(s).bar}`} /> {label}
@@ -2323,7 +2379,7 @@ function Legend() {
       </div>
       {/* Symbol key — what the shapes mean (MS-Project-style vocabulary). */}
       <div className="flex items-center gap-3.5 flex-wrap">
-        <span className="text-[11px] font-semibold text-[var(--color-text-muted)]">Symbols</span>
+        <span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Symbols</span>
         <span className="inline-flex items-center gap-1.5 text-[11px] text-[var(--color-text-muted)]" title="A task; the lighter fill shows % complete">
           <span className="relative w-7 h-2.5 rounded bg-[var(--color-text-muted)] overflow-hidden"><span className="absolute inset-y-0 left-0 bg-white/40" style={{ width: "55%" }} /></span> Task (fill = % done)
         </span>
@@ -2399,7 +2455,7 @@ function GroupTasksModal({
         <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center gap-3">
           <div className="w-9 h-9 rounded-xl bg-[var(--color-surface-2)] text-[var(--color-text)] flex items-center justify-center"><FolderPlus className="w-4 h-4" /></div>
           <div className="flex-1 min-w-0">
-            <h2 className="text-sm font-semibold text-[var(--color-text)]">Group under a parent</h2>
+            <h2 className="text-[15px] font-bold text-[var(--color-text)]">Group under a parent</h2>
             <div className="text-[11px] text-[var(--color-text-muted)]">{childIds.length} task{childIds.length === 1 ? "" : "s"} selected</div>
           </div>
           <button onClick={onClose} aria-label="Close" className="p-1.5 rounded hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"><XIcon className="w-4 h-4" /></button>
@@ -2430,7 +2486,7 @@ function GroupTasksModal({
           </div>
           {error && <div role="alert" className="text-xs text-rose-700 dark:text-rose-300">{error}</div>}
         </div>
-        <div className="px-5 py-3 border-t border-[var(--color-border)] bg-slate-50/60 dark:bg-[var(--color-surface-2)] flex items-center justify-end gap-2">
+        <div className="px-5 py-3 border-t border-[var(--color-border)] flex items-center justify-end gap-2">
           <button onClick={onClose} disabled={busy} className="text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5 transition-colors">Cancel</button>
           <button onClick={submit} disabled={!canSubmit || busy} className="inline-flex items-center gap-1.5 text-sm font-semibold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] px-4 py-2 rounded-md disabled:opacity-40 transition-colors">
             {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <FolderPlus className="w-4 h-4" />} Group
@@ -2479,7 +2535,7 @@ function SetDurationModal({ task, actorUserId, onClose, onDone }: { task: Milest
         <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center gap-3">
           <div className="w-9 h-9 rounded-xl bg-[var(--color-surface-2)] text-[var(--color-text)] flex items-center justify-center"><CalendarRange className="w-4 h-4" /></div>
           <div className="flex-1 min-w-0">
-            <h2 className="text-sm font-semibold text-[var(--color-text)] truncate">Set duration</h2>
+            <h2 className="text-[15px] font-bold text-[var(--color-text)] truncate">Set duration</h2>
             <div className="text-[11px] text-[var(--color-text-muted)] truncate">{task.name}</div>
           </div>
           <button onClick={onClose} aria-label="Close" className="p-1.5 rounded hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"><XIcon className="w-4 h-4" /></button>
@@ -2503,7 +2559,7 @@ function SetDurationModal({ task, actorUserId, onClose, onDone }: { task: Milest
           </div>
           {error && <div role="alert" className="text-xs text-rose-700 dark:text-rose-300">{error}</div>}
         </div>
-        <div className="px-5 py-3 border-t border-[var(--color-border)] bg-slate-50/60 dark:bg-[var(--color-surface-2)] flex items-center justify-end gap-2">
+        <div className="px-5 py-3 border-t border-[var(--color-border)] flex items-center justify-end gap-2">
           <button onClick={onClose} disabled={busy} className="text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5 transition-colors">Cancel</button>
           <button onClick={submit} disabled={busy} className="inline-flex items-center gap-1.5 text-sm font-semibold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] px-4 py-2 rounded-md disabled:opacity-40 transition-colors">
             {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <CalendarRange className="w-4 h-4" />} Apply

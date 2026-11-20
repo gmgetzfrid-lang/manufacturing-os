@@ -70,18 +70,17 @@ export default function PlanNextShift({ milestones, next, now, tz, times, mode, 
       <ModalHeader icon={CalendarClock} title={`Plan the ${shiftName(next)} shift`}
         subtitle={`${D(next.start)} ${T(next.start)}–${T(next.end)} · changes move the schedule (the baseline stays); the calendar, the report and the email follow`} onClose={onClose} />
       <ModalBody className="p-0">
-        {/* Pick, then check and save: the two steps, joined. */}
-        {view.v !== "list" && (
-          <StepPath className="px-4 pt-3" current={view.v === "confirm" ? 1 : 0}
-            steps={[(view.v === "confirm" ? view.back.v : view.v) === "push" ? "Pick the shift" : "Pick the work", "Check and save"]}
-            onPick={view.v === "confirm" ? () => setView(view.back) : undefined} />
-        )}
+        {/* The crew's list, then pick, then check and save: one path, joined
+            by a line, the step you're on ringed. A done step takes you back. */}
+        <StepPath className="px-4 pt-3 pb-2 border-b border-[var(--color-border)]" current={view.v === "list" ? 0 : view.v === "confirm" ? 2 : 1}
+          steps={[`The ${next.kind} crew's list`, (view.v === "confirm" ? view.back.v : view.v) === "push" ? "Pick the shift" : "Pick the work", "Check and save"]}
+          onPick={view.v === "list" ? undefined : (i) => { if (i === 0) setView({ v: "list" }); else if (view.v === "confirm") setView(view.back); }} />
         {view.v === "list" && (
           <div>
             <div className="flex flex-wrap items-center gap-2 px-4 py-2.5 border-b border-[var(--color-border)] text-[12.5px]">
-              <span className="flex-1 text-[var(--color-text-muted)]"><b className="text-[var(--color-text)]">{list.length} step{list.length === 1 ? "" : "s"}</b> on the {next.kind} crew&apos;s list · {report.goals.mustDoHours} h</span>
+              <span className="flex-1 text-[13px] text-[var(--color-text-muted)]"><b className="text-[var(--color-text)]">{list.length} step{list.length === 1 ? "" : "s"}</b> on the {next.kind} crew&apos;s list · {report.goals.mustDoHours} h</span>
               <button type="button" onClick={() => { setSaved(null); setView({ v: "pick" }); }}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] px-3 py-1.5 text-[12px] font-bold text-[var(--color-accent-fg)]">
+                className="inline-flex items-center gap-1.5 h-10 rounded-xl bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] px-4 text-[13px] font-extrabold text-[var(--color-accent-fg)] shadow-[0_10px_20px_-10px_var(--color-accent)]">
                 <Plus className="w-3.5 h-3.5" /> Pull in work
               </button>
             </div>
@@ -103,11 +102,11 @@ export default function PlanNextShift({ milestones, next, now, tz, times, mode, 
                   </div>
                   <div className="flex items-center gap-1.5">
                     <button type="button" onClick={() => { setSaved(null); setView({ v: "pick", outId: r.leaf.id! }); }}
-                      className="inline-flex items-center gap-1 rounded-lg border border-[var(--color-border-strong)] px-2.5 py-1.5 text-[12px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+                      className="inline-flex items-center gap-1 h-9 rounded-[10px] bg-[var(--color-surface-2)] px-3 text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-border)]">
                       <ArrowLeftRight className="w-3.5 h-3.5" /> Swap
                     </button>
                     <button type="button" onClick={() => { setSaved(null); setView({ v: "push", outId: r.leaf.id! }); }}
-                      className="inline-flex items-center gap-1 rounded-lg border border-[var(--color-border-strong)] px-2.5 py-1.5 text-[12px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+                      className="inline-flex items-center gap-1 h-9 rounded-[10px] bg-[var(--color-surface-2)] px-3 text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-border)]">
                       <LogOut className="w-3.5 h-3.5" /> Push out
                     </button>
                   </div>
@@ -136,7 +135,7 @@ export default function PlanNextShift({ milestones, next, now, tz, times, mode, 
                 <div className="flex flex-wrap gap-1.5">
                   {later.map((w) => (
                     <button key={w.start} type="button" onClick={() => setView({ v: "confirm", action: { kind: "push", outId: view.outId, to: w.start }, back: view })}
-                      className="rounded-lg border border-[var(--color-border-strong)] px-3 py-1.5 font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+                      className="h-9 rounded-[10px] bg-[var(--color-surface-2)] px-3 font-semibold text-[var(--color-text)] hover:bg-[var(--color-border)]">
                       {shiftName(w)} <span className="text-[var(--color-text-muted)] font-normal">{T(w.start)}</span>
                     </button>
                   ))}
@@ -194,7 +193,7 @@ function Picker({ items, out, next, span, onBack, onPick }: {
   const rows = more ? shown : shown.slice(0, SHOW);
   return (
     <div>
-      <div className="px-4 pt-2.5 pb-2 border-b border-[var(--color-border)] space-y-2 bg-slate-50/60 dark:bg-[var(--color-surface-2)]">
+      <div className="px-4 pt-2.5 pb-2 border-b border-[var(--color-border)] space-y-2">
         <BackLink onClick={onBack} />
         {out && (
           <div className="text-[12.5px]"><span className="text-[var(--color-text-muted)]">Swapping out:</span> <b className="text-[var(--color-text)]">{out.leaf.name}</b>

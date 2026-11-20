@@ -96,9 +96,9 @@ export default function MovePreviewSheet({ targets, allTasks, deltaDays, onCance
     <div className="fixed inset-0 z-[260] flex items-end sm:items-start sm:items-center justify-center overflow-y-auto p-4" onClick={onCancel}>
       <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm animate-in fade-in" />
       <div className="relative w-full max-w-md bg-[var(--color-surface)] rounded-2xl shadow-2xl ring-1 ring-slate-900/10 overflow-hidden animate-in fade-in zoom-in-95" onClick={(e) => e.stopPropagation()}>
-        <div className="px-5 py-3.5 border-b border-[var(--color-border)] flex items-center gap-2 bg-[var(--color-surface-2)]">
+        <div className="px-5 py-3.5 border-b border-[var(--color-border)] flex items-center gap-2">
           <CalendarRange className="w-4 h-4 text-[var(--color-text-muted)]" />
-          <h2 className="font-bold text-[var(--color-text)] text-sm flex-1 min-w-0 truncate">
+          <h2 className="font-bold text-[var(--color-text)] text-[15px] flex-1 min-w-0 truncate">
             Move {multi ? `${targets.length} tasks` : `“${primary.name}”`} {absDays} day{absDays === 1 ? "" : "s"} {dir}
           </h2>
           <button onClick={onCancel} aria-label="Close" className="p-1 rounded hover:bg-[var(--color-surface)] text-[var(--color-text-muted)] transition-colors"><XIcon className="w-4 h-4" /></button>

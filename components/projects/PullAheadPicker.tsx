@@ -129,7 +129,7 @@ export function PullAheadPicker({ items, onLists, next, shiftHours, picked, coun
         </div>
 
         {/* Search and filters */}
-        <div className="px-4 py-2.5 border-b border-[var(--color-border)] space-y-2 bg-slate-50/60 dark:bg-[var(--color-surface-2)]">
+        <div className="px-4 py-2.5 border-b border-[var(--color-border)] space-y-2">
           <label className="relative block">
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--color-text-faint)]" />
             <input ref={searchRef} autoFocus value={query} onChange={(e) => { setQuery(e.target.value); setMore(false); }}

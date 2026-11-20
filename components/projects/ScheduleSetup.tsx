@@ -53,6 +53,32 @@ interface Props {
   userEmail?: string;
   onProjectChanged: () => void;
   onSetBaseline: () => Promise<void>;
+  /** Given: what's missing is reported here, and the page shows it on its
+   *  first card (SetupNotice) instead of this banner. */
+  onMissing?: (missing: SetupItem[]) => void;
+}
+
+/** What's still to set up, as a row on a card: the reports hang on it. */
+export function SetupNotice({ missing, canManage }: { missing: SetupItem[]; canManage: boolean }) {
+  if (!missing.length) return null;
+  return (
+    <div role="alert" className="flex flex-wrap items-center gap-x-3 gap-y-1.5 py-2.5">
+      <span aria-hidden className="w-2 h-2 rounded-full bg-rose-600 shrink-0" />
+      <div className="flex-1 min-w-[220px] text-[13px] leading-snug text-[var(--color-text)]">
+        <b className="text-rose-700 dark:text-rose-300">Finish setting up this schedule: the reports can&apos;t be trusted yet.</b>{" "}
+        Missing: {missing.map((i) => i.label.toLowerCase()).join(" and ")}.
+        <span className="block text-[12px] text-[var(--color-text-muted)]">{missing[0].why}</span>
+      </div>
+      {canManage ? (
+        <button type="button" onClick={() => window.dispatchEvent(new CustomEvent(OPEN_SETUP_EVENT, { detail: missing[0].id }))}
+          className="shrink-0 inline-flex items-center gap-1.5 h-9 px-3 rounded-[10px] bg-[var(--color-surface-2)] hover:bg-[var(--color-border)] text-[var(--color-text)] text-[13px] font-semibold">
+          <Settings2 className="w-4 h-4" /> Finish setup
+        </button>
+      ) : (
+        <span className="shrink-0 text-[12px] font-semibold text-[var(--color-text-muted)]">Ask the project owner to finish setup.</span>
+      )}
+    </div>
+  );
 }
 
 /** Setup › Unit & equipment done: the unit picked, every work order's
@@ -121,9 +147,15 @@ export function ScheduleSetup(p: Props) {
     setOpen(first);
   }, [first, p.projectId]);
 
+  // The page puts what's missing on its own first card (SetupNotice), on
+  // the row it's about, instead of a coloured box above everything.
+  const onMissing = p.onMissing;
+  const missingKey = missing.map((i) => i.id).join(",");
+  useEffect(() => { onMissing?.(missing); }, [missingKey]); // eslint-disable-line react-hooks/exhaustive-deps -- reported when what's missing changes
+
   return (
     <>
-      {missing.length > 0 ? (
+      {missing.length > 0 && !onMissing ? (
         <div role="alert" className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-l-2 border-rose-500 pl-3 py-1">
           <div className="flex-1 min-w-[220px] text-[13px] leading-snug text-rose-800 dark:text-rose-300">
             <b>Finish setting up this schedule: the reports can&apos;t be trusted yet.</b>{" "}
@@ -161,7 +193,7 @@ export function ScheduleSetupButton(p: Props) {
   return (
     <>
       <button onClick={() => setOpen(true)} title="Project type, unit & equipment, time zone, shift times, night shifts, critical path, baseline, staffing plans, roles & responsibilities, printed reports"
-        className="inline-flex items-center gap-1 text-[12px] font-bold px-2.5 py-1.5 rounded-lg border transition-colors text-[var(--color-text)] bg-[var(--color-surface)] border-[var(--color-border)] hover:bg-[var(--color-surface-2)]">
+        className="inline-flex items-center gap-1.5 h-9 px-3 rounded-[10px] text-[13px] font-semibold transition-colors text-[var(--color-text)] bg-[var(--color-surface-2)] hover:bg-[var(--color-border)]">
         <Settings2 className="w-3.5 h-3.5" /> Setup{todo ? <span className="text-amber-700 dark:text-amber-400">{` · ${todo} to do`}</span> : <Check className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />}
       </button>
       {open && <SetupWizard {...p} items={items} start={items.find((i) => !i.done && !i.extra)?.id ?? "timezone"} critical={critical} onClose={() => setOpen(false)} />}

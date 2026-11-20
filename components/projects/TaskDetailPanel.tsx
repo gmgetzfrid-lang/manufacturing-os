@@ -289,16 +289,17 @@ export default function TaskDetailPanel({
 
   return (
     <div ref={rootRef} className="fixed inset-0 z-[150] flex justify-end" role="dialog" aria-modal="true">
-      <div className="absolute inset-0 bg-slate-900/50" onClick={onClose} />
-      <div className="relative w-full max-w-[440px] bg-[var(--color-surface)] shadow-2xl ring-1 ring-slate-900/10 flex flex-col animate-[slidein_.15s_ease-out]">
-        {/* Header */}
-        <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-start gap-2 bg-[var(--color-surface-2)]">
+      {/* The page behind is dimmed: the task is the figure, the board the ground. */}
+      <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-[2px] animate-in fade-in" onClick={onClose} />
+      <div className="relative w-full max-w-[460px] bg-[var(--color-surface)] shadow-2xl flex flex-col animate-[slidein_.15s_ease-out] sm:rounded-l-2xl">
+        {/* Header: where it sits (its parents), the task's name big, and how it stands. */}
+        <div className="px-5 pt-4 pb-4 border-b border-[var(--color-border)] flex items-start gap-2">
           <div className="flex-1 min-w-0">
             {/* Breadcrumb: DEC OUTAGE › Transmix 1 › Shut Down … so the
                 task is always shown in the context of its unit. Each
                 crumb is clickable to jump up the tree. */}
             {ancestors && ancestors.length > 0 && (
-              <nav className="flex items-center gap-0.5 flex-wrap mb-1 text-[11px] text-[var(--color-text-muted)]">
+              <nav aria-label="Where it sits" className="flex items-center gap-0.5 flex-wrap mb-2 text-[11px] font-bold uppercase tracking-[0.1em] text-[var(--color-text-muted)]">
                 {ancestors.slice().reverse().map((a, i) => (
                   <React.Fragment key={a.id ?? i}>
                     {i > 0 && <ChevronRight className="w-2.5 h-2.5 text-slate-300" />}
@@ -314,19 +315,19 @@ export default function TaskDetailPanel({
                 <ChevronRight className="w-2.5 h-2.5 text-slate-300" />
               </nav>
             )}
-            <div className="flex items-center gap-2 flex-wrap">
+            <h2 className="text-[24px] sm:text-[28px] font-black tracking-[-0.02em] text-[var(--color-text)] leading-[1.1] break-words">{m.name}</h2>
+            <div className="mt-2.5 flex items-center gap-2 flex-wrap">
               <StatusPill status={effStatus} />
-              <span className="text-[11px] font-black tabular-nums text-[var(--color-text-muted)]">{effPct}%</span>
-              {m.wbs && <span className="font-mono text-[11px] text-[var(--color-text-faint)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded">{m.wbs}</span>}
-              {!isLeaf && <span className="text-[11px] font-black uppercase tracking-wider bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] text-[var(--color-text)] dark:text-[var(--color-text)] px-1.5 py-0.5 rounded">Summary</span>}
+              <span className="text-[13px] font-bold tabular-nums text-[var(--color-text)]">{effPct}% done</span>
+              {m.wbs && <span className="font-mono text-[12px] text-[var(--color-text-muted)]">{m.wbs}</span>}
+              {!isLeaf && <span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Summary</span>}
             </div>
-            <h2 className="mt-1.5 text-base font-bold text-[var(--color-text)] leading-snug break-words">{m.name}</h2>
           </div>
           <div className="flex items-center gap-1 shrink-0">
             {canEdit && !editing && (
-              <button onClick={() => setEditing(true)} title="Edit" className="p-1.5 rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><Pencil className="w-4 h-4" /></button>
+              <button onClick={() => setEditing(true)} title="Edit" aria-label="Edit" className="w-9 h-9 inline-flex items-center justify-center rounded-[10px] bg-[var(--color-surface-2)] text-[var(--color-text)] hover:bg-[var(--color-border)]"><Pencil className="w-4 h-4" /></button>
             )}
-            <button onClick={onClose} aria-label="Close" className="p-1.5 rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-surface)]"><XIcon className="w-4 h-4" /></button>
+            <button onClick={onClose} aria-label="Close" className="w-9 h-9 inline-flex items-center justify-center rounded-[10px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><XIcon className="w-5 h-5" /></button>
           </div>
         </div>
 
@@ -358,9 +359,9 @@ export default function TaskDetailPanel({
                   like MS Project / Primavera, so you can't mark a phase done
                   while work under it is still open. */}
               {isLeaf ? (
-                <div className="px-4 py-3 border-b border-[var(--color-border)] space-y-3">
+                <div className="px-5 py-4 border-b border-[var(--color-border)] space-y-3">
                   <div className="flex items-center gap-2">
-                    <span className="text-[12px] font-semibold text-[var(--color-text-faint)]">Status</span>
+                    <span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Status</span>
                     <StatusControl
                       status={m.status}
                       busy={busyStatus}
@@ -390,9 +391,9 @@ export default function TaskDetailPanel({
                   )}
                 </div>
               ) : (
-                <div className="px-4 py-3 border-b border-[var(--color-border)]">
+                <div className="px-5 py-4 border-b border-[var(--color-border)]">
                   <div className="flex items-center gap-2">
-                    <span className="text-[12px] font-semibold text-[var(--color-text-faint)]">Phase status</span>
+                    <span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Phase status</span>
                     <StatusControl status={effStatus} variant="pill" readOnly title="Rolls up from sub-tasks" onPick={() => {}} />
                     <span className="text-sm font-black tabular-nums text-[var(--color-text)]">{effPct}%</span>
                   </div>
@@ -409,8 +410,8 @@ export default function TaskDetailPanel({
 
               {/* Move — reschedule the whole task without dragging. */}
               {canEdit && onMoveDays && m.id && (
-                <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap">
-                  <span className="text-[12px] font-semibold text-[var(--color-text-faint)]">Move</span>
+                <div className="px-5 py-3 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap">
+                  <span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Move</span>
                   <div className="inline-flex items-center rounded-lg border border-[var(--color-border)] overflow-hidden">
                     <button onClick={() => onMoveDays(m.id!, -7)} title="1 week earlier" className="px-2 py-1 text-[11px] font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]">−1w</button>
                     <button onClick={() => onMoveDays(m.id!, -1)} title="1 day earlier" className="px-2 py-1 text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] border-l border-[var(--color-border)]"><ChevronLeft className="w-3.5 h-3.5" /></button>
@@ -422,7 +423,7 @@ export default function TaskDetailPanel({
               )}
 
               {/* Metadata */}
-              <div className="px-4 py-3 border-b border-[var(--color-border)] space-y-2.5">
+              <div className="px-5 py-4 border-b border-[var(--color-border)] space-y-2.5">
                 <Field icon={<CalendarDays className="w-3.5 h-3.5" />} label="Scheduled">
                   {spanLabel(span.start, span.finish, tz)} <span className="text-[11px] text-[var(--color-text-faint)]">{tzAbbrev(tz, span.start)}</span>
                   {!isLeaf && <span className="block text-[11px] text-[var(--color-text-faint)]">from its first step to its last</span>}
@@ -505,7 +506,7 @@ export default function TaskDetailPanel({
                 const d = discoveryOf(m);
                 if (!d) return null;
                 return (
-                  <div className="px-4 py-3 border-b border-[var(--color-border)] bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)]">
+                  <div className="px-5 py-4 border-b border-[var(--color-border)]">
                     <div className="text-[12px] font-semibold text-[var(--color-text)] dark:text-[var(--color-text)] mb-1">{ADDED[kindOf(d)].word}{d.of > 1 ? ` · step ${d.seq} of ${d.of}` : ""}</div>
                     <div className="text-xs text-[var(--color-text)] break-words">{d.what}</div>
                     <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5">
@@ -525,9 +526,9 @@ export default function TaskDetailPanel({
                 const started = (m.percentComplete ?? 0) > 0 || !!m.actualStartAt;
                 const seg = (on: boolean, night: boolean) => `inline-flex items-center gap-1 px-3 py-1.5 text-[12px] font-bold border-l first:border-l-0 border-[var(--color-border-strong)] disabled:opacity-50 ${on ? (night ? "bg-[var(--color-surface-2)] text-[var(--color-text)]" : "bg-[var(--color-surface-2)] text-[var(--color-text)]") : "bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"}`;
                 return (
-                  <div className="px-4 py-2.5 border-b border-[var(--color-border)] space-y-1">
+                  <div className="px-5 py-3 border-b border-[var(--color-border)] space-y-1">
                     <div className="flex items-center gap-2">
-                      <span className="text-[12px] font-semibold text-[var(--color-text-faint)]">Shift</span>
+                      <span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Shift</span>
                       <div className="inline-flex rounded-lg border border-[var(--color-border-strong)] overflow-hidden" role="radiogroup" aria-label="Which shift does this step">
                         <button type="button" role="radio" aria-checked={k === "day"} disabled={shiftBusy || k === "day"} onClick={() => void putOnShift("day")} className={seg(k === "day", false)}><Sun className="w-3.5 h-3.5" aria-hidden /> Day</button>
                         <button type="button" role="radio" aria-checked={k === "night"} disabled={shiftBusy || k === "night"} onClick={() => void putOnShift("night")} className={seg(k === "night", true)}><Moon className="w-3.5 h-3.5" aria-hidden /> Night</button>
@@ -546,8 +547,8 @@ export default function TaskDetailPanel({
 
               {/* Where it came from: imported with the schedule, or added by hand. */}
               {!discoveryOf(m) && (
-                <div className="px-4 py-2.5 border-b border-[var(--color-border)]">
-                  <div className="text-[12px] font-semibold text-[var(--color-text-faint)] mb-1">Where it came from</div>
+                <div className="px-5 py-3 border-b border-[var(--color-border)]">
+                  <div className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)] mb-1">Where it came from</div>
                   {originOf(m, (t) => fmtInTz(t, tz, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true })).lines.map((l) => (
                     <div key={l} className="text-xs text-[var(--color-text)] break-words">{l}</div>
                   ))}
@@ -556,8 +557,8 @@ export default function TaskDetailPanel({
 
               {/* Source attributes (the labeled columns from the schedule) */}
               {m.attributes && Object.keys(m.attributes).some((k) => !HIDDEN_ATTRS.has(k)) && (
-                <div className="px-4 py-3 border-b border-[var(--color-border)]">
-                  <div className="text-[12px] font-semibold text-[var(--color-text-faint)] mb-2">From the schedule</div>
+                <div className="px-5 py-4 border-b border-[var(--color-border)]">
+                  <div className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)] mb-2">From the schedule</div>
                   <div className="grid grid-cols-1 gap-1">
                     {Object.entries(m.attributes).filter(([k]) => !HIDDEN_ATTRS.has(k)).map(([k, v]) => (
                       <div key={k} className="flex items-baseline gap-2 text-xs">
@@ -587,10 +588,10 @@ export default function TaskDetailPanel({
 
               {/* Subtasks */}
               {subtasks.length > 0 && (
-                <div className="px-4 py-3 border-b border-[var(--color-border)]">
+                <div className="px-5 py-4 border-b border-[var(--color-border)]">
                   <div className="flex items-center gap-1.5 mb-1">
                     <Layers className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
-                    <span className="text-[12px] font-semibold text-[var(--color-text-faint)]">Subtasks</span>
+                    <span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Subtasks</span>
                     {leafProgress && <span className="text-[11px] font-mono text-[var(--color-text)] dark:text-[var(--color-text)] font-bold ml-auto">{leafProgress.done}/{leafProgress.total} · {leafProgress.pct}%</span>}
                   </div>
                   <div className="text-[11px] text-[var(--color-text-faint)] mb-2">
@@ -668,10 +669,10 @@ export default function TaskDetailPanel({
               )}
 
               {/* Activity / breadcrumb trail */}
-              <div className="px-4 py-3">
+              <div className="px-5 py-4">
                 <div className="flex items-center gap-1.5 mb-2">
                   <History className="w-3.5 h-3.5 text-[var(--color-text-faint)]" />
-                  <span className="text-[12px] font-semibold text-[var(--color-text-faint)]">Activity</span>
+                  <span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Activity</span>
                 </div>
                 {canEdit && (
                   <div className="flex items-start gap-2 mb-3">
@@ -914,13 +915,13 @@ function EditForm({
         </L>
         <L label="Work order #"><input value={workOrderRef} onChange={(e) => setWorkOrderRef(e.target.value)} className={inp} /></L>
       </div>
-      <div className="text-[12px] font-semibold text-[var(--color-text-faint)] pt-1">Responsible (planned)</div>
+      <div className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)] pt-1">Responsible (planned)</div>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
         <L label="Person / crew"><CrewPicker value={responsibleParty} onChange={setResponsibleParty} crews={crewList} className="w-full" label="Person / crew" /></L>
         <L label="Dept / company"><input value={responsibleOrg} onChange={(e) => setResponsibleOrg(e.target.value)} className={inp} /></L>
       </div>
       <L label="Type"><KindSelect value={responsibleKind} onChange={setResponsibleKind} /></L>
-      <div className="text-[12px] font-semibold text-[var(--color-text-faint)] pt-1">Actually performed by</div>
+      <div className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)] pt-1">Actually performed by</div>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
         <L label="Person / crew"><input value={actualParty} onChange={(e) => setActualParty(e.target.value)} className={inp} /></L>
         <L label="Dept / company"><input value={actualOrg} onChange={(e) => setActualOrg(e.target.value)} className={inp} /></L>
@@ -986,7 +987,7 @@ function Field({ icon, label, children }: { icon: React.ReactNode; label: string
     <div className="flex items-start gap-2">
       <span className="text-[var(--color-text-faint)] mt-0.5 shrink-0">{icon}</span>
       <div className="min-w-0">
-        <div className="text-[12px] font-semibold text-[var(--color-text-faint)]">{label}</div>
+        <div className="text-[12px] text-[var(--color-text-muted)]">{label}</div>
         <div className="text-[13px] text-[var(--color-text)] break-words">{children}</div>
       </div>
     </div>
@@ -1103,10 +1104,10 @@ function DependencyEditor({
   if (allTasks.length === 0) return null;
 
   return (
-    <div className="px-4 py-3 border-b border-[var(--color-border)]">
+    <div className="px-5 py-4 border-b border-[var(--color-border)]">
       <div className="flex items-center gap-1.5 mb-1.5">
         <Link2 className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
-        <span className="text-[12px] font-semibold text-[var(--color-text-faint)]">Depends on</span>
+        <span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Depends on</span>
         <span className="text-[11px] text-[var(--color-text-faint)]">- and how it waits on each</span>
       </div>
       {deps.length === 0 ? (
@@ -1214,10 +1215,10 @@ function HoldsUpEditor({ milestone, allTasks, canEdit, userId, onChanged, onSele
   };
   if (!me || allTasks.length === 0) return null;
   return (
-    <div className="px-4 py-3 border-b border-[var(--color-border)]">
+    <div className="px-5 py-4 border-b border-[var(--color-border)]">
       <div className="flex items-center gap-1.5 mb-1.5">
         <ArrowRight className="w-3.5 h-3.5 text-amber-600" />
-        <span className="text-[12px] font-semibold text-[var(--color-text-faint)]">Holds up</span>
+        <span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Holds up</span>
         <span className="text-[11px] text-[var(--color-text-faint)]">- can&apos;t start until this is done</span>
       </div>
       {waiting.length === 0 ? (
@@ -1288,10 +1289,10 @@ function AssigneeEditor({ milestone, canEdit, userId, onChanged }: {
   if (!milestone.projectId) return null;
 
   return (
-    <div className="px-4 py-3 border-b border-[var(--color-border)]">
+    <div className="px-5 py-4 border-b border-[var(--color-border)]">
       <div className="flex items-center gap-1.5 mb-1.5">
         <Target className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
-        <span className="text-[12px] font-semibold text-[var(--color-text-faint)]">Responsible</span>
+        <span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Responsible</span>
         <span className="text-[11px] text-[var(--color-text-faint)]">: the member who owns this deliverable</span>
       </div>
       {membersErr && <div role="alert" className="mb-1 text-[11px] font-semibold text-rose-700 dark:text-rose-400">Couldn&apos;t read the project&apos;s members, so the list below is short.</div>}

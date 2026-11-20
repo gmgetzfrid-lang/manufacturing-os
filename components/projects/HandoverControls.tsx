@@ -70,12 +70,12 @@ export function ShipBar({ shippedAt, shippedBy, tries, canShip, busy, err, onShi
 }) {
   if (shippedAt) {
     return (
-      <div role="status" className="mx-3 mt-2 flex flex-wrap items-center gap-2 border-l-2 border-emerald-500 pl-3 py-1 text-[12px] text-[var(--color-text)] print:hidden">
+      <div role="status" className="px-4 sm:px-5 py-2.5 border-b border-[var(--color-border)] flex flex-wrap items-center gap-2 text-[13px] text-[var(--color-text)] print:hidden">
         <Lock className="w-4 h-4 shrink-0 text-emerald-700 dark:text-emerald-400" />
         <span className="flex-1 min-w-[200px]"><b>Report locked</b> {when(shippedAt)}{shippedBy ? ` by ${shippedBy}` : ""}{tries ? ` · ${tries} step${tries === 1 ? "" : "s"} asked to try` : ""}. It can&apos;t be changed.</span>
         {canShip && (
           <button onClick={() => { void appConfirm({ message: `Unlock the ${label} report? It can be changed again until it's locked.`, confirmLabel: "Unlock" }).then((ok) => { if (ok) onUnship(); }); }} disabled={busy}
-            className="inline-flex items-center gap-1 rounded-md border border-[var(--color-border-strong)] px-2 py-1 text-[11px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">
+            className="inline-flex items-center gap-1.5 h-9 px-3 rounded-[10px] bg-[var(--color-surface-2)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-border)] disabled:opacity-50">
             {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Unlock className="w-3.5 h-3.5" />} Unlock to edit
           </button>
         )}
@@ -86,14 +86,14 @@ export function ShipBar({ shippedAt, shippedBy, tries, canShip, busy, err, onShi
   // Open: one quiet line and a quiet Lock button (the report's one orange
   // button is Email / Print).
   return (
-    <div className="mx-3 mt-2 flex flex-wrap items-center gap-2 text-[12px] text-[var(--color-text-muted)] print:hidden">
+    <div className="px-4 sm:px-5 py-2.5 border-b border-[var(--color-border)] flex flex-wrap items-center gap-2 text-[13px] text-[var(--color-text-muted)] print:hidden">
       <Unlock className="w-3.5 h-3.5 shrink-0" />
       <span className="flex-1 min-w-[200px]">Open: this report can still be changed{tries ? ` (${tries} asked to try)` : ""}. Lock it when the turnover is done.</span>
       {canShip ? (
-        <button onClick={onShip} disabled={busy} className="inline-flex items-center gap-1.5 h-9 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] px-3 text-[12px] font-bold disabled:opacity-50">
+        <button onClick={onShip} disabled={busy} className="inline-flex items-center gap-1.5 h-9 rounded-[10px] bg-[var(--color-surface-2)] hover:bg-[var(--color-border)] text-[var(--color-text)] px-3 text-[13px] font-semibold disabled:opacity-50">
           {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Lock className="w-3.5 h-3.5" />} Lock report
         </button>
-      ) : <span className="text-[11px]">Only someone who can edit the schedule can lock it.</span>}
+      ) : <span className="text-[12px]">Only someone who can edit the schedule can lock it.</span>}
       {err && <span className="w-full text-rose-700 dark:text-rose-300">{err}</span>}
     </div>
   );

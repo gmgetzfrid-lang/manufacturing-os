@@ -391,31 +391,31 @@ export default function DayAgendaPanel({
 
   return (
     <div className={inline ? (hidden ? "hidden" : "") : `fixed inset-0 z-[170] flex justify-end ${hidden ? "hidden" : ""}`} onClick={inline ? undefined : onClose}>
-      {!inline && <div className="absolute inset-0 bg-slate-900/50" />}
+      {/* The board behind is dimmed: the day is the figure. */}
+      {!inline && <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-[2px] animate-in fade-in" />}
       <div
         className={inline
           ? "relative w-full max-h-[78vh] bg-[var(--color-surface)] text-[var(--color-text)] flex flex-col"
-          : "relative h-full w-full max-w-xl bg-[var(--color-surface)] text-[var(--color-text)] shadow-2xl ring-1 ring-black/10 flex flex-col animate-in slide-in-from-right duration-150"}
+          : "relative h-full w-full max-w-xl bg-[var(--color-surface)] text-[var(--color-text)] shadow-2xl flex flex-col animate-in slide-in-from-right duration-150 sm:rounded-l-2xl"}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header: the day, navigation, and the day's completion. */}
-        <div className="px-4 py-3 border-b border-[var(--color-border)] bg-[var(--color-surface-2)]">
+        <div className={`border-b border-[var(--color-border)] ${inline ? "px-4 py-3" : "px-5 pt-4 pb-4"}`}>
           <div className="flex items-center gap-2">
-            <button onClick={() => onChangeDay(dayKey(addDays(dayMs, -1, tz), tz))} className="p-1.5 rounded-md hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]" title="Previous day"><ChevronLeft className="w-4 h-4" /></button>
+            <button onClick={() => onChangeDay(dayKey(addDays(dayMs, -1, tz), tz))} className="w-9 h-9 shrink-0 inline-flex items-center justify-center rounded-[10px] hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]" title="Previous day" aria-label="Previous day"><ChevronLeft className="w-4 h-4" /></button>
             <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2">
-                <CalendarDays className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
-                <span className="text-sm font-black truncate">{label}</span>
-                <span className="text-[11px] font-mono font-bold px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text-muted)]" title={`Plant time: ${tz}`}>{tzAbbrev(tz, dayMs)}</span>
+              <div className="flex items-center gap-1.5 text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">
+                <CalendarDays className="w-3.5 h-3.5 shrink-0" /> The day&apos;s work <span title={`Plant time: ${tz}`}>· {tzAbbrev(tz, dayMs)}</span>
               </div>
-              <div className="text-[11px] text-[var(--color-text-muted)]">
+              <div className={`${inline ? "text-[15px] font-bold" : "text-[22px] sm:text-[26px] font-black tracking-[-0.02em] leading-[1.1]"} truncate`}>{label}</div>
+              <div className="mt-1 text-[12px] text-[var(--color-text-muted)]">
                 {totals.n === 0 ? "Nothing scheduled this day." : <>{totals.n} step{totals.n === 1 ? "" : "s"} · {totals.done} done · {totals.avg}% complete</>}
                 {isToday && live.overdue.length > 0 && <span className="ml-2 font-bold text-rose-700 dark:text-rose-300">{live.overdue.length} carried over</span>}
                 {aheadCount > 0 && <span className="ml-2 font-bold text-[var(--color-text)] dark:text-[var(--color-text)]">{aheadCount} worked ahead of plan</span>}
               </div>
             </div>
-            <button onClick={() => onChangeDay(dayKey(addDays(dayMs, 1, tz), tz))} className="p-1.5 rounded-md hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]" title="Next day"><ChevronRight className="w-4 h-4" /></button>
-            {!inline && <button onClick={onClose} className="p-1.5 rounded-md hover:bg-[var(--color-surface)] text-[var(--color-text-muted)]" title="Close" aria-label="Close"><XIcon className="w-4 h-4" /></button>}
+            <button onClick={() => onChangeDay(dayKey(addDays(dayMs, 1, tz), tz))} className="w-9 h-9 shrink-0 inline-flex items-center justify-center rounded-[10px] hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]" title="Next day" aria-label="Next day"><ChevronRight className="w-4 h-4" /></button>
+            {!inline && <button onClick={onClose} className="w-9 h-9 shrink-0 inline-flex items-center justify-center rounded-[10px] hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]" title="Close" aria-label="Close"><XIcon className="w-5 h-5" /></button>}
           </div>
           {totals.n > 0 && (
             <div className="mt-2 h-1.5 rounded-full bg-black/10 dark:bg-white/10 overflow-hidden">
@@ -425,7 +425,7 @@ export default function DayAgendaPanel({
           {readErr && <div role="alert" className="mt-1.5 text-[11px] font-semibold text-rose-700 dark:text-rose-400">Couldn&apos;t read the steps&apos; comments and history. Close and reopen the day to try again.</div>}
           {onAddWork && (
             <button type="button" onClick={onAddWork}
-              className="mt-2 inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[12px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+              className="mt-3 inline-flex items-center gap-1.5 h-9 px-3 rounded-[10px] bg-[var(--color-surface-2)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-border)]">
               <Plus className="w-3.5 h-3.5" /> Add discovery or added scope
             </button>
           )}
@@ -436,7 +436,7 @@ export default function DayAgendaPanel({
                 // A keyboard popping up on a tablet hides half the list: focus only with a mouse.
                 autoFocus={typeof window !== "undefined" && window.matchMedia?.("(pointer: fine)").matches}
                 placeholder="Find equipment, WO # or step, e.g. E-606, 4410037"
-                className="w-full h-8 pl-8 pr-8 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-xs text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none focus:border-[var(--color-accent-ring)]" />
+                className="w-full h-9 pl-8 pr-8 rounded-[10px] border border-transparent bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none focus:bg-[var(--color-surface)] focus:border-[var(--color-border-strong)]" />
               {query && <button onClick={() => setQuery("")} className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 text-[var(--color-text-faint)] hover:text-[var(--color-text)]" title="Clear"><XIcon className="w-3.5 h-3.5" /></button>}
             </div>
           )}
@@ -508,7 +508,8 @@ export default function DayAgendaPanel({
                     const note = spanNote(r);
                     return (
                       <li key={r.leaf.id} className={openId === r.leaf.id ? "bg-[var(--color-surface-2)]" : ""}>
-                      <div className={`px-4 py-2 flex items-center gap-3 ${openId === r.leaf.id ? "" : r.live === "overdue" ? "bg-rose-50 dark:bg-rose-950/40" : r.live === "started-early" ? "bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)]" : ""}`}>
+                      <div className={`relative px-4 py-2 flex items-center gap-3 ${openId === r.leaf.id ? "" : r.live === "started-early" ? "bg-[var(--color-surface-2)]/60" : ""}`}>
+                        {r.live === "overdue" && <span aria-hidden className="absolute left-0 top-1.5 bottom-1.5 w-[3px] rounded-r bg-rose-600" />}
                         {/* Day-only or night-only work is marked; round the clock is the norm. */}
                         {(() => { const w = workShiftOf(r.leaf, tz, shiftTimes); return w === "both" ? <span className="w-4 shrink-0" aria-hidden /> : <ShiftMark work={w} />; })()}
                         <span className={`w-[80px] shrink-0 text-[11px] font-mono tabular-nums ${r.live === "overdue" ? "font-black text-rose-700 dark:text-rose-300" : r.live === "started-early" ? "font-bold text-[var(--color-text)] dark:text-[var(--color-text)]" : r.live === "done-ahead" ? "font-bold text-emerald-700 dark:text-emerald-300" : "text-[var(--color-text-muted)]"}`}>{windowOf(r)}</span>

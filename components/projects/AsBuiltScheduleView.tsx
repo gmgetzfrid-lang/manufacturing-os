@@ -165,7 +165,7 @@ export default function AsBuiltScheduleView(p: Props) {
 
   return (
     <PxCtx.Provider value={px}>
-    <div ref={setBox} className={full ? "fixed inset-0 z-[300] overflow-auto bg-[var(--color-bg,#f8fafc)] p-3 sm:p-5 space-y-3" : "space-y-3 min-w-0"}>
+    <div ref={setBox} className={full ? "fixed inset-0 z-[300] overflow-auto bg-[var(--color-canvas)] p-3 sm:p-5 space-y-3" : "space-y-3 min-w-0"}>
       <div className="flex flex-wrap items-center gap-2">
         <div role="tablist" aria-label="Schedule" className="inline-flex rounded-lg border border-slate-400 overflow-hidden">
           {([["built", "As-built"], ["next", "Suggested for next time"]] as const).map(([k, label]) => (
@@ -773,16 +773,16 @@ function Taught(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsBui
         <div className="mt-3 text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">What this job taught, put in</div>
         {trusted && target != null && lateH != null && (
           lateH <= 0.5 ? (
-            <p className="mt-1 text-[16px] sm:text-[17px] font-black leading-snug text-[var(--color-text)]">{lateH < -0.5 ? `Makes this year's target: finishes ${p.at(plan.finish)}, ${r1(-lateH)} h before the plan's ${p.at(target)}.` : `Makes this year's target: ${p.at(target)}.`} <span className="font-semibold text-[var(--color-text-muted)]">This year it {built.finish != null ? `finished ${p.at(built.finish)}` : "is not finished"}.</span></p>
+            <p className="mt-1 text-[15px] font-bold leading-snug text-[var(--color-text)]">{lateH < -0.5 ? `Makes this year's target: finishes ${p.at(plan.finish)}, ${r1(-lateH)} h before the plan's ${p.at(target)}.` : `Makes this year's target: ${p.at(target)}.`} <span className="font-semibold text-[var(--color-text-muted)]">This year it {built.finish != null ? `finished ${p.at(built.finish)}` : "is not finished"}.</span></p>
           ) : reach && reach.shortH <= 0.5 && reach.levers.length ? (
             <div className="mt-1 space-y-1.5">
-              <p className="text-[16px] sm:text-[17px] font-black leading-snug text-[var(--color-text)]">Misses this year&apos;s target ({p.at(target)}) by {lateH} h. {reach.levers.length === 1 ? "This makes it" : `These ${reach.levers.length} make it`}:</p>
+              <p className="text-[15px] font-bold leading-snug text-[var(--color-text)]">Misses this year&apos;s target ({p.at(target)}) by {lateH} h. {reach.levers.length === 1 ? "This makes it" : `These ${reach.levers.length} make it`}:</p>
               <ol className="list-decimal pl-5 text-[13px] space-y-0.5">{reach.levers.map((l) => <li key={l.change.id}>{l.words}: <b>{r1(l.savedH)} h sooner</b></li>)}</ol>
               {p.canEdit && <button type="button" onClick={() => p.onChanges([...p.changes, ...reach.levers.map((l, i) => ({ ...l.change, id: `t${Date.now().toString(36)}${i}`, said: "to make the target", at: Date.now() }))])} className={btnPri}><Check className="w-4 h-4" /> Put {reach.levers.length === 1 ? "it" : "them"} in</button>}
             </div>
           ) : (
             <div className="mt-1 space-y-1.5">
-              <p className="text-[16px] sm:text-[17px] font-black leading-snug text-[var(--color-text)]">Misses this year&apos;s target ({p.at(target)}) by {reach ? reach.shortH : lateH} h{reach?.levers.length ? " even with the changes below" : ""}. What sets the finish: {pathOrders.slice(0, 3).join(", ")}.</p>
+              <p className="text-[15px] font-bold leading-snug text-[var(--color-text)]">Misses this year&apos;s target ({p.at(target)}) by {reach ? reach.shortH : lateH} h{reach?.levers.length ? " even with the changes below" : ""}. What sets the finish: {pathOrders.slice(0, 3).join(", ")}.</p>
               {reach?.levers.length ? <ol className="list-decimal pl-5 text-[13px] space-y-0.5">{reach.levers.map((l) => <li key={l.change.id}>{l.words}: <b>{r1(l.savedH)} h sooner</b></li>)}</ol> : null}
               <p className="text-[13px] text-[var(--color-text)]">Only that much more time is needed{offPath ? `, or ${offPath.name.replace(/\s*\(\d of 2\)$/, "")} back sooner than ${offPath.hours >= 36 ? `${r1(offPath.hours / 24)} days` : `${Math.round(offPath.hours)} h`}` : ""}.</p>
               {p.canEdit && reach?.levers.length ? <button type="button" onClick={() => p.onChanges([...p.changes, ...reach.levers.map((l, i) => ({ ...l.change, id: `t${Date.now().toString(36)}${i}`, said: "to close on the target", at: Date.now() }))])} className={btnQuiet}><Check className="w-4 h-4" /> Put {reach.levers.length === 1 ? "it" : "them"} in</button> : null}

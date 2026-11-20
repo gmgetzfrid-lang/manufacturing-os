@@ -52,9 +52,9 @@ export default function ExecutionReportView({ milestones, shiftTimes, critical: 
 
   if (r.totalLeaves === 0) {
     return (
-      <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm p-12 text-center">
-        <CalendarDays className="w-10 h-10 text-slate-300 mx-auto mb-3" />
-        <div className="text-sm font-semibold text-[var(--color-text)]">Nothing to report yet</div>
+      <div className="bg-[var(--color-surface)] rounded-2xl shadow-[var(--shadow-card)] p-12 text-center">
+        <CalendarDays className="w-10 h-10 text-[var(--color-text-faint)] mx-auto mb-3" />
+        <div className="text-[14px] font-bold text-[var(--color-text)]">Nothing to report yet.</div>
         <div className="text-xs text-[var(--color-text-muted)] mt-1">Import or add tasks to see progress, pace, and diagnostics.</div>
       </div>
     );
@@ -82,65 +82,65 @@ export default function ExecutionReportView({ milestones, shiftTimes, critical: 
       )}
       {/* Headline */}
       <div className={`grid gap-3 ${print ? "grid-cols-4" : "grid-cols-2 lg:grid-cols-4"}`}>
-        {byPhase && <div className={print ? "col-span-3" : "col-span-2 lg:col-span-3"}><Card><PhaseLines rows={byPhase} print={print} /></Card></div>}
-        {!byPhase && <Card>
+        {byPhase && <div className={print ? "col-span-3" : "col-span-2 lg:col-span-3"}><Card print={print}><PhaseLines rows={byPhase} print={print} /></Card></div>}
+        {!byPhase && <Card print={print}>
           <Label>Complete</Label>
           <div className="flex items-baseline gap-1">
-            <span className={`text-3xl font-black tracking-tighter ${r.pctComplete === 100 ? "text-emerald-600 dark:text-emerald-400" : "text-[var(--color-text)]"}`}>{r.pctComplete}</span>
-            <span className="text-base text-[var(--color-text-faint)] font-bold">%</span>
+            <span className={`${print ? "text-3xl font-black tracking-tighter" : "text-[15px] font-bold"} ${r.pctComplete === 100 ? "text-emerald-600 dark:text-emerald-400" : "text-[var(--color-text)]"}`}>{r.pctComplete}</span>
+            <span className={`${print ? "text-base" : "text-[13px]"} text-[var(--color-text-faint)] font-bold`}>%</span>
           </div>
           <Bar pct={r.pctComplete} done={r.pctComplete === 100} />
           <div className="text-[11px] text-[var(--color-text-muted)] font-mono mt-1">{r.done} / {r.totalLeaves} tasks</div>
         </Card>}
 
         {byPhase ? null : st.state === "finished" ? (
-        <Card>
+        <Card print={print}>
           <Label>Finished</Label>
-          <div className={`text-2xl font-black tracking-tight ${(st.lateHours ?? 0) >= 0.5 ? "text-rose-600 dark:text-rose-400" : "text-[var(--color-text)]"}`}>{finLate ?? "done"}</div>
+          <div className={`${print ? "text-2xl font-black tracking-tight" : "text-[15px] font-bold"} ${(st.lateHours ?? 0) >= 0.5 ? "text-rose-600 dark:text-rose-400" : "text-[var(--color-text)]"}`}>{finLate ?? "done"}</div>
           <div className="text-[11px] text-[var(--color-text-muted)] mt-1">{st.finishedAt ? `last step done ${fmtDateTime(st.finishedAt, tz)}` : "every step done"}</div>
         </Card>
         ) : (
-        <Card>
+        <Card print={print}>
           <Label>Pace</Label>
-          <div className={`flex items-center gap-1.5 text-2xl font-black tracking-tight ${standing === "behind" ? "text-rose-600 dark:text-rose-400" : standing === "ahead" ? "text-emerald-600 dark:text-emerald-400" : "text-[var(--color-text)]"}`}>
+          <div className={`flex items-center gap-1.5 ${print ? "text-2xl font-black tracking-tight" : "text-[15px] font-bold"} ${standing === "behind" ? "text-rose-600 dark:text-rose-400" : standing === "ahead" ? "text-emerald-600 dark:text-emerald-400" : "text-[var(--color-text)]"}`}>
             {ahead ? <TrendingUp className="w-5 h-5" /> : <TrendingDown className="w-5 h-5" />}
-            {ahead ? "+" : ""}{r.paceDelta}<span className="text-base text-[var(--color-text-faint)] font-bold">pts</span>
+            {ahead ? "+" : ""}{r.paceDelta}<span className={`${print ? "text-base" : "text-[13px]"} text-[var(--color-text-faint)] font-bold`}>pts</span>
           </div>
           <div className="text-[11px] text-[var(--color-text-muted)] mt-1">{standing === "on track" ? "on track" : standing === "ahead" ? "ahead of schedule" : "behind schedule"} · expected {r.expectedPct}% by now</div>
           {parts && <div className="text-[11px] text-[var(--color-text-muted)]">{parts}</div>}
         </Card>
         )}
 
-        <Card>
+        <Card print={print}>
           <Label>Work hours</Label>
           <div className="flex items-baseline gap-1">
-            <span className="text-2xl font-black tracking-tight text-[var(--color-text)]">{r.pctHours}</span>
-            <span className="text-base text-[var(--color-text-faint)] font-bold">%</span>
+            <span className={`${print ? "text-2xl font-black tracking-tight" : "text-[15px] font-bold"} text-[var(--color-text)]`}>{r.pctHours}</span>
+            <span className={`${print ? "text-base" : "text-[13px]"} text-[var(--color-text-faint)] font-bold`}>%</span>
           </div>
           <Bar pct={r.pctHours} />
           <div className="text-[11px] text-[var(--color-text-muted)] font-mono mt-1">{Math.round(r.earnedHours)} / {Math.round(r.plannedHours)} h</div>
         </Card>
 
-        {!byPhase && st.state !== "finished" && <Card>
+        {!byPhase && st.state !== "finished" && <Card print={print}>
           <Label>Forecast finish</Label>
-          <div className={`text-lg font-black tracking-tight ${r.forecastFinish && r.finish && Date.parse(r.forecastFinish) > Date.parse(r.finish) + 30 * 60_000 ? "text-rose-600 dark:text-rose-400" : "text-[var(--color-text)]"}`}>{r.forecastFinish ? fmtDate(r.forecastFinish, tz) : "No work yet to forecast from"}</div>
+          <div className={`${print ? "text-lg font-black tracking-tight" : "text-[15px] font-bold"} ${r.forecastFinish && r.finish && Date.parse(r.forecastFinish) > Date.parse(r.finish) + 30 * 60_000 ? "text-rose-600 dark:text-rose-400" : "text-[var(--color-text)]"}`}>{r.forecastFinish ? fmtDate(r.forecastFinish, tz) : "No work yet to forecast from"}</div>
           <div className="text-[11px] text-[var(--color-text-muted)] mt-1">
             planned {fmtDate(r.finish, tz)} · day {r.elapsedDays} of {r.totalDays}
           </div>
         </Card>}
-        {!byPhase && st.state === "finished" && <Card>
+        {!byPhase && st.state === "finished" && <Card print={print}>
           <Label>Planned finish</Label>
-          <div className="text-lg font-black tracking-tight text-[var(--color-text)]">{fmtDateTime(st.plannedFinish, tz)}</div>
+          <div className={`${print ? "text-lg font-black tracking-tight" : "text-[15px] font-bold"} text-[var(--color-text)]`}>{fmtDateTime(st.plannedFinish, tz)}</div>
           <div className="text-[11px] text-[var(--color-text-muted)] mt-1">{st.done} of {st.steps} steps done</div>
         </Card>}
       </div>
 
       {/* Critical path — what's driving the finish */}
       {critical.ids.size > 0 && (
-        <div className="rounded-2xl border border-[var(--color-border)] border-l-2 border-l-rose-500 bg-[var(--color-surface)] shadow-sm px-4 py-3">
+        <div className={`rounded-2xl bg-[var(--color-surface)] px-4 py-3 ${print ? "border border-[var(--color-border)] border-l-2 border-l-rose-500 shadow-sm" : "shadow-[var(--shadow-card)]"}`}>
           <div className="flex items-center gap-2 flex-wrap">
             <Zap className="w-4 h-4 text-rose-600 dark:text-rose-400" />
-            <span className="text-[12px] font-semibold text-[var(--color-text-faint)]">Driving the finish</span>
+            <span className={print ? "text-[12px] font-semibold text-[var(--color-text-faint)]" : "text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]"}>Driving the finish</span>
             <span className="text-sm font-bold text-[var(--color-text)]">{critical.ids.size} task{critical.ids.size === 1 ? "" : "s"} on the critical path</span>
             {critical.remainingHours > 0 && <span className="text-[11px] text-[var(--color-text-muted)]">· {Math.round(critical.remainingHours)}h remaining on the chain</span>}
             <span className="ml-auto text-[11px] print:text-[10px] text-[var(--color-text-faint)]">{criticalSource ? `${criticalSource} · change it on the Timeline` : "estimate, based on schedule shape, not dependency links"}</span>
@@ -156,10 +156,10 @@ export default function ExecutionReportView({ milestones, shiftTimes, critical: 
 
       {/* Baseline drift — planned vs now */}
       {r.baseline && (
-        <div className={`rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm px-4 py-3 ${r.baseline.finishDriftDays > 0 ? "border-l-2 border-l-rose-500" : r.baseline.finishDriftDays < 0 ? "border-l-2 border-l-emerald-500" : ""}`}>
+        <div className={`rounded-2xl bg-[var(--color-surface)] px-4 py-3 ${print ? `border border-[var(--color-border)] shadow-sm ${r.baseline.finishDriftDays > 0 ? "border-l-2 border-l-rose-500" : r.baseline.finishDriftDays < 0 ? "border-l-2 border-l-emerald-500" : ""}` : "shadow-[var(--shadow-card)]"}`}>
           <div className="flex items-center gap-3 flex-wrap">
-            <span className="text-[12px] font-semibold text-[var(--color-text-faint)]">Vs. approved plan</span>
-            <span className={`text-lg font-black ${r.baseline.finishDriftDays > 0 ? "text-rose-600 dark:text-rose-400" : r.baseline.finishDriftDays < 0 ? "text-emerald-600 dark:text-emerald-400" : "text-[var(--color-text)]"}`}>
+            <span className={print ? "text-[12px] font-semibold text-[var(--color-text-faint)]" : "text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]"}>Vs. approved plan</span>
+            <span className={`${print ? "text-lg font-black" : "text-[14px] font-bold"} ${r.baseline.finishDriftDays > 0 ? "text-rose-600 dark:text-rose-400" : r.baseline.finishDriftDays < 0 ? "text-emerald-600 dark:text-emerald-400" : "text-[var(--color-text)]"}`}>
               {r.baseline.finishDriftDays === 0 ? "On plan" : r.baseline.finishDriftDays > 0 ? `${r.baseline.finishDriftDays}d behind plan` : `${Math.abs(r.baseline.finishDriftDays)}d ahead of plan`}
             </span>
             <span className="text-[11px] text-[var(--color-text-muted)]">planned finish {fmtDate(r.baseline.baselineFinish, tz)} → now {fmtDate(r.baseline.currentFinish, tz)}</span>
@@ -180,14 +180,14 @@ export default function ExecutionReportView({ milestones, shiftTimes, critical: 
       )}
 
       {/* Health chips */}
-      <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm px-4 py-3 flex items-center gap-4 flex-wrap">
-        <Health icon={<CheckCircle2 className="w-4 h-4" />} tone="emerald" label="Done" value={r.done} />
-        <Health icon={<Clock className="w-4 h-4" />} tone="slate" label="In progress" value={r.inProgress} />
-        <Health icon={<PauseCircle className="w-4 h-4" />} tone="amber" label="On hold" value={r.onHold} />
-        <Health icon={<AlertTriangle className="w-4 h-4" />} tone="rose" label="Blocked" value={r.blocked} />
-        <Health icon={<AlertTriangle className="w-4 h-4" />} tone="rose" label="Overdue" value={r.overdue} />
+      <div className={`bg-[var(--color-surface)] rounded-2xl px-4 py-3 flex items-center gap-4 flex-wrap ${print ? "border border-[var(--color-border)] shadow-sm" : "shadow-[var(--shadow-card)]"}`}>
+        <Health print={print} icon={<CheckCircle2 className="w-4 h-4" />} tone="emerald" label="Done" value={r.done} />
+        <Health print={print} icon={<Clock className="w-4 h-4" />} tone="slate" label="In progress" value={r.inProgress} />
+        <Health print={print} icon={<PauseCircle className="w-4 h-4" />} tone="amber" label="On hold" value={r.onHold} />
+        <Health print={print} icon={<AlertTriangle className="w-4 h-4" />} tone="rose" label="Blocked" value={r.blocked} />
+        <Health print={print} icon={<AlertTriangle className="w-4 h-4" />} tone="rose" label="Overdue" value={r.overdue} />
         <span className="ml-auto inline-flex items-center gap-2 print:hidden">
-          <button onClick={() => window.print()} className="inline-flex items-center gap-1.5 text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] border border-[var(--color-border)] px-2.5 py-1.5 rounded-lg hover:bg-[var(--color-surface-2)]">
+          <button onClick={() => window.print()} className="inline-flex items-center gap-1.5 h-9 px-3 rounded-[10px] bg-[var(--color-surface-2)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-border)]">
             <Printer className="w-3.5 h-3.5" /> Print / export
           </button>
         </span>
@@ -195,10 +195,10 @@ export default function ExecutionReportView({ milestones, shiftTimes, critical: 
 
       {/* Blockers — what's stopping work, with reasons */}
       {r.blockers.length > 0 && (
-        <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] border-l-2 border-l-rose-500 shadow-sm overflow-hidden">
-          <div className="px-4 py-2.5 border-b border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center gap-2">
+        <div className={`bg-[var(--color-surface)] rounded-2xl overflow-hidden ${print ? "border border-[var(--color-border)] border-l-2 border-l-rose-500 shadow-sm" : "shadow-[var(--shadow-card)]"}`}>
+          <div className={`px-4 py-2.5 border-b border-[var(--color-border)] flex items-center gap-2 ${print ? "bg-[var(--color-surface-2)]" : ""}`}>
             <AlertTriangle className="w-4 h-4 text-rose-600 dark:text-rose-400" />
-            <span className="font-bold text-[var(--color-text)] text-sm">Needs attention</span>
+            <span className={print ? "font-bold text-[var(--color-text)] text-sm" : "text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]"}>Needs attention</span>
             <span className="text-[11px] text-[var(--color-text-muted)]">{r.blockers.length} on-hold / blocked</span>
           </div>
           <ul className="divide-y divide-[var(--color-border)]">
@@ -220,8 +220,8 @@ export default function ExecutionReportView({ milestones, shiftTimes, critical: 
 
       {/* Per-group rollups */}
       {r.groups.length > 1 && (
-        <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm overflow-hidden">
-          <div className="px-4 py-2.5 border-b border-[var(--color-border)] bg-slate-50/60 dark:bg-[var(--color-surface-2)] font-bold text-[var(--color-text)] text-sm">By group</div>
+        <div className={`bg-[var(--color-surface)] rounded-2xl overflow-hidden ${print ? "border border-[var(--color-border)] shadow-sm" : "shadow-[var(--shadow-card)]"}`}>
+          <div className={`px-4 py-2.5 border-b border-[var(--color-border)] ${print ? "bg-slate-50/60 dark:bg-[var(--color-surface-2)] font-bold text-[var(--color-text)] text-sm" : "text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]"}`}>By group</div>
           <div className="divide-y divide-[var(--color-border)]">
             {r.groups.map((g) => (
               <div key={g.id} className="px-4 py-2.5 flex items-center gap-3">
@@ -245,10 +245,10 @@ export default function ExecutionReportView({ milestones, shiftTimes, critical: 
       )}
 
       {/* Planned vs actual performer */}
-      <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm overflow-hidden">
-        <div className="px-4 py-2.5 border-b border-[var(--color-border)] bg-slate-50/60 dark:bg-[var(--color-surface-2)] flex items-center gap-2">
+      <div className={`bg-[var(--color-surface)] rounded-2xl overflow-hidden ${print ? "border border-[var(--color-border)] shadow-sm" : "shadow-[var(--shadow-card)]"}`}>
+        <div className={`px-4 py-2.5 border-b border-[var(--color-border)] flex items-center gap-2 ${print ? "bg-slate-50/60 dark:bg-[var(--color-surface-2)]" : ""}`}>
           <Users className="w-4 h-4 text-[var(--color-text-muted)]" />
-          <span className="font-bold text-[var(--color-text)] text-sm">Who did the work</span>
+          <span className={print ? "font-bold text-[var(--color-text)] text-sm" : "text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]"}>Who did the work</span>
         </div>
         <div className="px-4 py-3">
           {Object.keys(r.performers.byActualKind).length === 0 ? (
@@ -311,11 +311,12 @@ function PrintCopy({ children }: { children: React.ReactNode }) {
   return mounted ? createPortal(<div data-exec-print-root>{children}</div>, document.body) : null;
 }
 
-function Card({ children }: { children: React.ReactNode }) {
-  return <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm ring-1 ring-slate-900/[0.03] px-4 py-3">{children}</div>;
+/** On screen a white card on the paper (soft depth, no outline); on paper, a framed box. */
+function Card({ children, print, className = "" }: { children: React.ReactNode; print?: boolean; className?: string }) {
+  return <div className={`bg-[var(--color-surface)] rounded-2xl px-4 py-3 ${print ? "border border-[var(--color-border)] shadow-sm ring-1 ring-slate-900/[0.03]" : "shadow-[var(--shadow-card)]"} ${className}`}>{children}</div>;
 }
 function Label({ children }: { children: React.ReactNode }) {
-  return <div className="text-[11px] print:text-[9px] font-black uppercase tracking-widest text-[var(--color-text-faint)] mb-1">{children}</div>;
+  return <div className="text-[11px] print:text-[9px] font-extrabold print:font-black uppercase tracking-[0.14em] print:tracking-widest text-[var(--color-text-muted)] print:text-[var(--color-text-faint)] mb-1">{children}</div>;
 }
 function Bar({ pct, done }: { pct: number; done?: boolean }) {
   return (
@@ -324,12 +325,12 @@ function Bar({ pct, done }: { pct: number; done?: boolean }) {
     </div>
   );
 }
-function Health({ icon, tone, label, value }: { icon: React.ReactNode; tone: "emerald" | "slate" | "amber" | "rose"; label: string; value: number }) {
+function Health({ icon, tone, label, value, print }: { icon: React.ReactNode; tone: "emerald" | "slate" | "amber" | "rose"; label: string; value: number; print?: boolean }) {
   const c = tone === "emerald" ? "text-emerald-600 dark:text-emerald-400" : tone === "slate" ? "text-[var(--color-text-muted)]" : tone === "amber" ? "text-amber-600 dark:text-amber-400" : "text-rose-600 dark:text-rose-400";
   return (
     <span className="inline-flex items-center gap-1.5">
       <span className={c}>{icon}</span>
-      <span className="text-lg font-black tabular-nums text-[var(--color-text)]">{value}</span>
+      <span className={`${print ? "text-lg font-black" : "text-[14px] font-bold"} tabular-nums text-[var(--color-text)]`}>{value}</span>
       <span className="text-[11px] text-[var(--color-text-muted)]">{label}</span>
     </span>
   );

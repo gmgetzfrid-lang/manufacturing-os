@@ -138,7 +138,7 @@ export default function ManpowerLook({ shifts, records, settings, steps, tz, now
         </p>
       </div>
 
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-6 gap-y-3">
         <MiniTile k="Man-hours" v={n0(sum.totalMH)} s={sum.directMH + sum.indirectMH > 0 ? `${n0(sum.directMH)} direct · ${n0(sum.indirectMH)} indirect${sum.unsplitMH > 0 ? ` · ${n0(sum.unsplitMH)} not split` : ""}` : "not split direct / indirect"} />
         <MiniTile k="Peak on site" v={sum.peak ? String(sum.peak.n) : "-"} s={sum.peak ? labelOf({ key: sum.peak.key, kind: sum.peak.key.endsWith(":night") ? "night" : "day" }) : ""} />
         <MiniTile k="Recordable rate" v={sum.recordableRate != null ? sum.recordableRate.toFixed(2) : "-"} s={`${plural(sum.incidents.recordable, "recordable")} on counted hours`} />
@@ -271,9 +271,9 @@ export default function ManpowerLook({ shifts, records, settings, steps, tz, now
 
 function MiniTile({ k, v, s }: { k: string; v: string; s: string }) {
   return (
-    <div className="rounded-xl border border-[var(--color-border)] px-3 py-2 min-w-0">
-      <div className="text-[12px] font-semibold text-[var(--color-text-muted)]">{k}</div>
-      <div className="text-[16px] font-black truncate text-[var(--color-text)]">{v}</div>
+    <div className="min-w-0">
+      <div className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">{k}</div>
+      <div className="mt-0.5 text-[14px] font-bold truncate text-[var(--color-text)]">{v}</div>
       <div className="text-[11px] leading-snug text-[var(--color-text-muted)]">{s}</div>
     </div>
   );

@@ -154,7 +154,16 @@ interface Props {
   onOpenReport?: (link: ReportLink) => void;
   /** Start presenting at once (Reports › Present). */
   presentOnOpen?: boolean;
+  /** Quiet tools for the report's toolbar row (Update by note). */
+  tools?: React.ReactNode;
+  /** Rows under the toolbar: setup still to finish, undo. */
+  notice?: React.ReactNode;
+  /** The page's one orange action is in the band above: Email / Print is quiet. */
+  quietMain?: boolean;
 }
+
+// A quiet button on the white card; the one orange one is Email / Print.
+const QUIET = "inline-flex items-center justify-center gap-1.5 h-9 px-3 rounded-[10px] bg-[var(--color-surface-2)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-border)] disabled:opacity-50 transition-colors";
 
 const NONE_CANCELLED: CancelledJob[] = [];
 /** "Project / turnaround lead"; for a plain project, "Project lead". */
@@ -166,7 +175,7 @@ const MEETINGS: Array<{ id: MeetingKind; label: string; Icon: typeof Rocket }> =
   { id: "closeout", label: "Close-out", Icon: Trophy },
 ];
 
-export default function ShiftReportView({ milestones: rawLive, progress: liveProgress, projectId, projectName, cancelled = NONE_CANCELLED, userId, userName, canEdit = false, onUpdateStep, onDiscovery, onNewWorkOrder, pathNow, onPlanNext, onFixTimes, meetingFixed, shiftPick, docOnly, onDoc, onOpenReport, presentOnOpen }: Props) {
+export default function ShiftReportView({ milestones: rawLive, progress: liveProgress, projectId, projectName, cancelled = NONE_CANCELLED, userId, userName, canEdit = false, onUpdateStep, onDiscovery, onNewWorkOrder, pathNow, onPlanNext, onFixTimes, meetingFixed, shiftPick, docOnly, onDoc, onOpenReport, presentOnOpen, tools, notice, quietMain }: Props) {
   const tz = useScheduleTz();
   // What kind of project it is: the word the report says (Setup › Project type).
   const ptype = useProjectTypeCtx();
@@ -985,7 +994,8 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
   if (docOnly) return null;
   return (
     <ReportCrew.Provider value={crew}>
-    <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm ring-1 ring-slate-900/[0.03]">
+    {/* On screen, one white card on the paper; on paper, its own copy (below). */}
+    <div className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)]">
       <style>{`
         [data-shift-print-root] { display: none; }
         @media print {
@@ -1003,7 +1013,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
       `}</style>
 
       {/* ── Toolbar ─────────────────────────────────────────────────── */}
-      <div className="px-3 py-2 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap rounded-t-2xl bg-[var(--color-surface)]">
+      <div className="px-3 sm:px-4 pt-3 pb-2.5 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap rounded-t-2xl bg-[var(--color-surface)]">
         {!meetingFixed && <div className="inline-flex items-center bg-[var(--color-surface-2)] rounded-lg p-0.5 gap-0.5" role="tablist" aria-label="Meeting">
           {MEETINGS.map(({ id, label, Icon }) => (
             <button key={id} role="tab" aria-selected={meeting === id} onClick={() => { setMeetingPick(id); setPresenting(null); }}
@@ -1015,11 +1025,11 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
 
         {/* The report, or the meeting's agenda (attendance, the safety topic, what the next shift picks up). */}
         {meeting === "turnover" && agendaList.length > 0 && (
-          <div className="inline-flex items-center bg-[var(--color-surface-2)] rounded-lg p-0.5 gap-0.5" role="tablist" aria-label="Report or meeting">
+          <div className="inline-flex items-center bg-[var(--color-surface-2)] rounded-[10px] p-0.5 gap-0.5" role="tablist" aria-label="Report or meeting">
             {([["report", "Report"], ["meeting", "Meeting"]] as const).map(([id, label]) => (
               <button key={id} type="button" role="tab" aria-selected={(id === "meeting") === inMeetingView}
                 onClick={() => { setScreenState(id); setPresenting(null); }}
-                className={`px-3 py-1 rounded-md text-[12px] font-bold transition-colors ${(id === "meeting") === inMeetingView ? "bg-[var(--color-text)] text-[var(--color-surface)] shadow-sm" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
+                className={`h-8 px-3 rounded-lg text-[13px] font-semibold transition-colors ${(id === "meeting") === inMeetingView ? "bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
                 {label}
               </button>
             ))}
@@ -1029,31 +1039,35 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
         {meeting === "turnover" && (
           <>
             {(!meetingFixed || agendaList.length > 0) && <span className="mx-0.5 w-px h-4 bg-[var(--color-border)]" />}
-            <button onClick={() => pick(previousShift(shift, tz, times))} className="p-1.5 rounded-md hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]" title="Previous shift"><ChevronLeft className="w-4 h-4" /></button>
-            <div className="inline-flex items-center bg-[var(--color-surface-2)] rounded-md p-0.5 gap-0.5">
+            <button onClick={() => pick(previousShift(shift, tz, times))} className="w-9 h-9 inline-flex items-center justify-center rounded-[10px] hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]" title="Previous shift" aria-label="Previous shift"><ChevronLeft className="w-4 h-4" /></button>
+            <div className="inline-flex items-center bg-[var(--color-surface-2)] rounded-[10px] p-0.5 gap-0.5">
               {(["day", "night"] as const).map((k) => (
                 // The shift handing over, and the one it hands to: Day → Night
                 // is the day's report and the plan for that night.
                 <button key={k} onClick={() => setSel({ dayKey: shift.dayKey, kind: k })} aria-pressed={shift.kind === k}
                   title={k === "day" ? "The day shift's report, and the plan for the night shift after it" : "The night shift's report, and the plan for the day shift after it"}
-                  className={`inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] font-bold ${shift.kind === k ? "bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
+                  className={`inline-flex items-center gap-1 h-8 px-2.5 rounded-lg text-[12px] font-semibold ${shift.kind === k ? "bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
                   {k === "day" ? <Sun className="w-3 h-3" /> : <Moon className="w-3 h-3" />} {k === "day" ? "Day \u2192 Night" : "Night \u2192 Day"}
                 </button>
               ))}
             </div>
             <input type="date" value={shift.dayKey} onChange={(e) => { if (e.target.value) setSel({ dayKey: e.target.value, kind: shift.kind }); }}
-              className="h-7 text-[11px] border border-[var(--color-border-strong)] rounded px-2 bg-[var(--color-surface)]" title="Which day's shift to close" />
-            <button onClick={() => pick(nextShift(shift, tz, times))} className="p-1.5 rounded-md hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]" title="Next shift"><ChevronRight className="w-4 h-4" /></button>
-            <button onClick={() => setSel(null)} className="text-[11px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-2 py-1 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]">Current shift</button>
+              aria-label="Which day's shift"
+              className="h-9 w-[138px] text-[13px] rounded-[10px] px-2.5 bg-[var(--color-surface-2)] text-[var(--color-text)] border border-transparent focus:border-[var(--color-border-strong)]" title="Which day's shift to close" />
+            <button onClick={() => pick(nextShift(shift, tz, times))} className="w-9 h-9 inline-flex items-center justify-center rounded-[10px] hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]" title="Next shift" aria-label="Next shift"><ChevronRight className="w-4 h-4" /></button>
+            {/* Back to the shift on now: only once another one is picked. */}
+            {ownSel != null && <button onClick={() => setSel(null)} className="h-9 text-[13px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-2.5 rounded-[10px] hover:bg-[var(--color-surface-2)]">Current shift</button>}
           </>
         )}
 
         {/* One button in sight (the update), the rest in More: a phone shows one row, not six. */}
-        <div className="ml-auto relative flex flex-wrap items-center justify-end gap-1.5">
+        <span className="ml-auto" />
+        {tools}
+        <div className="relative flex flex-wrap items-center justify-end gap-2">
           <div className="contents">
             {timesSaved === false && (
               <button onClick={() => setShowTimes((v) => !v)} aria-expanded={showTimes} title="The day / night split is a guess until the shift times are saved"
-                className="inline-flex items-center gap-1 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 py-1 text-[11px] font-bold text-rose-700 dark:text-rose-300 hover:bg-[var(--color-surface-2)]">
+                className={`${QUIET} text-rose-700 dark:text-rose-300`}>
                 <Settings2 className="w-3.5 h-3.5" /> Set shift times
               </button>
             )}
@@ -1090,7 +1104,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
             {/* Sections left off are always said, never silently gone. */}
             {hiddenSecs.length > 0 && (
               <button type="button" onClick={() => setShowSecs((v) => !v)} aria-expanded={showSecs}
-                className="inline-flex items-center gap-1.5 text-[11px] font-bold px-3 py-1.5 rounded-lg border border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
+                className={QUIET}
                 title="Sections left off the report, on screen and in print">
                 <EyeOff className="w-3.5 h-3.5" /> {hiddenSecs.length} hidden
               </button>
@@ -1118,7 +1132,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
           </div>}
           {presenting != null && (
             <button onClick={() => setPresenting(null)} title="Back to the report (Esc)"
-              className="inline-flex items-center gap-1.5 text-[11px] font-bold px-3 py-1.5 rounded-lg border bg-slate-900 text-white border-slate-900">
+              className="inline-flex items-center gap-1.5 h-9 px-3 rounded-[10px] text-[13px] font-semibold bg-[var(--color-text)] text-[var(--color-surface)]">
               <X className="w-3.5 h-3.5" /> Leave present
             </button>
           )}
@@ -1128,8 +1142,8 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
               <HourlyLogExport formats={["pdf", "docx"]} what={`Hourly log - ${shiftTitle}`} letterhead={!!lh} onExport={exportHourly} label="Hourly log" />
             </>
           )}
-          <CopyUpdate primary doc={exportDoc} meeting={meeting} lh={lh} stamps={meeting === "turnover" ? { on: stamps, set: setStamps } : undefined} />
-          <MoreMenu items={[
+          <CopyUpdate primary={!quietMain} doc={exportDoc} meeting={meeting} lh={lh} stamps={meeting === "turnover" ? { on: stamps, set: setStamps } : undefined} />
+          <MoreMenu triggerClass={QUIET} items={[
             ...(presenting == null ? [{ icon: <Presentation className="w-4 h-4" />, label: "Present the meeting", onClick: () => setPresenting(0) }] : []),
             ...(meeting === "turnover" && onOpenReport ? [
               // The shift sheet: entered for the shift ending, printed for the one starting.
@@ -1149,6 +1163,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
         </div>
       </div>
 
+      {notice && <div className="px-4 sm:px-5 border-b border-[var(--color-border)]">{notice}</div>}
       {meeting === "turnover" && planOpen && planBase && (
         <ShiftPlanPicker next={planFor === "after" ? afterWin : planFor === "this" ? shift : report.next} groups={planGroups} pool={planPool} byId={byId} plan={planFor === "after" ? afterPlan : planFor === "this" ? thisPlan : nextPlan}
           locked={!canShip || !!shippedAt} fmt={{ D: ctx.D, T: ctx.T, DTs: ctx.DTs }} by={userName ?? null}
@@ -1170,9 +1185,10 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
           onClose={() => setPickerOpen(false)} />
       )}
       {recFail && (
-        <div role="alert" className="mx-3 flex flex-wrap items-center gap-x-3 gap-y-1 border-l-2 border-rose-500 pl-3 py-1 text-[13px] text-[var(--color-text)]">
+        <div role="alert" className="px-4 sm:px-5 py-2.5 border-b border-[var(--color-border)] flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px] text-[var(--color-text)]">
+          <span aria-hidden className="w-2 h-2 rounded-full bg-rose-600 shrink-0" />
           <span className="flex-1 min-w-[200px]"><b className="text-rose-700 dark:text-rose-300">Didn&apos;t save to the shift&apos;s record:</b> {recFail.msg}</span>
-          <button type="button" onClick={recFail.retry} className="h-9 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] cursor-pointer">Try again</button>
+          <button type="button" onClick={recFail.retry} className={QUIET}>Try again</button>
         </div>
       )}
       {meeting === "turnover" && (
@@ -1186,28 +1202,31 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
 
       {/* ── Agenda bar: stays on screen, jumps to each item ───────────── */}
       <div className="sticky top-0 z-20 border-b border-[var(--color-border)] bg-[var(--color-surface)]/95 backdrop-blur">
-      <nav className="px-3 py-1.5 flex items-center gap-1 overflow-x-auto" aria-label="Agenda">
+      {/* The agenda as one path: the numbers joined by a line, a problem in its colour. */}
+      <nav className="px-3 sm:px-4 py-2 flex items-center overflow-x-auto [scrollbar-width:none]" aria-label="Agenda">
         {sections.map((s, i) => {
           const active = presenting === i;
-          const tone = s.flag === "rose" ? "border-rose-300 bg-rose-50 text-rose-800 dark:bg-rose-950/40 dark:text-rose-200 dark:border-rose-900"
-            : s.flag === "amber" ? "border-amber-300 bg-amber-50 text-amber-900 dark:bg-amber-950/40 dark:text-amber-200 dark:border-amber-900"
-              : "border-[var(--color-border)] text-[var(--color-text)]";
+          const dot = s.flag === "rose" ? "bg-rose-600 text-white" : s.flag === "amber" ? "bg-amber-500 text-white" : "bg-[var(--color-text)] text-[var(--color-surface)]";
+          const word = s.flag === "rose" ? "text-rose-700 dark:text-rose-300" : s.flag === "amber" ? "text-amber-800 dark:text-amber-300" : "text-[var(--color-text)]";
           return (
-            <button key={s.id} onClick={() => goTo(s.id)}
-              className={`shrink-0 inline-flex items-center gap-1.5 rounded-full border pl-1 pr-2.5 py-0.5 text-[11px] font-bold hover:brightness-95 ${tone} ${active ? "ring-2 ring-[var(--color-text)]" : ""}`}>
-              <span className="w-[18px] h-[18px] rounded-full bg-[var(--color-text)] text-[var(--color-surface)] text-[11px] font-black flex items-center justify-center">{i + 1}</span>
-              {s.short}
-              {s.count != null && <span className="font-mono font-bold opacity-70">{badgeText(s.count)}</span>}
-            </button>
+            <React.Fragment key={s.id}>
+              {i > 0 && <span aria-hidden className="shrink-0 w-3 h-0.5 bg-[var(--color-border-strong)]" />}
+              <button onClick={() => goTo(s.id)}
+                className={`shrink-0 inline-flex items-center gap-1.5 rounded-full pl-0.5 pr-2.5 h-7 text-[12px] font-semibold hover:bg-[var(--color-surface-2)] ${word} ${active ? "ring-2 ring-[var(--color-text)]" : ""}`}>
+                <span className={`w-[22px] h-[22px] rounded-full text-[11px] font-black flex items-center justify-center ${dot}`}>{i + 1}</span>
+                {s.short}
+                {s.count != null && <span className="tabular-nums font-bold opacity-60">{badgeText(s.count)}</span>}
+              </button>
+            </React.Fragment>
           );
         })}
       </nav>
       {/* ── One crew at a time, and look up any step ───────────────── */}
       {meeting === "turnover" && (
-        <div className="px-3 pb-1.5 flex flex-wrap sm:flex-nowrap items-center gap-x-2 gap-y-1.5">
+        <div className="px-3 sm:px-4 pb-2 flex flex-wrap sm:flex-nowrap items-center gap-x-2 gap-y-1.5">
           {crews.length > 1 && (
             <div className="min-w-0 w-full sm:w-auto sm:flex-1 flex items-center gap-1 overflow-x-auto scroll-quiet" role="group" aria-label="Show one crew">
-              <span className="shrink-0 text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mr-0.5">Crew</span>
+              <span className="shrink-0 text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)] mr-0.5">Crew</span>
               {[{ who: null as string | null, steps: 0 }, ...crews].map((x) => {
                 const on = crew === x.who;
                 return (
@@ -1221,7 +1240,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
             </div>
           )}
           <div className="shrink-0 flex items-center gap-1" role="group" aria-label="Show only">
-            <span className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mr-0.5">Only</span>
+            <span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)] mr-0.5">Only</span>
             <button type="button" aria-pressed={criticalOnly} onClick={() => setOnlyPick((v) => ({ ...v, critical: !v.critical }))}
               className={`shrink-0 inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-bold ${criticalOnly ? "bg-[var(--color-text)] text-[var(--color-surface)] border-[var(--color-text)]" : "border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
               Critical path
@@ -1261,20 +1280,33 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
           </div>
         </div>
       ) : (
-        <div className="px-4 sm:px-5 py-3 space-y-3 text-[12.5px] text-[var(--color-text)]">
+        <div className="px-3 sm:px-5 pt-4 pb-4 text-[13px] text-[var(--color-text)]">
+          {/* The report's sections in order, joined by one line down the
+              left: a sequence reads as one path. A flagged one's number is
+              in its colour. */}
+          <ol>
           {sections.map((s, i) => {
             const isCollapsed = collapsed.has(s.id);
+            const last = i === sections.length - 1;
+            const dot = s.flag === "rose" ? "bg-rose-600 text-white" : s.flag === "amber" ? "bg-amber-500 text-white" : "bg-[var(--color-text)] text-[var(--color-surface)]";
             return (
-              <section key={s.id} ref={(el) => { if (el) refs.current.set(s.id, el); else refs.current.delete(s.id); }} className="scroll-mt-12">
-                <button className="w-full text-left" onClick={() => setCollapsed((c) => { const n = new Set(c); if (n.has(s.id)) n.delete(s.id); else n.add(s.id); return n; })} aria-expanded={!isCollapsed}>
-                  <SectionHead n={i + 1} s={s} collapsed={isCollapsed} />
-                </button>
-                {!isCollapsed && <div className="mt-2">{s.body(false)}</div>}
-              </section>
+              <li key={s.id} className="flex gap-2.5 sm:gap-4">
+                <div aria-hidden className="flex flex-col items-center shrink-0 w-6">
+                  <span className={`w-6 h-6 rounded-full text-[11px] font-black flex items-center justify-center ${dot}`}>{i + 1}</span>
+                  {!last && <span className="flex-1 w-0.5 mt-1 bg-[var(--color-border-strong)]" />}
+                </div>
+                <section ref={(el) => { if (el) refs.current.set(s.id, el); else refs.current.delete(s.id); }} className={`min-w-0 flex-1 scroll-mt-28 ${last ? "" : "pb-6"}`}>
+                  <button className="w-full text-left" onClick={() => setCollapsed((c) => { const n = new Set(c); if (n.has(s.id)) n.delete(s.id); else n.add(s.id); return n; })} aria-expanded={!isCollapsed}>
+                    <SectionHead n={i + 1} s={s} collapsed={isCollapsed} onPath />
+                  </button>
+                  {!isCollapsed && <div className="mt-2.5">{s.body(false)}</div>}
+                </section>
+              </li>
             );
           })}
+          </ol>
           {hiddenSecs.length > 0 && (
-            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border border-dashed border-[var(--color-border-strong)] px-3 py-2 text-[11.5px] text-[var(--color-text-muted)] print:hidden">
+            <div className="mt-4 flex flex-wrap items-center gap-x-2 gap-y-1 border-t border-[var(--color-border)] pt-3 text-[12px] text-[var(--color-text-muted)] print:hidden">
               <EyeOff className="w-3.5 h-3.5" /> Hidden:
               {hiddenSecs.map((x) => (
                 <button key={x.id} type="button" onClick={() => setHidden(x.id, false)} title="Show it again"
@@ -1490,7 +1522,9 @@ function CopyUpdate({ doc, meeting, lh, stamps, primary }: { primary?: boolean; 
   return (
     <>
       <button onClick={open}
-        className={`inline-flex items-center gap-1.5 text-[11px] font-bold px-3 py-1.5 rounded-lg ${primary ? "text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] shadow-sm" : "border border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}
+        className={primary
+          ? "inline-flex items-center gap-1.5 h-10 px-4 rounded-xl text-[14px] font-extrabold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] shadow-[0_12px_24px_-12px_var(--color-accent)]"
+          : QUIET}
         title="The short update: copy it into an email, or print it - see it first">
         <Mail className="w-3.5 h-3.5" /> Email / Print
       </button>
@@ -2013,13 +2047,13 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
   // Without a plan, steps can still be pulled forward one by one.
   const addButton = ho?.openPicker && !goals.byPlan ? (
     <button type="button" onClick={ho.openPicker}
-      className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 py-1.5 text-[12px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] print:hidden">
+      className="inline-flex items-center gap-1.5 h-9 rounded-[10px] bg-[var(--color-surface-2)] px-3 text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-border)] print:hidden">
       <Zap className="w-3.5 h-3.5" /> Add work for the {next.kind} shift
     </button>
   ) : null;
   const planButton = np?.open ? (
     <button type="button" onClick={np.open}
-      className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 py-1.5 text-[12px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] print:hidden">
+      className="inline-flex items-center gap-1.5 h-9 rounded-[10px] bg-[var(--color-surface-2)] px-3 text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-border)] print:hidden">
       <ListChecks className="w-3.5 h-3.5" /> {goals.byPlan ? `Change the ${next.kind} plan` : `Plan the ${next.kind} shift`}
     </button>
   ) : null;
@@ -2050,7 +2084,7 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
   });
   const afterButton = after?.open && afterNext ? (
     <button type="button" onClick={after.open}
-      className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 py-1.5 text-[12px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] print:hidden">
+      className="inline-flex items-center gap-1.5 h-9 rounded-[10px] bg-[var(--color-surface-2)] px-3 text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-border)] print:hidden">
       <ListChecks className="w-3.5 h-3.5" /> {after.report.goals.byPlan ? `Change the ${afterNext.kind} plan` : `Plan the ${afterNext.kind} shift`}
     </button>
   ) : null;
@@ -2188,7 +2222,7 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
           {!print && o.thisPlan?.open && (
             <div className="flex flex-wrap items-center gap-2">
               <button type="button" onClick={o.thisPlan.open}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 py-1.5 text-[12px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] print:hidden">
+                className="inline-flex items-center gap-1.5 h-9 rounded-[10px] bg-[var(--color-surface-2)] px-3 text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-border)] print:hidden">
                 <ListChecks className="w-3.5 h-3.5" /> {o.thisPlan.plan ? "Change this shift's plan" : "Plan this shift"}
               </button>
               <span className="text-[11.5px] text-[var(--color-text-muted)]">{o.thisPlan.plan ? `${planSetText(o.thisPlan.plan, c) ?? "Planned."} The update's "Work to be completed" is this plan.` : "The work after the meeting. Not set: the update lists the schedule's work for the shift."}</span>
@@ -2329,8 +2363,8 @@ function FollowUpsBox({ open, edit, T, onAdd, onDone }: {
       {edit && (
         <div className="flex gap-2">
           <input value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") add(); }} placeholder="Add a follow-up item"
-            aria-label="Add a follow-up item" className="flex-1 min-w-0 h-9 px-2.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[12.5px] text-[var(--color-text)]" />
-          <button type="button" onClick={add} disabled={!text.trim()} className="h-9 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] text-[12.5px] font-bold disabled:opacity-50">Add</button>
+            aria-label="Add a follow-up item" className="flex-1 min-w-0 h-9 px-2.5 rounded-[10px] border border-transparent bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text)] focus:bg-[var(--color-surface)] focus:border-[var(--color-border-strong)]" />
+          <button type="button" onClick={add} disabled={!text.trim()} className="h-9 px-3 rounded-[10px] bg-[var(--color-surface-2)] text-[var(--color-text)] hover:bg-[var(--color-border)] text-[13px] font-semibold disabled:opacity-50">Add</button>
         </div>
       )}
     </div>
@@ -2389,7 +2423,7 @@ function discoverySection(shift: ShiftWindow, c: Ctx, list: Discovery[], onAdd?:
         )}
         {!print && onAdd && (
           <button type="button" onClick={onAdd}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 py-1.5 text-[12px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] print:hidden">
+            className="inline-flex items-center gap-1.5 h-9 rounded-[10px] bg-[var(--color-surface-2)] px-3 text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-border)] print:hidden">
             <Plus className="w-3.5 h-3.5" /> Add discovery or added scope
           </button>
         )}
@@ -2914,13 +2948,14 @@ function closeSection(title: string, signers: string[], sub = "Notes, actions an
   return {
     id: "close", title, short: title, sub,
     body: (print) => (
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 keep">
-        <div className="rounded-md border border-[var(--color-border)] px-2.5 py-1.5">
-          <div className="text-[12px] font-semibold text-slate-600 dark:text-slate-300">Notes &amp; actions</div>
+      // On paper two framed boxes; on screen two plain columns on the card.
+      <div className={`grid grid-cols-1 sm:grid-cols-2 keep ${print ? "gap-2" : "gap-x-6 gap-y-4"}`}>
+        <div className={print ? "rounded-md border border-[var(--color-border)] px-2.5 py-1.5" : ""}>
+          <div className={print ? "text-[12px] font-semibold text-slate-600 dark:text-slate-300" : "mb-1 text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]"}>Notes &amp; actions</div>
           {notes ? notes(print) : Array.from({ length: print ? 4 : 3 }).map((_, i) => <div key={i} className="h-5 border-b border-dotted border-[var(--color-border-strong)]" />)}
         </div>
-        <div className="rounded-md border border-[var(--color-border)] px-2.5 py-1.5 space-y-2">
-          <div className="text-[12px] font-semibold text-slate-600 dark:text-slate-300">Sign-off</div>
+        <div className={print ? "rounded-md border border-[var(--color-border)] px-2.5 py-1.5 space-y-2" : "space-y-2"}>
+          <div className={print ? "text-[12px] font-semibold text-slate-600 dark:text-slate-300" : "text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]"}>Sign-off</div>
           {signers.map((who) => (
             <div key={who} className="flex items-end gap-2 text-[11px] text-[var(--color-text-muted)]">
               <span className="w-40 shrink-0">{who}</span>
@@ -2958,14 +2993,14 @@ function Masthead({ meeting, report, kickoff, closeout, ctx: c, asOf, now, rehea
   return (
     // On paper: the project's name in a dark band. On screen the page header
     // already names the project, so the shift itself is the headline.
-    <header className={print ? "pb-1.5 border-b-2 border-slate-900" : "px-4 sm:px-5 pt-3 pb-1"}>
+    <header className={print ? "pb-1.5 border-b-2 border-slate-900" : "px-4 sm:px-5 pt-4 pb-3"}>
       <div className="flex items-center gap-3 flex-wrap">
         <div className="min-w-0 flex-1">
           <div className="flex items-baseline gap-2 flex-wrap">
-            <span className={`text-[11px] font-semibold ${print ? "text-slate-500" : "text-[var(--color-text-muted)]"}`}>{title}</span>
-            <h2 className={`${print ? "text-[14pt]" : "text-[18px] text-[var(--color-text)]"} font-bold tracking-tight leading-tight ${print ? "truncate" : ""}`}>{print ? (projectName ?? "Schedule") : when}</h2>
+            <span className={print ? "text-[11px] font-semibold text-slate-500" : "text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]"}>{title}</span>
+            <h2 className={`${print ? "text-[14pt]" : "basis-full text-[15px] text-[var(--color-text)]"} font-bold tracking-tight leading-tight ${print ? "truncate" : ""}`}>{print ? (projectName ?? "Schedule") : when}</h2>
           </div>
-          <div className={`text-[11px] ${print ? "text-slate-700" : "text-[var(--color-text-muted)]"}`}>
+          <div className={print ? "text-[11px] text-slate-700" : "mt-0.5 text-[12px] text-[var(--color-text-muted)]"}>
             {print ? <>{when} · </> : null}as of {c.T(meeting === "turnover" ? asOf : now)} {tzAbbrev(c.tz, now)}
             {crew && meeting === "turnover" && <span className={`ml-2 whitespace-nowrap px-1.5 py-0.5 rounded text-[11px] print:text-[10px] font-black uppercase ${print ? "border border-slate-700 text-slate-900" : "border border-[var(--color-border-strong)] text-[var(--color-text)]"}`}>{crew} only</span>}
             {criticalOnly && meeting === "turnover" && <span className={`ml-2 whitespace-nowrap px-1.5 py-0.5 rounded text-[11px] print:text-[10px] font-black uppercase ${print ? "border border-rose-700 text-rose-900" : "bg-rose-200 text-rose-950"}`}>Critical path only</span>}
@@ -2994,11 +3029,21 @@ function Footnote({ meeting, ctx: c, asOf, now, projectName }: { meeting: Meetin
 
 // ─── Building blocks ─────────────────────────────────────────────────
 
-function SectionHead({ n, s, collapsed, big, print }: { n: number; s: Sec; collapsed?: boolean; big?: boolean; print?: boolean }) {
+function SectionHead({ n, s, collapsed, big, print, onPath }: { n: number; s: Sec; collapsed?: boolean; big?: boolean; print?: boolean;
+  /** On screen, on the report's path: the number is on the line, so here
+   *  just the name, a short line, and the fold arrow. */
+  onPath?: boolean }) {
+  if (onPath && !print && !big) return (
+    <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-0.5 min-h-6">
+      <span className="min-w-0 text-[14px] font-bold text-[var(--color-text)] leading-6">{s.title}</span>
+      {s.sub && <span className="min-w-0 text-[12px] text-[var(--color-text-muted)]">{s.sub}</span>}
+      <ChevronDown className={`ml-auto self-center w-4 h-4 shrink-0 text-[var(--color-text-muted)] transition-transform ${collapsed ? "-rotate-90" : ""}`} />
+    </div>
+  );
   return (
     <div className={`flex flex-wrap items-baseline gap-x-2.5 gap-y-0.5 ${print ? "pb-[2px] border-b-[1.5px] border-slate-900" : "pb-1.5 border-b-2 border-slate-900 dark:border-slate-500"}`}>
       <span className={`${big ? "w-7 h-7 text-[13px]" : print ? "w-4 h-4 text-[7.5pt]" : "w-5 h-5 text-[11px]"} self-center rounded-full bg-slate-900 text-white dark:bg-slate-200 dark:text-slate-900 font-bold flex items-center justify-center shrink-0`}>{n}</span>
-      <span className={`${big ? "text-[20px]" : print ? "text-[11pt]" : "text-[16px]"} min-w-0 font-bold tracking-tight`}>{s.title}</span>
+      <span className={`${big ? "text-[20px]" : print ? "text-[11pt]" : "text-[14px]"} min-w-0 font-bold tracking-tight`}>{s.title}</span>
       {s.sub && <span className={`min-w-0 ${big ? "text-[13px]" : print ? "text-[8pt]" : "text-[12px]"} text-[var(--color-text-muted)]`}>{s.sub}</span>}
       {!print && !big && <ChevronDown className={`ml-auto self-center w-4 h-4 shrink-0 text-[var(--color-text-muted)] transition-transform ${collapsed ? "-rotate-90" : ""}`} />}
     </div>
@@ -3018,6 +3063,34 @@ function StandTiles({ actual, planned, standing, gap, done, total, pastDue, past
   const small = `font-medium text-slate-600 dark:text-slate-300 ${print ? "text-[8pt]" : "text-[13px]"}`;
   const sub = `text-slate-500 dark:text-slate-400 ${print ? "text-[7pt]" : "text-[11px]"}`;
   const gapTone = standing === "behind" ? "text-rose-700 dark:text-rose-400" : standing === "ahead" ? "text-emerald-700 dark:text-emerald-400" : "";
+  // On screen: one compact row, no tiles (no big numbers in the content).
+  if (!print) return (
+    <dl className="grid grid-cols-2 sm:grid-cols-4 gap-x-6 gap-y-3 keep">
+      <div className="min-w-0">
+        <dt className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Progress</dt>
+        <dd className="mt-0.5 text-[14px] font-bold tabular-nums">{actual}% <span className="text-[12px] font-medium text-[var(--color-text-muted)]">of {planned}% planned</span></dd>
+        <div className="relative mt-1.5 h-1.5 rounded-full bg-[var(--color-surface-2)]" aria-hidden>
+          <div className="absolute inset-y-0 left-0 rounded-full bg-[var(--color-text)]" style={{ width: `${Math.min(100, actual)}%` }} />
+          <div className={`absolute -top-[3px] w-0.5 h-3 ${standing === "behind" ? "bg-rose-700" : "bg-[var(--color-text-muted)]"}`} style={{ left: `calc(${Math.min(100, planned)}% - 1px)` }} />
+        </div>
+      </div>
+      <div className="min-w-0">
+        <dt className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">{gap.label}</dt>
+        <dd className={`mt-0.5 text-[14px] font-bold tabular-nums ${gapTone}`}>{gap.value}</dd>
+        <dd className="text-[12px] text-[var(--color-text-muted)]">{standing === "behind" ? "planned work-hours not done" : standing === "ahead" ? "work-hours done early" : "planned work-hours, either way"}</dd>
+      </div>
+      <div className="min-w-0">
+        <dt className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Steps done</dt>
+        <dd className="mt-0.5 text-[14px] font-bold tabular-nums">{done} <span className="text-[12px] font-medium text-[var(--color-text-muted)]">of {total}</span></dd>
+        <dd className="text-[12px] text-[var(--color-text-muted)]">all crews, whole job</dd>
+      </div>
+      <div className="min-w-0">
+        <dt className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">{pastDueLabel}</dt>
+        <dd className={`mt-0.5 text-[14px] font-bold tabular-nums ${pastDue ? "text-amber-700 dark:text-amber-400" : ""}`}>{pastDue}</dd>
+        <dd className="text-[12px] text-[var(--color-text-muted)]">steps past their finish{pastDueHeld ? `, ${pastDueHeld} on hold or blocked` : ""}</dd>
+      </div>
+    </dl>
+  );
   return (
     <div className={`grid grid-cols-2 sm:grid-cols-4 ${print ? "gap-1.5" : "gap-2"} keep`}>
       <div className={tile}>
@@ -3062,8 +3135,8 @@ function WhyBehind({ why, c, print }: { why: BehindWhy; c: Ctx; print: boolean }
   const small = print ? "text-[7.5pt]" : "text-[11px]";
   const tag = (flag: boolean) => (flag ? "border-rose-300 bg-rose-50 text-rose-900 dark:border-rose-800 dark:bg-rose-950/40 dark:text-rose-200" : "border-slate-300 bg-slate-50 text-slate-800 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-200");
   return (
-    <div className={`mt-2 rounded-lg border border-slate-200 dark:border-slate-700 ${print ? "px-2 py-1.5" : "px-3 py-2.5"} keep`}>
-      <div className={`font-bold ${print ? "text-[9pt]" : "text-[13px]"}`}>{whyTitle(why, c.hrs)}</div>
+    <div className={print ? "mt-2 rounded-lg border border-slate-200 dark:border-slate-700 px-2 py-1.5 keep" : "mt-4 pt-3 border-t border-[var(--color-border)] keep"}>
+      <div className={`font-bold ${print ? "text-[9pt]" : "text-[14px]"}`}>{whyTitle(why, c.hrs)}</div>
       <div className={`mt-1.5 flex flex-wrap gap-1.5 ${small}`}>
         {labelHours(why).map((x) => (
           <span key={x.short} className={`rounded-full border px-2 py-0.5 font-bold ${tag(x.flag)}`}>
@@ -3092,7 +3165,7 @@ function WhyBehind({ why, c, print }: { why: BehindWhy; c: Ctx; print: boolean }
         </ul>
       )}
       {!print && more > 0 && !all && (
-        <button type="button" onClick={() => setAll(true)} className="mt-1 text-[11.5px] font-bold text-[var(--color-accent)] hover:underline print:hidden">
+        <button type="button" onClick={() => setAll(true)} className="mt-1 h-8 px-2.5 -ml-2.5 rounded-lg text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] print:hidden">
           Show {more} more
         </button>
       )}
@@ -3106,9 +3179,11 @@ function WhyBehind({ why, c, print }: { why: BehindWhy; c: Ctx; print: boolean }
 function Stat({ label, value, tone }: { label: string; value: string; tone: "emerald" | "rose" | "amber" | "slate" }) {
   const t = tone === "emerald" ? "text-emerald-700 dark:text-emerald-400" : tone === "rose" ? "text-rose-700 dark:text-rose-400" : tone === "amber" ? "text-amber-700 dark:text-amber-400" : "text-[var(--color-text)]";
   return (
-    <div className="rounded-lg border border-slate-200 dark:border-slate-700 px-3 py-1.5">
-      <div className="text-[11px] font-medium text-slate-500 dark:text-slate-400">{label}</div>
-      <div className={`text-[20px] font-bold leading-tight tabular-nums ${t}`}>{value}</div>
+    // On screen a compact label and value (no big numbers); on paper the
+    // framed tile it always was (print: classes).
+    <div className="min-w-0 print:rounded-lg print:border print:border-slate-200 print:px-3 print:py-1.5">
+      <div className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)] print:normal-case print:tracking-normal print:font-medium print:text-slate-500">{label}</div>
+      <div className={`mt-0.5 print:mt-0 text-[14px] print:text-[20px] font-bold leading-tight tabular-nums ${t}`}>{value}</div>
     </div>
   );
 }

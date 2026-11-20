@@ -103,13 +103,13 @@ export default function RebaseScheduleModal({
   return (
     <div className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
       <div className="w-full max-w-xl bg-[var(--color-surface)] rounded-2xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95">
-        <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center justify-between bg-[var(--color-surface-2)]">
+        <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-[var(--color-surface)] border border-[var(--color-border)] flex items-center justify-center">
               <CalendarClock className="w-5 h-5 text-[var(--color-text-muted)]" />
             </div>
             <div className="min-w-0">
-              <h2 className="font-black text-[var(--color-text)]">Rebase schedule</h2>
+              <h2 className="text-[15px] font-bold text-[var(--color-text)]">Rebase schedule</h2>
               <div className="text-[11px] text-[var(--color-text-muted)] truncate">
                 Move every task to a new start date. {projectName && <>Project: <b>{projectName}</b>.</>}
               </div>

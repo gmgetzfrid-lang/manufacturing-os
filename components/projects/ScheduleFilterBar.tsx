@@ -56,7 +56,8 @@ export default function ScheduleFilterBar({ filter, onChange, groups, matchCount
   );
 
   return (
-    <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm ring-1 ring-slate-900/[0.03] px-3 py-2.5 space-y-2">
+    // A quiet row on the card it sits in (Plan's task list, the Work board).
+    <div className="space-y-2">
       <div className="flex items-center gap-2 flex-wrap">
         {/* Search box */}
         <div className="relative flex-1 min-w-[200px]">
@@ -65,7 +66,8 @@ export default function ScheduleFilterBar({ filter, onChange, groups, matchCount
             value={filter.query}
             onChange={(e) => onChange({ ...filter, query: e.target.value })}
             placeholder="Search tasks, work-order number, area, person…"
-            className="w-full pl-8 pr-8 py-1.5 text-sm border border-[var(--color-border-strong)] rounded-lg outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]/30 focus:border-[var(--color-accent-ring)]"
+            aria-label="Search tasks"
+            className="w-full h-9 pl-8 pr-8 text-[13px] rounded-[10px] bg-[var(--color-surface-2)] border border-transparent outline-none placeholder:text-[var(--color-text-faint)] focus:bg-[var(--color-surface)] focus:border-[var(--color-border-strong)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/30"
           />
           {filter.query && (
             <button onClick={() => onChange({ ...filter, query: "" })} className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 rounded hover:bg-[var(--color-surface-2)] text-[var(--color-text-faint)] transition-colors" title="Clear search">
@@ -78,16 +80,17 @@ export default function ScheduleFilterBar({ filter, onChange, groups, matchCount
             in its panel, so the work itself is on screen. */}
           <button
             onClick={() => setShowMore((v) => !v)}
-            className={`shrink-0 whitespace-nowrap inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-bold border transition-colors ${showMore || filter.statuses.length || filter.groupIds.length || filter.shifts.length ? "bg-[var(--color-text)] border-[var(--color-text)] text-[var(--color-surface)]" : "bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-[var(--color-border-strong)]"}`}
+            aria-expanded={showMore}
+            className={`shrink-0 whitespace-nowrap inline-flex items-center gap-1.5 h-9 px-3 rounded-[10px] text-[13px] font-semibold transition-colors ${showMore || filter.statuses.length || filter.groupIds.length || filter.shifts.length ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "bg-[var(--color-surface-2)] text-[var(--color-text)] hover:bg-[var(--color-border)]"}`}
           >
             {(() => { const n = filter.statuses.length + filter.groupIds.length + filter.shifts.length + [filter.criticalOnly, filter.behindOnly, filter.overdueOnly, filter.notStartedOnly, filter.blockedOnly, !!filter.added?.length].filter(Boolean).length + (filter.units?.length ?? 0) + (filter.types?.length ?? 0); return <><SlidersHorizontal className="w-3.5 h-3.5" /> Filter{n > 0 ? ` (${n})` : ""}</>; })()}
           </button>
         {/* Match count + clear */}
-        <span className="text-[11px] text-[var(--color-text-muted)] font-mono ml-auto">
+        <span className="text-[12px] text-[var(--color-text-muted)] tabular-nums ml-auto">
           {active ? <><b className="text-[var(--color-text)]">{matchCount}</b> of {totalCount}</> : <>{totalCount} tasks</>}
         </span>
         {active && (
-          <button onClick={() => onChange(EMPTY_FILTER)} className="inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-text)] px-2 py-1 rounded hover:bg-[var(--color-surface-2)] transition-colors">
+          <button onClick={() => onChange(EMPTY_FILTER)} className="inline-flex items-center gap-1 h-9 text-[13px] font-semibold text-[var(--color-text)] px-2 rounded-[10px] hover:bg-[var(--color-surface-2)] transition-colors">
             <XIcon className="w-3 h-3" /> Clear
           </button>
         )}
@@ -95,9 +98,9 @@ export default function ScheduleFilterBar({ filter, onChange, groups, matchCount
 
       {/* Expanded: status + group chips */}
       {showMore && (
-        <div className="pt-1 space-y-2 border-t border-[var(--color-border)]">
+        <div className="pt-2.5 space-y-2 border-t border-[var(--color-border)]">
           <div role="group" aria-label="Show only" className="flex items-center gap-1.5 flex-wrap">
-            <span className="text-[12px] font-semibold text-[var(--color-text-faint)] mr-1">Show only</span>
+            <span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)] mr-1">Show only</span>
           {classSelects}
           {quick("Critical path", <Flame className="w-3.5 h-3.5" />, !!filter.criticalOnly, () => onChange({ ...filter, criticalOnly: !filter.criticalOnly }))}
           {quick("Behind", <TrendingDown className="w-3.5 h-3.5" />, !!filter.behindOnly, () => onChange({ ...filter, behindOnly: !filter.behindOnly }))}
@@ -106,7 +109,7 @@ export default function ScheduleFilterBar({ filter, onChange, groups, matchCount
           {quick("Needs attention", <PauseCircle className="w-3.5 h-3.5" />, filter.blockedOnly, () => onChange({ ...filter, blockedOnly: !filter.blockedOnly }))}
           </div>
           <div className="flex items-center gap-1.5 flex-wrap">
-            <span className="text-[12px] font-semibold text-[var(--color-text-faint)] mr-1">Status</span>
+            <span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)] mr-1">Status</span>
             {STATUS_CHIPS.map(({ s, label, dot }) => {
               const on = filter.statuses.includes(s);
               return (
@@ -118,7 +121,7 @@ export default function ScheduleFilterBar({ filter, onChange, groups, matchCount
           </div>
           {groups.length > 1 && (
             <div className="flex items-center gap-1.5 flex-wrap">
-              <span className="text-[12px] font-semibold text-[var(--color-text-faint)] mr-1">Group</span>
+              <span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)] mr-1">Group</span>
               {groups.map((g) => {
                 const on = !!g.id && filter.groupIds.includes(g.id);
                 return (
@@ -130,7 +133,7 @@ export default function ScheduleFilterBar({ filter, onChange, groups, matchCount
             </div>
           )}
           <div className="flex items-center gap-1.5 flex-wrap">
-            <span className="text-[12px] font-semibold text-[var(--color-text-faint)] mr-1">Discovery &amp; added</span>
+            <span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)] mr-1">Discovery &amp; added</span>
             {(["discovery", "added"] as const).map((k) => {
               const on = !!filter.added?.includes(k);
               return (
@@ -142,7 +145,7 @@ export default function ScheduleFilterBar({ filter, onChange, groups, matchCount
             })}
           </div>
           <div className="flex items-center gap-1.5 flex-wrap">
-            <span className="text-[12px] font-semibold text-[var(--color-text-faint)] mr-1">Shift</span>
+            <span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)] mr-1">Shift</span>
             {(["day", "night", "swing"] as const).map((sh) => {
               const on = filter.shifts.includes(sh);
               const has = filter.shifts.includes(sh);

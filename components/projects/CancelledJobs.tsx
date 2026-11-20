@@ -74,10 +74,13 @@ export function CancelledJobsList({ jobs, canEdit, userId, userEmail, onChanged 
     catch (e) { setErr((e as Error).message); }
     finally { setBusy(null); }
   };
+  // A long list ends with "Show N more", so it's plain there's more.
+  const [all, setAll] = useState(false);
+  const shown = all ? jobs : jobs.slice(0, SHOW_FIRST);
   return (
     <div className="divide-y divide-[var(--color-border)]">
       {err && <div className="px-3 py-2 text-[12px] text-rose-700 dark:text-rose-300">{err}</div>}
-      {jobs.map((j) => (
+      {shown.map((j) => (
         <div key={j.m.id} className="px-3 py-2 flex items-start gap-3">
           <div className="flex-1 min-w-0 text-[12.5px] space-y-0.5">
             <div className="text-[var(--color-text)]">
@@ -103,9 +106,16 @@ export function CancelledJobsList({ jobs, canEdit, userId, userEmail, onChanged 
           )}
         </div>
       ))}
+      {jobs.length > shown.length && (
+        <button type="button" onClick={() => setAll(true)} className="w-full px-3 py-2.5 text-left text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+          Show {jobs.length - shown.length} more
+        </button>
+      )}
     </div>
   );
 }
+
+const SHOW_FIRST = 8;
 
 export function CancelledJobsBar({ jobs, canEdit, userId, userEmail, onChanged }: {
   jobs: CancelledJob[]; canEdit: boolean; userId: string; userEmail?: string; onChanged: () => void | Promise<void>;
@@ -113,15 +123,16 @@ export function CancelledJobsBar({ jobs, canEdit, userId, userEmail, onChanged }
   const [open, setOpen] = useState(false);
   const n = jobs.length;
   return (
-    <div className={open ? "rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]" : ""}>
+    // A row on the card it sits in; open, the jobs follow under a hairline.
+    <div>
       <button onClick={() => setOpen((v) => !v)} aria-expanded={open}
-        className="w-full flex items-center gap-2 px-1 py-1 text-left text-[12.5px] text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
-        <Ban className="w-4 h-4 shrink-0 text-amber-600" />
-        <span className="flex-1 min-w-0"><b>{n} job{n === 1 ? "" : "s"} cancelled</b> from this schedule, still to be done elsewhere</span>
+        className="w-full flex items-center gap-2 py-1 text-left text-[13px] text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
+        <Ban className="w-4 h-4 shrink-0 text-[var(--color-text-muted)]" />
+        <span className="flex-1 min-w-0"><b className="text-[var(--color-text)]">{n} job{n === 1 ? "" : "s"} cancelled</b> from this schedule, still to be done elsewhere</span>
         {open ? <ChevronDown className="w-4 h-4 shrink-0" /> : <ChevronRight className="w-4 h-4 shrink-0" />}
       </button>
       {open && (
-        <div className="border-t border-[var(--color-border)]">
+        <div className="mt-1 -mx-3 border-t border-[var(--color-border)]">
           <CancelledJobsList jobs={jobs} canEdit={canEdit} userId={userId} userEmail={userEmail} onChanged={onChanged} />
         </div>
       )}

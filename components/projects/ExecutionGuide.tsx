@@ -31,7 +31,7 @@ export default function ExecutionGuide() {
       {/* Toolbar trigger: always present. */}
       <button
         onClick={() => setOpen(true)}
-        className="inline-flex items-center justify-center w-8 h-8 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors"
+        className="inline-flex items-center justify-center w-9 h-9 rounded-[10px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors"
         title="How this view works" aria-label="How this view works"
       >
         <HelpCircle className="w-4 h-4" />
@@ -42,13 +42,13 @@ export default function ExecutionGuide() {
         <div role="dialog" aria-modal="true" aria-label="How this view works" className="fixed inset-0 z-[300] flex items-start sm:items-center justify-center overflow-y-auto p-4" onClick={() => setOpen(false)}>
           <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm animate-in fade-in" />
           <div className="relative w-full max-w-lg bg-[var(--color-surface)] rounded-2xl shadow-2xl ring-1 ring-slate-900/10 overflow-hidden max-h-[85vh] flex flex-col animate-in fade-in zoom-in-95" onClick={(e) => e.stopPropagation()}>
-            <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center gap-2 bg-[var(--color-surface-2)]">
+            <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center gap-2">
               <HelpCircle className="w-5 h-5 text-[var(--color-text-muted)]" />
-              <h2 className="font-black text-[var(--color-text)]">How this view works</h2>
+              <h2 className="text-[15px] font-bold text-[var(--color-text)]">How this view works</h2>
               <button onClick={() => setOpen(false)} aria-label="Close" className="ml-auto p-1.5 rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] transition-colors"><XIcon className="w-4 h-4" /></button>
             </div>
 
-            <div className="overflow-y-auto p-5 space-y-5 text-sm text-[var(--color-text)]">
+            <div className="overflow-y-auto p-5 space-y-5 text-[14px] text-[var(--color-text)]">
               <Section title="Two ways to look at the schedule">
                 <Row icon={<ListTree className="w-4 h-4 text-[var(--color-text-muted)]" />} label="Timeline">
                   The work breakdown on the left, bars on a time axis on the right. Best for seeing sequence and overlap.
@@ -92,8 +92,8 @@ export default function ExecutionGuide() {
               </Section>
             </div>
 
-            <div className="px-5 py-3 border-t border-[var(--color-border)] bg-[var(--color-surface-2)] flex justify-end">
-              <button onClick={() => setOpen(false)} className="text-sm font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] px-4 py-2 rounded-lg transition-colors">Got it</button>
+            <div className="px-5 py-3 border-t border-[var(--color-border)] flex justify-end">
+              <button onClick={() => setOpen(false)} className="h-10 text-[14px] font-extrabold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] px-5 rounded-xl transition-colors">Got it</button>
             </div>
           </div>
         </div>
@@ -105,7 +105,7 @@ export default function ExecutionGuide() {
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div>
-      <div className="text-[12px] font-semibold text-[var(--color-text-faint)] mb-2">{title}</div>
+      <div className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)] mb-2">{title}</div>
       <div className="space-y-2">{children}</div>
     </div>
   );

@@ -36,6 +36,7 @@ import { resolveCriticalPath } from "@/lib/criticalPath";
 import { clockLabel } from "@/lib/scheduleTz";
 import { lateWords, verdictParts } from "@/lib/phaseStanding";
 import PhaseLines, { usePhaseStandings } from "@/components/projects/PhaseLines";
+import { Card } from "@/components/ui/PageHero";
 import {
   TrendingUp, TrendingDown, Flag, AlertTriangle, CalendarClock,
   CheckCircle2, Circle, PauseCircle, MinusCircle, XCircle,
@@ -51,7 +52,13 @@ interface Props {
   /** Show the overdue work / the held work on the board (Work tab). */
   onShowOverdue?: () => void;
   onShowBlocked?: () => void;
+  /** A row on top of the first card (the Plan tab's toolbar). */
+  head?: React.ReactNode;
+  /** Inside another card: plain sections, not cards of their own. */
+  bare?: boolean;
 }
+
+const LABEL = "text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)] mb-2";
 
 const STATUS_META: Record<MilestoneStatus, { label: string; tone: string; bar: string; Icon: React.ComponentType<{ className?: string }> }> = {
   // The same colours as the timeline and calendar dots.
@@ -63,7 +70,7 @@ const STATUS_META: Record<MilestoneStatus, { label: string; tone: string; bar: s
   on_hold:     { label: "On hold",     tone: "text-amber-700 dark:text-amber-300",   bar: "bg-amber-500",   Icon: PauseCircle },
 };
 
-export default function ScheduleProgress({ milestones, metrics, projectId, onShowOverdue, onShowBlocked }: Props) {
+export default function ScheduleProgress({ milestones, metrics, projectId, onShowOverdue, onShowBlocked, head, bare }: Props) {
   const tz = useScheduleTz();
   const total = milestones.length;
   const today = new Date(); today.setHours(0,0,0,0);
@@ -114,101 +121,83 @@ export default function ScheduleProgress({ milestones, metrics, projectId, onSho
   const held = r.onHold + r.blocked;
   const heldWord = [r.onHold ? `${r.onHold} on hold` : null, r.blocked ? `${r.blocked} blocked` : null].filter(Boolean).join(", ");
 
+  const verdictTone = verdict === "behind" ? "text-rose-700 dark:text-rose-300" : verdict === "ahead" ? "text-emerald-700 dark:text-emerald-300" : "text-[var(--color-text-muted)]";
+
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
-      {/* Completion + SPI */}
-      <div className="lg:col-span-2 bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm p-4">
+    <div className={`grid grid-cols-1 lg:grid-cols-3 ${bare ? "gap-x-6 gap-y-4" : "gap-4"}`}>
+      {/* How far along: each phase on its own line, or the job's one sentence. */}
+      <Box bare={bare} className="lg:col-span-2" label={head ? undefined : byPhase ? undefined : "Progress"}>
+        {head && <div className="mb-4 pb-3 border-b border-[var(--color-border)]">{head}</div>}
         {byPhase ? <div className="mb-3"><PhaseLines rows={byPhase} /></div> : (
-        <div className="flex items-baseline justify-between mb-3">
-          <div>
-            <div className="text-[12px] font-semibold text-[var(--color-text-muted)]">Completion</div>
-            <div className="text-3xl font-black text-[var(--color-text)] leading-none mt-1">
-              {earnedPct}<span className="text-base text-[var(--color-text-muted)] font-bold">%</span>
-            </div>
-            <div className="text-[11px] text-[var(--color-text-muted)] mt-1">{finished ? `Work done · ${r.done} of ${r.totalLeaves} steps` : `Work done · plan by now ${planPct}%`}</div>
+          <div className="mb-3">
+            {head && <div className={LABEL}>Progress</div>}
+            <p className="text-[15px] font-bold text-[var(--color-text)] tabular-nums">
+              {earnedPct}% done
+              <span className="font-semibold text-[var(--color-text-muted)]">{finished ? ` · ${r.done} of ${r.totalLeaves} steps` : ` · plan by now ${planPct}%`}</span>
+            </p>
+            {/* Finished: when and how late is on the card beside this, once. */}
+            {!finished && (
+              <p className="mt-0.5 text-[13px] text-[var(--color-text-muted)] inline-flex flex-wrap items-center gap-x-1.5">
+                <span className={`inline-flex items-center gap-1 font-semibold ${verdictTone}`}>
+                  {verdict === "behind" ? <TrendingDown className="w-3.5 h-3.5" /> : <TrendingUp className="w-3.5 h-3.5" />}
+                  {verdict === "behind" ? `${fmtH(gapH)} behind plan` : verdict === "ahead" ? `${fmtH(gapH)} ahead of plan` : "On plan"}
+                </span>
+                <span>· SPI <b className="text-[var(--color-text)] tabular-nums">{spi.toFixed(2)}</b></span>
+                {parts && <span data-verdict-parts>· {parts}</span>}
+              </p>
+            )}
           </div>
-          {/* Finished: when and how late is on the card beside this, once. */}
-          {finished ? null : (
-          <div className="text-right">
-            <div className="text-[12px] font-semibold text-[var(--color-text-muted)]">SPI</div>
-            <div className={`text-3xl font-black leading-none mt-1 ${verdict === "behind" ? "text-rose-600 dark:text-rose-400" : verdict === "ahead" ? "text-emerald-600 dark:text-emerald-400" : "text-[var(--color-text)]"}`}>
-              {spi.toFixed(2)}
-            </div>
-            <div className="text-[11px] text-[var(--color-text-muted)] mt-1 inline-flex items-center gap-1 justify-end">
-              {verdict === "behind" ? <TrendingDown className="w-3 h-3 text-rose-600 dark:text-rose-400" /> : <TrendingUp className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />}
-              {verdict === "behind" ? `${fmtH(gapH)} behind plan` : verdict === "ahead" ? `${fmtH(gapH)} ahead of plan` : "on plan"}
-            </div>
-            {parts && <div className="text-[11px] text-[var(--color-text-muted)]" data-verdict-parts>{parts}</div>}
-          </div>
-          )}
-        </div>
         )}
 
         {/* Stacked progress bar — leaves-only counts, matching the metrics. */}
         <StackedBar counts={metrics.byStatus} />
 
-        {/* Status legend */}
-        <div className="mt-3 grid grid-cols-3 sm:grid-cols-6 gap-1.5 text-[11px]">
+        {/* The counts in one row: zero is faint, colour only where it's off. */}
+        <ul className="mt-2.5 flex flex-wrap gap-x-4 gap-y-1 text-[12.5px]" aria-label="Steps by status">
           {(Object.keys(STATUS_META) as MilestoneStatus[]).map((s) => {
             const meta = STATUS_META[s];
-            const Icon = meta.Icon;
             const n = metrics.byStatus[s] ?? 0;
             return (
-              <div key={s} className={`rounded-md border border-[var(--color-border)] px-1.5 py-1 ${n > 0 ? "" : "opacity-50"}`}>
-                <div className={`inline-flex items-center gap-1 font-bold ${meta.tone}`}>
-                  <Icon className="w-3 h-3" /> {n}
-                </div>
-                <div className="text-[12px] text-[var(--color-text-muted)]">{meta.label}</div>
-              </div>
+              <li key={s} className={`inline-flex items-center gap-1.5 ${n > 0 ? "" : "opacity-50"}`}>
+                <span aria-hidden className={`w-2 h-2 rounded-full ${meta.bar}`} />
+                <b className={`tabular-nums ${n > 0 && s !== "planned" && s !== "in_progress" ? meta.tone : "text-[var(--color-text)]"}`}>{n}</b>
+                <span className="text-[var(--color-text-muted)]">{meta.label.toLowerCase()}</span>
+              </li>
             );
           })}
-        </div>
-      </div>
+        </ul>
+      </Box>
 
-      {/* Right column: forecast + upcoming */}
-      <div className="space-y-3">
-        {/* Forecast / slip card. All phases: each phase's line has its own. */}
-        <div className={`rounded-2xl p-4 border border-[var(--color-border)] bg-[var(--color-surface)] ${
-          byPhase ? ""
-          : (finished ? finIsLate : late)
-            ? "border-l-2 border-l-rose-500"
-            : forecastEndAt || finished
-              ? "border-l-2 border-l-emerald-500"
-              : ""
-        }`}>
+      {/* What needs you, when it ends, and what's coming: one card. */}
+      <Box bare={bare} label={byPhase ? "Needs you" : finished ? "Finished" : "Forecast end"}>
           {byPhase ? (
-            <>
-              <div className="text-[12px] font-semibold text-[var(--color-text-muted)]">Needs you</div>
-              {overdue.length === 0 && held === 0 && <div className="text-[13px] font-bold text-[var(--color-text)] mt-1">Nothing overdue or held</div>}
-            </>
+            overdue.length === 0 && held === 0 ? <div className="text-[14px] font-bold text-[var(--color-text)]">Nothing overdue or held</div> : null
           ) : finished ? (
             <>
-              <div className="text-[12px] font-semibold text-[var(--color-text-muted)]">Finished</div>
-              <div className="text-lg font-black text-[var(--color-text)] mt-1">{r.finishedAt ? humanDateTime(r.finishedAt, tz) : "-"}</div>
-              <div className={`text-[11px] mt-1 inline-flex items-center gap-1 ${finIsLate ? "text-rose-700 dark:text-rose-300" : "text-emerald-700 dark:text-emerald-300"}`}>
-                {finIsLate ? <AlertTriangle className="w-3 h-3" /> : <CheckCircle2 className="w-3 h-3" />}
+              <div className="text-[14px] font-bold text-[var(--color-text)]">{r.finishedAt ? humanDateTime(r.finishedAt, tz) : "-"}</div>
+              <div className={`text-[12.5px] mt-0.5 inline-flex items-center gap-1 ${finIsLate ? "text-rose-700 dark:text-rose-300 font-semibold" : "text-emerald-700 dark:text-emerald-300"}`}>
+                {finIsLate ? <AlertTriangle className="w-3.5 h-3.5" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
                 {[finWords, plannedEndAt ? `planned ${humanDateTime(plannedEndAt, tz)}` : null].filter(Boolean).join(" · ")}
               </div>
             </>
           ) : (
             <>
-          <div className="text-[12px] font-semibold text-[var(--color-text-muted)]">Forecast end</div>
-          <div className="text-lg font-black text-[var(--color-text)] mt-1">
+          <div className="text-[14px] font-bold text-[var(--color-text)]">
             {forecastEndAt ? (linked ? humanDateTime(forecastEndAt, tz) : humanDate(forecastEndAt, tz)) : plannedEndAt ? humanDate(plannedEndAt, tz) : "-"}
           </div>
-          <div className={`text-[11px] mt-1 inline-flex items-center gap-1 ${late ? "text-rose-700 dark:text-rose-300" : "text-emerald-700 dark:text-emerald-300"}`}>
+          <div className={`text-[12.5px] mt-0.5 inline-flex items-center gap-1 ${late ? "text-rose-700 dark:text-rose-300 font-semibold" : "text-emerald-700 dark:text-emerald-300"}`}>
             {linked
-              ? (slipH >= 0.5 ? <><AlertTriangle className="w-3 h-3" /> {fmtH(slipH)} late</> : slipH <= -0.5 ? <><CheckCircle2 className="w-3 h-3" /> {fmtH(-slipH)} early</> : <><CheckCircle2 className="w-3 h-3" /> On plan</>)
+              ? (slipH >= 0.5 ? <><AlertTriangle className="w-3.5 h-3.5" /> {fmtH(slipH)} late</> : slipH <= -0.5 ? <><CheckCircle2 className="w-3.5 h-3.5" /> {fmtH(-slipH)} early</> : <><CheckCircle2 className="w-3.5 h-3.5" /> On plan</>)
               : late
-                ? <><AlertTriangle className="w-3 h-3" /> {!forecastEndAt ? "Behind: no work recorded yet to forecast from" : slipDays > 0 ? `${slipDays}d slip vs plan` : "Behind plan: under a day of slip so far"}</>
-                : plannedEndAt ? <><CheckCircle2 className="w-3 h-3" /> On plan</> : "Plan not yet set"
+                ? <><AlertTriangle className="w-3.5 h-3.5" /> {!forecastEndAt ? "Behind: no work recorded yet to forecast from" : slipDays > 0 ? `${slipDays}d slip vs plan` : "Behind plan: under a day of slip so far"}</>
+                : plannedEndAt ? <><CheckCircle2 className="w-3.5 h-3.5" /> On plan</> : "Plan not yet set"
             }
           </div>
             </>
           )}
           {(overdue.length > 0 || held > 0) && (
-            <div className="mt-2 flex flex-wrap items-center gap-x-1 text-[11.5px] font-bold">
-              <AlertTriangle className="w-3 h-3 text-rose-700 dark:text-rose-300" />
+            <div className="mt-1.5 flex flex-wrap items-center gap-x-1 text-[13px] font-bold">
+              <AlertTriangle className="w-3.5 h-3.5 text-rose-700 dark:text-rose-300" />
               {overdue.length > 0 && (onShowOverdue
                 ? <button type="button" onClick={onShowOverdue} className="text-rose-700 dark:text-rose-300 underline decoration-dotted underline-offset-2 hover:decoration-solid" title="Show the overdue work">{overdue.length} overdue</button>
                 : <span className="text-rose-700 dark:text-rose-300">{overdue.length} overdue</span>)}
@@ -218,39 +207,43 @@ export default function ScheduleProgress({ milestones, metrics, projectId, onSho
                 : <span className="text-amber-700 dark:text-amber-300">{heldWord}</span>)}
             </div>
           )}
-        </div>
 
-        {/* Upcoming card */}
-        <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
-          <div className="flex items-baseline justify-between mb-2">
-            <div className="text-[12px] font-semibold text-[var(--color-text-muted)]">Next 14 days</div>
-            <div className="text-[11px] text-[var(--color-text-faint)]">{upcoming.length}</div>
+        {/* What's coming up, under a hairline. */}
+        <div className="mt-4 pt-3 border-t border-[var(--color-border)]">
+          <div className="flex items-baseline justify-between mb-1.5">
+            <div className={LABEL.replace(" mb-2", "")}>Next 14 days</div>
+            {upcoming.length > 0 && <div className="text-[12px] text-[var(--color-text-muted)] tabular-nums">{upcoming.length}</div>}
           </div>
           {upcoming.length === 0 ? (
-            <div className="text-[11px] text-[var(--color-text-faint)] italic">Nothing scheduled.</div>
+            <div className="text-[13px] text-[var(--color-text-muted)]">Nothing scheduled.</div>
           ) : (
-            <ul className="space-y-1">
+            <ul className="space-y-1.5">
               {upcoming.map(({ m, due }) => (
-                <li key={m.id} className="flex items-start gap-2 text-xs">
-                  <Flag className={`w-3 h-3 mt-0.5 shrink-0 ${STATUS_META[m.status].tone}`} />
+                <li key={m.id} className="flex items-start gap-2 text-[13px]">
+                  <Flag className={`w-3.5 h-3.5 mt-0.5 shrink-0 ${STATUS_META[m.status].tone}`} />
                   <div className="min-w-0 flex-1">
-                    <div className="font-bold text-[var(--color-text)] truncate">{m.name}</div>
-                    <div className="text-[11px] text-[var(--color-text-muted)] inline-flex items-center gap-1">
-                      <CalendarClock className="w-2.5 h-2.5" /> {humanRelative(due, tz)}
+                    <div className="font-semibold text-[var(--color-text)] truncate">{m.name}</div>
+                    <div className="text-[12px] text-[var(--color-text-muted)] inline-flex items-center gap-1">
+                      <CalendarClock className="w-3 h-3" /> {humanRelative(due, tz)}
                     </div>
                   </div>
                 </li>
               ))}
             </ul>
           )}
+          {!head && <div className="mt-2 text-[12px] text-[var(--color-text-muted)]">{total} task{total === 1 ? "" : "s"} on the schedule</div>}
         </div>
-
-        <div className="text-[11px] text-[var(--color-text-muted)] italic px-1">
-          {total} milestone{total === 1 ? "" : "s"} total
-        </div>
-      </div>
+      </Box>
     </div>
   );
+}
+
+/** A card on the paper; inside another card (the Work tab's), a plain
+ *  section: no boxes in boxes. */
+function Box({ bare, label, className = "", children }: { bare?: boolean; label?: React.ReactNode; className?: string; children: React.ReactNode }) {
+  return bare
+    ? <div className={className}>{label && <div className={LABEL}>{label}</div>}{children}</div>
+    : <Card label={label} className={className}>{children}</Card>;
 }
 
 function StackedBar({ counts }: { counts: Record<MilestoneStatus, number> }) {

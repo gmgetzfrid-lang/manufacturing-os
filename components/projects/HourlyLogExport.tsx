@@ -31,7 +31,7 @@ export function HourlyLogExport({ formats, what, letterhead, onExport, label = "
     <span className="relative inline-flex">
       <button type="button" onClick={() => { setOpen((v) => !v); setMsg(null); }} aria-expanded={open} disabled={!!busy}
         title="Save the hourly shift log as a file"
-        className="inline-flex items-center gap-1.5 text-[11px] font-bold px-3 py-1.5 rounded-lg border border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-60">
+        className="inline-flex items-center gap-1.5 h-9 px-3 rounded-[10px] bg-[var(--color-surface-2)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-border)] disabled:opacity-60">
         <Download className="w-3.5 h-3.5" /> {busy ? "Exporting…" : label}
       </button>
       {open && (

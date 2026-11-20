@@ -40,8 +40,15 @@ import { useWoClasses, passes, WoClassSelects } from "@/components/projects/WoCl
 import { typeLabel, unitLabel } from "@/lib/woClass";
 import MoreMenu from "@/components/ui/MoreMenu";
 
-export default function WorkOrdersView({ milestones, cancelled = [], childrenByParent, tz, times, progress, canEdit, onUpdate, onFixTimes, onOpenDetail, onMoveDays, marks, onDiscovery, onNewWorkOrder, projectId, projectName, user, onCancelled, onOpenReport }: {
+// A quiet button on the white card; the one orange one is New work order.
+const QUIET = "inline-flex items-center justify-center gap-1.5 h-9 px-3 rounded-[10px] bg-[var(--color-surface-2)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-border)] disabled:opacity-50 transition-colors";
+// The list: this many work orders, then "Show N more".
+const WO_STEP = 40;
+
+export default function WorkOrdersView({ milestones, cancelled = [], childrenByParent, tz, times, progress, canEdit, onUpdate, onFixTimes, onOpenDetail, onMoveDays, marks, onDiscovery, onNewWorkOrder, projectId, projectName, user, onCancelled, onOpenReport, quietMain = false }: {
   milestones: Milestone[];
+  /** The page's one orange action is elsewhere (the band): New work order is quiet. */
+  quietMain?: boolean;
   /** Work orders taken off the schedule: the Cancelled filter. */
   cancelled?: CancelledJob[];
   /** Print opens the report in Reports, set to the work orders shown (or one). */
@@ -81,6 +88,8 @@ export default function WorkOrdersView({ milestones, cancelled = [], childrenByP
   const [units, setUnits] = useState<string[]>([]);
   const [types, setTypes] = useState<string[]>([]);
   const [open, setOpen] = useState<Set<string>>(new Set());
+  // How many work orders the list shows before "Show N more".
+  const [limit, setLimit] = useState(WO_STEP);
   // The work order being taken off the schedule (its key).
   const [cancelling, setCancelling] = useState<string | null>(null);
   // Adding discovery or added scope: which work order first.
@@ -237,21 +246,25 @@ export default function WorkOrdersView({ milestones, cancelled = [], childrenByP
     </span>
   );
 
+  // A long list ends with "Show N more", so it's plain there's more.
+  const listed = shown.slice(0, limit);
   return (
-    <div className="space-y-2">
+    // Inside the Work card: a quiet row of search and filters, then one row
+    // per work order, split by hairlines (no boxes in boxes).
+    <div>
       {picking && onDiscovery && (
         <AddWorkPicker day={today} tz={tz} milestones={milestones}
           onPick={(t) => { setPicking(false); onDiscovery(t); }} onNew={onNewWorkOrder ? () => { setPicking(false); onNewWorkOrder(); } : undefined} onClose={() => setPicking(false)} />
       )}
-      <div className="flex flex-wrap items-center gap-2">
-        <label className="flex items-center gap-1.5 h-9 flex-1 min-w-[220px] max-w-[420px] rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 focus-within:border-[var(--color-accent-ring)]">
+      <div className="px-3 sm:px-4 py-3 flex flex-wrap items-center gap-2">
+        <label className="flex items-center gap-1.5 h-9 flex-1 min-w-[220px] max-w-[420px] rounded-[10px] bg-[var(--color-surface-2)] border border-transparent px-2.5 focus-within:bg-[var(--color-surface)] focus-within:border-[var(--color-border-strong)]">
           <Search className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
           <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="WO #, equipment, step, crew…" aria-label="Search work orders"
             className="flex-1 min-w-0 bg-transparent text-[13px] outline-none" />
           {query && <button type="button" onClick={() => setQuery("")} className="text-[11px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Clear</button>}
         </label>
         <select value={who ?? "__all"} onChange={(e) => setWho(e.target.value === "__all" ? null : e.target.value)} aria-label="Who"
-          className={`h-8 rounded-lg border px-2 text-[12px] font-semibold ${who != null ? "border-[var(--color-text)] text-[var(--color-text)]" : "border-[var(--color-border-strong)] text-[var(--color-text)]"} bg-[var(--color-surface)]`}>
+          className={`h-9 rounded-[10px] border px-2 text-[13px] font-semibold text-[var(--color-text)] ${who != null ? "border-[var(--color-text)] bg-[var(--color-surface)]" : "border-transparent bg-[var(--color-surface-2)]"}`}>
           <option value="__all">Everyone</option>
           {whoList.map(([k, x]) => <option key={k || "__none"} value={k}>{k ? x.name : "No crew named"} ({x.steps} step{x.steps === 1 ? "" : "s"})</option>)}
         </select>
@@ -260,7 +273,7 @@ export default function WorkOrdersView({ milestones, cancelled = [], childrenByP
         {(() => {
           const ALL = [["all", "All"], ["open", "Open"], ["critical", "Critical path"], ["behind", "Behind"], ["notStarted", "Not started"], ["held", "Held"], ["done", "Done"], ["added", "Discovery & added"]] as const;
           const UP_FRONT: Show[] = ["all", "open", "behind", "held"];
-          const chip = (on: boolean) => `h-8 px-2.5 rounded-full border text-[12px] font-semibold ${on ? "border-[var(--color-text)] bg-[var(--color-text)] text-[var(--color-surface)]" : "border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`;
+          const chip = (on: boolean) => `h-9 px-3 rounded-full text-[13px] font-semibold ${on ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "bg-[var(--color-surface-2)] text-[var(--color-text)] hover:bg-[var(--color-border)]"}`;
           const folded = ALL.filter(([k]) => !UP_FRONT.includes(k));
           const pickedFolded = !showCancelled && !UP_FRONT.includes(show) ? ALL.find(([k]) => k === show) : undefined;
           return (
@@ -281,7 +294,7 @@ export default function WorkOrdersView({ milestones, cancelled = [], childrenByP
                   Cancelled <span className="tabular-nums opacity-80">{cancelledShown.length}</span>
                 </button>
               )}
-              <MoreMenu label="More filters" triggerClass="inline-flex items-center gap-1 h-8 px-2.5 rounded-full border text-[12px] font-semibold border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
+              <MoreMenu label="More filters" triggerClass="inline-flex items-center gap-1 h-9 px-3 rounded-full text-[13px] font-semibold bg-[var(--color-surface-2)] text-[var(--color-text)] hover:bg-[var(--color-border)]"
                 items={[
                   ...folded.map(([k, l]) => ({ icon: <span aria-hidden className="w-4 text-center tabular-nums text-[11px]">{found.filter(is(k)).length}</span>, label: l, current: !showCancelled && show === k, onClick: () => { setShow(k); setShowCancelled(false); } })),
                   { icon: <Ban className="w-4 h-4" />, label: `Cancelled (${cancelled.length})`, current: showCancelled, line: true, onClick: () => setShowCancelled(true) },
@@ -291,19 +304,19 @@ export default function WorkOrdersView({ milestones, cancelled = [], childrenByP
         })()}
         {canEdit && onNewWorkOrder && (
           <button type="button" onClick={() => onNewWorkOrder()}
-            className="ml-auto inline-flex items-center gap-1.5 h-8 px-3 rounded-lg bg-[var(--color-accent)] text-[12px] font-bold text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]">
+            className={`ml-auto ${quietMain ? QUIET : "inline-flex items-center gap-1.5 h-9 px-3.5 rounded-[10px] bg-[var(--color-accent)] text-[13px] font-extrabold text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)] shadow-[0_10px_20px_-10px_var(--color-accent)]"}`}>
             <Plus className="w-3.5 h-3.5" /> New work order
           </button>
         )}
         {canEdit && onDiscovery && (
           <button type="button" onClick={() => setPicking(true)}
-            className={`${onNewWorkOrder ? "" : "ml-auto "}inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[12px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]`}>
+            className={`${onNewWorkOrder ? "" : "ml-auto "}${QUIET}`}>
             <Plus className="w-3.5 h-3.5" /> Add to a work order
           </button>
         )}
         <span className={`relative inline-flex ${canEdit && (onDiscovery || onNewWorkOrder) ? "" : "ml-auto"}`}>
           <button type="button" onClick={() => setPrintMenu((v) => !v)} aria-expanded={printMenu} disabled={shown.length === 0 || showCancelled}
-            className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[12px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">
+            className={QUIET}>
             <Printer className="w-3.5 h-3.5" /> Print
           </button>
           {printMenu && (
@@ -330,40 +343,44 @@ export default function WorkOrdersView({ milestones, cancelled = [], childrenByP
           )}
         </span>
       </div>
-      {printMsg && <div role="alert" className="text-[11.5px] font-semibold text-rose-700 dark:text-rose-400">{printMsg}</div>}
-      {preErr && <div role="alert" className="text-[11.5px] font-semibold text-rose-700 dark:text-rose-400">Couldn&apos;t read the steps&apos; comments and history. They&apos;re missing below until the page is opened again.</div>}
+      {printMsg && <div role="alert" className="px-3 sm:px-4 pb-2 text-[12px] font-semibold text-rose-700 dark:text-rose-400">{printMsg}</div>}
+      {preErr && <div role="alert" className="px-3 sm:px-4 pb-2 text-[12px] font-semibold text-rose-700 dark:text-rose-400">Couldn&apos;t read the steps&apos; comments and history. They&apos;re missing below until the page is opened again.</div>}
 
       {showCancelled ? (
         cancelledShown.length === 0 ? (
-          <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-6 text-center text-[12.5px] text-[var(--color-text-muted)]">
+          <div className="border-t border-[var(--color-border)] px-4 py-8 text-center text-[13px] text-[var(--color-text-muted)]">
             {cancelled.length === 0 ? "No work orders cancelled from this schedule." : "No cancelled work orders match."}
           </div>
         ) : (
-          <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
-            <div className="px-3 py-2 text-[12px] text-[var(--color-text)] border-b border-[var(--color-border)]">
+          <div className="border-t border-[var(--color-border)]">
+            <div className="px-3 sm:px-4 py-2.5 text-[13px] text-[var(--color-text)] border-b border-[var(--color-border)]">
               <b>{cancelledShown.length} cancelled</b> from this schedule, still to be done elsewhere. Not counted in any progress, plan or report except the close-out&apos;s cancelled list.
             </div>
             <CancelledJobsList jobs={cancelledShown} canEdit={canEdit && !!user} userId={user?.id ?? ""} userEmail={user?.email} onChanged={() => onCancelled?.()} />
           </div>
         )
       ) : shown.length === 0 ? (
-        <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-6 text-center text-[12.5px] text-[var(--color-text-muted)]">
+        <div className="border-t border-[var(--color-border)] px-4 py-8 text-center text-[13px] text-[var(--color-text-muted)]">
           {orders.length === 0 ? "No steps on the schedule yet." : "No work orders match."}
         </div>
       ) : (
-        <ul className="space-y-2">
-          {shown.map((o) => {
+        <ul className="border-t border-[var(--color-border)] divide-y divide-[var(--color-border)]">
+          {listed.map((o) => {
             const isOpen = open.has(o.key);
             const st = STANDING[o.standing];
+            // Ink and paper: the standing is a word; colour only when held (a
+            // problem) or done.
+            const stTone = o.standing === "held" ? "text-amber-700 dark:text-amber-300" : o.standing === "done" ? "text-emerald-700 dark:text-emerald-300" : o.standing === "in_progress" ? "text-[var(--color-text)]" : "text-[var(--color-text-muted)]";
             const single = o.steps.length === 1 && o.steps[0].id === o.owner.id;
             const name = `${o.wo ? `WO ${o.wo}` : "No WO"} ${o.owner.name}`;
             return (
-              // Each work order its own card; open, it's framed in a dark edge
-              // and its steps sit inside it, indented on a grey panel.
-              <li key={o.key} className={`rounded-xl border bg-[var(--color-surface)] ${isOpen ? "border-[var(--color-text)] shadow-md" : "border-[var(--color-border)] shadow-sm"}`}>
+              // Each work order a row on the card; open, its steps sit under it
+              // on the warm fill, framed by a dark edge on the left.
+              <li key={o.key} className={`relative ${isOpen ? "bg-[var(--color-surface-2)]/50" : ""}`}>
+                {isOpen && <span aria-hidden className="absolute left-0 top-0 bottom-0 w-[3px] bg-[var(--color-text)]" />}
                 <button type="button" onClick={() => toggle(o.key)} aria-expanded={isOpen} aria-label={`${isOpen ? "Close" : "Open"} ${name}`}
                   ref={(el) => { if (el) heads.current.set(o.key, el); else heads.current.delete(o.key); }}
-                  className={`w-full text-left px-3 py-2.5 rounded-t-[10px] ${isOpen ? "sticky top-0 z-20 bg-[var(--color-surface-2)] border-b border-[var(--color-text)]" : "rounded-b-[10px] hover:bg-[var(--color-surface-2)]"}`}>
+                  className={`w-full text-left px-3 sm:px-4 py-3 ${isOpen ? "sticky top-0 z-20 bg-[var(--color-surface-2)] border-b border-[var(--color-border-strong)]" : "hover:bg-[var(--color-surface-2)]/60"}`}>
                   <div className="flex items-start gap-2.5">
                     <span className={`mt-0.5 shrink-0 inline-flex items-center justify-center w-7 h-7 rounded-full border ${isOpen ? "bg-[var(--color-text)] border-[var(--color-text)] text-[var(--color-surface)]" : "border-[var(--color-border-strong)] text-[var(--color-text-muted)]"}`} aria-hidden>
                       {isOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
@@ -376,8 +393,8 @@ export default function WorkOrdersView({ milestones, cancelled = [], childrenByP
                       {!isOpen && detailsOf(o)}
                     </div>
                     <div className="shrink-0 flex flex-col items-end gap-1">
-                      <span className={`rounded-md border px-1.5 py-0.5 text-[11px] font-bold ${st.cls}`}>{st.word}</span>
-                      <span className="text-[12px] font-bold tabular-nums text-[var(--color-text)]">{o.pct}%</span>
+                      <span className={`text-[12px] font-bold ${stTone}`}>{st.word}</span>
+                      <span className="text-[13px] font-bold tabular-nums text-[var(--color-text)]">{o.pct}%</span>
                       {o.standing !== "done" && Math.abs(o.hours) >= 0.1 && (
                         <span className={`font-mono text-[11px] font-bold ${o.hours < 0 ? "text-rose-700 dark:text-rose-400" : "text-emerald-700 dark:text-emerald-400"}`}>{o.hours > 0 ? "+" : "−"}{Math.abs(o.hours)} h</span>
                       )}
@@ -386,45 +403,45 @@ export default function WorkOrdersView({ milestones, cancelled = [], childrenByP
                   {!isOpen && barOf(o)}
                 </button>
                 {isOpen && (
-                  <div className="rounded-b-[10px] bg-slate-100/80 dark:bg-slate-900/60">
-                    <div className="px-3 pt-2 pb-2.5 bg-[var(--color-surface)] border-b border-[var(--color-border)]">
+                  <div>
+                    <div className="px-3 sm:px-4 pt-2 pb-2.5 bg-[var(--color-surface)] border-b border-[var(--color-border)]">
                       <div className="ml-9">{detailsOf(o)}</div>
                       {barOf(o)}
                       {originBlock(o)}
                     </div>
-                    <div className="px-3 pt-2.5 flex flex-wrap gap-1.5">
+                    <div className="px-3 sm:px-4 pt-2.5 flex flex-wrap gap-1.5">
                         {/* The equipment it's on: picked from the project's unit. */}
                         <EquipmentField milestone={o.owner} milestones={milestones} />
                         {canEdit && onDiscovery && (
                           <button type="button" onClick={() => onDiscovery(o.owner)}
-                            className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-[var(--color-border-strong)] text-[12px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+                            className="inline-flex items-center gap-1.5 h-9 px-3 rounded-[10px] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-border)]">
                             <Plus className="w-3.5 h-3.5" /> Add discovery or added scope to this work order
                           </button>
                         )}
                         {onOpenReport && (
                           <button type="button" onClick={() => onOpenReport({ id: "workorders", wo: o.key })} title="This work order in Reports, ready to print"
-                            className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-[var(--color-border-strong)] text-[12px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+                            className="inline-flex items-center gap-1.5 h-9 px-3 rounded-[10px] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-border)]">
                             <Printer className="w-3.5 h-3.5" /> Print this work order
                           </button>
                         )}
                         {canEdit && o.owner.id && (
                           <button type="button" onClick={() => newFinding({ milestoneId: o.owner.id })} title="A problem, a lesson, a material shortfall or missed scope on this work order, kept for the next job"
-                            className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-[var(--color-border-strong)] text-[12px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+                            className="inline-flex items-center gap-1.5 h-9 px-3 rounded-[10px] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-border)]">
                             <Lightbulb className="w-3.5 h-3.5" /> + Finding
                           </button>
                         )}
                     </div>
                     {/* What was found on it, and on its equipment in past jobs. */}
-                    <div className="px-3 pt-2.5">
+                    <div className="px-3 sm:px-4 pt-2.5">
                       <JobFindings orgId={o.owner.orgId} projectId={o.owner.projectId ?? projectId} milestoneIds={[o.owner.id, ...o.steps.map((x) => x.id)]} tag={equipmentOf(o.owner, byIdAll)?.tag ?? null} tz={tz} />
                     </div>
                     {/* Its steps: inside the work order, indented, each a row that opens to its card. */}
                     <div className="px-2 sm:px-3 pt-2.5 pb-1">
                       <div className="ml-2 sm:ml-5 pl-2 sm:pl-3 border-l-2 border-[var(--color-border-strong)]">
-                        <div className="mb-1 text-[12px] font-semibold text-[var(--color-text-muted)]">
+                        <div className="mb-1 text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">
                           {single ? "The step" : `Steps · ${o.done} of ${o.steps.length} done`}
                         </div>
-                        <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
+                        <div className="rounded-xl bg-[var(--color-surface)] shadow-[0_1px_2px_rgb(11_18_32/0.06)] overflow-hidden">
                           <CalendarQuickView whole task={o.owner} onDay={o.steps} others={[]} dayKey={today} band={null} dayLabel="" marks={marks}
                             tz={tz} times={times} progress={progress} canEdit={canEdit} preloaded={pre}
                             onUpdate={onUpdate} onFixTimes={onFixTimes} onOpenDetail={onOpenDetail} onMoveDays={canEdit ? onMoveDays : undefined} />
@@ -449,7 +466,7 @@ export default function WorkOrdersView({ milestones, cancelled = [], childrenByP
                     )}
                     {/* Close it from the bottom: no scrolling back up. */}
                     <button type="button" onClick={() => toggle(o.key)} aria-label={`Close ${name}`}
-                      className="w-full flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-b-[10px] border-t border-[var(--color-border)] text-[12px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+                      className="w-full flex items-center justify-center gap-1.5 px-3 py-2.5 border-t border-[var(--color-border)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
                       <ChevronUp className="w-4 h-4" /> Close {o.wo ? `WO ${o.wo}` : o.owner.name}
                     </button>
                   </div>
@@ -459,7 +476,13 @@ export default function WorkOrdersView({ milestones, cancelled = [], childrenByP
           })}
         </ul>
       )}
-      <div className="px-1 text-[11px] text-[var(--color-text-muted)]">{shown.length} of {orders.length} work orders · tap one to update its steps</div>
+      {!showCancelled && shown.length > listed.length && (
+        <div className="px-3 sm:px-4 py-3 border-t border-[var(--color-border)] flex flex-wrap items-center gap-2">
+          <button type="button" onClick={() => setLimit((n) => n + WO_STEP)} className={QUIET}>Show {Math.min(WO_STEP, shown.length - listed.length)} more</button>
+          <button type="button" onClick={() => setLimit(Infinity)} className="h-9 px-3 rounded-[10px] text-[13px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">Show all {shown.length}</button>
+        </div>
+      )}
+      <div className="px-3 sm:px-4 py-3 border-t border-[var(--color-border)] text-[12px] text-[var(--color-text-muted)]">{shown.length} of {orders.length} work orders · tap one to update its steps</div>
     </div>
   );
 }
