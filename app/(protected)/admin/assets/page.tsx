@@ -303,6 +303,7 @@ function AssetsPageInner() {
   const moreItems = [
     ...(filtered.length > 0 ? [{ icon: <QrCode className="w-4 h-4" />, label: `QR labels (${Math.min(filtered.length, 200)})`, onClick: () => void printLabels() }] : []),
     ...(canEditEquipment ? [{ icon: <Upload className="w-4 h-4" />, label: "Import CSV", onClick: () => setCsvOpen(true) }] : []),
+    ...(canEditEquipment && activeOrgId && !unitFilter ? [{ icon: <RotateCcw className="w-4 h-4" />, label: "Start over from the drawings", tone: "bad" as const, line: true, onClick: () => setStartOverOpen(true) }] : []),
   ];
 
   // The answer: how much equipment, and the one gap that matters (photos).

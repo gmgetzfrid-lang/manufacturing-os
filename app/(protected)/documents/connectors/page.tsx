@@ -21,6 +21,7 @@ import {
   checkConnectors, drawingOf, missingLine, oneWayLine, tagLine,
   type ConnectorChecks, type ConnectorRead, type SheetOnFile, type SheetRef,
 } from "@/lib/drawingConnectors";
+import { fetchReadings } from "@/lib/drawingReadings";
 
 type View = "missing" | "tag" | "oneway";
 
@@ -33,24 +34,14 @@ async function load(orgId: string): Promise<ConnectorChecks> {
     .filter((d) => d.document_number && drawingOf(d.document_number) && !["Archived", "Superseded"].includes(d.status ?? ""))
     .map((d) => ({ id: d.id, libraryId: d.library_id, number: d.document_number!, sheet: d.sheet, name: d.name ?? "" }));
   const ids = new Set(sheets.map((s) => s.id));
-  const mirrors = await fetchAllRows<{ id: string; source_document_id: string | null }>((from, to) =>
-    supabase.from("knowledge_documents").select("id, source_document_id").eq("org_id", orgId).not("source_document_id", "is", null).order("id").range(from, to));
-  if (mirrors.error) throw new Error(mirrors.error);
-  const toDoc = new Map(mirrors.rows.filter((m) => m.source_document_id && ids.has(m.source_document_id)).map((m) => [m.id, m.source_document_id!]));
+  // What the reader found on each sheet (only drawings this person can open).
+  const readings = await fetchReadings(orgId);
   const reads: ConnectorRead[] = [];
   const tagsOn = new Map<string, string[]>();
-  const mirrorIds = [...toDoc.keys()];
-  for (let i = 0; i < mirrorIds.length; i += 60) {
-    const slice = mirrorIds.slice(i, i + 60);
-    const ents = await fetchAllRows<{ document_id: string; page: number; kind: string; tag: string; raw: string | null }>((from, to) =>
-      supabase.from("knowledge_page_entities").select("document_id, page, kind, tag, raw").in("document_id", slice).in("kind", ["xref", "equipment", "instrument"]).order("id").range(from, to));
-    if (ents.error) throw new Error(ents.error);
-    for (const e of ents.rows) {
-      const doc = toDoc.get(e.document_id);
-      if (!doc) continue;
-      if (e.kind === "xref") reads.push({ sheetId: doc, page: e.page, tag: e.tag, raw: e.raw ?? "" });
-      else tagsOn.set(doc, [...(tagsOn.get(doc) ?? []), e.tag]);
-    }
+  for (const e of readings) {
+    if (!ids.has(e.documentId)) continue;
+    if (e.kind === "xref") reads.push({ sheetId: e.documentId, page: e.page, tag: e.tag, raw: e.raw ?? "" });
+    else tagsOn.set(e.documentId, [...(tagsOn.get(e.documentId) ?? []), e.tag]);
   }
   return checkConnectors(sheets, reads, tagsOn);
 }

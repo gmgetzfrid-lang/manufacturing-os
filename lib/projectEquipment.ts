@@ -404,20 +404,16 @@ export interface DrawnName { tag: string; name: string | null; sheet: string; do
 export async function drawnNamesForId(orgId: string, code: string): Promise<DrawnName[]> {
   const id = code.trim();
   if (!id) return [];
-  const { data: ents } = await supabase.from("knowledge_page_entities").select("document_id, page, tag, raw")
-    .eq("org_id", orgId).eq("kind", "equipment").ilike("raw", `%(${id.replace(/[%_]/g, "")})%`).limit(60);
-  const rows = ((ents ?? []) as Array<{ document_id: string; page: number; tag: string; raw: string | null }>)
-    .filter((r) => sameEquipmentId(readCallout(r.tag, r.raw).code, id));
+  // Read on the server (the readings are server-only), for drawings this person can open.
+  const { fetchReadings } = await import("@/lib/drawingReadings");
+  const rows = (await fetchReadings(orgId, id)).filter((r) => sameEquipmentId(readCallout(r.tag, r.raw).code, id));
   if (!rows.length) return [];
-  const { data: mirrors } = await supabase.from("knowledge_documents").select("id, source_document_id").in("id", [...new Set(rows.map((r) => r.document_id))]);
-  const toDoc = new Map(((mirrors ?? []) as Array<{ id: string; source_document_id: string | null }>).filter((m) => m.source_document_id).map((m) => [m.id, m.source_document_id!]));
-  const docIds = [...new Set([...toDoc.values()])];
-  if (!docIds.length) return [];
+  const docIds = [...new Set(rows.map((r) => r.documentId))];
   const { data: docs } = await supabase.from("documents").select("id, library_id, document_number, name, sheet:metadata->>sheet").in("id", docIds);
   const byId = new Map(((docs ?? []) as unknown as Array<{ id: string; library_id: string; document_number: string | null; name: string | null; sheet: string | null }>).map((d) => [d.id, d]));
   const out = new Map<string, DrawnName>();
   for (const r of rows) {
-    const d = byId.get(toDoc.get(r.document_id) ?? "");
+    const d = byId.get(r.documentId);
     if (!d) continue;
     const number = d.document_number ?? d.name ?? "a drawing";
     const sh = d.sheet && /\d/.test(d.sheet) ? sheetKey(d.sheet) : sheetFromName(d.name ?? "");

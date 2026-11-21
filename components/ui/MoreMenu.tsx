@@ -1,9 +1,12 @@
 "use client";
 
 // MoreMenu - "More": a screen's less-used actions in one menu, so the few
-// used every day stay in sight. Closes on a tap outside or Escape.
+// used every day stay in sight. Closes on a tap outside or Escape. The menu
+// is drawn on top of the page (not inside its button's box), so a header
+// band that clips its own edges never cuts it off.
 
 import React, { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { MoreHorizontal } from "lucide-react";
 import { useEscapeClose } from "@/hooks/useEscapeClose";
 
@@ -14,26 +17,38 @@ export type MoreItem = { icon: React.ReactNode; label: string; onClick: () => vo
  *  just the dots, with the label for screen readers. */
 export default function MoreMenu({ items, label = "More", triggerClass, iconOnly }: { items: MoreItem[]; label?: string; triggerClass?: string; iconOnly?: boolean }) {
   const [open, setOpen] = useState(false);
-  // Opens toward the side with room (the button sits on the left on a phone).
-  const [toLeft, setToLeft] = useState(true);
+  // Where the menu goes: under the button, toward the side with room (the
+  // button sits on the left on a phone).
+  const [at, setAt] = useState<{ top: number; left?: number; right?: number }>({ top: 0 });
   const box = React.useRef<HTMLDivElement | null>(null);
+  const menu = React.useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     if (!open) return;
-    const away = (e: MouseEvent | TouchEvent) => { if (box.current && !box.current.contains(e.target as Node)) setOpen(false); };
+    const inside = (t: EventTarget | null) => !!t && ((box.current?.contains(t as Node) ?? false) || (menu.current?.contains(t as Node) ?? false));
+    const away = (e: MouseEvent | TouchEvent) => { if (!inside(e.target)) setOpen(false); };
+    // The page moving under it: the menu would float away from its button.
+    const moved = (e: Event) => { if (!inside(e.target)) setOpen(false); };
     document.addEventListener("mousedown", away);
     document.addEventListener("touchstart", away);
-    return () => { document.removeEventListener("mousedown", away); document.removeEventListener("touchstart", away); };
+    window.addEventListener("scroll", moved, true);
+    window.addEventListener("resize", moved);
+    return () => {
+      document.removeEventListener("mousedown", away); document.removeEventListener("touchstart", away);
+      window.removeEventListener("scroll", moved, true); window.removeEventListener("resize", moved);
+    };
   }, [open]);
+  const place = (r: DOMRect) => setAt(r.right >= 232 ? { top: r.bottom + 4, right: Math.max(8, window.innerWidth - r.right) } : { top: r.bottom + 4, left: Math.max(8, r.left) });
   // Escape closes the open menu first, not the screen or dialog under it.
   useEscapeClose(() => setOpen(false), open);
   return (
     <div ref={box} className="relative">
-      <button type="button" aria-haspopup="menu" aria-expanded={open} aria-label={iconOnly ? label : undefined} onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); setToLeft(r.right >= 232); setOpen((o) => !o); }}
+      <button type="button" aria-haspopup="menu" aria-expanded={open} aria-label={iconOnly ? label : undefined} onClick={(e) => { place(e.currentTarget.getBoundingClientRect()); setOpen((o) => !o); }}
         className={triggerClass ?? "inline-flex items-center justify-center gap-1.5 h-9 px-3 rounded-lg border text-[13px] font-semibold transition-colors border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}>
         <MoreHorizontal className="w-4 h-4" />{!iconOnly && <span>{label}</span>}
       </button>
-      {open && (
-        <div role="menu" className={`on-sheet absolute ${toLeft ? "right-0" : "left-0"} top-full mt-1 z-50 w-56 max-w-[calc(100vw-2rem)] rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-xl py-1`}>
+      {open && typeof document !== "undefined" && createPortal(
+        <div ref={menu} role="menu" style={{ top: at.top, left: at.left, right: at.right }}
+          className="on-sheet fixed z-[650] w-56 max-w-[calc(100vw-2rem)] max-h-[calc(100dvh-5rem)] overflow-y-auto rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-xl py-1">
           {items.map((it, i) => (
             <React.Fragment key={it.label}>
               {it.line && i > 0 && <div className="my-1 h-px bg-[var(--color-border)]" />}
@@ -43,7 +58,8 @@ export default function MoreMenu({ items, label = "More", triggerClass, iconOnly
               </button>
             </React.Fragment>
           ))}
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );
