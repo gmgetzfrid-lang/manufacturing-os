@@ -310,13 +310,7 @@ const FileGraph = React.forwardRef<FileGraphHandle, Props>(function FileGraph(
         ctx.strokeStyle = "rgba(255,255,255,0.9)"; ctx.lineWidth = 1.5; ctx.stroke();
         const img = imagesRef.current.get(up.kind === "folder" || up.kind === "extfolder" ? "folderOpen" : up.type.key);
         if (img) ctx.drawImage(img, upP.x - r * 0.6, upP.y - r * 0.6, r * 1.2, r * 1.2);
-        // The way up's name, at a fixed size on the screen.
-        ctx.save();
-        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-        ctx.font = "600 12px Barlow, system-ui, sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "top";
-        ctx.fillStyle = "#334155";
-        ctx.fillText(`↑ ${up.label.length > 24 ? up.label.slice(0, 22) + "…" : up.label}`, w / 2 + cam.x + upP.x * s, h / 2 + cam.y + (upP.y + r) * s + 4);
-        ctx.restore();
+        // (Its name goes on the screen with the others, after the nodes.)
         ctx.globalAlpha = 1;
       }
 
@@ -568,6 +562,20 @@ const FileGraph = React.forwardRef<FileGraphHandle, Props>(function FileGraph(
           }
         }
         ctx.globalAlpha = 1;
+      }
+      // The way up's name, last: left out where it would cover the map.
+      if (up && upP && rootP) {
+        ctx.font = "600 12px Barlow, system-ui, sans-serif";
+        const t = `↑ ${up.label.length > 24 ? up.label.slice(0, 22) + "…" : up.label}`;
+        const tw = ctx.measureText(t).width;
+        const sx = ox + upP.x * s, sy = oy + (upP.y + RADIUS[up.kind] * 0.8) * s + 4;
+        const rect: Rect = [sx - tw / 2 - 3, sy, tw + 6, 16];
+        if (!placedOnScreen.some((q) => hits(rect, q)) && !placed.some((q) => hits(rect, toScreen(q)))) {
+          ctx.globalAlpha = hoverRef.current === "__up__" ? 1 : 0.8;
+          ctx.fillStyle = "#334155";
+          ctx.fillText(t, sx, sy);
+          ctx.globalAlpha = 1;
+        }
       }
       // Back to the graph for the satellites (their names go on the screen too).
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
