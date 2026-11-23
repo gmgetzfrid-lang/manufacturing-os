@@ -1,174 +1,354 @@
 "use client";
 
-// /share/<token> — public landing for a shared document.
+// /share/<token>: the page someone outside the company opens from a sent
+// link. No sign-in. What they see comes from /api/share/resolve (gated by
+// the unguessable token, and by the code when the link asks for one); each
+// file comes from /api/share/file, stamped on the server as an uncontrolled
+// copy before any byte leaves.
 //
-// No auth required. Resolution happens server-side via /api/share/resolve
-// (service role, gated only by possession of the unguessable token) — the
-// old direct table query was blocked by RLS for the outside recipients the
-// link exists for. The download comes from /api/share/file, which stamps
-// SERVER-SIDE (uncontrolled watermark, rev footer, verify-QR) before any
-// byte leaves — client-side stamping was CORS-blocked by the bucket, and
-// its fallback opened the raw unstamped file. There is no raw-URL path
-// anymore: the copy that leaves is always marked.
+//   Code screen   when the link asks for a code. The code is kept in this
+//                 tab only (sessionStorage), so a reload doesn't ask again.
+//   The list      who sent it, for whom, until when, and the documents. A
+//                 link with one document opens straight into the viewer.
+//   The viewer    the stamped PDF drawn in the page (never the browser's
+//                 PDF plugin, which has its own download button).
+//   Dead links    expired, turned off, locked, not found: one sentence and
+//                 who to ask.
 
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import dynamic from "next/dynamic";
 import { useParams } from "next/navigation";
-import {
-  Download, Loader2, AlertTriangle, ShieldCheck,
-} from "lucide-react";
-import { PageHero, PageBody, Card, heroPrimary } from "@/components/ui/PageHero";
+import { Loader2, Eye, Download, ShieldCheck, KeyRound, FileText } from "lucide-react";
+import { PageHero, PageBody, Card } from "@/components/ui/PageHero";
+import { btnPrimary, btnRow, Problem, shortDateTime } from "@/components/admin/kit";
+import type { ResolvedShare, ResolvedShareItem } from "@/lib/documentShares";
 
-interface ResolvedShare {
-  documentId: string;
-  versionId: string | null;
-  documentNumber: string | null;
-  title: string | null;
-  rev: string | null;
-  orgName: string | null;
-  fileUrl: string | null;
+const SharedPdfViewer = dynamic(() => import("@/components/viewers/SharedPdfViewer"), { ssr: false });
+
+type State = "loading" | "code" | "ok" | "revoked" | "expired" | "locked" | "notfound" | "error";
+
+const DEAD: Record<"revoked" | "expired" | "locked" | "notfound", string> = {
+  expired: "This link has expired.",
+  revoked: "This link was turned off.",
+  locked: "This link is locked.",
+  notfound: "This link doesn't exist.",
+};
+
+const codeKey = (token: string) => `share-code:${token}`;
+function readCode(token: string): string {
+  try { return sessionStorage.getItem(codeKey(token)) ?? ""; } catch { return ""; }
 }
+function keepCode(token: string, code: string | null) {
+  try { if (code) sessionStorage.setItem(codeKey(token), code); else sessionStorage.removeItem(codeKey(token)); } catch { /* private mode */ }
+}
+
+/** A dead-link answer from either route moves the whole page there. */
+const deadFrom = (err: string | undefined): keyof typeof DEAD | null =>
+  err === "revoked" || err === "expired" || err === "locked" ? err
+    : err === "notfound" || err === "invalid" ? "notfound" : null;
+
+const itemName = (it: ResolvedShareItem) => it.documentNumber || it.title || "Document";
 
 export default function SharePage() {
   const { token } = useParams<{ token: string }>();
-  const [state, setState] = useState<"loading" | "ok" | "revoked" | "expired" | "notfound" | "error">("loading");
+  const [state, setState] = useState<State>("loading");
   const [data, setData] = useState<ResolvedShare | null>(null);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [downloading, setDownloading] = useState(false);
+  const [codeError, setCodeError] = useState<string | null>(null);
+  const [checking, setChecking] = useState(false);
+  // Each wrong code starts the boxes over, empty.
+  const [codeTry, setCodeTry] = useState(0);
+  const code = useRef("");
+
+  // The open document.
+  const [viewing, setViewing] = useState<{ item: ResolvedShareItem; url: string | null; error: string | null } | null>(null);
+  const [downloading, setDownloading] = useState<string | null>(null);
   const [downloadError, setDownloadError] = useState<string | null>(null);
+  const autoOpened = useRef(false);
+
+  const headers = useCallback((): Record<string, string> => (code.current ? { "x-share-code": code.current } : {}), []);
+
+  const resolve = useCallback(async (fromCodeScreen: boolean) => {
+    if (!token) return;
+    if (fromCodeScreen) setChecking(true);
+    try {
+      const res = await fetch(`/api/share/resolve?token=${encodeURIComponent(token)}`, { headers: headers(), cache: "no-store" });
+      const body = (await res.json().catch(() => null)) as (ResolvedShare & { error?: string }) | null;
+      if (!res.ok) {
+        const dead = deadFrom(body?.error);
+        if (dead) { keepCode(token, null); setState(dead); return; }
+        if (body?.error === "code" || body?.error === "badcode") {
+          keepCode(token, null);
+          code.current = "";
+          setCodeError(body.error === "badcode" ? "That code isn't right." : null);
+          setCodeTry((n) => n + 1);
+          setState("code");
+          return;
+        }
+        setState("error");
+        return;
+      }
+      if (code.current) keepCode(token, code.current);
+      setCodeError(null);
+      setData(body);
+      setState("ok");
+    } catch {
+      setState("error");
+    } finally {
+      setChecking(false);
+    }
+  }, [token, headers]);
 
   useEffect(() => {
     if (!token) return;
-    (async () => {
-      try {
-        const res = await fetch(`/api/share/resolve?token=${encodeURIComponent(token)}`);
-        if (!res.ok) {
-          const body = (await res.json().catch(() => null)) as { error?: string } | null;
-          if (body?.error === "revoked") setState("revoked");
-          else if (body?.error === "expired") setState("expired");
-          else if (res.status === 404 || body?.error === "notfound" || body?.error === "invalid") setState("notfound");
-          else { setErrorMessage(body?.error ?? `HTTP ${res.status}`); setState("error"); }
-          return;
-        }
-        setData((await res.json()) as ResolvedShare);
-        setState("ok");
-      } catch (e) {
-        setErrorMessage((e as Error).message);
-        setState("error");
-      }
-    })();
-  }, [token]);
+    code.current = readCode(token);
+    void resolve(false);
+  }, [token, resolve]);
 
-  const handleDownload = async () => {
-    if (!data?.fileUrl) return;
-    setDownloading(true);
+  const fetchFile = useCallback(async (it: ResolvedShareItem, view: boolean): Promise<Blob> => {
+    const qs = new URLSearchParams({ token, doc: it.documentId });
+    if (view) qs.set("view", "1");
+    const res = await fetch(`/api/share/file?${qs}`, { headers: headers(), cache: "no-store" });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => null)) as { error?: string } | null;
+      const dead = deadFrom(body?.error);
+      if (dead && dead !== "notfound") { setViewing(null); setState(dead); throw new Error(DEAD[dead]); }
+      if (body?.error === "code" || body?.error === "badcode") { setViewing(null); code.current = ""; keepCode(token, null); setState("code"); throw new Error("That code isn't right."); }
+      throw new Error(
+        body?.error === "unstampable" ? "This file couldn't be stamped as an uncontrolled copy, so it isn't shown. Ask the person who sent it for a PDF."
+          : body?.error === "nodownload" ? "The person who sent this didn't allow downloading. You can view it here."
+            : body?.error === "nofile" ? "There's no file for this document. Ask the person who sent it."
+              : "The file couldn't be opened. Try again in a minute.",
+      );
+    }
+    return res.blob();
+  }, [token, headers]);
+
+  const openViewer = useCallback(async (it: ResolvedShareItem) => {
+    setViewing({ item: it, url: null, error: null });
+    try {
+      const blob = await fetchFile(it, true);
+      setViewing((v) => (v && v.item.documentId === it.documentId ? { ...v, url: URL.createObjectURL(blob) } : v));
+    } catch (e) {
+      setViewing((v) => (v && v.item.documentId === it.documentId ? { ...v, error: (e as Error).message } : v));
+    }
+  }, [fetchFile]);
+
+  const closeViewer = useCallback(() => {
+    setViewing((v) => { if (v?.url) URL.revokeObjectURL(v.url); return null; });
+  }, []);
+
+  const download = useCallback(async (it: ResolvedShareItem) => {
+    setDownloading(it.documentId);
     setDownloadError(null);
     try {
-      const label = data.documentNumber || data.title || "document";
-      // The server stamps before it responds — this is just "save the blob".
-      const res = await fetch(data.fileUrl);
-      if (!res.ok) {
-        const body = (await res.json().catch(() => null)) as { error?: string } | null;
-        throw new Error(body?.error === "revoked" || body?.error === "expired"
-          ? "This link is no longer active - ask the owner for a fresh one."
-          : "The file couldn't be prepared. Try again, or ask the person who shared it.");
-      }
-      const blob = await res.blob();
+      const blob = await fetchFile(it, false);
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
+      const safe = (s: string) => s.replace(/[^\w.\-]+/g, "_");
       a.href = url;
-      a.download = `${label.replace(/[^\w.\-]+/g, "_")}_Rev${(data.rev ?? "0").replace(/[^\w.\-]+/g, "_")}.pdf`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
+      a.download = `${safe(itemName(it))}_Rev${safe(it.rev ?? "0")}${it.markedUp ? "_markup" : ""}.pdf`;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 30_000);
     } catch (e) {
       setDownloadError((e as Error).message);
     } finally {
-      setDownloading(false);
+      setDownloading(null);
     }
+  }, [fetchFile]);
+
+  // One document: straight into the viewer (once; closing shows the page).
+  useEffect(() => {
+    if (state === "ok" && data && data.items.length === 1 && data.items[0].viewable && !autoOpened.current) {
+      autoOpened.current = true;
+      void openViewer(data.items[0]);
+    }
+  }, [state, data, openViewer]);
+
+  const submitCode = (value: string) => {
+    if (!/^\d{6}$/.test(value) || checking) return;
+    code.current = value;
+    void resolve(true);
   };
 
-  // The answer: what this link gives you, or why it doesn't.
-  const title = state === "loading" ? "Opening the shared document…"
-    : state === "notfound" ? "This link doesn't exist."
-    : state === "revoked" ? "This link was revoked."
-    : state === "expired" ? "This link has expired."
-    : state === "error" ? "It didn't open."
-    : data?.documentNumber || data?.title || "Shared document";
-  const sub = state === "ok" && data
-    ? <>{data.title && data.documentNumber && data.title !== data.documentNumber ? <>{data.title}. </> : null}Rev {data.rev || "0"}, from {data.orgName ?? "-"}.</>
-    : undefined;
-  const canDownload = state === "ok" && !!data?.fileUrl;
+  // ── The page ──────────────────────────────────────────────────────────
+  const from = data?.orgName ? `From ${data.orgName}` : "Sent to you";
+  if (state === "loading") {
+    return (
+      <Shell kicker="Sent to you" title="Opening…">
+        <Card><div className="text-[15px] text-[var(--color-text-muted)] inline-flex items-center gap-2"><Loader2 className="w-5 h-5 animate-spin" /> Opening the link…</div></Card>
+      </Shell>
+    );
+  }
+  if (state === "revoked" || state === "expired" || state === "locked" || state === "notfound") {
+    return (
+      <Shell kicker="Sent to you" title={DEAD[state]}
+        sub={`${state === "locked" ? "The code was entered wrong too many times. " : ""}Ask the person who sent it for a new link.`} />
+    );
+  }
+  if (state === "error") {
+    return (
+      <Shell kicker="Sent to you" title="The link couldn't be opened right now." sub="Try again in a minute.">
+        <Card><button type="button" onClick={() => { setState("loading"); void resolve(false); }} className={`${btnPrimary} h-11`}>Try again</button></Card>
+      </Shell>
+    );
+  }
+  if (state === "code") {
+    return (
+      <Shell kicker="Sent to you" title="Enter the code" sub="The person who sent this link gave you a 6-digit code separately, by a call or a text.">
+        <Card>
+          <CodeBoxes key={codeTry} onDone={submitCode} busy={checking} error={codeError} onTyping={() => setCodeError(null)} />
+        </Card>
+      </Shell>
+    );
+  }
+
+  // state === "ok"
+  const d = data!;
+  const until = d.expiresAt ? shortDateTime(d.expiresAt) : null;
+  const sentBy = [
+    d.senderName ? `Sent by ${d.senderName}` : "Sent",
+    d.orgName ? ` at ${d.orgName}` : "",
+    d.recipient ? ` for ${d.recipient}` : "",
+    ".",
+  ].join("");
+  const title = d.items.length === 1 ? itemName(d.items[0]) : `${d.items.length} documents`;
 
   return (
-    <main className="min-h-dvh bg-[var(--color-canvas)] px-3 sm:px-6 py-4 sm:py-8 pb-24">
-      <div className="mx-auto w-full max-w-2xl">
-        <PageHero
-          kicker={state === "ok" ? `Shared document${data?.orgName ? ` · ${data.orgName}` : ""}` : "Shared document"}
-          title={title}
-          sub={sub}
-          size="md"
-          primary={canDownload ? (
-            <button onClick={() => void handleDownload()} disabled={downloading} className={heroPrimary}>
-              {downloading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
-              {downloading ? "Preparing stamped copy…" : "Download stamped copy"}
-            </button>
-          ) : undefined}
-        />
-        <PageBody>
-          <Card>
-            {state === "loading" && (
-              <div className="text-[14px] text-[var(--color-text-muted)] inline-flex items-center gap-2"><Loader2 className="w-5 h-5 animate-spin" /> Opening the shared document…</div>
-            )}
-            {state === "notfound" && (
-              <Centered icon={AlertTriangle} tone="rose" title="Link not found" body="This share link doesn't exist. It may have been mistyped or revoked." />
-            )}
-            {state === "revoked" && (
-              <Centered icon={AlertTriangle} tone="amber" title="Link revoked" body="The owner has revoked this share. Ask them for a fresh link if you still need access." />
-            )}
-            {state === "expired" && (
-              <Centered icon={AlertTriangle} tone="amber" title="Link expired" body="This share has passed its expiration date. Ask the owner for a fresh link." />
-            )}
-            {state === "error" && (
-              <Centered icon={AlertTriangle} tone="rose" title="Couldn't load" body={errorMessage ?? "Something went wrong resolving this share link."} />
-            )}
-            {state === "ok" && data && (
-              <div className="space-y-3">
-                {data.fileUrl ? (
-                  <p className="text-[14px] text-[var(--color-text)]">
-                    The copy you download is stamped: it says it&apos;s uncontrolled, shows the revision, and carries a code to check whether it&apos;s still current.
-                  </p>
-                ) : (
-                  <p className="text-[14px] text-amber-800 dark:text-amber-300">
-                    The link works, but its file couldn&apos;t be found. Ask the person who shared it to check the document still has a file.
-                  </p>
-                )}
-                {downloadError && (
-                  <p role="alert" className="text-[14px] text-rose-700 dark:text-rose-300 flex items-start gap-1.5">
-                    <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" /> {downloadError}
-                  </p>
-                )}
-                <div className="pt-3 border-t border-[var(--color-border)] text-[12px] text-[var(--color-text-muted)] inline-flex items-center gap-1.5">
-                  <ShieldCheck className="w-3.5 h-3.5" /> Each download is recorded.
+    <>
+      <Shell kicker={from} title={title} sub={<>{sentBy}{until ? <><br />Open until {until}.</> : null}</>}>
+        <Card pad={false}>
+          <ul className="divide-y divide-[var(--color-border)]">
+            {d.items.map((it) => (
+              <li key={it.documentId} className="px-4 sm:px-5 py-3.5 flex items-center gap-3 flex-wrap sm:flex-nowrap">
+                <FileText className="w-5 h-5 shrink-0 text-[var(--color-text-muted)] max-sm:hidden" />
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-[16px] font-semibold text-[var(--color-text)]">{itemName(it)}</span>
+                    {it.rev && <span className="text-[14px] text-[var(--color-text-muted)]">Rev {it.rev}</span>}
+                    {it.markedUp && <span className="ui-pill">Marked up</span>}
+                  </div>
+                  {it.documentNumber && it.title && <div className="text-[14px] text-[var(--color-text-muted)] mt-0.5 truncate">{it.title}</div>}
+                  {!it.viewable && <div className="text-[13px] text-[var(--state-overdue)] mt-0.5">There&apos;s no file to show for this one.</div>}
                 </div>
-              </div>
-            )}
-          </Card>
-        </PageBody>
+                {it.viewable && (
+                  <div className="flex items-center gap-2 shrink-0 max-sm:w-full">
+                    <button type="button" onClick={() => void openViewer(it)} className={`${btnRow} h-11 px-4 text-[14px] max-sm:flex-1`}>
+                      <Eye className="w-4 h-4" /> View
+                    </button>
+                    {d.allowDownload && (
+                      <button type="button" onClick={() => void download(it)} disabled={downloading === it.documentId} className={`${btnRow} h-11 px-4 text-[14px] max-sm:flex-1`}>
+                        {downloading === it.documentId ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />} Download
+                      </button>
+                    )}
+                  </div>
+                )}
+              </li>
+            ))}
+          </ul>
+          {downloadError && <div className="px-4 sm:px-5 pb-3"><Problem>{downloadError}</Problem></div>}
+        </Card>
+        <div className="space-y-1.5 text-[14px] text-[var(--color-text-muted)] px-1 -mt-4">
+          <p className="flex items-start gap-2"><ShieldCheck className="w-4 h-4 mt-0.5 shrink-0" />
+            <span>These are uncontrolled copies. Every page is stamped with the revision and a QR code to check whether it is still current.</span></p>
+          {!d.allowDownload && <p className="pl-6">View only: the person who sent this didn&apos;t allow downloading.</p>}
+          <p className="pl-6">Each time you open this link, it&apos;s recorded.</p>
+        </div>
+      </Shell>
+
+      {viewing && (viewing.url ? (
+        <SharedPdfViewer
+          url={viewing.url}
+          title={[itemName(viewing.item), viewing.item.rev ? `Rev ${viewing.item.rev}` : null].filter(Boolean).join(" ")}
+          sub={[viewing.item.documentNumber && viewing.item.title ? viewing.item.title : null, viewing.item.markedUp ? "Marked-up copy" : null].filter(Boolean).join(", ") || null}
+          onClose={closeViewer}
+          onDownload={d.allowDownload ? () => void download(viewing.item) : undefined}
+          downloading={downloading === viewing.item.documentId}
+          downloadNote={d.allowDownload ? undefined : "View only"}
+        />
+      ) : (
+        <div className="fixed inset-0 z-50 flex flex-col items-center justify-center gap-4 px-6 bg-[var(--color-canvas)] text-center" role="dialog" aria-modal="true">
+          {viewing.error
+            ? <>
+                <p className="text-[16px] text-[var(--color-text)] max-w-md">{viewing.error}</p>
+                <button type="button" onClick={closeViewer} className={`${btnPrimary} h-11`}>Back to the list</button>
+              </>
+            : <p className="text-[15px] text-[var(--color-text-muted)] inline-flex items-center gap-2"><Loader2 className="w-5 h-5 animate-spin" /> Opening {itemName(viewing.item)}…</p>}
+        </div>
+      ))}
+    </>
+  );
+}
+
+function Shell({ kicker, title, sub, children }: { kicker: React.ReactNode; title: React.ReactNode; sub?: React.ReactNode; children?: React.ReactNode }) {
+  return (
+    <main className="min-h-dvh bg-[var(--color-canvas)] px-3 sm:px-6 pt-6 pb-16">
+      <div className="mx-auto w-full max-w-2xl">
+        <PageHero kicker={kicker} title={title} sub={sub} size="md" />
+        {children && <PageBody>{children}</PageBody>}
       </div>
     </main>
   );
 }
 
-function Centered({ icon: Icon, tone, title, body }: { icon: React.ComponentType<{ className?: string }>; tone: "rose" | "amber"; title: string; body: string }) {
-  const c = tone === "rose" ? "text-rose-700 dark:text-rose-300" : "text-amber-700 dark:text-amber-300";
+/** Six boxes, one digit each: the number keyboard on a phone, paste fills
+ *  them all, Backspace steps back. Opens itself when the sixth is typed. */
+function CodeBoxes({ onDone, busy, error, onTyping }: { onDone: (code: string) => void; busy: boolean; error: string | null; onTyping: () => void }) {
+  const [digits, setDigits] = useState<string[]>(["", "", "", "", "", ""]);
+  const refs = useRef<Array<HTMLInputElement | null>>([]);
+  useEffect(() => { refs.current[0]?.focus(); }, []);
+  const set = (i: number, raw: string) => {
+    const only = raw.replace(/\D/g, "");
+    onTyping();
+    if (only.length > 1) {
+      // Pasted, or the phone filled it from a message.
+      const next = [...digits];
+      for (let k = 0; k < 6 - i && k < only.length; k++) next[i + k] = only[k];
+      setDigits(next);
+      const filled = next.join("");
+      refs.current[Math.min(5, i + only.length)]?.focus();
+      if (/^\d{6}$/.test(filled)) onDone(filled);
+      return;
+    }
+    const next = [...digits];
+    next[i] = only;
+    setDigits(next);
+    if (only && i < 5) refs.current[i + 1]?.focus();
+    const filled = next.join("");
+    if (/^\d{6}$/.test(filled)) onDone(filled);
+  };
+
+  const code = digits.join("");
   return (
-    <div className="flex items-start gap-3">
-      <Icon className={`w-5 h-5 shrink-0 mt-0.5 ${c}`} />
-      <div>
-        <h2 className="text-[14px] font-bold text-[var(--color-text)]">{title}</h2>
-        <p className="text-[14px] text-[var(--color-text-muted)] mt-0.5">{body}</p>
+    <form onSubmit={(e) => { e.preventDefault(); onDone(code); }}>
+      <div className="flex items-center gap-2 text-[15px] font-semibold text-[var(--color-text)]">
+        <KeyRound className="w-5 h-5 text-[var(--color-text-muted)]" /> Code
       </div>
-    </div>
+      <div className="mt-3 flex items-center gap-2 sm:gap-3" role="group" aria-label="6-digit code">
+        {digits.map((v, i) => (
+          <React.Fragment key={i}>
+            {i === 3 && <span aria-hidden className="w-1 sm:w-2" />}
+            <input
+              ref={(el) => { refs.current[i] = el; }}
+              value={v}
+              onChange={(e) => set(i, e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Backspace" && !digits[i] && i > 0) { refs.current[i - 1]?.focus(); }
+                if (e.key === "ArrowLeft" && i > 0) refs.current[i - 1]?.focus();
+                if (e.key === "ArrowRight" && i < 5) refs.current[i + 1]?.focus();
+              }}
+              onFocus={(e) => e.currentTarget.select()}
+              inputMode="numeric" pattern="[0-9]*" autoComplete={i === 0 ? "one-time-code" : "off"}
+              maxLength={6} disabled={busy}
+              aria-label={`Digit ${i + 1}`}
+              className={`w-11 h-14 sm:w-14 sm:h-16 text-center font-mono text-[26px] sm:text-[30px] font-bold rounded-md border-2 bg-[var(--color-surface)] text-[var(--color-text)] outline-none focus:border-[var(--color-main)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40 disabled:opacity-60 ${error ? "border-[var(--state-overdue)]" : "border-[var(--color-border-strong)]"}`}
+            />
+          </React.Fragment>
+        ))}
+      </div>
+      {error && <Problem className="mt-3">{error}</Problem>}
+      <button type="submit" disabled={busy || !/^\d{6}$/.test(code)} className={`${btnPrimary} h-12 mt-4 w-full sm:w-auto sm:min-w-[160px]`}>
+        {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : null} Open
+      </button>
+    </form>
   );
 }

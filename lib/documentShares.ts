@@ -1,91 +1,123 @@
 // lib/documentShares.ts
 //
-// Tokenized public share links for a single document. Token is a
-// 32-char url-safe random string (collision-safe at this scale).
+// The browser side of sending documents. Links for people outside the
+// company are made, listed and turned off only through the server
+// (/api/share/create, /list, /revoke), which checks the sender can open
+// every document first. The table itself is read-only to members.
+//
+// Links for people in this workspace are just the app's own addresses:
+// they sign in and see the live document.
 
 import { supabase } from "@/lib/supabase";
+import { publicOrigin } from "@/lib/publicOrigin";
 
-export interface DocumentShare {
+/** A link already sent outside the company, as the Send sheet lists it. */
+export interface SentLink {
   id: string;
-  token: string;
-  orgId: string;
-  documentId: string;
-  createdBy: string;
+  /** Only for the person who made it (so they can copy it again). */
+  url: string | null;
+  mine: boolean;
+  recipient: string | null;
+  createdAt: string | null;
   createdByName: string | null;
-  createdAt: string;
   expiresAt: string | null;
   revokedAt: string | null;
-  revokedBy: string | null;
-  note: string | null;
   accessCount: number;
   accessLastAt: string | null;
+  withCode: boolean;
+  allowDownload: boolean;
+  /** Too many wrong codes: the link no longer opens. */
+  locked: boolean;
+  documentIds: string[];
+  markedUpIds: string[];
 }
 
-function randomToken(len = 32): string {
-  // url-safe base64 of crypto bytes — guaranteed unguessable at 32 chars
-  const arr = new Uint8Array(len);
-  crypto.getRandomValues(arr);
-  return btoa(String.fromCharCode(...arr))
-    .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "")
-    .slice(0, len);
+export interface CreatedLink {
+  id: string;
+  token: string;
+  url: string;
+  /** The 6-digit code, when one was asked for. Shown this once only. */
+  code: string | null;
+  expiresAt: string;
 }
 
-export async function createShareLink(input: {
-  orgId: string;
+/** One document on a link, as the public page shows it. */
+export interface ResolvedShareItem {
   documentId: string;
-  expiresInDays?: number;   // default 30
-  note?: string;
-  createdBy: string;
-  createdByName?: string;
-}): Promise<DocumentShare> {
-  const expiresAt = input.expiresInDays === undefined
-    ? new Date(Date.now() + 30 * 86_400_000).toISOString()
-    : input.expiresInDays === 0
-      ? null
-      : new Date(Date.now() + input.expiresInDays * 86_400_000).toISOString();
-  const { data, error } = await supabase.from("document_shares").insert({
-    token: randomToken(),
-    org_id: input.orgId,
-    document_id: input.documentId,
-    created_by: input.createdBy,
-    created_by_name: input.createdByName ?? null,
-    expires_at: expiresAt,
-    note: input.note ?? null,
-  }).select("*").single();
-  if (error) throw error;
-  return rowToShare(data as Record<string, unknown>);
+  documentNumber: string | null;
+  title: string | null;
+  rev: string | null;
+  /** The sender's marked-up copy rather than the issued file. */
+  markedUp: boolean;
+  /** False when there's no file that can be shown (none issued, or not a PDF or picture). */
+  viewable: boolean;
+}
+export interface ResolvedShare {
+  orgName: string | null;
+  senderName: string | null;
+  recipient: string | null;
+  expiresAt: string | null;
+  allowDownload: boolean;
+  items: ResolvedShareItem[];
 }
 
-export async function listShareLinks(documentId: string): Promise<DocumentShare[]> {
-  const { data } = await supabase
-    .from("document_shares")
-    .select("*")
-    .eq("document_id", documentId)
-    .order("created_at", { ascending: false });
-  return ((data ?? []) as Array<Record<string, unknown>>).map(rowToShare);
+async function authHeader(): Promise<Record<string, string>> {
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session?.access_token) throw new Error("Sign in again.");
+  return { authorization: `Bearer ${session.access_token}` };
 }
 
-export async function revokeShareLink(id: string, actorUserId: string): Promise<void> {
-  await supabase.from("document_shares").update({
-    revoked_at: new Date().toISOString(),
-    revoked_by: actorUserId,
-  }).eq("id", id);
+async function readError(res: Response): Promise<Error> {
+  const body = (await res.json().catch(() => null)) as { error?: string } | null;
+  return new Error(body?.error || `The server answered ${res.status}.`);
 }
 
-function rowToShare(r: Record<string, unknown>): DocumentShare {
-  return {
-    id: r.id as string,
-    token: r.token as string,
-    orgId: r.org_id as string,
-    documentId: r.document_id as string,
-    createdBy: r.created_by as string,
-    createdByName: (r.created_by_name as string | null) ?? null,
-    createdAt: r.created_at as string,
-    expiresAt: (r.expires_at as string | null) ?? null,
-    revokedAt: (r.revoked_at as string | null) ?? null,
-    revokedBy: (r.revoked_by as string | null) ?? null,
-    note: (r.note as string | null) ?? null,
-    accessCount: (r.access_count as number) ?? 0,
-    accessLastAt: (r.access_last_at as string | null) ?? null,
-  };
+export async function createSendLink(input: {
+  orgId: string;
+  recipient: string;
+  expiresDays: 1 | 7 | 30;
+  withCode: boolean;
+  allowDownload: boolean;
+  items: Array<{ documentId: string; markupPath?: string | null }>;
+}): Promise<CreatedLink> {
+  const res = await fetch("/api/share/create", {
+    method: "POST",
+    headers: { "content-type": "application/json", ...(await authHeader()) },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) throw await readError(res);
+  return (await res.json()) as CreatedLink;
+}
+
+export async function listSentLinks(orgId: string, docIds: string[]): Promise<SentLink[]> {
+  if (docIds.length === 0) return [];
+  // The first 150 keep the address a safe length; a bigger set is rare.
+  const qs = new URLSearchParams({ orgId, docIds: docIds.slice(0, 150).join(",") });
+  const res = await fetch(`/api/share/list?${qs}`, { headers: await authHeader() });
+  if (!res.ok) throw await readError(res);
+  return ((await res.json()) as { links: SentLink[] }).links ?? [];
+}
+
+export async function turnOffSentLink(orgId: string, id: string): Promise<string> {
+  const res = await fetch("/api/share/revoke", {
+    method: "POST",
+    headers: { "content-type": "application/json", ...(await authHeader()) },
+    body: JSON.stringify({ orgId, id }),
+  });
+  if (!res.ok) throw await readError(res);
+  return ((await res.json()) as { revokedAt: string }).revokedAt;
+}
+
+/** The app's own address for a document (sign-in needed): /d/<number>, or
+ *  the library with the document open when it has no number. */
+export function appLinkFor(doc: { id: string; documentNumber: string | null; libraryId: string }): string {
+  const origin = publicOrigin();
+  return doc.documentNumber
+    ? `${origin}/d/${encodeURIComponent(doc.documentNumber)}`
+    : `${origin}/documents/${encodeURIComponent(doc.libraryId)}?doc=${encodeURIComponent(doc.id)}`;
+}
+
+/** Live: not turned off, not expired, not locked. */
+export function linkIsLive(l: Pick<SentLink, "revokedAt" | "expiresAt" | "locked">, now = Date.now()): boolean {
+  return !l.revokedAt && !l.locked && !(l.expiresAt && new Date(l.expiresAt).getTime() < now);
 }

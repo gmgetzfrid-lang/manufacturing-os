@@ -1,94 +1,81 @@
-// GET /api/share/resolve?token=<share token>
+// GET /api/share/resolve?token=<share token>   (header x-share-code: 123456)
 //
-// Service-role resolution for public share links. The /share/[token] page
-// used to query document_shares with the anon browser client — which RLS
-// (correctly) blocks for outsiders, so the links never worked for the very
-// people they were made for. This route does the lookup with the service
-// role, gated ONLY by possession of the unguessable token, and returns the
-// minimum the landing page needs.
+// What the public /share/<token> page shows: who sent the link, for whom,
+// until when, and the documents on it. No sign-in: the unguessable token is
+// the key, and when the link asks for a code, the code too. A wrong code
+// counts toward the lockout (10 and the link is locked for good); the
+// answer never says more than "that code isn't right".
 //
-// It also makes the page's "Audit logged" claim true: every resolve bumps
-// the share's access counter AND writes a download_audits row, so the
-// distribution record shows outside pulls too.
+// Each successful open bumps the link's open counter. The files themselves
+// come from /api/share/file, which stamps them and records each one served.
 
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import {
+  SHARE_TOKEN_RE, fileKind, gateShare, loadShareByToken, resolveIssuedFile, shareItems,
+} from "@/lib/shareLinks";
+import type { ResolvedShare, ResolvedShareItem } from "@/lib/documentShares";
+
+export const runtime = "nodejs";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || "";
 const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
 
+const no = (error: string, status: number) =>
+  NextResponse.json({ error }, { status, headers: { "Cache-Control": "no-store" } });
+
 export async function GET(req: NextRequest) {
-  if (!supabaseUrl || !serviceRoleKey) {
-    return NextResponse.json({ error: "Share resolution unavailable" }, { status: 503 });
-  }
+  if (!supabaseUrl || !serviceRoleKey) return no("unavailable", 503);
   const token = (req.nextUrl.searchParams.get("token") ?? "").trim();
-  // Tokens are 32+ url-safe chars; reject junk cheaply before touching the DB.
-  if (!/^[A-Za-z0-9_-]{16,128}$/.test(token)) {
-    return NextResponse.json({ error: "invalid" }, { status: 400 });
-  }
+  // Tokens are 32 url-safe chars; reject junk cheaply before touching the DB.
+  if (!SHARE_TOKEN_RE.test(token)) return no("invalid", 400);
 
   const sb = createClient(supabaseUrl, serviceRoleKey, { auth: { persistSession: false } });
+  const { row: share, error } = await loadShareByToken(sb, token);
+  if (error) return no("unavailable", 503);
+  if (!share) return no("notfound", 404);
+  const gate = await gateShare(sb, share, req.headers.get("x-share-code"));
+  if (!gate.ok) return no(gate.error, gate.status);
 
-  const { data: share } = await sb
-    .from("document_shares")
-    .select("id, org_id, document_id, expires_at, revoked_at, created_by")
-    .eq("token", token)
-    .maybeSingle();
-  if (!share) return NextResponse.json({ error: "notfound" }, { status: 404 });
-  if (share.revoked_at) return NextResponse.json({ error: "revoked" }, { status: 410 });
-  if (share.expires_at && new Date(share.expires_at as string).getTime() < Date.now()) {
-    return NextResponse.json({ error: "expired" }, { status: 410 });
-  }
+  const items = shareItems(share);
+  const ids = items.map((i) => i.documentId);
+  const { data: docRows } = ids.length
+    ? await sb.from("documents").select("id, org_id, document_number, title, name, rev, current_version_id")
+      .eq("org_id", share.org_id).in("id", ids)
+    : { data: [] };
+  type Doc = { id: string; document_number: string | null; title: string | null; name: string | null; rev: string | null; current_version_id: string | null };
+  const byId = new Map(((docRows ?? []) as Doc[]).map((d) => [d.id, d]));
 
-  const { data: doc } = await sb
-    .from("documents")
-    .select("id, document_number, title, name, rev, current_version_id")
-    .eq("id", share.document_id as string)
-    .maybeSingle();
-  if (!doc) return NextResponse.json({ error: "notfound" }, { status: 404 });
-
-  const { data: org } = await sb.from("orgs").select("name").eq("id", share.org_id as string).maybeSingle();
-
-  // Resolve the current PUBLISHED version's file (never an in-review draft).
-  let storagePath: string | null = null;
-  let versionId: string | null = (doc.current_version_id as string | null) ?? null;
-  if (versionId) {
-    const { data: v } = await sb.from("document_versions").select("file_url").eq("id", versionId).maybeSingle();
-    storagePath = (v?.file_url as string | null) ?? null;
-  }
-  if (!storagePath) {
-    const { data: latest } = await sb
-      .from("document_versions")
-      .select("id, file_url")
-      .eq("record_id", doc.id as string)
-      .or("review_state.is.null,review_state.eq.approved")
-      .order("created_at", { ascending: false })
-      .limit(1);
-    if (latest?.length) {
-      storagePath = (latest[0] as { file_url: string }).file_url;
-      versionId = (latest[0] as { id: string }).id;
+  const out: ResolvedShareItem[] = [];
+  for (const it of items) {
+    const d = byId.get(it.documentId);
+    if (!d) continue; // deleted since the link was made
+    let viewable = !!it.markupPath;
+    if (!viewable) {
+      const f = await resolveIssuedFile(sb, d);
+      viewable = !!f && fileKind(f.path, f.fileType) !== "other";
     }
+    out.push({
+      documentId: d.id,
+      documentNumber: d.document_number ?? null,
+      title: d.title ?? d.name ?? null,
+      rev: d.rev ?? null,
+      markedUp: !!it.markupPath,
+      viewable,
+    });
   }
+  if (out.length === 0) return no("notfound", 404);
 
-  // The page never receives a raw bucket URL anymore. Downloads go through
-  // /api/share/file, which stamps SERVER-SIDE (watermark + rev footer +
-  // verify QR) before any byte leaves — the old client-side stamp fetch was
-  // CORS-blocked by the bucket, so its fallback leaked the raw file. That
-  // route also writes the download_audits row (an actual download); this one
-  // only bumps the access counter (link opened).
-  const fileUrl: string | null = storagePath
-    ? `/api/share/file?token=${encodeURIComponent(token)}`
-    : null;
-
+  const { data: org } = await sb.from("orgs").select("name").eq("id", share.org_id).maybeSingle();
   try { await sb.rpc("bump_share_access", { p_share: share.id }); } catch { /* best-effort */ }
 
-  return NextResponse.json({
-    documentId: doc.id,
-    versionId,
-    documentNumber: (doc.document_number as string | null) ?? null,
-    title: (doc.title as string | null) ?? (doc.name as string | null) ?? null,
-    rev: (doc.rev as string | null) ?? null,
-    orgName: (org?.name as string | null) ?? null,
-    fileUrl,
-  });
+  const body: ResolvedShare = {
+    orgName: (org as { name?: string | null } | null)?.name ?? null,
+    senderName: share.created_by_name ?? null,
+    recipient: share.recipient ?? share.note ?? null,
+    expiresAt: share.expires_at,
+    allowDownload: share.allow_download,
+    items: out,
+  };
+  return NextResponse.json(body, { headers: { "Cache-Control": "no-store" } });
 }

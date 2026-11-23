@@ -34,8 +34,9 @@
 // caching behavior changes (v4: RSC payloads are never cached; data GETs are
 // network-first — stale-while-revalidate was serving old app navigations.
 // v5: stop inventing 504s — see the honesty rule below. v6: prefetches
-// are never intercepted. v7: nor is the manifest).
-const VERSION = "mfgos-v7";
+// are never intercepted. v7: nor is the manifest. v8: nor are sent links,
+// and copies cached from them before are dropped).
+const VERSION = "mfgos-v8";
 const SHELL_CACHE = `${VERSION}-shell`;
 const RUNTIME_CACHE = `${VERSION}-runtime`;
 
@@ -158,6 +159,10 @@ self.addEventListener("fetch", (event) => {
   }
   // The web-app manifest is the browser's own business — see SHELL_ASSETS.
   if (url.pathname === "/manifest.webmanifest") return;
+
+  // Sent links (/api/share/*): never kept. A copy must not open from this
+  // browser's cache after the link expires or is turned off.
+  if (url.pathname.startsWith("/api/share/")) return;
 
   // Prefetches of any kind (the router's, the browser's speculative loads):
   // nobody is waiting on them, the browser cancels them freely, and a
