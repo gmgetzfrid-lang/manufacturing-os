@@ -124,7 +124,7 @@ function NeedRow({ r, tz }: { r: Row; tz: string }) {
           {r.source && <SourceLine source={r.source} tz={tz} className="mt-0.5" />}
         </div>
         <div className="max-md:order-2 md:pt-px"><Mark state={r.state} /></div>
-        <div className="max-md:order-4 max-md:basis-full md:justify-self-end flex items-center justify-end gap-2 min-w-0 md:-mt-1.5">{r.action}</div>
+        <div className="max-md:order-2 max-md:-my-1.5 md:justify-self-end flex items-center justify-end gap-2 min-w-0 md:-mt-1.5">{r.action}</div>
         {r.body && <div className="md:col-start-2 md:col-span-3 max-md:order-5 max-md:basis-full min-w-0">{r.body}</div>}
       </div>
     </li>

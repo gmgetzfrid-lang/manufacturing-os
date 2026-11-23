@@ -114,9 +114,9 @@ const clockIfNow = (shift: ShiftWindow, tz: string) => { const t = Date.now(); r
 
 /** A quiet Add/Save beside a line being typed: the report's one orange
  *  button is its Email / Print. */
-const addBtn = "h-7 px-2.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] text-[11px] font-bold";
+const addBtn = "inline-flex items-center justify-center gap-1 h-8 pointer-coarse:h-11 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] text-[13px] font-semibold disabled:opacity-50";
 
-const inputCls = "h-7 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1.5 text-[12px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] ";
+const inputCls = "h-8 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-control)] bg-[var(--color-surface)] px-2.5 text-[13px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] ";
 
 /** "Safety incidents this shift: None / Report one" — in place of the old
  *  tick-box, with each one reported listed under it. */
@@ -179,7 +179,7 @@ export function IncidentsLine({ incidents, edit, print, shift, tz, T, onNone, on
     else if (write) void write(key, (rec) => restoreIncident(rec, x)).catch((e) => setMsg(sayError(e)));
     else onAdd({ at: x.at, kind: x.kind, text: x.text });
   };
-  const btn = (on: boolean) => `px-2 py-0.5 text-[11px] font-semibold ${on ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30" : "bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`;
+  const btn = (on: boolean) => `inline-flex items-center gap-1 h-8 pointer-coarse:h-11 px-3 text-[13px] font-semibold bg-[var(--color-surface)] ${on ? "text-[var(--color-text)] shadow-[inset_0_-2px_0_var(--color-current)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`;
   return (
     <div className="text-[12px] min-w-0">
       <div className="flex flex-wrap items-center gap-1.5">
@@ -218,7 +218,7 @@ export function IncidentsLine({ incidents, edit, print, shift, tz, T, onNone, on
       {open && edit && !print && (
         <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
           <TimeChip value={clock} onChange={(v) => { setClock(v); setMsg(null); }} tz={tz} label="Time it happened" />
-          <button type="button" onClick={() => setClock(nowClock(tz))} className="h-7 px-2 rounded-md border border-[var(--color-border-strong)] text-[11px] font-semibold">Now</button>
+          <button type="button" onClick={() => setClock(nowClock(tz))} className="h-8 pointer-coarse:h-11 px-2.5 rounded-lg border border-[var(--color-border-strong)] text-[13px] font-semibold">Now</button>
           <select value={kind} onChange={(e) => setKind(e.target.value as IncidentKind)} aria-label="Kind" className={`${inputCls} pr-6`}>
             {INCIDENT_KINDS.map((k) => <option key={k}>{k}</option>)}
           </select>
@@ -343,7 +343,7 @@ export function ShiftNotesBox({ notes, edit, print, shift, tz, T, D, onAdd, onCl
       {edit && !print && (
         <div className="flex flex-wrap items-center gap-1.5 pt-1">
           <TimeChip value={clock} onChange={(v) => { setClock(v); setMsg(null); }} tz={tz} />
-          <button type="button" onClick={() => setClock(nowClock(tz))} className="h-7 px-2 rounded-md border border-[var(--color-border-strong)] text-[11px] font-semibold">Now</button>
+          <button type="button" onClick={() => setClock(nowClock(tz))} className="h-8 pointer-coarse:h-11 px-2.5 rounded-lg border border-[var(--color-border-strong)] text-[13px] font-semibold">Now</button>
           <input value={text} onChange={(e) => { setText(e.target.value); setMsg(null); }} onKeyDown={(e) => { if (e.key === "Enter") add(); }} placeholder="What happened, or what needs doing" aria-label="Note" className={`${inputCls} flex-1 min-w-[160px]`} />
           <label className="inline-flex items-center gap-1 text-[11px]"><input type="checkbox" checked={follow} onChange={(e) => setFollow(e.target.checked)} /> Follow-up</label>
           <button type="button" onClick={add} className={addBtn}>{editing ? "Save" : "Add"}</button>

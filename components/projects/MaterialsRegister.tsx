@@ -9,7 +9,7 @@
 import { Card } from "@/components/ui/PageHero";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import HelpTooltip from "@/components/ui/HelpTooltip";
-import { bandSeg, bandSegItem } from "@/components/admin/band";
+import { SubTabs } from "@/components/projects/SubTabs";
 import { Loader2, Plus, Trash2 } from "lucide-react";
 import type { ProjectPhase } from "@/lib/projectPhases";
 import { supabase } from "@/lib/supabase";
@@ -96,9 +96,7 @@ export default function MaterialsRegister({ orgId, projectId, phases, canManage,
 
   if (!rows) return <SkeletonRows rows={6} cols={3} what="the materials register" />;
 
-  const Pill = ({ id, children }: { id: Filter; children: React.ReactNode }) => (
-    <button type="button" onClick={() => setFilter(id)} aria-pressed={filter === id} className={bandSegItem(filter === id)}>{children}</button>
-  );
+
   // The counts in one line the eye runs along; a bad count in red.
   const Kpi = ({ name, value, detail, bad }: { name: string; value: number; detail: string; bad?: boolean }) => (
     <span className="inline-flex items-baseline gap-1 whitespace-nowrap" title={detail}>
@@ -129,12 +127,13 @@ export default function MaterialsRegister({ orgId, projectId, phases, canManage,
       </div>
 
       <div className="mt-3 pt-3 border-t border-[var(--color-border)] flex gap-2 flex-wrap items-center">
-        <div className={bandSeg} role="group" aria-label="Show">
-          <Pill id="all">All <span className="tabular-nums text-[var(--color-text-muted)]">{scoped.length}</span></Pill>
-          <Pill id="attention">Needs attention <span className="tabular-nums text-[var(--color-text-muted)]">{sum.needAttention}</span></Pill>
-          <Pill id="offsite">Off-site repairs <span className="tabular-nums text-[var(--color-text-muted)]">{sum.offsite}</span></Pill>
-          <Pill id="received">Received <span className="tabular-nums text-[var(--color-text-muted)]">{sum.received}</span></Pill>
-        </div>
+        <SubTabs label="Show" value={filter} onChange={setFilter} size="sm"
+          items={[
+            { id: "all" as Filter, label: "All", count: scoped.length },
+            { id: "attention" as Filter, label: "Needs attention", count: sum.needAttention, dot: sum.needAttention ? "warn" as const : undefined },
+            { id: "offsite" as Filter, label: "Off-site repairs", count: sum.offsite },
+            { id: "received" as Filter, label: "Received", count: sum.received },
+          ]} />
         {phases.length > 0 && <select aria-label="Phase" value={phaseId ?? ""} onChange={(e) => setPhaseId(e.target.value || null)} className={`${field} !w-auto ml-auto h-8 pointer-coarse:h-11 !py-0`}><option value="">All phases</option>{phases.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select>}
       </div>
       </Card>

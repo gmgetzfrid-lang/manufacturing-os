@@ -754,7 +754,7 @@ export default function TaskDetailPanel({
             )}
           </div>
         )}
-        {saving && <div className="absolute inset-0 bg-black/10 dark:bg-black/30 flex items-center justify-center"><Loader2 className="w-6 h-6 animate-spin text-[var(--color-text-muted)] dark:text-[var(--color-text)]" /></div>}
+        {saving && <><div aria-hidden className="absolute inset-0 cursor-progress" /><div role="status" className="ui-float absolute top-3 left-1/2 -translate-x-1/2 inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)]"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Saving</div></>}
       </div>
       <style jsx>{`@keyframes slidein { from { transform: translateX(16px); opacity: .6 } to { transform: translateX(0); opacity: 1 } }`}</style>
     </div>
