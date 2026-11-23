@@ -1,6 +1,6 @@
 "use client";
 
-// Ask Knowledge — ask a library a quick question right on the dashboard.
+// Ask Knowledge: ask a library a quick question right on the dashboard.
 //
 // The same engine and the same rules as the Assistant (documents only,
 // cited to the page), shaped for a card: the verdict and the direct answer
@@ -8,13 +8,21 @@
 // with the words highlighted), "to settle this" when the library can't, and
 // a door into the full conversation. The question is saved as a real
 // conversation, so "Continue in Assistant" picks up exactly here.
+//
+// The question box has every state drawn: quiet at rest; a soft focus ring
+// on the box (its edge never jumps); it grows with the question while the
+// send button stays put; the send button wakes (filled) once there is
+// text; while the answer comes it turns into Stop in the same place, and
+// Stop puts the question back in the box.
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import dynamic from "next/dynamic";
 import {
-  Sparkles, ArrowRight, Loader2, MessageSquare, FileText, CornerDownRight, RotateCcw, AlertTriangle,
+  Sparkles, ArrowUp, Square, Loader2, MessageSquare, FileText, CornerDownRight, RotateCcw, AlertTriangle,
 } from "lucide-react";
+import { friendlyError } from "@/lib/friendlyError";
+import { SkeletonText } from "@/components/ui/Skeleton";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
 import { askTurn, listThreads, type ChatThread } from "@/lib/chatClient";
@@ -146,21 +154,37 @@ export default function AskKnowledgeBody() {
           setTurns((t) => t.map((x, i) => (i === t.length - 1 ? { ...x, answer: reply } : x)));
         } else if (ev.t === "error") {
           gotResult = true;
-          setTurns((t) => t.map((x, i) => (i === t.length - 1 ? { ...x, error: ev.error ?? `Error ${ev.status}` } : x)));
+          setTurns((t) => t.map((x, i) => (i === t.length - 1 ? { ...x, error: friendlyError(ev.error ?? { status: ev.status }) } : x)));
         }
       }, ctl.signal);
-      if (!gotResult) {
+      // Stopped: the turn is already gone and the question back in the box.
+      if (!gotResult && !ctl.signal.aborted) {
         setTurns((t) => t.map((x, i) => (i === t.length - 1 && !x.answer ? { ...x, error: "The answer didn't come back. Try again." } : x)));
       }
     } catch (e) {
       if (!ctl.signal.aborted) {
-        setTurns((t) => t.map((x, i) => (i === t.length - 1 ? { ...x, error: (e as Error).message } : x)));
+        setTurns((t) => t.map((x, i) => (i === t.length - 1 ? { ...x, error: friendlyError(e) } : x)));
       }
     } finally {
       setBusy(false);
       setStatus(null);
     }
   }, [activeOrgId, lib, busy, threadId, mode, web, picked, setThreadId, setTurns, qDraft]);
+
+  // Stop waiting for the answer: the pending question leaves the list and
+  // goes back into the box, as typed.
+  const taRef = useRef<HTMLTextAreaElement>(null);
+  const stop = useCallback(() => {
+    const ctl = abortRef.current;
+    if (!ctl || ctl.signal.aborted) return;
+    ctl.abort();
+    const pending = turns[turns.length - 1];
+    setTurns((t) => (t.length && !t[t.length - 1].answer ? t.slice(0, -1) : t));
+    if (pending && !pending.answer) setQ(pending.question);
+    setBusy(false);
+    setStatus(null);
+    window.setTimeout(() => taRef.current?.focus(), 0);
+  }, [turns, setTurns]);
 
   // Resolve the cited documents' files once per answer, so a tap opens the
   // page straight away.
@@ -234,19 +258,36 @@ export default function AskKnowledgeBody() {
       </div>
       <SkillHint skills={skills} picked={picked} question={q} answerMode={mode === "auto" ? null : mode} />
 
-      {/* Ask */}
+      {/* Ask: the box grows with the question, the button stays put. */}
       <form onSubmit={(e) => { e.preventDefault(); void ask(q); }}
-        className="shrink-0 flex items-center gap-2 h-11 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] pl-3 pr-1 focus-within:border-[var(--color-text-faint)] focus-within:ring-2 focus-within:ring-[var(--color-accent-ring)]/40 transition-colors">
-        <Sparkles className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
-        <input value={q} onChange={(e) => setQ(e.target.value)} disabled={busy || !lib}
-          placeholder={threadId ? "Ask a follow-up…" : lib ? `Ask ${lib.name}…` : "Loading libraries…"}
+        className="ui-field-box shrink-0 flex items-end gap-2 rounded-lg border border-[var(--color-border-control)] bg-[var(--color-surface)] pl-3 pr-1.5 py-1.5">
+        <Sparkles aria-hidden className="w-4 h-4 mb-2.5 text-[var(--color-text-muted)] shrink-0" />
+        <textarea ref={taRef} rows={1} value={q} onChange={(e) => setQ(e.target.value)} disabled={!lib} readOnly={busy}
+          onKeyDown={(e) => {
+            // Enter asks; Shift+Enter starts a new line.
+            if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void ask(q); }
+          }}
+          placeholder={threadId ? "Ask a follow-up" : lib ? `Ask ${lib.name}` : "Loading libraries"}
           aria-label="Your question"
-          className="flex-1 min-w-0 bg-transparent text-[15px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] outline-none" />
-        <button type="submit" disabled={busy || !q.trim() || !lib}
-          className={rowBtn}>
-          {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ArrowRight className="w-3.5 h-3.5" />}
-          Ask
-        </button>
+          enterKeyHint="send"
+          className="ui-field-bare flex-1 min-w-0 min-h-9 max-h-40 resize-none overflow-y-auto [field-sizing:content] bg-transparent py-1.5 text-[15px] leading-6 text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] outline-none disabled:opacity-60" />
+        {busy ? (
+          // While the answer comes, the same spot stops it.
+          // Its own element (key): reusing the Ask button's node would turn
+          // this click into a submit once the button flips back.
+          <button key="stop" type="button" onClick={(e) => { e.preventDefault(); stop(); }} aria-label="Stop waiting for the answer" title="Stop"
+            className="relative shrink-0 w-9 h-9 pointer-coarse:w-11 pointer-coarse:h-11 grid place-items-center rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
+            <span aria-hidden className="absolute inset-1.5 rounded-full border-2 border-[var(--color-border)] border-t-[var(--color-current)] motion-safe:animate-spin" />
+            <Square aria-hidden className="w-3 h-3 fill-current" />
+          </button>
+        ) : (
+          <button key="ask" type="submit" disabled={!q.trim() || !lib} aria-label="Ask" title="Ask (Enter)"
+            className={`shrink-0 w-9 h-9 pointer-coarse:w-11 pointer-coarse:h-11 grid place-items-center rounded-lg transition-colors disabled:cursor-not-allowed ${q.trim()
+              ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]"
+              : "text-[var(--color-text-faint)]"}`}>
+            <ArrowUp aria-hidden className="w-4 h-4" />
+          </button>
+        )}
       </form>
 
       <div className={`${SCROLL} space-y-2`}>
@@ -254,14 +295,11 @@ export default function AskKnowledgeBody() {
         {busy && (
           <div className="border-t border-[var(--color-border)] pt-3">
             <div className="text-[15px] font-semibold text-[var(--color-text)] truncate">{last?.question}</div>
-            <div className="mt-2 flex items-center gap-2 text-[13px] text-[var(--color-text-muted)]">
-              <Loader2 className="w-3 h-3 animate-spin shrink-0" />
-              {status ?? "Working…"}
+            <div role="status" className="mt-2 flex items-center gap-2 text-[13px] text-[var(--color-text-muted)]">
+              <Loader2 aria-hidden className="w-3 h-3 motion-safe:animate-spin shrink-0" />
+              {status ?? "Reading the library"}
             </div>
-            <div className="mt-2 space-y-1.5">
-              <div className="h-2.5 w-3/4 rounded bg-[var(--color-surface-2)] animate-pulse" />
-              <div className="h-2.5 w-1/2 rounded bg-[var(--color-surface-2)] animate-pulse" />
-            </div>
+            <SkeletonText lines={2} className="mt-2.5" />
           </div>
         )}
 
@@ -273,9 +311,11 @@ export default function AskKnowledgeBody() {
               <span className="font-semibold line-clamp-2">{last.question}</span>
             </div>
             {last.error ? (
-              <div role="alert" className="mt-2 flex items-start gap-2 border-l-[3px] border-[var(--state-overdue)] pl-2.5 text-[14px] text-[var(--state-overdue)]">
-                <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
-                <span>{last.error}</span>
+              <div role="alert" className="mt-2 flex flex-wrap items-start gap-x-2 gap-y-1 text-[14px]">
+                <AlertTriangle aria-hidden className="w-4 h-4 shrink-0 mt-0.5 text-[var(--state-overdue)]" />
+                <span className="min-w-0 flex-1 text-[var(--color-text)]">{last.error}</span>
+                <button type="button" onClick={() => { const question = last.question; setTurns((t) => t.slice(0, -1)); void ask(question); }}
+                  className="font-semibold text-[var(--color-accent-text)] hover:underline underline-offset-2">Try again</button>
               </div>
             ) : parts && (
               <>
@@ -286,8 +326,8 @@ export default function AskKnowledgeBody() {
                   <Inline text={capFirst(parts.v?.text ?? parts.p.hero ?? last.answer?.answer?.slice(0, 400) ?? "")} onCite={(n) => openCite(citeByN(n))} />
                 </p>
                 {parts.p.settle.length > 0 && (
-                  <div className="mt-2 border-l-2 border-amber-500 pl-2.5">
-                    <div className="text-[13px] font-semibold text-amber-800 dark:text-amber-300">To settle this</div>
+                  <div className="mt-2 border-l-2 border-[var(--state-held)] pl-2.5">
+                    <div className="text-[13px] font-semibold text-[var(--state-held-text)]">To settle this</div>
                     <ul className="mt-0.5 space-y-0.5">
                       {parts.p.settle.slice(0, 2).map((b, i) => (
                         <li key={i} className="text-[13px] text-[var(--color-text)]"><Inline text={b.text} onCite={(n) => openCite(citeByN(n))} /></li>
@@ -310,7 +350,7 @@ export default function AskKnowledgeBody() {
                       const clause = c.quote ? clauseFor(c.quote, c.highlight, c.section) : null;
                       return (
                         <button key={c.n} type="button" onClick={() => openCite(c)}
-                          className="w-full text-left rounded-lg border border-[var(--color-border)] hover:border-[var(--color-main)] bg-[var(--color-surface-2)]/40 px-2.5 py-1.5 transition-colors">
+                          className="w-full text-left rounded-lg border border-[var(--color-border)] hover:border-[var(--color-border-control)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] px-2.5 py-1.5 transition-colors">
                           <div className="flex items-center gap-1.5 text-[13px] font-semibold text-[var(--color-text-muted)]">
                             <span className="px-1 rounded bg-[var(--color-surface-2)] text-[var(--color-text)]">{c.n}</span>
                             <FileText className="w-3 h-3" />
@@ -318,12 +358,12 @@ export default function AskKnowledgeBody() {
                               {c.url ? (c.title ?? c.url) : docDesignation(c.documentName ?? "Document")}
                               {clause ? ` § ${clause}` : ""}{c.page ? ` · p.${c.page}` : ""}
                             </span>
-                            {c.role === "decides" && <span className="ml-auto shrink-0 text-emerald-700 dark:text-emerald-400">decides</span>}
-                            {c.role === "limits" && <span className="ml-auto shrink-0 text-amber-700 dark:text-amber-400">limits</span>}
+                            {c.role === "decides" && <span className="ml-auto shrink-0 text-[var(--state-released-text)]">decides</span>}
+                            {c.role === "limits" && <span className="ml-auto shrink-0 text-[var(--state-held-text)]">limits</span>}
                           </div>
                           <div className="mt-0.5 text-[13px] leading-snug text-[var(--color-text-muted)] line-clamp-3">
                             {win ? (
-                              <>{win.clippedStart ? "… " : ""}{win.before}<mark className="rounded px-0.5 bg-amber-200 dark:bg-amber-700/60 text-[var(--color-text)] font-bold">{win.hit}</mark>{win.after}{win.clippedEnd ? " …" : ""}</>
+                              <>{win.clippedStart ? "… " : ""}{win.before}<mark className="rounded px-0.5 bg-[color-mix(in_srgb,var(--state-held)_22%,transparent)] text-[var(--color-text)] font-semibold">{win.hit}</mark>{win.after}{win.clippedEnd ? " …" : ""}</>
                             ) : (c.quote ?? c.claim ?? "Open the page")}
                           </div>
                         </button>
@@ -339,13 +379,13 @@ export default function AskKnowledgeBody() {
                       <span className="mt-1 flex flex-wrap gap-1">
                         {parts.followup.options.slice(0, 4).map((o) => (
                           <button key={o} type="button" onClick={() => void ask(o)}
-                            className="px-2 py-0.5 rounded-md border border-[var(--color-main)]/50 text-[13px] font-bold text-[var(--color-accent-text)] hover:bg-[var(--color-accent)] hover:text-[var(--color-accent-fg)]">
+                            className="ui-tag !h-auto min-h-7 pointer-coarse:min-h-10 font-sans text-[var(--color-accent-text)]">
                             {o}
                           </button>
                         ))}
                       </span>
                     ) : (
-                      <span className="block text-[13px] text-[var(--color-text-muted)] mt-0.5">Answer it in the box above - it continues this conversation.</span>
+                      <span className="block text-[13px] text-[var(--color-text-muted)] mt-0.5">Answer it in the box above. It continues this conversation.</span>
                     )}
                   </div>
                 )}

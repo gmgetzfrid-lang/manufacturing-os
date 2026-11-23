@@ -1,12 +1,13 @@
 "use client";
 
-// NotificationCenter — the answer to "the badge says 10 and I can't find them."
+// NotificationCenter: the answer to "the badge says 10 and I can't find them."
 //
-// One right-hand slide-over, openable from EVERY count in the app — sidebar
-// badges, the Command Deck "Needs you" / "Action" stats, the bell — showing
-// exactly the items those counts are counting. It consumes the SAME
-// useTicketNotifications hook the badges do, so the list can never disagree
-// with the number that opened it: click a 10, see the 10.
+// One right-hand panel, openable from every count in the app (sidebar
+// badges, Home's "Needs you", the bell), showing exactly the items those
+// counts are counting. It reads the SAME useTicketNotifications hook the
+// badges do, so the list can never disagree with the number that opened
+// it: click a 10, see the 10. Opening it is a look: the bell's dot clears,
+// and what came in since the last look reads as new in the list.
 //
 // Inside: the cockpit's AttentionFeed (filters, mark-read, deep links per
 // item), so every row is a doorway to the thing that needs you.
@@ -15,12 +16,15 @@ import React, { createContext, useCallback, useContext, useEffect, useState, use
 import { appAlert } from "@/components/providers/DialogProvider";
 import { createPortal } from "react-dom";
 import Link from "next/link";
-import { X, Bell } from "lucide-react";
-import LoadingBlock from "@/components/ui/LoadingBlock";
+import { X } from "lucide-react";
+import { SkeletonRows } from "@/components/ui/Skeleton";
+import { ErrorNote } from "@/components/ui/ErrorNote";
+import { friendlyError } from "@/lib/friendlyError";
 import { useTicketNotifications } from "@/hooks/useTicketNotifications";
 import { AttentionFeed, type AttnFilter } from "@/components/cockpit/AttentionFeed";
 import { buildNeeds, needsFacts } from "@/components/cockpit/needsYou";
 import { heroPrimary, heroQuiet } from "@/components/ui/PageHero";
+import { useNotificationsSeen } from "./seen";
 
 interface CenterCtx {
   /** Open the center (optionally pre-filtered, e.g. "action"). */
@@ -76,9 +80,20 @@ function CenterPanel({
   const handleMarkAll = useCallback(async () => {
     setMarkingAll(true);
     try { await markAllRead(); }
-    catch (e) { void appAlert({ title: "Couldn't mark them read", message: (e as Error).message, tone: "danger" }); }
+    catch (e) { void appAlert({ title: "Couldn't mark them read", message: friendlyError(e), tone: "danger" }); }
     finally { setMarkingAll(false); }
   }, [markAllRead]);
+
+  // Opening is a look: what came in after the last look reads as new here
+  // (taken as it opens), and the bell's dot clears.
+  const { seenAt, markSeen } = useNotificationsSeen();
+  const [listSeen, setListSeen] = useState<number>(0);
+  const [wasOpen, setWasOpen] = useState(false);
+  if (isOpen !== wasOpen) {
+    setWasOpen(isOpen);
+    if (isOpen) setListSeen(seenAt ?? 0);
+  }
+  useEffect(() => { if (isOpen) markSeen(); }, [isOpen, markSeen]);
 
   // News clears once you've seen it: when you close this after opening it.
   // Decisions stay until you act on them (markAllRead skips those).
@@ -119,48 +134,47 @@ function CenterPanel({
       <div
         onClick={onClose}
         aria-hidden
-        className={`fixed inset-0 z-[240] bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)] transition-opacity duration-300 ${
+        className={`fixed inset-0 z-[240] bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)] transition-opacity duration-200 motion-reduce:transition-none ${
           isOpen ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
         }`}
       />
-      {/* Panel */}
+      {/* Panel: slides in from the right edge (instantly under reduced
+          motion). */}
       <aside
         role="dialog"
         aria-modal={isOpen ? "true" : undefined}
         aria-hidden={isOpen ? undefined : true}
         inert={!isOpen}
-        aria-label="Notification center"
-        className={`fixed top-0 right-0 bottom-0 z-[241] w-[480px] max-w-[94vw] bg-[var(--color-canvas)] border-l border-[var(--color-border-strong)] shadow-[-30px_0_60px_-30px_rgb(0_0_0/0.6)] flex flex-col transition-transform duration-500 ${
+        aria-label="Notifications"
+        className={`fixed top-0 right-0 bottom-0 z-[241] w-[480px] max-w-[94vw] bg-[var(--color-canvas)] border-l border-[var(--color-border)] ui-float flex flex-col transition-transform duration-[260ms] ease-out motion-reduce:transition-none ${
           isOpen ? "translate-x-0" : "translate-x-[110%]"
         }`}
-        style={{ transitionTimingFunction: "var(--ease-spring)" }}
       >
-        <div className="px-5 pt-4 pb-4 shrink-0 border-b border-[var(--color-border-strong)]">
-          <div className="flex items-center gap-2">
-            <span aria-hidden className="ui-icon-tile is-sm is-solid"><Bell className="w-4 h-4" /></span>
-            <div className="text-[14px] font-medium text-[var(--color-text-muted)]">Notifications</div>
+        <div className="px-5 pt-4 pb-4 shrink-0 border-b border-[var(--color-border)]">
+          <div className="flex items-center gap-2 min-h-9">
+            <div className="text-[14px] text-[var(--color-text-muted)]">Notifications</div>
             <div className="flex-1" />
             <button
               type="button"
               onClick={onClose}
               title="Close (Esc)"
               aria-label="Close"
-              className="w-9 h-9 grid place-items-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface)] transition-colors"
+              className="w-9 h-9 pointer-coarse:w-11 pointer-coarse:h-11 grid place-items-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors"
             >
               <X className="w-4 h-4" />
             </button>
           </div>
-          <h2 className="mt-1 font-display text-[30px] leading-[1.05] font-semibold tracking-[-0.01em] text-[var(--color-text)]">{answer}</h2>
+          <h2 className="font-display text-title font-semibold text-[var(--color-text)]">{answer}</h2>
           {counts.all > 0 && (
-            <dl className="mt-3 flex border-t border-[var(--color-border-strong)] pt-2.5">
+            <dl className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-[14px]">
               {[
-                { label: "Overdue", value: nf.overdue, bad: nf.overdue > 0 },
+                { label: "Overdue", value: nf.overdue, bad: true },
                 { label: "Waiting on you", value: nf.yourTurn, bad: false },
                 { label: "Updates", value: nf.news, bad: false },
-              ].map((f, i) => (
-                <div key={f.label} className={`pr-5 ${i ? "pl-5 border-l border-[var(--color-border-strong)]" : ""}`}>
-                  <dt className="text-[13px] text-[var(--color-text-muted)]">{f.label}</dt>
-                  <dd className="mt-1"><span className={`ui-count !h-8 !min-w-8 !text-[18px] font-display ${f.bad ? "is-bad" : f.value > 0 ? "is-solid" : ""}`}>{f.value}</span></dd>
+              ].map((f) => (
+                <div key={f.label} className="inline-flex items-baseline gap-1.5">
+                  <dt className="text-[var(--color-text-muted)]">{f.label}</dt>
+                  <dd className={`tabular-nums ${f.value === 0 ? "text-[var(--color-text-faint)]" : f.bad ? "font-semibold text-[var(--state-overdue-text)]" : "font-semibold text-[var(--color-text)]"}`}>{f.value.toLocaleString()}</dd>
                 </div>
               ))}
             </dl>
@@ -174,13 +188,11 @@ function CenterPanel({
         </div>
 
         <div className="flex-1 min-h-0 overflow-y-auto bg-[var(--color-surface)]">
-          {loadError && (
-            <p role="alert" className="mx-4 mt-3 border-l-[3px] border-[var(--state-overdue)] pl-2.5 text-[14px] text-[var(--state-overdue)]">
-              Some of this couldn&apos;t load, so the list may be missing items: {loadError}
-            </p>
+          {!!loadError && (
+            <ErrorNote compact className="mx-4 mt-3" error={loadError} title="Some of this didn't load, so the list may be missing items." />
           )}
           {loading && items.length === 0 ? (
-            <div className="p-4"><LoadingBlock what="notifications" rows={4} /></div>
+            <SkeletonRows rows={4} cols={1} what="notifications" sheet={false} />
           ) : (
             <div className="pt-1">
               <AttentionFeed
@@ -189,15 +201,16 @@ function CenterPanel({
                 counts={counts}
                 filter={filter}
                 onFilter={onFilter}
-                onMarkRead={(id) => { void markRead(id).catch((e: unknown) => appAlert({ title: "Couldn't mark it read", message: e instanceof Error ? e.message : String(e), tone: "danger" })); }}
+                onMarkRead={(id) => { void markRead(id).catch((e: unknown) => appAlert({ title: "Couldn't mark it read", message: friendlyError(e), tone: "danger" })); }}
                 onMarkAll={handleMarkAll}
                 markingAll={markingAll}
+                seenAt={listSeen}
               />
             </div>
           )}
         </div>
 
-        <div className="px-5 py-3 border-t border-[var(--color-border-strong)] shrink-0 pb-[calc(12px+env(safe-area-inset-bottom))]">
+        <div className="px-5 py-3 border-t border-[var(--color-border)] shrink-0 pb-[calc(12px+env(safe-area-inset-bottom))]">
           <Link href="/inbox" onClick={onClose} className={heroQuiet}>Open the full inbox</Link>
         </div>
       </aside>

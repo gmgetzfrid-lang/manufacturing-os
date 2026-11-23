@@ -66,7 +66,6 @@ export function Sparkline({
   const px = (i: number) => (n === 1 ? W / 2 : (i / (n - 1)) * (W - 4) + 2);
   const py = (v: number) => H - 6 - (v / max) * (H - 12);
   const pts = values.map((v, i) => `${px(i)},${py(v)}`).join(" ");
-  const area = `2,${H - 4} ${pts} ${W - 2},${H - 4}`;
   const last = values[n - 1];
   return (
     <svg
@@ -77,7 +76,6 @@ export function Sparkline({
       role="img"
       aria-label={`Trend, latest ${last}`}
     >
-      <polygon points={area} fill={stroke} opacity="0.1" />
       <polyline
         points={pts}
         fill="none"
@@ -97,8 +95,9 @@ export function Sparkline({
 
 // ── MiniBars — daily activity columns with per-bar hover ────────────────────
 
+/** Bars from zero; the latest day in the brand color, the rest gray. */
 export function MiniBars({
-  values, labels, height = 40, fill = "var(--color-text)", className = "",
+  values, labels, height = 40, fill = "var(--color-text-faint)", className = "",
 }: {
   values: number[];
   labels?: string[];
@@ -115,7 +114,7 @@ export function MiniBars({
           <div
             key={i}
             className="flex-1 min-w-[3px] rounded-t-[3px] transition-[height] duration-300"
-            style={{ height: h, background: fill, opacity: v === 0 ? 0.22 : 0.9 }}
+            style={{ height: h, background: i === values.length - 1 && v > 0 ? "var(--color-current)" : fill, opacity: v === 0 ? 0.35 : 1 }}
             title={labels?.[i] != null ? `${labels[i]} · ${v}` : String(v)}
           />
         );

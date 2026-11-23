@@ -1,28 +1,30 @@
 "use client";
 
-// /activity — org-wide unified activity stream.
+// /activity: the workspace's activity, for people.
 //
-// Different from /admin/audit (which is a power-user log with raw
-// JSON detail blocks and full audit weight). This is the people-
-// facing feed: "what's been happening in the workspace lately?"
-// grouped by day, with friendly summaries per event, links to
-// the resource, and an actor avatar.
+// Different from /admin/audit (a power-user log with raw detail blocks).
+// This is "what's been happening lately?": grouped by day, each change in
+// plain words (who did what to which item, when), linked to the item. A
+// forced release, a hold or a missed milestone gets the red edge.
 //
-// Reads the same audit_logs table — the back-end is shared — but
-// renders for humans, not auditors.
+// Reads the same audit_logs table (the back-end is shared) but renders
+// for humans, not auditors.
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { RefreshCw, CalendarDays, FilePlus, Lock, OctagonPause, Flag, Wrench, Eye, Download, Activity as ActivityIcon, FolderInput } from "lucide-react";
+import { RefreshCw } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
 import { PageShell } from "@/components/ui/PageShell";
-import { PageHero, PageBody, Card, heroQuiet } from "@/components/ui/PageHero";
-import LoadingBlock from "@/components/ui/LoadingBlock";
+import { PageHero, PageBody, heroQuiet } from "@/components/ui/PageHero";
+import { SkeletonRows } from "@/components/ui/Skeleton";
+import { ErrorNote } from "@/components/ui/ErrorNote";
 import ViewTabs, { ACTIVITY_VIEWS } from "@/components/navigation/ViewTabs";
 import DocThumb from "@/components/documents/DocThumb";
 import DocHoverPreview from "@/components/documents/DocHoverPreview";
-import { sheet, thead, th, rowBtn, humanTime } from "@/components/cockpit/ui";
+import { sheet, thead, th, rowBtn, rowHover, link, humanTime, SectionHead } from "@/components/cockpit/ui";
+import { useRouter } from "next/navigation";
+import { transitionPush } from "@/lib/viewTransition";
 
 interface ActivityRow {
   id: string;
@@ -37,21 +39,6 @@ interface ActivityRow {
 
 // What each recorded action reads as, and whether it is bad news (a forced
 // release, a hold, a missed or blocked milestone gets a red edge).
-/** The kind of change, as an icon on a tile in the What column. */
-function actIcon(action: string): React.ReactNode {
-  const c = "w-4 h-4";
-  if (["REV_UP", "REV_BACKFILL", "SUPERSEDE_DOC", "DOC_SPLIT", "DOC_MERGED", "DOC_RENUMBERED"].includes(action)) return <FilePlus className={c} />;
-  if (["CHECK_OUT", "CHECK_IN", "ABANDON", "FORCE_RELEASE", "DOCUMENT_CHECKOUT", "DOCUMENT_CHECKIN"].includes(action)) return <Lock className={c} />;
-  if (action.startsWith("HOLD_")) return <OctagonPause className={c} />;
-  if (action.startsWith("MILESTONE_")) return <Flag className={c} />;
-  if (action.startsWith("EQUIPMENT_")) return <Wrench className={c} />;
-  if (action === "VIEW") return <Eye className={c} />;
-  if (action === "DOWNLOAD") return <Download className={c} />;
-  if (action.includes("MOVE") || action.includes("FOLDER")) return <FolderInput className={c} />;
-  return <ActivityIcon className={c} />;
-}
-const badTile = "!bg-[color-mix(in_srgb,var(--state-overdue)_14%,transparent)] !text-[var(--state-overdue)]";
-
 const ACTION_VERBS: Record<string, { verb: string; bad?: boolean }> = {
   CHECK_OUT:           { verb: "checked out" },
   CHECK_IN:            { verb: "checked in" },
@@ -92,9 +79,10 @@ const RESOURCE_LABEL: Record<string, string> = {
 
 export default function ActivityFeedPage() {
   const { activeOrgId } = useRole();
+  const router = useRouter();
   const [rows, setRows] = useState<ActivityRow[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
   const [limit, setLimit] = useState(200);
   const [docMeta, setDocMeta] = useState<Map<string, { documentNumber: string | null; title: string | null; libraryId: string }>>(new Map());
   // Resolve non-document resources (tickets/projects/assets) to real labels +
@@ -168,7 +156,7 @@ export default function ActivityFeedPage() {
         }) : Promise.resolve(),
       ]);
       setExtraMeta(em);
-    } catch (e) { setError((e as Error).message); }
+    } catch (e) { setError(e ?? "error"); }
     finally { setLoading(false); }
   }, [activeOrgId, limit]);
 
@@ -220,20 +208,18 @@ export default function ActivityFeedPage() {
         <PageHero
           kicker="History · Activity"
           title={answer}
-          sub={
-            <>
-              {rows.length > 0 ? `The last ${rows.length.toLocaleString()} changes, by ${pulse.actors} ${pulse.actors === 1 ? "person" : "people"}, newest first.` : "What happened in the workspace, in plain words."}
-              {error && <span role="alert" className="block mt-1 text-[var(--state-overdue)] font-semibold">The activity didn&apos;t load: {error}</span>}
-            </>
-          }
+          sub={rows.length > 0
+            ? `The last ${rows.length.toLocaleString()} changes, by ${pulse.actors} ${pulse.actors === 1 ? "person" : "people"}, newest first.`
+            : "What happened in the workspace, in plain words."}
           facts={rows.length > 0 ? [
-            { label: "Today", value: pulse.today },
+            { label: "Today", value: pulse.today, hero: pulse.today > 0 },
             { label: "Revisions", value: pulse.revisions },
             { label: "Checkouts", value: pulse.locks },
           ] : undefined}
+          factsHero={pulse.today > 0 ? "auto" : "none"}
           tools={
             <button type="button" className={heroQuiet} onClick={refresh} disabled={loading} aria-label="Refresh">
-              <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} /><span className="max-sm:hidden">Refresh</span>
+              <RefreshCw className={`w-4 h-4 ${loading ? "motion-safe:animate-spin" : ""}`} /><span className="max-sm:hidden">Refresh</span>
             </button>
           }
         >
@@ -241,10 +227,16 @@ export default function ActivityFeedPage() {
         </PageHero>
 
         <PageBody>
+        {!!error && <ErrorNote error={error} title="The activity didn't load." onRetry={() => void refresh()} />}
         {loading && rows.length === 0 ? (
-          <Card><LoadingBlock what="activity" rows={6} className="border-0 p-0" /></Card>
+          <SkeletonRows rows={6} cols={2} what="activity" />
         ) : rows.length === 0 ? (
-          <Card><p className="flex items-center gap-3 text-[15px] text-[var(--color-text-muted)]"><span aria-hidden className="ui-icon-tile"><ActivityIcon className="w-5 h-5" /></span>No activity recorded yet.</p></Card>
+          error ? null : (
+            <p className={`${sheet} px-4 py-4 text-[15px] text-[var(--color-text-muted)]`}>
+              Changes to documents, requests and projects show here as people make them.{" "}
+              <Link href="/documents" className={`font-semibold ${link}`}>Open documents</Link>
+            </p>
+          )
         ) : (
           <>
             {grouped.map((group) => {
@@ -264,13 +256,9 @@ export default function ActivityFeedPage() {
               });
               return (
                 <section key={group.day} aria-label={group.day}>
-                  <div className="flex items-center gap-2 mb-2.5 min-h-9">
-                    <span aria-hidden className="ui-icon-tile is-sm is-solid"><CalendarDays className="w-4 h-4" /></span>
-                    <h2 className="font-display text-[19px] leading-tight font-semibold text-[var(--color-text)]">
-                      {group.day === today ? `Today, ${group.day.split(", ").slice(1).join(", ")}` : group.day === yesterday ? `Yesterday, ${group.day.split(", ").slice(1).join(", ")}` : group.day}
-                    </h2>
-                    <span className="ui-count is-solid">{group.rows.length}</span>
-                  </div>
+                  <SectionHead
+                    title={group.day === today ? `Today, ${group.day.split(", ").slice(1).join(", ")}` : group.day === yesterday ? `Yesterday, ${group.day.split(", ").slice(1).join(", ")}` : group.day}
+                    count={group.rows.length} />
                   <div className={`${sheet} @container`}>
                     <table className="hidden @[40rem]:table w-full table-fixed text-[15px]">
                       <thead className={thead}>
@@ -283,17 +271,14 @@ export default function ActivityFeedPage() {
                       </thead>
                       <tbody className="divide-y divide-[var(--color-border)]">
                         {items.map((it) => (
-                          <tr key={it.r.id} className={it.href ? "hover:bg-[var(--color-surface-2)]" : ""}>
+                          <tr key={it.r.id} className={it.href ? rowHover : ""} onClick={it.href ? () => transitionPush(router, it.href!) : undefined}>
                             <td className="relative px-4 py-2.5 whitespace-nowrap tabular-nums text-[var(--color-text-muted)]">
                               {it.meta?.bad && <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] bg-[var(--state-overdue)]" />}
                               {it.time}
                             </td>
                             <td className="px-4 py-2.5 truncate text-[var(--color-text)]">{it.who}</td>
-                            <td className={`px-4 py-2 ${it.meta?.bad ? "text-[var(--state-overdue)] font-semibold" : "text-[var(--color-text)]"}`}>
-                              <span className="flex items-center gap-2.5 min-w-0">
-                                <span aria-hidden className={`ui-icon-tile is-sm ${it.meta?.bad ? badTile : ""}`}>{actIcon(it.r.action)}</span>
-                                <span className="min-w-0 truncate">{it.verb}</span>
-                              </span>
+                            <td className={`px-4 py-2.5 ${it.meta?.bad ? "text-[var(--state-overdue-text)] font-semibold" : "text-[var(--color-text)]"}`}>
+                              <span className="block min-w-0 truncate">{it.verb}</span>
                             </td>
                             <td className="px-4 py-2">
                               <span className="flex items-center gap-3 min-w-0">
@@ -303,7 +288,7 @@ export default function ActivityFeedPage() {
                                   </DocHoverPreview>
                                 )}
                                 {it.href ? (
-                                  <Link href={it.href} className="ui-id min-w-0 truncate">{it.resourceLabel}</Link>
+                                  <Link href={it.href} onClick={(e) => e.stopPropagation()} className="ui-id min-w-0 truncate">{it.resourceLabel}</Link>
                                 ) : (
                                   <span className="ui-id min-w-0 truncate">{it.resourceLabel}</span>
                                 )}
@@ -318,12 +303,12 @@ export default function ActivityFeedPage() {
                       {items.map((it) => {
                         const inner = (
                           <>
-                            <span className="flex items-center gap-3">
-                              <span aria-hidden className={`ui-icon-tile is-sm ${it.meta?.bad ? badTile : ""}`}>{actIcon(it.r.action)}</span>
+                            <span className="flex items-baseline gap-3">
                               <span className="ui-id min-w-0 flex-1 truncate text-[15px]">{it.resourceLabel}</span>
                               <span className="shrink-0 text-[13px] text-[var(--color-text-muted)] tabular-nums">{it.time}</span>
                             </span>
-                            <span className={`mt-0.5 block pl-10 text-[13px] truncate ${it.meta?.bad ? "text-[var(--state-overdue)] font-semibold" : "text-[var(--color-text-muted)]"}`}>{it.who} {it.verb}</span>
+                            {it.name && <span className="block text-[13px] text-[var(--color-text-muted)] truncate">{it.name}</span>}
+                            <span className={`mt-0.5 block text-[13px] truncate ${it.meta?.bad ? "text-[var(--state-overdue-text)] font-semibold" : "text-[var(--color-text)]"}`}>{it.who} {it.verb}</span>
                           </>
                         );
                         return (

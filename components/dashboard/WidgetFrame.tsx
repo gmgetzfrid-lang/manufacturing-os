@@ -22,6 +22,7 @@ import { createPortal } from "react-dom";
 import Link from "next/link";
 import { GripVertical, X, Settings2, RotateCw, Maximize2 } from "lucide-react";
 import type { DashboardWidget } from "@/lib/dashboard/types";
+import { friendlyError } from "@/lib/friendlyError";
 import { WIDGET_CATALOG } from "./widgets";
 import { WidgetContextProvider, timeAgo, type WidgetCtx } from "./kit";
 
@@ -83,14 +84,13 @@ export default function WidgetFrame({ widget, editing, size, onRemove, onOpenSet
 
   if (!meta) return null;
   const Body = meta.Body;
-  const Icon = meta.icon;
   const title = (typeof widget.settings?.title === "string" && widget.settings.title.trim()) || meta.title;
 
   // ── Bare widgets bring their own heading and sheet (the Command Deck) ──
   if (meta.bare) {
     return (
       <WidgetContextProvider value={ctx}>
-        <div className={`group/widget relative h-full ${editing ? "rounded-lg outline-2 outline-dashed outline-offset-4 outline-[var(--color-border-strong)]" : ""}`}>
+        <div className={`group/widget relative h-full ${editing ? "rounded-panel outline-2 outline-dashed outline-offset-4 outline-[var(--color-border-strong)]" : ""}`}>
           <div className={editing ? "h-full pointer-events-none" : "h-full"}>
             <Body widget={widget} />
           </div>
@@ -98,7 +98,7 @@ export default function WidgetFrame({ widget, editing, size, onRemove, onOpenSet
             <div data-no-drag className="absolute top-0 right-0 z-20 h-9 flex items-center gap-1">
               <GripVertical className="w-4 h-4 mx-1 text-[var(--color-text-muted)]" aria-hidden />
               <button type="button" onClick={onRemove} title="Remove widget" aria-label="Remove widget"
-                className="w-9 h-9 grid place-items-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--state-overdue)] hover:bg-[var(--color-surface)] transition-colors">
+                className="w-9 h-9 pointer-coarse:w-11 pointer-coarse:h-11 grid place-items-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--state-overdue-text)] hover:bg-[var(--color-surface)] transition-colors">
                 <X className="w-4 h-4" />
               </button>
             </div>
@@ -108,22 +108,21 @@ export default function WidgetFrame({ widget, editing, size, onRemove, onOpenSet
     );
   }
 
-  const iconBtn = "w-9 h-9 sm:w-8 sm:h-8 inline-flex items-center justify-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface)] transition-colors";
+  const iconBtn = "w-8 h-8 pointer-coarse:w-11 pointer-coarse:h-11 inline-flex items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors";
 
-  // The section's name is a heading on the panel (its description rides
-  // along as a tooltip); the tools sit on the right.
+  // The section's name is a heading on the page, as text (its description
+  // rides along as a tooltip); the tools sit on the right.
   const header = (isExpanded: boolean) => (
-    <div className={`flex items-center gap-2 shrink-0 min-h-9 ${isExpanded ? "" : "mb-2.5"}`}>
+    <div className={`flex items-center gap-2 shrink-0 min-h-9 ${isExpanded ? "" : "mb-3"}`}>
       {editing && <GripVertical className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" aria-hidden />}
-      <span aria-hidden className="ui-icon-tile is-sm is-solid"><Icon className="w-4 h-4" /></span>
-      <h2 title={meta.description} className="min-w-0 flex-1 truncate font-display text-[19px] leading-tight font-semibold text-[var(--color-text)]">{title}</h2>
+      <h2 title={meta.description} className="min-w-0 flex-1 truncate font-display text-section font-semibold text-[var(--color-text)]">{title}</h2>
       {editing ? (
         <div data-no-drag className="shrink-0 flex items-center gap-1">
           <button type="button" onClick={onOpenSettings} title="Widget settings" aria-label="Widget settings" className={iconBtn}>
             <Settings2 className="w-4 h-4" />
           </button>
           <button type="button" onClick={onRemove} title="Remove widget" aria-label="Remove widget"
-            className={`${iconBtn} hover:!text-[var(--state-overdue)]`}>
+            className={`${iconBtn} hover:!text-[var(--state-overdue-text)]`}>
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -142,7 +141,7 @@ export default function WidgetFrame({ widget, editing, size, onRemove, onOpenSet
             </button>
           )}
           <Link href={meta.href} aria-label={meta.cta} title={meta.cta}
-            className="ml-2 text-[14px] text-[var(--color-accent-text)] hover:underline underline-offset-2">
+            className="ml-2 text-[14px] font-semibold text-[var(--color-accent-text)] hover:underline underline-offset-2">
             Open
           </Link>
           {isExpanded && (
@@ -155,9 +154,10 @@ export default function WidgetFrame({ widget, editing, size, onRemove, onOpenSet
     </div>
   );
   const errorLine = loadError ? (
-    <p role="alert" className="mb-3 border-l-[3px] border-[var(--state-overdue)] pl-2.5 text-[13px] font-semibold text-[var(--state-overdue)]">
-      Couldn&apos;t load this: {loadError}{" "}
-      <button type="button" onClick={refresh} className="font-normal text-[var(--color-accent-text)] hover:underline underline-offset-2">Try again</button>
+    <p role="alert" className="mb-3 flex flex-wrap items-baseline gap-x-2 text-[14px]">
+      <span className="font-semibold text-[var(--state-overdue-text)]">This didn&apos;t load.</span>
+      <span className="text-[var(--color-text-muted)]">{friendlyError(loadError)}</span>
+      <button type="button" onClick={refresh} className="font-semibold text-[var(--color-accent-text)] hover:underline underline-offset-2">Try again</button>
     </p>
   ) : null;
 
@@ -167,10 +167,10 @@ export default function WidgetFrame({ widget, editing, size, onRemove, onOpenSet
         aria-label={title}
         style={size}
         className={`group/widget relative flex flex-col min-w-0 ${size ? "" : "h-full"} ${
-          editing ? "rounded-lg outline-2 outline-dashed outline-offset-4 outline-[var(--color-border-strong)]" : ""}`}
+          editing ? "rounded-panel outline-2 outline-dashed outline-offset-4 outline-[var(--color-border-strong)]" : ""}`}
       >
         {header(false)}
-        <div className="relative flex-1 min-h-0 flex flex-col rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4 overflow-hidden">
+        <div className="relative flex-1 min-h-0 flex flex-col rounded-panel border border-[var(--color-border)] bg-[var(--color-surface)] p-4 overflow-hidden">
           {!expanded && errorLine}
           {/* While expanded, the full-size copy is the live one: the tile
               doesn't fetch the same data twice. */}
@@ -192,7 +192,7 @@ export default function WidgetFrame({ widget, editing, size, onRemove, onOpenSet
           <div className="fixed inset-0 z-[200] flex items-stretch justify-center p-2 sm:p-6 lg:p-10">
             <div className="absolute inset-0 bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)]" onClick={() => setExpanded(false)} />
             <div role="dialog" aria-modal="true" aria-label={title}
-              className="group/widget relative w-full max-w-6xl flex flex-col rounded-lg bg-[var(--color-canvas)] shadow-2xl overflow-hidden">
+              className="group/widget relative w-full max-w-6xl flex flex-col rounded-panel bg-[var(--color-canvas)] ui-float ui-float-in overflow-hidden">
               <div className="px-4 sm:px-5 pt-3 pb-3 border-b border-[var(--color-border-strong)]">{header(true)}</div>
               <div className="relative flex-1 min-h-0 flex flex-col p-4 sm:p-5 bg-[var(--color-surface)]">
                 {errorLine}

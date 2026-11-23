@@ -25,9 +25,9 @@ export interface Group {
   title: string;
   count: number;
   help?: React.ReactNode;
-  /** An icon for the group's band (shown on a brand tile). */
+  /** Kept for older callers; not drawn (the band's title is text). */
   icon?: React.ReactNode;
-  /** The count's badge tone: late items red, waiting amber. */
+  /** The count's tone: late items red, waiting amber. */
   tone?: "bad" | "warn";
   rows: GroupRow[];
   more?: { href: string; label: string };
@@ -36,11 +36,12 @@ export interface Group {
 export default function GroupedTable({ groups, label }: { groups: Group[]; label: string }) {
   const shown = groups.filter((g) => g.rows.length > 0);
   if (shown.length === 0) return null;
+  // The band names the group as text, then its count as plain figures (in
+  // its state color when late or waiting).
   const bandTitle = (g: Group) => (
     <span className="inline-flex items-center gap-2">
-      {g.icon && <span aria-hidden className="ui-icon-tile is-sm !bg-[var(--color-surface)]">{g.icon}</span>}
       <span className="font-semibold text-[var(--color-text)]">{g.title}</span>
-      <span className={`ui-count ${g.tone === "bad" ? "is-bad" : g.tone === "warn" ? "is-warn" : "is-solid"}`}>{g.count.toLocaleString()}</span>
+      <span className={`tabular-nums ${g.tone === "bad" ? "font-semibold text-[var(--state-overdue-text)]" : g.tone === "warn" ? "font-semibold text-[var(--state-held-text)]" : "text-[var(--color-text-muted)]"}`}>{g.count.toLocaleString()}</span>
       {g.help && <HelpTooltip>{g.help}</HelpTooltip>}
     </span>
   );

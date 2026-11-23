@@ -202,7 +202,8 @@ export default function DocBrowserBody() {
     const head = (
       <div className="mb-3 flex items-end justify-between gap-4 shrink-0">
         <span className="text-[14px] text-[var(--color-text-muted)]">
-          <span className="font-display text-[26px] leading-none font-semibold text-[var(--color-heading)] tabular-nums">{(top?.totalDocs ?? 0).toLocaleString()}</span> controlled documents
+          {/* Small: the page has its one large number already. */}
+          <span className={`font-display text-section font-semibold tabular-nums ${(top?.totalDocs ?? 0) === 0 ? "text-[var(--color-text-faint)]" : "text-[var(--color-heading)]"}`}>{(top?.totalDocs ?? 0).toLocaleString()}</span> controlled documents
         </span>
         <div className="flex items-center gap-3 min-w-0">
           <TrendChip current={wk.cur} previous={wk.prev} what="new" />

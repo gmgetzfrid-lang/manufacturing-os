@@ -1,23 +1,28 @@
 "use client";
 
-// /profile — personal account page. Display name, email, role,
-// org memberships, password change link, and quick links to the
-// settings surfaces (notification prefs, sign out).
+// /profile: your own account. Your photo and the name people see, your
+// email, the password section, the workspaces you're in and your role in
+// each, and the two things people come here for (notification settings,
+// sign out) as quiet tools in the header.
 
 import React, { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { Bell, LogOut, Check, Camera, Loader2, UserRound, Building2 } from "lucide-react";
+import { Bell, LogOut, Camera, Loader2 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase, setPreferMicrosoft } from "@/lib/supabase";
 import { useRouter } from "next/navigation";
 import { PageShell } from "@/components/ui/PageShell";
-import { PageHero, PageBody, Card, heroPrimary, heroQuiet } from "@/components/ui/PageHero";
+import { PageHero, PageBody, Card, heroQuiet } from "@/components/ui/PageHero";
+import { Button } from "@/components/ui/Button";
+import { SkeletonText } from "@/components/ui/Skeleton";
+import { ErrorNote } from "@/components/ui/ErrorNote";
 import ChangePassword from "@/components/admin/ChangePassword";
-import { Pill } from "@/components/admin/kit";
-import LoadingBlock from "@/components/ui/LoadingBlock";
+import { StatusTag, field, label as labelCls, btnLink, tbl } from "@/components/admin/kit";
 import FileThumb from "@/components/ui/FileThumb";
 import { useFileDrag } from "@/hooks/useFileDrag";
 import { tryUpload } from "@/lib/uploadRetry";
+import { friendlyError } from "@/lib/friendlyError";
+import { appConfirm } from "@/components/providers/DialogProvider";
 
 import UserAvatar from "@/components/ui/UserAvatar";
 import { saveMyAvatar, clearProfileCache } from "@/lib/userProfiles";
@@ -30,14 +35,15 @@ export default function ProfilePage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<unknown>(null);
+  const [reload, setReload] = useState(0);
   const [orgs, setOrgs] = useState<Array<{ org_id: string; org_name: string; role: string }>>([]);
   const [hasAvatar, setHasAvatar] = useState(false);
   const [avatarBusy, setAvatarBusy] = useState(false);
   const avatarInputRef = useRef<HTMLInputElement>(null);
   const [avatarFile, setAvatarFile] = useState<File | null>(null);
   const [avatarError, setAvatarError] = useState<string | null>(null);
-  const [loadFailed, setLoadFailed] = useState(false);
 
   // One photo: upload, then point the profile at it. Safe to repeat (a new
   // path each time, and the profile just points at the latest).
@@ -51,10 +57,19 @@ export default function ProfilePage() {
         onRetried: () => { clearProfileCache(); setHasAvatar(true); setAvatarFile(null); setAvatarError(null); },
       });
       clearProfileCache(); setHasAvatar(true); setAvatarFile(null);
-    } catch (err) { setAvatarError(`The photo didn't upload: ${(err as Error).message}`); }
+    } catch (err) { setAvatarError(`The photo didn't upload. ${friendlyError(err)}`); }
     finally { setAvatarBusy(false); }
   };
   const avatarDrag = useFileDrag((files) => { if (files[0]) void uploadAvatar(files[0]); }, avatarBusy);
+
+  const removeAvatar = async () => {
+    if (!uid) return;
+    if (!(await appConfirm({ title: "Remove your photo?", message: "Your initials show in its place.", confirmLabel: "Remove photo", tone: "danger" }))) return;
+    setAvatarBusy(true); setAvatarError(null);
+    try { await saveMyAvatar(uid, null); clearProfileCache(); setHasAvatar(false); }
+    catch (e) { setAvatarError(`The photo wasn't removed. ${friendlyError(e)}`); }
+    finally { setAvatarBusy(false); }
+  };
 
   useEffect(() => {
     if (!uid) return;
@@ -74,30 +89,29 @@ export default function ProfilePage() {
           .eq("uid", uid)
           .eq("status", "active");
         if (mErr) throw mErr;
-        setLoadFailed(false);
+        setLoadError(null);
         setOrgs(((members ?? []) as unknown as Array<{ org_id: string; role: string; orgs: { name: string } | { name: string }[] | null }>).map((m) => {
           const o = m.orgs;
-          const name = Array.isArray(o) ? (o[0]?.name ?? "(unknown)") : (o?.name ?? "(unknown)");
+          const name = Array.isArray(o) ? (o[0]?.name ?? "") : (o?.name ?? "");
           return { org_id: m.org_id, org_name: name, role: m.role };
         }));
       } catch (e) {
-        setLoadFailed(true);
-        setError(`Couldn't load your profile: ${(e as Error).message}`);
+        setLoadError(e ?? "error");
       } finally { setLoading(false); }
     })();
-  }, [uid]);
+  }, [uid, reload]);
 
   const save = async () => {
     if (!uid) return;
-    setSaving(true); setError(null); setSaved(false);
+    setSaving(true); setSaveError(null); setSaved(false);
     try {
       // The person's own profile, which their admin's add made: changed, never made here.
       const { error: upsertErr } = await supabase.from("users")
         .update({ display_name: displayName.trim() || null, updated_at: new Date().toISOString() }).eq("id", uid);
       if (upsertErr) throw upsertErr;
       setSaved(true);
-      setTimeout(() => setSaved(false), 2500);
-    } catch (e) { setError((e as Error).message); }
+      window.setTimeout(() => setSaved(false), 1600);
+    } catch (e) { setSaveError(`Not saved. ${friendlyError(e)}`); }
     finally { setSaving(false); }
   };
 
@@ -108,7 +122,12 @@ export default function ProfilePage() {
   };
 
   if (loading) {
-    return <PageShell width="form"><PageHero kicker="Your profile" title="Your profile" size="md" /><PageBody><Card><LoadingBlock what="your profile" className="border-0 p-0" /></Card></PageBody></PageShell>;
+    return (
+      <PageShell width="form">
+        <PageHero kicker="Your profile" title="Your profile" size="md" />
+        <PageBody><Card label="Your details"><SkeletonText lines={4} /></Card></PageBody>
+      </PageShell>
+    );
   }
 
   const shownName = displayName.trim() || (userEmail ? userEmail.split("@")[0] : "you");
@@ -119,10 +138,13 @@ export default function ProfilePage() {
           size="md"
           title={`Signed in as ${shownName}.`}
           sub={userEmail ?? undefined}
+          // A role and a count of workspaces: facts, not one number that
+          // matters, so all small.
           facts={[
             { label: "Role", value: activeRole || "None" },
             { label: "Workspaces", value: orgs.length },
           ]}
+          factsHero="none"
           tools={
             <>
               <Link href="/settings/notifications" className={heroQuiet} aria-label="Notification settings">
@@ -136,44 +158,30 @@ export default function ProfilePage() {
         />
 
         <PageBody>
-        <Card label={<span className="inline-flex items-center gap-2.5"><span aria-hidden className="ui-icon-tile is-sm is-solid"><UserRound className="w-4 h-4" /></span>Your details</span>} pad={false}>
-          <form onSubmit={(e) => { e.preventDefault(); void save(); }}>
-            <div className="px-5 sm:px-6 py-5 space-y-5">
-              {error && (
-                <p role="alert" className="relative pl-3 text-[15px] text-[var(--color-text)]">
-                  <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] bg-[var(--state-overdue)]" />{error}
-                </p>
-              )}
+        {!!loadError && <ErrorNote error={loadError} title="Your profile didn't load." onRetry={() => setReload((n) => n + 1)} />}
 
+        <Card label="Your details" pad={false}>
+          <form onSubmit={(e) => { e.preventDefault(); void save(); }}>
+            <div className="px-5 sm:px-6 py-5 space-y-6">
               {/* Photo if set, otherwise initials from the display name. This
                   is the face shown everywhere. Drop an image here to use it. */}
               <div>
-                <div className="block text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5">Photo</div>
-                <div {...avatarDrag.bind} className={`flex items-center gap-4 rounded-md ${avatarDrag.ring}`}>
+                <div className={labelCls}>Photo</div>
+                <div {...avatarDrag.bind} className={`flex items-center gap-4 rounded-lg ${avatarDrag.ring}`}>
                   {avatarDrag.over ? (
-                    <div className="w-16 h-16 rounded-xl grid place-items-center border border-dashed border-[var(--color-border-strong)] text-[13px] font-semibold text-[var(--color-text)] text-center">{avatarDrag.say}</div>
+                    <div className="w-16 h-16 rounded-panel grid place-items-center border border-dashed border-[var(--color-border-strong)] text-[13px] font-semibold text-[var(--color-text)] text-center">{avatarDrag.say}</div>
                   ) : (
                     <UserAvatar uid={uid} name={displayName || undefined} email={userEmail} size={64} rounded="xl" />
                   )}
                   <div className="min-w-0 space-y-1.5">
-                    <div className="flex flex-wrap items-center gap-3">
+                    <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
                       <button type="button" onClick={() => avatarInputRef.current?.click()} disabled={avatarBusy} className={heroQuiet}>
-                        {avatarBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Camera className="w-4 h-4" />}
+                        {avatarBusy ? <Loader2 className="w-4 h-4 motion-safe:animate-spin" /> : <Camera className="w-4 h-4" />}
                         {hasAvatar ? "Change photo" : "Add photo"}
                       </button>
                       {hasAvatar && (
-                        <button
-                          type="button"
-                          disabled={avatarBusy}
-                          onClick={async () => {
-                            if (!uid) return;
-                            setAvatarBusy(true); setAvatarError(null);
-                            try { await saveMyAvatar(uid, null); clearProfileCache(); setHasAvatar(false); }
-                            catch (e) { setAvatarError(`Couldn't remove the photo: ${(e as Error).message}`); }
-                            finally { setAvatarBusy(false); }
-                          }}
-                          className="text-[14px] text-[var(--state-overdue)] hover:underline underline-offset-2 disabled:opacity-50"
-                        >
+                        <button type="button" disabled={avatarBusy} onClick={() => void removeAvatar()}
+                          className={`${btnLink} !text-[var(--state-overdue-text)]`}>
                           Remove photo
                         </button>
                       )}
@@ -183,16 +191,16 @@ export default function ProfilePage() {
                         <FileThumb file={avatarFile} size={28} />
                         <span className="min-w-0 text-[13px]">
                           <span className="block font-semibold text-[var(--color-text)] truncate max-w-[14rem]">{avatarFile.name}</span>
-                          <span className="block text-[var(--color-text-muted)]">{formatBytes(avatarFile.size)}{avatarBusy ? ", uploading…" : ""}</span>
+                          <span className="block text-[var(--color-text-muted)]">{formatBytes(avatarFile.size)}{avatarBusy ? ", uploading" : ""}</span>
                         </span>
                         {!avatarBusy && avatarError && (
-                          <button type="button" onClick={() => void uploadAvatar(avatarFile)} className={`${heroQuiet} h-8`}>Try again</button>
+                          <button type="button" onClick={() => void uploadAvatar(avatarFile)} className={btnLink}>Try again</button>
                         )}
                       </div>
                     ) : (
-                      <p className="text-[13px] text-[var(--color-text-muted)]">No photo shows your initials. Under 5 MB.</p>
+                      <p className="text-[13px] text-[var(--color-text-muted)]">Without a photo, your initials show. Under 5 MB.</p>
                     )}
-                    {avatarError && <p role="alert" className="text-[13px] font-semibold text-[var(--state-overdue)]">{avatarError}</p>}
+                    {avatarError && <p role="alert" className="text-[13px] font-semibold text-[var(--state-overdue-text)]">{avatarError}</p>}
                   </div>
                 </div>
                 <input
@@ -210,64 +218,65 @@ export default function ProfilePage() {
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
                 <div>
-                  <label htmlFor="profile-display-name" className="block text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5">Display name</label>
+                  <label htmlFor="profile-display-name" className={labelCls}>Display name</label>
                   <input
                     id="profile-display-name"
                     value={displayName}
                     onChange={(e) => setDisplayName(e.target.value)}
                     placeholder={userEmail ? userEmail.split("@")[0] : "Your name"}
+                    autoComplete="name"
                     aria-describedby="profile-name-hint"
-                    className="w-full h-10 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[15px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] outline-none focus:border-[var(--color-main)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40"
+                    className={field}
                   />
-                  <p id="profile-name-hint" className="mt-1 text-[13px] text-[var(--color-text-muted)]">Blank uses the first part of your email.</p>
+                  <p id="profile-name-hint" className="mt-1.5 text-[13px] text-[var(--color-text-muted)]">Blank uses the first part of your email.</p>
                 </div>
                 <div>
-                  <div className="block text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5">Email</div>
+                  <div className={labelCls}>Email</div>
                   <div className="h-10 flex items-center text-[15px] text-[var(--color-text)] truncate">{userEmail ?? "None"}</div>
                 </div>
               </div>
+              {saveError && <p role="alert" className="text-[14px] font-semibold text-[var(--state-overdue-text)]">{saveError}</p>}
             </div>
             <div className="flex items-center justify-end gap-3 px-5 sm:px-6 py-3 border-t border-[var(--color-border)]">
-              {saved && <span role="status" className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-[var(--color-text)]"><Check className="w-4 h-4 text-[var(--state-released)]" /> Saved</span>}
-              <button type="submit" disabled={saving || loadFailed} className={heroPrimary}>
-                {saving && <Loader2 className="w-4 h-4 animate-spin" />}
-                Save
-              </button>
+              <Button type="submit" loading={saving} done={saved} doneLabel="Saved" disabled={!!loadError}>Save</Button>
             </div>
           </form>
         </Card>
 
         <ChangePassword />
 
-        <Card label={<span className="inline-flex items-center gap-2.5"><span aria-hidden className="ui-icon-tile is-sm is-solid"><Building2 className="w-4 h-4" /></span>Workspaces{orgs.length > 1 ? <span className="ui-count is-solid">{orgs.length}</span> : null}</span>} pad={false} className="overflow-hidden">
+        <section aria-label="Workspaces" className="min-w-0">
+          <div className="flex items-end gap-2 mb-3 min-h-8">
+            <h2 className="font-display text-section font-semibold text-[var(--color-text)]">Workspaces</h2>
+            {orgs.length > 1 && <span className="mb-0.5 text-body tabular-nums text-[var(--color-text-muted)]">{orgs.length}</span>}
+          </div>
           {orgs.length === 0 ? (
-            <p className="px-5 py-4 text-[15px] text-[var(--color-text-muted)]">You aren&apos;t in any workspace.</p>
+            <p className="rounded-panel border border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-4 text-[15px] text-[var(--color-text-muted)]">You aren&apos;t in a workspace. Your workspace admin adds you.</p>
           ) : (
-            <table className="w-full text-[15px]">
-              <thead className="bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text-muted)] text-left">
-                <tr>
-                  <th className="font-semibold px-4 sm:px-5 h-10 w-full">Workspace</th>
-                  <th className="font-semibold px-4 h-10 whitespace-nowrap">Your role</th>
-                  <th className="h-10 pr-4 sm:pr-5"><span className="sr-only">Current</span></th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-[var(--color-border)]">
-                {orgs.map((o) => (
-                  <tr key={o.org_id}>
-                    <td className="px-4 sm:px-5 py-3 font-semibold text-[var(--color-text)] max-w-0">
-                      <span className="flex items-center gap-3 min-w-0">
-                        <span aria-hidden className={`ui-icon-tile is-sm ${o.org_id === activeOrgId ? "is-solid" : ""}`}><Building2 className="w-4 h-4" /></span>
-                        <span className="truncate">{o.org_name}</span>
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 whitespace-nowrap"><span className="ui-tag">{o.role}</span></td>
-                    <td className="pr-4 sm:pr-5 py-3 whitespace-nowrap text-right">{o.org_id === activeOrgId && <Pill tone="solid">Current</Pill>}</td>
+            <div className={tbl.wrap}>
+              <table className={tbl.table}>
+                <thead className={tbl.thead}>
+                  <tr>
+                    <th className={`${tbl.th} w-full`}>Workspace</th>
+                    <th className={tbl.th}>Your role</th>
+                    <th className={tbl.th}><span className="sr-only">Current</span></th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className={tbl.tbody}>
+                  {orgs.map((o) => (
+                    <tr key={o.org_id}>
+                      <td className={`${tbl.td} font-semibold text-[15px] text-[var(--color-text)] max-w-0`}>
+                        <span className="block truncate">{o.org_name || <span className="font-normal text-[var(--color-text-muted)]">Name not set</span>}</span>
+                      </td>
+                      <td className={`${tbl.td} whitespace-nowrap`}><span className="ui-tag">{o.role}</span></td>
+                      <td className={`${tbl.td} whitespace-nowrap text-right`}>{o.org_id === activeOrgId && <StatusTag tone="good" colored={false}>Current</StatusTag>}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
-        </Card>
+        </section>
         </PageBody>
     </PageShell>
   );

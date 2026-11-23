@@ -1,21 +1,22 @@
 "use client";
 
-// ─── NEEDS YOU (Home's first section) ─────────────────────────────────────
-// The page's header says how many things wait on you and backs it up with
-// the counts; this section lists them as a ruled table (item, what to do,
-// status, date, one button), late rows first with a red edge, and closes
-// with a row of the three main tools and their live counts.
+// Needs you (Home's first section). The page's header says how many things
+// wait on you; this section lists them as a ruled table (item, what to do,
+// status, date), late rows first with a red edge, and closes with one quiet
+// line of the three main tools and their live counts.
 //
 // The customizable dashboard renders it as the `commandDeck` widget.
 
 import React from "react";
-import { RefreshCw, Download, BellRing, MailPlus, FileLock, Briefcase } from "lucide-react";
+import Link from "next/link";
+import { RefreshCw, Download } from "lucide-react";
 import type { InboxSnapshot } from "@/lib/inbox";
 import type { AttentionItem } from "@/hooks/useTicketNotifications";
 import { useNotificationCenter } from "@/components/notifications/NotificationCenter";
+import { useNotificationsSeen } from "@/components/notifications/seen";
 import { buildNeeds } from "./needsYou";
 import NeedsTable from "./NeedsTable";
-import { sheet, iconBtn, rowBtn, FactRow, humanTime } from "./ui";
+import { sheet, iconBtn, link, humanTime, SectionHead } from "./ui";
 
 // Headline counts for the three tools in the section's last row. Fetched
 // separately from the personal inbox snapshot (org-wide numbers), each guarded
@@ -71,35 +72,42 @@ export function CommandDeck({
 }: CommandDeckProps) {
   const stale = data?.myStaleCheckouts.length ?? 0;
   const { open: openCenter } = useNotificationCenter();
+  const { seenAt } = useNotificationsSeen();
   const rows = React.useMemo(() => buildNeeds(items), [items]);
   const more = Math.max(0, rows.length - SHOWN);
-  const n = (v: number | undefined) => (pillars.loaded ? (v ?? 0).toLocaleString() : "–");
+
+  // The three main tools as one quiet line of labelled figures (each opens
+  // its tool); a zero reads muted, checkouts past their date in red.
+  const tools: Array<{ href: string; label: string; value: number | undefined; note?: string; bad?: boolean }> = [
+    { href: "/requests", label: "Open drafting requests", value: pillars.openRequests, note: data ? `${data.ticketsAssigned.length.toLocaleString()} yours` : undefined },
+    { href: "/checkouts", label: "Documents checked out", value: pillars.lockedDocs, bad: stale > 0,
+      note: data ? (stale > 0 ? `${stale.toLocaleString()} past due` : `${data.myCheckouts.length.toLocaleString()} by you`) : undefined },
+    { href: "/projects", label: "Active projects", value: pillars.activeProjects, note: data && data.milestonesUpcoming.length ? `${data.milestonesUpcoming.length.toLocaleString()} milestones this week` : undefined },
+  ];
 
   return (
     <section aria-label="Needs you" className={`min-w-0 ${fill ? "h-full flex flex-col" : ""}`}>
-      <div className="flex items-center gap-2 mb-2.5 min-h-9">
-        <span aria-hidden className="ui-icon-tile is-sm is-solid"><BellRing className="w-4 h-4" /></span>
-        <h2 className="font-display text-[19px] leading-tight font-semibold text-[var(--color-text)]">Needs you</h2>
-        {rows.length > 0 && <span className={`ui-count ${rows.some((r) => r.overdue) ? "is-bad" : "is-solid"}`}>{rows.length.toLocaleString()}</span>}
-        <div className="flex-1" />
-        {!fill && (<>
-        <button type="button" onClick={onRefresh} disabled={refreshing} aria-label="Refresh" title={lastLoadedAt ? `Updated ${humanTime(new Date(lastLoadedAt).toISOString())}` : "Refresh"} className={iconBtn}>
-          <RefreshCw className={`w-4 h-4 ${refreshing ? "animate-spin" : ""}`} />
-        </button>
-        <button type="button" onClick={onExport} disabled={!canExport} aria-label="Export" title="Download what needs you as a spreadsheet (CSV)" className={iconBtn}>
-          <Download className="w-4 h-4" />
-        </button>
-        {rows.length > 0 && (
-          <button type="button" onClick={() => openCenter("all")} className={rowBtn}>
-            {more > 0 ? `Show all ${rows.length.toLocaleString()}` : "Show all"}
-          </button>
+      <SectionHead title="Needs you" count={rows.length} tone={rows.some((r) => r.overdue) ? "bad" : undefined}>
+        {!fill && (
+          <div className="flex items-center gap-1">
+            <button type="button" onClick={onRefresh} disabled={refreshing} aria-label="Refresh" title={lastLoadedAt ? `Refresh (updated ${humanTime(new Date(lastLoadedAt).toISOString())})` : "Refresh"} className={iconBtn}>
+              <RefreshCw className={`w-4 h-4 ${refreshing ? "animate-spin" : ""}`} />
+            </button>
+            <button type="button" onClick={onExport} disabled={!canExport} aria-label="Download as a spreadsheet" title="Download what needs you as a spreadsheet (CSV)" className={iconBtn}>
+              <Download className="w-4 h-4" />
+            </button>
+            {rows.length > 0 && (
+              <button type="button" onClick={() => openCenter("all")} className={`ml-2 text-[14px] font-semibold ${link}`}>
+                {more > 0 ? `Show all ${rows.length.toLocaleString()}` : "Show all"}
+              </button>
+            )}
+          </div>
         )}
-        </>)}
-      </div>
+      </SectionHead>
 
       <div className={`${sheet} ${fill ? "flex-1 min-h-0 overflow-y-auto" : ""}`}>
         {rows.length > 0 ? (
-          <NeedsTable rows={rows} limit={SHOWN} onOpen={(r) => { if (r.notificationId) onOpenItem?.(r.notificationId); }} />
+          <NeedsTable rows={rows} limit={SHOWN} seenAt={seenAt} onOpen={(r) => { if (r.notificationId) onOpenItem?.(r.notificationId); }} />
         ) : (
           <p className="px-4 py-4 text-[15px] text-[var(--color-text-muted)]">
             {focus ?? "No requests, reviews or alerts are waiting on you."}
@@ -110,14 +118,22 @@ export function CommandDeck({
             Showing {SHOWN} of {rows.length.toLocaleString()}, late ones first.
           </div>
         )}
-        {/* The three main tools, with their live counts. */}
-        <FactRow className="border-t border-[var(--color-border-strong)] bg-[var(--color-surface-2)]/50" cells={[
-          { icon: <MailPlus className="w-4 h-4" />, label: "Open drafting requests", value: n(pillars.openRequests), href: "/requests", note: data ? `${data.ticketsAssigned.length} yours` : undefined },
-          { icon: <FileLock className="w-4 h-4" />, label: "Documents checked out", value: n(pillars.lockedDocs), href: "/checkouts", tone: stale > 0 ? "bad" : undefined,
-            note: data ? (stale > 0 ? `${stale} past due` : `${data.myCheckouts.length} by you`) : undefined },
-          { icon: <Briefcase className="w-4 h-4" />, label: "Active projects", value: n(pillars.activeProjects), href: "/projects", note: data && data.milestonesUpcoming.length ? `${data.milestonesUpcoming.length} milestones this week` : undefined },
-        ]} />
       </div>
+      {/* The three main tools, with their live counts: quiet text. */}
+      <ul aria-label="Your tools" className="mt-3 flex flex-wrap gap-x-6 gap-y-1.5 text-[14px]">
+        {tools.map((t) => {
+          const v = pillars.loaded ? t.value ?? 0 : null;
+          return (
+            <li key={t.href}>
+              <Link href={t.href} className="group inline-flex items-baseline gap-1.5 text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
+                <span className="group-hover:underline underline-offset-2">{t.label}</span>
+                <span className={`font-semibold tabular-nums ${v === null || v === 0 ? "text-[var(--color-text-faint)]" : t.bad ? "text-[var(--state-overdue-text)]" : "text-[var(--color-text)]"}`}>{v === null ? "–" : v.toLocaleString()}</span>
+                {t.note && <span className={t.bad ? "text-[var(--state-overdue-text)]" : ""}>({t.note})</span>}
+              </Link>
+            </li>
+          );
+        })}
+      </ul>
     </section>
   );
 }

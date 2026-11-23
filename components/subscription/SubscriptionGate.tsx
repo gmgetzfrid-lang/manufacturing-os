@@ -22,7 +22,7 @@ import { PageShell } from "@/components/ui/PageShell";
 import { PageHero, PageBody, Card, heroPrimary, heroQuiet } from "@/components/ui/PageHero";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Lock, CreditCard, Download, LogOut } from "lucide-react";
+import { CreditCard, Download, LogOut } from "lucide-react";
 import { supabase, setPreferMicrosoft } from "@/lib/supabase";
 import { useSubscription } from "@/components/providers/SubscriptionProvider";
 import { useRole } from "@/components/providers/RoleContext";
@@ -81,7 +81,7 @@ function SubscriptionBlocked({
   return (
     <PageShell width="form">
       <PageHero
-        kicker={<span className="inline-flex items-center gap-1.5"><Lock className="w-3.5 h-3.5" /> Subscription required</span>}
+        kicker="Subscription required"
         title={reason}
         size="md"
         sub={admin
@@ -107,7 +107,7 @@ function SubscriptionBlocked({
           <p className="text-[14px] text-[var(--color-text-muted)] mb-3">Everything stays exportable while access is paused.</p>
           <Link
             href="/admin/data-export"
-            className="inline-flex items-center justify-center gap-2 h-10 px-4 rounded-xl border border-[var(--color-border-strong)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] text-[14px] font-bold transition-colors"
+            className={heroQuiet}
           >
             <Download className="w-4 h-4" /> Export your data
           </Link>

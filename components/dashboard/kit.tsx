@@ -14,6 +14,7 @@ import { Search } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
 import type { DashboardWidget } from "@/lib/dashboard/types";
+import { SkeletonRows } from "@/components/ui/Skeleton";
 
 export interface WidgetCtx {
   widget: DashboardWidget;
@@ -121,15 +122,10 @@ export function BodyShell({ children }: { children: React.ReactNode }) {
   return <div className="text-[15px] text-[var(--color-text-muted)]">{children}</div>;
 }
 
+/** A body loading: skeleton rows in place of its list (no spinner, no
+ *  "Loading" words; screen readers hear it). */
 export function Skeleton({ rows = 3 }: { rows?: number }) {
-  return (
-    <div className="flex-1 min-h-0 divide-y divide-[var(--color-border)]" aria-busy="true">
-      {Array.from({ length: rows }).map((_, i) => (
-        <div key={i} className="py-2.5"><div className="h-4 rounded bg-[var(--color-surface-2)] animate-pulse" style={{ width: `${70 - i * 12}%` }} /></div>
-      ))}
-      <p className="pt-2 text-[13px] text-[var(--color-text-muted)]">Loading…</p>
-    </div>
-  );
+  return <SkeletonRows rows={rows} cols={1} sheet={false} className="-mx-4 -my-1 flex-1 min-h-0" />;
 }
 
 /** Honest empty-state for a chart slot. */
@@ -145,8 +141,8 @@ export function Empty({ children }: { children: React.ReactNode }) {
   );
 }
 
-/** Tabs inside a section: the current one is underlined in the brand
- *  color. Counts are optional badges (solid on the current tab). */
+/** Tabs inside a section: the current one is underlined in the current
+ *  color. Counts are plain muted figures after the label. */
 export function Tabs<T extends string>({ value, onChange, options, className = "" }: {
   value: T;
   onChange: (v: T) => void;
@@ -161,14 +157,14 @@ export function Tabs<T extends string>({ value, onChange, options, className = "
         const on = o.value === value;
         return (
           <button key={o.value} role="tab" aria-selected={on} type="button" onClick={() => onChange(o.value)}
-            className={`shrink-0 inline-flex items-center gap-1.5 h-9 border-b-2 text-[14px] whitespace-nowrap transition-colors ${
+            className={`shrink-0 inline-flex items-center gap-1.5 h-9 pointer-coarse:h-11 border-b-2 text-[14px] whitespace-nowrap transition-colors ${
               on
-                ? "border-[var(--color-main)] font-semibold text-[var(--color-text)]"
+                ? "border-[var(--color-current)] font-semibold text-[var(--color-text)]"
                 : "border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
             }`}>
             {o.label}
             {o.count !== undefined && (
-              <span className={`ui-count ${on ? "is-solid" : ""}`}>{o.count}</span>
+              <span className={`text-[13px] font-normal tabular-nums ${o.count === 0 ? "text-[var(--color-text-faint)]" : "text-[var(--color-text-muted)]"}`}>{o.count}</span>
             )}
           </button>
         );
@@ -189,17 +185,20 @@ export function SearchField({ value, onChange, onSubmit, placeholder, title, aut
   return (
     <form
       onSubmit={(e) => { e.preventDefault(); const v = value.trim(); if (v && onSubmit) onSubmit(v); }}
-      className="flex items-center gap-2 h-9 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 focus-within:border-[var(--color-text-faint)] focus-within:ring-2 focus-within:ring-[var(--color-accent-ring)]/40 transition-colors"
+      className="ui-field-box flex items-center gap-2 h-10 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-control)] bg-[var(--color-surface)] px-3"
       title={title}
+      role="search"
     >
-      <Search className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
+      <Search className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" aria-hidden />
       <input
+        type="search"
+        enterKeyHint="search"
         value={value}
         autoFocus={autoFocus}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
         aria-label={placeholder}
-        className="flex-1 min-w-0 bg-transparent text-[14px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] outline-none"
+        className="ui-field-bare flex-1 min-w-0 bg-transparent text-[14px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] outline-none"
       />
     </form>
   );
