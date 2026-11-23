@@ -11,7 +11,11 @@
 // link proposer can connect documents that only ever used the nickname.
 
 import React, { useCallback, useEffect, useState } from "react";
-import { Tags, Plus, X, Loader2, Sparkles, Hand, ScanEye } from "lucide-react";
+import { Plus, X, Sparkles, Hand, ScanEye } from "lucide-react";
+import { Button } from "@/components/ui/Button";
+import { ErrorNote } from "@/components/ui/ErrorNote";
+import { SkeletonText } from "@/components/ui/Skeleton";
+import { friendlyError } from "@/lib/friendlyError";
 import {
   listAssetAliases, addAssetAlias, removeAssetAlias,
   ALIAS_ORIGIN_LABELS, type AssetAlias, type AliasOrigin,
@@ -50,40 +54,30 @@ export default function AliasPanel({
       await addAssetAlias({ orgId, assetId, alias, userId, userName });
       setDraft("");
       await refresh();
-    } catch (e) { setError((e as Error).message); }
+    } catch (e) { setError(`Couldn't add ${alias}. ${friendlyError(e)}`); }
     finally { setBusy(false); }
   };
 
   const remove = async (a: AssetAlias) => {
     setError(null);
     try { await removeAssetAlias(a.id); await refresh(); }
-    catch (e) { setError(`Couldn't remove ${a.alias}: ${(e as Error).message}`); }
+    catch (e) { setError(`Couldn't remove ${a.alias}. ${friendlyError(e)}`); }
   };
 
-  if (rows === null) {
-    return (
-      <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4 sm:p-5 text-[13px] text-[var(--color-text-muted)] flex items-center gap-2 w-full">
-        <Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading other names…
-      </div>
-    );
-  }
-
   return (
-    <section className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4 sm:p-5 space-y-2.5">
-      <div className="flex items-center gap-2">
-        <h2 className="font-display text-[17px] font-semibold text-[var(--color-heading)] inline-flex items-center gap-2.5"><span className="ui-icon-tile is-sm" aria-hidden><Tags className="w-4 h-4" /></span> Also known as</h2>
-        {rows.length > 0 && <span className="ui-count">{rows.length}</span>}
+    <section className="min-w-0">
+      <div className="flex items-end gap-2 mb-3 min-h-8">
+        <h2 className="font-display text-[20px] leading-tight font-semibold text-[var(--color-text)]">Also known as</h2>
+        {rows && rows.length > 0 && <span className="ui-count">{rows.length}</span>}
       </div>
-      <p className="text-[13px] text-[var(--color-text-muted)]">
+      <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 sm:p-5 space-y-3">
+      <p className="text-[14px] text-[var(--color-text-muted)]">
         Nicknames, old tags before a renumber, vendor names.
       </p>
-      {loadFailed && (
-        <p role="alert" className="text-[13px] text-[var(--state-overdue)]">
-          Couldn&apos;t load the other names. <button type="button" onClick={() => void refresh()} className="font-bold underline">Try again</button>
-        </p>
-      )}
+      {rows === null && <SkeletonText lines={1} />}
+      {loadFailed && <ErrorNote compact title="Couldn't load the other names." onRetry={() => void refresh()} />}
 
-      {rows.length > 0 && (
+      {rows && rows.length > 0 && (
         <div className="flex flex-wrap gap-1.5">
           {rows.map((a) => {
             const Icon = ORIGIN_ICON[a.origin] ?? Hand;
@@ -106,27 +100,28 @@ export default function AliasPanel({
         </div>
       )}
 
-      {canManage && (
-        <div className="flex items-center gap-1.5">
+      {canManage && rows !== null && (
+        <form className="flex items-center gap-2" onSubmit={(e) => { e.preventDefault(); void add(); }}>
           <input
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter") void add(); }}
             placeholder="e.g. the north furnace, F-101 (old tag)"
             aria-label="Another name for this equipment"
-            className="flex-1 min-w-0 h-9 px-2.5 border border-[var(--color-border-strong)] rounded-lg text-[13px] bg-[var(--color-surface)]"
+            enterKeyHint="done"
+            autoComplete="off"
+            className="flex-1 min-w-0 h-10 pointer-coarse:h-11 px-3 border border-[var(--color-border-control)] rounded-lg text-[15px] max-sm:text-[16px] bg-[var(--color-surface)] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)]"
           />
-          <button onClick={() => void add()} disabled={busy || !draft.trim()}
-            className="inline-flex items-center gap-1 h-9 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">
-            {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />} Teach
-          </button>
-        </div>
+          <Button type="submit" variant="secondary" loading={busy} disabled={!draft.trim()}>
+            <Plus aria-hidden className="w-4 h-4" /> Add
+          </Button>
+        </form>
       )}
 
-      {rows.length === 0 && !canManage && !loadFailed && (
-        <div className="text-[13px] text-[var(--color-text-faint)] italic">No other names recorded.</div>
+      {rows && rows.length === 0 && !canManage && !loadFailed && (
+        <div className="text-[14px] text-[var(--color-text-muted)]">No other names recorded.</div>
       )}
-      {error && <div role="alert" className="text-[13px] text-[var(--state-overdue)]">{error}</div>}
+      {error && <ErrorNote compact title={error} next="" />}
+      </div>
     </section>
   );
 }

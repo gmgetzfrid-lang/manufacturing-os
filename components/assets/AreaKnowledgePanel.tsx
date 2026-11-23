@@ -32,7 +32,10 @@ import {
   removeKnowledgeSource, browseKnowledgeContainers, type SourceBrowseResult,
 } from "@/lib/knowledge";
 import { listProcessFlows } from "@/lib/processFlows";
-import { sheet, btnQuiet, btnRow, btnIcon, btnPrimary, link, label, fieldBox } from "@/components/admin/kit";
+import { sheet, btnQuiet, btnRow, btnIcon, btnPrimary, link, label, fieldBox, Section } from "@/components/admin/kit";
+import { ErrorNote } from "@/components/ui/ErrorNote";
+import { Skeleton, SkeletonRows } from "@/components/ui/Skeleton";
+import { friendlyError } from "@/lib/friendlyError";
 import { StatusTag } from "@/components/documents/StatusTag";
 import { Note, Cells } from "@/components/knowledge/panelKit";
 
@@ -77,7 +80,7 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
   unitAssetIds: string[];
 }) {
   const [status, setStatus] = useState<AreaStatus | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
   const [wizardOpen, setWizardOpen] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [note, setNoteState] = useState<{ text: string; bad: boolean } | null>(null);
@@ -96,11 +99,13 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
         `/api/area/knowledge-status?orgId=${encodeURIComponent(orgId)}&unitCode=${encodeURIComponent(unit.code)}`,
         { headers: { Authorization: `Bearer ${session?.access_token ?? ""}` } },
       );
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error ?? "Couldn't load the area's knowledge status.");
+      // A server that answers with a page instead of data is a server
+      // problem, not something to print.
+      const json = await res.json().catch(() => ({ error: null }));
+      if (!res.ok) throw Object.assign(new Error(json.error ?? ""), { status: res.status });
       setStatus(json as AreaStatus);
       setError(null);
-    } catch (e) { setError((e as Error).message); }
+    } catch (e) { setError(e ?? true); }
   }, [orgId, unit.code]);
   useEffect(() => { void loadStatus(); }, [loadStatus]);
 
@@ -166,7 +171,7 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
       setNote(r.added > 0
         ? `Synced: ${r.added} new document${r.added === 1 ? "" : "s"} pulled in.`
         : "Synced: up to date.");
-    } catch (e) { setNote(`Sync didn't finish: ${(e as Error).message}`, true); }
+    } catch (e) { setNote(`Sync didn't finish. ${friendlyError(e)}`, true); }
     finally { setSyncing(false); }
   };
 
@@ -177,7 +182,7 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
       const r = await addKnowledgeSources(orgId, status.boundLibrary.id, [{ type: "folder", id: folderId }]);
       await loadStatus();
       setNote(`Linked “${name}”: ${r.added} document${r.added === 1 ? "" : "s"} pulled in.`);
-    } catch (e) { setNote(`Couldn't link “${name}”: ${(e as Error).message}`, true); }
+    } catch (e) { setNote(`Couldn't link “${name}”. ${friendlyError(e)}`, true); }
     finally { setSyncing(false); }
   };
 
@@ -187,7 +192,7 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
       await removeKnowledgeSource(orgId, sourceId);
       await loadStatus();
       setNote("Removed the link to the deleted folder.");
-    } catch (e) { setNote(`Couldn't remove the link: ${(e as Error).message}`, true); }
+    } catch (e) { setNote(`Couldn't remove the link. ${friendlyError(e)}`, true); }
     finally { setSyncing(false); }
   };
 
@@ -214,13 +219,19 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
     action?: React.ReactNode;
   }) => (
     <li className="flex flex-wrap sm:flex-nowrap items-start gap-x-3 gap-y-2 px-4 sm:px-5 py-3">
-      <span aria-hidden className={`w-6 h-6 rounded-full grid place-items-center shrink-0 font-display text-[13px] font-semibold mt-0.5 ${
-        state === "done" ? "bg-[var(--state-released)] text-white"
-        : state === "review" ? "bg-[var(--state-held)] text-white"
-        : "text-[var(--color-text-muted)] border-2 border-[var(--color-border-strong)]"
-      }`}>
-        {state === "done" ? <Check className="w-3.5 h-3.5" /> : state === "loading" ? <Loader2 className="w-3 h-3 animate-spin" /> : n}
-      </span>
+      {/* A step's mark: a check when it's done, its number while it's
+          still to do (never a filled color). */}
+      {state === "loading" ? (
+        <Skeleton className="!w-6 !h-6 !rounded-full shrink-0 mt-0.5" />
+      ) : (
+        <span aria-hidden className={`w-6 h-6 rounded-full grid place-items-center shrink-0 font-display text-[13px] font-semibold mt-0.5 border-[1.5px] ${
+          state === "done" ? "border-[var(--state-released)] text-[var(--state-released-text)]"
+          : state === "review" ? "border-[var(--state-held)] text-[var(--state-held-text)]"
+          : "text-[var(--color-text-muted)] border-[var(--color-border-strong)]"
+        }`}>
+          {state === "done" ? <Check className="w-3.5 h-3.5" strokeWidth={2.5} /> : n}
+        </span>
+      )}
       <div className="flex-1 min-w-0 basis-[220px]">
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-[15px] font-semibold text-[var(--color-text)]">{title}</span>
@@ -234,17 +245,12 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
   );
 
   return (
-    <section className="min-w-0">
-      <div className="flex flex-wrap items-end gap-x-3 gap-y-2 mb-2.5 min-h-8">
-        <h2 className="font-display text-[19px] leading-tight font-semibold text-[var(--color-text)]">This area&apos;s knowledge</h2>
-        <div className="flex-1" />
-        {status?.boundLibrary && status.canManage && (
-          <button type="button" onClick={() => void syncNow()} disabled={syncing} className={btnQuiet}>
-            <RefreshCw className={`w-4 h-4 ${syncing ? "animate-spin" : ""}`} /> Sync now
-          </button>
-        )}
-      </div>
-
+    <Section label="This area's knowledge"
+      action={status?.boundLibrary && status.canManage ? (
+        <button type="button" onClick={() => void syncNow()} disabled={syncing} className={btnQuiet}>
+          <RefreshCw className={`w-4 h-4 ${syncing ? "animate-spin" : ""}`} /> {syncing ? "Syncing" : "Sync now"}
+        </button>
+      ) : undefined}>
       <div className={`${sheet} overflow-hidden`}>
         {status?.boundLibrary && (
           <div className="border-b border-[var(--color-border)]">
@@ -259,11 +265,7 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
 
         {(error || note || countsFailed || (hasDrift && drift)) && (
           <div className="border-b border-[var(--color-border)] px-4 sm:px-5 py-3 space-y-2.5">
-            {error && (
-              <Note tone="bad" title="Couldn't load this area's knowledge.">
-                {error} <button type="button" onClick={() => void loadStatus()} className={link}>Try again</button>
-              </Note>
-            )}
+            {!!error && <ErrorNote compact error={error} title="Couldn't load this area's knowledge." onRetry={() => void loadStatus()} />}
             {note && <Note tone={note.bad ? "bad" : "good"} title={note.text} />}
             {countsFailed && <Note tone="warn" title="Some links and markers weren't counted.">The numbers in step 3 may be low.</Note>}
 
@@ -311,12 +313,12 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
         {/* The order of operations, live. */}
         <ol className="divide-y divide-[var(--color-border)]">
           <Step n={1} title="File this area's drawings in Documents"
-            state={status === null ? "loading" : drawingsDone ? "done" : "todo"}
+            state={status === null ? (error ? "todo" : "loading") : drawingsDone ? "done" : "todo"}
             action={<Link href="/documents" className={`${btnRow} no-underline`}>Open Documents <ExternalLink className="w-3.5 h-3.5" /></Link>}>
             Type-first folders work best: PFDs / {unit.label}, P&amp;IDs / {unit.label}, Plot Plans / {unit.label}.
           </Step>
           <Step n={2} title="Connect the area's knowledge"
-            state={status === null ? "loading" : knowledgeDone ? "done" : needsReview ? "review" : "todo"}
+            state={status === null ? (error ? "todo" : "loading") : knowledgeDone ? "done" : needsReview ? "review" : "todo"}
             action={status?.canManage ? (
               <button type="button" onClick={() => setWizardOpen(true)} className={btnRow}>
                 {status?.boundLibrary ? "Review links" : "Set up"} <ChevronRight className="w-3.5 h-3.5" />
@@ -327,21 +329,24 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
               : <>One library per area, so asking about {unit.label} finds only its own drawings. Setup finds the folders for you.</>}
           </Step>
           <Step n={3} title="Deep read the drawings"
-            state={status === null || flowCount === null ? "loading" : (flowCount > 0 ? "done" : "todo")}
+            state={flowCount === null || (status === null && !error) ? "loading" : (flowCount > 0 ? "done" : "todo")}
             action={
               <button type="button" onClick={scrollToFlows} className={btnRow}>
                 Read flows <ChevronRight className="w-3.5 h-3.5" />
               </button>
             }>
             <span className="inline-flex items-center gap-x-4 gap-y-0.5 flex-wrap">
-              <span><span className="font-display font-semibold tabular-nums text-[var(--color-text)]">{flowCount ?? "…"}</span> process flow{flowCount === 1 ? "" : "s"}</span>
-              <span><span className="font-display font-semibold tabular-nums text-[var(--color-text)]">{docLinkCount ?? "…"}</span> linked document{docLinkCount === 1 ? "" : "s"}</span>
-              <span><span className="font-display font-semibold tabular-nums text-[var(--color-text)]">{plotMarkCount ?? "…"}</span> plot marker{plotMarkCount === 1 ? "" : "s"}</span>
+              {([[flowCount, "process flow"], [docLinkCount, "linked document"], [plotMarkCount, "plot marker"]] as const).map(([n, word]) => (
+                <span key={word} className="inline-flex items-center gap-1">
+                  {n === null ? <Skeleton className="!w-5 !h-3" /> : <span className={`font-display font-semibold tabular-nums ${n > 0 ? "text-[var(--color-text)]" : "text-[var(--color-text-faint)]"}`}>{n}</span>}
+                  {word}{n === 1 ? "" : "s"}
+                </span>
+              ))}
               <Link href="/plot-plans" className={link}>Plot plans</Link>
             </span>
           </Step>
           <Step n={4} title="Link equipment files to assets"
-            state={status === null || docLinkCount === null ? "loading" : docLinkCount > 0 ? "done" : "todo"}>
+            state={docLinkCount === null || (status === null && !error) ? "loading" : docLinkCount > 0 ? "done" : "todo"}>
             Open an asset below and use Link document for its data sheets; drawings that print the tag link themselves.
           </Step>
         </ol>
@@ -358,7 +363,7 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
           onDone={(msg) => { setWizardOpen(false); setNote(msg); void loadStatus(); }}
         />
       )}
-    </section>
+    </Section>
   );
 }
 
@@ -420,7 +425,7 @@ function AreaKnowledgeWizard({ orgId, userId, userName, unit, status, onClose, o
           b.folders.filter((f) => suggestedIds.has(f.id)).map((f) => `folder:${f.id}`),
         ));
       })
-      .catch((e) => { if (alive) setError((e as Error).message); });
+      .catch((e) => { if (alive) setError(`Couldn't load the folders. ${friendlyError(e)}`); });
     return () => { alive = false; };
   }, [orgId, suggestedIds]);
 
@@ -482,7 +487,7 @@ function AreaKnowledgeWizard({ orgId, userId, userName, unit, status, onClose, o
       }
       onDone(`${unit.label} is connected to “${klName}”: ${linked} source${linked === 1 ? "" : "s"} watched, ${added} document${added === 1 ? "" : "s"} pulled in. Indexing runs automatically.`);
     } catch (e) {
-      setError((e as Error).message);
+      setError(friendlyError(e));
     } finally { setBusy(false); }
   };
 
@@ -503,11 +508,11 @@ function AreaKnowledgeWizard({ orgId, userId, userName, unit, status, onClose, o
 
   const sheet = (
     <div role="dialog" aria-modal="true" className="fixed inset-0 z-[700] flex items-start justify-center bg-[var(--color-ink)]/60 pt-[6vh] p-4 overscroll-contain" onClick={onClose}>
-      <div className="w-full max-w-lg max-h-[86vh] flex flex-col rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] shadow-2xl overflow-hidden"
+      <div className="w-full max-w-lg max-h-[86vh] flex flex-col rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] ui-float ui-float-in overflow-hidden"
         onClick={(e) => e.stopPropagation()}>
         <div className="flex items-start gap-2 px-5 py-4 border-b border-[var(--color-border)] shrink-0">
           <div className="flex-1 min-w-0">
-            <h2 className="font-display text-[19px] font-semibold text-[var(--color-text)]">
+            <h2 className="font-display text-[20px] font-semibold text-[var(--color-text)]">
               {bound ? `Review ${unit.label}'s knowledge` : `Set up ${unit.label}'s knowledge`}
             </h2>
             <p className="text-[14px] text-[var(--color-text-muted)]">
@@ -563,7 +568,7 @@ function AreaKnowledgeWizard({ orgId, userId, userName, unit, status, onClose, o
           <div>
             <div className={label}>Watch these folders</div>
             {browse === null ? (
-              <div className="flex items-center gap-2 py-3 text-[14px] text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin" /> Loading folders…</div>
+              <SkeletonRows rows={4} cols={0} what="folders" />
             ) : foldersByLib.length === 0 ? (
               <div className="text-[14px] text-[var(--color-text-muted)]">
                 No document libraries yet. <Link href="/documents" className={link}>Make them in Documents</Link> first.
@@ -594,7 +599,7 @@ function AreaKnowledgeWizard({ orgId, userId, userName, unit, status, onClose, o
                             <input type="checkbox" disabled={watched}
                               checked={watched || checked.has(`folder:${f.id}`)}
                               onChange={() => toggle(`folder:${f.id}`)} className="w-4 h-4 accent-[var(--color-accent)]" />
-                            <span className="truncate text-[var(--color-text)]" style={{ paddingLeft: Math.max(0, f.pathNames.length - 1) * 10 }}>
+                            <span className="truncate text-[var(--color-text)]" style={{ paddingLeft: Math.max(0, f.pathNames.length - 1) * 16 }}>
                               {f.name}
                             </span>
                             {suggestedIds.has(f.id) && !watched && (

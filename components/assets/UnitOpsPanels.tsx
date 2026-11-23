@@ -30,6 +30,11 @@ import { planCategorization, applyCategorization, type CategorizationResult } fr
 import { listProcessFlows, decideFlow, deleteFlow, type ProcessFlow } from "@/lib/processFlows";
 import { syncKnowledgeSources, addKnowledgeSources } from "@/lib/knowledge";
 import type { DcLibraryNode, DcFolderNode, DcDocRow, FlowsBrowseUploadGroup } from "@/lib/flowsBrowse";
+import { Section, StatusTag, sheet, btnQuiet, btnLink, btnIcon } from "@/components/admin/kit";
+import { Button } from "@/components/ui/Button";
+import { ErrorNote } from "@/components/ui/ErrorNote";
+import { SkeletonRows, SkeletonText } from "@/components/ui/Skeleton";
+import { friendlyError } from "@/lib/friendlyError";
 
 // ─── Auto-categorize ───────────────────────────────────────────────────────
 
@@ -55,23 +60,22 @@ export function CategorizeBanner({ orgId, userId, assets, types, book, onDone }:
       setResult(await applyCategorization(orgId, userId, plan, types));
       onDone();
     } catch (e) {
-      setRunError((e as Error).message || "Couldn't sort the equipment.");
+      setRunError(friendlyError(e));
     } finally { setBusy(false); }
   };
 
   return (
-    <section className="min-w-0">
-      <h2 className="mb-2.5 font-display text-[19px] leading-tight font-semibold text-[var(--color-text)]">Sort equipment</h2>
-      <div className="rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] p-4 sm:p-5">
+    <Section label="Sort equipment by type">
+      <div className={`${sheet} px-4 sm:px-5 py-4`}>
       {result ? (
         <div className="space-y-1">
-          <div className="flex items-center gap-2 text-[13px] font-semibold text-[var(--state-released)]">
-            <CheckCircle2 className="w-4 h-4" />
-            {[`${result.categorized} categorized`, result.filedToUnits > 0 ? `${result.filedToUnits} filed to their operating area from site codes` : "", result.createdTypes > 0 ? `${result.createdTypes} new categor${result.createdTypes === 1 ? "y" : "ies"} made from your codebook` : "", result.failed > 0 ? `${result.failed} failed` : ""].filter(Boolean).join(", ")}
+          <div className="flex items-center gap-2 text-[14px] font-semibold text-[var(--color-text)]">
+            <CheckCircle2 aria-hidden className="w-4 h-4 text-[var(--state-released)]" />
+            {(() => { const t = [`${result.categorized} sorted by type`, result.filedToUnits > 0 ? `${result.filedToUnits} filed to their operating area from site codes` : "", result.createdTypes > 0 ? `${result.createdTypes} new categor${result.createdTypes === 1 ? "y" : "ies"} made from your codebook` : "", result.failed > 0 ? `${result.failed} failed` : ""].filter(Boolean).join(", "); return `${t}.`; })()}
           </div>
           {result.unmatched.length > 0 && (
-            <div className="text-[13px] text-[var(--state-held)]">
-              No codebook prefix matched: <b className="font-display tabular-nums">{result.unmatched.slice(0, 8).join(", ")}{result.unmatched.length > 8 ? "…" : ""}</b>.
+            <div className="text-[14px] text-[var(--color-text-muted)]">
+              No codebook prefix matched <span className="font-display font-semibold tabular-nums text-[var(--color-text)]">{result.unmatched.slice(0, 8).join(", ")}{result.unmatched.length > 8 ? ` and ${result.unmatched.length - 8} more` : ""}</span>.
               {" "}Teach the prefix in the <Link href="/admin/codebook" className="text-[var(--color-accent-text)] hover:underline underline-offset-2">Site Codebook</Link> and run again. That fixes every future asset too.
             </div>
           )}
@@ -81,28 +85,26 @@ export function CategorizeBanner({ orgId, userId, assets, types, book, onDone }:
           <div className="flex-1 min-w-[14rem]">
             <div className="text-[15px] font-semibold text-[var(--color-text)]">
               {uncategorized > 0
-                ? `${uncategorized} piece${uncategorized === 1 ? "" : "s"} of equipment uncategorized`
-                : `${plan.unitAssignments.length} piece${plan.unitAssignments.length === 1 ? "" : "s"} not filed to an operating area`}
-              {uncategorized > 0 && plan.unitAssignments.length > 0 ? ` · ${plan.unitAssignments.length} unfiled to areas` : ""}
+                ? `${uncategorized.toLocaleString()} piece${uncategorized === 1 ? "" : "s"} of equipment have no type yet.`
+                : `${plan.unitAssignments.length.toLocaleString()} piece${plan.unitAssignments.length === 1 ? "" : "s"} not filed to an operating area.`}
+              {uncategorized > 0 && plan.unitAssignments.length > 0 ? ` ${plan.unitAssignments.length.toLocaleString()} not filed to an area.` : ""}
             </div>
-            <div className="text-[13px] text-[var(--color-text-muted)]">
+            <div className="text-[14px] text-[var(--color-text-muted)]">
               {plan.assignments.length > 0
-                ? <>Your Site Codebook&apos;s prefixes sort {plan.assignments.length} of them{plan.typesToCreate.length > 0 ? `, creating ${plan.typesToCreate.slice(0, 4).join(", ")}${plan.typesToCreate.length > 4 ? "…" : ""}` : ""}.</>
+                ? <>Your Site Codebook&apos;s prefixes sort {plan.assignments.length} of them{plan.typesToCreate.length > 0 ? `, making ${plan.typesToCreate.slice(0, 4).join(", ")}${plan.typesToCreate.length > 4 ? ` and ${plan.typesToCreate.length - 4} more` : ""}` : ""}.</>
                 : <>None of your Site Codebook&apos;s prefixes match these tags. Add the prefixes in the <Link href="/admin/codebook" className="text-[var(--color-accent-text)] hover:underline underline-offset-2">Site Codebook</Link>.</>}
             </div>
-            {runError && <div role="alert" className="mt-1 text-[13px] font-bold text-[var(--state-overdue)]">Couldn&apos;t sort them: {runError}</div>}
+            {runError && <ErrorNote compact className="mt-1.5" title="Couldn't sort them." next={runError} />}
           </div>
           {(plan.assignments.length > 0 || plan.unitAssignments.length > 0) && (
-            <button onClick={() => void run()} disabled={busy}
-              className="inline-flex items-center gap-1.5 h-9 px-3.5 rounded-lg text-[13px] font-semibold text-[var(--color-text)] border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] disabled:opacity-60 shrink-0">
-              {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wand2 className="w-3.5 h-3.5" />}
-              Auto-categorize from codebook
-            </button>
+            <Button variant="secondary" loading={busy} onClick={() => void run()}>
+              <Wand2 aria-hidden className="w-4 h-4" /> Sort from the codebook
+            </Button>
           )}
         </div>
       )}
       </div>
-    </section>
+    </Section>
   );
 }
 
@@ -147,7 +149,7 @@ export function FlowPanel({ orgId, userId, userName, isAdmin, unitCode, unitAsse
         for (const r of (data as Array<{ id: string; tag: string }>) ?? []) map.set(r.id, r.tag);
       }
       setTagById(map);
-    } catch (e) { setLoadError((e as Error).message || "Couldn't load the flows."); setFlows((f) => f ?? []); }
+    } catch (e) { setLoadError(friendlyError(e)); setFlows((f) => f ?? []); }
   }, [orgId, unitCode, unitAssets]);
 
   useEffect(() => { void refresh(); }, [refresh]);
@@ -158,21 +160,21 @@ export function FlowPanel({ orgId, userId, userName, isAdmin, unitCode, unitAsse
   const decide = async (f: ProcessFlow, accept: boolean) => {
     setBusyId(f.id); setNote(null);
     try { await decideFlow(f.id, accept, { userId, userName }); await refresh(); }
-    catch (e) { setNote(`Couldn't ${accept ? "confirm" : "reject"} that flow: ${(e as Error).message}`); }
+    catch (e) { setNote(`Couldn't ${accept ? "confirm" : "reject"} that flow. ${friendlyError(e)}`); }
     finally { setBusyId(null); }
   };
   const remove = async (f: ProcessFlow) => {
     setBusyId(f.id); setNote(null);
     try { await deleteFlow(f.id); await refresh(); }
-    catch (e) { setNote(`Couldn't remove that flow: ${(e as Error).message}`); }
+    catch (e) { setNote(`Couldn't remove that flow. ${friendlyError(e)}`); }
     finally { setBusyId(null); }
   };
 
   if (flows === undefined) {
     return (
-      <div id="area-flow-panel" className="rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] p-4 sm:p-5 text-[13px] text-[var(--color-text-muted)] flex items-center gap-2 w-full">
-        <Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading process flows…
-      </div>
+      <Section label="Process flows" id="area-flow-panel">
+        <SkeletonRows rows={2} cols={0} what="process flows" />
+      </Section>
     );
   }
 
@@ -181,23 +183,22 @@ export function FlowPanel({ orgId, userId, userName, isAdmin, unitCode, unitAsse
 
   return (
     <section id="area-flow-panel" className="min-w-0">
-      <div className="flex items-end gap-x-3 gap-y-2 flex-wrap mb-2.5 min-h-8">
-        <h2 className="font-display text-[19px] leading-tight font-semibold text-[var(--color-text)]">Process flows</h2>
+      <div className="flex items-end gap-x-3 gap-y-2 flex-wrap mb-3 min-h-8">
+        <h2 className="font-display text-[20px] leading-tight font-semibold text-[var(--color-text)]">Process flows</h2>
         {flows !== null && (
           <span className="text-[14px] text-[var(--color-text-muted)] tabular-nums">
             {confirmed.length} confirmed{proposed.length > 0 ? `, ${proposed.length} proposed` : ""}
           </span>
         )}
         <span className="flex-1" />
-        <Link href="/graph" className="text-[14px] text-[var(--color-accent-text)] hover:underline underline-offset-2">Process lens</Link>
+        <Link href="/graph" className={btnLink}>See them on the graph</Link>
         {isAdmin && flows !== null && (
-          <button type="button" onClick={() => setReaderOpen(true)}
-            className="inline-flex items-center gap-1.5 h-9 px-3.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+          <button type="button" onClick={() => setReaderOpen(true)} className={btnQuiet}>
             <ScanSearch className="w-4 h-4" /> Read flows from a document
           </button>
         )}
       </div>
-      <div className="rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] p-4 sm:p-5">
+      <div className={`${sheet} p-4 sm:p-5`}>
 
       {flows === null ? (
         <div className="text-[13px] text-[var(--color-text-muted)]">
@@ -205,20 +206,17 @@ export function FlowPanel({ orgId, userId, userName, isAdmin, unitCode, unitAsse
         </div>
       ) : (
         <>
-          {loadError && (
-            <div role="alert" className="text-[13px] text-[var(--state-overdue)] mb-2">
-              Couldn&apos;t load the flows: {loadError} <button type="button" onClick={() => void refresh()} className="text-[var(--color-accent-text)] hover:underline underline-offset-2">Try again</button>
-            </div>
-          )}
-          {note && <div role="status" className={`text-[13px] mb-2 ${note.startsWith("Couldn't") ? "text-[var(--state-overdue)]" : "text-[var(--color-text-muted)]"}`}>{note}</div>}
+          {loadError && <ErrorNote compact className="mb-2" title="Couldn't load the flows." next={loadError} onRetry={() => void refresh()} />}
+          {note && <p role="status" className={`text-[14px] mb-2 ${note.startsWith("Couldn't") ? "text-[var(--state-overdue-text)]" : "text-[var(--color-text-muted)]"}`}>{note}</p>}
           {proposed.length > 0 && (
-            <div className="space-y-1 mb-2">
-              <div className="text-[13px] font-semibold text-[var(--state-held)]">Proposed by the AI. Confirm or reject each.</div>
+            <div className="mb-3">
+              <div className="mb-1"><StatusTag tone="warn">Proposed by the AI. Confirm or reject each.</StatusTag></div>
+              <ul className="divide-y divide-[var(--color-border)]">
               {proposed.map((f) => (
-                <div key={f.id} className="flex items-center gap-2 rounded-lg border border-dashed border-[color-mix(in_srgb,var(--state-held)_40%,transparent)] bg-[color-mix(in_srgb,var(--state-held)_12%,transparent)] px-2.5 py-1.5">
-                  <span className="text-[13px] font-semibold text-[var(--color-text)]">{endpointLabel(f.from_kind, f.from_ref)}</span>
-                  <ArrowRight className="w-3 h-3 text-[var(--state-held)] shrink-0" />
-                  <span className="text-[13px] font-semibold text-[var(--color-text)]">{endpointLabel(f.to_kind, f.to_ref)}</span>
+                <li key={f.id} className="flex items-center gap-2 py-1.5">
+                  <span className="text-[14px] font-display font-semibold tabular-nums text-[var(--color-text)]">{endpointLabel(f.from_kind, f.from_ref)}</span>
+                  <ArrowRight aria-hidden className="w-3.5 h-3.5 text-[var(--color-text-muted)] shrink-0" />
+                  <span className="text-[14px] font-display font-semibold tabular-nums text-[var(--color-text)]">{endpointLabel(f.to_kind, f.to_ref)}</span>
                   {f.label && <span className="text-[13px] text-[var(--color-text-muted)] italic truncate">“{f.label}”</span>}
                   {f.evidence?.docName && (
                     <span className="text-[13px] text-[var(--color-text-faint)] truncate hidden sm:inline">
@@ -229,40 +227,42 @@ export function FlowPanel({ orgId, userId, userName, isAdmin, unitCode, unitAsse
                   {isAdmin && (
                     <>
                       <button onClick={() => void decide(f, false)} disabled={busyId === f.id}
-                        className="p-1.5 rounded-lg text-[var(--color-text-faint)] hover:text-[var(--state-overdue)]" title="Not a real flow" aria-label="Reject this flow">
-                        <X className="w-3.5 h-3.5" />
+                        className={btnIcon} title="Not a real flow" aria-label="Reject this flow">
+                        <X className="w-4 h-4" />
                       </button>
                       <button onClick={() => void decide(f, true)} disabled={busyId === f.id}
-                        className="p-1.5 rounded-lg text-[var(--state-released)] hover:bg-[color-mix(in_srgb,var(--state-released)_10%,transparent)]" title="Confirm and draw it on the graph" aria-label="Confirm this flow">
-                        {busyId === f.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                        className={`${btnIcon} !text-[var(--state-released-text)]`} title="Confirm and draw it on the graph" aria-label="Confirm this flow">
+                        {busyId === f.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
                       </button>
                     </>
                   )}
-                </div>
+                </li>
               ))}
+              </ul>
             </div>
           )}
           {confirmed.length === 0 && proposed.length === 0 ? (
-            <div className="text-[13px] text-[var(--color-text-muted)]">
-              Nothing mapped yet. Draw flows on the <Link href="/graph" className="text-[var(--color-accent-text)] hover:underline underline-offset-2">graph</Link> (Connect two equipment items: the first feeds the second){isAdmin ? ", or point the reader at a process flow diagram." : "."}
+            <div className="text-[14px] text-[var(--color-text-muted)]">
+              Nothing mapped yet. Draw flows on the <Link href="/graph" className="text-[var(--color-accent-text)] hover:underline underline-offset-2">graph</Link> (connect two pieces of equipment: the first feeds the second){isAdmin ? ", or point the reader at a process flow diagram." : "."}
             </div>
           ) : (
-            <div className="flex flex-wrap gap-1.5">
+            <ul className="divide-y divide-[var(--color-border)] -my-1.5">
               {confirmed.map((f) => (
-                <span key={f.id} className="group inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] border border-[var(--color-border)] dark:border-[var(--color-border)] text-[13px] font-bold text-[var(--color-text)]">
-                  {endpointLabel(f.from_kind, f.from_ref)}
-                  <ArrowRight className="w-3 h-3 text-[var(--color-text-muted)]" />
-                  {endpointLabel(f.to_kind, f.to_ref)}
-                  {f.label && <span className="text-[13px] text-[var(--color-text-muted)] italic">“{f.label}”</span>}
+                <li key={f.id} className="group flex items-center gap-2 py-1.5">
+                  <span className="text-[14px] font-display font-semibold tabular-nums text-[var(--color-text)]">{endpointLabel(f.from_kind, f.from_ref)}</span>
+                  <ArrowRight aria-hidden className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
+                  <span className="text-[14px] font-display font-semibold tabular-nums text-[var(--color-text)]">{endpointLabel(f.to_kind, f.to_ref)}</span>
+                  {f.label && <span className="text-[14px] text-[var(--color-text-muted)] truncate">{f.label}</span>}
+                  <span className="flex-1" />
                   {isAdmin && (
                     <button onClick={() => void remove(f)} disabled={busyId === f.id}
-                      className="opacity-60 group-hover:opacity-100 text-[var(--color-text-faint)] hover:text-[var(--state-overdue)] transition-opacity" title="Remove this flow" aria-label="Remove this flow">
-                      <Trash2 className="w-3 h-3" />
+                      className={btnIcon} title="Remove this flow" aria-label="Remove this flow">
+                      <Trash2 className="w-4 h-4" />
                     </button>
                   )}
-                </span>
+                </li>
               ))}
-            </div>
+            </ul>
           )}
         </>
       )}
@@ -316,10 +316,10 @@ function ReadFlowsModal({ orgId, onClose, onDone }: {
         headers: { Authorization: `Bearer ${session?.access_token ?? ""}` },
       });
       const json = await res.json();
-      if (!res.ok) throw new Error(json.error ?? "Couldn't load the libraries.");
+      if (!res.ok) throw Object.assign(new Error(json.error ?? ""), { status: res.status });
       setModel(json as NonNullable<typeof model>);
       setLoadError(null);
-    } catch (e) { setLoadError((e as Error).message); }
+    } catch (e) { setLoadError(friendlyError(e)); }
      
   }, [orgId]);
   useEffect(() => { void load(); }, [load]);
@@ -344,7 +344,7 @@ function ReadFlowsModal({ orgId, onClose, onDone }: {
         added += r.added;
         failures.push(...(r.errors ?? []).map((e) => `${kl.name}: ${e}`));
       } catch (e) {
-        failures.push(`${kl.name}: ${(e as Error).message}`);
+        failures.push(`${kl.name}: ${friendlyError(e)}`);
       }
     }
     await load();
@@ -369,7 +369,7 @@ function ReadFlowsModal({ orgId, onClose, onDone }: {
       setLinking(null);
       await load();
       setSyncNote(`Linked “${target.name}”: ${res.added} document${res.added === 1 ? "" : "s"} pulled in. Indexing starts automatically.`);
-    } catch (e) { setError((e as Error).message); }
+    } catch (e) { setError(friendlyError(e)); }
     finally { setLinkingKey(null); }
   };
   const requestLink = (target: { type: "library" | "folder"; id: string; name: string }) => {
@@ -422,7 +422,7 @@ function ReadFlowsModal({ orgId, onClose, onDone }: {
       onDone(json.proposed > 0
         ? `${readLine}Found ${json.proposed} flow${json.proposed === 1 ? "" : "s"}. Review them below.`
         : `${readLine}${json.note ?? "No new flows found."}`);
-    } catch (e) { setError((e as Error).message); }
+    } catch (e) { setError(friendlyError(e)); }
     finally { setRunningId(null); }
   };
 
@@ -545,7 +545,7 @@ function ReadFlowsModal({ orgId, onClose, onDone }: {
 
   const sheet = (
     <div role="dialog" aria-modal="true" aria-label="Read flows from a document" className="fixed inset-0 z-[700] flex items-start justify-center bg-[var(--color-ink)]/60 pt-[6vh] p-4 overscroll-contain" onClick={onClose}>
-      <div className="w-full max-w-lg max-h-[86vh] flex flex-col rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] shadow-2xl overflow-hidden"
+      <div className="w-full max-w-lg max-h-[86vh] flex flex-col rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] ui-float ui-float-in overflow-hidden"
         onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-2 px-4 py-3 border-b border-[var(--color-border)] shrink-0">
           <ScanSearch className="w-4 h-4 text-[var(--color-text-muted)]" />
@@ -628,12 +628,9 @@ function ReadFlowsModal({ orgId, onClose, onDone }: {
 
         <div className="flex-1 overflow-y-auto p-3 space-y-4 min-h-0">
           {model === null && loadError === null ? (
-            <div className="flex justify-center items-center gap-2 py-6 text-[13px] text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin" /> Loading your libraries…</div>
+            <SkeletonText lines={5} />
           ) : loadError ? (
-            <p role="alert" className="flex items-start gap-2 border-l-2 border-[var(--state-overdue)] pl-2.5 text-[13px] text-[var(--state-overdue)]">
-              <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-              <span>Couldn&apos;t load the libraries: {loadError} <button type="button" onClick={() => void load()} className="font-bold underline">Try again</button></span>
-            </p>
+            <ErrorNote compact title="Couldn't load the libraries." next={loadError} onRetry={() => void load()} />
           ) : viewTree.length === 0 && viewUploads.length === 0 ? (
             <div className="text-center text-[13px] text-[var(--color-text-muted)] py-6">
               {q ? "No documents match that search." : "No documents yet. Upload PDFs in Documents or a knowledge library."}
@@ -645,7 +642,7 @@ function ReadFlowsModal({ orgId, onClose, onDone }: {
                   <div className="flex items-center gap-2 mb-1.5">
                     <BookOpen className="w-3.5 h-3.5 shrink-0 text-[var(--color-text-muted)]" />
                     <span className="text-[13px] font-semibold text-[var(--color-text)]">{l.name}</span>
-                    <span className="text-[13px] font-bold text-[var(--color-text-muted)] bg-[var(--color-surface-2)] rounded-full px-1.5">
+                    <span className="text-[13px] text-[var(--color-text-muted)] tabular-nums">
                       {l.totalDocs} doc{l.totalDocs === 1 ? "" : "s"}
                     </span>
                     {!l.watched && <span className="text-[13px] font-bold text-[var(--state-held)]">Not linked to AI</span>}
