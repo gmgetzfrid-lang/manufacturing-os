@@ -18,10 +18,11 @@ import { heroPrimary, heroQuiet } from "@/components/ui/PageHero";
 import React, { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import {
-  User, Loader2, ChevronRight, Briefcase, Inbox,
+  User, Loader2, ChevronRight, Briefcase, Inbox, CircleAlert,
 } from "lucide-react";
 import { Textarea } from "@/components/ui/Field";
-import { Spinner } from "@/components/ui/Spinner";
+import { SkeletonRows } from "@/components/ui/Skeleton";
+import { friendlyError } from "@/lib/friendlyError";
 import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/ui/Modal";
 import { useDraft } from "@/hooks/useDraft";
 
@@ -131,7 +132,7 @@ export default function EngineerPickerModal({
 
         if (alive) setEngineers(list);
       } catch (e) {
-        if (alive) setLoadError((e as Error).message);
+        if (alive) setLoadError(friendlyError(e));
       } finally {
         if (alive) setLoading(false);
       }
@@ -162,7 +163,7 @@ export default function EngineerPickerModal({
       draft.clear();
       onClose();
     } catch (e) {
-      setError((e as Error).message);
+      setError(friendlyError(e));
     } finally { setBusy(false); }
   };
 
@@ -172,14 +173,12 @@ export default function EngineerPickerModal({
 
         <ModalBody className="space-y-4">
           <div>
-            <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">Engineer</div>
-            <div className="mt-1.5 max-h-64 overflow-y-auto rounded-lg border border-[var(--color-border)]">
+            <div className="text-[14px] font-semibold text-[var(--color-text)]">Engineer</div>
+            <div className="mt-1.5 max-h-64 overflow-y-auto rounded-xl border border-[var(--color-border)]">
               {loading ? (
-                <div className="flex items-center gap-2 p-4 text-sm text-[var(--color-text-muted)]">
-                  <Spinner size="sm" /> Loading engineers…
-                </div>
+                <SkeletonRows rows={3} cols={1} what="engineers" sheet={false} />
               ) : loadError ? (
-                <p role="alert" className="p-4 text-[15px] font-semibold text-[var(--state-overdue)]">Couldn&apos;t load the engineers: {loadError}</p>
+                <p role="alert" className="p-4 text-[15px] text-[var(--color-text)]"><span className="font-semibold">The engineers didn&apos;t load.</span> <span className="text-[var(--color-text-muted)]">{loadError}</span></p>
               ) : filtered.length === 0 ? (
                 <div className="p-4 text-[15px] text-[var(--color-text-muted)] text-center">
                   <p className="font-semibold text-[var(--color-text)]">No active engineers in this workspace.</p>
@@ -201,7 +200,7 @@ export default function EngineerPickerModal({
                         onChange={(e) => setSelectedId(e.target.value)}
                         className="accent-[var(--color-text)]"
                       />
-                      <div className="p-1.5 bg-[var(--color-surface-2)] rounded-full"><User className="w-4 h-4 text-[var(--color-text-muted)]" /></div>
+                      <User aria-hidden className="w-4 h-4 shrink-0 text-[var(--color-text-faint)]" />
                       <div className="flex-1 min-w-0">
                         <div className="text-[15px] font-semibold text-[var(--color-text)] truncate">{eng.name}</div>
                         <div className="text-[13px] text-[var(--color-text-muted)] truncate">{eng.email}</div>
@@ -210,7 +209,7 @@ export default function EngineerPickerModal({
                         <span className="text-[13px] text-[var(--color-text-muted)]">{eng.role}</span>
                         <span
                           title={`${eng.workload} open ticket${eng.workload === 1 ? "" : "s"}`}
-                          className={`inline-flex items-center gap-1 text-[13px] font-semibold tabular-nums ${eng.workload < 3 ? "text-[var(--color-text-muted)]" : "text-[var(--state-held)]"}`}
+                          className={`inline-flex items-center gap-1 text-[13px] font-semibold tabular-nums ${eng.workload < 3 ? "text-[var(--color-text-muted)]" : "text-[var(--state-held-text)]"}`}
                         >
                           <Inbox className="w-3 h-3" /> {eng.workload}
                         </span>
@@ -225,19 +224,19 @@ export default function EngineerPickerModal({
 
           {requireComment && (
             <div>
-              <label className="text-[13px] font-semibold text-[var(--color-text-muted)]">{commentLabel.replace(/\s*\*$/, "")}</label>
+              <label className="text-[14px] font-semibold text-[var(--color-text)]">{commentLabel.replace(/\s*\*$/, "")}</label>
               <Textarea
                 value={comment}
                 onChange={(e) => setComment(e.target.value)}
                 rows={3}
-                className="mt-1 resize-y"
+                className="mt-1.5 resize-y"
                 placeholder={commentPlaceholder}
               />
             </div>
           )}
 
           {error && (
-            <p role="alert" className="relative pl-3 text-[13px] font-semibold text-[var(--color-text)]"><span aria-hidden className="absolute left-0 inset-y-0 w-[3px] bg-[var(--state-overdue)]" />{error}</p>
+            <p role="alert" className="flex items-start gap-1.5 text-[13px] font-semibold text-[var(--state-overdue-text)]"><CircleAlert aria-hidden className="w-4 h-4 shrink-0 mt-px" />{error}</p>
           )}
         </ModalBody>
 
@@ -245,7 +244,7 @@ export default function EngineerPickerModal({
           <button type="button" onClick={onClose} disabled={busy} className={heroQuiet}>Cancel</button>
           <button type="button" onClick={submit} disabled={busy} className={heroPrimary}>
             {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <ChevronRight className="w-4 h-4" />}
-            {busy ? "Sending…" : "Send to engineer"}
+            {busy ? "Sending" : "Send to engineer"}
           </button>
         </ModalFooter>
     </Modal>

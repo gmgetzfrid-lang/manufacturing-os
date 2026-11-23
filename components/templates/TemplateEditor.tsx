@@ -13,6 +13,7 @@ import {
   X, Loader2, Upload, FileText, Save, Sparkles, Database, Type, AlertTriangle, Trash2,
 } from "lucide-react";
 import { useToast } from "@/components/providers/ToastProvider";
+import { friendlyError } from "@/lib/friendlyError";
 import FileThumb from "@/components/ui/FileThumb";
 import { useFileDrag } from "@/hooks/useFileDrag";
 import { useDraft } from "@/hooks/useDraft";
@@ -92,7 +93,7 @@ export default function TemplateEditor({ orgId, template, onClose, onSaved }: {
     let up: { key: string; name: string };
     try {
       up = await tryUpload(file.name, () => uploadTemplateFile(orgId, file, "templates"), {
-        onRetried: (u) => { setUploadError(null); void afterUp(u).catch((e: unknown) => showToast({ type: "error", title: "Couldn't read the template", message: e instanceof Error ? e.message : String(e) })); },
+        onRetried: (u) => { setUploadError(null); void afterUp(u).catch((e: unknown) => showToast({ type: "error", title: "Couldn't read the template", message: friendlyError(e) })); },
       });
     } catch (e) {
       setUploadError({ which: "template", file, msg: (e as Error).message });
@@ -100,7 +101,7 @@ export default function TemplateEditor({ orgId, template, onClose, onSaved }: {
       return;
     }
     try { await afterUp(up); }
-    catch (e) { showToast({ type: "error", title: "Couldn't read the template", message: (e as Error).message }); }
+    catch (e) { showToast({ type: "error", title: "Couldn't read the template", message: friendlyError(e) }); }
     finally { setBusy(null); }
   };
 
@@ -125,7 +126,7 @@ export default function TemplateEditor({ orgId, template, onClose, onSaved }: {
     let up: { key: string; name: string };
     try {
       up = await tryUpload(file.name, () => uploadTemplateFile(orgId, file, "examples"), {
-        onRetried: (u) => { setUploadError(null); void afterUp(u).catch((e: unknown) => showToast({ type: "error", title: "Couldn't read the example", message: e instanceof Error ? e.message : String(e) })); },
+        onRetried: (u) => { setUploadError(null); void afterUp(u).catch((e: unknown) => showToast({ type: "error", title: "Couldn't read the example", message: friendlyError(e) })); },
       });
     } catch (e) {
       setUploadError({ which: "example", file, msg: (e as Error).message });
@@ -133,7 +134,7 @@ export default function TemplateEditor({ orgId, template, onClose, onSaved }: {
       return;
     }
     try { await afterUp(up); }
-    catch (e) { showToast({ type: "error", title: "Couldn't read the example", message: (e as Error).message }); }
+    catch (e) { showToast({ type: "error", title: "Couldn't read the example", message: friendlyError(e) }); }
     finally { setBusy(null); }
   };
   const templateDrag = useFileDrag((fs) => { if (fs[0]) void onTemplatePicked(fs[0]); }, busy !== null);
@@ -168,51 +169,51 @@ export default function TemplateEditor({ orgId, template, onClose, onSaved }: {
       onSaved();
       onClose();
     } catch (e) {
-      showToast({ type: "error", title: (e as Error).message });
+      showToast({ type: "error", title: "That didn't work", message: friendlyError(e) });
     } finally { setBusy(null); }
   };
 
   return (
     <div role="dialog" aria-modal="true" aria-label={template ? "Edit template" : "New output template"} className="fixed inset-0 z-50 bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)] flex items-start justify-center p-4 overflow-y-auto" onClick={onClose}>
-      <div className="w-full max-w-2xl bg-[var(--color-surface)] rounded-lg shadow-2xl mt-8 mb-8"
+      <div className="w-full max-w-2xl bg-[var(--color-surface)] rounded-xl shadow-2xl mt-8 mb-8"
         onClick={(e) => e.stopPropagation()}>
-        <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center justify-between sticky top-0 bg-[var(--color-surface)] rounded-t-2xl z-10">
+        <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center justify-between sticky top-0 bg-[var(--color-surface)] rounded-t-xl z-10">
           <div>
-            <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">Output docs</div>
-            <h2 className="mt-1 text-[24px] leading-tight font-semibold tracking-[-0.02em] text-[var(--color-text)]">
+            <div className="text-[14px] font-semibold text-[var(--color-text)]">Output docs</div>
+            <h2 className="mt-1 font-display text-[24px] leading-tight font-semibold text-[var(--color-text)]">
               {template ? (template.name || "Edit template") : "New output template."}
             </h2>
             <p className="text-[13px] text-[var(--color-text-muted)] mt-1">
               Your file sets all the formatting. The AI only writes the words that go in the blanks.
             </p>
           </div>
-          <button onClick={onClose} aria-label="Close" className="w-9 h-9 grid place-items-center rounded-[10px] bg-[var(--color-surface-2)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"><X className="w-4 h-4" /></button>
+          <button onClick={onClose} aria-label="Close" title="Close" className="w-9 h-9 pointer-coarse:w-11 pointer-coarse:h-11 grid place-items-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
         </div>
 
         <div className="p-5 space-y-5">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <label className="block">
-              <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Name</span>
+              <span className="block text-[14px] font-semibold text-[var(--color-text)] mb-1.5">Name</span>
               <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Scope of Work" />
             </label>
             <label className="block">
-              <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">One document per…</span>
+              <span className="block text-[14px] font-semibold text-[var(--color-text)] mb-1.5">Makes</span>
               <Select value={mode} onChange={(e) => setMode(e.target.value as OutputTemplate["mode"])}>
-                <option value="per_row">Row - one document per spreadsheet row</option>
-                <option value="summary">Summary - one document covering all rows</option>
-                <option value="both">Both - choose at generate time</option>
+                <option value="per_row">Row: one document per spreadsheet row</option>
+                <option value="summary">Summary: one document covering all rows</option>
+                <option value="both">Both: choose when you generate</option>
               </Select>
             </label>
           </div>
           <label className="block">
-            <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Description</span>
+            <span className="block text-[14px] font-semibold text-[var(--color-text)] mb-1.5">Description</span>
             <Input value={description} onChange={(e) => setDescription(e.target.value)}
               placeholder="Issued to contractors for turnaround work orders" />
           </label>
 
           {/* ── Blank template ─────────────────────────────────────────── */}
           <div {...templateDrag.bind} className={`rounded-xl border border-[var(--color-border)] p-3.5 ${templateDrag.ring}`}>
-            <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5">
+            <div className="text-[14px] font-semibold text-[var(--color-text)] mb-1.5">
               Blank template: it sets all the formatting
               {templateDrag.over && <span className="normal-case tracking-normal font-bold text-[var(--color-text)]"> · {templateDrag.say}</span>}
             </div>
@@ -220,7 +221,7 @@ export default function TemplateEditor({ orgId, template, onClose, onSaved }: {
               <label className="inline-flex">
                 <input type="file" accept=".docx,.xlsx" hidden disabled={busy !== null}
                   onChange={(e) => { void onTemplatePicked(e.target.files?.[0] ?? null); e.target.value = ""; }} />
-                <span className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[13px] font-bold border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] cursor-pointer">
+                <span className="inline-flex items-center gap-1.5 h-10 pointer-coarse:h-11 px-3.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] cursor-pointer">
                   {busy === "template" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
                   {templateFile ? "Replace file" : "Upload or drop .docx / .xlsx"}
                 </span>
@@ -237,17 +238,15 @@ export default function TemplateEditor({ orgId, template, onClose, onSaved }: {
               )}
             </div>
             {analysisNote && (
-              <div className={`mt-2 rounded-lg px-3 py-2 text-[13px] flex items-start gap-2 ${
-                placeholders.length > 0
-                  ? "border border-emerald-300 dark:border-emerald-800 bg-emerald-50/60 dark:bg-emerald-950/20 text-emerald-900 dark:text-emerald-200"
-                  : "border border-amber-300 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-950/20 text-amber-900 dark:text-amber-200"}`}>
+              <div className={`mt-2 border-l-[3px] pl-3 py-1 text-[14px] flex items-start gap-2 text-[var(--color-text)] ${
+                placeholders.length > 0 ? "border-[var(--state-released)]" : "border-[var(--state-held)]"}`}>
                 {placeholders.length > 0 ? <Sparkles className="w-3.5 h-3.5 shrink-0 mt-px" /> : <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-px" />}
                 <span>{analysisNote}</span>
               </div>
             )}
             {loops.length > 0 && (
               <p className="mt-1.5 text-[13px] text-[var(--color-text-muted)]">
-                Repeating blocks detected: {loops.map((l) => `{#${l}}`).join(", ")} - these fill from
+                Repeating blocks detected: {loops.map((l) => `{#${l}}`).join(", ")}. These fill from
                 the data rows automatically.
               </p>
             )}
@@ -256,8 +255,8 @@ export default function TemplateEditor({ orgId, template, onClose, onSaved }: {
           {/* ── Fill points ────────────────────────────────────────────── */}
           {placeholders.length > 0 && (
             <div className="rounded-xl border border-[var(--color-border)] p-3.5">
-              <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-2">
-                Fill points - what goes in each blank
+              <div className="text-[14px] font-semibold text-[var(--color-text)] mb-2">
+                Fill points: what goes in each blank
               </div>
               <ul className="space-y-2">
                 {placeholders.map((p) => (
@@ -302,7 +301,7 @@ export default function TemplateEditor({ orgId, template, onClose, onSaved }: {
 
           {/* ── Examples ───────────────────────────────────────────────── */}
           <div {...exampleDrag.bind} className={`rounded-xl border border-[var(--color-border)] p-3.5 ${exampleDrag.ring}`}>
-            <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5">
+            <div className="text-[14px] font-semibold text-[var(--color-text)] mb-1.5">
               Example documents: the voice to copy
               {exampleDrag.over && <span className="normal-case tracking-normal font-bold text-[var(--color-text)]"> · {exampleDrag.say}</span>}
             </div>
@@ -313,7 +312,7 @@ export default function TemplateEditor({ orgId, template, onClose, onSaved }: {
               <label className="inline-flex">
                 <input type="file" accept=".docx" hidden disabled={busy !== null}
                   onChange={(e) => { void onExamplePicked(e.target.files?.[0] ?? null); e.target.value = ""; }} />
-                <span className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[13px] font-bold border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] cursor-pointer">
+                <span className="inline-flex items-center gap-1.5 h-10 pointer-coarse:h-11 px-3.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] cursor-pointer">
                   {busy === "example" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
                   Add example
                 </span>
@@ -323,27 +322,27 @@ export default function TemplateEditor({ orgId, template, onClose, onSaved }: {
                   {pickedFiles[ex.key] ? <FileThumb file={pickedFiles[ex.key]} size={28} /> : <FileText className="w-3 h-3" />} {ex.name}
                   {pickedFiles[ex.key] && <span className="font-normal text-[var(--color-text-muted)]">{(pickedFiles[ex.key].size / 1024).toFixed(0)} KB</span>}
                   <button onClick={() => setExamples((prev) => prev.filter((p) => p.key !== ex.key))} aria-label={`Remove ${ex.name}`}
-                    className="text-[var(--color-text-muted)] hover:text-rose-600"><Trash2 className="w-3 h-3" /></button>
+                    className="text-[var(--color-text-muted)] hover:text-[var(--state-overdue-text)]"><Trash2 className="w-3 h-3" /></button>
                 </span>
               ))}
             </div>
           </div>
           {uploadError && (
-            <p role="alert" className="-mt-2 flex items-center gap-2 text-[13px] font-semibold text-red-700 dark:text-red-400">
-              {uploadError.file.name} didn&apos;t upload: {uploadError.msg}
-              <button type="button" disabled={busy !== null} onClick={() => void (uploadError.which === "template" ? onTemplatePicked(uploadError.file) : onExamplePicked(uploadError.file))} className="underline font-bold">Try again</button>
+            <p role="alert" className="-mt-2 flex flex-wrap items-center gap-x-2 text-[13px] font-semibold text-[var(--state-overdue-text)]">
+              {uploadError.file.name} didn&apos;t upload. {friendlyError(uploadError.msg)}
+              <button type="button" disabled={busy !== null} onClick={() => void (uploadError.which === "template" ? onTemplatePicked(uploadError.file) : onExamplePicked(uploadError.file))} className="text-[var(--color-accent-text)] hover:underline underline-offset-2">Try again</button>
             </p>
           )}
 
           <label className="block">
-            <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Standing instructions</span>
+            <span className="block text-[14px] font-semibold text-[var(--color-text)] mb-1.5">Standing instructions</span>
             <Textarea rows={3} value={instructions} onChange={(e) => setInstructions(e.target.value)}
               className="text-[13px]"
               placeholder="e.g. Written for contractors - never assume tools or scaffolding are provided. Always name the unit and equipment tag in the first sentence. Use our abbreviations (T/A, PSV, MOC)." />
           </label>
 
           <label className="block">
-            <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">File naming</span>
+            <span className="block text-[14px] font-semibold text-[var(--color-text)] mb-1.5">File naming</span>
             <Input value={filenamePattern} onChange={(e) => setFilenamePattern(e.target.value)}
               placeholder="SOW-{wo_number}-{unit}" className="text-xs font-mono" />
             <span className="block mt-1 text-[13px] text-[var(--color-text-muted)]">

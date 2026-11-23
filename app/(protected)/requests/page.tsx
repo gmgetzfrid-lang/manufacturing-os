@@ -665,7 +665,8 @@ export default function RequestPortal() {
   // The page's answer: what waits on you, else what's late, else what's open.
   const openN = metrics.activeQueue;
   const waitN = metrics.myActionItems;
-  const answer = metrics.totalVolume === 0 ? 'No requests yet.'
+  const answer = error != null && tickets.length === 0 ? "The requests didn't load."
+    : metrics.totalVolume === 0 ? 'No requests yet.'
     : openN === 0 ? 'No open requests.'
     : waitN > 0 ? `${plural(waitN, 'request')} waiting on you.`
     : metrics.overdue > 0 ? `${plural(metrics.overdue, 'request')} overdue.`
@@ -861,7 +862,7 @@ export default function RequestPortal() {
         )}
 
         {error != null && (
-          <ErrorNote error={error} title="The requests didn't load." onRetry={handleRefresh} />
+          <ErrorNote error={error} title={tickets.length > 0 ? "The list didn't refresh." : undefined} onRetry={handleRefresh} />
         )}
 
         {viewMode === 'team' ? (
@@ -899,7 +900,7 @@ export default function RequestPortal() {
         ) : paginatedTickets.length === 0 ? (
           error != null ? null : (
             <EmptySheet
-              line={tickets.length === 0 ? 'No requests yet. New ones show up here.' : 'Nothing matches these filters.'}
+              line={tickets.length === 0 ? 'New requests show up here.' : 'Nothing matches these filters.'}
               action={tickets.length > 0
                 ? <button type="button" onClick={() => { clearAllFilters(); setCurrentPage(1); }} className={heroQuiet}>Clear filters</button>
                 : undefined}

@@ -1540,7 +1540,7 @@ export default function TicketDetailView() {
       tag: f.status === 'staged' ? <StatusTag tone="warn">Not sent yet</StatusTag> : undefined,
       redline: i === 0 && ticket.status === 'PENDING_REVIEW' && ticket.requesterId === uid,
     })) },
-    { key: 'issued', label: <>Issued for construction{ticket.deliverableRev && /^\d+$/.test(ticket.deliverableRev) ? `, Rev ${ticket.deliverableRev}` : ''}</>, empty: 'Nothing issued yet.', rows: finalFiles.map((f) => ({ file: f, kind: 'Issued', issued: true })) },
+    { key: 'issued', label: <>Issued for construction{finalFiles.length > 0 && ticket.deliverableRev && /^\d+$/.test(ticket.deliverableRev) ? `, Rev ${ticket.deliverableRev}` : ''}</>, empty: 'Nothing issued yet.', rows: finalFiles.map((f) => ({ file: f, kind: 'Issued', issued: true })) },
   ];
   if (issuedFirst) fileGroups.splice(1, 2, fileGroups[2], fileGroups[1]);
   const fileCount = fileGroups.reduce((n, g) => n + g.rows.length, 0);
@@ -1772,7 +1772,7 @@ export default function TicketDetailView() {
         <section aria-label="Request sent" className="relative rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 sm:px-5 py-4 flex flex-wrap items-center gap-x-4 gap-y-3">
           <CheckCircle2 aria-hidden className="w-5 h-5 shrink-0 text-[var(--state-released)]" />
           <div className="min-w-0 flex-1 basis-[260px]">
-            <p className="text-[15px] font-semibold text-[var(--color-text)]">Sent. A supervisor assigns a drafter next.</p>
+            <p className="text-[15px] font-semibold text-[var(--color-text)]">Sent.{ticket.status === 'PENDING_ASSIGNMENT' ? ' A supervisor assigns a drafter next.' : ''}</p>
             {emailAsk === 'off' ? (
               <p className="text-[14px] text-[var(--color-text-muted)]">Email you when a drafter picks up {ticket.ticketId} and when the draft is ready for your review?</p>
             ) : (

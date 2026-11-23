@@ -131,7 +131,7 @@ export default function CompaniesPage() {
 
       <PageBody className="!space-y-3">
       {error != null && (
-        <ErrorNote error={error} title="The companies didn't load." onRetry={() => void refresh()} />
+        <ErrorNote error={error} title={companies.length > 0 ? "The list didn't refresh." : undefined} onRetry={() => void refresh()} />
       )}
 
       {loading ? (
@@ -141,12 +141,12 @@ export default function CompaniesPage() {
           <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-10 text-center">
             <p className="text-[15px] text-[var(--color-text)]">
               {companies.length === 0
-                ? "No companies yet. Add the contractors and vendors you work with; their record fills in as projects run."
+                ? "Add the contractors and vendors you work with; their record fills in as projects run."
                 : "No companies match."}
             </p>
             <div className="mt-4 flex justify-center">
               {companies.length === 0
-                ? (canManage ? <button type="button" onClick={() => setShowAdd(true)} className={heroQuiet}><Plus className="w-4 h-4" /> Add a company</button> : null)
+                ? null
                 : <button type="button" onClick={() => { setSearch(""); setKindFilter("all"); }} className={heroQuiet}>Show every company</button>}
             </div>
           </div>
