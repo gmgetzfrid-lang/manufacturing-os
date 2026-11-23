@@ -30,7 +30,7 @@ import {
 } from "@/lib/holds";
 import type { DocumentHold } from "@/types/schema";
 import { supabase } from "@/lib/supabase";
-import ViewTabs, { DOCUMENT_VIEWS } from "@/components/navigation/ViewTabs";
+import DocViewTabs from "@/components/documents/DocViewTabs";
 import { useDraft } from "@/hooks/useDraft";
 
 const ADMIN_ROLES = new Set(["Admin", "Manager", "Supervisor", "DocCtrl"]);
@@ -138,7 +138,7 @@ export default function HoldsPage() {
         ] : undefined}
       >
         <div className="[&>div]:mb-0">
-          <ViewTabs tabs={DOCUMENT_VIEWS} variant="dark" />
+          <DocViewTabs />
         </div>
       </PageHero>
 
