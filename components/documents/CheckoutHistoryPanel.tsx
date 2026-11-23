@@ -14,8 +14,7 @@
 
 import React, { useEffect, useState } from "react";
 import {
-  History, ChevronDown, ChevronRight, Loader2, User, FileText,
-  MessageSquare, Shield, AlarmClock, CheckCircle2,
+  History, ChevronRight, Loader2, User, FileText, MessageSquare, Shield, AlarmClock, CheckCircle2,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import {
@@ -193,7 +192,7 @@ export default function CheckoutHistoryPanel({ orgId, documentId, activeEpisodeI
           <History className="w-3.5 h-3.5 text-[var(--color-text-faint)]" />
           Checkout History
         </span>
-        {open ? <ChevronDown className="w-4 h-4 text-[var(--color-text-faint)]" /> : <ChevronRight className="w-4 h-4 text-[var(--color-text-faint)]" />}
+        <ChevronRight className={`w-4 h-4 text-[var(--color-text-faint)] ui-chevron${(open) ? " rotate-90" : ""}`} />
       </button>
 
       {open && (
@@ -225,9 +224,7 @@ export default function CheckoutHistoryPanel({ orgId, documentId, activeEpisodeI
                       <span className={`shrink-0 text-[13px] font-bold px-1.5 py-0.5 rounded-full border ${reason.cls}`}>
                         {reason.label}
                       </span>
-                      {expandedId === ep.id
-                        ? <ChevronDown className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" />
-                        : <ChevronRight className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" />}
+                      <ChevronRight className={`w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0 ui-chevron${(expandedId === ep.id) ? " rotate-90" : ""}`} />
                     </button>
                     {expandedId === ep.id && (
                       <EpisodeDetailView detail={detail} loading={detailLoading} />
@@ -246,9 +243,7 @@ export default function CheckoutHistoryPanel({ orgId, documentId, activeEpisodeI
                     <span className="flex-1 text-[13px] font-bold text-[var(--color-text-muted)]">
                       Earlier activity <span className="font-medium text-[var(--color-text-faint)]">(before checkout records, {legacyCount} item{legacyCount === 1 ? "" : "s"})</span>
                     </span>
-                    {expandedId === "__legacy__"
-                      ? <ChevronDown className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" />
-                      : <ChevronRight className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" />}
+                    <ChevronRight className={`w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0 ui-chevron${(expandedId === "__legacy__") ? " rotate-90" : ""}`} />
                   </button>
                   {expandedId === "__legacy__" && (
                     <EpisodeDetailView detail={detail} loading={detailLoading} />

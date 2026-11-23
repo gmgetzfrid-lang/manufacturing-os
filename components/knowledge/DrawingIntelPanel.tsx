@@ -8,7 +8,7 @@
 
 import React, { useEffect, useState } from "react";
 import {
-  Loader2, Download, RefreshCw, ChevronDown, ChevronRight, Lightbulb, ArrowRight, ClipboardCheck, ScanSearch,
+  Loader2, Download, RefreshCw, ChevronRight, Lightbulb, ArrowRight, ClipboardCheck, ScanSearch,
 } from "lucide-react";
 import { useToast } from "@/components/providers/ToastProvider";
 import { appConfirm } from "@/components/providers/DialogProvider";
@@ -379,7 +379,7 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
                       <td className="px-4 sm:px-5 py-2.5 relative">
                         {c.tone !== "none" && <span aria-hidden className="absolute left-0 inset-y-0 w-[3px]" style={{ background: c.tone === "bad" ? "var(--state-overdue)" : "var(--state-held)" }} />}
                         <button type="button" aria-expanded={c.open} onClick={(e) => { e.stopPropagation(); c.toggle(); }} className="inline-flex items-center gap-1.5 text-left font-semibold text-[var(--color-text)] hover:text-[var(--color-accent-text)]">
-                          {c.open ? <ChevronDown className="w-4 h-4 shrink-0 text-[var(--color-text-muted)]" /> : <ChevronRight className="w-4 h-4 shrink-0 text-[var(--color-text-muted)]" />}
+                          <ChevronRight className={`w-4 h-4 shrink-0 text-[var(--color-text-muted)] ui-chevron${(c.open) ? " rotate-90" : ""}`} />
                           {c.label}
                         </button>
                       </td>

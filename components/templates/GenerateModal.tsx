@@ -11,8 +11,7 @@
 
 import React, { useState } from "react";
 import {
-  X, Loader2, Upload, Sparkles, Download, FileText, ChevronDown, ChevronRight,
-  AlertTriangle, Table2,
+  X, Loader2, Upload, Sparkles, Download, FileText, ChevronRight, AlertTriangle, Table2,
 } from "lucide-react";
 import { useToast } from "@/components/providers/ToastProvider";
 import { useRole } from "@/components/providers/RoleContext";
@@ -317,7 +316,7 @@ export default function GenerateModal({ orgId, template, onClose, onGenerated }:
                   <li key={i} className="rounded-lg border border-[var(--color-border)]">
                     <button onClick={() => setExpanded(expanded === i ? null : i)}
                       className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-[var(--color-surface-2)] rounded-lg">
-                      {expanded === i ? <ChevronDown className="w-3.5 h-3.5 shrink-0" /> : <ChevronRight className="w-3.5 h-3.5 shrink-0" />}
+                      <ChevronRight className={`w-3.5 h-3.5 shrink-0 ui-chevron${(expanded === i) ? " rotate-90" : ""}`} />
                       <FileText className="w-3.5 h-3.5 text-[var(--color-text-muted)] shrink-0" />
                       <span className="text-[13px] font-bold text-[var(--color-text)] truncate">{d.filename}</span>
                       {d.sourceRow && (

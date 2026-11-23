@@ -11,7 +11,7 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { ChevronDown, ChevronRight, Sparkles, ArrowRight } from "lucide-react";
+import { ChevronRight, Sparkles, ArrowRight } from "lucide-react";
 import { gatherProjectSnapshot } from "@/lib/projectSnapshot";
 import { computeProjectHealth, buildCoachItems, type ProjectHealth, type CoachItem } from "@/lib/projectHealth";
 import { ScoreDial, scoreBandColor } from "@/components/ui/ChartKit";
@@ -67,7 +67,7 @@ export default function ProjectCoach({ orgId, projectId, refreshKey }: {
   return (
     <div className="rounded-lg bg-[var(--color-surface)] overflow-hidden border border-[var(--color-border)]">
       <button onClick={() => setOpen((v) => !v)} aria-expanded={open} className="w-full px-4 sm:px-5 py-3 flex items-center gap-2 text-left hover:bg-[var(--color-surface-2)]/40 transition-colors">
-        {open ? <ChevronDown className="w-4 h-4 text-[var(--color-text-faint)]" /> : <ChevronRight className="w-4 h-4 text-[var(--color-text-faint)]" />}
+        <ChevronRight className={`w-4 h-4 text-[var(--color-text-faint)] ui-chevron${(open) ? " rotate-90" : ""}`} />
         <Sparkles className="w-4 h-4 text-[var(--color-text-muted)]" />
         <span className="text-[14px] font-bold text-[var(--color-text)]">Health</span>
         {health.score != null && (

@@ -28,9 +28,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useFileDrag } from "@/hooks/useFileDrag";
 import Link from "next/link";
 import {
-  ClipboardCheck, FileText, Loader2, Sparkles, Search, X, Plus, Check,
-  ChevronDown, ChevronRight, ShieldCheck,
-  ListChecks, Ban, Wand2, Pencil, RotateCcw, Paperclip, Trash2, UploadCloud,
+  ClipboardCheck, FileText, Loader2, Sparkles, Search, X, Plus, Check, ChevronRight, ShieldCheck, ListChecks, Ban, Wand2, Pencil, RotateCcw, Paperclip, Trash2, UploadCloud,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { listParties, type Actor, type CostParty } from "@/lib/costs";
@@ -512,7 +510,7 @@ function ChecklistCard({ orgId, projectId, checklist, canManage, actor, onChange
   return (
     <div>
       <button onClick={() => setOpen((v) => !v)} className="w-full px-4 py-3 flex items-center gap-2 text-left hover:bg-[var(--color-surface-2)]/40 transition-colors">
-        {open ? <ChevronDown className="w-4 h-4 text-[var(--color-text-faint)]" /> : <ChevronRight className="w-4 h-4 text-[var(--color-text-faint)]" />}
+        <ChevronRight className={`w-4 h-4 text-[var(--color-text-faint)] ui-chevron${(open) ? " rotate-90" : ""}`} />
         <span className="text-xs font-semibold text-[var(--color-text)]">{checklist.title}</span>
         <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">{CHECKLIST_KIND_LABEL[checklist.kind]}</span>
         {checklist.status === "complete" && (

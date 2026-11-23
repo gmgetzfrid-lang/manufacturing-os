@@ -6,7 +6,7 @@
 // everyone with an outdated copy.
 
 import React, { useEffect, useState } from "react";
-import { FileDown, ChevronDown, ChevronUp, CheckCircle2, AlertTriangle, BellRing, Loader2 } from "lucide-react";
+import { FileDown, ChevronDown, CheckCircle2, AlertTriangle, BellRing, Loader2 } from "lucide-react";
 import { getDocumentRecall, nudgeStaleHolders, type RecallHolder } from "@/lib/staleCopies";
 
 interface DistributionRecallProps {
@@ -79,7 +79,7 @@ export default function DistributionRecall({
             </span>
           )}
         </span>
-        {open ? <ChevronUp className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" /> : <ChevronDown className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" />}
+        <ChevronDown className={`w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0 ui-chevron${(open) ? " rotate-180" : ""}`} />
       </button>
 
       {open && (

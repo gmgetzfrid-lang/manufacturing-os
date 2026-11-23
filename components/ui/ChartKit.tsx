@@ -4,11 +4,12 @@
 // draws with: the cost S-curve, comparison bars, score dials, donuts, and
 // the EXAMPLE frame that lets every chart be seen before real data exists.
 //
-// Same design method as components/dashboard/viz.tsx: thin marks, recessive
-// grids, text wears text tokens (never series color), identity never
-// color-alone (legends carry labels; dashes differentiate the planned
-// line), every mark hoverable via <title>. No chart library — these render
-// anywhere the app does, at zero bundle cost.
+// Honest by default: axes start at zero; ONE series in the brand (the one
+// that matters) and the rest gray; names at the ends of lines instead of a
+// legend; hairline grid; no fills or gradients. Identity is never color
+// alone (labels carry names; dashes mark the planned line), every mark is
+// hoverable via <title>. No chart library: these render anywhere the app
+// does, at zero bundle cost.
 
 import React from "react";
 import { vizCat } from "@/components/dashboard/viz";
@@ -22,7 +23,19 @@ export interface SCurvePoint {
   actual: number;
 }
 
-const VB_W = 600, VB_H = 220, PAD_L = 8, PAD_R = 8, PAD_T = 12, PAD_B = 24;
+// Room on the right for the names at the line ends.
+const VB_W = 600, VB_H = 220, PAD_L = 8, PAD_R = 112, PAD_T = 12, PAD_B = 24;
+
+/** End labels pushed apart so two lines ending close together stay
+ *  readable (at least `gap` apart, inside the plot). */
+function spreadLabels<T extends { y: number }>(items: T[], gap: number, top: number, bottom: number): T[] {
+  const out = [...items].sort((a, b) => a.y - b.y).map((it) => ({ ...it }));
+  for (let i = 1; i < out.length; i++) if (out[i].y - out[i - 1].y < gap) out[i].y = out[i - 1].y + gap;
+  const over = out.length ? out[out.length - 1].y - bottom : 0;
+  if (over > 0) for (const it of out) it.y -= over;
+  for (let i = 0; i < out.length; i++) if (out[i].y < top) out[i].y = top + i * gap;
+  return out;
+}
 
 export function SCurveChart({ points, fmt, todayIso, className = "" }: {
   points: SCurvePoint[];
@@ -60,16 +73,13 @@ export function SCurveChart({ points, fmt, todayIso, className = "" }: {
     <div className={className}>
       <svg viewBox={`0 0 ${VB_W} ${VB_H}`} className="w-full h-auto" role="img"
         aria-label={`Cost curve - actual ${fmt(last.actual)}, committed ${fmt(last.committed)}${last.planned != null ? `, planned ${fmt(last.planned)}` : ""}`}>
-        {/* Recessive horizontal grid at quarter lines. */}
-        {[0.25, 0.5, 0.75, 1].map((f) => (
+        {/* Hairline grid at quarter lines, and the zero line. */}
+        {[0, 0.25, 0.5, 0.75, 1].map((f) => (
           <line key={f} x1={PAD_L} x2={VB_W - PAD_R} y1={py(max * f)} y2={py(max * f)}
-            stroke="var(--viz-track)" strokeWidth="1" />
+            stroke={f === 0 ? "var(--color-border-strong)" : "var(--viz-track)"} strokeWidth="1" vectorEffect="non-scaling-stroke" />
         ))}
-        {/* Actual: filled area + line (the money that really left). */}
-        <path d={`${path((p) => p.actual)} L${px(n - 1).toFixed(1)},${py(0).toFixed(1)} L${px(0).toFixed(1)},${py(0).toFixed(1)} Z`}
-          fill="var(--color-main)" opacity="0.08" />
-        {/* Committed: promised money. */}
-        <path d={path((p) => p.committed)} fill="none" stroke={vizCat(1)} strokeWidth="2"
+        {/* Committed: promised money, gray (the brand is for what was spent). */}
+        <path d={path((p) => p.committed)} fill="none" stroke="var(--viz-neutral)" strokeWidth="1.75"
           strokeLinecap="round" strokeLinejoin="round" />
         {/* Planned: dashed so identity survives grayscale. */}
         {hasPlanned && (
@@ -83,9 +93,17 @@ export function SCurveChart({ points, fmt, todayIso, className = "" }: {
           <line x1={px(todayIdx)} x2={px(todayIdx)} y1={PAD_T} y2={VB_H - PAD_B}
             stroke="var(--color-text-faint)" strokeWidth="1" strokeDasharray="2 3" />
         )}
-        {/* Endpoint dots. */}
+        {/* Endpoint dots, and each line's name and value at its end. */}
         <circle cx={px(n - 1)} cy={py(last.actual)} r="3.5" fill="var(--color-main)" />
-        <circle cx={px(n - 1)} cy={py(last.committed)} r="3" fill={vizCat(1)} />
+        <circle cx={px(n - 1)} cy={py(last.committed)} r="3" fill="var(--viz-neutral)" />
+        {spreadLabels([
+          { key: "spent", y: py(last.actual), text: `Spent ${fmt(last.actual)}`, color: "var(--color-main)", bold: true },
+          { key: "committed", y: py(last.committed), text: `Committed ${fmt(last.committed)}`, color: "var(--color-text-muted)", bold: false },
+          ...(hasPlanned && last.planned != null ? [{ key: "planned", y: py(last.planned), text: `Planned ${fmt(last.planned)}`, color: "var(--color-text-muted)", bold: false }] : []),
+        ], 13, PAD_T + 4, VB_H - PAD_B).map((l) => (
+          <text key={l.key} x={px(n - 1) + 8} y={l.y + 4} fontSize="11" fontWeight={l.bold ? 600 : 400} fill={l.color}
+            style={{ fontVariantNumeric: "tabular-nums" }}>{l.text}</text>
+        ))}
         {/* Per-point hover columns. */}
         {points.map((p, i) => (
           <rect key={i} x={px(i) - (VB_W / n) / 2} y={PAD_T} width={VB_W / n} height={VB_H - PAD_T - PAD_B}
@@ -97,22 +115,12 @@ export function SCurveChart({ points, fmt, todayIso, className = "" }: {
         <text x={PAD_L} y={VB_H - 8} fontSize="10" fill="var(--color-text-faint)">{fmtDate(points[0].date)}</text>
         <text x={VB_W - PAD_R} y={VB_H - 8} fontSize="10" textAnchor="end" fill="var(--color-text-faint)">{fmtDate(last.date)}</text>
       </svg>
-      <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-[var(--color-text-muted)]">
-        <span className="inline-flex items-center gap-1.5">
-          <span aria-hidden className="w-4 h-0.5 rounded-full" style={{ background: "var(--color-main)" }} />
-          Spent <b className="text-[var(--color-text)] tabular-nums">{fmt(last.actual)}</b>
-        </span>
-        <span className="inline-flex items-center gap-1.5">
-          <span aria-hidden className="w-4 h-0.5 rounded-full" style={{ background: vizCat(1) }} />
-          Committed <b className="text-[var(--color-text)] tabular-nums">{fmt(last.committed)}</b>
-        </span>
-        {hasPlanned && (
-          <span className="inline-flex items-center gap-1.5">
-            <span aria-hidden className="w-4 border-t border-dashed border-[var(--color-text-faint)]" />
-            Planned pace
-          </span>
-        )}
-      </div>
+      {hasPlanned && (
+        <p className="mt-1 text-[12px] text-[var(--color-text-muted)] inline-flex items-center gap-1.5">
+          <span aria-hidden className="w-4 border-t border-dashed border-[var(--color-text-faint)]" />
+          Dashed: the planned pace
+        </p>
+      )}
     </div>
   );
 }
@@ -123,9 +131,9 @@ export interface BarItem {
   label: string;
   value: number;
   sublabel?: string;
-  /** Slot for vizCat color; omit for accent. */
+  /** Slot for a vizCat color; omit for gray (the default). */
   slot?: number;
-  /** Highlight ring (e.g. best-value bid). */
+  /** The bar that matters (e.g. the best-value bid): drawn in the brand. */
   highlight?: boolean;
   /** Small red flag text (e.g. "over budget"). */
   flag?: string;
@@ -139,22 +147,22 @@ export function BarList({ items, fmt, className = "" }: {
     <div className={`space-y-2 ${className}`}>
       {items.map((it, i) => (
         <div key={`${it.label}-${i}`} title={`${it.label} · ${fmt(it.value)}`}>
-          <div className="flex items-baseline justify-between gap-2 text-[11px]">
+          <div className="flex items-baseline justify-between gap-2 text-[12px]">
             <span className={`truncate font-bold ${it.highlight ? "text-[var(--color-accent-text)]" : "text-[var(--color-text)]"}`}>
               {it.label}
-              {it.flag && <span className="ml-1.5 font-black text-[11px] text-rose-600 dark:text-rose-400">{it.flag}</span>}
+              {it.flag && <span className="ml-1.5 font-semibold text-[12px] text-[var(--state-overdue-text)]">{it.flag}</span>}
             </span>
-            <span className="tabular-nums font-black text-[var(--color-text)] shrink-0">{fmt(it.value)}</span>
+            <span className="tabular-nums font-semibold text-[var(--color-text)] shrink-0">{fmt(it.value)}</span>
           </div>
           <div className="mt-0.5 h-2 rounded-full bg-[var(--viz-track)] overflow-hidden">
             <div className="h-full rounded-full transition-[width] duration-500"
               style={{
                 width: `${Math.max(2, (it.value / max) * 100)}%`,
-                background: it.slot != null ? vizCat(it.slot) : "var(--color-main)",
-                opacity: it.highlight ? 1 : 0.75,
+                // One bar in the brand (the highlighted one), the rest gray.
+                background: it.highlight ? "var(--color-main)" : it.slot != null ? vizCat(it.slot) : "var(--viz-neutral)",
               }} />
           </div>
-          {it.sublabel && <div className="mt-0.5 text-[11px] text-[var(--color-text-muted)]">{it.sublabel}</div>}
+          {it.sublabel && <div className="mt-0.5 text-[12px] text-[var(--color-text-muted)]">{it.sublabel}</div>}
         </div>
       ))}
     </div>
@@ -197,7 +205,7 @@ export function ScoreDial({ score, size = 64, label, className = "" }: {
         )}
       </svg>
       <div className="relative text-center leading-none">
-        <div className="font-black tabular-nums text-[var(--color-text)]" style={{ fontSize: size / 3.4 }}>
+        <div className="font-semibold tabular-nums text-[var(--color-text)]" style={{ fontSize: size / 3.4 }}>
           {score == null ? "-" : Math.round(score)}
         </div>
         {label && <div className="mt-0.5 text-[13px] font-semibold " style={{ color }}>{label}</div>}
@@ -245,7 +253,7 @@ export function Donut({ segments, size = 96, fmt, centerLabel, className = "" }:
           })}
         </svg>
         {centerLabel && (
-          <div className="absolute inset-0 flex items-center justify-center text-[11px] font-black text-[var(--color-text-muted)] text-center leading-tight">
+          <div className="absolute inset-0 flex items-center justify-center text-[12px] font-semibold text-[var(--color-text-muted)] text-center leading-tight">
             {centerLabel}
           </div>
         )}
@@ -254,7 +262,7 @@ export function Donut({ segments, size = 96, fmt, centerLabel, className = "" }:
         {shown.map((s) => {
           const slot = segments.indexOf(s);
           return (
-            <div key={s.label} className="flex items-center gap-1.5 text-[11px] text-[var(--color-text-muted)]">
+            <div key={s.label} className="flex items-center gap-1.5 text-[12px] text-[var(--color-text-muted)]">
               <span aria-hidden className="w-2 h-2 rounded-full shrink-0" style={{ background: vizCat(slot) }} />
               <span className="truncate">{s.label}</span>
               <b className="text-[var(--color-text)] tabular-nums shrink-0">{f(s.value)}</b>
@@ -286,7 +294,7 @@ export function ExampleFrame({ children, note, className = "" }: {
         <span className="text-[13px] font-semibold px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/40">
           Example data
         </span>
-        <span className="text-[11px] text-[var(--color-text-muted)]">
+        <span className="text-[12px] text-[var(--color-text-muted)]">
           {note ?? "This is what the view looks like with a job in flight - it turns real as your numbers land."}
         </span>
       </div>

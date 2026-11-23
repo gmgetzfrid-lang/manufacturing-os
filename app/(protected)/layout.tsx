@@ -23,12 +23,12 @@ import SignatureCaptureHost from "@/components/signatures/SignatureCaptureHost";
 import { DialogHost } from "@/components/providers/DialogProvider";
 import { NotificationCenterProvider } from "@/components/notifications/NotificationCenter";
 import UpdatePill from "@/components/system/UpdatePill";
-import { Spinner } from "@/components/ui/Spinner";
+import { Skeleton, SkeletonRows } from "@/components/ui/Skeleton";
 import { SlowNotice, useElapsed, startOver } from "@/components/system/SlowNotice";
 import { useKeepScroll } from "@/hooks/useKeepScroll";
 import { flushHistory } from "@/lib/historyQueue";
 import { checkSignin } from "@/lib/signinCheck";
-import { btnQuiet } from "@/components/admin/kit";
+import { btnQuiet, btnPrimary } from "@/components/admin/kit";
 import { useRouter } from "next/navigation";
 
 const ProtectedContent = ({ children }: { children: React.ReactNode }) => {
@@ -74,11 +74,18 @@ const ProtectedContent = ({ children }: { children: React.ReactNode }) => {
   }, [uid, router]);
 
   if (loading) {
+    // The app's shape while the workspace loads (the side menu, a header
+    // and a list), not a spinner over the whole screen.
     return (
-      <div className="h-dvh w-full flex flex-col items-center justify-center bg-[var(--color-canvas)] animate-in fade-in px-4">
-        <Spinner size="lg" className="mb-4" />
-        <h2 className="text-xl font-bold text-[var(--color-text)]">Loading your workspace…</h2>
-        <div className="w-full max-w-sm"><SlowNotice secs={waited} onStartOver={() => startOver()} /></div>
+      <div className="h-dvh w-full flex bg-[var(--color-canvas)]" aria-busy="true">
+        <div className="surface-side max-md:hidden w-64 shrink-0" aria-hidden />
+        <div className="flex-1 min-w-0 px-4 sm:px-6 lg:px-8 pt-20">
+          <p role="status" className="text-[14px] text-[var(--color-text-muted)]">Loading your workspace</p>
+          <Skeleton className="mt-4 w-[min(420px,80%)] h-7" />
+          <Skeleton className="mt-3 w-[min(300px,60%)] h-4" />
+          <SkeletonRows rows={5} cols={2} className="mt-8 max-w-[1400px]" />
+          <div className="w-full max-w-sm"><SlowNotice secs={waited} onStartOver={() => startOver()} /></div>
+        </div>
       </div>
     );
   }
@@ -100,7 +107,9 @@ const ProtectedContent = ({ children }: { children: React.ReactNode }) => {
           <TopBar onOpenMobileNav={openMobileNav} />
           {/* Never scrolls sideways (a phone would let the page drift and
               bounce): wide content scrolls in its own strip or table. */}
-          <main ref={setMainEl} className="flex-1 overflow-y-auto overflow-x-hidden overscroll-x-none relative">
+          {/* vt-page: the part that cross-fades when moving between views
+              (lib/viewTransition); the side menu and top bar hold still. */}
+          <main ref={setMainEl} className="vt-page flex-1 overflow-y-auto overflow-x-hidden overscroll-x-none relative">
             <NotificationListener />
             <UpdatePill />
             <CornerDock />
@@ -135,7 +144,7 @@ function NotAMemberScreen({ email }: { email: string | null }) {
   // access an admin suspended.
   return (
     <div className="h-dvh w-full flex items-center justify-center bg-[var(--color-canvas)] p-6">
-      <div className="max-w-md w-full bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl shadow-xl p-8">
+      <div className="max-w-md w-full bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl p-8">
         <h1 className="text-[20px] font-semibold text-[var(--color-heading)]">Your access is off.</h1>
         <p className="text-[15px] text-[var(--color-text)] mt-2 leading-relaxed">
           You&apos;re signed in as <b>{email ?? "this account"}</b>. Your access to the workspace is suspended. Ask your admin to turn it back on, then sign in again.
@@ -153,15 +162,15 @@ function NotAMemberScreen({ email }: { email: string | null }) {
 function MembershipErrorScreen() {
   return (
     <div className="h-dvh w-full flex items-center justify-center bg-[var(--color-canvas)] p-6">
-      <div className="max-w-md w-full bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl shadow-xl p-8 text-center">
-        <h1 className="text-lg font-black text-[var(--color-text)]">Couldn&apos;t load your workspace</h1>
-        <p className="text-sm text-[var(--color-text-muted)] mt-2">
+      <div className="max-w-md w-full bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl p-8 text-center">
+        <h1 className="text-[20px] font-semibold text-[var(--color-text)]">Couldn&apos;t load your workspace</h1>
+        <p className="text-[15px] text-[var(--color-text-muted)] mt-2">
           The connection dropped while looking up your membership. Your access is
-          unchanged - this is a network hiccup, not a permissions change.
+          unchanged. Check your connection, then try again.
         </p>
         <button
           onClick={() => window.location.reload()}
-          className="mt-5 px-4 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-sm font-black shadow"
+          className={`mt-5 ${btnPrimary}`}
         >
           Try again
         </button>

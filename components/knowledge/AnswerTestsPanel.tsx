@@ -9,7 +9,7 @@
 // test that passed there and fails now is flagged as a regression.
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { FlaskConical, Play, Square, Plus, Loader2, ChevronDown, ChevronRight, CheckCircle2, XCircle, AlertTriangle, Pencil, Trash2, Flag } from "lucide-react";
+import { FlaskConical, Play, Square, Plus, Loader2, ChevronRight, CheckCircle2, XCircle, AlertTriangle, Pencil, Trash2, Flag } from "lucide-react";
 import {
   loadAnswerTests, runAnswerTests, saveAnswerTest, archiveAnswerTest, setAnswerTestBaseline,
   type AnswerTestsState, type AnswerTestRun, type AnswerTestCase,
@@ -88,7 +88,7 @@ export default function AnswerTestsPanel({ orgId, libraryId }: { orgId: string; 
         <button onClick={() => setOpen((v) => !v)} aria-expanded={open} className="flex-1 min-w-0 text-left">
           <div className="font-display text-[17px] font-semibold text-[var(--color-heading)] flex items-center gap-2">
             <span aria-hidden className="ui-icon-tile is-sm"><FlaskConical className="w-4 h-4" /></span>
-            Answer tests {cases.length > 0 && <span className="ui-count font-sans">{cases.length}</span>} {open ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+            Answer tests {cases.length > 0 && <span className="ui-count font-sans">{cases.length}</span>} <ChevronRight className={`w-3.5 h-3.5 ui-chevron${(open) ? " rotate-90" : ""}`} />
           </div>
           <div className="text-[13px] text-[var(--color-text-muted)]">
             {cases.length === 0

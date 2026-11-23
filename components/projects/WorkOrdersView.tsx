@@ -388,7 +388,7 @@ export default function WorkOrdersView({ milestones, cancelled = [], childrenByP
                   className={`w-full text-left px-3 sm:px-4 py-3 ${isOpen ? "sticky top-0 z-20 bg-[var(--color-accent-soft)] border-b border-[var(--color-border-strong)]" : "hover:bg-[var(--color-surface-2)]/60"}`}>
                   <div className="flex items-start gap-2.5">
                     <span className={`mt-0.5 ui-icon-tile is-sm ${isOpen ? "is-solid" : ""}`} aria-hidden>
-                      {isOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                      <ChevronDown className={`w-4 h-4 ui-chevron${(isOpen) ? " rotate-180" : ""}`} />
                     </span>
                     <div className="flex-1 min-w-0">
                       <div className="flex flex-wrap items-baseline gap-x-2">

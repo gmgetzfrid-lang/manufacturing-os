@@ -96,7 +96,7 @@ export default function DuplicateAwareInput({
           {...inputProps}
           value={value}
           onChange={(e) => onChange(e.target.value)}
-          className={`w-full pr-8 px-2.5 py-1.5 text-sm border ${borderClass} rounded focus:outline-none focus:ring-1 focus:ring-[var(--color-accent-ring)] ${className}`}
+          className={`w-full pr-8 px-2.5 py-1.5 text-sm border ${borderClass} rounded-lg ${className}`}
         />
         <span className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none">
           {state.kind === "checking" && <Loader2 className="w-3.5 h-3.5 animate-spin text-[var(--color-text-faint)]" />}

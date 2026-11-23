@@ -6,7 +6,7 @@
 // (estimated). Counts carried from an earlier shift are said so.
 
 import React, { useMemo, useState } from "react";
-import { ChevronDown, ChevronRight } from "lucide-react";
+import { ChevronRight } from "lucide-react";
 import { fmtInTz } from "@/lib/scheduleTz";
 import { shiftLabel, type ShiftRow } from "@/lib/phaseReport";
 import type { ShiftRecord } from "@/lib/shiftRecord";
@@ -175,7 +175,7 @@ export default function ManpowerLook({ shifts, records, settings, steps, tz, now
                 <button type="button" onClick={() => setOpen(isOpen ? null : c.key)} aria-expanded={isOpen}
                   className="w-full grid grid-cols-[116px_minmax(0,1fr)_auto] gap-2 items-center py-1 text-left text-[12px]">
                   <span className="text-[var(--color-text)] leading-tight pl-1 inline-flex items-start gap-0.5">
-                    {isOpen ? <ChevronDown className="w-3.5 h-3.5 mt-px shrink-0" /> : <ChevronRight className="w-3.5 h-3.5 mt-px shrink-0" />}
+                    <ChevronRight className={`w-3.5 h-3.5 mt-px shrink-0 ui-chevron${(isOpen) ? " rotate-90" : ""}`} />
                     <span>{labelOf(c)}{c.carried && <span className="block text-[11px] text-amber-700 dark:text-amber-400">carried, not checked</span>}</span>
                   </span>
                   <span className="relative h-3">

@@ -1,15 +1,36 @@
 import type { Metadata, Viewport } from 'next';
+import localFont from 'next/font/local';
 import './globals.css';
 import { ThemeProvider, THEME_PREPAINT } from '@/components/providers/ThemeProvider';
 import ServiceWorkerManager from '@/components/pwa/ServiceWorkerManager';
 
-// Barlow is loaded at RUNTIME via the <link> below rather than
-// next/font/google, which fetches the font at BUILD time and hard-fails
-// the entire build when Google Fonts is unreachable (restricted CI,
-// offline, or a transient network error). Loading it in the browser
-// keeps the build network-independent; users on a normal connection
-// still get Barlow, and everyone falls back cleanly to system fonts
-// (see --font-inter in globals.css).
+// Barlow is self-hosted (app/fonts, SIL Open Font License) through
+// next/font/local: no request to Google at build time or in the browser,
+// so plant networks that filter fonts.googleapis.com still get the real
+// type, and nothing shifts when it arrives. Two weights do the work (400
+// and 700); 600 is kept for small labels where 700 is too heavy. The
+// variables feed --font-inter / --font-display in globals.css, so pages
+// don't change.
+const barlow = localFont({
+  src: [
+    { path: './fonts/barlow-400.woff2', weight: '400', style: 'normal' },
+    { path: './fonts/barlow-600.woff2', weight: '600', style: 'normal' },
+    { path: './fonts/barlow-700.woff2', weight: '700', style: 'normal' },
+  ],
+  variable: '--font-barlow',
+  display: 'swap',
+  fallback: ['system-ui', '-apple-system', 'Segoe UI', 'Roboto', 'sans-serif'],
+});
+const barlowSemiCondensed = localFont({
+  src: [
+    { path: './fonts/barlow-semi-condensed-400.woff2', weight: '400', style: 'normal' },
+    { path: './fonts/barlow-semi-condensed-600.woff2', weight: '600', style: 'normal' },
+    { path: './fonts/barlow-semi-condensed-700.woff2', weight: '700', style: 'normal' },
+  ],
+  variable: '--font-barlow-semi-condensed',
+  display: 'swap',
+  fallback: ['system-ui', 'sans-serif'],
+});
 
 // Resolve absolute URLs for OG/metadata: explicit site URL, else the Vercel
 // deploy URL, else localhost — so OG links work in prod without a warning.
@@ -40,9 +61,11 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
+  // The browser bar matches the page canvas (neutral), not a brand color;
+  // ThemeProvider keeps it in step with the workspace and light/dark mode.
   themeColor: [
-    { media: '(prefers-color-scheme: light)', color: '#ea580c' },
-    { media: '(prefers-color-scheme: dark)', color: '#0b1120' },
+    { media: '(prefers-color-scheme: light)', color: '#f4f5f8' },
+    { media: '(prefers-color-scheme: dark)', color: '#16181d' },
   ],
   colorScheme: 'light dark',
 };
@@ -53,33 +76,12 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="en" suppressHydrationWarning className={`${barlow.variable} ${barlowSemiCondensed.variable}`}>
       <head>
         {/* Set theme class/accent before first paint to avoid a flash. */}
         <script dangerouslySetInnerHTML={{ __html: THEME_PREPAINT }} />
         {/* Apply saved density before first paint. */}
         <script dangerouslySetInnerHTML={{ __html: `try{var d=localStorage.getItem('mfg-os.density');if(d)document.documentElement.setAttribute('data-density',d);}catch(e){}` }} />
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
-        {/* Barlow loads NON-BLOCKING: a stylesheet <link> in the head blocks
-            first paint until Google answers — on networks where
-            fonts.googleapis.com is slow or filtered (common on plant/corporate
-            networks) that stalled every page for seconds. Injecting the link
-            from a script makes it async by spec: pages paint immediately in
-            the system-font fallback stack and upgrade to Barlow whenever the
-            CSS arrives (display=swap, so no invisible text either way). */}
-        <script
-          dangerouslySetInnerHTML={{
-            __html: `(function(){function f(){var l=document.createElement('link');l.rel='stylesheet';l.href='https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Barlow+Semi+Condensed:wght@500;600;700&display=swap';document.head.appendChild(l);}if(document.readyState==='complete'){f();}else{window.addEventListener('load',f);}})();`,
-          }}
-        />
-        <noscript>
-          {/* eslint-disable-next-line @next/next/no-page-custom-font -- deliberate: next/font fetches at BUILD time and hard-fails restricted/offline builds; runtime link is the fallback for no-JS only */}
-          <link
-            href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Barlow+Semi+Condensed:wght@500;600;700&display=swap"
-            rel="stylesheet"
-          />
-        </noscript>
       </head>
       {/* suppressHydrationWarning on <body> for the same reason <html> has it:
           things outside React write here before hydration — the pre-paint

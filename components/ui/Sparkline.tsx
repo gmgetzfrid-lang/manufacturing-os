@@ -24,15 +24,16 @@ function pathFor(values: number[], width: number, height: number, pad = 1): stri
     .join(" ");
 }
 
-/** Inline trend line. Pass a series of numbers; the last point gets a dot.
- *  `tone` maps to a CSS color (defaults to ink). */
+/** Inline trend line from zero. Pass a series of numbers; the last point
+ *  gets a dot. `color` defaults to the brand (the one series that
+ *  matters); `fill` adds a flat, faint area (no gradient). */
 export function Sparkline({
   values,
   width = 96,
   height = 28,
   strokeWidth = 1.5,
-  color = "var(--color-text)",
-  fill = true,
+  color = "var(--color-main)",
+  fill = false,
   className = "",
   ariaLabel,
 }: {
@@ -45,9 +46,6 @@ export function Sparkline({
   className?: string;
   ariaLabel?: string;
 }) {
-  // useId must run unconditionally (Rules of Hooks) — call it before any early
-  // return so the gradient id is stable across renders.
-  const gid = React.useId();
   if (!values || values.length < 2) {
     return <div className={className} style={{ width, height }} aria-hidden />;
   }
@@ -70,17 +68,7 @@ export function Sparkline({
       role="img"
       aria-label={ariaLabel ?? "trend"}
     >
-      {fill && (
-        <>
-          <defs>
-            <linearGradient id={gid} x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor={color} stopOpacity="0.22" />
-              <stop offset="100%" stopColor={color} stopOpacity="0" />
-            </linearGradient>
-          </defs>
-          <path d={areaD} fill={`url(#${gid})`} stroke="none" />
-        </>
-      )}
+      {fill && <path d={areaD} fill={color} fillOpacity={0.08} stroke="none" />}
       <path d={d} fill="none" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" />
       <circle cx={lastX} cy={lastY} r={strokeWidth + 1} fill={color} />
     </svg>

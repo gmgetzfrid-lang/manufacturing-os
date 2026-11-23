@@ -19,10 +19,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import HelpTooltip from "@/components/ui/HelpTooltip";
 import { bandSeg, bandSegItem } from "@/components/admin/band";
 import {
-  Plus, X, Loader2, Check, ChevronDown, ChevronRight,
-  Landmark, HardHat, AlertTriangle, Ban,
-  LayoutDashboard, ScanSearch, Receipt, GitPullRequestArrow, FileCheck2, FileUp, Hourglass,
-  Pencil, RotateCcw,
+  Plus, X, Loader2, Check, ChevronRight, Landmark, HardHat, AlertTriangle, Ban, LayoutDashboard, ScanSearch, Receipt, GitPullRequestArrow, FileCheck2, FileUp, Hourglass, Pencil, RotateCcw,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import {
@@ -376,7 +373,7 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
         <button onClick={() => setShowParties((v) => !v)} aria-expanded={showParties} className="w-full px-4 sm:px-5 py-3.5 flex items-center gap-2 text-left hover:bg-[var(--color-surface-2)]/40 transition-colors">
           <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Contractors &amp; vendors · {parties.length}</span>
           <span className="flex-1" />
-          {showParties ? <ChevronDown className="w-4 h-4 text-[var(--color-text-faint)]" /> : <ChevronRight className="w-4 h-4 text-[var(--color-text-faint)]" />}
+          <ChevronRight className={`w-4 h-4 text-[var(--color-text-faint)] ui-chevron${(showParties) ? " rotate-90" : ""}`} />
         </button>
         {showParties && (
           <PartiesPanel orgId={orgId} projectId={projectId} actor={actor} parties={parties} canManage={canManage} onChanged={() => void refresh()} />

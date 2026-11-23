@@ -1,28 +1,30 @@
 // Controls in a page's header (search, filters, small toggles), so every
-// page's header reads the same. Grey and white; the signal color stays on
-// the one main action.
+// page's header reads the same. White and grey on the page; the accent
+// stays on the one main action. Focus is the app-wide ring (globals.css),
+// so the edge never changes shade on focus.
 
-/** A search box on the band (leave room on the left for an icon). */
+/** A search box under the header (leave room on the left for an icon).
+ *  16 px text on a phone, 44 px tall on touch screens. */
 export const bandInput =
-  "w-full h-10 pl-10 pr-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-[15px] placeholder:text-[var(--color-text-faint)] outline-none focus:border-[var(--color-main)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40";
+  "w-full h-10 pointer-coarse:h-11 pl-10 pr-3 rounded-lg border border-[var(--color-border-control)] bg-[var(--color-surface)] text-[var(--color-text)] text-[15px] max-sm:text-[16px] placeholder:text-[var(--color-text-faint)] transition-colors";
 
-/** The icon inside a band search box. */
+/** The icon inside a header search box. */
 export const bandInputIcon =
   "absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--color-text-faint)] pointer-events-none";
 
-/** A select on the band. */
+/** A select in the header row. */
 export const bandSelect =
-  "h-10 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-[14px] font-semibold outline-none focus:border-[var(--color-main)] [&_option]:bg-[var(--color-surface)] [&_option]:text-[var(--color-text)]";
+  "h-10 pointer-coarse:h-11 px-3 rounded-lg border border-[var(--color-border-control)] bg-[var(--color-surface)] text-[var(--color-text)] text-[14px] max-sm:text-[16px] font-semibold [&_option]:bg-[var(--color-surface)] [&_option]:text-[var(--color-text)]";
 
-/** A row of toggles on the band (wrapper). */
+/** A row of toggles in the header (wrapper). */
 export const bandSeg =
-  "inline-flex items-center gap-0.5 p-0.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] max-w-full overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden";
+  "inline-flex items-center gap-0.5 p-0.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] max-w-full overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden";
 
 /** One toggle in a header row. The one you're on is a white raised
- *  segment with graphite text. */
+ *  segment with text color. */
 export function bandSegItem(on: boolean): string {
-  return `shrink-0 whitespace-nowrap inline-flex items-center gap-1.5 h-8 px-3 rounded text-[14px] font-semibold transition-colors ${
-    on ? "bg-[var(--color-surface)] text-[var(--color-text)] shadow-[0_1px_2px_rgb(31_39_51/0.15)] ring-1 ring-[var(--color-border-strong)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+  return `shrink-0 whitespace-nowrap inline-flex items-center gap-1.5 h-8 pointer-coarse:h-10 px-3 rounded-md text-[14px] font-semibold transition-colors ${
+    on ? "bg-[var(--color-surface)] text-[var(--color-text)] ring-1 ring-[var(--color-border-strong)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
   }`;
 }
 

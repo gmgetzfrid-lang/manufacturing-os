@@ -10,8 +10,7 @@
 
 import React, { useCallback, useEffect, useState } from "react";
 import {
-  ClipboardCheck, ChevronDown, ChevronUp, CheckCircle2, Clock,
-  BellRing, Loader2, UserPlus, X,
+  ClipboardCheck, ChevronDown, CheckCircle2, Clock, BellRing, Loader2, UserPlus, X,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import {
@@ -170,7 +169,7 @@ export default function DistributionAcks({
                 </span>
               )}
             </span>
-            {open ? <ChevronUp className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" /> : <ChevronDown className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" />}
+            <ChevronDown className={`w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0 ui-chevron${(open) ? " rotate-180" : ""}`} />
           </button>
 
           {open && (

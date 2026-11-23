@@ -8,7 +8,7 @@
 
 import React, { useCallback, useEffect, useState } from "react";
 import {
-  Loader2, RefreshCw, Wrench, ChevronDown, ChevronRight, HeartPulse,
+  Loader2, RefreshCw, Wrench, ChevronRight, HeartPulse,
 } from "lucide-react";
 import { getLibraryHealth, repairLibrary, fixLinkedDocumentNames, type KnowledgeHealthReport, type RepairResult } from "@/lib/knowledge";
 import type { NameRepairResult } from "@/lib/documentNameRepair";
@@ -289,7 +289,7 @@ export default function HealthPanel({ orgId, libraryId, isController, onRepaired
                   : <>Like &ldquo;EP 5-3-10&rdquo; cut to &ldquo;EP&rdquo;. Files, titles and the index are fine.{nameKinds && nameKinds.suffix > 0 && ` ${nameKinds.suffix.toLocaleString()} carry a count an upload added.`}</>}
                 {N.clashes > 0 && <span className="block">{N.clashes.toLocaleString()} can&apos;t be corrected automatically: the right number is already used. They&apos;re marked in the list.</span>}
                 <button type="button" onClick={() => setNamesOpen((v) => !v)} aria-expanded={namesOpen} className={`${link} mt-0.5 inline-flex items-center gap-0.5`}>
-                  {namesOpen ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />} {namesOpen ? "Hide" : "Show"} the list
+                  <ChevronRight className={`w-3.5 h-3.5 ui-chevron${(namesOpen) ? " rotate-90" : ""}`} /> {namesOpen ? "Hide" : "Show"} the list
                 </button>
               </Note>
             )}
@@ -340,7 +340,7 @@ export default function HealthPanel({ orgId, libraryId, isController, onRepaired
 
         <div className="border-t border-[var(--color-border)] px-4 sm:px-5 h-11 flex items-center gap-3 text-[13px] text-[var(--color-text-muted)]">
           <button type="button" onClick={() => setExpanded(!expanded)} aria-expanded={expanded} className={`${link} inline-flex items-center gap-1 text-[14px]`}>
-            {expanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />} {expanded ? "Hide the details" : "Every status, in detail"}
+            <ChevronRight className={`w-4 h-4 ui-chevron${(expanded) ? " rotate-90" : ""}`} /> {expanded ? "Hide the details" : "Every status, in detail"}
           </button>
           <span className="flex-1" />
           <span className="tabular-nums">Checked {new Date(report.checkedAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}</span>
@@ -370,7 +370,7 @@ export default function HealthPanel({ orgId, libraryId, isController, onRepaired
                               <span aria-hidden className="w-3 h-3 rounded-sm shrink-0" style={{ background: SWATCH[k] }} />
                               {items.length > 0 ? (
                                 <button type="button" aria-expanded={isOpen} onClick={(e) => { e.stopPropagation(); setOpen(isOpen ? null : k); }} className="inline-flex items-center gap-1 font-semibold text-[var(--color-text)] hover:text-[var(--color-accent-text)]">
-                                  {STATUS_LABEL[k]} {isOpen ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+                                  {STATUS_LABEL[k]} <ChevronRight className={`w-3.5 h-3.5 ui-chevron${(isOpen) ? " rotate-90" : ""}`} />
                                 </button>
                               ) : <span className="font-semibold text-[var(--color-text)]">{STATUS_LABEL[k]}</span>}
                             </span>
@@ -404,7 +404,7 @@ export default function HealthPanel({ orgId, libraryId, isController, onRepaired
                           <span className="inline-flex items-center gap-2.5">
                             <span aria-hidden className="w-3 h-3 rounded-sm shrink-0 bg-[var(--state-held)]" />
                             <button type="button" aria-expanded={open === "leftovers"} onClick={(e) => { e.stopPropagation(); setOpen(open === "leftovers" ? null : "leftovers"); }} className="inline-flex items-center gap-1 font-semibold text-[var(--color-text)] hover:text-[var(--color-accent-text)]">
-                              Left behind {open === "leftovers" ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+                              Left behind <ChevronRight className={`w-3.5 h-3.5 ui-chevron${(open === "leftovers") ? " rotate-90" : ""}`} />
                             </button>
                           </span>
                         </td>

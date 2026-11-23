@@ -90,7 +90,7 @@ export default function NotificationBell({ collapsed, variant = "sidebar" }: Not
           aria-label={decisions > 0 ? `Notifications: ${decisions} waiting on you` : unread > 0 ? `Notifications: ${unread} new` : "Notifications"}
           aria-expanded={open}
           className={`relative w-9 h-9 inline-flex items-center justify-center rounded-full transition-all ${
-            open ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "bg-[var(--color-surface)] text-[var(--color-text)] shadow-[0_1px_2px_rgb(11_18_32/0.08)] hover:shadow-[var(--shadow-card)]"
+            open ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
           }`}
         >
           <Bell className="w-4 h-4" />
@@ -118,7 +118,7 @@ export default function NotificationBell({ collapsed, variant = "sidebar" }: Not
       )}
 
       {open && (
-        <div role="dialog" aria-label="Notifications" className={`${isHeader ? "absolute right-0 top-full mt-2 origin-top-right" : "absolute left-full ml-2 bottom-0"} w-[26rem] max-w-[calc(100vw-1.5rem)] max-h-[70vh] bg-[var(--color-surface)] text-[var(--color-text)] rounded-lg border border-[var(--color-border-strong)] shadow-[0_30px_60px_-24px_rgb(11_18_32/0.55)] z-[90] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150`}>
+        <div role="dialog" aria-label="Notifications" className={`${isHeader ? "absolute right-0 top-full mt-2 origin-top-right" : "absolute left-full ml-2 bottom-0"} w-[26rem] max-w-[calc(100vw-1.5rem)] max-h-[70vh] bg-[var(--color-surface)] text-[var(--color-text)] rounded-xl border border-[var(--color-border)] ui-float z-[90] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150`}>
             <div className="px-4 pt-3 pb-3 border-b border-[var(--color-border-strong)]">
               <div className="flex items-center gap-3">
                 <span aria-hidden className="ui-icon-tile is-sm is-solid"><Bell className="w-4 h-4" /></span>

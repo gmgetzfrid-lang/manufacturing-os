@@ -10,7 +10,7 @@ import Link from "next/link";
 // on, only takes rows whose ID is printed plainly on the sheet.
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { X, Loader2, Check, RefreshCw, AlertTriangle, ScanSearch, GraduationCap, ChevronDown, ChevronRight, ExternalLink } from "lucide-react";
+import { X, Loader2, Check, RefreshCw, AlertTriangle, ScanSearch, GraduationCap, ChevronRight, ExternalLink } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { loadCodebook, EMPTY_CODEBOOK, type Codebook } from "@/lib/codebook";
 import { decodeId, looksLikeId, type SweepRow, type RowChoice } from "@/lib/equipmentSweep";
@@ -323,7 +323,7 @@ export default function EquipmentSweepModal({ orgId, libraryId, libraryName, fol
               {sweeping ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />} {sweeping ? "Reading the sheets…" : "Read again"}
             </button>
             <button type="button" onClick={() => setShowSettings((v) => !v)} className="inline-flex items-center gap-1 text-[13px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
-              {showSettings ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />} Settings
+              <ChevronRight className={`w-3.5 h-3.5 ui-chevron${(showSettings) ? " rotate-90" : ""}`} /> Settings
             </button>
           </div>
 

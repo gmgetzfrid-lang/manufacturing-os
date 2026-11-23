@@ -717,9 +717,9 @@ export default function ChatShell() {
 
       {/* Stream */}
       <div className="flex-1 min-w-0 flex flex-col rounded-lg overflow-hidden bg-[var(--color-surface)] border border-[var(--color-border)]">
-        {/* A slim band in the brand color, like every page's header: inside
-            .page-head the text and border tokens turn white. */}
-        <div className="page-head bg-[var(--color-band)] rounded-t-lg px-3 sm:px-5 py-2.5 min-h-[60px] flex items-center gap-2 shrink-0">
+        {/* The conversation's header: plain, on the sheet, like every page's
+            header now (no colored band). */}
+        <div className="page-head border-b border-[var(--color-border)] px-3 sm:px-5 py-2.5 min-h-[60px] flex items-center gap-2 shrink-0">
           {!railOpen && (
             <button onClick={() => setRailOpen(true)} title="Conversations" aria-label="Show conversations"
               className="h-9 w-9 -ml-1 shrink-0 inline-flex items-center justify-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">

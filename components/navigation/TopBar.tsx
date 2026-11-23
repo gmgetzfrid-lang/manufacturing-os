@@ -19,12 +19,13 @@ export default function TopBar({ onOpenMobileNav }: { onOpenMobileNav?: () => vo
   const { uid } = useRole();
 
   return (
-    <header className="shrink-0 h-14 sm:h-12 sm:mt-1 bg-[var(--color-canvas)] px-4 sm:px-6 lg:px-8 flex items-center gap-3 relative z-30">
+    <header className="vt-top shrink-0 h-14 sm:h-12 sm:mt-1 bg-[var(--color-canvas)] px-4 sm:px-6 lg:px-8 flex items-center gap-3 relative z-30">
       {/* Hamburger — opens the off-canvas nav drawer (mobile only). */}
       <button
         onClick={onOpenMobileNav}
         aria-label="Open navigation menu"
-        className="md:hidden -ml-1 mr-0.5 w-9 h-9 inline-flex items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors shrink-0"
+        title="Menu"
+        className="md:hidden -ml-1 mr-0.5 w-11 h-11 inline-flex items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors shrink-0"
       >
         <Menu className="w-5 h-5" />
       </button>
@@ -40,7 +41,7 @@ export default function TopBar({ onOpenMobileNav }: { onOpenMobileNav?: () => vo
           }}
           aria-label="Search anything"
           title="Search anything"
-          className="sm:hidden w-9 h-9 inline-flex items-center justify-center rounded-full text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors"
+          className="sm:hidden w-11 h-11 inline-flex items-center justify-center rounded-full text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors"
         >
           <Search className="w-4 h-4" />
         </button>
@@ -50,10 +51,10 @@ export default function TopBar({ onOpenMobileNav }: { onOpenMobileNav?: () => vo
             window.dispatchEvent(new KeyboardEvent("keydown", { key: "k", metaKey: true, bubbles: true }));
           }}
           title="Search anything (⌘K)"
-          className="hidden sm:inline-flex items-center gap-2 h-9 w-60 lg:w-80 pl-3 pr-1.5 rounded-[10px] bg-[var(--color-surface)] shadow-[0_1px_2px_rgb(11_18_32/0.06)] hover:shadow-[var(--shadow-card)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-shadow group"
+          className="hidden sm:inline-flex items-center gap-2 h-9 w-60 lg:w-80 pl-3 pr-1.5 rounded-lg bg-[var(--color-surface)] border border-[var(--color-border-strong)] hover:border-[var(--color-border-control)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors group"
         >
           <Search className="w-3.5 h-3.5" />
-          <span className="flex-1 min-w-0 truncate text-left text-[13px] font-medium pr-1">Search documents, tags, requests</span>
+          <span className="flex-1 min-w-0 truncate text-left text-[14px] pr-1">Search documents, tags, requests</span>
           <kbd className="inline-flex items-center gap-0.5 px-1.5 py-0.5 bg-[var(--color-surface-2)] group-hover:bg-[var(--color-border)] rounded text-[11px] font-mono text-[var(--color-text-muted)] font-bold">
             <Command className="w-2.5 h-2.5" />K
           </kbd>

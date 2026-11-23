@@ -9,7 +9,7 @@
 
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
-import { Network, ChevronDown, ChevronUp, Lock, Ticket as TicketIcon, Briefcase, GitBranch, ShieldAlert } from "lucide-react";
+import { Network, ChevronDown, Lock, Ticket as TicketIcon, Briefcase, GitBranch, ShieldAlert } from "lucide-react";
 import { getDocumentImpact, type DocumentImpact } from "@/lib/impact";
 
 interface ImpactPanelProps {
@@ -113,7 +113,7 @@ export default function ImpactPanel({ documentId, orgId }: ImpactPanelProps) {
             </span>
           )}
         </span>
-        {open ? <ChevronUp className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" /> : <ChevronDown className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" />}
+        <ChevronDown className={`w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0 ui-chevron${(open) ? " rotate-180" : ""}`} />
       </button>
 
       {open && (

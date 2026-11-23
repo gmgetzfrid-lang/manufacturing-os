@@ -10,7 +10,7 @@
 // quiet; when a piece was a guess it's highlighted — that's the one question.
 
 import React, { useMemo, useState } from "react";
-import { Wand2, ChevronDown, ChevronRight, AlertTriangle } from "lucide-react";
+import { Wand2, ChevronRight, AlertTriangle } from "lucide-react";
 import { ROLE_LABEL, type NameReading, type NameRole } from "@/lib/filenameRoles";
 
 const TONE: Record<NameRole, string> = {
@@ -53,7 +53,7 @@ export default function NameReadingStrip({ readings, onChange }: {
         </span>
         {groups.length > 1 && (
           <button onClick={() => setOpen((v) => !v)} className="inline-flex items-center gap-0.5 font-bold hover:text-[var(--color-text)]">
-            {open ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />} {open ? "Fewer" : "All patterns"}
+            <ChevronRight className={`w-3 h-3 ui-chevron${(open) ? " rotate-90" : ""}`} /> {open ? "Fewer" : "All patterns"}
           </button>
         )}
       </div>

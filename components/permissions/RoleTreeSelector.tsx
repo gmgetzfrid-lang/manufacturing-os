@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
-import { ChevronRight, ChevronDown, CheckSquare, Square, MinusSquare } from "lucide-react";
+import { ChevronRight, CheckSquare, Square, MinusSquare } from "lucide-react";
 import { Role } from "@/types/schema";
 
 export const ROLE_HIERARCHY: { name: string; roles: Role[] }[] = [
@@ -86,7 +86,7 @@ export function RoleTreeSelector({ selected, onChange, disabled }: RoleTreeSelec
                 onClick={(e) => { e.stopPropagation(); toggleExpand(group.name); }}
                 className="p-1 text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)] mr-1"
               >
-                {isExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                <ChevronRight className={`w-4 h-4 ui-chevron${(isExpanded) ? " rotate-90" : ""}`} />
               </button>
               
               <div 

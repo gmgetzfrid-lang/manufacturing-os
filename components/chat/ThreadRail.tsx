@@ -8,8 +8,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
-  Search, Plus, Pin, PinOff, Archive, ArchiveRestore, Pencil, Trash2, MoreHorizontal,
-  ChevronDown, ChevronRight, X, PanelLeftClose,
+  Search, Plus, Pin, PinOff, Archive, ArchiveRestore, Pencil, Trash2, MoreHorizontal, ChevronRight, X, PanelLeftClose,
 } from "lucide-react";
 import type { ChatThread } from "@/lib/chatClient";
 import { SCOPE_META, relativeTime } from "./shared";
@@ -124,7 +123,7 @@ export default function ThreadRail(p: RailProps) {
                 <button onClick={() => setSettledOpen((v) => !v)}
                   aria-expanded={settledOpen}
                   className="w-full flex items-center gap-1.5 px-3 py-1.5 text-[13px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
-                  {settledOpen ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+                  <ChevronRight className={`w-3.5 h-3.5 ui-chevron${(settledOpen) ? " rotate-90" : ""}`} />
                   Settled <span className="ui-count !h-5 !min-w-5 !px-1.5 !text-[12px]">{settled.length}</span>
                 </button>
                 {settledOpen && <div className="divide-y divide-[var(--color-border)] border-y border-[var(--color-border)]">{settled.map((t) => <Row key={t.id} t={t} p={p} />)}</div>}

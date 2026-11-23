@@ -43,17 +43,20 @@ export default function MoreMenu({ items, label = "More", triggerClass, iconOnly
   return (
     <div ref={box} className="relative">
       <button type="button" aria-haspopup="menu" aria-expanded={open} aria-label={iconOnly ? label : undefined} onClick={(e) => { place(e.currentTarget.getBoundingClientRect()); setOpen((o) => !o); }}
-        className={triggerClass ?? "inline-flex items-center justify-center gap-1.5 h-9 px-3 rounded-lg border text-[13px] font-semibold transition-colors border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}>
+        title={iconOnly ? label : undefined}
+        className={triggerClass ?? "inline-flex items-center justify-center gap-1.5 h-10 pointer-coarse:h-11 px-3 rounded-lg border text-[14px] font-semibold transition-colors border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-border-control)]"}>
         <MoreHorizontal className="w-4 h-4" />{!iconOnly && <span>{label}</span>}
       </button>
       {open && typeof document !== "undefined" && createPortal(
-        <div ref={menu} role="menu" style={{ top: at.top, left: at.left, right: at.right }}
-          className="on-sheet fixed z-[650] w-56 max-w-[calc(100vw-2rem)] max-h-[calc(100dvh-5rem)] overflow-y-auto rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-xl py-1">
+        // It floats (the one shadow for things above the page) and grows
+        // out of the corner next to its button.
+        <div ref={menu} role="menu" style={{ top: at.top, left: at.left, right: at.right, transformOrigin: at.right !== undefined ? "top right" : "top left" }}
+          className="on-sheet ui-float ui-float-in fixed z-[650] w-56 max-w-[calc(100vw-2rem)] max-h-[calc(100dvh-5rem)] overflow-y-auto rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] py-1">
           {items.map((it, i) => (
             <React.Fragment key={it.label}>
               {it.line && i > 0 && <div className="my-1 h-px bg-[var(--color-border)]" />}
               <button type="button" role="menuitem" aria-current={it.current ? "page" : undefined} onClick={() => { setOpen(false); void it.onClick(); }}
-                className={`w-full flex items-center gap-2.5 px-3 min-h-11 text-left text-[14px] font-semibold hover:bg-[var(--color-surface-2)] ${it.current ? "bg-[var(--color-surface-2)]" : ""} ${it.tone === "bad" ? "text-rose-700 dark:text-rose-400" : it.tone === "good" ? "text-emerald-700 dark:text-emerald-400" : "text-[var(--color-text)]"}`}>
+                className={`w-full flex items-center gap-2.5 px-3 min-h-11 text-left text-[14px] font-semibold hover:bg-[var(--color-surface-2)] ${it.current ? "bg-[var(--color-surface-2)]" : ""} ${it.tone === "bad" ? "text-[var(--state-overdue-text)]" : it.tone === "good" ? "text-[var(--state-released-text)]" : "text-[var(--color-text)]"}`}>
                 {it.icon}{it.label}
               </button>
             </React.Fragment>

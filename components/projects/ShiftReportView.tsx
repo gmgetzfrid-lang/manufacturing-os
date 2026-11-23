@@ -1072,7 +1072,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
             </div>
             <input type="date" value={shift.dayKey} onChange={(e) => { if (e.target.value) setSel({ dayKey: e.target.value, kind: shift.kind }); }}
               aria-label="Which day's shift"
-              className="h-9 min-w-0 w-[142px] max-md:flex-1 max-md:w-auto text-[14px] font-semibold rounded-md px-2.5 bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border-strong)] outline-none focus:border-[var(--color-main)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40" title="Which day's shift to close" />
+              className="h-9 min-w-0 w-[142px] max-md:order-last max-md:basis-full max-md:w-full text-[14px] font-semibold rounded-md px-2.5 bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border-strong)] outline-none focus:border-[var(--color-main)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40" title="Which day's shift to close" />
             <button onClick={() => pick(nextShift(shift, tz, times))} className="w-9 h-9 shrink-0 inline-flex items-center justify-center rounded-md hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]" title="Next shift" aria-label="Next shift"><ChevronRight className="w-4 h-4" /></button>
             {/* Back to the shift on now: only once another one is picked. */}
             {/* (On a phone it's in More, so the row stays one row.) */}

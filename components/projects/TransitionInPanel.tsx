@@ -11,8 +11,7 @@
 import { Card } from "@/components/ui/PageHero";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  ArrowRightCircle, Loader2, ShieldAlert, ShieldCheck, Cable, Layers,
-  ChevronDown, ChevronRight, RefreshCw,
+  ArrowRightCircle, Loader2, ShieldAlert, ShieldCheck, Cable, Layers, ChevronRight, RefreshCw,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import {
@@ -187,7 +186,7 @@ export default function TransitionInPanel({ orgId, projectId, intakeCollectionId
           return (
             <li key={c.docId} className={`rounded-xl border px-2.5 py-1.5 ${!impact ? "border-[var(--color-border)]" : impact.clean ? "border-emerald-500/30 bg-emerald-500/[0.04]" : "border-amber-500/40 bg-amber-500/[0.05]"}`}>
               <button onClick={() => setOpen(expanded ? null : c.docId)} className="w-full flex items-center gap-2 text-left">
-                {expanded ? <ChevronDown className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" /> : <ChevronRight className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" />}
+                <ChevronRight className={`w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0 ui-chevron${(expanded) ? " rotate-90" : ""}`} />
                 <span className="text-[14px] font-bold text-[var(--color-text)] truncate">{c.label}</span>
                 <span className="text-xs text-[var(--color-text-muted)] shrink-0">Rev {c.rev ?? "-"}{c.company ? ` · ${c.company}` : ""}</span>
                 <span className="ml-auto flex items-center gap-1.5 shrink-0">

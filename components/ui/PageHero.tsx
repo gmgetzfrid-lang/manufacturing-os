@@ -1,29 +1,58 @@
 "use client";
 
-// The page frame every screen shares. The header is a band in the main
-// (brand) color, edge to edge, drawn like the title block of an
-// engineering drawing: the page's answer in big condensed type on the left
-// (what matters right now, e.g. "43 things need you"), the facts that back
-// it up in ruled cells beside it, and the one main action at the end in the
-// accent color, so it is the first thing the eye lands on. Tabs, search
-// and filters sit just under the band. Below, sections are a heading and
-// their content on a white sheet, full width.
+// The page frame every screen shares. The header sits on the page itself,
+// with no colored band: a small muted kicker (where you are), the page's
+// answer as the title (what matters right now, e.g. "1 thing needs you."),
+// one short line under it, and the facts that back it up: ONE hero number
+// large, the others as small labeled values in a row. Zeros are muted, a
+// late or waiting value is in its state color (never a filled box). The one
+// filled action (the accent) sits on the right; secondary tools are quiet
+// buttons beside the kicker. Tabs, search and filters sit just under the
+// header. Below, sections are a heading and their content on a white
+// sheet, full width.
 
 import React from "react";
 import Link from "next/link";
 import { ChevronLeft } from "lucide-react";
 
-/** A secondary button. On the band it is white glass; on a sheet, white
- *  with a ruled edge. */
+/** A secondary button: white, a hairline edge, text color. */
 export const heroQuiet =
-  "inline-flex items-center justify-center gap-1.5 h-9 px-3.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-text-faint)] disabled:opacity-50 transition-colors";
+  "inline-flex items-center justify-center gap-1.5 whitespace-nowrap h-10 pointer-coarse:h-11 px-3.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-border-control)] disabled:opacity-50 disabled:cursor-not-allowed transition-colors";
 
-/** The page's one main action: the accent, the color that pops. */
+/** The page's one main action: the only filled accent on the screen. */
 export const heroPrimary =
-  "inline-flex items-center justify-center gap-2 h-11 px-5 rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[15px] font-bold hover:bg-[var(--color-accent-hover)] shadow-[0_8px_20px_-8px_rgb(0_0_0/0.45)] disabled:opacity-50 transition-colors";
+  "inline-flex items-center justify-center gap-2 whitespace-nowrap h-10 pointer-coarse:h-11 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[15px] font-semibold hover:bg-[var(--color-accent-hover)] disabled:opacity-50 disabled:cursor-not-allowed transition-colors";
 
-/** One ruled cell in the title block: a fact that backs up the answer. */
-export interface HeroFact { label: React.ReactNode; value: React.ReactNode; tone?: "bad" | "warn" | "good" }
+/** A fact that backs up the answer. `hero` marks the one number that
+ *  matters (shown large); otherwise the first fact that isn't zero is. */
+export interface HeroFact { label: React.ReactNode; value: React.ReactNode; tone?: "bad" | "warn" | "good"; hero?: boolean }
+
+/** True for a value that reads as nothing: 0, "0", "0 h", "0%", "-". */
+export function isZeroFact(v: React.ReactNode): boolean {
+  if (typeof v === "number") return v === 0;
+  if (typeof v === "string") return /^\s*(?:0+(?:[.,]0+)?\s*(?:h|d|%)?|-|–)\s*$/i.test(v);
+  return false;
+}
+
+const TONE_TEXT: Record<NonNullable<HeroFact["tone"]>, string> = {
+  bad: "text-[var(--state-overdue-text)]",
+  warn: "text-[var(--state-held-text)]",
+  good: "text-[var(--state-released-text)]",
+};
+
+function factColor(f: HeroFact): string {
+  if (isZeroFact(f.value)) return "text-[var(--color-text-faint)]";
+  return f.tone ? TONE_TEXT[f.tone] : "text-[var(--color-text)]";
+}
+
+/** Which fact leads: the one marked `hero`, else the first that isn't
+ *  zero; none when every fact is zero (nothing to shout about). */
+function heroIndex(facts: HeroFact[], mode: "auto" | "none"): number {
+  if (mode === "none") return -1;
+  const marked = facts.findIndex((f) => f.hero);
+  if (marked >= 0) return marked;
+  return facts.findIndex((f) => !isZeroFact(f.value));
+}
 
 export function PageHero({
   kicker,
@@ -33,13 +62,14 @@ export function PageHero({
   tools,
   primary,
   facts,
+  factsHero = "auto",
   children,
   size = "lg",
   className = "",
 }: {
   /** Where you are (e.g. "Documents / Drawings"). */
   kicker?: React.ReactNode;
-  /** The answer: what matters on this page right now. Shown big. */
+  /** The answer: what matters on this page right now. */
   title: React.ReactNode;
   /** One short line under the answer. */
   sub?: React.ReactNode;
@@ -50,8 +80,10 @@ export function PageHero({
   /** The one main action (use heroPrimary). On a phone it rides in a bar
    *  at the bottom of the screen, where a thumb reaches it. */
   primary?: React.ReactNode;
-  /** Up to four facts beside the answer, in ruled cells. */
+  /** Up to four facts under the answer: one large, the rest small. */
   facts?: HeroFact[];
+  /** "none" shows every fact small (no hero number). */
+  factsHero?: "auto" | "none";
   /** Things that steer the page: tabs, search, a path of steps. */
   children?: React.ReactNode;
   /** "md" for detail pages whose answer is long. */
@@ -60,60 +92,60 @@ export function PageHero({
   overlap?: boolean;
   className?: string;
 }) {
-  const big = size === "lg" ? "text-[32px] sm:text-[42px]" : "text-[28px] sm:text-[34px]";
-  // A late or waiting number is a chip in its status color, so it jumps out.
-  const chip = (t?: HeroFact["tone"]) =>
-    t === "bad" ? "bg-[var(--state-overdue)] text-white px-2 rounded-md"
-      : t === "warn" ? "bg-[#f5b301] text-[#1f2733] px-2 rounded-md"
-        : t === "good" ? "bg-[var(--state-released)] text-white px-2 rounded-md" : "";
+  const big = size === "lg" ? "text-[24px] sm:text-[26px]" : "text-[21px] sm:text-[24px]";
+  const list = (facts ?? []).slice(0, 4);
+  const hi = heroIndex(list, factsHero);
+  const hero = hi >= 0 ? list[hi] : null;
+  const rest = list.filter((_, i) => i !== hi);
+  const backCls = "-ml-2 w-9 h-9 rounded-lg grid place-items-center shrink-0 text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[color-mix(in_srgb,var(--color-text)_7%,transparent)] transition-colors";
   return (
     <>
-      <header
-        className={`page-head relative bg-[var(--color-band)] -mt-6 pt-5 pb-6 sm:pb-7 [box-shadow:0_0_0_100vmax_var(--color-band)] [clip-path:inset(0_-100vmax)] ${children ? "" : "mb-1"} ${className}`}
-      >
+      <header className={`page-head relative -mt-2 ${children ? "" : "mb-1"} ${className}`}>
         {(back || kicker || tools) && (
-          <div className="flex items-center gap-2 min-h-9 mb-1.5">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-2 min-h-10 mb-1.5">
             {back && (back.href ? (
-              <Link href={back.href} aria-label={back.label}
-                className="-ml-2 w-8 h-8 rounded-md grid place-items-center text-white/85 hover:text-white hover:bg-white/15">
+              <Link href={back.href} aria-label={back.label} title={back.label} className={backCls}>
                 <ChevronLeft className="w-5 h-5" />
               </Link>
             ) : (
-              <button type="button" onClick={back.onClick} aria-label={back.label}
-                className="-ml-2 w-8 h-8 rounded-md grid place-items-center text-white/85 hover:text-white hover:bg-white/15">
+              <button type="button" onClick={back.onClick} aria-label={back.label} title={back.label} className={backCls}>
                 <ChevronLeft className="w-5 h-5" />
               </button>
             ))}
-            {kicker && <div className="min-w-0 truncate text-[14px] font-medium text-white/80">{kicker}</div>}
-            <div className="flex-1" />
-            {tools && <div className="flex items-center gap-2 shrink-0">{tools}</div>}
+            <div className="min-w-0 flex-1 truncate text-[14px] text-[var(--color-text-muted)]">{kicker}</div>
+            {tools && <div className="flex flex-wrap items-center gap-2 min-w-0 max-w-full">{tools}</div>}
           </div>
         )}
-        <div className="flex flex-wrap items-stretch gap-x-0 gap-y-4">
-          <div className="min-w-0 flex-1 basis-[360px] pr-6 self-center">
-            <h1 className={`font-display ${big} leading-[1.04] font-semibold tracking-[-0.01em] text-white`}>{title}</h1>
-            {sub && <p className="mt-2 text-[15px] leading-snug text-white/85 max-w-[70ch]">{sub}</p>}
+        <div className="flex flex-wrap items-end gap-x-6 gap-y-4">
+          <div className="min-w-0 flex-1 basis-[300px]">
+            <h1 className={`font-display ${big} leading-[1.2] font-semibold tracking-[-0.005em] text-[var(--color-text)] [overflow-wrap:anywhere]`}>{title}</h1>
+            {sub && <p className="mt-1.5 text-[15px] sm:text-[16px] leading-snug text-[var(--color-text-muted)] max-w-[72ch]">{sub}</p>}
+            {list.length > 0 && (
+              <dl className="mt-4 flex flex-wrap items-end gap-x-7 gap-y-3">
+                {hero && (
+                  <div className="min-w-0 sm:mr-2">
+                    <dt className="text-[13px] text-[var(--color-text-muted)] truncate">{hero.label}</dt>
+                    <dd className={`mt-0.5 font-display text-[34px] sm:text-[42px] leading-[1.05] font-bold tabular-nums whitespace-nowrap ${factColor(hero)}`}>{hero.value}</dd>
+                  </div>
+                )}
+                {rest.map((f, i) => (
+                  <div key={i} className="min-w-0 sm:pb-1">
+                    <dt className="text-[13px] text-[var(--color-text-muted)] truncate">{f.label}</dt>
+                    <dd className={`mt-0.5 font-display text-[20px] leading-tight font-semibold tabular-nums whitespace-nowrap ${factColor(f)}`}>{f.value}</dd>
+                  </div>
+                ))}
+              </dl>
+            )}
           </div>
-          {facts && facts.length > 0 && (
-            <dl className="grid grid-flow-col auto-cols-fr max-sm:w-full max-sm:border-t max-sm:border-white/25 max-sm:pt-3">
-              {facts.slice(0, 4).map((f, i) => (
-                <div key={i} className="min-w-0 px-3 sm:px-5 max-sm:first:pl-0 sm:border-l max-sm:[&+&]:border-l border-white/25 flex flex-col justify-center sm:min-w-[96px]">
-                  <dt className="text-[13px] text-white/80 truncate">{f.label}</dt>
-                  <dd className="mt-1.5 leading-none">
-                    <span className={`inline-block font-display text-[22px] sm:text-[28px] leading-[1.15] font-semibold tabular-nums text-white ${chip(f.tone)}`}>{f.value}</span>
-                  </dd>
-                </div>
-              ))}
-            </dl>
-          )}
-          {primary && <div className={`max-sm:hidden shrink-0 self-center ${facts?.length ? "pl-5 border-l border-white/25" : ""}`}>{primary}</div>}
+          {primary && <div className="max-sm:hidden shrink-0">{primary}</div>}
         </div>
       </header>
       {children && <div className="mt-4">{children}</div>}
       {primary && (
         // On a phone the one action sits where a thumb reaches it (above the
-        // staged tray when that shows: --staged-tray-h).
-        <div className="sm:hidden fixed inset-x-0 bottom-[var(--staged-tray-h,0px)] z-40 px-3.5 pt-3 pb-[calc(12px+env(safe-area-inset-bottom))] bg-[color-mix(in_srgb,var(--color-canvas)_94%,transparent)] border-t border-[var(--color-border)] [&>*]:w-full">
+        // staged tray when that shows: --staged-tray-h), clear of the home
+        // indicator.
+        <div className="sm:hidden fixed inset-x-0 bottom-[var(--staged-tray-h,0px)] z-40 px-4 pt-3 pb-[calc(12px+env(safe-area-inset-bottom))] bg-[color-mix(in_srgb,var(--color-canvas)_94%,transparent)] border-t border-[var(--color-border)] [&>*]:w-full">
           {primary}
         </div>
       )}
@@ -130,7 +162,7 @@ export function PageBody({ children, className = "" }: { children: React.ReactNo
 // rest style the sheet.
 const PLACE = /^(?:[a-z]+:)*(?:col-span|row-span|order|sticky|top-|self-|min-w-0|basis)/;
 
-/** A section: its heading on the panel, its content on a white sheet.
+/** A section: its heading on the page, its content on a white sheet.
  *  `label` names it; `action` sits on the heading's right. */
 export function Card({
   label,
@@ -147,15 +179,15 @@ export function Card({
   pad?: boolean;
   as?: "section" | "article" | "div";
 }) {
-  const sheet = `rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] ${pad ? "p-4 sm:p-5" : ""}`;
+  const sheet = `rounded-xl bg-[var(--color-surface)] border border-[var(--color-border)] ${pad ? "p-4 sm:p-5" : ""}`;
   if (!label && !action) return <Tag className={`${sheet} ${className}`}>{children}</Tag>;
   const parts = className.split(/\s+/).filter(Boolean);
   const place = parts.filter((c) => PLACE.test(c)).join(" ");
   const rest = parts.filter((c) => !PLACE.test(c)).join(" ");
   return (
     <Tag className={`min-w-0 ${place}`}>
-      <div className="flex items-end gap-3 mb-2.5 min-h-8">
-        {label && <h2 className="font-display text-[19px] leading-tight font-semibold text-[var(--color-text)] [&_svg]:inline [&_svg]:align-[-2px]">{label}</h2>}
+      <div className="flex flex-wrap items-end gap-x-3 gap-y-2 mb-3 min-h-8">
+        {label && <h2 className="font-display text-[20px] leading-tight font-semibold text-[var(--color-text)] [&_svg]:inline [&_svg]:align-[-2px]">{label}</h2>}
         <div className="flex-1" />
         {action}
       </div>
@@ -179,7 +211,7 @@ export function StepLine({ steps, onDark = false }: {
   steps: Array<{ label: React.ReactNode; note?: React.ReactNode; tone?: "bad" | "ok" | "muted"; state: "done" | "now" | "next" }>;
   onDark?: boolean;
 }) {
-  void onDark; // the header is on the light panel now
+  void onDark; // the header is on the page now: one look everywhere
   const fg = "var(--color-text)";
   const line = "var(--color-border-strong)";
   return (
@@ -190,13 +222,13 @@ export function StepLine({ steps, onDark = false }: {
         return (
           <li key={i} className={last ? "shrink-0 pr-2" : "flex-1 min-w-0"} aria-current={s.state === "now" ? "step" : undefined}>
             <div className="flex items-center">
-              <span className="w-3.5 h-3.5 rounded-full shrink-0 box-border"
-                style={filled ? { background: fg } : { border: `2px solid ${s.state === "now" ? fg : line}` }} />
-              {!last && <span className="flex-1 h-0.5" style={{ background: filled && steps[i + 1]?.state !== "next" ? fg : line }} />}
+              <span className="w-3 h-3 rounded-full shrink-0 box-border"
+                style={filled ? { background: fg } : { border: `2px solid ${s.state === "now" ? "var(--color-current)" : line}` }} />
+              {!last && <span className="flex-1 h-px" style={{ background: filled && steps[i + 1]?.state !== "next" ? fg : line }} />}
             </div>
             <div className="mt-2.5 pr-3 text-[14px] font-semibold truncate text-[var(--color-text)]">{s.label}</div>
             {s.note && (
-              <div className={`pr-3 text-[13px] mt-0.5 ${s.tone === "bad" ? "text-[var(--state-overdue)] font-semibold" : "text-[var(--color-text-muted)]"}`}>{s.note}</div>
+              <div className={`pr-3 text-[13px] mt-0.5 tabular-nums ${s.tone === "bad" ? "text-[var(--state-overdue-text)] font-semibold" : "text-[var(--color-text-muted)]"}`}>{s.note}</div>
             )}
           </li>
         );

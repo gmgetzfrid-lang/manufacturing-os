@@ -2,7 +2,7 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import type { LibraryCollection, NodeVisibility } from "@/types/schema";
-import { ChevronDown, ChevronRight, Folder, FolderOpen, Search } from "lucide-react";
+import { ChevronRight, Folder, FolderOpen, Search } from "lucide-react";
 
 type FolderTreeProps = {
   collections: LibraryCollection[];
@@ -172,7 +172,7 @@ export default function FolderTree({
             }}
             aria-label={open ? "Collapse folder" : "Expand folder"}
           >
-            {open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+            <ChevronRight className={`h-4 w-4 ui-chevron${(open) ? " rotate-90" : ""}`} />
           </button>
 
           {open ? <FolderOpen className="h-4 w-4 shrink-0 text-[var(--color-text-muted)]" /> : <Folder className="h-4 w-4 shrink-0 text-[var(--color-text-muted)]" />}

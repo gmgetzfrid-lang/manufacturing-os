@@ -5,7 +5,7 @@
 // the whole list a tap away.
 
 import React, { useState } from "react";
-import { ArrowRight, Check, ChevronDown, ChevronUp } from "lucide-react";
+import { ArrowRight, Check, ChevronDown } from "lucide-react";
 import type { Need, NeedGo } from "@/lib/closeNeeds";
 
 export default function CloseNeeds({ needs, onGo }: { needs: Need[]; onGo: (go: NeedGo) => void }) {
@@ -33,7 +33,7 @@ export default function CloseNeeds({ needs, onGo }: { needs: Need[]; onGo: (go: 
           </div>
         </div>
         <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} className="inline-flex items-center gap-1.5 h-9 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
-          {open ? "Hide the list" : `See all ${needs.length}`} {open ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+          {open ? "Hide the list" : `See all ${needs.length}`} <ChevronDown className={`w-4 h-4 ui-chevron${(open) ? " rotate-180" : ""}`} />
         </button>
       </div>
       {!open && next && (

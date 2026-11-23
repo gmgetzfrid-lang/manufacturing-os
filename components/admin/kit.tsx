@@ -1,54 +1,70 @@
 // The pieces admin screens and the public pages share, so a list reads the
-// same everywhere: a ruled table on one white sheet, a quiet status tag (a
-// dot and a word), labeled form rows, and the button and link recipes.
+// same everywhere: a ruled table on one white sheet, a quiet status (a dot
+// and a word), labeled form rows, and the button and link recipes.
+//
+// Buttons: ONE filled primary per screen (the accent); secondary is white
+// with a hairline edge; tertiary is a link; destructive is red words on a
+// secondary button (and always confirms). 40 px tall, 44 px on touch
+// screens, radius 8. Focus is the app-wide ring (globals.css).
 //
 // No "use client" here on purpose: the public pages are server pages and
 // import these class strings too (PageHero's live in a client module, where
 // a server page can't read them).
 
 import React from "react";
+import { explainError } from "@/lib/friendlyError";
 
-/** The page's one main action: filled with the signal color. */
+/** The page's one main action: filled with the accent. */
 export const btnPrimary =
-  "inline-flex items-center justify-center gap-2 whitespace-nowrap h-10 px-4 rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[15px] font-semibold hover:bg-[var(--color-accent-hover)] shadow-[0_1px_0_rgb(0_0_0/0.12)] disabled:opacity-50 disabled:cursor-not-allowed transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent-ring)] focus-visible:ring-offset-2";
+  "inline-flex items-center justify-center gap-2 whitespace-nowrap h-10 pointer-coarse:h-11 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[15px] font-semibold hover:bg-[var(--color-accent-hover)] disabled:opacity-50 disabled:cursor-not-allowed transition-colors";
 
-/** A secondary button: white, ruled, graphite text. */
+/** A secondary button: white, a hairline edge, text color. */
 export const btnQuiet =
-  "inline-flex items-center justify-center gap-1.5 whitespace-nowrap h-9 px-3.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-text-faint)] disabled:opacity-50 disabled:cursor-not-allowed transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent-ring)]";
+  "inline-flex items-center justify-center gap-1.5 whitespace-nowrap h-10 pointer-coarse:h-11 px-3.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-border-control)] disabled:opacity-50 disabled:cursor-not-allowed transition-colors";
 
 /** A small secondary button for a table row. */
 export const btnRow =
-  "inline-flex items-center justify-center gap-1.5 whitespace-nowrap shrink-0 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-text-faint)] disabled:opacity-50 disabled:cursor-not-allowed transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent-ring)]";
+  "inline-flex items-center justify-center gap-1.5 whitespace-nowrap shrink-0 h-8 pointer-coarse:h-10 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-border-control)] disabled:opacity-50 disabled:cursor-not-allowed transition-colors";
 
-/** A destructive secondary button (red text on white). */
+/** A destructive action: red words on a secondary button. Confirm first. */
 export const btnDanger =
-  "inline-flex items-center justify-center gap-1.5 whitespace-nowrap h-9 px-3.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--state-overdue)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 disabled:cursor-not-allowed transition-colors";
+  "inline-flex items-center justify-center gap-1.5 whitespace-nowrap h-10 pointer-coarse:h-11 px-3.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--state-overdue-text)] hover:bg-[color-mix(in_srgb,var(--state-overdue)_6%,var(--color-surface))] hover:border-[color-mix(in_srgb,var(--state-overdue)_45%,var(--color-border-strong))] disabled:opacity-50 disabled:cursor-not-allowed transition-colors";
 
-/** An icon-only button with a visible hover fill. Give it an aria-label. */
+/** A tertiary action: a link-styled button (no box). */
+export const btnLink =
+  "inline-flex items-center gap-1.5 whitespace-nowrap min-h-8 pointer-coarse:min-h-11 text-[14px] font-semibold text-[var(--color-accent-text)] hover:underline underline-offset-2 disabled:opacity-50 disabled:cursor-not-allowed disabled:no-underline";
+
+/** An icon-only button with a visible hover fill. Give it an aria-label
+ *  and a title (the tooltip). */
 export const btnIcon =
-  "inline-flex items-center justify-center w-8 h-8 rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] hover:text-[var(--color-text)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent-ring)]";
+  "inline-flex items-center justify-center w-8 h-8 pointer-coarse:w-11 pointer-coarse:h-11 rounded-lg text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] hover:text-[var(--color-text)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors";
 
-/** A link: the signal color's readable shade, underlined on hover. */
+/** A link: the brand's readable shade, underlined on hover. */
 export const link =
   "text-[var(--color-accent-text)] hover:underline underline-offset-2";
 
-/** A text field with no size: give it a width, height and text size. */
+/** A text field with no size: give it a width, height and text size. The
+ *  resting edge is 3:1 against the page; focus is the app-wide ring. */
 export const fieldBox =
-  "px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] outline-none focus:border-[var(--color-main)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40 disabled:opacity-60 transition-colors";
+  "px-3 rounded-lg border border-[var(--color-border-control)] bg-[var(--color-surface)] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] disabled:opacity-60 aria-[invalid=true]:border-[var(--state-overdue)] transition-colors";
 
-/** A full-width text field on a white sheet. */
-export const field = `w-full h-10 text-[15px] ${fieldBox}`;
+/** A full-width text field on a white sheet: 40 px (44 on touch), 16 px
+ *  text on a phone. */
+export const field = `w-full h-10 pointer-coarse:h-11 text-[15px] max-sm:text-[16px] ${fieldBox}`;
 
-/** A form label: 13px, muted, sentence case. */
-export const label = "block text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5";
+/** A form label, above its field: 14px, sentence case. */
+export const label = "block text-[14px] font-semibold text-[var(--color-text)] mb-1.5";
+
+/** The line under a field that says what's wrong and how to fix it. */
+export const fieldError = "mt-1.5 flex items-start gap-1.5 text-[13px] font-semibold text-[var(--state-overdue-text)]";
 
 /** A white sheet: where data sits. */
-export const sheet = "rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)]";
+export const sheet = "rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]";
 
 /** The ruled table recipe. */
 export const tbl = {
-  wrap: "rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden",
-  table: "w-full text-[15px] border-collapse",
+  wrap: "rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden",
+  table: "w-full text-[14px] border-collapse tabular-nums",
   thead: "bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text-muted)] text-left",
   th: "font-semibold px-4 h-10 whitespace-nowrap",
   tbody: "divide-y divide-[var(--color-border)]",
@@ -66,24 +82,32 @@ const TONE_VAR: Record<Tone, string> = {
   good: "var(--state-released)",
   none: "var(--color-text-faint)",
 };
+const TONE_TEXT: Record<Tone, string> = {
+  bad: "var(--state-overdue-text)",
+  warn: "var(--state-held-text)",
+  good: "var(--state-released-text)",
+  none: "var(--color-text)",
+};
 
-/** A quiet status tag: an 8px dot in the state color, the word in graphite
- *  (or in the state color with `colored`). */
-export function StatusTag({ tone = "none", colored = false, children, className = "" }: {
+/** A quiet status: a small dot in the state color and a word. The word is
+ *  colored only when the state needs someone (late or failed, waiting);
+ *  `colored` forces it on (true) or off (false). */
+export function StatusTag({ tone = "none", colored, children, className = "" }: {
   tone?: Tone; colored?: boolean; children: React.ReactNode; className?: string;
 }) {
+  const wordColored = colored ?? (tone === "bad" || tone === "warn");
   return (
     <span className={`inline-flex items-center gap-1.5 text-[13px] font-semibold whitespace-nowrap ${className}`}
-      style={{ color: colored && tone !== "none" ? TONE_VAR[tone] : "var(--color-text)" }}>
-      <span aria-hidden className="w-2 h-2 rounded-full shrink-0" style={{ background: TONE_VAR[tone] }} />
+      style={{ color: wordColored && tone !== "none" ? TONE_TEXT[tone] : tone === "none" ? "var(--color-text-muted)" : "var(--color-text)" }}>
+      <span aria-hidden className="w-[7px] h-[7px] rounded-full shrink-0" style={{ background: TONE_VAR[tone] }} />
       {children}
     </span>
   );
 }
 
-/** A status as a soft colored pill (the `ui-pill` recipe): done green,
- *  waiting amber, late or failed red, not set grey, the current one solid
- *  brand, and `brand` a plain brand tint. */
+/** A status as a dot and a word (the `ui-pill` recipe): done green dot,
+ *  waiting amber, late or failed red (the word colored too), not set grey,
+ *  `brand` / `solid` the brand's dot. */
 export function Pill({ tone = "none", children, className = "", title }: {
   tone?: Tone | "brand" | "solid"; children: React.ReactNode; className?: string; title?: string;
 }) {
@@ -92,7 +116,9 @@ export function Pill({ tone = "none", children, className = "", title }: {
   return <span title={title} className={`ui-pill ${mod} ${className}`}>{children}</span>;
 }
 
-/** An icon on a brand-tinted tile (the `ui-icon-tile` recipe). */
+/** A plain, muted icon at text size in front of a heading or row (the
+ *  `ui-icon-tile` recipe; no colored tile). Use it only when the icon
+ *  carries meaning (a file type, folder vs file). */
 export function IconTile({ icon: Icon, size = "sm", solid = false, className = "" }: {
   icon: React.ComponentType<{ className?: string }>; size?: "sm" | "md"; solid?: boolean; className?: string;
 }) {
@@ -110,7 +136,7 @@ export function RowEdge({ tone }: { tone: Exclude<Tone, "none"> }) {
 
 /** Text in a state color (a late count, a failed step). */
 export function toneText(tone: Tone): string {
-  return tone === "bad" ? "text-[var(--state-overdue)]" : tone === "warn" ? "text-[var(--state-held)]" : tone === "good" ? "text-[var(--state-released)]" : "text-[var(--color-text)]";
+  return tone === "bad" ? "text-[var(--state-overdue-text)]" : tone === "warn" ? "text-[var(--state-held-text)]" : tone === "good" ? "text-[var(--state-released-text)]" : "text-[var(--color-text)]";
 }
 
 /** One labeled row of a settings form: the label (and one short hint) on the
@@ -134,34 +160,39 @@ export function FormRow({ label: text, hint, htmlFor, children, className = "" }
   );
 }
 
-/** A problem said where it happened, with an optional way to try again. */
-export function Problem({ children, retry, className = "" }: {
-  children: React.ReactNode; retry?: () => void; className?: string;
+/** A problem said where it happened, with an optional way to try again.
+ *  Pass the caught `error` to have it said in plain words (never a raw
+ *  database or network message); `children` is used as written. */
+export function Problem({ children, error, retry, className = "" }: {
+  children?: React.ReactNode; error?: unknown; retry?: () => void; className?: string;
 }) {
+  const said = children ?? (error !== undefined ? (() => { const f = explainError(error); return `${f.message} ${f.next}`; })() : null);
   return (
-    <p role="alert" className={`flex flex-wrap items-baseline gap-x-2 gap-y-1 text-[14px] text-[var(--state-overdue)] ${className}`}>
-      <span className="font-semibold">{children}</span>
+    <p role="alert" className={`flex flex-wrap items-baseline gap-x-2 gap-y-1 text-[14px] text-[var(--state-overdue-text)] ${className}`}>
+      <span className="font-semibold">{said}</span>
       {retry && <button type="button" onClick={retry} className={link}>Try again</button>}
     </p>
   );
 }
 
 /** A section whose content brings its own sheet (a table, a list): the
- *  heading on the panel, `action` on its right, and the content as given. */
+ *  heading on the page, `action` on its right, and the content as given.
+ *  A count reads as plain figures after the heading ("Libraries 4"). */
 export function Section({ label: text, icon, count, action, children, className = "", id }: {
   label: React.ReactNode; action?: React.ReactNode; children: React.ReactNode; className?: string; id?: string;
-  /** The section's icon, set on a brand tile beside the heading. */
+  /** Kept for older callers: a plain muted icon before the heading. */
   icon?: React.ComponentType<{ className?: string }>;
-  /** A count badge after the heading. */
+  /** A count after the heading, as plain muted figures. */
   count?: number;
 }) {
   return (
     <section className={`min-w-0 ${className}`} aria-labelledby={id}>
-      <div className="flex flex-wrap items-end gap-x-3 gap-y-2 mb-2.5 min-h-8">
-        {/* On the grey panel a tinted tile would vanish: headings get the solid one. */}
-        {icon && <IconTile icon={icon} solid className="self-center" />}
-        <h2 id={id} className="font-display text-[19px] leading-tight font-semibold text-[var(--color-text)] [&_svg]:inline [&_svg]:align-[-2px]">{text}</h2>
-        {count !== undefined && count > 0 && <span className="ui-count is-solid self-center">{count.toLocaleString()}</span>}
+      <div className="flex flex-wrap items-end gap-x-3 gap-y-2 mb-3 min-h-8">
+        <h2 id={id} className="font-display text-[20px] leading-tight font-semibold text-[var(--color-text)] inline-flex items-center gap-2 [&_svg]:inline [&_svg]:align-[-2px]">
+          {icon && <IconTile icon={icon} />}
+          {text}
+          {count !== undefined && count > 0 && <span className="ui-count">{count.toLocaleString()}</span>}
+        </h2>
         <div className="flex-1" />
         {action}
       </div>
@@ -169,6 +200,7 @@ export function Section({ label: text, icon, count, action, children, className 
     </section>
   );
 }
+
 
 /** A human date: "Aug 6", or "Aug 6, 2025" outside this year. */
 export function shortDate(iso?: string | null): string {

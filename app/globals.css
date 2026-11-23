@@ -6,136 +6,205 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 @theme {
-  /* Inter is loaded at runtime via a <link> in app/layout.tsx (not
-     next/font, which would fetch it at build time and break the build
-     when Google Fonts is unreachable). Fall back to system fonts. */
-  /* Barlow: drawn from road and industrial signage. The semi-condensed
-     cut is for page titles, tag and drawing numbers, and figures in
-     tables. Loaded at runtime (app/layout.tsx); system fonts until then. */
-  --font-inter: "Barlow", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  /* Barlow, self-hosted through next/font/local (app/layout.tsx sets
+     --font-barlow and --font-barlow-semi-condensed on <html>). The
+     semi-condensed cut is for page titles, tag and drawing numbers, and
+     figures. System fonts only until the file is decoded. */
+  --font-inter: var(--font-barlow), "Barlow", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --font-sans: var(--font-inter);
-  --font-display: "Barlow Semi Condensed", "Barlow", system-ui, sans-serif;
+  --font-display: var(--font-barlow-semi-condensed), "Barlow Semi Condensed", var(--font-barlow), "Barlow", system-ui, sans-serif;
 
-  /* Like a plant control screen: calm grey, color only where it means
-     something. Panel is the page, Sheet is where data sits (tables,
-     forms), Graphite is text, Rule is lines. The signal color (the
-     workspace's brand, set by ThemeProvider) marks what you can do;
-     red / amber / green mark late / waiting / done. */
-  /* Defaults below are the default pair (blue and tangerine); a
-     workspace's colors replace them at runtime (ThemeProvider). */
-  --color-canvas: #ecf0f8;        /* Panel, tinted toward the brand */
-  --color-surface: #ffffff;       /* Sheet */
-  --color-surface-2: #f1f6fe;     /* hover, subtle fills */
-  --color-text: #1f2733;          /* Graphite */
-  --color-text-muted: #4f5b6b;
-  --color-text-faint: #677283;
-  --color-border: #dde1ea;        /* hairline */
-  --color-border-strong: #c4cbd7; /* Rule */
-  /* Main: the brand at full strength (header band, links, tabs, progress). */
+  /* ── Type: few sizes, clearly apart ───────────────────────────────
+     12 caption, 14 body (tables, dense UI), 16 reading (forms; every field
+     on a phone), 20 section heading, 26 page title, 42 the one hero number.
+     Utilities: text-caption, text-body, text-reading, text-section,
+     text-title, text-hero. Weights 400 and 600 (700 for the hero). */
+  --text-caption: 12px;
+  --text-caption--line-height: 16px;
+  --text-body: 14px;
+  --text-body--line-height: 20px;
+  --text-reading: 16px;
+  --text-reading--line-height: 24px;
+  --text-section: 20px;
+  --text-section--line-height: 26px;
+  --text-title: 26px;
+  --text-title--line-height: 32px;
+  --text-hero: 42px;
+  --text-hero--line-height: 46px;
+
+  /* ── Corners by size ─────────────────────────────────────────────
+     Panels and cards 12, inputs and buttons 8, chips and badges 6,
+     avatars round. Utilities: rounded-panel, rounded-control,
+     rounded-chip. The big Tailwind radii fold into the panel radius so
+     no card is rounder than 12. */
+  --radius-chip: 6px;
+  --radius-control: 8px;
+  --radius-panel: 12px;
+  --radius-2xl: 12px;
+  --radius-3xl: 12px;
+
+  /* ── Color: 60 / 30 / 10 ─────────────────────────────────────────
+     60 neutral: the page (canvas, about 4% of the brand hue), white
+     sheets, hairlines. 30: the side menu in the brand's deep shade, and
+     quiet secondary fills. 10 the accent, which means "you can act here":
+     the one filled button per screen. Links, the current tab, the menu
+     marker and focus use the brand's readable shade. Red / amber / green
+     are states only (late, waiting, done). The workspace's colors replace
+     these defaults at runtime (ThemeProvider). */
+  --color-canvas: #f1f5fa;        /* the page */
+  --color-surface: #ffffff;       /* sheets: tables, forms, cards */
+  --color-surface-2: #f3f7fd;     /* hover, quiet fills inside a sheet */
+  --color-text: #1f2733;
+  --color-text-muted: #4f5b6b;    /* 4.5:1 or better on the page */
+  --color-text-faint: #626d7e;
+  --color-border: #e0e3e9;        /* hairline */
+  --color-border-strong: #cdd1d9; /* rule */
+  --color-border-control: #878c96;/* a field's resting edge: 3:1 */
+  /* The brand at full strength (charts, progress). */
   --color-main: #2262e6;
   --color-main-hover: #0a4bce;
-  /* Section headings: the brand's deep shade, so structure carries color. */
-  --color-heading: #0d3381;
+  /* Section headings are text, not color. */
+  --color-heading: var(--color-text);
+  /* Where you are: the current tab's underline, the menu marker. */
+  --color-current: #2262e6;
+  /* The keyboard focus ring. */
+  --color-focus: #2262e6;
 
   /* Graphite surfaces that are not the page: dimming behind dialogs,
      toasts, the frame around a drawing. */
   --color-ink: #1f2733;
-  /* The header band on every page: the main color. */
-  --color-band: #2262e6;
+  /* Kept for older code: there is no colored header band any more; it is
+     the page color. */
+  --color-band: #f1f5fa;
   /* Controls on graphite (viewers): white at low strength. */
   --color-ink-2: rgb(255 255 255 / 0.1);
   --color-ink-line: rgb(255 255 255 / 0.22);
   --color-ink-fg: #ffffff;
   --color-ink-text: #d5dae2;
   --color-ink-muted: #aeb6c2;
-  /* Sheets sit flat on the panel: a hairline, no floating shadow. */
-  --shadow-card: 0 1px 0 rgb(31 39 51 / 0.04);
+  /* Sheets sit flat on the page: a hairline, no floating shadow. */
+  --shadow-card: 0 0 0 1px rgb(31 39 51 / 0.02);
 
-  /* Default accent = the ManufacturingOS brand orange. The product's chrome
-     (logo, login, sidebar mark) is orange everywhere, so the token that
-     drives active states, primary buttons, focus rings and spinners now
-     matches it instead of the old indigo (which clashed surface-to-surface).
-     Orgs that set a white-label palette still override this at runtime. */
-  /* Signal (process blue until a workspace sets its own). */
-  --color-accent: #2e6be7;
-  --color-accent-text: #1854cf;
-  --color-accent-hover: #1854cf;
-  --color-accent-fg: #ffffff;
+  /* The action color: the one filled button per screen (the workspace's
+     accent). accent-text is the brand's readable shade for links. */
+  --color-accent: #ebb432;
+  --color-accent-text: #0a4bce;
+  --color-accent-hover: #d7a10b;
+  --color-accent-fg: #1f2733;
   --color-accent-soft: #e6efff;
-  --color-accent-ring: #4b86fb;
+  --color-accent-ring: #2262e6;
 
-  --color-accent-2: #f59e0b;      /* amber-500 — warm secondary */
-  --color-accent-2-hover: #d97706;/* amber-600 */
-  --color-accent-2-fg: #ffffff;
-  --color-accent-2-soft: #fffbeb; /* amber-50 */
-  --brand-gradient: linear-gradient(135deg, #f97316, #c2410c); /* matches the logo */
+  --color-accent-2: #ebb432;
+  --color-accent-2-hover: #d7a10b;
+  --color-accent-2-fg: #1f2733;
+  --color-accent-2-soft: #f3f7fd;
+  --brand-gradient: linear-gradient(135deg, #2262e6, #2262e6);
 
-  /* Semantic STATE colors — reserved for status, never decoration. So
-     "held / overdue / locked / released" read as information, not theme. */
-  --state-held:     #d97706;  /* amber-600  — on hold / awaiting */
-  --state-overdue:  #dc2626;  /* red-600    — overdue / blocked / missed */
-  --state-locked:   #2563eb;  /* blue-600   — checked out / in progress */
-  --state-released: #16a34a;  /* green-600  — released / done / cleared */
-  --state-draft:    #64748b;  /* slate-500  — draft / planned */
-  --state-review:   #7c3aed;  /* violet-600 — in review / IFC */
+  /* Semantic STATE colors, reserved for status, never decoration. The
+     -text steps are for words (4.5:1 on the page and on sheets); the base
+     steps are for dots, edges and bars. */
+  --state-held:     #d97706;  /* waiting, on hold */
+  --state-overdue:  #dc2626;  /* late, failed, blocked */
+  --state-locked:   #2563eb;  /* checked out, in progress */
+  --state-released: #16a34a;  /* done, issued */
+  --state-draft:    #64748b;  /* draft, planned */
+  --state-review:   #7c3aed;  /* in review */
+  --state-overdue-text:  #c42323;
+  --state-held-text:     #a14a07;
+  --state-released-text: #15803d;
+
+  /* ── Colors named by job ──────────────────────────────────────────
+     New code should use these (bg-page, bg-panel, border-line,
+     text-link, bg-action...). They point at the older names above, which
+     stay so nothing breaks. */
+  --color-page: var(--color-canvas);
+  --color-panel: var(--color-surface);
+  --color-panel-quiet: var(--color-surface-2);
+  --color-line: var(--color-border);
+  --color-line-strong: var(--color-border-strong);
+  --color-line-control: var(--color-border-control);
+  --color-action: var(--color-accent);
+  --color-action-hover: var(--color-accent-hover);
+  --color-on-action: var(--color-accent-fg);
+  --color-link: var(--color-accent-text);
+  --color-nav: var(--side-bg, #081d48);
+  --color-late: var(--state-overdue);
+  --color-waiting: var(--state-held);
+  --color-done: var(--state-released);
+  --color-late-text: var(--state-overdue-text);
+  --color-waiting-text: var(--state-held-text);
+  --color-done-text: var(--state-released-text);
 
   /* ── Chart / viz categorical palette (dashboard widgets) ─────────
      Fixed assignment order 1→6, never cycled. VALIDATED with the dataviz
      six-checks script (lightness band, chroma floor, adjacent-pair CVD
      ΔE ≥ 12, ≥3:1 contrast on the light surface) — swap only for another
-     validated set. Dark mode gets its own validated steps below. */
+     validated set. Dark mode gets its own validated steps below. Charts
+     draw one series in the brand and the rest in --viz-neutral. */
   --viz-cat-1: #2563eb;  /* blue-600   */
   --viz-cat-2: #b45309;  /* amber-700  */
   --viz-cat-3: #7c3aed;  /* violet-600 */
   --viz-cat-4: #047857;  /* emerald-700 */
   --viz-cat-5: #be123c;  /* rose-700   */
   --viz-cat-6: #0891b2;  /* cyan-600   */
+  --viz-neutral: #9aa1ad;
   --viz-track: color-mix(in oklab, var(--color-border) 55%, transparent);
   --viz-up:    #047857;  /* trend up (paired with ▲, never color-alone) */
   --viz-down:  #be123c;  /* trend down (paired with ▼) */
 
-  /* ── Motion vocabulary ───────────────────────────────────────────
-     Two easings, app-wide: `ease-fluid` for entrances/most things,
-     `ease-spring` (the Inspector drawer's signature overshoot) for
-     drawers and anything that should feel physical. */
+  /* ── Motion ──────────────────────────────────────────────────────
+     150 to 300 ms, ease-out. `ease-fluid` for entrances and most things;
+     `ease-spring` only for drawers that should feel physical. */
   --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
   --ease-fluid: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-out-quick: cubic-bezier(0.2, 0, 0, 1);
   --animate-pop: pop 0.18s var(--ease-fluid) both;
   --animate-rise: rise 0.22s var(--ease-fluid) both;
   --animate-shimmer: shimmer 1.8s linear infinite;
 
-  /* ── Elevation system ────────────────────────────────────────────
-     Premium, layered shadows tinted with the slate "ink" color rather
-     than pure black — softer and more refined than a single hard drop.
-     These OVERRIDE Tailwind's defaults, so every existing `shadow-sm /
-     -md / -lg / -xl / -2xl` across the app (400+ usages) is upgraded
-     cohesively without touching a component. A contact layer (tight,
-     low blur) + an ambient layer (wide, soft) reads as real depth.
-     Dark mode re-tints to black at higher opacity below. */
-  --shadow-2xs: 0 1px 1px 0 rgb(15 23 42 / 0.04);
-  --shadow-xs:  0 1px 2px 0 rgb(15 23 42 / 0.05);
-  --shadow-sm:  0 1px 2px -1px rgb(15 23 42 / 0.06), 0 2px 4px 0 rgb(15 23 42 / 0.05);
-  --shadow:     0 1px 2px -1px rgb(15 23 42 / 0.06), 0 2px 4px 0 rgb(15 23 42 / 0.05);
-  --shadow-md:  0 2px 4px -2px rgb(15 23 42 / 0.06), 0 6px 12px -2px rgb(15 23 42 / 0.09);
-  --shadow-lg:  0 4px 8px -3px rgb(15 23 42 / 0.07), 0 14px 24px -6px rgb(15 23 42 / 0.11);
-  --shadow-xl:  0 8px 16px -6px rgb(15 23 42 / 0.08), 0 24px 40px -10px rgb(15 23 42 / 0.14);
-  --shadow-2xl: 0 12px 24px -8px rgb(15 23 42 / 0.12), 0 36px 64px -16px rgb(15 23 42 / 0.20);
-  /* Accent glow — for "live"/primary surfaces that should feel energized. */
-  --shadow-accent: 0 6px 20px -6px color-mix(in srgb, var(--color-accent) 45%, transparent);
+  /* ── Depth: two levels ───────────────────────────────────────────
+     Surfaces get a hairline (the small shadow steps are near nothing, so
+     the 400+ `shadow-sm` / `shadow` already in the app go quiet). Things
+     that float above the page (menus, popovers, dialogs, toasts, the
+     phone sheet) get the one soft float shadow: the large steps all map to
+     it. */
+  --shadow-2xs: 0 0 0 0 transparent;
+  --shadow-xs:  0 1px 0 0 rgb(15 23 42 / 0.03);
+  --shadow-sm:  0 1px 0 0 rgb(15 23 42 / 0.04);
+  --shadow:     0 1px 0 0 rgb(15 23 42 / 0.04);
+  --shadow-md:  0 1px 2px 0 rgb(15 23 42 / 0.05), 0 2px 6px -2px rgb(15 23 42 / 0.06);
+  --shadow-float: 0 16px 44px -12px rgb(15 23 42 / 0.22), 0 2px 8px -2px rgb(15 23 42 / 0.08);
+  --shadow-lg:  var(--shadow-float);
+  --shadow-xl:  var(--shadow-float);
+  --shadow-2xl: var(--shadow-float);
+  /* Kept for older code; no glow. */
+  --shadow-accent: 0 0 0 0 transparent;
 }
 
 @keyframes pop { from { opacity: 0; transform: scale(0.96); } }
 @keyframes rise { from { opacity: 0; transform: translateY(8px); } }
 @keyframes shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+/* A menu or dialog opening from its trigger (transform-origin is set by
+   the component to the trigger's side). */
+@keyframes float-in { from { opacity: 0; transform: scale(0.96); } }
+@keyframes skeleton-pulse { 50% { opacity: 0.55; } }
 
-/* Dark theme overrides — a deep slate command-center. */
+/* Dark theme: a deep slate page; the same roles. */
 .dark {
-  --color-canvas: #13161c;
-  --color-surface: #1b1e25;
-  --color-surface-2: #22272e;
+  --color-canvas: #14161b;
+  --color-surface: #1b1e24;
+  --color-surface-2: #23272d;
   --color-ink: #0b0e13;
-  --color-band: #0041c3;
-  --shadow-card: 0 1px 0 rgb(0 0 0 / 0.25);
+  --color-band: #14161b;
+  --shadow-card: 0 0 0 1px rgb(0 0 0 / 0.2);
+  --color-border-control: #757b85;
+  --color-current: #73a3fd;
+  --color-focus: #73a3fd;
+  --color-accent-ring: #73a3fd;
+  --viz-neutral: #6b7280;
+  --state-overdue-text: #f87171;
+  --state-held-text: #fbbf24;
+  --state-released-text: #4ade80;
 
   /* Viz categorical — dark-surface steps, separately validated (never an
      automatic flip of the light set). */
@@ -150,22 +219,36 @@
   --color-text: #e8ebf0;
   --color-text-muted: #a9b2bf;
   --color-text-faint: #8a94a3;
-  --color-border: #2c3039;
-  --color-border-strong: #3d434c;
+  --color-border: #2c3038;
+  --color-border-strong: #3e434b;
 
   --color-accent-soft: color-mix(in srgb, var(--color-main) 24%, #1b1e25);
   --color-accent-text: #a5c5fe;
 
-  /* On a dark command-center surface, ink-tinted shadows vanish — switch
-     to deep black at higher opacity so elevation still reads. */
-  --shadow-2xs: 0 1px 1px 0 rgb(0 0 0 / 0.25);
-  --shadow-xs:  0 1px 2px 0 rgb(0 0 0 / 0.30);
-  --shadow-sm:  0 1px 2px -1px rgb(0 0 0 / 0.40), 0 2px 4px 0 rgb(0 0 0 / 0.30);
-  --shadow:     0 1px 2px -1px rgb(0 0 0 / 0.40), 0 2px 4px 0 rgb(0 0 0 / 0.30);
-  --shadow-md:  0 2px 4px -2px rgb(0 0 0 / 0.40), 0 6px 12px -2px rgb(0 0 0 / 0.45);
-  --shadow-lg:  0 4px 8px -3px rgb(0 0 0 / 0.45), 0 14px 24px -6px rgb(0 0 0 / 0.55);
-  --shadow-xl:  0 8px 16px -6px rgb(0 0 0 / 0.50), 0 24px 40px -10px rgb(0 0 0 / 0.60);
-  --shadow-2xl: 0 12px 24px -8px rgb(0 0 0 / 0.55), 0 36px 64px -16px rgb(0 0 0 / 0.70);
+  /* On a dark page, ink-tinted shadows vanish: deep black, still one
+     hairline level and one float level. */
+  --shadow-xs:  0 1px 0 0 rgb(0 0 0 / 0.25);
+  --shadow-sm:  0 1px 0 0 rgb(0 0 0 / 0.3);
+  --shadow:     0 1px 0 0 rgb(0 0 0 / 0.3);
+  --shadow-md:  0 1px 2px 0 rgb(0 0 0 / 0.35), 0 2px 6px -2px rgb(0 0 0 / 0.4);
+  --shadow-float: 0 16px 44px -12px rgb(0 0 0 / 0.65), 0 2px 8px -2px rgb(0 0 0 / 0.4);
+}
+
+/* The job-named colors point at the older names; a surface that redefines
+   the older names (the side menu, the charcoal frame, a sheet inside the
+   header) redefines these with them, so both spellings agree there. */
+.dark, .surface-side, .surface-charcoal, .on-sheet {
+  --color-page: var(--color-canvas);
+  --color-panel: var(--color-surface);
+  --color-panel-quiet: var(--color-surface-2);
+  --color-line: var(--color-border);
+  --color-line-strong: var(--color-border-strong);
+  --color-line-control: var(--color-border-control);
+  --color-link: var(--color-accent-text);
+  --color-late-text: var(--state-overdue-text);
+  --color-waiting-text: var(--state-held-text);
+  --color-done-text: var(--state-released-text);
+  --color-heading: var(--color-text);
 }
 
 :root {
@@ -179,20 +262,17 @@ body {
   font-family: var(--font-sans), system-ui, sans-serif;
 }
 
-/* Accent-tinted text selection — a small premium cue that the whole
-   product shares one brand color. */
+/* Numbers line up in columns everywhere. */
+.tabular-nums, td, th, dd { font-variant-numeric: tabular-nums; }
+
+/* Accent-tinted text selection. */
 ::selection {
-  background: color-mix(in srgb, var(--color-accent) 24%, transparent);
+  background: color-mix(in srgb, var(--color-current) 22%, transparent);
   color: var(--color-text);
 }
 
-/* ── Surface & interaction utilities ─────────────────────────────
-   `card-surface` is the one elevated-panel recipe (token bg + hairline
-   ring + soft shadow), so every card reads identically. `hover-lift`
-   adds the subtle rise-on-hover used for clickable cards/tiles. Both
-   compose with Tailwind utilities and are theme/dark-mode aware. */
-/* The side menu: the brand's deep shade (default) or light, set by
-   ThemeProvider as --side-*. */
+/* The side menu: the brand's deep shade (the 30% zone, calm and dark), or
+   light; set by ThemeProvider as --side-*. */
 .surface-side {
   --color-canvas: var(--side-bg, #081d48);
   --color-surface: var(--side-surface, #242f43);
@@ -207,8 +287,8 @@ body {
   color: var(--side-text, #ffffff);
 }
 
-/* The sheet's own colors, kept so anything opened from the band (a menu,
-   a help popover) can return to them. */
+/* The sheet's own colors, kept so anything opened from a dark or tinted
+   area (a menu, a help popover) can return to them. */
 :root, .dark {
   --sheet-text: var(--color-text);
   --sheet-text-muted: var(--color-text-muted);
@@ -251,89 +331,115 @@ body {
 }
 .dark .surface-charcoal { --color-canvas: #0b0e13; background-color: #0b0e13; }
 
-/* The header band (PageHero): the main color, edge to edge. Everything
-   in it reads white; controls are white glass. */
+/* ── The page header (PageHero) ───────────────────────────────────
+   It sits on the page now: no colored band. Things that were drawn for
+   the old band read as on a sheet: the ink tokens turn into the page's
+   own, light-on-band state words turn into their readable state colors,
+   and plain white words (no fill of their own) turn into text. */
 .page-head {
-  --color-text: #ffffff;
-  --color-text-muted: rgb(255 255 255 / 0.82);
-  --color-text-faint: rgb(255 255 255 / 0.68);
-  --color-surface: rgb(255 255 255 / 0.12);
-  --color-surface-2: rgb(255 255 255 / 0.2);
-  --color-border: rgb(255 255 255 / 0.2);
-  --color-border-strong: rgb(255 255 255 / 0.34);
-  --color-accent-text: #ffffff;
-  --color-heading: #ffffff;
-  --color-ink-2: rgb(255 255 255 / 0.12);
-  --color-ink-line: rgb(255 255 255 / 0.34);
-  --color-ink-fg: #ffffff;
-  --color-ink-text: rgb(255 255 255 / 0.82);
-  --color-ink-muted: rgb(255 255 255 / 0.82);
-  --state-overdue-on: #ffd0d0;
-  color: #ffffff;
+  --color-ink-2: var(--color-surface-2);
+  --color-ink-line: var(--color-border-strong);
+  --color-ink-fg: var(--color-text);
+  --color-ink-text: var(--color-text-muted);
+  --color-ink-muted: var(--color-text-muted);
+  --state-overdue-on: var(--state-overdue-text);
 }
-.page-head a[class*="color-accent-text"] { text-decoration: underline; text-underline-offset: 3px; }
-.page-head option { background: #ffffff; color: #1f2733; }
-.dark .page-head option { background: #1b1e25; color: #e8ebf0; }
-.page-head .text-rose-200, .page-head .text-rose-300, .page-head .text-red-200, .page-head .text-red-300,
-.page-head .text-\[var\(--state-overdue\)\] { color: #ffd0d0; }
-.page-head .text-amber-200, .page-head .text-amber-300, .page-head .text-\[var\(--state-held\)\] { color: #ffe3a6; }
-.page-head .text-emerald-200, .page-head .text-emerald-300, .page-head .text-\[var\(--state-released\)\] { color: #c4f5d6; }
-.page-head .border-white, .page-head .border-b-white { border-color: #ffffff; }
-/* A dark chip on a sheet (graphite fill, white text) becomes a white chip
-   with band-colored text on the band. */
-.page-head .text-\[var\(--color-surface\)\] { color: var(--color-band); }
+.page-head .text-rose-200, .page-head .text-rose-300, .page-head .text-red-200, .page-head .text-red-300 { color: var(--state-overdue-text); }
+.page-head .text-amber-200, .page-head .text-amber-300 { color: var(--state-held-text); }
+.page-head .text-emerald-200, .page-head .text-emerald-300 { color: var(--state-released-text); }
+.page-head [class*="text-white"]:not([class^="bg-"]):not([class*=" bg-"]) { color: var(--color-text); }
+.page-head [class^="bg-white/"], .page-head [class*=" bg-white/"] { background-color: var(--color-surface); }
+.page-head [class*="border-white"] { border-color: var(--color-border-strong); }
 
-/* ── Pop: the small things that pull the eye ──────────────────────
-   Icons sit on brand-tinted tiles; counts are colored badges; tags
-   (equipment, line classes, phases) are pills you can click; identifiers
-   (drawing, request and tag numbers) are set in the brand's deep shade. */
+/* ── Icons, counts, tags, statuses ────────────────────────────────
+   Quiet by default, so color keeps its meaning.
+   - An icon in front of a heading or a row is a plain muted icon at text
+     size (no colored tile): the heading reads as text.
+   - A count is plain muted figures after its label ("Libraries 4"); a
+     late or waiting count is in its state color. A filled badge
+     (.ui-badge) is only for unread or needs-you counts, a dot (.ui-dot)
+     when there is no room for the number.
+   - A status (.ui-pill) is a small dot and a word; the word is colored
+     only when the state needs someone (late, failed, waiting).
+   - Tags (equipment, line classes) are neutral chips you can click.
+   - IDs (drawing, request and tag numbers) are set in the condensed cut,
+     tabular. */
 .ui-icon-tile {
   display: inline-grid; place-items: center; flex-shrink: 0;
-  width: 2.25rem; height: 2.25rem; border-radius: 0.5rem;
-  background: color-mix(in srgb, var(--color-main) 15%, var(--sheet-surface, #ffffff)); color: var(--color-main);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-main) 22%, transparent);
+  width: 1.125rem; height: 1.125rem; border-radius: 0;
+  background: none; box-shadow: none; color: var(--color-text-faint);
 }
-.ui-icon-tile.is-sm { width: 1.75rem; height: 1.75rem; border-radius: 0.375rem; }
-.ui-icon-tile.is-solid { background: var(--color-main); color: #ffffff; }
+.ui-icon-tile.is-sm { width: 1rem; height: 1rem; }
+.ui-icon-tile.is-solid { background: none; color: var(--color-text-faint); }
 .ui-count {
-  display: inline-flex; align-items: center; justify-content: center; min-width: 1.5rem; height: 1.5rem;
-  padding: 0 0.5rem; border-radius: 999px; font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums;
-  background: color-mix(in srgb, var(--color-main) 16%, var(--sheet-surface, #ffffff)); color: var(--color-accent-text);
+  display: inline-flex; align-items: center; justify-content: center; min-width: 0; height: auto;
+  padding: 0; border-radius: 0; background: none; box-shadow: none;
+  font-family: var(--font-sans); font-size: max(12px, 0.8em); font-weight: 400; line-height: inherit;
+  font-variant-numeric: tabular-nums; color: var(--color-text-muted);
 }
-.ui-count.is-solid { background: var(--color-main); color: #ffffff; }
-.ui-count.is-accent { background: var(--color-accent); color: var(--color-accent-fg); }
-.ui-count.is-bad { background: var(--state-overdue); color: #ffffff; }
-.ui-count.is-warn { background: #f5b301; color: #1f2733; }
+.ui-count.is-solid, .ui-count.is-accent { background: none; color: var(--color-text-muted); }
+.ui-count.is-bad { background: none; color: var(--state-overdue-text); font-weight: 600; }
+.ui-count.is-warn { background: none; color: var(--state-held-text); font-weight: 600; }
+/* (New recipes live in the components layer, so a utility on the same
+   element, like `hidden` or `max-sm:hidden`, still wins.) */
+@layer components {
+  .ui-badge {
+    display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px;
+    padding: 0 5px; border-radius: 999px; font-size: 11px; font-weight: 700; line-height: 1;
+    font-variant-numeric: tabular-nums; background: var(--state-overdue); color: #ffffff;
+  }
+  .ui-badge.is-quiet { background: var(--color-surface-2); color: var(--color-text); box-shadow: inset 0 0 0 1px var(--color-border-strong); }
+  .ui-dot { display: inline-block; width: 8px; height: 8px; border-radius: 999px; background: var(--state-overdue); flex-shrink: 0; }
+  .ui-dot.is-quiet { background: var(--color-text-faint); }
+}
 .ui-tag {
   display: inline-flex; align-items: center; gap: 0.25rem; height: 1.625rem; padding: 0 0.5rem;
-  border-radius: 0.375rem; font-family: var(--font-display); font-size: 13.5px; font-weight: 600; white-space: nowrap;
-  background: var(--color-accent-soft); color: var(--color-accent-text);
-  border: 1px solid color-mix(in srgb, var(--color-main) 22%, transparent);
+  border-radius: var(--radius-chip); font-family: var(--font-display); font-size: 13px; font-weight: 600; white-space: nowrap;
+  background: var(--color-surface-2); color: var(--color-text);
+  border: 1px solid var(--color-border);
   transition: background-color .12s, color .12s, border-color .12s;
 }
 button.ui-tag, a.ui-tag { cursor: pointer; }
-button.ui-tag:hover, a.ui-tag:hover { background: var(--color-main); color: #ffffff; border-color: var(--color-main); }
+button.ui-tag:hover, a.ui-tag:hover { background: var(--color-surface); color: var(--color-accent-text); border-color: var(--color-border-control); }
 .ui-tag.is-more { background: var(--color-surface); color: var(--color-text-muted); border-color: var(--color-border-strong); font-family: var(--font-sans); }
 .ui-id { font-family: var(--font-display); font-weight: 600; font-variant-numeric: tabular-nums; color: var(--color-heading); }
 a.ui-id:hover, button.ui-id:hover { color: var(--color-accent-text); text-decoration: underline; text-underline-offset: 3px; }
 .ui-pill {
-  display: inline-flex; align-items: center; gap: 0.375rem; height: 1.5rem; padding: 0 0.625rem; border-radius: 999px;
-  font-size: 13px; font-weight: 600; white-space: nowrap;
-  background: color-mix(in srgb, var(--color-main) 12%, transparent); color: var(--color-accent-text);
+  display: inline-flex; align-items: center; gap: 0.375rem; height: auto; min-height: 1.25rem; padding: 0; border-radius: 0;
+  font-size: 13px; font-weight: 600; white-space: nowrap; background: none; box-shadow: none;
+  color: var(--color-text);
 }
-.ui-pill.is-good { background: color-mix(in srgb, var(--state-released) 15%, transparent); color: var(--state-released); }
-.ui-pill.is-bad { background: color-mix(in srgb, var(--state-overdue) 14%, transparent); color: var(--state-overdue); }
-.ui-pill.is-warn { background: color-mix(in srgb, var(--state-held) 16%, transparent); color: var(--state-held); }
-.ui-pill.is-muted { background: var(--color-surface-2); color: var(--color-text-muted); }
-.ui-pill.is-solid { background: var(--color-main); color: #ffffff; }
+.ui-pill::before { content: ""; width: 7px; height: 7px; border-radius: 999px; flex-shrink: 0; background: var(--color-current); }
+.ui-pill:has(> svg)::before { display: none; }
+.ui-pill.is-good { background: none; color: var(--color-text); }
+.ui-pill.is-good::before { background: var(--state-released); }
+.ui-pill.is-bad { background: none; color: var(--state-overdue-text); }
+.ui-pill.is-bad::before { background: var(--state-overdue); }
+.ui-pill.is-warn { background: none; color: var(--state-held-text); }
+.ui-pill.is-warn::before { background: var(--state-held); }
+.ui-pill.is-muted { background: none; color: var(--color-text-muted); font-weight: 400; }
+.ui-pill.is-muted::before { background: var(--color-text-faint); }
+.ui-pill.is-solid { background: none; color: var(--color-text); }
+.ui-pill.is-solid::before { background: var(--color-current); }
+
+/* Pages that forced a fill onto a tile or a count (`!bg-…`, a white icon
+   on a solid tile) don't bring the tile back: an important rule in the
+   base layer outranks an important utility (important layers run in
+   reverse), so the icon stays a plain icon and the count plain figures.
+   A state color on the icon (red for late) is kept. */
+@layer base {
+  .ui-icon-tile, .ui-icon-tile:hover, .group:hover .ui-icon-tile { background: none !important; box-shadow: none !important; }
+  .ui-icon-tile[class*="text-white"] { color: var(--color-text-faint) !important; }
+  :is(button, a).ui-icon-tile:hover { color: var(--color-text) !important; }
+  .ui-count, .ui-count:hover { background: none !important; box-shadow: none !important; }
+}
 
 /* Tab rows and chip strips scroll sideways without a scroll bar. */
 [role="tablist"], [role="radiogroup"], .no-scrollbar { scrollbar-width: none; }
 [role="tablist"]::-webkit-scrollbar, [role="radiogroup"]::-webkit-scrollbar, .no-scrollbar::-webkit-scrollbar { display: none; }
 
-/* Section headings carry the brand's deep shade. */
+/* Section headings are text color (set by --color-heading). */
 h2.font-display, h3.font-display { color: var(--color-heading); }
-.dark { --color-heading: #cedffd; }
 
 /* Titles, tag and drawing numbers, figures: the condensed cut. */
 .font-display { font-family: var(--font-display); }
@@ -343,10 +449,10 @@ h2.font-display, h3.font-display { color: var(--color-heading); }
   box-shadow: var(--shadow-card);
 }
 @utility hover-lift {
-  transition: transform 0.18s var(--ease-fluid), box-shadow 0.18s var(--ease-fluid);
+  /* A clickable card answers the pointer with its edge, not a float. */
+  transition: border-color 0.15s var(--ease-out-quick), background-color 0.15s var(--ease-out-quick);
   &:hover {
-    transform: translateY(-2px);
-    box-shadow: var(--shadow-lg);
+    border-color: var(--color-border-control);
   }
 }
 /* Faint accent wash for page headers / hero strips — gives flat zones a
@@ -569,21 +675,94 @@ html[data-density="compact"] tbody tr {
 }
 
 /* ── Form-control baseline ───────────────────────────────────────
-   One rule each for the two most repeated gaps: native checkboxes/
-   radios/progress pick up the workspace accent instead of browser
-   blue, and anything keyboard-focused gets a visible accent outline.
-   Both live in the base layer (zero-ish specificity) so any
-   component's own focus/ring utilities still win. */
+   Native checkboxes, radios and progress bars take the brand. */
 @layer base {
   input[type="checkbox"],
   input[type="radio"],
   progress {
-    accent-color: var(--color-accent);
+    accent-color: var(--color-current);
   }
-  :where(button, [role="button"], a, summary, input, select, textarea):focus-visible {
-    outline: 2px solid var(--color-accent-ring);
-    outline-offset: 2px;
+}
+
+/* ── Focus: one ring everywhere ───────────────────────────────────
+   A 2 px ring in the brand's readable shade, 2 px outside the control,
+   for anything reached by keyboard. It sits outside the cascade layers on
+   purpose: Tailwind's `outline-none` / `focus:outline-none` utilities live
+   in a layer, so they can no longer switch the ring off. The control's
+   own border never changes on focus (no jump). */
+:where(a[href], button, [role="button"], [role="tab"], [role="menuitem"], [role="option"], [role="switch"],
+    [role="checkbox"], [role="radio"], [role="treeitem"], summary, input, select, textarea,
+    [tabindex]:not([tabindex="-1"]), [contenteditable="true"]):focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+/* A bare field inside a box that shows focus itself (the box carries
+   `ui-field-box`): the ring goes on the box, not the field. */
+.ui-field-bare:focus-visible { outline: none; }
+.ui-field-box:has(.ui-field-bare:focus-visible) { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+
+/* ── Phones and touch ─────────────────────────────────────────────
+   Every field is 16 px on a phone, so iPhone Safari never zooms the page
+   on focus (fields drawn bigger keep their size). Tap targets grow to 44
+   px only on touch screens, in the shared control recipes
+   (the pointer-coarse variant). */
+@media (max-width: 639px) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="file"]):not([class*="text-lg"]):not([class*="text-xl"]):not([class*="text-[17"]):not([class*="text-[18"]):not([class*="text-[19"]):not([class*="text-[2"]):not([class*="text-[3"]):not([class*="text-[4"]),
+  select:not([class*="text-lg"]):not([class*="text-xl"]),
+  textarea:not([class*="text-lg"]):not([class*="text-xl"]):not([class*="text-[17"]):not([class*="text-[18"]):not([class*="text-[2"]) {
+    font-size: 16px;
   }
+}
+
+/* ── Loading: skeleton rows ───────────────────────────────────────
+   The shape of what is coming, gently breathing; still under reduced
+   motion. */
+@layer components {
+  .ui-skeleton {
+    display: block; border-radius: var(--radius-chip);
+    background: color-mix(in srgb, var(--color-border) 70%, var(--color-surface-2));
+    animation: skeleton-pulse 1.4s ease-in-out infinite;
+  }
+
+  /* ── Things that float: menus, popovers, dialogs ───────────────
+     One soft shadow, and a short scale and fade from the side they
+     opened from (the component sets transform-origin to its trigger). */
+  .ui-float { box-shadow: var(--shadow-float); }
+  .ui-float-in { animation: float-in 170ms var(--ease-out-quick) both; }
+
+  /* A chevron turns instead of swapping icons. */
+  .ui-chevron { transition: transform 180ms var(--ease-out-quick), rotate 180ms var(--ease-out-quick); }
+
+  /* ── The side menu's current item joins the page ───────────────
+     The row takes the page's color and runs into the content edge, with
+     curved inner corners above and below, so the menu points at the
+     page. */
+  .nav-joined { position: relative; background: var(--side-current, var(--color-canvas)); }
+  .nav-joined::before, .nav-joined::after {
+    content: ""; position: absolute; right: 0; width: 10px; height: 10px; pointer-events: none;
+  }
+  .nav-joined::before { top: -10px; background: radial-gradient(circle at 0 0, transparent 9.5px, var(--side-current, var(--color-canvas)) 10px); }
+  .nav-joined::after { bottom: -10px; background: radial-gradient(circle at 0 100%, transparent 9.5px, var(--side-current, var(--color-canvas)) 10px); }
+}
+
+/* ── Moving between views (lib/viewTransition.ts) ─────────────────
+   Where the browser has view transitions, the page content cross-fades
+   and rises a few pixels while the side menu and the top bar hold still;
+   elsewhere the swap is instant. Off under reduced motion. */
+.vt-page { view-transition-name: page; }
+.vt-side { view-transition-name: side-menu; }
+.vt-top { view-transition-name: top-bar; }
+@keyframes vt-fade-out { to { opacity: 0; } }
+@keyframes vt-rise-in { from { opacity: 0; transform: translateY(6px); } }
+::view-transition-old(root), ::view-transition-new(root) { animation-duration: 160ms; animation-timing-function: var(--ease-out-quick); }
+::view-transition-old(page) { animation: vt-fade-out 120ms var(--ease-out-quick) both; }
+::view-transition-new(page) { animation: vt-rise-in 220ms var(--ease-out-quick) both; }
+::view-transition-group(side-menu), ::view-transition-group(top-bar) { animation-duration: 0s; }
+
+@media (prefers-reduced-motion: reduce) {
+  .ui-skeleton, .ui-float-in { animation: none; }
+  .ui-chevron { transition: none; }
+  ::view-transition-group(*), ::view-transition-old(*), ::view-transition-new(*) { animation: none !important; }
 }
 
 /* --- PRINTING RULES (WET MARK SUPPORT) --- */

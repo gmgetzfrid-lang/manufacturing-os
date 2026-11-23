@@ -15,8 +15,7 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import {
-  X, Upload, CheckCircle2, Loader2, Wand2,
-  Copy, Trash2, KeyRound, FolderTree, ChevronDown, ChevronRight,
+  X, Upload, CheckCircle2, Loader2, Wand2, Copy, Trash2, KeyRound, FolderTree, ChevronRight,
 } from "lucide-react";
 import { parseFilename, detectBulkHints, withHints, type ParsedFilename } from "@/lib/filenameParser";
 import { readBatch, type NameRole } from "@/lib/filenameRoles";
@@ -654,7 +653,7 @@ export default function MetadataStagingModal({
                 </ul>
                 <button onClick={() => setShowDetails((v) => !v)}
                   className="mt-2 inline-flex items-center gap-1 text-[13px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
-                  {showDetails ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+                  <ChevronRight className={`w-3.5 h-3.5 ui-chevron${(showDetails) ? " rotate-90" : ""}`} />
                   {showDetails ? "Hide file details" : `Review file details (${items.length})`}
                 </button>
               </div>

@@ -5,7 +5,7 @@
 // past jobs" on the next project's plan. lib/findings has the rules.
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { Check, ChevronDown, ChevronRight, History, Lightbulb, Loader2, Pencil, Plus, RotateCcw, X } from "lucide-react";
+import { Check, ChevronRight, History, Lightbulb, Loader2, Pencil, Plus, RotateCcw, X } from "lucide-react";
 import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/ui/Modal";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
@@ -527,7 +527,7 @@ export function FindingsReview({ orgId, projectId, projectType: given, projectNa
       {r.state.kept.length > 0 && (
         <div>
           <button type="button" onClick={() => setShowKept((x) => !x)} className="inline-flex items-center gap-1 text-[13px] text-[var(--color-accent-text)] hover:underline">
-            {showKept ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />} Kept · {r.state.kept.length}
+            <ChevronRight className={`w-4 h-4 ui-chevron${(showKept) ? " rotate-90" : ""}`} /> Kept · {r.state.kept.length}
           </button>
           {showKept && (
             <ul className="mt-1.5 space-y-2">
@@ -548,7 +548,7 @@ export function FindingsReview({ orgId, projectId, projectType: given, projectNa
       {r.state.dropped.length > 0 && (
         <div>
           <button type="button" onClick={() => setShowDropped((x) => !x)} className="inline-flex items-center gap-1 text-[13px] text-[var(--color-accent-text)] hover:underline">
-            {showDropped ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />} Dropped · {r.state.dropped.length}
+            <ChevronRight className={`w-4 h-4 ui-chevron${(showDropped) ? " rotate-90" : ""}`} /> Dropped · {r.state.dropped.length}
           </button>
           {showDropped && (
             <ul className="mt-1.5 space-y-1">
@@ -812,7 +812,7 @@ export function PastJobsPanel({ orgId, projectId, projectType: given, milestones
         <History className="w-4 h-4 text-[var(--color-text-muted)]" />
         <span className="text-[13px] font-semibold text-[var(--color-text)]">{title}</span>
         <span className="text-[12px] text-[var(--color-text-muted)]">{open_.length ? `${open_.length} to plan for` : "all answered"}{answered.length ? ` · ${answered.length} answered` : ""}</span>
-        <span className="ml-auto">{open ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}</span>
+        <span className="ml-auto"><ChevronRight className={`w-4 h-4 ui-chevron${(open) ? " rotate-90" : ""}`} /></span>
       </button>
       {open && (
         <div className="border-t border-[var(--color-border)]">
@@ -820,7 +820,7 @@ export function PastJobsPanel({ orgId, projectId, projectType: given, milestones
           {answered.length > 0 && (
             <div className="border-t border-[var(--color-border)] px-3 py-1.5">
               <button type="button" onClick={() => setShowAnswered((s) => !s)} className="inline-flex items-center gap-1 text-[13px] text-[var(--color-accent-text)] hover:underline">
-                {showAnswered ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />} Answered · {answered.length}
+                <ChevronRight className={`w-4 h-4 ui-chevron${(showAnswered) ? " rotate-90" : ""}`} /> Answered · {answered.length}
               </button>
             </div>
           )}

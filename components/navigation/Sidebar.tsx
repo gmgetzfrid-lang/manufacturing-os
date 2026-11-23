@@ -52,6 +52,7 @@ import { useIsMobile } from '@/hooks/useIsMobile';
 import LogoUploadModal from '@/components/branding/LogoUploadModal';
 import UserAvatar from '@/components/ui/UserAvatar';
 import { badgeText } from '@/lib/badge';
+import { onTransitionClick } from '@/lib/viewTransition';
 import {
   DOCUMENT_VIEWS, EQUIPMENT_VIEWS, HOME_VIEWS, ACTIVITY_VIEWS, INTELLIGENCE_VIEWS,
 } from '@/components/navigation/ViewTabs';
@@ -106,9 +107,6 @@ const TONE_ICON: Record<Tone, string> = {
   purple:  'text-[var(--color-text-muted)]',
   cyan:    'text-[var(--color-text-muted)]',
 };
-// Where you are: the main color, filled, on the deep menu (the pair).
-const ACCENT_ICON_STYLE: React.CSSProperties = { color: 'var(--side-current-text, #ffffff)' };
-const ACTIVE_BG_STYLE: React.CSSProperties = { backgroundColor: 'var(--side-current, var(--color-main))', color: 'var(--side-current-text, #ffffff)' };
 
 export default function Sidebar({
   mobileOpen = false,
@@ -309,7 +307,7 @@ export default function Sidebar({
       )}
       <aside
         aria-hidden={isMobile && !mobileOpen}
-        className={`${collapsed ? 'w-16' : 'w-64'} surface-side h-full flex flex-col text-[var(--color-text-muted)] shrink-0 fixed inset-y-0 left-0 z-[70] md:relative md:inset-auto md:z-auto transition-[transform,width] duration-200 ease-out bg-[var(--color-canvas)] border-r border-[var(--color-border)] ${mobileOpen ? 'translate-x-0 shadow-2xl' : '-translate-x-full'} md:translate-x-0`}
+        className={`${collapsed ? 'w-16' : 'w-64'} vt-side surface-side h-full flex flex-col text-[var(--color-text-muted)] shrink-0 fixed inset-y-0 left-0 z-[70] md:relative md:inset-auto md:z-auto transition-[transform,width] duration-200 ease-out bg-[var(--color-canvas)] shadow-[inset_-1px_0_0_var(--color-border)] ${mobileOpen ? 'translate-x-0 ui-float' : '-translate-x-full'} md:translate-x-0`}
       >
 
       {/* BRAND */}
@@ -319,14 +317,9 @@ export default function Sidebar({
             onClick={() => setRailCollapsed(false)}
             title="Expand sidebar (⌘B)"
             aria-label="Expand sidebar"
-            className="group relative w-10 h-10 rounded-xl flex items-center justify-center shadow-lg ring-1 ring-[var(--color-border-strong)] bg-[var(--color-text)]"
+            className="group relative w-10 h-10 rounded-lg flex items-center justify-center text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface)] transition-colors"
           >
-            <LayoutDashboard className="w-5 h-5 text-[var(--color-surface)] transition-opacity group-hover:opacity-0" />
-            <ChevronRight className="w-5 h-5 text-[var(--color-surface)] absolute opacity-0 transition-opacity group-hover:opacity-100" />
-            {/* always-visible expand affordance */}
-            <span className="absolute -right-1 -bottom-1 w-4 h-4 rounded-full bg-[var(--color-text-muted)] ring-2 ring-[var(--color-surface)] flex items-center justify-center">
-              <ChevronRight className="w-2.5 h-2.5 text-[var(--color-surface)]" />
-            </span>
+            <ChevronRight className="ui-chevron w-5 h-5 group-hover:translate-x-0.5" />
           </button>
         ) : (
           <>
@@ -401,7 +394,7 @@ export default function Sidebar({
           return (
             <div key={section.id} className={collapsed ? 'mb-1' : 'mb-3 px-2'}>
               {collapsed ? (
-                <SectionDivider tone={section.tone} active={isHot} />
+                <SectionDivider />
               ) : (
                 <SectionHeader section={section} open={open} active={isHot} onToggle={() => toggleSection(section.id)} />
               )}
@@ -458,7 +451,7 @@ export default function Sidebar({
   );
 }
 
-// ─── Section header — the dominant chrome between leaves ─────
+// ─── Section header: a small label with a chevron that turns ─────
 
 function SectionHeader({
   section, open, active, onToggle,
@@ -468,32 +461,35 @@ function SectionHeader({
   active: boolean;
   onToggle: () => void;
 }) {
-  const Icon = section.icon;
   return (
     <button
+      type="button"
       onClick={onToggle}
       title={section.hint ?? section.title}
-      className="group/sec w-full flex items-center gap-2 px-1.5 h-7 rounded-md hover:bg-[var(--color-surface-2)] transition-colors select-none"
+      aria-expanded={open}
+      className="group/sec w-full flex items-center gap-1.5 px-2.5 h-7 rounded-md hover:bg-[var(--color-surface-2)] transition-colors select-none"
     >
-      <Icon className={`w-3.5 h-3.5 shrink-0 ${TONE_ICON[section.tone]}`} />
-      <span className={`text-[13px] font-semibold truncate ${active ? 'text-[var(--color-text)]' : 'text-[var(--color-text-muted)]'}`}>
+      <span className={`text-[12px] font-semibold truncate ${active ? 'text-[var(--color-text)]' : 'text-[var(--color-text-faint)]'}`}>
         {section.title}
       </span>
-      <span className="flex-1 h-px bg-[var(--color-border)] group-hover/sec:bg-[var(--color-border-strong)] transition-colors" aria-hidden />
-      <ChevronDown className={`w-3.5 h-3.5 text-[var(--color-text-faint)] group-hover/sec:text-[var(--color-text-muted)] transition-all ${open ? '' : '-rotate-90'}`} />
+      <ChevronDown aria-hidden className={`ui-chevron w-3.5 h-3.5 text-[var(--color-text-faint)] group-hover/sec:text-[var(--color-text-muted)] ${open ? '' : '-rotate-90'}`} />
     </button>
   );
 }
 
-function SectionDivider({ tone, active }: { tone: Tone; active: boolean }) {
+function SectionDivider() {
   return (
-    <div className="px-3 my-1.5 flex items-center" aria-hidden>
-      <div className={`h-px flex-1 ${active ? `bg-[var(--color-surface-2)] ${TONE_ICON[tone]}/40` : 'bg-[var(--color-border)]'}`} />
+    <div className="px-3 my-2 flex items-center" aria-hidden>
+      <div className="h-px flex-1 bg-[var(--color-border)]" />
     </div>
   );
 }
 
 // ─── Leaf row ────────────────────────────────────────────────
+// The current item takes the page's color and runs into the content edge
+// (nav-joined in globals.css), with a short brand marker on its left: the
+// menu points at the page. A red count is something waiting on you; in
+// the narrow rail it becomes a dot on the icon's corner.
 
 function SidebarLeaf({
   leaf, active, collapsed,
@@ -503,41 +499,52 @@ function SidebarLeaf({
   collapsed: boolean;
 }) {
   const Icon = leaf.icon;
+  const router = useRouter();
   const { open: openCenter } = useNotificationCenter();
-  const badgeTone =
-    leaf.badgeTone === 'red'
-      ? 'bg-red-600 text-white'
-      : 'bg-[var(--color-surface-2)] text-[var(--color-text)] border border-[var(--color-border-strong)]';
+  const urgent = leaf.badgeTone === 'red';
+  const hasBadge = !!leaf.badge && leaf.badge > 0;
+  const badgeWords = urgent ? `${leaf.badge} waiting on you` : `${leaf.badge} new`;
   return (
     <Link href={leaf.href}
-      title={collapsed ? `${leaf.label}${leaf.hint ? ` - ${leaf.hint}` : ''}` : (leaf.hint ?? leaf.label)}
-      style={active ? ACTIVE_BG_STYLE : undefined}
+      title={collapsed ? `${leaf.label}${hasBadge ? ` (${badgeWords})` : ''}` : (leaf.hint ?? leaf.label)}
+      aria-label={collapsed ? `${leaf.label}${hasBadge ? `, ${badgeWords}` : ''}` : undefined}
       aria-current={active ? 'page' : undefined}
-      className={`relative flex items-center gap-2.5 rounded-md transition-colors ${
+      onClick={active ? undefined : (e) => onTransitionClick(e, () => router.push(leaf.href))}
+      style={active ? { color: 'var(--side-current-text, var(--color-text))' } : undefined}
+      className={`relative flex items-center gap-2.5 transition-colors ${
         collapsed ? 'h-10 justify-center' : 'h-9 px-2.5'
       } ${
         active
-          ? 'font-semibold shadow-[0_6px_14px_-8px_rgb(0_0_0/0.6)]'
-          : 'text-[var(--color-text-muted)] hover:bg-[var(--color-surface)] hover:text-[var(--color-text)]'
+          ? 'nav-joined -mr-2 rounded-l-lg font-semibold'
+          : 'rounded-lg text-[var(--color-text-muted)] hover:bg-[var(--color-surface)] hover:text-[var(--color-text)]'
       }`}
     >
-      <Icon className={`w-[17px] h-[17px] shrink-0 ${active ? '' : TONE_ICON[leaf.tone]}`} style={active ? ACCENT_ICON_STYLE : undefined} />
+      {active && <span aria-hidden className="absolute left-1 top-2 bottom-2 w-[3px] rounded-full bg-[var(--color-current)]" />}
+      <span className="relative shrink-0 inline-flex">
+        <Icon className={`w-[17px] h-[17px] ${active ? '' : TONE_ICON[leaf.tone]}`} />
+        {collapsed && hasBadge && (
+          <span aria-hidden className={`absolute -top-1 -right-1 ui-dot ${urgent ? '' : 'is-quiet'} ring-2 ring-[var(--side-bg,#081d48)]`} />
+        )}
+      </span>
       {!collapsed && (
         <span className="text-[15px] truncate flex-1 leading-none">{leaf.label}</span>
       )}
-      {leaf.badge && leaf.badge > 0 && (
-        // The count is a DOORWAY, not a scoreboard: clicking it opens the
+      {!collapsed && hasBadge && (
+        // The count is a doorway, not a scoreboard: clicking it opens the
         // Notification Center showing exactly the items it counts (a red
-        // badge opens pre-filtered to action-required). The row itself
-        // still navigates to its tool.
+        // count opens filtered to what waits on you). The row itself
+        // still goes to its tool. Unread news is plain figures, not a
+        // badge: only what needs a decision is badged.
         <button
           type="button"
-          onClick={(e) => { e.preventDefault(); e.stopPropagation(); openCenter(leaf.badgeTone === 'red' ? 'action' : 'all'); }}
-          title={leaf.badgeTone === 'red' ? `${leaf.badge} waiting on you` : `${leaf.badge} new`}
-          aria-label={leaf.badgeTone === 'red' ? `${leaf.label}: ${leaf.badge} waiting on you` : `${leaf.label}: ${leaf.badge} new`}
-          className={`${collapsed ? 'absolute top-1 right-1' : ''} inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full text-[11px] font-black cursor-pointer hover:ring-2 hover:ring-[var(--color-border-strong)] transition-shadow ${badgeTone}`}
+          onClick={(e) => { e.preventDefault(); e.stopPropagation(); openCenter(urgent ? 'action' : 'all'); }}
+          title={badgeWords}
+          aria-label={`${leaf.label}: ${badgeWords}`}
+          className={urgent
+            ? 'ui-badge cursor-pointer hover:brightness-110'
+            : 'min-w-5 h-5 px-1 rounded text-[12px] tabular-nums text-[var(--color-text-muted)] hover:text-[var(--color-text)] cursor-pointer'}
         >
-          {badgeText(leaf.badge)}
+          {badgeText(leaf.badge!)}
         </button>
       )}
     </Link>

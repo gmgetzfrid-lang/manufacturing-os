@@ -9,7 +9,7 @@
 // record is ever lost. Each line still opens to its entries and history.
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Plus, MoreHorizontal, ChevronDown, ChevronRight, Loader2, Undo2, Search } from "lucide-react";
+import { Plus, MoreHorizontal, ChevronRight, Loader2, Undo2, Search } from "lucide-react";
 import type { Actor, CostAccount, CostEntry, CostParty } from "@/lib/costs";
 import { saveAccount } from "@/lib/costs";
 import { reviseAccount } from "@/lib/costRevisions";
@@ -214,7 +214,7 @@ export default function BudgetTable({ orgId, projectId, accounts, numbers, entri
                         {canManage && <td className={td}><input type="checkbox" aria-label={`Pick ${a.name}`} checked={sel.has(a.id)} onChange={() => setSel((s) => { const n = new Set(s); if (n.has(a.id)) n.delete(a.id); else n.add(a.id); return n; })} className="w-4 h-4 accent-[var(--color-text)]" /></td>}
                         <td className={`${td} min-w-[200px]`}>
                           <div className="flex items-center gap-1">
-                            <button type="button" onClick={() => setOpen(open === a.id ? null : a.id)} aria-label={`${open === a.id ? "Close" : "Open"} ${a.name}'s entries`} className="shrink-0 text-[var(--color-text-faint)]">{open === a.id ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}</button>
+                            <button type="button" onClick={() => setOpen(open === a.id ? null : a.id)} aria-label={`${open === a.id ? "Close" : "Open"} ${a.name}'s entries`} className="shrink-0 text-[var(--color-text-faint)]"><ChevronRight className={`w-4 h-4 ui-chevron${(open === a.id) ? " rotate-90" : ""}`} /></button>
                             {a.code && <span className="font-display tabular-nums text-[11px] text-[var(--color-text-faint)]">{a.code}</span>}
                             <Cell value={a.name} disabled={!canManage || closed} aria={`${a.name} name`} onSave={(v) => (v.trim() && v.trim() !== a.name ? savePatch(a, { name: v.trim() }) : undefined)} className="font-bold" />
                             {closed && <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">closed</span>}

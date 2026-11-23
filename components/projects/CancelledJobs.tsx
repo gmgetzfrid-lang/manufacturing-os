@@ -5,7 +5,7 @@
 //   CancelledJobsBar — above the schedule: what came off, and Put back
 
 import React, { useState } from "react";
-import { Ban, ChevronDown, ChevronRight, Loader2, RotateCcw } from "lucide-react";
+import { Ban, ChevronRight, Loader2, RotateCcw } from "lucide-react";
 import { cancelMilestone, restoreCancelledMilestone } from "@/lib/milestones";
 import { fmtInTz } from "@/lib/scheduleTz";
 import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
@@ -129,7 +129,7 @@ export function CancelledJobsBar({ jobs, canEdit, userId, userEmail, onChanged }
         className="w-full flex items-center gap-2 py-1 text-left text-[13px] text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
         <Ban className="w-4 h-4 shrink-0 text-[var(--color-text-muted)]" />
         <span className="flex-1 min-w-0"><b className="text-[var(--color-text)]">{n} job{n === 1 ? "" : "s"} cancelled</b> from this schedule, still to be done elsewhere</span>
-        {open ? <ChevronDown className="w-4 h-4 shrink-0" /> : <ChevronRight className="w-4 h-4 shrink-0" />}
+        <ChevronRight className={`w-4 h-4 shrink-0 ui-chevron${(open) ? " rotate-90" : ""}`} />
       </button>
       {open && (
         <div className="mt-1 -mx-3 border-t border-[var(--color-border)]">

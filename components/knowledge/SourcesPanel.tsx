@@ -12,8 +12,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/ui/Modal";
 import {
-  Loader2, Plus, Link2, FolderOpen, Library, RefreshCw, Trash2, Search,
-  ChevronRight, ChevronDown,
+  Loader2, Plus, Link2, FolderOpen, Library, RefreshCw, Trash2, Search, ChevronRight,
 } from "lucide-react";
 import { useToast } from "@/components/providers/ToastProvider";
 import { appConfirm } from "@/components/providers/DialogProvider";
@@ -148,7 +147,7 @@ function AddSourcesModal({ orgId, libraryId, existing, onClose, onAdded }: {
             <button type="button" onClick={() => toggleExpand(folderId)}
               aria-label={open ? `Fold ${f.name}` : `Open ${f.name}`} aria-expanded={open}
               className="p-0.5 rounded hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]">
-              {open ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+              <ChevronRight className={`w-3.5 h-3.5 ui-chevron${(open) ? " rotate-90" : ""}`} />
             </button>
           ) : <span className="w-[18px]" />}
           <label className={`flex items-center gap-2 flex-1 min-w-0 ${already || covered ? "" : "cursor-pointer"}`}>
@@ -253,7 +252,7 @@ function AddSourcesModal({ orgId, libraryId, existing, onClose, onAdded }: {
                             {rootFolders.length > 0 ? (
                               <button type="button" onClick={() => toggleExpand(l.id)}
                                 className="p-0.5 rounded hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]">
-                                {open ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+                                <ChevronRight className={`w-3.5 h-3.5 ui-chevron${(open) ? " rotate-90" : ""}`} />
                               </button>
                             ) : <span className="w-[18px]" />}
                             <label className={`flex items-center gap-2 flex-1 min-w-0 ${already ? "" : "cursor-pointer"}`}>

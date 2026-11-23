@@ -3,16 +3,19 @@
 // ThemeProvider: light/dark mode and the workspace's colors, applied to
 // the document root as CSS variables (see globals.css). Saved per device.
 //
-// Two main colors and one accent, the way the color video lays it out:
-//   deep    a deep shade for the side menu (a big, quiet area): the
-//           brand's, or of its own color (a logo's darkest, say)
-//   main    the brand at full strength: the header band on every page,
-//           links, tabs, the current menu item, progress, charts
-//   accent  the surprise, kept small so it draws the eye: the one main
-//           button per screen. The logo's second color, or the brand's
-//           opposite.
-// Greys are tinted toward the brand so the page feels like one family.
-// The app sets every lightness (lib/brandColors), so any logo works.
+// The workspace's palette (from its logo: primary, secondary, deep) is
+// placed on roles, 60 / 30 / 10:
+//   page     a light neutral with about 4% of the brand hue (60)
+//   side     the side menu in the brand's deep shade, calm and dark (30):
+//            the brand's, or its own color (a logo's darkest, say)
+//   action   the ONE filled color: the main button per screen (10). The
+//            logo's second color, or the brand's opposite.
+//   brand    the brand's readable shade: links, the current tab's
+//            underline, the side menu's marker, the focus ring, the one
+//            series that matters in a chart.
+// Nothing paints a saturated band behind page headers: --color-band is
+// kept for older code and is the page color. The app sets every
+// lightness (lib/brandColors), so any logo works.
 
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { signalScale, chartColor, toOklch, fromOklch, mix, deepFor, accentFor, tintedNeutrals, isColorful } from "@/lib/brandColors";
@@ -49,24 +52,26 @@ export const deepOf = (p: Palette): string => (p.deep && isHex(p.deep) && isColo
  *  next page load paints them before React starts). */
 export function themeVars(mode: ThemeMode, p: Palette): Record<string, string> {
   const sc = signalScale(p.primary);
-  const h = toOklch(sc[600])[2];
   const acc = accentFor(p.primary, p.secondary);
   const n = tintedNeutrals(p.primary, mode);
   const v: Record<string, string> = {};
-  // Greys with a breath of the brand.
+  // Greys with a breath of the brand (the page, sheets, hairlines, and a
+  // field's resting edge at 3:1).
   v["--color-canvas"] = n.canvas; v["--color-surface"] = n.surface; v["--color-surface-2"] = n.surface2;
-  v["--color-border"] = n.border; v["--color-border-strong"] = n.borderStrong;
-  // Main: the brand at full strength.
-  // The band: the brand, rich and a shade deeper than the buttons' blue.
-  const band = fromOklch(mode === "dark" ? 0.4 : Math.min(toOklch(sc[600])[0], 0.49), 0.21, h);
+  v["--color-border"] = n.border; v["--color-border-strong"] = n.borderStrong; v["--color-border-control"] = n.borderControl;
+  // Kept for older code: the page color (no header band any more).
+  v["--color-band"] = n.canvas;
+  // The brand at full strength (charts, progress).
   v["--color-main"] = sc[600];
   v["--color-main-hover"] = sc[700];
-  v["--color-band"] = band;
-  v["--color-accent-text"] = mode === "dark" ? sc[300] : sc[700];   // links
-  v["--color-heading"] = mode === "dark" ? sc[200] : sc[900];       // section headings
-  v["--color-accent-ring"] = sc[400];
+  // The brand's readable shade: links, the current tab and the menu
+  // marker, the focus ring.
+  v["--color-accent-text"] = mode === "dark" ? sc[300] : sc[700];
+  v["--color-current"] = mode === "dark" ? sc[400] : sc[600];
+  v["--color-focus"] = mode === "dark" ? sc[400] : sc[600];
+  v["--color-accent-ring"] = mode === "dark" ? sc[400] : sc[600];
   if (mode === "light") v["--color-accent-soft"] = sc[100];         // "you are here" tints
-  // Accent: the one main button per screen.
+  // Action: the one filled button per screen.
   v["--color-accent"] = acc.fill;
   v["--color-accent-hover"] = acc.hover;
   v["--color-accent-fg"] = acc.fg;
@@ -81,6 +86,8 @@ export function themeVars(mode: ThemeMode, p: Palette): Record<string, string> {
   v["--viz-cat-2"] = chartColor(acc.fill);
   // Side menu: the deep shade (default), or light. The deep shade comes
   // from its own color when one is set; the app still sets its lightness.
+  // Its current item takes the page's color and joins the page.
+  const current = { "--side-current": n.canvas, "--side-current-text": mode === "dark" ? "#e8ebf0" : "#1f2733" };
   if (sideOf(p) === "deep") {
     const deep = deepFor(deepOf(p), mode);
     const [dl, , dh] = toOklch(deep);
@@ -88,14 +95,14 @@ export function themeVars(mode: ThemeMode, p: Palette): Record<string, string> {
       "--side-bg": deep, "--side-surface": fromOklch(dl + 0.06, 0.04, dh), "--side-text": "#ffffff",
       "--side-muted": "rgb(255 255 255 / 0.78)", "--side-faint": "rgb(255 255 255 / 0.6)",
       "--side-border": "rgb(255 255 255 / 0.12)", "--side-border-strong": "rgb(255 255 255 / 0.22)",
-      "--side-current": sc[600], "--side-current-text": "#ffffff", "--side-accent-text": sc[200], "--side-logo-plate": "#ffffff",
+      "--side-accent-text": sc[200], "--side-logo-plate": "#ffffff", ...current,
     });
   } else {
     Object.assign(v, {
       "--side-bg": mode === "dark" ? n.surface : "#ffffff", "--side-surface": n.surface2, "--side-text": mode === "dark" ? "#e8ebf0" : "#1f2733",
       "--side-muted": mode === "dark" ? "#a9b2bf" : "#4f5b6b", "--side-faint": mode === "dark" ? "#8a94a3" : "#677283",
       "--side-border": n.border, "--side-border-strong": n.borderStrong,
-      "--side-current": sc[600], "--side-current-text": "#ffffff", "--side-accent-text": mode === "dark" ? sc[300] : sc[700], "--side-logo-plate": "transparent",
+      "--side-accent-text": mode === "dark" ? sc[300] : sc[700], "--side-logo-plate": "transparent", ...current,
     });
   }
   return v;
@@ -108,14 +115,16 @@ function applyTheme(mode: ThemeMode, p: Palette) {
   const root = document.documentElement;
   root.classList.toggle("dark", mode === "dark");
   // Clear what an earlier palette set, so nothing lingers.
-  for (const k of ["--color-accent-soft", "--viz-cat-2", "--color-ink-text", "--color-ink-muted", "--side-accent-soft", "--color-canvas", "--color-surface", "--color-surface-2", "--color-border", "--color-border-strong"]) root.style.removeProperty(k);
+  // (--color-heading was set by older versions: headings are text now.)
+  for (const k of ["--color-accent-soft", "--viz-cat-2", "--color-ink-text", "--color-ink-muted", "--side-accent-soft", "--color-canvas", "--color-surface", "--color-surface-2", "--color-border", "--color-border-strong", "--color-heading"]) root.style.removeProperty(k);
   const vars = themeVars(mode, p);
   for (const [k, val] of Object.entries(vars)) root.style.setProperty(k, val);
   try { localStorage.setItem(LS_VARS, JSON.stringify(vars)); } catch { /* noop */ }
 
   let meta = document.querySelector('meta[name="theme-color"]');
   if (!meta) { meta = document.createElement("meta"); meta.setAttribute("name", "theme-color"); document.head.appendChild(meta); }
-  meta.setAttribute("content", vars["--color-band"]);
+  // The phone's browser bar matches the page, not a brand color.
+  meta.setAttribute("content", vars["--color-canvas"]);
 }
 
 interface ThemeCtx {

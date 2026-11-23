@@ -12,6 +12,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useRole } from "@/components/providers/RoleContext";
 import { useStagedDocs } from "@/lib/stagedDocs";
+import { onTransitionClick, transitionPush } from "@/lib/viewTransition";
 
 export interface ViewTab {
   label: string;
@@ -57,12 +58,13 @@ export default function ViewTabs({
   // at the moment of the tap.
   const libMatch = /^\/documents\/([0-9a-f-]{36})/.exec(pathname);
   const hrefFor = (href: string) => hrefs?.[href] ?? (href === "/documents/graph" && libMatch ? `/documents/graph?focus=${encodeURIComponent(`lib:${libMatch[1]}`)}` : href);
-  const openGraphHere = (e: React.MouseEvent, href: string) => {
-    if (hrefs?.[href] || href !== "/documents/graph" || !libMatch || e.metaKey || e.ctrlKey || e.shiftKey) return;
+  const openGraphHere = (e: React.MouseEvent, href: string): boolean => {
+    if (hrefs?.[href] || href !== "/documents/graph" || !libMatch || e.metaKey || e.ctrlKey || e.shiftKey) return false;
     const folderId = new URLSearchParams(window.location.search).get("folderId");
-    if (!folderId) return;
+    if (!folderId) return false;
     e.preventDefault();
-    router.push(`/documents/graph?focus=${encodeURIComponent(`folder:${folderId}`)}`);
+    transitionPush(router, `/documents/graph?focus=${encodeURIComponent(`folder:${folderId}`)}`);
+    return true;
   };
   const isActive = (t: ViewTab) => {
     if (t.exclude?.some((x) => pathname === x || pathname.startsWith(x + "/"))) return false;
@@ -71,49 +73,50 @@ export default function ViewTabs({
 
   // The header is on the light panel now: both variants draw the same.
   void variant;
-  const dark = false;
   // On a phone the views don't all fit: the strip scrolls on its own (never
   // the page), with the one you're on brought into sight.
-  const strip = React.useRef<HTMLDivElement>(null);
+  const strip = React.useRef<HTMLElement>(null);
   React.useEffect(() => {
     const el = strip.current, on = el?.querySelector<HTMLElement>("[aria-current=page]");
     if (!el || !on || el.scrollWidth <= el.clientWidth) return;
     el.scrollLeft = Math.max(0, on.offsetLeft - (el.clientWidth - on.offsetWidth) / 2);
   }, [pathname]);
+  // Underline tabs: the one you're on is text color with a brand line
+  // under it; the rest are muted. A count is plain muted figures after the
+  // label. Switching views cross-fades where the browser can.
   return (
-    <div className={`flex items-center gap-3 flex-wrap min-w-0 max-w-full ${dark ? "" : "mb-4"}`}>
+    <div className="flex items-end gap-x-4 gap-y-2 flex-wrap min-w-0 max-w-full mb-4 border-b border-[var(--color-border)]">
       {title && (
-        <span className={`text-[14px] font-medium ${dark ? "text-[var(--color-ink-muted)]" : "text-[var(--color-text-muted)]"}`}>{title}</span>
+        <span className="self-center text-[14px] text-[var(--color-text-muted)]">{title}</span>
       )}
-      <div ref={strip} className={`inline-flex items-center gap-0.5 p-0.5 rounded-md min-w-0 max-w-full overflow-x-auto overscroll-x-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden ${dark ? "bg-[var(--color-ink-2)] border border-[var(--color-ink-line)]" : "bg-[var(--color-surface-2)] border border-[var(--color-border-strong)]"}`}>
+      <nav aria-label={title ? `${title} views` : "Views"} ref={strip} className="-mb-px flex items-end gap-5 min-w-0 max-w-full overflow-x-auto overscroll-x-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         {tabs.map((t) => {
           const active = isActive(t);
-          const Icon = t.icon;
           const badge = badgeOf(t);
           return (
             <Link
               key={t.href}
               href={hrefFor(t.href)}
-              onClick={(e) => openGraphHere(e, t.href)}
+              onClick={(e) => {
+                if (openGraphHere(e, t.href) || active) return;
+                onTransitionClick(e, () => router.push(hrefFor(t.href)));
+              }}
               aria-current={active ? "page" : undefined}
-              className={`shrink-0 whitespace-nowrap inline-flex items-center gap-1.5 px-3 h-8 rounded-lg text-xs font-bold transition-colors ${
+              className={`shrink-0 whitespace-nowrap inline-flex items-center gap-1.5 h-10 pointer-coarse:h-11 border-b-2 text-[14px] transition-colors ${
                 active
-                  ? (dark ? "bg-white text-[var(--color-ink)] shadow-sm" : "bg-[var(--color-surface)] text-[var(--color-text)] shadow-[0_1px_2px_rgb(31_39_51/0.15)] ring-1 ring-[var(--color-border-strong)]")
-                  : (dark ? "text-[var(--color-ink-muted)] hover:text-white" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]")
+                  ? "border-[var(--color-current)] text-[var(--color-text)] font-semibold"
+                  : "border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-border-strong)]"
               }`}
             >
-              {Icon && <Icon className="w-3.5 h-3.5" />}
               {t.label}
               {typeof badge === "number" && badge > 0 && (
-                <span className={`ml-0.5 inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full text-[11px] font-black ${active ? (dark ? "bg-[var(--color-ink)] text-white" : "bg-[var(--color-text)] text-[var(--color-surface)]") : (dark ? "bg-[var(--color-ink-line)] text-[var(--color-ink-fg)]" : "bg-[var(--color-border)] text-[var(--color-text-muted)]")}`}>
-                  {badgeText(badge)}
-                </span>
+                <span className="text-[13px] font-normal tabular-nums text-[var(--color-text-muted)]">{badgeText(badge)}</span>
               )}
             </Link>
           );
         })}
-      </div>
-      {right && <div className="ml-auto">{right}</div>}
+      </nav>
+      {right && <div className="ml-auto self-center pb-1.5">{right}</div>}
     </div>
   );
 }

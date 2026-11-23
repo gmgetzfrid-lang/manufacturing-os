@@ -10,7 +10,7 @@
 // what leaves the server and on whose key. Nothing runs until Start.
 
 import React, { useMemo, useState } from "react";
-import { X, Loader2, Lock, FileText, ChevronRight, ChevronDown, Send, ShieldOff } from "lucide-react";
+import { X, Loader2, Lock, FileText, ChevronRight, Send, ShieldOff } from "lucide-react";
 import LibraryAiSwitch from "@/components/documents/LibraryAiSwitch";
 import type { ConnectPlan, PlanFileState } from "@/lib/estate/connectPlan";
 import { useEscapeClose } from "@/components/documents/useEscapeClose";
@@ -100,7 +100,7 @@ export default function ConnectPreview({ orgId, plan, loading, canChange, onStar
                       {l.toCensus > 0 && <StatusTag tone="none">{l.toCensus} drawings to your model</StatusTag>}
                     </div>
                     <button type="button" onClick={() => setOpen(isOpen ? null : l.id)} aria-expanded={isOpen} className="mt-1.5 text-[14px] text-[var(--color-accent-text)] hover:underline underline-offset-2 inline-flex items-center gap-0.5">
-                      {isOpen ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />} {isOpen ? "Hide the files" : "Show every file"}
+                      <ChevronRight className={`w-4 h-4 ui-chevron${(isOpen) ? " rotate-90" : ""}`} /> {isOpen ? "Hide the files" : "Show every file"}
                     </button>
                     {isOpen && (
                       <ul className="mt-1.5 max-h-64 overflow-y-auto rounded-md border border-[var(--color-border)] divide-y divide-[var(--color-border)]">

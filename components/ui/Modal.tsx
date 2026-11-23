@@ -19,6 +19,26 @@ import { createPortal } from "react-dom";
 import { useEscapeClose } from "@/hooks/useEscapeClose";
 import { X } from "lucide-react";
 
+// Where the last press landed, so a dialog can grow out of the button that
+// opened it (not fade in from nowhere).
+let lastPress: { x: number; y: number; at: number } | null = null;
+if (typeof window !== "undefined") {
+  window.addEventListener("pointerdown", (e) => { lastPress = { x: e.clientX, y: e.clientY, at: Date.now() }; }, { capture: true, passive: true });
+}
+
+/** The point a dialog grows from: the press that opened it (within the
+ *  last second), else the focused control outside the dialog, else none
+ *  (it grows from its center). */
+function triggerPoint(panel: HTMLElement): { x: number; y: number } | null {
+  if (lastPress && Date.now() - lastPress.at < 1000) return { x: lastPress.x, y: lastPress.y };
+  const a = document.activeElement as HTMLElement | null;
+  if (a && a !== document.body && !panel.contains(a)) {
+    const r = a.getBoundingClientRect();
+    if (r.width || r.height) return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+  }
+  return null;
+}
+
 const SIZES = {
   sm: "max-w-md",
   md: "max-w-lg",
@@ -49,6 +69,18 @@ export function Modal({
   // closes first (one shared stack with every other dialog).
   useEscapeClose(onClose, dismissable);
 
+  // Grow from the trigger: a short scale and fade (globals.css
+  // .ui-float-in) whose origin is the button that opened the dialog.
+  const panel = React.useRef<HTMLDivElement>(null);
+  React.useLayoutEffect(() => {
+    const el = panel.current;
+    if (!el) return;
+    const p = triggerPoint(el);
+    if (!p) return;
+    const r = el.getBoundingClientRect();
+    el.style.transformOrigin = `${Math.round(p.x - r.left)}px ${Math.round(p.y - r.top)}px`;
+  }, []);
+
   // Modals are interaction-driven, so the document always exists by the
   // time one renders; the guard only protects an SSR edge case.
   if (typeof document === "undefined") return null;
@@ -64,7 +96,8 @@ export function Modal({
         onClick={dismissable ? onClose : undefined}
       />
       <div
-        className={`relative w-full ${SIZES[size]} max-h-[90vh] flex flex-col bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border-strong)] rounded-xl shadow-2xl animate-in fade-in zoom-in-95 ease-spring ${className}`}
+        ref={panel}
+        className={`relative w-full ${SIZES[size]} max-h-[90vh] flex flex-col bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] rounded-xl ui-float ui-float-in ${className}`}
       >
         {children}
       </div>
@@ -75,7 +108,7 @@ export function Modal({
 
 export function ModalHeader({
   icon: Icon,
-  iconClassName = "bg-[var(--color-surface-2)] text-[var(--color-text)]",
+  iconClassName = "",
   title,
   subtitle,
   onClose,
@@ -87,12 +120,15 @@ export function ModalHeader({
   subtitle?: React.ReactNode;
   onClose?: () => void;
 }) {
+  // A plain icon at text size (no tile); a state color passed in
+  // iconClassName (text-*) is kept, fills are dropped.
+  const iconText = iconClassName.split(/\s+/).filter((c) => /^(?:dark:)?text-/.test(c)).join(" ") || "text-[var(--color-text-faint)]";
   return (
-    <div className="flex items-start gap-3 px-5 py-4 border-b border-[var(--color-border)] shrink-0">
+    <div className="flex items-start gap-2.5 px-5 py-4 border-b border-[var(--color-border)] shrink-0">
       {Icon && (
-        <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${iconClassName}`}>
-          <Icon className="w-4.5 h-4.5" />
-        </div>
+        <span aria-hidden className={`inline-flex shrink-0 mt-[3px] ${iconText}`}>
+          <Icon className="w-5 h-5" />
+        </span>
       )}
       <div className="min-w-0 flex-1">
         <h2 className="font-display text-[20px] leading-tight font-semibold truncate">{title}</h2>
@@ -101,7 +137,7 @@ export function ModalHeader({
       {onClose && (
         <button
           onClick={onClose}
-          aria-label="Close"
+          aria-label="Close" title="Close"
           className="p-1.5 -m-1 rounded-lg text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors"
         >
           <X className="w-4 h-4" />
@@ -118,7 +154,7 @@ export function ModalBody({ className = "", children }: { className?: string; ch
 export function ModalFooter({ className = "", children }: { className?: string; children: React.ReactNode }) {
   return (
     <div
-      className={`flex items-center justify-end gap-2 px-5 py-3.5 border-t border-[var(--color-border)] bg-[var(--color-surface-2)] rounded-b-2xl shrink-0 ${className}`}
+      className={`flex items-center justify-end gap-2 px-5 py-3.5 border-t border-[var(--color-border)] bg-[var(--color-surface-2)] rounded-b-xl shrink-0 ${className}`}
     >
       {children}
     </div>

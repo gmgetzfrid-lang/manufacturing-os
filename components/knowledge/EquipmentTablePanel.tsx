@@ -7,7 +7,7 @@
 // prose summarizes, this enumerates.
 
 import React, { useState } from "react";
-import { ChevronDown, ChevronRight, Crosshair, Table2, Search } from "lucide-react";
+import { ChevronRight, Crosshair, Table2, Search } from "lucide-react";
 import type { EquipmentTable } from "@/lib/knowledge";
 
 export default function EquipmentTablePanel({ table, onOpenTag }: {
@@ -64,7 +64,7 @@ export default function EquipmentTablePanel({ table, onOpenTag }: {
           <div key={cat.prefix} className="border-b border-[var(--color-border)] last:border-b-0">
             <button onClick={() => toggle(cat.prefix)}
               className="w-full flex items-center gap-2 px-4 py-2 text-left hover:bg-[var(--color-surface-2)] transition-colors">
-              {expanded ? <ChevronDown className="w-3.5 h-3.5 shrink-0 text-[var(--color-text-faint)]" /> : <ChevronRight className="w-3.5 h-3.5 shrink-0 text-[var(--color-text-faint)]" />}
+              <ChevronRight className={`w-3.5 h-3.5 shrink-0 text-[var(--color-text-faint)] ui-chevron${(expanded) ? " rotate-90" : ""}`} />
               <span className="font-display font-semibold text-[var(--color-text)] text-[13px] w-10 shrink-0">{cat.prefix}-</span>
               <span className="text-[13px] font-bold text-[var(--color-text)] flex-1">{cat.label}</span>
               <span className="text-[13px] font-semibold text-[var(--color-text)] tabular-nums">{cat.count}</span>

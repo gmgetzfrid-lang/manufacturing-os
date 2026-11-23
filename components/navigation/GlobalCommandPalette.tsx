@@ -352,7 +352,7 @@ export default function GlobalCommandPalette() {
         aria-modal="true"
         aria-label="Search"
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-xl bg-[var(--color-surface)] text-[var(--color-text)] rounded-2xl shadow-[0_30px_60px_-20px_rgb(0_0_0/0.55)] overflow-hidden animate-in fade-in zoom-in-95 slide-in-from-top-2 duration-200"
+        className="w-full max-w-xl bg-[var(--color-surface)] text-[var(--color-text)] rounded-xl border border-[var(--color-border)] ui-float overflow-hidden animate-in fade-in zoom-in-95 slide-in-from-top-2 duration-200"
       >
         <div className="px-4 h-14 border-b border-[var(--color-border)] flex items-center gap-3">
           <Search className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
