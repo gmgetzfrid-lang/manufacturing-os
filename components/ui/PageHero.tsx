@@ -111,8 +111,9 @@ export function PageHero({
       </header>
       {children && <div className="mt-4">{children}</div>}
       {primary && (
-        // On a phone the one action sits where a thumb reaches it.
-        <div className="sm:hidden fixed inset-x-0 bottom-0 z-40 px-3.5 pt-3 pb-[calc(12px+env(safe-area-inset-bottom))] bg-[color-mix(in_srgb,var(--color-canvas)_94%,transparent)] border-t border-[var(--color-border)] [&>*]:w-full">
+        // On a phone the one action sits where a thumb reaches it (above the
+        // staged tray when that shows: --staged-tray-h).
+        <div className="sm:hidden fixed inset-x-0 bottom-[var(--staged-tray-h,0px)] z-40 px-3.5 pt-3 pb-[calc(12px+env(safe-area-inset-bottom))] bg-[color-mix(in_srgb,var(--color-canvas)_94%,transparent)] border-t border-[var(--color-border)] [&>*]:w-full">
           {primary}
         </div>
       )}

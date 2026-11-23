@@ -32,14 +32,13 @@ import { downloadDocumentPdf, printDocumentPdf, determineControlState, viewerSta
 import { stampPdf } from "@/lib/stamping";
 import { recordIntent } from "@/lib/intents";
 import { publicOrigin } from "@/lib/publicOrigin";
-import { resolveFileUrl } from "@/lib/storage";
 import { PDFDocument } from "pdf-lib";
 import BulkCheckoutToProjectModal from "@/components/documents/BulkCheckoutToProjectModal";
 import EquipmentTagsStrip from "@/components/assets/EquipmentTagsStrip";
 import { collectTagGroups, rankTags, type TagColumnDef } from "@/lib/documentTags";
 import { useViewerPanZoom } from "@/lib/useViewerPanZoom";
 import { bakeMarkupIntoPdf } from "@/lib/markupExport";
-import { stashDraft, type DraftHandoffFile } from "@/lib/draftHandoff";
+import { issuedFileUrl, prepareDraftingRequest } from "@/lib/sendToDrafting";
 import { appAlert } from "@/components/providers/DialogProvider";
 import { useRouter } from "next/navigation";
 import { badgeText } from "@/lib/badge";
@@ -307,9 +306,21 @@ interface MultiDocViewerProps {
   /** First two VISIBLE table columns — drives each thumbnail's two-line label so
    *  it matches what the library table shows. */
   labelColumns?: { key: string; label: string }[];
+  /** What this set is called in the chrome ("Reference book", "Staged"). */
+  setName?: string;
+  /** Open at this document instead of the first. */
+  startDocId?: string;
+  /** Markups kept from before (docId → page states), drawn when it opens. */
+  initialMarkups?: Record<string, Record<number, object>>;
+  /** Called when a document's markups change (undefined: it has none now),
+   *  so they can be kept after the viewer closes. */
+  onMarkupsChange?: (docId: string, pages: Record<number, object> | undefined) => void;
+  /** A line to show under the chrome (e.g. the markups could not be kept). */
+  note?: string | null;
+  onDismissNote?: () => void;
 }
 
-export default function MultiDocViewer({ docs, onClose, currentUserId, currentUserEmail, orgId, userRole, customColumns, labelColumns }: MultiDocViewerProps) {
+export default function MultiDocViewer({ docs, onClose, currentUserId, currentUserEmail, orgId, userRole, customColumns, labelColumns, setName = "Reference book", startDocId, initialMarkups, onMarkupsChange, note, onDismissNote }: MultiDocViewerProps) {
   const router = useRouter();
   const [bookBusy, setBookBusy] = useState(false);
   const [docBusy, setDocBusy] = useState(false);
@@ -321,7 +332,8 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
   const [entries, setEntries] = useState<DocEntry[]>(() =>
     docs.map((doc) => ({ doc, resolvedUrl: null, loading: true, error: null }))
   );
-  const [activeIdx, setActiveIdx] = useState(0);
+  const startIdx = Math.max(0, startDocId ? docs.findIndex((d) => d.id === startDocId) : 0);
+  const [activeIdx, setActiveIdx] = useState(startIdx);
   // Thumbnail rail — a push panel (default CLOSED for a clean full-bleed page;
   // open it with the toolbar button or B).
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -330,7 +342,7 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
 
   // Continuous-render state.
   const [pageCounts, setPageCounts] = useState<Record<number, number>>({});
-  const [mounted, setMounted] = useState<Set<number>>(() => new Set([0]));
+  const [mounted, setMounted] = useState<Set<number>>(() => new Set([startIdx]));
   const [zoom, setZoom] = useState(1);
 
   // Pages render fit-to-width from the live container size (no hard cap) so a
@@ -353,13 +365,15 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
   const [picked, setPicked] = useState<Set<string>>(() => new Set());
   const [focusMode, setFocusMode] = useState(false);
   const [pendingScroll, setPendingScroll] = useState<{ idx: number; flash: boolean } | null>(null);
-  // Markups persisted per sheet (docId → normalized fabric page states), so
-  // annotating several sheets in one session never loses work.
-  const [markupStore, setMarkupStore] = useState<Record<string, Record<number, object>>>({});
+  // Markups per sheet (docId → normalized fabric page states), so annotating
+  // several sheets in one session never loses work.
+  const [markupStore, setMarkupStore] = useState<Record<string, Record<number, object>>>(() => initialMarkups ?? {});
   const [sendingDraft, setSendingDraft] = useState(false);
   // Inline markup: compact tools in the toolbar draw straight onto the rendered
-  // page (no editor window, no PDF re-render). Markups live in memory and are
-  // DISCARDED on close unless baked for a drafting request or a download.
+  // page (no editor window, no PDF re-render). Markups live in memory; with
+  // onMarkupsChange (staged documents) every change is handed out to be kept,
+  // otherwise they are DISCARDED on close unless baked for a drafting request
+  // or a download.
   const [markupMode, setMarkupMode] = useState(false);
   const [markTool, setMarkTool] = useState<MarkTool>("pen");
   const [markColor, setMarkColor] = useState<ColorKey>("red");
@@ -378,22 +392,13 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
 
   // Load versions + resolve presigned URLs for all docs — in PARALLEL (this was a
   // serial loop, so a 20-sheet book waited on 20 round-trips one after another).
-  // resolveFileUrl shares a TTL cache, so a re-open / a sheet shown elsewhere as a
+  // The URL resolve shares a TTL cache, so a re-open / a sheet shown elsewhere as a
   // thumbnail costs no extra request.
   useEffect(() => {
     let alive = true;
     void Promise.all(docs.map(async (doc, i) => {
       try {
-        let fileUrl: string | null = null;
-        if (doc.currentVersionId) {
-          const { data } = await supabase.from("document_versions").select("file_url").eq("id", doc.currentVersionId).single();
-          if (data?.file_url) fileUrl = data.file_url as string;
-        }
-        if (!fileUrl) {
-          const { data } = await supabase.from("document_versions").select("file_url").eq("record_id", doc.id).or("review_state.is.null,review_state.eq.approved").order("created_at", { ascending: false }).limit(1);
-          if (data && data.length > 0) fileUrl = data[0].file_url as string;
-        }
-        const resolvedUrl = fileUrl ? await resolveFileUrl(fileUrl) : null;
+        const resolvedUrl = doc.id ? await issuedFileUrl({ id: doc.id, currentVersionId: doc.currentVersionId }) : null;
         if (!alive) return;
         setEntries((prev) => { const next = [...prev]; next[i] = { doc, resolvedUrl, loading: false, error: null }; return next; });
       } catch {
@@ -676,6 +681,54 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
     setMarkupVersion((v) => ({ ...v, [docId]: (v[docId] ?? 0) + 1 }));
   }, []);
 
+  // Hand each changed sheet's markups out to be kept (staged documents), so
+  // they are still there after the viewer closes. Only sheets whose markups
+  // changed are reported; what came in is not reported back.
+  const onMarkupsChangeRef = useRef(onMarkupsChange);
+  useEffect(() => { onMarkupsChangeRef.current = onMarkupsChange; });
+  const reportedMarks = useRef(markupStore);
+  useEffect(() => {
+    const prev = reportedMarks.current;
+    reportedMarks.current = markupStore;
+    const report = onMarkupsChangeRef.current;
+    if (!report || prev === markupStore) return;
+    for (const id of new Set([...Object.keys(prev), ...Object.keys(markupStore)])) {
+      if (prev[id] !== markupStore[id]) report(id, markupStore[id]);
+    }
+  }, [markupStore]);
+
+  // Opened at a sheet further down: go there once every sheet's file is
+  // known, and keep it there while the sheets above it load and change
+  // height, until the person moves the page themselves (or 5 seconds pass).
+  const startedAt = useRef(startIdx === 0);
+  const stopHolding = useRef<() => void>(() => {});
+  useEffect(() => {
+    if (startedAt.current || entries.some((e) => e.loading)) return;
+    startedAt.current = true;
+    const el = sectionRefs.current[startIdx], c = scrollContainerRef.current;
+    if (!el || !c) return;
+    const align = () => { c.scrollTop = Math.max(0, el.offsetTop - 4); };
+    align();
+    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(align) : null;
+    sectionRefs.current.slice(0, startIdx).forEach((s) => s && ro?.observe(s));
+    const moved = () => stopHolding.current();
+    const timer = window.setTimeout(moved, 5000);
+    c.addEventListener("wheel", moved, { passive: true });
+    c.addEventListener("touchstart", moved, { passive: true });
+    c.addEventListener("pointerdown", moved);
+    window.addEventListener("keydown", moved);
+    stopHolding.current = () => {
+      ro?.disconnect();
+      window.clearTimeout(timer);
+      c.removeEventListener("wheel", moved);
+      c.removeEventListener("touchstart", moved);
+      c.removeEventListener("pointerdown", moved);
+      window.removeEventListener("keydown", moved);
+      stopHolding.current = () => {};
+    };
+  }, [entries, startIdx]);
+  useEffect(() => () => stopHolding.current(), []);
+
   const activeEntry = entries[activeIdx];
   const activeControlState = activeEntry?.doc && currentUserId ? determineControlState(activeEntry.doc, currentUserId) : "uncontrolled";
   const activeControlled = activeControlState === "controlled";
@@ -842,62 +895,25 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
   const requestBookDownload = (scope: "all" | "pinned") => setDownloadConfirm({ type: "book", scope });
   const requestBookPrint = (scope: "all" | "pinned") => setDownloadConfirm({ type: "book-print", scope });
 
-  // Bake every marked-up sheet's annotations into its PDF, stash them, and open
-  // a NEW drafting request with all of them pre-attached — so you can mark up a
-  // few sheets and send them together, markups included.
+  // Bake every marked-up sheet's annotations into its PDF and open a NEW
+  // drafting request with all of them attached (lib/sendToDrafting, shared
+  // with the Staged page), so you can mark up a few sheets and send them
+  // together, markups included.
   const sendMarkupsToDrafting = async () => {
     if (markedUpIds.length === 0 || sendingDraft) return;
     setSendingDraft(true);
     try {
-      const files: DraftHandoffFile[] = [];
-      for (const id of markedUpIds) {
-        const entry = entries.find((e) => e.doc.id === id);
-        if (!entry?.resolvedUrl || !markupStore[id]) continue;
-        const res = await fetch(entry.resolvedUrl);
-        if (!res.ok) continue;
-        const bytes = new Uint8Array(await res.arrayBuffer());
-        const baked = await bakeMarkupIntoPdf(bytes, markupStore[id]);
-        const stem = `${entry.doc.documentNumber || entry.doc.title || "sheet"}${entry.doc.rev ? `_Rev${entry.doc.rev}` : ""}_markup`.replace(/[^\w.\-]+/g, "_");
-        files.push({ name: `${stem}.pdf`, blob: new Blob([baked as BlobPart], { type: "application/pdf" }), docId: id, docNumber: entry.doc.documentNumber });
-      }
-      if (files.length === 0) {
+      const sheets = markedUpIds
+        .map((id) => entries.find((e) => e.doc.id === id))
+        .filter((e): e is DocEntry => !!e?.resolvedUrl)
+        .map((e) => ({ doc: e.doc, url: e.resolvedUrl, markups: markupStore[e.doc.id ?? ""] }));
+      const { href } = await prepareDraftingRequest(sheets);
+      if (!href) {
         setSendingDraft(false);
         await appAlert("Couldn't prepare any marked-up sheets.");
         return;
       }
-      // Rich prefill so the requester only adds their notes: doc number · rev ·
-      // sheet · title per sheet, plus a shared Unit if they all belong to one.
-      const docsForFiles = files
-        .map((f) => entries.find((e) => e.doc.id === f.docId)?.doc)
-        .filter((d): d is DocumentRecord => !!d);
-      const metaVal = (d: DocumentRecord, re: RegExp): string | null => {
-        const m = (d.metadata ?? {}) as Record<string, unknown>;
-        for (const [kk, vv] of Object.entries(m)) if (re.test(kk) && vv != null && vv !== "") return String(vv);
-        return null;
-      };
-      const sheetOf = (d: DocumentRecord) => (d.sheetNumber != null ? String(d.sheetNumber) : metaVal(d, /sheet/i));
-      const unitOf = (d: DocumentRecord) => metaVal(d, /\bunit\b|\barea\b/i);
-      const units = Array.from(new Set(docsForFiles.map(unitOf).filter((u): u is string => !!u)));
-      const unit = units.length === 1 ? units[0] : "";
-      const lines = docsForFiles.map((d) => {
-        const sheet = sheetOf(d);
-        return `• ${d.documentNumber || d.title || "Document"}${d.rev ? ` Rev ${d.rev}` : ""}${sheet ? ` · Sheet ${sheet}` : ""}${d.title ? ` - ${d.title}` : ""}`;
-      });
-      const description = [
-        "Marked-up sheets, attached as Source files:",
-        ...lines,
-        unit ? `\nUnit: ${unit}` : "",
-        "\nWhat needs to change:\n- ",
-      ].filter(Boolean).join("\n");
-
-      const key = await stashDraft(files);
-      const params = new URLSearchParams({
-        title: `Markups: ${files.length} sheet${files.length === 1 ? "" : "s"}${unit ? ` · Unit ${unit}` : ""}`,
-        description,
-        draft: key,
-      });
-      if (unit) params.set("unit", unit);
-      router.push(`/requests/new?${params.toString()}`);
+      router.push(href);
     } catch (e) {
       console.error("Send markups to drafting failed", e);
       setSendingDraft(false);
@@ -921,13 +937,13 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
   // Which sheet is open, said big: its number (or name), with where it sits in
   // the book and its state on the line above.
   const posInBook = Math.max(1, visibleIdxs.indexOf(activeIdx) + 1);
-  const activeName = activeEntry?.doc.documentNumber || activeEntry?.doc.title || activeEntry?.doc.name || "Reference book";
+  const activeName = activeEntry?.doc.documentNumber || activeEntry?.doc.title || activeEntry?.doc.name || setName;
   const statusWord = viewBadge ? viewBadge.label.replace(/\s·\sRev\s.*$/, "") : null;
   const isBook = downloadConfirm?.type === "book" || downloadConfirm?.type === "book-print";
   const closeConfirm = () => { setDownloadConfirm(null); setActionError(null); };
 
   return (
-    <div className="fixed inset-0 z-[85]" role="dialog" aria-modal="true" aria-label={`Reference book, ${docs.length} sheets`}>
+    <div className="fixed inset-0 z-[85]" role="dialog" aria-modal="true" aria-label={`${setName}, ${docs.length} sheet${docs.length === 1 ? "" : "s"}`}>
       {/* The page behind stays in view at the edges, dimmed. */}
       <div className={vDim} aria-hidden="true" />
 
@@ -995,7 +1011,7 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
             <button type="button" onClick={() => setSidebarOpen((v) => !v)} className={vTool(sidebarOpen, "w-9 h-9")} title="Sheets in this book (B)" aria-label="Sheets in this book" aria-pressed={sidebarOpen}><Menu className="w-4 h-4" /></button>
             <div className="min-w-0 flex-1">
               <div className={vKicker}>
-                <span className="max-sm:hidden">Reference book · </span>Sheet {posInBook} of {visibleIdxs.length}
+                <span className="max-sm:hidden">{setName} · </span>Sheet {posInBook} of {visibleIdxs.length}
                 {activeEntry?.doc.rev ? <> · Rev {activeEntry.doc.rev}</> : null}
                 {viewBadge && statusWord && (
                   <> · <span className={STATUS_TONE[viewBadge.tone]} title="Status of the live version you're viewing. A copy you download or print is stamped separately.">{statusWord}</span></>
@@ -1134,7 +1150,10 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
           )}
 
           {/* Markup toggle — reveals the compact tools. A white pill while on. */}
-          <button type="button" onClick={() => setMarkupMode((v) => !v)} title="Markup: draw on the page. Discarded on close unless you download the sheet or send it to drafting." aria-pressed={markupMode}
+          <button type="button" onClick={() => setMarkupMode((v) => !v)} aria-label="Markup" aria-pressed={markupMode}
+            title={onMarkupsChange
+              ? "Markup: draw on the page. Kept on this device until you clear it."
+              : "Markup: draw on the page. Discarded on close unless you download the sheet or send it to drafting."}
             className={`inline-flex items-center justify-center gap-1.5 h-9 px-3 shrink-0 rounded-[10px] text-[13px] font-semibold transition-colors ${markupMode ? "bg-[var(--color-ink-fg)] text-[var(--color-ink)]" : "bg-[var(--color-ink-2)] text-[var(--color-text)] hover:bg-[var(--color-ink-line)]"}`}>
             <Pen className="w-4 h-4" /> <span className="hidden lg:inline">Markup</span>
           </button>
@@ -1203,6 +1222,16 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
           </button>
           </div>
         </header>
+
+        {note && (
+          <p role="alert" className={`${vNote} text-amber-300`}>
+            <ShieldAlert className="w-3.5 h-3.5 shrink-0" />
+            <span className="min-w-0">{note}</span>
+            {onDismissNote && (
+              <button type="button" onClick={onDismissNote} aria-label="Dismiss" className="ml-auto shrink-0 w-7 h-7 grid place-items-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-ink-2)]"><X className="w-3.5 h-3.5" /></button>
+            )}
+          </p>
+        )}
 
         {actionError && !downloadConfirm && (
           <p role="alert" className={`${vNote} text-rose-300`}>

@@ -239,6 +239,8 @@ body {
   --color-surface: #29323f;
   --color-surface-2: #29323f;
   --color-text: #f2f4f7;
+  /* A drawing's name (h2.font-display) reads light here, not navy. */
+  --color-heading: #f2f4f7;
   --color-text-muted: #b3bcc8;
   --color-text-faint: #8d97a5;
   --color-border: #333d4b;

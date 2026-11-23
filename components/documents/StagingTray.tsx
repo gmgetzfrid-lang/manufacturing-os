@@ -1,108 +1,62 @@
 "use client";
 
-import React, { useState } from "react";
-import { BookOpen, X, ChevronUp, ChevronDown, Trash2, Play } from "lucide-react";
-import type { DocumentRecord } from "@/types/schema";
-import { badgeText } from "@/lib/badge";
+// StagingTray - "Staged: 3 documents" along the bottom of every Documents
+// page while something is staged, with the first few numbers and Open, which
+// goes to the Staged page (view them, mark them up, send them). It takes its
+// own row under the page rather than floating over it, so it never covers
+// the last rows of a table; things pinned to the bottom of the screen (a
+// phone's main button, the corner cards) move up by its height
+// (--staged-tray-h).
 
-interface StagingTrayProps {
-  docs: DocumentRecord[];
-  onRemove: (id: string) => void;
-  onClear: () => void;
-  onOpen: () => void;
+import React, { useEffect } from "react";
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+import { Layers } from "lucide-react";
+import { useRole } from "@/components/providers/RoleContext";
+import { useStagedDocs, stagedLabel } from "@/lib/stagedDocs";
+import { DOCUMENT_VIEWS } from "@/components/navigation/ViewTabs";
+import { btnQuiet } from "@/components/admin/kit";
+
+export const STAGED_PAGE = "/documents/staged";
+const TRAY_H = "calc(56px + env(safe-area-inset-bottom, 0px))";
+
+/** A page under Documents (any of its tabs), other than the Staged page. */
+export function isDocumentsPage(path: string): boolean {
+  if (path === STAGED_PAGE || path.startsWith(STAGED_PAGE + "/")) return false;
+  return DOCUMENT_VIEWS.some((v) => path === v.href || path.startsWith(v.href + "/"));
 }
 
-export default function StagingTray({ docs, onRemove, onClear, onOpen }: StagingTrayProps) {
-  const [expanded, setExpanded] = useState(false);
+export default function StagingTray() {
+  const pathname = usePathname() ?? "";
+  const { activeOrgId, uid } = useRole();
+  const staged = useStagedDocs(activeOrgId, uid);
+  const show = staged.count > 0 && isDocumentsPage(pathname);
 
-  if (docs.length === 0) return null;
+  useEffect(() => {
+    if (!show) return;
+    const root = document.documentElement;
+    root.style.setProperty("--staged-tray-h", TRAY_H);
+    return () => { root.style.removeProperty("--staged-tray-h"); };
+  }, [show]);
 
+  if (!show) return null;
+  const n = staged.count;
+  const shown = staged.docs.slice(0, 4).map(stagedLabel);
+  const more = n - shown.length;
   return (
-    <div className="fixed bottom-0 left-0 right-0 z-30 flex flex-col items-center pointer-events-none">
-      <div className="w-full pointer-events-auto">
-        {/* Expanded document list */}
-        {expanded && (
-          <div className="bg-[var(--color-surface)] border-t border-x border-[var(--color-border)] shadow-2xl max-h-52 overflow-y-auto">
-            <div className="p-3 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-1.5">
-              {docs.map((doc, idx) => (
-                <div
-                  key={doc.id}
-                  className="flex items-center gap-2 bg-[var(--color-surface-2)] rounded-lg px-3 py-2 border border-[var(--color-border)] group"
-                >
-                  <span className="w-5 h-5 rounded-full bg-[var(--color-surface-2)] text-[var(--color-text)] flex items-center justify-center text-[13px] font-semibold shrink-0">
-                    {idx + 1}
-                  </span>
-                  <span className="text-[13px] font-display font-semibold tabular-nums text-[var(--color-text)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded border border-[var(--color-border)] shrink-0 truncate max-w-[80px]">
-                    {doc.documentNumber || "-"}
-                  </span>
-                  <span className="text-[13px] text-[var(--color-text)] truncate flex-1 min-w-0">
-                    {doc.title || doc.name}
-                  </span>
-                  <button aria-label="Remove"
-                    onClick={() => onRemove(doc.id!)}
-                    className="shrink-0 text-[var(--color-text-faint)] hover:text-[var(--state-overdue)] transition-colors opacity-60 sm:opacity-0 group-hover:opacity-100"
-                  >
-                    <X className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              ))}
-            </div>
+    <div data-staged-tray role="region" aria-label="Staged documents"
+      className="shrink-0 box-content h-14 pb-[env(safe-area-inset-bottom)] border-t border-[var(--color-border-strong)] bg-[var(--color-surface)] shadow-[0_-4px_12px_-8px_rgb(31_39_51/0.25)]">
+      <div className="h-full px-4 sm:px-6 flex items-center gap-3">
+        <Layers aria-hidden className="w-[18px] h-[18px] shrink-0 text-[var(--color-text-muted)]" />
+        <div className="min-w-0 flex-1 sm:flex sm:items-baseline sm:gap-3">
+          <div className="text-[15px] font-semibold text-[var(--color-text)] whitespace-nowrap">
+            Staged: <span className="tabular-nums">{n}</span> document{n === 1 ? "" : "s"}
           </div>
-        )}
-
-        {/* Tray bar */}
-        <div className="bg-slate-900 text-white flex items-center gap-3 px-5 py-2.5 shadow-2xl border-t border-slate-700">
-          <div className="flex items-center gap-2.5 flex-1 min-w-0">
-            <BookOpen className="w-4 h-4 text-[var(--color-text-faint)] shrink-0" />
-            <span className="text-sm font-bold text-white whitespace-nowrap">Reference Stack</span>
-            <span className="text-xs font-semibold bg-slate-700 text-white px-2 py-0.5 rounded-full shrink-0">
-              {badgeText(docs.length)}
-            </span>
-            {/* Pills preview — hidden on small screens */}
-            <div className="hidden md:flex items-center gap-1 overflow-hidden flex-1 min-w-0">
-              {docs.slice(0, 6).map((doc) => (
-                <span
-                  key={doc.id}
-                  className="text-[13px] font-mono bg-slate-800 px-2 py-0.5 rounded text-[var(--color-text-faint)] whitespace-nowrap border border-slate-700"
-                  title={doc.title || doc.name}
-                >
-                  {doc.documentNumber || (doc.title || "").slice(0, 10) || "-"}
-                </span>
-              ))}
-              {docs.length > 6 && (
-                <span className="text-[13px] text-[var(--color-text-faint)] whitespace-nowrap">+{docs.length - 6} more</span>
-              )}
-            </div>
-          </div>
-
-          <div className="flex items-center gap-1 shrink-0">
-            <button
-              onClick={() => setExpanded((v) => !v)}
-              className="p-1.5 hover:bg-slate-700 rounded-lg transition-colors text-[var(--color-text-faint)] hover:text-white"
-              title={expanded ? "Hide the list" : "Show the list"}
-              aria-label={expanded ? "Hide the list" : "Show the list"}
-              aria-expanded={expanded}
-            >
-              {expanded ? <ChevronDown className="w-4 h-4" /> : <ChevronUp className="w-4 h-4" />}
-            </button>
-            <button
-              onClick={onClear}
-              className="p-1.5 hover:bg-slate-700 rounded-lg transition-colors text-[var(--color-text-faint)] hover:text-[var(--state-overdue)]"
-              title="Empty the stack"
-              aria-label="Empty the stack"
-            >
-              <Trash2 className="w-4 h-4" />
-            </button>
-            <div className="w-px h-5 bg-slate-700 mx-1" />
-            <button
-              onClick={onOpen}
-              className="flex items-center gap-2 px-4 py-2 bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] rounded-xl font-bold text-sm transition-all shadow-lg active:scale-95"
-            >
-              <Play className="w-3.5 h-3.5" />
-              Open
-            </button>
+          <div className="min-w-0 truncate text-[13px] text-[var(--color-text-muted)] tabular-nums" title={staged.docs.map(stagedLabel).join(", ")}>
+            {shown.join(", ")}{more > 0 ? ` and ${more} more` : ""}
           </div>
         </div>
+        <Link href={STAGED_PAGE} className={`${btnQuiet} min-w-[88px]`}>Open</Link>
       </div>
     </div>
   );

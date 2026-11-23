@@ -10,6 +10,8 @@ import React from "react";
 import { badgeText } from "@/lib/badge";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
+import { useRole } from "@/components/providers/RoleContext";
+import { useStagedDocs } from "@/lib/stagedDocs";
 
 export interface ViewTab {
   label: string;
@@ -17,6 +19,9 @@ export interface ViewTab {
   icon?: React.ComponentType<{ className?: string }>;
   /** Optional count badge. */
   badge?: number;
+  /** A count read live on this device: "staged" is how many documents
+   *  this person has staged in this workspace. */
+  liveCount?: "staged";
   /** Match the active state by exact path or by prefix (default: prefix). */
   exact?: boolean;
   /** Prefixes that must NOT count as this tab, for a sibling tab nested under it. */
@@ -43,6 +48,9 @@ export default function ViewTabs({
 }) {
   const pathname = usePathname() ?? "";
   const router = useRouter();
+  const { activeOrgId, uid } = useRole();
+  const staged = useStagedDocs(activeOrgId, uid);
+  const badgeOf = (t: ViewTab) => (t.liveCount === "staged" ? staged.count : t.badge);
   // The Graph opens on the library and folder you were in, not the whole
   // estate (it has a way back up to everything). A page that knows where
   // it is says so (`hrefs`); otherwise the folder is read from the address
@@ -81,6 +89,7 @@ export default function ViewTabs({
         {tabs.map((t) => {
           const active = isActive(t);
           const Icon = t.icon;
+          const badge = badgeOf(t);
           return (
             <Link
               key={t.href}
@@ -95,9 +104,9 @@ export default function ViewTabs({
             >
               {Icon && <Icon className="w-3.5 h-3.5" />}
               {t.label}
-              {typeof t.badge === "number" && t.badge > 0 && (
+              {typeof badge === "number" && badge > 0 && (
                 <span className={`ml-0.5 inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full text-[11px] font-black ${active ? (dark ? "bg-[var(--color-ink)] text-white" : "bg-[var(--color-text)] text-[var(--color-surface)]") : (dark ? "bg-[var(--color-ink-line)] text-[var(--color-ink-fg)]" : "bg-[var(--color-border)] text-[var(--color-text-muted)]")}`}>
-                  {badgeText(t.badge)}
+                  {badgeText(badge)}
                 </span>
               )}
             </Link>
@@ -111,10 +120,13 @@ export default function ViewTabs({
 
 // ─── Tab presets for each consolidated tool ──────────────────────
 
-import { Table, Lock, AlertOctagon, Map as MapIcon, List, Activity as ActivityIcon, ScrollText, Inbox as InboxIcon, Network, Send, Package, ClipboardList, Gauge, Bot, BookOpen, Waypoints, GitPullRequest, Settings2, Puzzle, Unplug } from "lucide-react";
+import { Table, Lock, AlertOctagon, Map as MapIcon, List, Activity as ActivityIcon, ScrollText, Inbox as InboxIcon, Network, Send, Package, ClipboardList, Gauge, Bot, BookOpen, Waypoints, GitPullRequest, Settings2, Puzzle, Unplug, Layers } from "lucide-react";
 
 export const DOCUMENT_VIEWS: ViewTab[] = [
-  { label: "Table", href: "/documents", icon: Table, exclude: ["/documents/graph", "/documents/connectors"] },
+  { label: "Table", href: "/documents", icon: Table, exclude: ["/documents/graph", "/documents/connectors", "/documents/staged"] },
+  // The documents you staged, from any folder or library: view them side by
+  // side, mark them up, send them. The count is how many are staged.
+  { label: "Staged", href: "/documents/staged", icon: Layers, liveCount: "staged" },
   { label: "Graph", href: "/documents/graph", icon: Waypoints },
   { label: "Connector checks", href: "/documents/connectors", icon: Unplug },
   { label: "Register", href: "/register", icon: ClipboardList },

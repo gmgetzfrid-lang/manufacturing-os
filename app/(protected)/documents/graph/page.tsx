@@ -686,7 +686,7 @@ function GraphPageInner() {
   };
 
   return (
-    <div className="flex flex-col lg:h-[calc(100vh-56px)] px-3 sm:px-4 lg:px-6 pt-4 pb-4">
+    <div className="flex flex-col lg:h-[calc(100vh_-_56px_-_var(--staged-tray-h,0px))] px-3 sm:px-4 lg:px-6 pt-4 pb-4">
       <PageHero size="md" overlap={false} className="!mb-4 !pb-6" kicker="Document control" title={mapAnswer} sub={mapSub} facts={mapFacts}
         back={cameBack ? { onClick: () => router.back(), label: `Back to ${homeLabel}` } : undefined}>
         <ViewTabs tabs={DOCUMENT_VIEWS} hrefs={tableHref ? { "/documents": tableHref } : undefined} />

@@ -37,7 +37,8 @@ import HistoryDrawer from "@/components/documents/HistoryDrawer";
 import PermissionsDrawer from "@/components/permissions/PermissionDrawer";
 import SetManager from "@/components/documents/SetManager";
 import EquipmentSweepModal from "@/components/documents/EquipmentSweepModal";
-import StagingTray from "@/components/documents/StagingTray";
+import SendSheet, { type SendDoc } from "@/components/documents/SendSheet";
+import { useStagedDocs, toStagedDoc } from "@/lib/stagedDocs";
 import MetadataStagingModal, { type StagedItem, type CustomColumnDef, type UploadOutcome } from "@/components/documents/MetadataStagingModal";
 import DuplicateUploadsModal from "@/components/documents/DuplicateUploadsModal";
 import CollectionsStrip from "@/components/documents/CollectionsStrip";
@@ -206,11 +207,17 @@ import {
   Table as TableIcon,
   List as ListIcon,
   Image as ImageIcon,
-  Link as LinkIcon,
+  Send,
   Map as MapIcon,
   Library as LibraryIcon,
   RotateCcw,
 } from "lucide-react";
+
+// The selection bars float over the list: above a phone's Upload bar, and
+// above the staged tray when it shows (--staged-tray-h).
+const SELECTION_BAR_BOTTOM = "bottom-[calc(5rem_+_var(--staged-tray-h,0px))] sm:bottom-[calc(2.5rem_+_var(--staged-tray-h,0px))]";
+// A quiet button on the selection bar, tall enough to tap.
+const barBtn = "flex items-center gap-1.5 h-9 px-3 text-[13px] font-bold hover:text-white hover:bg-slate-700/60 rounded-lg transition-colors whitespace-nowrap";
 
 const BUILTIN_COLUMNS = [
   { key: "title", label: "Title" },
@@ -867,7 +874,8 @@ export default function LibraryExplorerPage() {
         : (d.title || d.name || d.id))
       .join("\n");
     void navigator.clipboard?.writeText(text);
-    setError(`Copied ${rows.length} document link${rows.length === 1 ? "" : "s"} to the clipboard.`);
+    // Honest about what was copied: these links ask for a sign-in.
+    setNotice(`Copied ${rows.length === 1 ? "the link" : `${rows.length} links`} for people in this workspace (they sign in to open ${rows.length === 1 ? "it" : "them"}). For someone outside, use Send.`);
   };
 
   /** Ctrl+Z — reverse the most recent move. */
@@ -1209,30 +1217,32 @@ export default function LibraryExplorerPage() {
     if (failure) setError(`Archived ${done.size} of ${ids.length}. The rest failed: ${failure}`);
   };
 
+  // Staging: the store keeps it per person and workspace on this device, so
+  // it is still there after leaving the library (lib/stagedDocs).
+  const stageOf = (d: DocumentRecord) => toStagedDoc({ ...d, libraryId: d.libraryId || libraryId }, library?.name);
+  const stageMany = (docs: DocumentRecord[]) => {
+    if (docs.length === 0) return;
+    if (!staged.add(docs.map(stageOf))) return; // the store says why (staged.error)
+    const fresh = docs.filter((d) => !staged.isStaged(d.id)).length;
+    setNotice(fresh === 0
+      ? `${docs.length === 1 ? "It is" : "They are"} already staged.`
+      : `Staged ${fresh} document${fresh === 1 ? "" : "s"}. Open Staged to view, mark up and send ${fresh === 1 ? "it" : "them"}.`);
+  };
   const handleStageSelected = () => {
-    setStagedDocs((prev) => {
-      const existingIds = new Set(prev.map((d) => d.id));
-      const toAdd = sortedDocs.filter((d) => selectedDocIds.has(d.id!) && !existingIds.has(d.id));
-      return [...prev, ...toAdd];
-    });
+    stageMany(sortedDocs.filter((d) => selectedDocIds.has(d.id!)));
     setSelectedDocIds(new Set());
   };
 
   const handleStageDoc = (docRecord: DocumentRecord, e: React.MouseEvent) => {
     e.stopPropagation();
-    setStagedDocs((prev) => {
-      if (prev.some((d) => d.id === docRecord.id)) {
-        return prev.filter((d) => d.id !== docRecord.id);
-      }
-      return [...prev, docRecord];
-    });
+    staged.toggle(stageOf(docRecord));
   };
 
-  const handleUnstage = (id: string) => {
-    setStagedDocs((prev) => prev.filter((d) => d.id !== id));
-  };
-
-  const handleClearStaged = () => setStagedDocs([]);
+  // Send: the document, or the selection when it is part of one.
+  const sendDocOf = (d: DocumentRecord): SendDoc => ({
+    id: d.id!, documentNumber: d.documentNumber || null, title: d.title || d.name || null, rev: d.rev || null, libraryId: d.libraryId || libraryId,
+  });
+  const openSend = (docs: DocumentRecord[]) => { if (docs.length) setSendDocs(docs.map(sendDocOf)); };
 
   const handleAddColumnClick = (type: MetadataFieldType) => {
     setWizardInitType(type);
@@ -1307,11 +1317,17 @@ export default function LibraryExplorerPage() {
   // The folder whose sort was put back from where you left it (docsPlace).
   const placeSortRef = useRef<string | null>(null);
 
-  // Staging area — persists across folder navigation
-  const [stagedDocs, setStagedDocs] = useState<DocumentRecord[]>([]);
+  // Staged documents: kept per person and workspace on this device, across
+  // folders, libraries and visits. Viewed, marked up and sent on the Staged
+  // page (/documents/staged); the tray along the bottom goes there.
+  const staged = useStagedDocs(activeOrgId, uid);
+  // Send (a link, email, text, QR code): the documents it is for, while open.
+  const [sendDocs, setSendDocs] = useState<SendDoc[] | null>(null);
+  // A curated collection opened as a book (side by side, in its order).
+  const [bookDocs, setBookDocs] = useState<DocumentRecord[]>([]);
   const [showMultiView, setShowMultiView] = useState(false);
   // Which curated collection the open book represents (for the ?book=<id> deep
-  // link). Null when the book was opened from an ad-hoc staged set.
+  // link).
   const [openBookId, setOpenBookId] = useState<string | null>(null);
 
   // Metadata-first upload staging (Phase 1)
@@ -1557,7 +1573,7 @@ export default function LibraryExplorerPage() {
         const byId = new Map((data ?? []).map((r) => { const row = r as unknown as Record<string, unknown>; return [row.id as string, docRecordFromRow(row)] as const; }));
         const ordered = ids.map((id) => byId.get(id)).filter(Boolean) as DocumentRecord[];
         if (ordered.length === 0) return;
-        setStagedDocs(ordered);
+        setBookDocs(ordered);
         setOpenBookId(bookId);
         setShowMultiView(true);
       } catch (e) {
@@ -3774,7 +3790,8 @@ export default function LibraryExplorerPage() {
   const buildDocContextEntries = (doc: DocumentRecord): ContextMenuEntry[] => {
     const n = selectedDocIds.has(doc.id!) ? Math.max(selectedDocIds.size, 1) : 1;
     const many = n > 1;
-    const isStaged = stagedDocs.some((d) => d.id === doc.id);
+    const isStaged = staged.isStaged(doc.id);
+    const picked = () => (many ? sortedDocs.filter((d) => selectedDocIds.has(d.id!)) : [doc]);
     const entries: ContextMenuEntry[] = [];
     if (!many) {
       entries.push({
@@ -3799,36 +3816,24 @@ export default function LibraryExplorerPage() {
           onSelect: () => startTitleEdit(doc),
         });
       }
-      if (doc.documentNumber) {
-        entries.push({
-          key: "link", label: "Copy link", icon: <LinkIcon className="w-3.5 h-3.5" />,
-          onSelect: () => {
-            void navigator.clipboard?.writeText(`${window.location.origin}/d/${encodeURIComponent(doc.documentNumber!)}`);
-          },
-        });
-      }
     }
+    // Stage: gather it with others (from any folder or library) to view
+    // side by side, mark up and send together, on the Staged page.
     entries.push({
       key: "stage", separator: !many,
-      label: many ? `Add ${n} to Reference Stack` : isStaged ? "Remove from Reference Stack" : "Add to Reference Stack",
-      icon: <Layers className="w-3.5 h-3.5" />,
+      label: many ? `Stage ${n}` : isStaged ? "Unstage" : "Stage",
+      icon: isStaged && !many ? <Check className="w-3.5 h-3.5" /> : <Layers className="w-3.5 h-3.5" />,
       onSelect: () => {
-        if (many) {
-          setStagedDocs((prev) => {
-            const existing = new Set(prev.map((d) => d.id));
-            return [...prev, ...sortedDocs.filter((d) => selectedDocIds.has(d.id!) && !existing.has(d.id))];
-          });
-        } else {
-          setStagedDocs((prev) => prev.some((d) => d.id === doc.id)
-            ? prev.filter((d) => d.id !== doc.id)
-            : [...prev, doc]);
-        }
+        if (many || !isStaged) stageMany(picked());
+        else staged.remove(doc.id!);
       },
     });
+    // Send: one place that asks how (a link someone outside can open without
+    // signing in, or the workspace link; copied, emailed, texted or a QR code).
     entries.push({
-      key: "copyLinks", label: many ? `Copy ${n} links` : "Copy link(s)",
-      icon: <LinkIcon className="w-3.5 h-3.5" />,
-      onSelect: copySelectionLinks,
+      key: "send", label: many ? `Send ${n}…` : "Send…",
+      icon: <Send className="w-3.5 h-3.5" />,
+      onSelect: () => openSend(picked()),
     });
     if (isController) {
       entries.push({
@@ -4343,7 +4348,9 @@ export default function LibraryExplorerPage() {
         />
 
         {/* MAIN AREA: the band with the answer, then cards over its edge */}
-        <div ref={mainScrollRef} className={`flex-1 min-w-0 overflow-auto px-3 sm:px-4 pt-3 sm:pt-4 ${stagedDocs.length > 0 ? "pb-28" : "pb-24 sm:pb-10"}`}>
+        {/* The staged tray takes its own row under the page, so the list
+            needs no room for it here (only for a phone's Upload bar). */}
+        <div ref={mainScrollRef} className="flex-1 min-w-0 overflow-auto px-3 sm:px-4 pt-3 sm:pt-4 pb-24 sm:pb-10">
           <div className="max-w-[1920px] mx-auto">
 
             <PageHero
@@ -4410,8 +4417,14 @@ export default function LibraryExplorerPage() {
               {/* Messages used to be set and never shown while the library was
                   open: failed deletes and partial uploads looked like "nothing
                   happened". They read on the band, right under the search. */}
-              {(error || notice) && (
+              {(error || notice || staged.error) && (
                 <div className="mt-3 space-y-1.5">
+                  {staged.error && (
+                    <div role="alert" className="text-[14px] font-semibold text-[var(--state-overdue)] flex items-start gap-2">
+                      <span className="flex-1 min-w-0">{staged.error}</span>
+                      <button onClick={staged.dismissError} className="shrink-0 p-1 rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface)]" aria-label="Dismiss"><X className="w-3.5 h-3.5" /></button>
+                    </div>
+                  )}
                   {error && (
                     <div role="alert" className="text-[14px] font-semibold text-[var(--state-overdue)] flex items-start gap-2">
                       <span className="flex-1 min-w-0">{error}</span>
@@ -4552,7 +4565,7 @@ export default function LibraryExplorerPage() {
                       .map((id) => documents.find((d) => d.id === id))
                       .filter(Boolean) as DocumentRecord[];
                     if (ordered.length === 0) return;
-                    setStagedDocs(ordered);
+                    setBookDocs(ordered);
                     // Record the curated-collection id so the URL becomes a
                     // shareable ?book=<id>; mark it handled so the reader doesn't
                     // redundantly re-fetch the same book we just opened.
@@ -4911,10 +4924,12 @@ export default function LibraryExplorerPage() {
                       return (
                         <div key={doc.id} className={`relative ${isOpen ? "bg-[var(--color-accent-soft)]" : ""}`}>
                           {isOpen && <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] bg-[var(--color-main)]" />}
+                          <div className="flex items-start">
                           <button
                             onClick={() => setSelectedDoc(doc)}
+                            onContextMenu={(e) => handleRowContextMenu(doc, e)}
                             data-doc-open={doc.id}
-                            className={`w-full text-left px-4 pt-3 ${tags.length ? "pb-1.5" : "pb-3"} active:bg-[var(--color-surface-2)] hover:bg-[var(--color-surface-2)] block`}
+                            className={`flex-1 min-w-0 text-left pl-4 pr-1 pt-3 ${tags.length ? "pb-1.5" : "pb-3"} active:bg-[var(--color-surface-2)] hover:bg-[var(--color-surface-2)] block`}
                           >
                             <span className="flex items-center gap-3">
                               <span className="ui-id flex-1 min-w-0 truncate text-[17px] leading-snug">{doc.documentNumber || doc.title || doc.name || "-"}</span>
@@ -4928,6 +4943,21 @@ export default function LibraryExplorerPage() {
                                 : <span className="shrink-0">{humanDate(doc.updatedAt)}</span>}
                             </span>
                           </button>
+                          {/* Stage in one tap, the same as the table's Stage button. */}
+                          {(() => {
+                            const on = staged.isStaged(doc.id);
+                            return (
+                              <button type="button" onClick={(e) => handleStageDoc(doc, e)} aria-pressed={on}
+                                aria-label={on ? `Unstage ${doc.documentNumber || "it"}` : `Stage ${doc.documentNumber || "it"}`}
+                                title={on ? "Staged. Tap to unstage" : "Stage: gather it with others to view, mark up and send"}
+                                className={`shrink-0 mt-2 mr-2 w-11 h-11 grid place-items-center rounded-lg transition-colors ${on
+                                  ? "text-white bg-[var(--color-main)]"
+                                  : "text-[var(--color-text-muted)] active:bg-[var(--color-surface-2)] hover:bg-[var(--color-surface-2)]"}`}>
+                                <Layers className="w-[18px] h-[18px]" />
+                              </button>
+                            );
+                          })()}
+                          </div>
                           {tags.length > 0 && (
                             <div className="px-4 pb-3 flex flex-wrap items-center gap-1">
                               {tags.slice(0, tags.length > 3 ? 2 : 3).map((t) => (
@@ -5055,8 +5085,8 @@ export default function LibraryExplorerPage() {
                             );
                           })()}{colKey === checkoutAfterKey && checkoutTh}</React.Fragment>)}
                           {!checkoutAfterKey && checkoutTh}
-                          <th className={`px-2 ${headerPad} text-center`} style={{ width: "36px" }} title="Reference stack">
-                            <Layers className="w-3.5 h-3.5 inline text-[var(--color-text-faint)]" aria-label="Reference stack" />
+                          <th className={`px-2 ${headerPad} text-center`} style={{ width: "36px" }} title="Staged">
+                            <Layers className="w-3.5 h-3.5 inline text-[var(--color-text-faint)]" aria-label="Staged" />
                           </th>
                           <th className={`px-2 ${headerPad} text-center print:hidden`} style={{ width: "44px" }}>
                             <ColumnHeaderMenu onAdd={handleAddColumnClick} isController={isController} />
@@ -5289,7 +5319,7 @@ export default function LibraryExplorerPage() {
                                 {!checkoutAfterKey && checkoutTd}
                                 <td className={`px-2 ${rowPad} text-center`}>
                                   {(() => {
-                                    const isStaged = stagedDocs.some((d) => d.id === docRecord.id);
+                                    const isStaged = staged.isStaged(docRecord.id);
                                     return (
                                       <button
                                         onClick={(e) => handleStageDoc(docRecord, e)}
@@ -5298,8 +5328,8 @@ export default function LibraryExplorerPage() {
                                             ? "text-white bg-[var(--color-main)] opacity-100"
                                             : "text-[var(--color-text-faint)] group-hover:text-[var(--color-text-muted)] hover:!text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
                                         }`}
-                                        title={isStaged ? "Remove from reference stack" : "Add to reference stack"}
-                                        aria-label={isStaged ? "Remove from reference stack" : "Add to reference stack"}
+                                        title={isStaged ? "Staged. Tap to unstage" : "Stage: gather it with others to view, mark up and send"}
+                                        aria-label={isStaged ? "Unstage" : "Stage"}
                                         aria-pressed={isStaged}
                                       >
                                         <Layers className="w-3.5 h-3.5" />
@@ -5365,13 +5395,8 @@ export default function LibraryExplorerPage() {
             onCheckout={openCheckout}
             onForceUnlock={handleForceUnlock}
             onFullScreen={() => setShowFullScreen(true)}
-            onToggleStage={(doc) => {
-              setStagedDocs((prev) => {
-                if (prev.some((d) => d.id === doc.id)) return prev.filter((d) => d.id !== doc.id);
-                return [...prev, doc];
-              });
-            }}
-            isStaged={stagedDocs.some((d) => d.id === selectedDoc.id)}
+            onToggleStage={(doc) => { staged.toggle(stageOf(doc)); }}
+            isStaged={staged.isStaged(selectedDoc.id)}
             orgId={activeOrgId ?? undefined}
             customColumns={library?.customColumns ?? []}
             onRevUp={() => setShowRevUp(true)}
@@ -5420,7 +5445,7 @@ export default function LibraryExplorerPage() {
 
       {/* Folder selection bar — ctrl/shift-click tiles, then act on them all. */}
       {isController && selectedFolderIds.size > 0 && selectedDocIds.size === 0 && (
-        <div className={`fixed left-1/2 -translate-x-1/2 z-40 ${stagedDocs.length > 0 ? "bottom-16" : "bottom-10"}`}>
+        <div className={`fixed left-1/2 -translate-x-1/2 z-40 ${SELECTION_BAR_BOTTOM}`}>
           <div className="flex items-center gap-2 px-4 py-2.5 bg-slate-900/95 text-white rounded-lg shadow-2xl border border-slate-700/60"
             style={{ backdropFilter: "blur(20px) saturate(200%)" }}>
             <span className="text-[13px] font-bold">{selectedFolderIds.size} folder{selectedFolderIds.size === 1 ? "" : "s"} selected</span>
@@ -5441,46 +5466,50 @@ export default function LibraryExplorerPage() {
 
       {/* FLOATING BULK ACTION BAR — slides up from bottom when items selected */}
       <div
-        className={`fixed left-1/2 -translate-x-1/2 z-40 transition-all duration-300 ${
+        className={`fixed left-1/2 -translate-x-1/2 z-40 w-max max-w-[calc(100vw-1.5rem)] transition-all duration-300 ${
           selectedDocIds.size > 0
-            ? `opacity-100 ${stagedDocs.length > 0 ? "bottom-16" : "bottom-10"} pointer-events-auto`
+            ? `opacity-100 ${SELECTION_BAR_BOTTOM} pointer-events-auto`
             : "opacity-0 -bottom-20 pointer-events-none"
         }`}
         style={{ transitionTimingFunction: "cubic-bezier(0.34, 1.56, 0.64, 1)" }}
       >
         <div
-          className="flex items-center gap-2 px-4 py-2.5 bg-slate-900/95 text-white rounded-lg shadow-2xl border border-slate-700/60"
+          className="flex flex-wrap items-center justify-center gap-x-1.5 gap-y-1 px-3 py-2 bg-slate-900/95 text-white rounded-lg shadow-2xl border border-slate-700/60"
           style={{ backdropFilter: "blur(20px) saturate(200%)" }}
         >
-          <span className="text-[13px] font-bold">{selectedDocIds.size} selected</span>
-          <div className="h-4 w-px bg-slate-700 mx-1" />
+          <span className="px-1 text-[13px] font-bold whitespace-nowrap">{selectedDocIds.size} selected</span>
+          <div className="h-4 w-px bg-slate-700 mx-1 max-sm:hidden" />
           <button
             onClick={() => setSelectedDocIds(new Set())}
-            className="px-2.5 py-1 text-[13px] font-bold text-[var(--color-text-faint)] hover:text-white hover:bg-slate-700/60 rounded-lg transition-colors"
+            className={`${barBtn} text-[var(--color-text-faint)]`}
           >
             Deselect
           </button>
-          {/* One orange (Move, unless the stack's Open shows), two quiet, the rest under More. */}
+          {/* One orange (Move), the rest quiet, the rare ones under More. */}
           <button
             onClick={() => setShowBulkMoveModal(true)}
-            className={`flex items-center gap-1.5 px-2.5 py-1 text-[13px] font-bold rounded-lg transition-all active:scale-95 ${stagedDocs.length > 0
-              // The stack's Open is the orange one while the stack shows.
-              ? "text-slate-200 hover:text-white hover:bg-slate-700/60"
-              : "bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)]"}`}
+            className="flex items-center gap-1.5 h-9 px-3 text-[13px] font-bold rounded-lg transition-all active:scale-95 bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] whitespace-nowrap"
             title="Move all selected documents to a folder"
           >
             <ArrowRight className="w-3 h-3" /> Move to…
           </button>
           <button
             onClick={handleStageSelected}
-            className="flex items-center gap-1.5 px-2.5 py-1 text-[13px] font-bold text-slate-200 hover:text-white hover:bg-slate-700/60 rounded-lg transition-colors"
-            title="Add to the reference stack to read side by side"
+            className={`${barBtn} text-slate-200`}
+            title="Stage them: gather them with others to view side by side, mark up and send, from Staged"
           >
             <Layers className="w-3 h-3" /> Stage
           </button>
           <button
+            onClick={() => openSend(sortedDocs.filter((d) => selectedDocIds.has(d.id!)))}
+            className={`${barBtn} text-slate-200`}
+            title="Send the selected documents: a link, email, text or QR code"
+          >
+            <Send className="w-3 h-3" /> Send
+          </button>
+          <button
             onClick={() => setShowBulkCheckout(true)}
-            className="flex items-center gap-1.5 px-2.5 py-1 text-[13px] font-bold text-slate-200 hover:text-white hover:bg-slate-700/60 rounded-lg transition-colors"
+            className={`${barBtn} text-slate-200`}
             title="Check out the selected documents, on their own or to a project"
           >
             <Briefcase className="w-3 h-3" /> Check out
@@ -5495,7 +5524,7 @@ export default function LibraryExplorerPage() {
               <button
                 onClick={() => setBulkMoreOpen((v) => !v)}
                 aria-haspopup="menu" aria-expanded={bulkMoreOpen}
-                className="flex items-center gap-1 px-2.5 py-1 text-[13px] font-bold text-slate-200 hover:text-white hover:bg-slate-700/60 rounded-lg transition-colors"
+                className={`${barBtn} text-slate-200`}
               >
                 <MoreHorizontal className="w-3.5 h-3.5" /> More
               </button>
@@ -5529,7 +5558,7 @@ export default function LibraryExplorerPage() {
       <StatusFooter
         docCount={filteredDocs.length}
         folderCount={filteredFolders.length}
-        stagedCount={stagedDocs.length}
+        stagedCount={staged.count}
         selectedCount={selectedDocIds.size}
         loading={loadingDocs || loadingUpload}
         density={density}
@@ -5547,9 +5576,7 @@ export default function LibraryExplorerPage() {
         isController={isController}
         onNavigateFolder={setCurrentFolderId}
         onSelectDoc={setSelectedDoc}
-        onStageDoc={(doc) => {
-          setStagedDocs((prev) => prev.some((d) => d.id === doc.id) ? prev : [...prev, doc]);
-        }}
+        onStageDoc={(doc) => stageMany([doc])}
         onUpload={() => fileInputRef.current?.click()}
         onCreateFolder={openCreateFolder}
         onColumnManager={() => setShowColumnManager(true)}
@@ -5557,18 +5584,17 @@ export default function LibraryExplorerPage() {
         currentLibraryId={libraryId}
       />
 
-      {/* STAGING TRAY — fixed bottom bar */}
-      <StagingTray
-        docs={stagedDocs}
-        onRemove={handleUnstage}
-        onClear={handleClearStaged}
-        onOpen={() => { setOpenBookId(null); setShowMultiView(true); }}
-      />
+      {/* (The staged tray is in the app frame, on every Documents page.) */}
 
-      {/* MULTI-DOC VIEWER */}
-      {showMultiView && stagedDocs.length > 0 && (
+      {/* SEND: a link, email, text or QR code, for one document or the selection */}
+      {sendDocs && activeOrgId && (
+        <SendSheet orgId={activeOrgId} docs={sendDocs} onClose={() => setSendDocs(null)} />
+      )}
+
+      {/* A curated collection opened as a book */}
+      {showMultiView && bookDocs.length > 0 && (
         <MultiDocViewer
-          docs={stagedDocs}
+          docs={bookDocs}
           onClose={() => { setShowMultiView(false); setOpenBookId(null); }}
           currentUserId={uid ?? undefined}
           currentUserEmail={userEmail ?? undefined}

@@ -22,7 +22,7 @@ export function CornerDock() {
   return (
     <div
       id={DOCK_ID}
-      className="fixed bottom-4 right-4 z-[300] flex flex-col items-end gap-2 pointer-events-none max-w-[calc(100vw-2rem)]"
+      className="fixed bottom-[calc(1rem_+_var(--staged-tray-h,0px))] right-4 z-[300] flex flex-col items-end gap-2 pointer-events-none max-w-[calc(100vw-2rem)]"
     />
   );
 }

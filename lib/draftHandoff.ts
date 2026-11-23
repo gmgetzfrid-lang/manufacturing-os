@@ -49,8 +49,24 @@ export async function stashDraft(files: DraftHandoffFile[]): Promise<string> {
   return key;
 }
 
-/** Read and DELETE the stashed files for `key` (one-shot). */
-export async function takeDraft(key: string): Promise<DraftHandoff | null> {
+// A key taken once in this page answers the same files again: the form's
+// effect can run twice (React's strict mode, a remount), and the second
+// read used to find the entry already deleted, so the files never attached.
+const taken = new Map<string, Promise<DraftHandoff | null>>();
+
+/** Read and DELETE the stashed files for `key` (one-shot; asking again for
+ *  the same key in this page gives the same files). */
+export function takeDraft(key: string): Promise<DraftHandoff | null> {
+  let p = taken.get(key);
+  if (!p) {
+    p = takeDraftOnce(key);
+    taken.set(key, p);
+    p.catch(() => taken.delete(key));
+  }
+  return p;
+}
+
+async function takeDraftOnce(key: string): Promise<DraftHandoff | null> {
   const db = await openDb();
   try {
     return await new Promise<DraftHandoff | null>((resolve, reject) => {

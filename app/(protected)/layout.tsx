@@ -18,6 +18,7 @@ import TrialBanner from "@/components/subscription/TrialBanner";
 import SubscriptionGate from "@/components/subscription/SubscriptionGate";
 import RelationshipGraphHost from "@/components/documents/RelationshipGraphHost";
 import BackToGraphChip from "@/components/graph/BackToGraphChip";
+import StagingTray from "@/components/documents/StagingTray";
 import SignatureCaptureHost from "@/components/signatures/SignatureCaptureHost";
 import { DialogHost } from "@/components/providers/DialogProvider";
 import { NotificationCenterProvider } from "@/components/notifications/NotificationCenter";
@@ -116,6 +117,9 @@ const ProtectedContent = ({ children }: { children: React.ReactNode }) => {
             <SignatureCaptureHost />
             <DialogHost />
           </main>
+          {/* "Staged: 3 documents" on every Documents page while something is
+              staged: its own row under the page, never over its last rows. */}
+          <StagingTray />
         </div>
       </div>
     </div>
