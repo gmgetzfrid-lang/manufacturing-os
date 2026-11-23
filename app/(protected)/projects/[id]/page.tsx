@@ -21,7 +21,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import {
-  Loader2, AlertTriangle, Pause, Play,
+  Pause, Play,
   CheckCircle2, XCircle, Archive as ArchiveIcon, Layers, Send, Settings2,
   Users, FileText, Activity as ActivityIcon,
   Hash, Trash2, Plus, Flag, X, Download, Target, ShieldCheck, Pencil, CircleDollarSign, Package, Lock,
@@ -62,7 +62,13 @@ import PresenceIndicator from "@/components/ui/PresenceIndicator";
 import { useRole } from "@/components/providers/RoleContext";
 import { appAlert, appConfirm } from "@/components/providers/DialogProvider";
 import { Select } from "@/components/ui/Field";
-import LoadingBlock from "@/components/ui/LoadingBlock";
+import { SkeletonRows, SkeletonText } from "@/components/ui/Skeleton";
+import { ErrorNote } from "@/components/ui/ErrorNote";
+import { Button, useActionFeedback } from "@/components/ui/Button";
+import { CopyId } from "@/components/ui/CopyId";
+import { label as fieldLabel, field as fieldCls } from "@/components/admin/kit";
+import { withViewTransition } from "@/lib/viewTransition";
+import { flushSync } from "react-dom";
 import { useDraft, clearDraft } from "@/hooks/useDraft";
 import {
   getProject, listMembers, listActivity, listProjectCheckouts,
@@ -170,6 +176,8 @@ export default function ProjectDetailPage() {
       window.history.replaceState(null, "", u.toString());
     } catch { /* URL sync is best-effort */ }
   }, []);
+  // A tab picked by hand: the content cross-fades (instant under reduced motion).
+  const switchTab = useCallback((t: Tab) => withViewTransition(() => flushSync(() => setTab(t))), [setTab]);
   // Same-page ?tab= navigations (the coach's deep links live on THIS page)
   // must switch the tab too — the state initializer only runs on mount.
   useEffect(() => {
@@ -208,8 +216,6 @@ export default function ProjectDetailPage() {
   const [showPhases, setShowPhases] = useState(false);
   // A phone keeps the band to the name and the Project menu's dots.
   const narrow = useIsMobile();
-  // The schedule's tabs use the full width; the rest a reading width.
-  const wideTab = isScheduleTab(tab) || !tab;
 
   // Status-transition state
   const [pendingStatus, setPendingStatus] = useState<ProjectStatus | null>(null);
@@ -399,8 +405,8 @@ export default function ProjectDetailPage() {
     return () => { window.removeEventListener("project:tab", toTab); window.removeEventListener("project:complete", complete); };
   }, [goTab]);
 
-  const handlePostComment = async () => {
-    if (!commentDraft.trim() || !uid || !project) return;
+  const handlePostComment = async (): Promise<boolean> => {
+    if (!commentDraft.trim() || !uid || !project) return false;
     setPosting(true);
     try {
       await postComment({
@@ -412,8 +418,10 @@ export default function ProjectDetailPage() {
       });
       setCommentDraft("");
       await refresh();
+      return true;
     } catch (e) {
       setActionError(sayError(e));
+      return false;
     } finally { setPosting(false); }
   };
 
@@ -447,7 +455,7 @@ export default function ProjectDetailPage() {
   if (loading) return (
     <div className={FRAME}>
       <PageHero back={{ onClick: goBack, label: "Back to projects" }} kicker="Projects" title="Project" />
-      <PageBody><Card><LoadingBlock what="the project" className="border-0 p-0" /></Card></PageBody>
+      <PageBody><SkeletonRows rows={6} what="the project" /></PageBody>
     </div>
   );
 
@@ -456,15 +464,14 @@ export default function ProjectDetailPage() {
       <PageHero back={{ onClick: goBack, label: "Back to projects" }} kicker="Projects"
         title={error === "Project not found" || !error ? "Project not found." : "Couldn't open the project."} />
       <PageBody>
-        <Card>
-          <p role="alert" className="text-[14px] text-[var(--color-text)]">
-            {error === "Project not found" || !error ? "This project wasn't found. It may have been deleted, or you're not on it." : `Couldn't load the project: ${error}`}
+        {error === "Project not found" || !error ? (
+          <p className="text-[15px] text-[var(--color-text)]">
+            It may have been deleted, or you&apos;re not on it.{" "}
+            <Link href="/projects" className="font-semibold text-[var(--color-accent-text)] hover:underline underline-offset-2">All projects</Link>
           </p>
-          <div className="mt-3 flex gap-4 text-[15px]">
-            {error && error !== "Project not found" && <button onClick={() => void refresh()} className="text-[var(--color-accent-text)] hover:underline">Try again</button>}
-            <Link href="/projects" className="text-[var(--color-accent-text)] hover:underline">All projects</Link>
-          </div>
-        </Card>
+        ) : (
+          <ErrorNote title="Couldn't load the project." next={error} onRetry={() => void refresh()} />
+        )}
       </PageBody>
     </div>
   );
@@ -484,43 +491,54 @@ export default function ProjectDetailPage() {
   const stepsDone = st.reduce((a, s) => a + s.done, 0), stepsAll = st.reduce((a, s) => a + s.steps, 0);
   // How the finish went against the plan: the phase that finished last.
   const lastDone = st.filter((s) => s.state === "finished" && s.finishedAt).sort((a, b) => Date.parse(b.finishedAt!) - Date.parse(a.finishedAt!))[0];
-  const finishFact = (): HeroFact | null => {
+  // How the finish went against the plan. `hero` when it's the number
+  // that matters now (the work is over and nothing is left to close).
+  const finishFact = (hero = false): HeroFact | null => {
     const l = lastDone?.lateHours;
     if (l == null) return null;
-    return l >= 0.5 ? { label: "Hours late", value: h1(l), tone: "bad" } : l <= -0.5 ? { label: "Hours early", value: h1(l), tone: "good" } : { label: "Finish", value: "On time", tone: "good" };
+    return l >= 0.5 ? { label: "Hours late", value: h1(l), tone: "bad", hero } : l <= -0.5 ? { label: "Hours early", value: h1(l), tone: "good", hero } : { label: "Finish", value: "On time", tone: "good", hero };
   };
-  const stepsFact: HeroFact | null = stepsAll ? { label: "Steps", value: `${stepsDone}/${stepsAll}` } : null;
+  // The steps, said once and small: the line of phases already shows them.
+  const stepsFact: HeroFact | null = stepsAll ? { label: "Steps done", value: `${stepsDone} of ${stepsAll}` } : null;
   let answer: React.ReactNode = project.name;
   let sub: React.ReactNode = project.status === "cancelled" && project.cancelledReason ? `Cancelled: ${project.cancelledReason}` : null;
   let facts: Array<HeroFact | null> = [];
+  // ONE large number, picked by the stage the project is at: while the
+  // work runs, how far off the plan it is (or the steps left when it's on
+  // plan); once the work is done, what's left to close (or how late it
+  // finished when nothing is). Never "235/235".
   if (project.status === "cancelled") answer = "Cancelled.";
   else if (project.status === "archived") answer = "Archived.";
-  else if (project.status === "completed") { answer = workDone ? "Project complete." : "Marked complete."; facts = [stepsFact, finishFact()]; }
+  else if (project.status === "completed") { answer = workDone ? "Project complete." : "Marked complete."; facts = [finishFact(true), stepsFact]; }
   else if (!standings || !stepRows) answer = project.name;
   else if (noSchedule) { answer = "No schedule yet."; sub = "Import it on Plan to track the work."; }
   else if (workDone) {
-    answer = "Work done.";
-    facts = [stepsFact, finishFact(), close ? { label: "Left to close", value: close.open.length, tone: close.open.length ? "warn" : "good" } : null];
+    const left = close ? close.open.length : null;
+    answer = left === 0 ? "Work done. Ready to close." : "Work done.";
+    if (left) sub = `Next to close: ${close!.open[0].name}.`;
+    facts = left ? [{ label: "Left to close", value: left, tone: "warn", hero: true }, finishFact(), stepsFact]
+      : [finishFact(true), stepsFact];
   } else if (state?.scheduledDone && unscheduled.length) {
     answer = `${joinWords(st.filter((s) => s.state === "finished").map((s) => s.name))} done.`;
     sub = `${joinWords(unscheduled.map((p) => p.name))} ${unscheduled.length === 1 ? "has" : "have"} no schedule yet.`;
-    facts = [stepsFact, finishFact()];
+    facts = [finishFact(true), stepsFact];
   } else if (running) {
     answer = `${who(running)} is ${running.pct}% done.`;
     const late = lateWords(running.lateHours);
     sub = running.forecastFinish ? `Forecast end ${when(running.forecastFinish)}${late ? `, ${late}` : ""}.` : null;
+    const stepsLeft: HeroFact = { label: "Steps left", value: Math.max(0, running.steps - running.done), hero: running.standing !== "behind" && running.standing !== "ahead" };
     facts = [
+      running.standing === "behind" ? { label: "Hours behind", value: h1(running.gapHours), tone: "bad", hero: true }
+        : running.standing === "ahead" ? { label: "Hours ahead", value: h1(running.gapHours), tone: "good", hero: true } : null,
+      stepsLeft,
       { label: "Plan by now", value: `${running.planPct}%` },
-      running.standing === "behind" ? { label: "Hours behind", value: h1(running.gapHours), tone: "bad" }
-        : running.standing === "ahead" ? { label: "Hours ahead", value: h1(running.gapHours), tone: "good" } : { label: "Pace", value: "On plan" },
       { label: "Overdue", value: running.overdue, tone: running.overdue ? "bad" : undefined },
-      { label: "Steps", value: `${running.done}/${running.steps}` },
     ];
   } else if (upcoming) {
     answer = `${who(upcoming)} starts ${upcoming.plannedStart ? when(upcoming.plannedStart).split(",").slice(0, 2).join(",") : "soon"}.`;
     facts = [{ label: "Steps planned", value: upcoming.steps }];
   }
-  else if (st.length && st.every((s) => s.state === "finished")) { answer = "Work done."; facts = [stepsFact, finishFact()]; }
+  else if (st.length && st.every((s) => s.state === "finished")) { answer = "Work done."; facts = [finishFact(true), stepsFact]; }
   if (project.status === "paused" && !sub) sub = "Paused.";
   const heroFacts = facts.filter((f): f is HeroFact => !!f);
 
@@ -530,16 +548,19 @@ export default function ProjectDetailPage() {
     const ph = phases.find((p) => p.id === s.id);
     const late = lateWords(s.lateHours);
     const bad = (s.state === "finished" && (s.lateHours ?? 0) >= 0.5) || (s.state === "running" && s.standing === "behind");
-    const red = "font-semibold text-[var(--state-overdue)]";
-    // One fact a line: the dates, when it finished (or where it stands), how late.
-    const where = s.state === "finished" ? <>
-        {s.finishedAt && <span className="block max-sm:hidden">Done {when(s.finishedAt)}</span>}
-        <span className={`block ${bad ? red : ""}`}>{late ?? "Done"}</span>
-      </>
-      : s.state === "running" ? <>
-        <span className="block">{s.pct}% done</span>
-        {s.standing === "behind" && <span className={`block max-sm:hidden ${red}`}>{h1(s.gapHours)} h behind</span>}
-      </>
+    const red = "font-semibold text-[var(--state-overdue-text)]";
+    // Two short lines: the dates, then where it stands (when it finished
+    // and how late, in one line; the exact time is in its tooltip).
+    const day = (iso: string) => fmtInTz(Date.parse(iso), tz, { month: "short", day: "numeric" });
+    const where = s.state === "finished" ? (
+        <span className="block truncate" title={s.finishedAt ? `Done ${when(s.finishedAt)}` : undefined}>
+          {s.finishedAt && <span className="max-sm:hidden">Done {day(s.finishedAt)}{late ? ", " : ""}</span>}
+          {late ? <span className={bad ? red : ""}>{late}</span> : !s.finishedAt ? "Done" : null}
+        </span>
+      )
+      : s.state === "running" ? (
+        <span className="block truncate">{s.pct}% done{s.standing === "behind" && <span className={`max-sm:hidden ${red}`}>, {h1(s.gapHours)} h behind</span>}</span>
+      )
         : s.state === "not started" ? <span className="block">Not started</span> : <span className="block">No schedule yet</span>;
     return {
       label: s.id === "all" ? "Work" : s.name,
@@ -694,11 +715,10 @@ export default function ProjectDetailPage() {
         </>}
       >
         {actionError && (
-          <div role="alert" className="mb-4 flex items-start gap-2 text-[14px] font-semibold text-[var(--state-overdue)]">
-            <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
-            <span className="flex-1">{actionError}</span>
-            <button type="button" onClick={() => setActionError(null)} className="shrink-0 p-1 rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface)]" aria-label="Dismiss">
-              <X className="w-3.5 h-3.5" />
+          <div className="mb-4 flex items-start gap-2">
+            <ErrorNote compact className="flex-1" title={actionError} next="" />
+            <button type="button" onClick={() => setActionError(null)} className="shrink-0 w-8 h-8 pointer-coarse:w-11 pointer-coarse:h-11 -mt-1 inline-flex items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]" aria-label="Dismiss">
+              <X className="w-4 h-4" />
             </button>
           </div>
         )}
@@ -709,25 +729,26 @@ export default function ProjectDetailPage() {
         )}
         {/* TABS: the five for running the job, then the records used every
             week, all in sight (a phone scrolls the strip sideways). The two
-            rare ones sit under More, with the one open in sight. */}
-        <div className="mt-6 sm:mt-7 flex items-end border-b border-[var(--color-border-strong)]">
+            rare ones sit under More, with the one open in sight. Switching
+            cross-fades where the browser can. */}
+        <div className="mt-5 sm:mt-6 flex items-end border-b border-[var(--color-border)]">
           <TabStrip>
             {MAIN_TABS.map((t) => (
-              <TabButton key={t.id} active={tab === t.id} onClick={() => setTab(t.id)}>{t.label}</TabButton>
+              <TabButton key={t.id} active={tab === t.id} onClick={() => switchTab(t.id)}>{t.label}</TabButton>
             ))}
             <span aria-hidden className="shrink-0 self-center w-px h-5 bg-[var(--color-border-strong)]" />
             {RECORD_TABS.map((t) => (
-              <TabButton key={t.id} active={tab === t.id} onClick={() => setTab(t.id)}>
-                {t.label}{t.id === "documents" && checkouts.length > 0 && <span className="ui-count is-solid">{checkouts.length}</span>}
+              <TabButton key={t.id} active={tab === t.id} onClick={() => switchTab(t.id)}>
+                {t.label}{t.id === "documents" && checkouts.length > 0 && <span className="text-[13px] font-normal tabular-nums text-[var(--color-text-muted)]">{checkouts.length}</span>}
               </TabButton>
             ))}
             {MORE_TABS.filter((t) => t.id === tab).map((t) => (
-              <TabButton key={t.id} active onClick={() => setTab(t.id)}>{t.label}</TabButton>
+              <TabButton key={t.id} active onClick={() => switchTab(t.id)}>{t.label}</TabButton>
             ))}
           </TabStrip>
-          <span className="shrink-0 self-center ml-3 sm:ml-6">
-            <MoreMenu label="More" triggerClass="inline-flex items-center justify-center gap-1 h-10 px-2 -mx-2 rounded-md text-[15px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface)]"
-              items={MORE_TABS.map((t) => ({ icon: <t.icon className="w-4 h-4" />, label: t.label, current: tab === t.id, onClick: () => setTab(t.id) }))} />
+          <span className="shrink-0 self-center ml-3 sm:ml-5">
+            <MoreMenu label="More" triggerClass="inline-flex items-center justify-center gap-1 h-10 pointer-coarse:h-11 px-2 -mx-2 rounded-lg text-[15px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
+              items={MORE_TABS.map((t) => ({ icon: <t.icon className="w-4 h-4" />, label: t.label, current: tab === t.id, onClick: () => switchTab(t.id) }))} />
           </span>
           <div className="ml-auto pl-2 self-center shrink-0 max-sm:hidden">
               <HelpTooltip>
@@ -749,7 +770,7 @@ export default function ProjectDetailPage() {
 
       {/* CONTENT: white cards on the paper, over the band's bottom edge. The
           schedule's tabs use the full width; the rest a reading width. */}
-      <PageBody className={wideTab ? "" : "max-w-6xl mx-auto"}>
+      <PageBody>
         {/* The work is done: what's left to close, as one path. */}
         {tab === "plan" && closing && (
           <ClosePath close={close} standings={standings} when={when} />
@@ -788,9 +809,9 @@ export default function ProjectDetailPage() {
             )}
           </div>
         )}
-        {(tab === "intake" || isScheduleTab(tab) || !tab) && !uid && <Card><LoadingBlock what="your access" className="border-0 p-0" /></Card>}
+        {(tab === "intake" || isScheduleTab(tab) || !tab) && !uid && <SkeletonRows rows={5} what="your access" />}
         {/* Where to open is decided by the schedule: until it's read, say so. */}
-        {!tab && uid && <Card><LoadingBlock what="the schedule" className="border-0 p-0" /></Card>}
+        {!tab && uid && <SkeletonRows rows={6} what="the schedule" />}
         {tab === "costs" && project.id && project.orgId && uid && (
           <CostsTab
             orgId={project.orgId}
@@ -828,7 +849,7 @@ export default function ProjectDetailPage() {
             onJobKind={setJobKind}
           />
         )}
-        {tab === "closeout" && !uid && <Card><LoadingBlock what="close-out" className="border-0 p-0" /></Card>}
+        {tab === "closeout" && !uid && <SkeletonRows rows={5} what="close-out" />}
         {tab === "materials" && project.id && project.orgId && uid && (
           <MaterialsRegister orgId={project.orgId} projectId={project.id} phases={phases} canManage={!!canManage || access.canEdit} actor={{ uid, email: userEmail }} />
         )}
@@ -948,13 +969,13 @@ export default function ProjectDetailPage() {
           {/* The reason being typed is kept on this device until it's saved. */}
           <ReasonDraft key={pendingStatus} draftKey={`project-status:${project.id}:${pendingStatus}`} value={statusReason} set={setStatusReason}
             onEscape={() => { if (!transitionBusy && !reviewOpen) { setPendingStatus(null); setStatusReason(""); setActionError(null); } }} />
-          <div className="w-full max-w-md bg-[var(--color-surface)] rounded-lg shadow-2xl border border-[var(--color-border)] overflow-hidden animate-in fade-in zoom-in-95">
+          <div className="ui-float ui-float-in w-full max-w-md bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] overflow-hidden">
             <div className="px-6 py-4 border-b border-[var(--color-border)] relative pr-12">
               <button onClick={() => { setPendingStatus(null); setStatusReason(""); setActionError(null); }} disabled={transitionBusy} aria-label="Close"
                 className="absolute top-3 right-3 p-1.5 rounded-lg text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
                 <X className="w-4 h-4" />
               </button>
-              <h2 className="font-display text-[19px] font-semibold text-[var(--color-text)]">
+              <h2 className="font-display text-[20px] font-semibold text-[var(--color-text)]">
                 {pendingStatus === "cancelled" ? "Cancel project" :
                  pendingStatus === "completed" ? "Mark project complete" :
                  pendingStatus === "archived" ? "Archive project" :
@@ -977,8 +998,10 @@ export default function ProjectDetailPage() {
             {/* Closeout gates — what a finished job should have closed out.
                 Warnings, not walls: the owner can complete anyway, on the record. */}
             {pendingStatus === "completed" && !gates && (
-              <div className="px-6 pt-4 text-[14px] text-[var(--color-text-muted)]">
-                {gatesFailed ? <span className="font-semibold text-[var(--state-held)]">Couldn&apos;t check what&apos;s still open. You can still complete it.</span> : <><Loader2 className="w-3.5 h-3.5 animate-spin inline mr-1.5" />Checking what&apos;s still open…</>}
+              <div className="px-6 pt-4">
+                {gatesFailed
+                  ? <p className="text-[14px] font-semibold text-[var(--state-held-text)]">Couldn&apos;t check what&apos;s still open. You can still complete it.</p>
+                  : <SkeletonText lines={3} />}
               </div>
             )}
             {pendingStatus === "completed" && gates && (() => {
@@ -995,54 +1018,53 @@ export default function ProjectDetailPage() {
               const failed = gateLines.filter((g) => !g.ok).length;
               return (
                 <div className="px-6 pt-4">
-                  <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5">Left to close</div>
+                  <h3 className="text-[14px] font-semibold text-[var(--color-text)] mb-1">Left to close</h3>
                   <ul className="divide-y divide-[var(--color-border)] border-y border-[var(--color-border)]">
                     {gateLines.map((g, i) => (
-                      <li key={i} className="flex items-center gap-2 py-1.5 text-[14px] text-[var(--color-text)]">
-                        {g.ok ? <CheckCircle2 className="w-4 h-4 shrink-0 text-[var(--state-released)]" /> : <AlertTriangle className="w-4 h-4 shrink-0 text-[var(--state-held)]" />}
+                      <li key={i} className="flex items-center gap-2.5 py-2 text-[14px] text-[var(--color-text)]">
+                        <span aria-label={g.ok ? "Clear" : "Open"} className="w-[7px] h-[7px] rounded-full shrink-0" style={{ background: g.ok ? "var(--state-released)" : "var(--state-held)" }} />
                         {g.text}
                       </li>
                     ))}
                   </ul>
                   {failed > 0 && (
-                    <div className="mt-2 text-[13px] text-[var(--color-text-muted)]">
+                    <p className="mt-2 text-[13px] text-[var(--color-text-muted)]">
                       You can complete anyway. The open items stay on the record and in the report.
-                    </div>
+                    </p>
                   )}
                 </div>
               );
             })()}
             <div className="px-6 py-5">
-              <label className="text-[13px] font-semibold text-[var(--color-text)]">
-                Reason {pendingStatus === "cancelled" ? "*" : "(optional)"}
+              <label htmlFor="status-reason" className={fieldLabel}>
+                {pendingStatus === "cancelled" ? "Why is it being cancelled?" : <>Note <span className="font-normal text-[var(--color-text-muted)]">(optional, kept in Activity)</span></>}
               </label>
               <textarea
+                id="status-reason"
                 value={statusReason}
                 onChange={(e) => setStatusReason(e.target.value)}
                 autoFocus
                 rows={3}
-                className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-md text-[15px] bg-[var(--color-surface)] resize-y"
-                placeholder={pendingStatus === "cancelled" ? "Why is this project being cancelled?" : "Optional note for the audit log"}
+                aria-invalid={pendingStatus === "cancelled" && !!actionError && !statusReason.trim() ? true : undefined}
+                aria-describedby={actionError ? "status-reason-err" : undefined}
+                className={`${fieldCls} !h-auto min-h-[5.5rem] py-2 resize-y`}
+                placeholder={pendingStatus === "cancelled" ? "e.g. Moved to the spring outage" : "e.g. Waiting on the vendor"}
               />
-              {actionError && <div className="mt-2 text-[14px] font-semibold text-[var(--state-overdue)]">{actionError}</div>}
+              {actionError && <ErrorNote compact className="mt-2" title={actionError} next="" />}
             </div>
-            <div className="px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-end gap-2">
-              <button onClick={() => { setPendingStatus(null); setStatusReason(""); setActionError(null); }} disabled={transitionBusy} className="h-9 px-3.5 rounded-md text-[14px] font-semibold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border-strong)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">Cancel</button>
+            <div className="px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex flex-wrap items-center justify-end gap-2">
+              <Button variant="secondary" onClick={() => { setPendingStatus(null); setStatusReason(""); setActionError(null); }} disabled={transitionBusy}>Keep as is</Button>
               {pendingStatus === "completed" && (reviewLeft ?? 0) > 0 ? (
                 <>
-                  <button onClick={handleTransition} disabled={transitionBusy} className="inline-flex items-center gap-1.5 h-9 px-3.5 rounded-md text-[14px] font-semibold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border-strong)] hover:bg-[var(--color-surface-2)] disabled:opacity-60">
-                    {transitionBusy && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                    Complete anyway
-                  </button>
-                  <button onClick={() => setReviewOpen(true)} className="inline-flex items-center gap-1.5 h-9 px-4 rounded-md text-[14px] font-semibold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)]">
-                    Finish the review
-                  </button>
+                  <Button variant="secondary" onClick={handleTransition} loading={transitionBusy}>Complete anyway</Button>
+                  <Button onClick={() => setReviewOpen(true)}>Finish the review</Button>
                 </>
               ) : (
-                <button onClick={handleTransition} disabled={transitionBusy} className="inline-flex items-center gap-1.5 h-9 px-4 rounded-md text-[14px] font-semibold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-60">
-                  {transitionBusy && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                  Confirm
-                </button>
+                <Button variant={pendingStatus === "cancelled" ? "danger" : "primary"} onClick={handleTransition} loading={transitionBusy}
+                  disabled={pendingStatus === "cancelled" && !statusReason.trim()}
+                  title={pendingStatus === "cancelled" && !statusReason.trim() ? "Say why it's being cancelled first" : undefined}>
+                  {pendingStatus === "cancelled" ? "Cancel project" : pendingStatus === "completed" ? "Mark complete" : pendingStatus === "archived" ? "Archive" : pendingStatus === "paused" ? "Pause project" : canReopen(project.status) ? "Reopen" : "Resume"}
+                </Button>
               )}
             </div>
           </div>
@@ -1124,8 +1146,8 @@ function TabButton({ active, onClick, children }: { active: boolean; onClick: ()
       type="button"
       onClick={onClick}
       aria-current={active ? "page" : undefined}
-      className={`shrink-0 h-11 text-[15px] font-semibold inline-flex items-center gap-1.5 border-b-[3px] whitespace-nowrap transition-colors ${
-        active ? "border-[var(--color-main)] text-[var(--color-text)]" : "border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-border-strong)]"
+      className={`shrink-0 h-11 text-[15px] font-semibold inline-flex items-center gap-1.5 border-b-2 whitespace-nowrap transition-colors ${
+        active ? "border-[var(--color-current)] text-[var(--color-text)]" : "border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-border-strong)]"
       }`}
     >
       {children}
@@ -1137,7 +1159,9 @@ function DocumentsTab({ checkouts }: { checkouts: CheckoutWithDoc[] }) {
   if (checkouts.length === 0) {
     return (
       <Card label="Checked out to this project">
-        <p className="text-[15px] text-[var(--color-text-muted)]">None yet. Check a document out from its library.</p>
+        <p className="text-[15px] text-[var(--color-text-muted)]">Nothing checked out to this project. Check a document out from its library.{" "}
+          <Link href="/documents" className="font-semibold text-[var(--color-accent-text)] hover:underline underline-offset-2">Open Documents</Link>
+        </p>
       </Card>
     );
   }
@@ -1146,12 +1170,12 @@ function DocumentsTab({ checkouts }: { checkouts: CheckoutWithDoc[] }) {
   return (
     <>
       {active.length > 0 && (
-        <Card label={<span className="inline-flex items-center gap-2"><span aria-hidden className="ui-icon-tile is-sm is-solid"><Lock className="w-4 h-4" /></span>Checked out now <span className="ui-count is-solid">{active.length}</span></span>} pad={false} className="overflow-hidden">
+        <Card label={<>Checked out now <span className="ml-1 text-[15px] font-normal tabular-nums text-[var(--color-text-muted)]">{active.length}</span></>} pad={false} className="overflow-hidden">
           <CheckoutTable rows={active} />
         </Card>
       )}
       {released.length > 0 && (
-        <Card label={<span className="inline-flex items-center gap-2"><span aria-hidden className="ui-icon-tile is-sm is-solid"><RotateCcw className="w-4 h-4" /></span>Checked out before <span className="ui-count is-solid">{released.length}</span></span>} pad={false} className="overflow-hidden">
+        <Card label={<>Checked out before <span className="ml-1 text-[15px] font-normal tabular-nums text-[var(--color-text-muted)]">{released.length}</span></>} pad={false} className="overflow-hidden">
           <CheckoutTable rows={released} historical />
         </Card>
       )}
@@ -1163,7 +1187,7 @@ function DocumentsTab({ checkouts }: { checkouts: CheckoutWithDoc[] }) {
 function CheckoutTable({ rows, historical }: { rows: CheckoutWithDoc[]; historical?: boolean }) {
   const router = useRouter();
   return (
-    <table className="w-full text-[15px]">
+    <table className="w-full text-[14px]">
       <thead className="max-sm:hidden bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text-muted)] text-left">
         <tr className="border-b border-[var(--color-border)]">
           <th scope="col" className="font-semibold px-4 h-10">Document</th>
@@ -1181,16 +1205,16 @@ function CheckoutTable({ rows, historical }: { rows: CheckoutWithDoc[]; historic
             <tr key={c.id} className="hover:bg-[var(--color-surface-2)] cursor-pointer align-top max-sm:flex max-sm:flex-wrap max-sm:gap-x-3 max-sm:px-4 max-sm:py-3"
               onClick={(e) => { if (!(e.target as HTMLElement).closest("a, button")) router.push(href); }}>
               <td className="sm:px-4 sm:py-3 max-sm:basis-full min-w-0">
-                <Link href={href} className="ui-id">{c.docNumber || "-"}</Link>
-                {c.docTitle && <div className="text-[13px] text-[var(--color-text-muted)] line-clamp-1">{c.docTitle}</div>}
+                {c.docNumber ? <CopyId value={c.docNumber} label="document number" /> : null}
+                <Link href={href} className={`block line-clamp-1 hover:text-[var(--color-accent-text)] hover:underline underline-offset-2 ${c.docNumber ? "text-[13px] text-[var(--color-text-muted)]" : "font-semibold text-[var(--color-text)]"}`}>{c.docTitle || c.docNumber || "Open the document"}</Link>
                 {note && <div className="text-[13px] text-[var(--color-text-muted)] line-clamp-1 md:hidden">{note}</div>}
               </td>
-              <td className="px-4 py-3 hidden lg:table-cell">{c.libraryName ? <Link href={`/documents/${c.libraryId}`} className="ui-tag">{c.libraryName}</Link> : <span className="text-[var(--color-text-faint)]">-</span>}</td>
+              <td className="px-4 py-3 hidden lg:table-cell">{c.libraryName ? <Link href={`/documents/${c.libraryId}`} className="text-[var(--color-text)] hover:text-[var(--color-accent-text)] hover:underline underline-offset-2">{c.libraryName}</Link> : null}</td>
               <td className="sm:px-4 sm:py-3 text-[14px] text-[var(--color-text)] max-sm:text-[13px] max-sm:text-[var(--color-text-muted)]">
                 {c.userName || "-"}
                 {note && <div className="max-md:hidden text-[13px] text-[var(--color-text-muted)] line-clamp-1">{note}</div>}
               </td>
-              <td className="px-4 py-3 hidden md:table-cell"><span className="ui-tag is-more capitalize">{String(c.mode).replace(/_/g, " ")}</span></td>
+              <td className="px-4 py-3 hidden md:table-cell text-[var(--color-text-muted)]">{(() => { const w = String(c.mode ?? "").replace(/_/g, " "); return w ? w[0].toUpperCase() + w.slice(1) : null; })()}</td>
               <td className="sm:px-4 sm:py-3 text-[14px] text-[var(--color-text-muted)] whitespace-nowrap max-sm:text-[13px]">{formatRelative(historical ? (c.releasedAt ?? c.endedAt) : c.startedAt)}</td>
             </tr>
           );
@@ -1208,37 +1232,36 @@ function ActivityTab({
   commentDraft: string;
   setCommentDraft: (v: string) => void;
   posting: boolean;
-  onPost: () => void;
+  onPost: () => Promise<boolean>;
 }) {
   // A long timeline shows its newest, and says how many more there are.
   const [shown, setShown] = useState(40);
+  const post = useActionFeedback();
+  const send = () => void post.run(async () => { if (!(await onPost())) throw new Error("not posted"); }).catch(() => { /* said above the tabs */ });
   return (
     <>
       {canComment && (
         <Card label="Comment">
+          <label htmlFor="project-comment" className={fieldLabel}>An update or a question for everyone on the project</label>
           <textarea
+            id="project-comment"
             value={commentDraft}
             onChange={(e) => setCommentDraft(e.target.value)}
-            placeholder="Share an update or ask a question…"
-            aria-label="Comment"
+            placeholder="e.g. Scaffold on E-22 moved to Thursday"
             rows={2}
-            className="w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-md text-[15px] bg-[var(--color-surface)] resize-y"
+            className={`${fieldCls} !h-auto min-h-[4.5rem] py-2 resize-y`}
           />
-          <div className="mt-2 flex items-center justify-end">
-            {/* Orange once there's something to post. */}
-            <button
-              onClick={onPost}
-              disabled={!commentDraft.trim() || posting}
-              className={`inline-flex items-center gap-1.5 h-9 px-3.5 rounded-md text-[14px] font-semibold disabled:opacity-50 ${commentDraft.trim() ? "text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)]" : "border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)]"}`}
-            >
-              {posting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
-              Post comment
-            </button>
+          <div className="mt-3 flex items-center justify-end">
+            {/* The accent once there's something to post. */}
+            <Button variant={commentDraft.trim() ? "primary" : "secondary"} onClick={send} disabled={!commentDraft.trim() || posting}
+              loading={posting || post.loading} done={post.done} doneLabel="Posted">
+              <Send className="w-4 h-4" /> Post comment
+            </Button>
           </div>
         </Card>
       )}
 
-      <Card label={timeline.length ? <span className="inline-flex items-center gap-2"><span aria-hidden className="ui-icon-tile is-sm is-solid"><ActivityIcon className="w-4 h-4" /></span>Activity <span className="ui-count is-solid">{timeline.length}</span></span> : "Activity"}>
+      <Card label={timeline.length ? <>Activity <span className="ml-1 text-[15px] font-normal tabular-nums text-[var(--color-text-muted)]">{timeline.length}</span></> : "Activity"}>
         {/* Empty: one plain line on the sheet, not a box inside it. */}
         {timeline.length === 0 ? <p className="text-[15px] text-[var(--color-text-muted)]">No activity yet. Comments, checkouts and revisions show up here.</p> : <TimelineFeed
           events={timeline.slice(0, shown)}
@@ -1281,7 +1304,7 @@ function MembersTab({
     setBusy(true); setError(null);
     try {
       const { data: userRows, error: lookErr } = await supabase.from("users").select("id, email").eq("email", email).limit(2);
-      if (lookErr) throw new Error(`Couldn't look up that email: ${lookErr.message}`);
+      if (lookErr) throw new Error(`Couldn't look up that email. ${sayError(lookErr)}`);
       const candidates = (userRows ?? []) as Array<{ id: string; email: string }>;
       if (candidates.length > 1) throw new Error("More than one account has that email. Ask your admin to sort it out.");
       const candidate = candidates[0] ?? null;
@@ -1290,9 +1313,9 @@ function MembersTab({
       const { data: memberRow, error: orgErr } = candidate
         ? await supabase.from("org_members").select("uid").eq("org_id", project.orgId).eq("uid", candidate.id).eq("status", "active").maybeSingle()
         : { data: null, error: null };
-      if (orgErr) throw new Error(`Couldn't check that person is in this org: ${orgErr.message}`);
+      if (orgErr) throw new Error(`Couldn't check that person is in this workspace. ${sayError(orgErr)}`);
       const data = candidate && memberRow ? candidate : null;
-      if (!data?.id) throw new Error("No one with that email is in this org.");
+      if (!data?.id) throw new Error("No one with that email is in this workspace. Check the spelling, or ask an admin to invite them first.");
       await addMember({
         projectId: project.id!, orgId: project.orgId,
         userId: data.id as string, userEmail: email, userName: email.split("@")[0],
@@ -1301,11 +1324,15 @@ function MembersTab({
       });
       setAddEmail(""); setAddResp(""); setAddRole("collaborator");
       onAdded();
+      return true;
     } catch (e) {
       const msg = (e as Error).message;
-      setError(needsCoOwnerSql(msg) ? COOWNER_SQL_NOTE : msg);
+      setError(needsCoOwnerSql(msg) ? COOWNER_SQL_NOTE : sayError(e));
+      return false;
     } finally { setBusy(false); }
   };
+  const adding = useActionFeedback();
+  const add = () => void adding.run(async () => { if (!(await addByEmail())) throw new Error("not added"); }).catch(() => { /* said under the form */ });
 
   // A member's permission on the project: Co-owner, Editor or Viewer.
   const [roleBusy, setRoleBusy] = useState<string | null>(null);
@@ -1317,7 +1344,7 @@ function MembersTab({
       onAdded();
     } catch (e) {
       const msg = (e as Error).message;
-      setError(needsCoOwnerSql(msg) ? COOWNER_SQL_NOTE : msg);
+      setError(needsCoOwnerSql(msg) ? COOWNER_SQL_NOTE : sayError(e));
     } finally { setRoleBusy(null); }
   };
 
@@ -1337,23 +1364,32 @@ function MembersTab({
   const [transferNote, setTransferNote] = useState<string | null>(null);
 
   const addCard = canManage && (
-    <Card label="Add member">
-      <div className="flex flex-col sm:flex-row gap-2">
-        <input value={addEmail} onChange={(e) => setAddEmail(e.target.value)} placeholder="user@example.com" aria-label="Email"
-          className="flex-1 h-10 px-3 border border-[var(--color-border-strong)] rounded-md text-[15px] bg-[var(--color-surface)]" />
-        <Select value={addRole} onChange={(e) => setAddRole(e.target.value as ProjectMemberRole)} aria-label="Permission">
-          {MEMBER_ROLES.map((r) => <option key={r.role} value={r.role}>{r.label}</option>)}
-        </Select>
-      </div>
-      <input value={addResp} onChange={(e) => setAddResp(e.target.value)} placeholder="What they're responsible for (optional)" aria-label="Responsibility"
-        className="mt-2 w-full h-10 px-3 border border-[var(--color-border-strong)] rounded-md text-[15px] bg-[var(--color-surface)]" />
-      <div className="mt-2 flex justify-end">
-        {/* Orange once there's someone to add: the event organization's Save may be the orange one until then. */}
-        <button onClick={addByEmail} disabled={busy || !addEmail.trim()} className={`inline-flex items-center gap-1.5 h-9 px-3.5 rounded-md text-[14px] font-semibold disabled:opacity-50 ${addEmail.trim() ? "text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)]" : "border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)]"}`}>
-          {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />} Add member
-        </button>
-      </div>
-      {error && <div role="alert" className="mt-2 text-[14px] font-semibold text-[var(--state-overdue)]">{error}</div>}
+    <Card label="Add a member">
+      <form onSubmit={(e) => { e.preventDefault(); if (addEmail.trim() && !busy) add(); }}
+        className="grid gap-x-4 gap-y-3 sm:grid-cols-[minmax(0,1.4fr)_minmax(0,0.8fr)] lg:grid-cols-[minmax(0,1.2fr)_minmax(0,0.6fr)_minmax(0,1.4fr)_auto] items-end">
+        <div className="min-w-0">
+          <label htmlFor="member-email" className={fieldLabel}>Email</label>
+          <input id="member-email" type="email" autoComplete="email" inputMode="email" value={addEmail} onChange={(e) => setAddEmail(e.target.value)} placeholder="name@company.com"
+            className={fieldCls} />
+        </div>
+        <div className="min-w-0">
+          <label htmlFor="member-role" className={fieldLabel}>Permission</label>
+          <Select id="member-role" value={addRole} onChange={(e) => setAddRole(e.target.value as ProjectMemberRole)}>
+            {MEMBER_ROLES.map((r) => <option key={r.role} value={r.role}>{r.label}</option>)}
+          </Select>
+        </div>
+        <div className="min-w-0 sm:col-span-2 lg:col-span-1">
+          <label htmlFor="member-resp" className={fieldLabel}>Responsible for <span className="font-normal text-[var(--color-text-muted)]">(optional)</span></label>
+          <input id="member-resp" value={addResp} onChange={(e) => setAddResp(e.target.value)} placeholder="e.g. Exchanger bundles, nights"
+            className={fieldCls} />
+        </div>
+        {/* The accent once there's someone to add. */}
+        <Button type="submit" variant={addEmail.trim() ? "primary" : "secondary"} disabled={!addEmail.trim()} loading={busy} done={adding.done} doneLabel="Added"
+          title={!addEmail.trim() ? "Type their email first" : undefined} className="sm:col-span-2 lg:col-span-1 justify-self-end">
+          <Plus className="w-4 h-4" /> Add member
+        </Button>
+      </form>
+      {error && <ErrorNote compact className="mt-3" title={error} next="" />}
     </Card>
   );
 
@@ -1365,20 +1401,20 @@ function MembersTab({
           onDone={(note) => { setTransferTo(undefined); setTransferNote(note ?? "Ownership transferred."); onAdded(); }} />
       )}
 
-      <Card label={<span className="inline-flex items-center gap-2"><span aria-hidden className="ui-icon-tile is-sm is-solid"><Users className="w-4 h-4" /></span>Members <span className="ui-count is-solid">{members.length}</span></span>} pad={false} className="overflow-hidden"
+      <Card label={<>Members <span className="ml-1 text-[15px] font-normal tabular-nums text-[var(--color-text-muted)]">{members.length}</span></>} pad={false} className="overflow-hidden"
         action={canTransfer ? (
           <span className="flex items-center gap-3">
-            {transferNote && <span role="status" className="text-[13px] font-semibold text-[var(--state-released)]">{transferNote}</span>}
+            {transferNote && <span role="status" className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-[var(--color-text)]"><span aria-hidden className="w-[7px] h-[7px] rounded-full bg-[var(--state-released)]" />{transferNote}</span>}
             <button type="button" onClick={() => setTransferTo(null)} title="Hand the project to someone else and choose what you become" className={heroQuiet}>
               Transfer ownership
             </button>
           </span>
         ) : undefined}>
-        <table className="w-full text-[15px]">
+        <table className="w-full text-[14px]">
           <thead className="max-sm:hidden bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text-muted)] text-left">
             <tr className="border-b border-[var(--color-border)]">
               <th scope="col" className="font-semibold px-4 h-10">Member</th>
-              <th scope="col" className="font-semibold px-4 w-[150px]">Permission</th>
+              <th scope="col" className="font-semibold px-4 w-[170px]">Permission</th>
               <th scope="col" className="font-semibold px-4 hidden md:table-cell">Responsible for</th>
               <th scope="col" className="px-4 w-[1%]"><span className="sr-only">Actions</span></th>
             </tr>
@@ -1395,63 +1431,56 @@ function MembersTab({
                     <input autoFocus value={respDraft} aria-label={`What ${who} is responsible for`}
                       onChange={(e) => setEditingResp((p) => ({ ...p, [m.userId]: e.target.value }))}
                       onKeyDown={(e) => { if (e.key === "Enter") void saveResp(m); if (e.key === "Escape") setEditingResp((p) => { const n = { ...p }; delete n[m.userId]; return n; }); }}
-                      placeholder="What is this member responsible for?"
-                      className="flex-1 min-w-0 h-9 px-3 border border-[var(--color-border-strong)] rounded-md text-[14px] bg-[var(--color-surface)]" />
-                    <button type="button" onClick={() => void saveResp(m)} className="h-9 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">Save</button>
+                      placeholder="e.g. Exchanger bundles, nights"
+                      className={`${fieldCls} flex-1 min-w-0 !h-9 pointer-coarse:!h-11 text-[14px] max-sm:text-[16px]`} />
+                    <Button size="sm" variant="secondary" onClick={() => void saveResp(m)}>Save</Button>
                   </div>
                 ) : (
                   <button type="button" onClick={() => setEditingResp((p) => ({ ...p, [m.userId]: m.responsibility ?? "" }))}
                     className="text-left text-[14px] text-[var(--color-text)] hover:text-[var(--color-accent-text)]">
-                    {m.responsibility ? m.responsibility : <span className="text-[var(--color-accent-text)] hover:underline">Add responsibility</span>}
+                    {m.responsibility ? m.responsibility : <span className="text-[var(--color-accent-text)] hover:underline underline-offset-2">Add what they&apos;re responsible for</span>}
                   </button>
                 )
-              ) : m.responsibility ? <span className="text-[14px] text-[var(--color-text)]">{m.responsibility}</span> : <span className="text-[var(--color-text-faint)]">-</span>;
+              ) : m.responsibility ? <span className="text-[14px] text-[var(--color-text)]">{m.responsibility}</span> : null;
+              // Their row's rare actions, in one menu.
+              const rowMenu = [
+                ...(canTransfer && !isOwner ? [{ icon: <ShieldCheck className="w-4 h-4" />, label: "Make owner", onClick: () => setTransferTo(m.userId) }] : []),
+                ...(canRemove ? [{ icon: <X className="w-4 h-4" />, label: "Remove from project", tone: "bad" as const, line: !!canTransfer && !isOwner, onClick: async () => {
+                  if (!(await appConfirm({ message: `Remove ${m.userEmail || m.userName || m.userId} from this project? They keep their account; they just stop seeing it if it's private.`, tone: "danger", confirmLabel: "Remove" }))) return;
+                  try {
+                    await removeMember({ projectId: project.id!, orgId: project.orgId, userId: m.userId, userName: m.userName ?? undefined, userEmail: m.userEmail ?? undefined, actorUserId, actorEmail });
+                    onAdded();
+                  } catch (e) { await appAlert({ message: sayError(e), tone: "danger" }); }
+                } }] : []),
+              ];
               return (
                 <tr key={m.id} className="group align-top max-sm:flex max-sm:flex-wrap max-sm:items-center max-sm:gap-x-3 max-sm:px-4 max-sm:py-3">
                   <td className="sm:px-4 sm:py-3 max-sm:flex-1 max-sm:min-w-0">
                     <div className="flex items-center gap-3 min-w-0">
-                      <span aria-hidden className={`ui-icon-tile is-sm font-display text-[13px] font-semibold ${isOwner ? "is-solid" : ""}`}>{initials(who)}</span>
+                      <span aria-hidden className="w-8 h-8 shrink-0 rounded-full grid place-items-center bg-[var(--color-surface-2)] border border-[var(--color-border)] font-display text-[12px] font-semibold text-[var(--color-text-muted)]">{initials(who)}</span>
                       <div className="min-w-0">
                         <div className="font-semibold text-[var(--color-text)] truncate">{who}</div>
                         {m.userEmail && m.userEmail !== who && <div className="text-[13px] text-[var(--color-text-muted)] truncate">{m.userEmail}</div>}
                       </div>
                     </div>
                   </td>
-                  <td className="sm:px-4 sm:py-3">
+                  <td className="sm:px-4 sm:py-3 max-sm:order-2">
                     {canManage && !isOwner ? (
                       <select value={m.role} disabled={roleBusy === m.userId} onChange={(e) => void setRole(m, e.target.value as ProjectMemberRole)}
                         aria-label={`Permission for ${who}`} title={MEMBER_ROLES.find((r) => r.role === m.role)?.help}
-                        className="h-9 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[14px] font-semibold text-[var(--color-text)] disabled:opacity-60">
+                        className="h-9 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-control)] bg-[var(--color-surface)] px-2 text-[14px] max-sm:text-[16px] text-[var(--color-text)] disabled:opacity-60">
                         {MEMBER_ROLES.map((r) => <option key={r.role} value={r.role}>{r.label}</option>)}
                       </select>
                     ) : (
-                      <span className="inline-flex h-9 items-center"><span className={`ui-pill ${isOwner ? "is-solid" : ""}`}>{roleLabel(isOwner ? "owner" : m.role)}</span></span>
+                      <span className="inline-flex h-9 items-center text-[14px] text-[var(--color-text)]">{roleLabel(isOwner ? "owner" : m.role)}</span>
                     )}
                   </td>
-                  <td className="hidden max-sm:block max-sm:basis-full max-sm:pt-1.5 md:table-cell md:px-4 md:py-3">{resp}</td>
-                  <td className="sm:px-4 sm:py-3 whitespace-nowrap sm:text-right max-sm:basis-full">
-                    <span className="inline-flex items-center gap-2">
-                      {canTransfer && !isOwner && (
-                        <button type="button" onClick={() => setTransferTo(m.userId)} title="Hand the project to this member" className="text-[14px] text-[var(--color-accent-text)] hover:underline">
-                          Make owner
-                        </button>
-                      )}
-                      {canRemove && (
-                        <button type="button"
-                          onClick={async () => {
-                            if (!(await appConfirm({ message: `Remove ${m.userEmail || m.userName || m.userId} from this project?`, tone: "danger", confirmLabel: "Remove" }))) return;
-                            try {
-                              await removeMember({ projectId: project.id!, orgId: project.orgId, userId: m.userId, userName: m.userName ?? undefined, userEmail: m.userEmail ?? undefined, actorUserId, actorEmail });
-                              onAdded();
-                            } catch (e) { await appAlert({ message: sayError(e), tone: "danger" }); }
-                          }}
-                          title="Remove from project"
-                          aria-label={`Remove ${who}`}
-                          className="w-9 h-9 inline-flex items-center justify-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--state-overdue)] hover:bg-[var(--color-surface-2)]">
-                          <X className="w-4 h-4" />
-                        </button>
-                      )}
-                    </span>
+                  <td className="hidden max-sm:block max-sm:order-3 max-sm:basis-full max-sm:pt-1.5 md:table-cell md:px-4 md:py-3">{resp}</td>
+                  <td className="sm:px-4 sm:py-3 w-[1%] whitespace-nowrap sm:text-right max-sm:order-1">
+                    {rowMenu.length > 0 && (
+                      <MoreMenu label={`Actions for ${who}`} iconOnly items={rowMenu}
+                        triggerClass="inline-flex items-center justify-center w-9 h-9 pointer-coarse:w-11 pointer-coarse:h-11 rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]" />
+                    )}
                   </td>
                 </tr>
               );
