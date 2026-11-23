@@ -10,6 +10,7 @@ import { supabase } from "@/lib/supabase";
 import { saveFinding, FindingsMissing, topicOf, type Category, type FindingKind } from "@/lib/findings";
 import { AREAS, AREA_OF, CATEGORIES, emptySaved, lessonOf, type AddedFinding, type Answer, type CategoryId, type Finding, type ReviewSaved, type SavedItem } from "@/lib/postEventReview";
 import { noEmDash } from "@/lib/noEmDash";
+import { patchProjectSettings } from "@/lib/nextPlanStore";
 
 /** The whole project, or one phase. */
 export const reviewScope = (phaseId: string | null | undefined) => phaseId || "all";
@@ -39,6 +40,7 @@ export function cleanSaved(v: unknown): ReviewSaved {
       const item: SavedItem = {};
       if (i.status === "kept" || i.status === "discarded" || i.status === "draft") item.status = i.status;
       if (i.done === true) item.done = true;
+      const why = str(i.notRight, 300)?.trim(); if (why) item.notRight = why;
       const e = cleanEdit(i.edits); if (e) item.edits = e;
       if (Array.isArray(i.info)) { const lines = i.info.map((t) => str(t, 1000)?.trim()).filter(Boolean) as string[]; if (lines.length) item.info = lines; }
       if (typeof i.basis === "string") item.basis = i.basis;
@@ -154,6 +156,36 @@ export async function syncLesson(input: { orgId: string; projectId: string; proj
     if (e instanceof FindingsMissing) return false;
     throw e;
   }
+}
+
+// ─── How many jobs each party can work at once ─────────────────────
+//
+// Kept with the project's settings, beside the contractors' staffing plans
+// (projects.shift_times.crewsAtOnce, by phase, then by party): a staffing
+// plan counts heads by craft, and this is the number of jobs those heads
+// can work at once. The review uses it as the party's planned number.
+
+const cleanAtOnce = (v: unknown): Record<string, number> => {
+  const out: Record<string, number> = {};
+  for (const [k, x] of Object.entries((v && typeof v === "object" ? v : {}) as Record<string, unknown>)) if (typeof x === "number" && Number.isFinite(x) && x >= 1 && x <= 50) out[k.slice(0, 80)] = Math.round(x);
+  return out;
+};
+export async function loadAtOnce(projectId: string, scope: string): Promise<Record<string, number>> {
+  const { data, error } = await supabase.from("projects").select("shift_times").eq("id", projectId).maybeSingle();
+  if (error) throw new Error(error.message);
+  const st = (data as { shift_times?: Record<string, unknown> | null } | null)?.shift_times;
+  const all = (st?.crewsAtOnce ?? {}) as Record<string, unknown>;
+  return cleanAtOnce(all[scope]);
+}
+/** A party's jobs at once for one phase (null: back to the schedule's number). */
+export function saveAtOnce(projectId: string, scope: string, party: string, n: number | null): Promise<void> {
+  return patchProjectSettings(projectId, (st) => {
+    const all = { ...((st.crewsAtOnce ?? {}) as Record<string, unknown>) };
+    const mine = cleanAtOnce(all[scope]);
+    if (n != null && n >= 1) mine[party] = Math.round(n); else delete mine[party];
+    all[scope] = mine;
+    st.crewsAtOnce = all;
+  });
 }
 
 export type { AddedFinding };

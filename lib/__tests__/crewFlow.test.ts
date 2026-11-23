@@ -85,30 +85,25 @@ describe("the review's conclusion from it", () => {
   const look = buildLookBack({ milestones: all, notes: [], discoveries: discoveries(all), now: Date.parse(at(31, 12)), tz });
   const base = { built, work, notes: [], look, discoveries: discoveries(all), tz };
   const r = buildReview(base);
-  const f = r.findings.find((x) => x.key === "contractors:crew:clean")!;
-  it("says the crew could not keep up in plain facts: how many at once against the plan, and the longest waits", () => {
-    expect(f.title).toBe("Not enough Clean for the equipment that was open: 4 jobs at once against 1 planned");
-    expect(f.because).toBe("4 jobs were open for Clean at once against 1 planned. Longest waits: E-4 23 h, E-3 20 h, E-2 6 h.");
-    expect(f.ask).toBe("Bring a second Clean crew for the days equipment opens.");
-    // No hours added across jobs anywhere it is shown: a sum of job waits reads as the crew sitting idle.
-    expect(`${f.title} ${f.because} ${f.why} ${f.effect} ${f.observation}`).not.toMatch(/52 h|waiting in all|what-if/i);
-    expect(f.effect).toBe("3 of the 4 jobs handed to Clean sat 4 h or more before it started them, the longest 23 h.");
-    expect(r.qa.map((x) => x.a).join(" ")).not.toMatch(/waiting in all|what-if/i);
+  it("the hand-offs to a crew are still counted for the report's table", () => {
     expect(crewsRows(r).find((row) => row[0] === "Clean")).toEqual(["Clean", "4", "3 of 4", "23 h (E-4), no link in the schedule", "4 (plan 1)"]);
     expect(CREWS_HEAD).toEqual(["Crew", "Jobs handed to it", "Jobs that waited 4 h or more for it", "Longest a job waited", "Most open at once"]);
-    // Each wait says what the job is taken to have followed, and that the schedule had no link for it.
-    expect(f.observation).toContain("E-4 Hydroblast Bundle 23 h (ready when Pull Bundle was done, no link in the schedule)");
-    expect(f.practice).toContain("sized to the most work the schedule hands it at once");
   });
-  it("is the app's suggestion until a person accepts it, unless the records show it cost the finish", () => {
-    const pt = pointOf(r, "Phase 1", tz);
-    // Here no work finished late, so the crew cost the finish nothing: it waits for a person.
-    expect(f.auto).toBe(false);
-    expect(pt.conclusions).toEqual([]);
-    expect(pt.pending.find((x) => x.key === f.key)).toMatchObject({ ask: f.ask, because: f.because, category: "Contractors and resourcing" });
-    const kept = buildReview({ ...base, saved: { ...emptySaved(), items: { [f.key]: { status: "kept" } } } });
-    expect(pointOf(kept, "Phase 1", tz).conclusions.map((x) => x.key)).toEqual([f.key]);
-    expect(r.qa.map((x) => x.q)).toEqual(expect.arrayContaining(["What was open and waiting for Clean?", "Would another Clean crew have changed the finish?"]));
+  it("the review reads the crew from its load: it kept to its plan, so no job waited for it past a planned start", () => {
+    // Four pulled the first morning against one planned at once: all four were ready by noon.
+    const L = r.loads.find((x) => x.party === "Clean")!;
+    expect([L.planned.n, L.planned.from, L.peak.open]).toEqual([1, "schedule", 4]);
+    // Each was cleaned at (or ahead of) its planned start: the time before that is the plan saying later, not waiting.
+    expect(L.jobs.map((j) => [j.id, j.partyH, j.nobodyH, j.laterH > 0])).toEqual([["c1", 0, 0, true], ["c2", 0, 0, true], ["c3", 0, 0, true], ["c4", 0, 0, true]]);
+    expect(L.waited).toEqual([]);
+    // So the review says nothing of a crew short of people, and nothing is on the slides for it.
+    expect(r.findings.some((x) => x.key.startsWith("contractors:load:") || x.key.startsWith("contractors:crew:"))).toBe(false);
+    expect(pointOf(r, "Phase 1", tz).conclusions.some((c) => /Clean/.test(c.title))).toBe(false);
+    // A person who sets the crew's number keeps its card, where the number can be changed; it says what the record shows.
+    const one = buildReview({ ...base, atOnce: { Clean: 1 } });
+    expect(one.loads.find((x) => x.party === "Clean")!.planned).toMatchObject({ n: 1, from: "set", sched: 1 });
+    expect(one.findings.find((x) => x.key === "contractors:load:clean")!.observation.split("\n")[1]).toBe("No job waited while Clean was working 1 or more: it worked 1 at most.");
+    void emptySaved;
   });
   it("a person can correct what a job followed, and its wait follows", () => {
     // E-4's cleaning was not ready until E-3's was done (a link the schedule did not have).

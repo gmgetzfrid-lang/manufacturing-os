@@ -9,9 +9,10 @@
 import JSZip from "jszip";
 import { noEmDash } from "@/lib/noEmDash";
 import { fmtInTz } from "@/lib/scheduleTz";
-import { CAUSE_WORD, areaOf, jobWord, orderWord, pointOf, shiftsWord, whenWord, type Finding, type Review } from "@/lib/postEventReview";
-import { MIN_WAIT_H, overloaded, type CrewFlow } from "@/lib/crewFlow";
-import { AREA_STATE_WORD, GUIDES, SCORE_CATEGORY, VERDICT_WORD, bookOf, categoryName, guidesOf, type AreaState, type Book, type Guide, type ScoreInputs, type Verdict } from "@/lib/reviewBook";
+import { CAUSE_WORD, jobShort, jobWord, loadDays, orderWord, pointOf, readyWord, shiftsWord, whenWord, type Finding, type Review } from "@/lib/postEventReview";
+import { MIN_WAIT_H } from "@/lib/crewFlow";
+import { bookOf, type Book, type ScoreInputs } from "@/lib/reviewBook";
+import type { PartyLoad } from "@/lib/partyLoad";
 import { lookFromPalette, type DeckLook } from "@/lib/deckLook";
 import type { LayoutRole, TemplateInfo } from "@/lib/slideTemplate";
 
@@ -35,8 +36,6 @@ export interface ReviewFileOpts {
 /** Who an action is for. `kind` is the project type in a sentence ("turnaround"). */
 export const appliesWord = (a: "all" | "unit", kind?: string | null) => (a === "unit" ? "Next event on this unit" : `Every ${kind?.trim() || "event"}`);
 
-/** A score line's measure with its category under it, unless they say the same thing (Safety, Cost). */
-const measureCell = (x: { key: keyof typeof SCORE_CATEGORY; measure: string }) => { const c = categoryName(SCORE_CATEGORY[x.key]); return c.toLowerCase().startsWith(x.measure.toLowerCase()) ? x.measure : `${x.measure}\n${c}`; };
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 const live = (r: Review) => r.findings.filter((f) => f.status !== "discarded");
 const toClose = (r: Review) => live(r).filter((f) => f.rating === "gap" || f.rating === "opportunity");
@@ -61,14 +60,7 @@ const facts = (f: Finding) => [...f.observation.split("\n").map((l) => l.trim())
 const point = (r: Review, o: ReviewFileOpts) => pointOf(r, eventName(o), o.tz);
 export const bookFor = (r: Review, o: ReviewFileOpts): Book => bookOf(r, eventName(o), o.tz, o.score ?? {});
 const NOT_SET = "Not set";
-const NOT_WRITTEN = "Not written";
 const scopeLine = (r: Review) => { const m = r.metrics; return m.steps ? `${m.baselineDone} of ${m.baselineSteps} planned activities completed${m.addedSteps ? `, plus ${m.addedDone} of ${m.addedSteps} added from ${plural(r.found.length, "finding")}` : ""}.` : ""; };
-/** Against its planned start: "22 h late", "2 h early", "on plan". */
-const planWord = (h: number | null) => (h == null ? "" : Math.abs(h) < 1 ? "On plan" : `${Math.abs(h)} h ${h > 0 ? "late" : "early"}`);
-/** Every job handed to a crew: when it was open, when the crew started it, how long it sat. */
-const plainStep = (n: string) => n.replace(/\s*\([^)]*\)/g, "").replace(/[()]/g, "").trim();
-const crewRows = (f: CrewFlow, tz: string): string[][] => f.jobs.map((j) => [jobWord(j), `${plainStep(j.after)} done${j.afterOrder !== j.order ? ` (${orderWord(j.afterOrder)})` : ""}${j.basis === "guessed" ? ", no link in the schedule" : j.basis === "corrected" ? ", as corrected" : ""}`, whenWord(j.openedAt, tz), whenWord(j.startedAt, tz), j.waitH >= 1 ? `${j.waitH} h` : "None", planWord(j.lateStartH)]);
-const crewHead = (f: CrewFlow) => ["Job", "Ready when", "Ready from", `${f.crew} started`, "Waited", "Start against plan"];
 /** Each crew that was handed work by another: how many jobs, how many of them
  *  waited for it, the longest one, and the most it had open at once. No hours
  *  are added across jobs: a sum of job waits reads as the crew sitting idle. */
@@ -99,7 +91,26 @@ const waitedRows = (r: Review): string[][] => [
   ...r.service.map((j) => [jobWord(j), j.crew, "Out for service (planned)", shiftsWord(j.shifts), `"${j.said}"${j.stillOut ? ` Still out past the time quoted: "${j.stillOut.said}"` : " Back as planned."}`]),
 ];
 const foundRows = (r: Review) => r.found.map((f) => [f.what, orderWord(f.on), String(f.steps), `${f.hours} h`, f.critical ? "Yes" : "No", f.approvedBy ?? "Not recorded"]);
-const SOURCES = "Sources: the baseline schedule; progress logged by shift; comments and hold reasons on each job; added-work records with their approver; shift meeting head counts; answers given in the review.";
+const SOURCES = "Sources: the baseline schedule and its links; actual start and finish times; progress logged by shift; comments and hold reasons on each job; added-work records with their approver; shift meeting head counts; what was entered in the review.";
+
+// ─── The findings, in the words and tables both files use ──────────
+
+/** "Tue, Oct 27" from "2026-10-27". */
+const dayName = (key: string) => { const d = new Date(`${key}T12:00:00Z`); return d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" }); };
+/** Where the late hours went: each piece, its hours, and what explains it. */
+export const LATE_BARS_HEAD = ["Piece of the late finish", "Hours", "What explains it"];
+export const lateBarRows = (r: Review): string[][] => r.lateBars.map((b) => [b.label, `${b.hours} h`, b.segs.map((x) => `${x.title}${b.segs.length > 1 ? ` (${x.hours} h)` : ""}`).join("; ")]);
+/** A party's load day by day: the chart, as a table. */
+export const loadDayHead = (L: PartyLoad) => ["Day", "Most ready at once", "Most being worked", "Planned at once", `Waited for ${L.party}`, "Nobody on it"];
+export const loadDayRows = (L: PartyLoad, tz: string): string[][] => loadDays(L, tz).map((d) => [dayName(d.day), String(d.open), String(d.working), String(d.planned), d.waitedH ? `${d.waitedH} h` : "", d.nobodyH ? `${d.nobodyH} h` : ""]);
+/** The jobs that waited for a party, and what each held up after it. */
+export const loadJobHead = (L: PartyLoad) => ["Job", "Ready", `${L.party} started it`, "Waited", "Held up after it"];
+export const loadJobRows = (L: PartyLoad, tz: string): string[][] => L.waited.map((j) => [jobWord(j), `${whenWord(j.ready, tz)}\n${readyWord(j)}`, j.start != null ? whenWord(j.start, tz) : "Not started", `${j.partyH} h`, L.down.held.filter((h) => h.by === j.id).map((h) => `${jobShort(h)}, ${h.hours} h`).join("; ") || "None"]);
+/** Ready work with nobody on it, by party and step. */
+export const IDLE_HEAD = ["Party", "Step", "Jobs", "Hours it sat"];
+export const idleRows = (f: Finding): string[][] => (f.idle?.groups ?? []).map((g) => [g.party, g.step, String(g.jobs.length), `${g.hours} h`]);
+/** Where a party's planned number came from. */
+export const plannedWord = (L: PartyLoad, tz: string) => (L.planned.from === "set" ? `Planned at once: ${L.planned.n}, set in this review (the schedule had ${L.planned.sched}).` : `Planned at once: ${L.planned.n}, from the schedule: the most of ${L.party}'s jobs it had going at one time${L.planned.schedAt != null ? ` (${whenWord(L.planned.schedAt, tz)})` : ""}.${L.calendars.length ? ` Its jobs were on ${L.calendars.length} crew calendar${L.calendars.length === 1 ? "" : "s"}: ${L.calendars.join(", ")}.` : ""}`);
 
 // ─── Word ──────────────────────────────────────────────────────────
 
@@ -108,8 +119,9 @@ type Block =
   | { k: "num"; text: string; n: number; lead?: string }
   | { k: "table"; head: string[]; rows: string[][]; widths: number[] };
 
-/** The report, top to bottom: what the event showed and what changes, then
- *  the records behind each. */
+/** The report, top to bottom: the answer (the finish and where the late
+ *  hours went), what the records show (each finding with its numbers and
+ *  tables), what we change, then the records behind it. */
 export function reportBlocks(r: Review, o: ReviewFileOpts): Block[] {
   const b: Block[] = [];
   const m = r.metrics, pt = point(r, o);
@@ -121,66 +133,50 @@ export function reportBlocks(r: Review, o: ReviewFileOpts): Block[] {
   const bk = bookFor(r, o);
   b.push({ k: "h1", text: `1. ${pt.headline}` });
   b.push({ k: "p", text: [pt.span, scopeLine(r)].filter(Boolean).join(" ") });
-  if (bk.delayLines.length) { b.push({ k: "p", lead: `${bk.delay.split(":")[0]}: `, text: "" }); for (const l of bk.delayLines) b.push({ k: "bullet", text: l }); }
-
-  b.push({ k: "h2", text: "What this review measures" });
-  b.push({ k: "table", head: ["Category", "What is measured", "Where it is addressed"], rows: bk.categories.map((c) => [c.name, c.measures, c.where]), widths: [1.2, 3.6, 2.1] });
-
-  b.push({ k: "h1", text: "2. The score: plan against actual" });
-  if (bk.score.line) b.push({ k: "p", text: bk.score.line });
-  b.push({ k: "table", head: ["Measure", "Target", "Actual", "Result", "Verdict"], rows: bk.score.rows.map((x) => [measureCell(x), x.plan, x.actual, x.result, x.result.toLowerCase() === VERDICT_WORD[x.verdict].toLowerCase() ? "" : VERDICT_WORD[x.verdict]]), widths: [1.1, 1.9, 2.4, 1.3, 1.0] });
-
-  b.push({ k: "h1", text: "3. What went well, what did not, and why" });
-  for (const a of bk.areas) {
-    b.push({ k: "h2", text: `${a.name}: ${a.tag.toLowerCase()}` });
-    for (const w of a.well) b.push({ k: "bullet", lead: "Went well: ", text: w });
-    for (const t of a.measured) b.push({ k: "bullet", lead: "Measured: ", text: t });
-    // Each finding by itself: what did not go well, where it was written, its own root cause, its action.
-    for (const it of a.items) {
-      b.push({ k: "bullet", lead: "Did not go well: ", text: it.didNot });
-      if (it.where) b.push({ k: "muted", text: `${it.where}.` });
-      b.push({ k: "p", lead: "Root cause: ", text: it.rootCause || NOT_WRITTEN });
-      b.push({ k: "p", lead: "Action: ", text: `No. ${it.action} in the action plan.` });
-    }
-    if (a.pending) b.push({ k: "bullet", text: `${a.pending === 1 ? "1 finding waits" : `${a.pending} findings wait`} for a decision in the review.` });
-    if (a.state === "none") b.push({ k: "p", text: `Nothing was recorded for this event.${a.guide ? ` How to set it up is in the last appendix (${GUIDES[a.guide].title.toLowerCase()}).` : ""}` });
+  if (r.lateBars.length) {
+    b.push({ k: "h2", text: `Where the ${m.varianceH} h went` });
+    b.push({ k: "table", head: LATE_BARS_HEAD, rows: lateBarRows(r), widths: [1.6, 0.7, 4.6] });
   }
-
-  b.push({ k: "h1", text: "4. The action plan" });
-  if (bk.actions.length) b.push({ k: "table", head: ["No.", "What we will do", "Area, for", "How it will be done", "Benefit", "Who", "By", "Cost"], rows: bk.actions.map((a) => [String(a.n), a.what, `${a.areaName}\n${appliesWord(a.applies, o.kind)}`, a.how, a.benefit || NOT_WRITTEN, a.who || NOT_SET, a.by || NOT_SET, a.cost || NOT_SET]), widths: [0.45, 1.3, 0.95, 1.55, 1.3, 0.7, 0.7, 0.7] });
-  else b.push({ k: "p", text: pt.pending.length ? "No action has been accepted in the review yet." : "Nothing in the records calls for a change." });
-  if (pt.pending.length) { b.push({ k: "h2", text: "Waiting for a decision in the review" }); for (const c of pt.pending) b.push({ k: "bullet", text: `${c.title}.` }); }
 
   const close = toClose(r);
-  b.push({ k: "h1", text: "5. Each finding, with the record behind it" });
-  if (!close.length) b.push({ k: "p", text: "None." });
+  b.push({ k: "h1", text: "2. What the records show" });
+  if (!close.length) b.push({ k: "p", text: "Nothing in the records calls for a change." });
   close.forEach((f, i) => {
     b.push({ k: "h2", text: `${i + 1}. ${f.title}` });
-    // Written on the job: what the person wrote, as written, and where.
     if (f.where) b.push({ k: "muted", text: `${f.where}.` });
-    if (f.source === "job") b.push({ k: "p", lead: "What happened: ", text: f.observation.replace(/\s*\n\s*/g, " ") });
-    if (f.source !== "job" || f.why) b.push({ k: "p", lead: "What justifies a change: ", text: f.why || f.effect || NOT_WRITTEN });
-    if (f.effect && f.effect !== f.why) b.push({ k: "p", lead: "What it cost: ", text: f.effect });
-    if (f.practice) b.push({ k: "p", lead: `How it is done well (${areaOf(f.category).name}): `, text: f.practice });
-    b.push({ k: "p", lead: "Root cause: ", text: f.gap || NOT_WRITTEN });
-    if (f.next) b.push({ k: "p", lead: "What we will do: ", text: f.next });
-    if (f.year) b.push({ k: "p", lead: "Longer term: ", text: f.year });
-    if (f.owner) b.push({ k: "p", lead: "Who: ", text: f.owner });
-    if (f.due) b.push({ k: "p", lead: "By: ", text: f.due });
-    if (f.cost) b.push({ k: "p", lead: "Cost: ", text: f.cost });
-    if (f.source !== "job" || f.info.length) {
-      b.push({ k: "p", lead: f.source === "job" ? "Added in the review:" : "From the records:", text: "" });
-      for (const l of f.source === "job" ? f.info : facts(f)) b.push({ k: "bullet", text: l });
+    const lines = f.observation.split("\n").map((l) => l.trim()).filter(Boolean);
+    for (const l of lines) b.push({ k: f.load || f.idle ? "p" : "bullet", text: l });
+    for (const l of f.info) b.push({ k: "bullet", text: l });
+    if (f.effect && !lines.includes(f.effect)) b.push({ k: "p", lead: "Of the late finish: ", text: f.effect });
+    if (f.load) {
+      const L = f.load;
+      b.push({ k: "muted", text: plannedWord(L, o.tz) });
+      b.push({ k: "table", head: loadDayHead(L), rows: loadDayRows(L, o.tz), widths: [1.2, 1.0, 1.0, 1.0, 1.1, 1.0] });
+      if (L.waited.length) b.push({ k: "table", head: loadJobHead(L), rows: loadJobRows(L, o.tz), widths: [1.7, 1.6, 1.2, 0.6, 1.8] });
+    } else if (f.idle) {
+      b.push({ k: "table", head: IDLE_HEAD, rows: idleRows(f), widths: [1.6, 3.1, 0.7, 1.0] });
+    } else if (f.evidence.length && f.source !== "job") {
+      b.push({ k: "p", lead: "From the records:", text: "" });
+      for (const l of f.evidence) b.push({ k: "bullet", text: l });
     }
+    if (f.ask) b.push({ k: "p", lead: "What we change: ", text: `${f.ask}${f.because ? ` ${f.because}` : ""}` });
+    if (f.notRight) b.push({ k: "muted", text: `Said not right in the review: ${f.notRight}` });
   });
+  if (r.wins.length) { b.push({ k: "h2", text: "What went well" }); for (const w of r.wins) b.push({ k: "bullet", text: w.text }); }
 
-  const quiet = live(r).filter((f) => f.rating === "none" && f.source === "records" && f.moved === 0);
-  let n = 6;
+  b.push({ k: "h1", text: "3. What we change next time" });
+  if (bk.actions.length) b.push({ k: "table", head: ["No.", "What we will do", "Why, from this event", "Area, for", "Who", "By"], rows: bk.actions.map((a) => [String(a.n), a.what, a.benefit || "", `${a.areaName}\n${appliesWord(a.applies, o.kind)}`, a.who || NOT_SET, a.by || NOT_SET]), widths: [0.4, 2.0, 2.2, 1.1, 0.7, 0.6] });
+  else b.push({ k: "p", text: "Nothing in the records calls for a change." });
+
+  const quiet = live(r).filter((f) => f.rating === "none" && f.source === "records");
+  let n = 4;
   if (quiet.length || pt.quiet.length) {
-    b.push({ k: "h1", text: `${n++}. What happened that did not move the finish` });
-    for (const f of quiet) { b.push({ k: "h2", text: f.title }); for (const l of facts(f)) b.push({ k: "bullet", text: l }); if (f.next) b.push({ k: "p", text: f.next }); }
+    b.push({ k: "h1", text: `${n++}. Checked: did not move the finish` });
+    for (const f of quiet) { b.push({ k: "h2", text: f.title }); for (const l of facts(f)) b.push({ k: "bullet", text: l }); }
     for (const t of pt.quiet.filter((t) => !quiet.some((f) => f.title === t))) b.push({ k: "bullet", text: `${t}.` });
   }
+  const out = r.findings.filter((f) => f.status === "discarded" && f.notRight);
+  if (out.length) { b.push({ k: "h2", text: "Taken out of the review" }); for (const f of out) b.push({ k: "bullet", text: `${f.title}: ${f.notRight}` }); }
 
   b.push({ k: "h1", text: `${n++}. The event in numbers` });
   b.push({ k: "table", head: ["Measure", "Result", "How it is counted"], rows: metricRows(r), widths: [2.0, 2.0, 2.9] });
@@ -194,10 +190,6 @@ export function reportBlocks(r: Review, o: ReviewFileOpts): Block[] {
   }
 
   let ap = 0; const letter = () => String.fromCharCode(65 + ap++);
-  for (const f of r.flows.filter(overloaded)) {
-    b.push({ k: "h1", text: `Appendix ${letter()}. What waited for ${f.crew}` });
-    b.push({ k: "table", head: crewHead(f), rows: crewRows(f, o.tz), widths: [1.6, 1.7, 1.0, 1.0, 0.7, 0.9] });
-  }
   if (lateRows(r).length) {
     b.push({ k: "h1", text: `Appendix ${letter()}. Other work orders that finished after their plan` });
     b.push({ k: "table", head: LATE_HEAD, rows: lateRows(r), widths: [1.8, 1.1, 4.0] });
@@ -213,18 +205,10 @@ export function reportBlocks(r: Review, o: ReviewFileOpts): Block[] {
   b.push({ k: "h1", text: `Appendix ${letter()}. Jobs that sat a shift` });
   if (waitedRows(r).length) b.push({ k: "table", head: ["Job", "Crew", "What happened", "When", "Why, from the record"], rows: waitedRows(r), widths: [1.7, 0.9, 1.1, 1.0, 2.2] }); else b.push({ k: "p", text: "None." });
   b.push({ k: "muted", text: "Night shifts count only for work that ran on nights. Equipment out for repair or calibration is a planned step, not waiting." });
-  const guides = guidesOf(bk);
-  if (guides.length) {
-    b.push({ k: "h1", text: `Appendix ${letter()}. How to set up what was not measured` });
-    for (const g of guides) {
-      b.push({ k: "h2", text: g.title });
-      b.push({ k: "p", text: g.what });
-      g.steps.forEach((t, i) => b.push({ k: "num", n: i + 1, text: t }));
-      b.push({ k: "p", lead: "In the app: ", text: g.inApp });
-    }
+  if (r.qa.length) {
+    b.push({ k: "h1", text: `Appendix ${letter()}. Questions people will ask, answered from the records` });
+    for (const x of r.qa) b.push({ k: "p", lead: `${x.q} `, text: x.a });
   }
-  b.push({ k: "h1", text: `Appendix ${letter()}. Anticipated questions` });
-  for (const x of r.qa) b.push({ k: "p", lead: `${x.q} `, text: x.a });
   b.push({ k: "h1", text: `Appendix ${letter()}. How each number is counted` });
   b.push({ k: "table", head: ["Measure", "What it means"], rows: r.definitions.map((d) => [d.measure, d.means]), widths: [2.2, 4.7] });
   b.push({ k: "muted", text: SOURCES });
@@ -394,10 +378,7 @@ export function picPlace(spec: SlideSpec, fit: DeckFit = PLAIN_FIT): "right" | "
 
 export const tablePt = (rows: string[][]) => { const c = rows.reduce((n, r) => n + r.join("").length, 0) + rows.length * 30; return c > 1900 ? 10 : c > 1550 ? 11 : c > 1250 ? 12 : c > 1000 ? 13 : c > 780 ? 14 : 15; };
 export const TONE_HEX: Record<Tone, { fg: string; bg: string }> = { bad: { fg: "A3200F", bg: "F8DFD9" }, warn: { fg: "7A4D00", bg: "F6E6C2" }, good: { fg: "1C6240", bg: "DCECDF" }, none: { fg: "5D6675", bg: "E2DED4" } };
-const VERDICT_TONE: Record<Verdict, Tone> = { met: "good", missed: "bad", unmeasured: "none", untargeted: "warn", open: "none" };
 type BorderLine = { type: "solid" | "none"; pt?: number; color?: string };
-const STATE_TONE: Record<AreaState, Tone> = { finish: "bad", time: "warn", improve: "warn", pending: "none", well: "good", none: "none" };
-const guideMore = (g: Guide): SlideMore => ({ title: g.title, sections: [{ title: "What it is", lines: [g.what] }, { title: "How to set it up", lines: g.steps, numbered: true }, { title: "In the app", lines: [g.inApp] }] });
 export type SlidePane = { title: string; items?: SlideItem[]; table?: { head: string[]; rows: string[][]; widths: number[]; title?: string } };
 type Item = SlideItem;
 type Pane = SlidePane;
@@ -439,138 +420,79 @@ export interface SlideSpec {
 
 const part = (i: number, n: number) => (n > 1 ? ` (${i + 1} of ${n})` : "");
 
-/** The deck, slide by slide (what the PowerPoint is drawn from), in the order
- *  the review is run: the cover, the score (plan against actual), the seven
- *  areas (went well, did not, root cause, action), and the action plan (what,
- *  how, benefit, who, by what date, cost). Each thing is said once. The record
- *  behind a line opens from the line in the app, and is in the report. */
+/** The deck, slide by slide (what the PowerPoint is drawn from), in the
+ *  order of the review on screen: where the late hours went, what the
+ *  records show (each finding, with its numbers; for a party's load, its
+ *  chart as a day-by-day table and the jobs that waited), and what we
+ *  change. Tables split over slides where they would not fit at the deck's
+ *  one table size. */
 export function deckSlides(r: Review, o: ReviewFileOpts, fit: DeckFit = PLAIN_FIT): SlideSpec[] {
   const s: SlideSpec[] = [], pt = point(r, o), bk = bookFor(r, o);
   const dates = eventDates(r, o.tz);
-  const PARTS = ["The score: plan against actual", "What went well, what did not, and why", "What we do about it"];
+  const PARTS = ["Where the late hours went", "What the records show", "What we change next time"];
   const partOf = (n: number) => ({ n, of: PARTS.length, name: PARTS[n - 1] });
-  const byKey = new Map(r.findings.map((f) => [f.key, f]));
-  s.push({ key: "cover", kicker: "Post-event review", title: dates ? `${eventName(o)}: ${dates}` : eventName(o), notes: "The score, then what went well and what did not by area, then what we do about it.",
+  const late = r.lateBars.length > 0;
+  const close = toClose(r);
+  /** Rows to slides: as many as fit at the deck's one size. */
+  const fitRows = (head: string[], rows: string[][], widths: number[], room: (i: number) => number): number[][] => {
+    const parts: number[][] = [];
+    rows.forEach((_, i) => {
+      const cur = parts[parts.length - 1];
+      if (cur && tableHeight(head, [...cur, i].map((j) => rows[j]), widths, fit.w, TABLE_PT, undefined, undefined, fit.charW) <= room(parts.length - 1)) cur.push(i); else parts.push([i]);
+    });
+    return parts.length ? parts : [[]];
+  };
+  s.push({ key: "cover", kicker: "Post-event review", title: dates ? `${eventName(o)}: ${dates}` : eventName(o), notes: `${pt.headline} Then what the records show, and what we change next time.`,
     body: { k: "cover", sub: projectLine(o), meta: [o.preparedBy, `Written ${o.date}`].filter(Boolean).join("  ·  "), agenda: PARTS,
-      table: { head: ["Category", "What is measured", "Where it is addressed"], rows: bk.categories.map((c) => [c.name, c.measures, c.where]), widths: [1.3, 4.2, 2.3] } } });
+      ...(close.length ? { tableTitle: pt.headline, table: { head: ["What the records show", late ? "Of the late finish" : "Hours it is about"], rows: close.slice(0, 7).map((f) => [f.title, late ? (f.finishH ? `${f.finishH} h` : "None") : f.hours != null ? `${f.hours} h` : ""]), widths: [6.4, 1.4] } } : {}) } });
 
-  // 1. The score. One slide when it fits at the deck's table size; else it
-  // runs on (the line above it and the counts stay on the first).
-  const sc = bk.score;
-  const SC_HEAD = ["Measure", "Target", "Actual", "Result"], SC_W = [1.4, 2.4, 3.4, 1.7];
-  const scRows = sc.rows.map((x) => [measureCell(x), x.plan, x.actual, x.result]);
-  // The verdict under the measure, unless the result already says it.
-  const scTags = sc.rows.map((x) => (x.result.toLowerCase() === VERDICT_WORD[x.verdict].toLowerCase() ? null : { text: VERDICT_WORD[x.verdict], tone: VERDICT_TONE[x.verdict] }));
-  const scMore = sc.rows.map((x) => {
-    const what = { title: "What it measures", lines: [x.means] };
-    if (x.key === "duration" && pt.lines.length) return { title: "Where the late hours went", sections: [{ title: "From the records", lines: pt.lines }] };
-    if (x.key === "added" && r.found.length) return { title: "Added work", sections: [what, ...(["added", "discovery"] as const).map((k) => ({ title: k === "added" ? "Added scope: known work, not on the plan" : "Discovery: found when opened or inspected", lines: r.found.filter((f) => (f.kind === "added") === (k === "added")).map((f) => `${orderWord(f.on)}: ${f.what}. ${f.hours} h${f.critical ? ", on the critical path" : ""}.`) })).filter((g) => g.lines.length)] };
-    if (x.key === "quality" && r.failedTests.length) return { title: "Quality", sections: [what, { title: "From the records", lines: r.failedTests.map((f) => `${orderWord(f.order)} ${f.step}: "${f.said}"`) }, ...(x.guide ? guideMore(GUIDES[x.guide]).sections.slice(1) : [])] };
-    if (x.key === "safety" && r.standDowns.length) return { title: "Safety", sections: [what, { title: "Stand-downs, from the records", lines: r.standDowns.map((h) => `${orderWord(h.order)} ${h.name}: ${h.hours} h. "${h.reason}"`) }, ...(x.guide ? guideMore(GUIDES[x.guide]).sections.slice(1) : [])] };
-    return x.guide ? { ...guideMore(GUIDES[x.guide]), sections: [what, ...guideMore(GUIDES[x.guide]).sections.slice(1)] } : { title: x.measure, sections: [what] };
-  });
-  const scTally = [{ n: sc.met, label: "met", tone: "good" as Tone }, { n: sc.missed, label: "missed", tone: "bad" as Tone }, { n: sc.untargeted, label: "no target set", tone: "warn" as Tone }, { n: sc.unmeasured, label: "not measured", tone: "none" as Tone }].filter((x) => x.n > 0);
-  const scFoot = [sc.untargeted ? "No target set: set it on the line in the review." : "", sc.unmeasured ? "Not measured: the event did not record it. Open the line for how to set it up." : ""].filter(Boolean).join(" ");
-  const scParts: number[][] = [];
-  sc.rows.forEach((_, i) => {
-    const cur = scParts[scParts.length - 1];
-    const room = tableRoom(fit, { lead: scParts.length <= 1 ? bk.delay : undefined, tally: scParts.length <= 1 ? scTally : undefined, foot: "x" });
-    if (cur && tableHeight(SC_HEAD, [...cur, i].map((j) => scRows[j]), SC_W, fit.w, TABLE_PT, [...cur, i].map((j) => scTags[j]), undefined, fit.charW) <= room) cur.push(i); else scParts.push([i]);
-  });
-  if (!scParts.length) scParts.push([]);
-  scParts.forEach((ix, i) => s.push({
-    key: i ? `score-${i + 1}` : "score", kicker: `1 · The score: plan against actual${part(i, scParts.length)}`, title: pt.headline, notes: i ? "" : [pt.headline, sc.line].filter(Boolean).join(" "), part: partOf(1),
-    body: {
-      k: "table", head: SC_HEAD, widths: SC_W, ...(i ? {} : { lead: bk.delay, tally: scTally }),
-      rows: ix.map((j) => scRows[j]), tags: ix.map((j) => scTags[j]), more: ix.map((j) => scMore[j]),
-      foot: i === scParts.length - 1 ? scFoot : "",
-    },
+  // 1. Where the late hours went.
+  const lb = lateBarRows(r), LB_W = [2.4, 0.9, 6.6];
+  const lbParts = late ? fitRows(LATE_BARS_HEAD, lb, LB_W, () => tableRoom(fit, { foot: "x" })) : [];
+  if (!late) s.push({ key: "late-1", kicker: `1 · ${PARTS[0]}`, title: pt.headline, part: partOf(1), notes: pt.headline, body: { k: "asks", items: [], foot: pt.span } });
+  lbParts.forEach((ix, i) => s.push({
+    key: `late-${i + 1}`, kicker: `1 · ${PARTS[0]}${part(i, lbParts.length)}`, title: pt.headline, part: partOf(1), notes: [pt.headline, pt.delay].filter(Boolean).join(" "),
+    body: { k: "table", head: LATE_BARS_HEAD, widths: LB_W, rows: ix.map((j) => lb[j]), rowKeys: ix.map((j) => r.lateBars[j].segs.find((x) => x.key)?.key ?? null),
+      more: ix.map((j) => ({ title: r.lateBars[j].label, sections: [{ title: "From the records", lines: [r.lateBars[j].line, ...r.lateBars[j].segs.map((x) => `${x.title}: ${x.hours} h.`)] }] })),
+      foot: i === lbParts.length - 1 ? `${pt.span} Each piece is put down to the finding that explains it; what is left is not explained by the records.` : "" },
   }));
 
-  // 2. The seven areas: each finding on its own row, with its own root
-  // cause and action, under its area. Areas split over slides when they
-  // would not read at 11 pt on one.
-  const costly = bk.areas.filter((a) => a.hours > 0).sort((a, b) => b.hours - a.hours);
-  const late = r.metrics.varianceH ?? 0;
-  const areasTitle = costly.length ? `${costly.map((a, i) => (i === 0 ? `${a.name} cost ${a.hours}${late ? ` of the ${late}` : ""} h` : `${a.name} ${a.hours} h`)).join(", ")}.`
-    : (bk.actions.length ? "Where the event can do better, by area" : bk.pending ? "No finding has been accepted yet" : "Nothing in the records calls for a change");
-  const AREA_HEAD = ["Area", "What went well", "What did not go well", "Root cause", "Action"], AREA_W = [1.35, 2.3, 3.85, 2.75, 0.75];
-  // The finding each row was written from, so its words can be changed from the slide.
-  const keyOf = new Map<string[], string>();
-  const keyed = (row: string[], key: string) => { keyOf.set(row, key); return row; };
-  const areaGroups = bk.areas.map((a) => {
-    const own: string[][] = [
-      ...a.items.map((it) => keyed([it.where ? `${it.didNot}\n${it.where}.` : it.didNot, it.rootCause || NOT_WRITTEN, `No. ${it.action}`], it.key)),
-      ...a.measured.map((t) => [`${t}\nFrom the records.`, NOT_WRITTEN, "None"]),
-      ...(a.pending ? [[`${a.pending === 1 ? "1 finding waits" : `${a.pending} findings wait`} for your call in the review.`, "", ""]] : []),
-    ];
-    if (!own.length) own.push([a.state === "none" ? "Nothing was recorded for this event." : "", "", ""]);
-    const sections = [
-      ...(a.parts.length ? [{ title: "Hours of the late finish", lines: a.parts.map((p2) => (r.finish?.delay.find((d) => d.kind === "work" && d.order === p2.order)?.line ?? `${orderWord(p2.order)}: ${p2.hours} h.`)) }] : []),
-      ...(a.well.length ? [{ title: "Went well", lines: a.well }] : []),
-      ...a.items.map((it) => { const f = byKey.get(it.key); return { title: f?.title ?? it.didNot, lines: f ? facts(f) : [] }; }).filter((x) => x.lines.length),
-      ...(a.guide ? guideMore(GUIDES[a.guide]).sections.map((x) => ({ ...x, title: x.title === "What it is" ? GUIDES[a.guide!].title : x.title })) : []),
-    ];
-    const tag: SlideTag = { text: a.tag, tone: STATE_TONE[a.state] }, more = sections.length ? { title: a.name, sections } as SlideMore : null;
-    return { a, own, tag, more };
-  });
-  // Rows grouped under their area; a group that would not read at 11 pt on
-  // a slide of its own goes on over the next ("Planning, continued").
-  type Unit = { rows: string[][]; tag: SlideTag | null; more: SlideMore | null };
-  // Rows go on a slide while its table fits at the deck's one size.
-  const reads = (us: Unit[]) => tableHeight(AREA_HEAD, us.flatMap((u) => u.rows), AREA_W, fit.w, TABLE_PT, us.flatMap((u) => u.rows.map((_, i) => (i ? null : u.tag))), { cols: 2, rows: us.flatMap((u) => u.rows.map((_, i) => (i ? 0 : u.rows.length))) }, fit.charW) <= tableRoom(fit, { foot: "x" });
-  const units: Unit[] = [];
-  for (const g of areaGroups) {
-    let part: string[][] = [], first = true;
-    const unit = (rows: string[][]): Unit => ({ rows: rows.map((x, i) => { const row = [i ? "" : first ? g.a.name : `${g.a.name}, continued`, i || !first ? "" : g.a.well.join("\n"), ...x]; const k = keyOf.get(x); if (k) keyOf.set(row, k); return row; }), tag: first ? g.tag : null, more: g.more });
-    for (const x of g.own) {
-      if (part.length && !reads([unit([...part, x])])) { units.push(unit(part)); part = []; first = false; }
-      part.push(x);
+  // 2. What the records show: each finding, most hours of the finish first.
+  close.forEach((f, i) => {
+    const kicker = `2 · ${PARTS[1]} (${i + 1} of ${close.length})`;
+    const lines = [...f.observation.split("\n").map((l) => l.trim()).filter(Boolean), ...f.info].slice(0, 8);
+    if (f.load) {
+      const L = f.load;
+      s.push({ key: `f-${f.key}`, kicker, title: f.title, part: partOf(2), notes: f.why,
+        body: { k: "split", ratio: 0.42, left: { title: "What the records show", items: lines }, right: { title: `${L.party} day by day`, table: { head: loadDayHead(L), rows: loadDayRows(L, o.tz), widths: [1.4, 1.0, 1.0, 1.0, 1.1, 1.0] } }, foot: plannedWord(L, o.tz) } });
+      const rows = loadJobRows(L, o.tz), head = loadJobHead(L), W = [2.4, 2.4, 1.8, 0.9, 3.4];
+      const parts = rows.length ? fitRows(head, rows, W, () => tableRoom(fit, { foot: "x" })) : [];
+      parts.forEach((ix, k) => s.push({ key: `f-${f.key}-jobs-${k + 1}`, kicker, title: `${L.party}: the jobs that waited, and what they held up${part(k, parts.length)}`, part: partOf(2), notes: f.because,
+        body: { k: "table", head, widths: W, rows: ix.map((j) => rows[j]), rowKeys: ix.map(() => f.key), foot: k === parts.length - 1 ? f.effect : "" } }));
+      return;
     }
-    units.push(unit(part));
-  }
-  const areaSlides: Unit[][] = [[]];
-  for (const u of units) {
-    const cur = areaSlides[areaSlides.length - 1];
-    if (cur.length && !reads([...cur, u])) areaSlides.push([u]); else cur.push(u);
-  }
-  areaSlides.forEach((gs, i) => s.push({
-    key: `areas-${i + 1}`, kicker: `2 · What went well, what did not, and why${part(i, areaSlides.length)}`, title: areasTitle, part: partOf(2),
-    notes: bk.areas.filter((a) => gs.some((g) => g.rows[0][0] === a.name)).map((a) => `${a.name}: ${AREA_STATE_WORD[a.state].toLowerCase()}.`).join(" ") || `${gs[0].rows[0][0]}.`,
-    body: {
-      k: "table", head: AREA_HEAD, widths: AREA_W, span: { cols: 2, rows: gs.flatMap((g) => g.rows.map((_, j) => (j ? 0 : g.rows.length))) }, source: 2,
-      rows: gs.flatMap((g) => g.rows),
-      rowKeys: gs.flatMap((g) => g.rows.map((row) => keyOf.get(row) ?? null)),
-      tags: gs.flatMap((g) => g.rows.map((_, j) => (j ? null : g.tag))),
-      more: gs.flatMap((g) => g.rows.map((_, j) => (j ? null : g.more))),
-      foot: i === areaSlides.length - 1 && bk.pending ? `${bk.pending === 1 ? "1 finding waits" : `${bk.pending} findings wait`} for a decision in the review and ${bk.pending === 1 ? "is" : "are"} not shown.` : "",
-    },
-  }));
+    if (f.idle) {
+      s.push({ key: `f-${f.key}`, kicker, title: f.title, part: partOf(2), notes: f.why,
+        body: { k: "split", ratio: 0.45, left: { title: "What the records show", items: lines }, right: { title: "By party and step", table: { head: IDLE_HEAD, rows: idleRows(f).slice(0, 10), widths: [1.4, 2.8, 0.6, 1.0] } }, foot: f.effect } });
+      return;
+    }
+    const rows = lines.map((l) => [l]);
+    const parts = fitRows(["What the records show"], rows, [1], () => tableRoom(fit, { foot: "x" }));
+    parts.forEach((ix, k) => s.push({ key: k ? `f-${f.key}-${k + 1}` : `f-${f.key}`, kicker, title: f.title, part: partOf(2), notes: f.why || f.because,
+      body: { k: "table", head: ["What the records show"], widths: [1], rows: ix.map((j) => rows[j]), rowKeys: ix.map(() => f.key), foot: k === parts.length - 1 ? (f.effect || "") : "" } }));
+  });
+  if (!close.length) s.push({ key: "f-none", kicker: `2 · ${PARTS[1]}`, part: partOf(2), title: "Nothing in the records calls for a change", notes: "", body: { k: "asks", items: [], foot: "" } });
 
-  // 3. The action plan: as many to a slide as fit at the deck's one size.
-  const ACT_HEAD = ["What we will do", "How it will be done", "Benefit", "Who", "By", "Cost"], ACT_W = [2.7, 3.0, 2.6, 1.2, 0.95, 0.95];
-  const actRow = (a: (typeof bk.actions)[number]) => [`${a.n}. ${a.what}\n${a.areaName} · ${appliesWord(a.applies, o.kind)}`, a.how, a.benefit || NOT_WRITTEN, a.who || NOT_SET, a.by || NOT_SET, a.cost || NOT_SET];
-  const groups: Array<typeof bk.actions> = [];
-  for (const a of bk.actions) {
-    const cur = groups[groups.length - 1];
-    if (cur && tableHeight(ACT_HEAD, [...cur, a].map(actRow), ACT_W, fit.w, TABLE_PT, undefined, undefined, fit.charW) <= tableRoom(fit, { foot: "x" })) cur.push(a); else groups.push([a]);
-  }
-  if (!groups.length) s.push({ key: "actions-1", kicker: "3 · What we do about it", part: partOf(3), title: bk.pending ? "No actions accepted yet" : "No actions for the next event", notes: bk.pending ? `${bk.pending} findings wait for a decision in the review.` : "Nothing in the records calls for a change.", body: { k: "asks", items: [], foot: "" } });
+  // 3. What we change next time: as many to a slide as fit.
+  const ACT_HEAD = ["What we will do", "Why, from this event", "Who", "By"], ACT_W = [4.4, 4.8, 1.3, 1.1];
+  const actRow = (a: (typeof bk.actions)[number]) => [`${a.n}. ${a.what}\n${a.areaName} · ${appliesWord(a.applies, o.kind)}`, a.benefit || "", a.who || NOT_SET, a.by || NOT_SET];
+  const rows = bk.actions.map(actRow);
+  const groups = bk.actions.length ? fitRows(ACT_HEAD, rows, ACT_W, () => tableRoom(fit, { foot: "x" })) : [];
+  if (!groups.length) s.push({ key: "actions-1", kicker: `3 · ${PARTS[2]}`, part: partOf(3), title: "No actions for the next event", notes: "Nothing in the records calls for a change.", body: { k: "asks", items: [], foot: "" } });
   groups.forEach((g, i) => s.push({
-    key: `actions-${i + 1}`, kicker: `3 · What we do about it${part(i, groups.length)}`, part: partOf(3), title: `${bk.actions.length === 1 ? "1 action" : `${bk.actions.length} actions`} for the next event`, notes: g.map((a) => `${a.n}. ${a.what}${a.benefit ? ` Benefit: ${a.benefit}` : ""}`).join(" "),
-    body: {
-      k: "table", head: ACT_HEAD, widths: ACT_W,
-      rows: g.map(actRow),
-      rowKeys: g.map((a) => a.keys[0] ?? null),
-      // Behind each action: how it will be done, then each finding it came from, with its own root cause.
-      more: g.map((a) => {
-        const fs = a.keys.map((k) => byKey.get(k)).filter((f): f is Finding => !!f);
-        if (!fs.length) return null;
-        const how = [...new Set(fs.map((f) => f.next).filter(Boolean))];
-        return { title: a.what, sections: [...(how.length ? [{ title: "How it will be done", lines: how }] : []), ...fs.flatMap((f) => [{ title: f.source === "job" ? (f.where ?? "What happened") : "From the records", lines: facts(f) }, { title: "Root cause", lines: [f.gap || NOT_WRITTEN] }])] };
-      }),
-      foot: g.some((a) => !a.who || !a.by || !a.cost) ? "Who, by what date and cost are set on each action in the review." : "",
-    },
+    key: `actions-${i + 1}`, kicker: `3 · ${PARTS[2]}${part(i, groups.length)}`, part: partOf(3), title: `${bk.actions.length === 1 ? "1 action" : `${bk.actions.length} actions`} for the next event`, notes: g.map((j) => `${bk.actions[j].n}. ${bk.actions[j].what}`).join(" "),
+    body: { k: "table", head: ACT_HEAD, widths: ACT_W, rows: g.map((j) => rows[j]), rowKeys: g.map((j) => bk.actions[j].keys[0] ?? null),
+      foot: g.some((j) => !bk.actions[j].who || !bk.actions[j].by) ? "Who and by when are set on each action in the review." : "" },
   }));
   return s;
 }

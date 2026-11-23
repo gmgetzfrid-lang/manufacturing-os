@@ -5,7 +5,7 @@ import { buildAsBuiltWork } from "@/lib/asBuiltWork";
 import { buildLookBack } from "@/lib/lookBack";
 import { discoveries, discoveryAttr, type DiscoveryRecord } from "@/lib/discovery";
 import type { ProgressLogRow } from "@/lib/progressHistory";
-import { appliesWord, deckSlides, fitTablePt, reportBlocks } from "@/lib/reviewFiles";
+import { LATE_BARS_HEAD, appliesWord, deckSlides, fitTablePt, reportBlocks } from "@/lib/reviewFiles";
 import { GUIDES, bookOf, sameAction, scoreOf } from "@/lib/reviewBook";
 import { buildReview, causeOfText, emptySaved, basisOf, measuresOf, lessonOf, jobWord, pointOf, shiftWord, type ReviewSaved, type JobFinding } from "@/lib/postEventReview";
 
@@ -134,18 +134,27 @@ describe("the review, from the records", () => {
     const plug = by("planning:cleaning");
     expect([r.findings[0].key, plug.rating, plug.moved]).toEqual(["planning:cleaning", "gap", 3]);
     expect(plug.title).toBe("PSVs set the finish: a line had to be cleaned first");
-    expect(plug.effect).toBe("Set the finish. Cost 22 of the 46 h. PSVs was done 22 h after Control Valves, the work before it.");
+    expect(plug.effect).toBe("22 of the 46 h late finish: PSVs 22 h.");
+    expect(plug.finishH).toBe(22);
     // No advice is written for it: nobody can plan where a line will be plugged. A person says what, if anything, to change.
     expect([plug.next, plug.ask]).toEqual(["", ""]);
     // A hand-off on the same work is told as that, not as a crew short of people.
     const hand = by("contractors:handoff");
     expect([hand.rating, hand.moved, hand.title]).toEqual(["opportunity", 2, "PSV-021 - E-13 Overhead waited a shift on another crew"]);
-    expect(hand.effect).toBe("Cost 22 of the 46 h. PSVs was done 22 h after Control Valves, the work before it.");
+    // Its work order's piece is told once, by the reason on record: the hand-off says where it went.
+    expect(hand.effect).toBe('On PSVs, 22 h of the late finish, put down to "PSVs set the finish: a line had to be cleaned first".');
+    expect(hand.finishH).toBe(0);
     expect(hand.next).not.toMatch(/add a crew|more people/i);
     // A job that sat with no reason written is told by name, with what its work order cost.
-    expect([by("execution").title, by("execution").moved, by("execution").effect]).toEqual(["E-13 Pull Blinds / Torque Flanges sat a shift with no reason written", 2, "Cost 1 of the 46 h. E-13 was done 1 h after Clean fuel gas header, the work before it."]);
+    expect([by("execution").title, by("execution").moved, by("execution").effect]).toEqual(["E-13 Pull Blinds / Torque Flanges sat a shift with no reason written", 2, "1 of the 46 h late finish: E-13 1 h."]);
+    // Each piece of the late finish is put down to one finding, or said to be not explained; the pieces add up to the late hours.
+    expect(r.lateBars.map((b) => [b.label, b.hours, b.segs.map((x) => x.key)])).toEqual([["PSVs", 22, ["planning:cleaning"]], ["Control Valves", 5, [null]], ["E-13", 1, ["execution"]], ["Clean fuel gas header", 16, ["contractors:late:cleanfuelgasheader"]], ["V-7", 2, ["planning"]]]);
+    expect(r.lateBars.reduce((n, b) => n + b.hours, 0)).toBe(46);
+    expect(r.lateBars[1].segs[0].title).toBe("Not explained by the records");
+    // The findings run most hours of the late finish first.
+    expect(r.findings.slice(0, 4).map((f) => f.finishH)).toEqual([22, 16, 2, 1]);
     // Discovery on V-7's critical path: said in its own hours, with what V-7 cost, never claimed as the whole of it.
-    expect([by("scope").moved, by("scope").effect]).toEqual([1, "18 h of it was on the critical path of V-7. V-7 cost 2 of the 46 h late."]);
+    expect([by("scope").moved, by("scope").effect, by("scope").finishH]).toEqual([1, "18 h of it was on the critical path of V-7. V-7 cost 2 of the 46 h late.", 0]);
     // Nothing is said about an organization the project has not recorded.
     expect([by("organization").rating, by("materials").rating]).toEqual(["none", "none"]);
   });
@@ -154,12 +163,15 @@ describe("the review, from the records", () => {
     // Gas-freeing on V-7 says nothing of the plugged line on the PSVs, and the other way round.
     const gas = by("planning");
     // V-7 finished after the baseline finish: it holds its own share of the delay, said in hours.
-    expect([gas.title, gas.effect]).toEqual(["V-7 was held 6 h for gas-freeing that was not in the plan", "Cost 2 of the 46 h. V-7 was done 2 h after the baseline finish."]);
+    expect([gas.title, gas.effect]).toEqual(["V-7 was held 6 h for gas-freeing that was not in the plan", "2 of the 46 h late finish: V-7 2 h."]);
     expect(`${gas.observation} ${gas.gap} ${gas.next}`).not.toMatch(/PSV|plug|clean the line/i);
     expect(`${by("planning:cleaning").observation} ${by("planning:cleaning").next}`).not.toMatch(/V-7|gas/i);
-    // Ready work and a hand-off between crews are two findings.
-    expect([by("contractors").title, by("contractors").effect]).toEqual(["Ready work waited for a crew", "Did not move the finish."]);
-    expect(by("contractors").observation).not.toMatch(/PSV-021/);
+    // Ready work that sat is told from each party's load, apart from the hand-off between crews.
+    expect(r.findings.some((f) => f.key === "contractors")).toBe(false);
+    const idle = by("execution:nobody");
+    expect(idle.title).toBe("Ready work sat 35 h with nobody on it");
+    expect(idle.observation).toContain("By party: Ancon 31 h (1 job), Maintenance (KE) 4 h (1 job).");
+    expect(idle.observation).not.toMatch(/PSV-021/);
     // What a finding says to do names only the work it is about.
     for (const f of r.findings) {
       const about = `${f.title} ${f.observation}`;
@@ -172,9 +184,11 @@ describe("the review, from the records", () => {
     expect(scope.observation.split("\n")).toEqual(["Found when the equipment was opened or inspected: 1 item, 18 h (35% of the 52 h plan); 18 h of it on the critical path.", "V-7: Unplanned clean downcomers, 18 h, on the critical path."]);
     // The only change it draws is to carry time for discovery, at the share it was here. Whether it could have been known is the person's question.
     expect([scope.next, scope.ask]).toEqual(["Carry time in the plan for discovery: 18 h this event, 35% of the planned hours.", "Carry time in the plan for discovery."]);
-    expect(r.questions.map((q) => q.kind).sort()).toEqual(["approver", "known", "stuck"]);
-    expect(r.questions.find((q) => q.kind === "known")!.ask).toBe('"Unplanned clean downcomers" (V-7, 18 h): could this have been known before the event? If yes, what do we do next time?');
-    expect(r.questions.find((q) => q.kind === "stuck")!.ask).toContain("E-13 Pull Blinds / Torque Flanges had started and sat the 10/28 day shift");
+    // Questions only where the records leave an hour unexplained, one to a group, each under its finding.
+    expect(r.questions.map((q) => [q.kind, q.findingKey]).sort()).toEqual([["approver", "scope"], ["nobody", "execution:nobody"], ["stuck", "execution"]]);
+    expect(r.questions.find((q) => q.kind === "stuck")!.ask).toBe("E-13 Pull Blinds / Torque Flanges sat with nothing written (E-13 Pull Blinds / Torque Flanges). What held it?");
+    expect(r.questions.find((q) => q.kind === "nobody")!.ask).toBe("Nothing written says why these sat. The longest: Hydroblast piping on Clean fuel gas header, 31 h while Ancon had nothing going. What kept them from starting?");
+    // Answers given before, on whether found work could have been known, still count.
     // Said to be knowable from the drawings: a finding of its own, in the person's words.
     const yes = emptySaved(); yes.answers["known:d1"] = { known: "drawing", note: "Review the vessel drawings for welded internals and plan the hand cleaning. Ask operations what to expect." };
     const k = read(yes).findings.find((f) => f.key === "scope:known:d1")!;
@@ -222,14 +236,18 @@ describe("the review, from the records", () => {
 
 describe("what a person said, laid over the draft", () => {
   it("an answer gives the shift its reason and closes the question", () => {
+    // A reason given for a shift (saved before) is the shift's reason.
     const saved = emptySaved();
-    const key = r.questions.find((q) => q.kind === "stuck")!.key;
-    saved.answers[key] = { cause: "material", note: "Waiting on studs" };
+    saved.answers["stuck:bl:2026-10-28:day"] = { cause: "material", note: "Waiting on studs" };
     const r2 = read(saved);
     expect(r2.stuck.find((j) => j.id === "bl")!.shifts[0]).toMatchObject({ cause: "material", said: "Waiting on studs", answered: true });
-    expect(r2.questions.some((q) => q.key === key)).toBe(false);
+    expect(r2.questions.some((q) => q.kind === "stuck")).toBe(false);
     expect(r2.metrics.noReasonShifts).toBe(0);
-    expect(r2.answeredCount).toBe(1);
+    // The one question on a finding: its answer shows with the finding.
+    const said = emptySaved(); said.answers["stuck:all"] = { note: "Studs came late from the warehouse." };
+    const r3 = read(said);
+    expect(r3.findings.find((f) => f.key === "execution")!.info).toEqual(["Said in the review: Studs came late from the warehouse."]);
+    expect(r3.answeredCount).toBe(1);
   });
   it("kept and changed findings are never overwritten; the records moving after is flagged", () => {
     const saved = emptySaved();
@@ -243,7 +261,7 @@ describe("what a person said, laid over the draft", () => {
     expect(r2.findings.find((f) => f.key === "records")!.status).toBe("discarded");
     // An answer changes what the records say: the kept finding keeps its
     // words and says the draft has moved.
-    saved.answers[r.questions.find((q) => q.kind === "stuck")!.key] = { cause: "material" };
+    saved.answers["stuck:bl:2026-10-28:day"] = { cause: "material" };
     r2 = read(saved);
     expect(r2.findings.find((f) => f.key === "execution")!.stale).toBe(true);
   });
@@ -308,14 +326,19 @@ describe("the files open on the point of the meeting", () => {
   const accepted = emptySaved();
   for (const f of r.findings) if (f.rating === "gap" || f.rating === "opportunity") accepted.items[f.key] = { status: "kept" };
   const rk = read(accepted);
-  it("the slides are the findings written on the job; what the records suggest waits for a person", () => {
+  it("what the records show is in the review and on the slides without a click; a person can take one out", () => {
     const deck = deckSlides(r, o);
-    // In order; a part runs on over more slides when its table needs them.
     expect([...new Set(deck.map((x) => x.kicker.split(" · ")[0]))]).toEqual(["Post-event review", "1", "2", "3"]);
-    // Nothing the records drafted is on the slide without a click.
-    expect(r.findings.every((f) => f.status !== "kept" && !f.auto)).toBe(true);
-    expect(bookOf(r, "Phase 1", tz).actions).toEqual([]);
-    expect(pointOf(r, "Phase 1", tz).pending.length).toBeGreaterThan(2);
+    // Nothing waits for a person to accept it.
+    expect(r.findings.filter((f) => f.source === "records").every((f) => f.status === "kept" && f.auto)).toBe(true);
+    expect(pointOf(r, "Phase 1", tz).pending).toEqual([]);
+    expect(bookOf(r, "Phase 1", tz).actions.length).toBeGreaterThan(2);
+    // Said not right, with a line why: out of the review, off the slides, the reason kept.
+    const off0 = emptySaved(); off0.items.planning = { status: "discarded", notRight: "The gas test was in the permit hours." };
+    const r0 = read(off0);
+    expect(r0.findings.find((f) => f.key === "planning")).toMatchObject({ status: "discarded", notRight: "The gas test was in the permit hours." });
+    expect(deckSlides(r0, o).some((x) => x.title.startsWith("V-7 was held"))).toBe(false);
+    expect(r0.lateBars.find((b) => b.label === "V-7")!.segs).toEqual([{ key: null, title: "Not explained by the records", hours: 2 }]);
     // A finding written on V-7 about two areas: on the slide as written, under both.
     const lel: JobFinding = {
       id: "f1", areas: ["safety", "planning"], kind: "problem", tag: "V-7", on: "V-7 Open Internal Manways", every: false, by: "eng@kern.test", at: Date.parse("2026-10-28T15:00:00Z"),
@@ -327,31 +350,12 @@ describe("the files open on the point of the meeting", () => {
     expect(jf).toMatchObject({ source: "job", status: "kept", category: "safety", areas: ["safety", "planning"], title: "V-7 Open Internal Manways", ask: "Put the tower fan on as soon as the manways are open.", applies: "unit", gap: "", because: "", why: "" });
     expect(jf.observation).toBe("LEL levels were high in the tower. The fan was not put on until the afternoon.");
     const bk = bookOf(withJob, "Phase 1", tz);
-    expect(bk.actions.map((a) => [a.key, a.areaName, a.benefit])).toEqual([["job:f1", "Safety, Planning", ""]]);
-    const item = bk.areas.find((a) => a.id === "safety")!.items[0];
-    expect(item).toMatchObject({ key: "job:f1", didNot: "LEL levels were high in the tower. The fan was not put on until the afternoon.", rootCause: "", action: 1 });
-    expect(item.where).toMatch(/^Written on V-7 Open Internal Manways by eng@kern\.test, 10\/28/);
-    expect(bk.areas.find((a) => a.id === "planning")!.items.map((x) => x.key)).toEqual(["job:f1"]);
-    expect(bk.categories.find((c) => c.key === "planning")!.where).toMatch(/Action 1/);
-    // Two findings in one area: each its own row, its own root cause; one never stands for the other.
-    const spools: JobFinding = { ...lel, id: "f2", areas: ["planning"], on: "V-7 - Overhead and Bottoms Piping", body: "Two piping spools were found with low UT readings.", nextTime: "Inspect before the outage." };
-    const saved2 = emptySaved(); saved2.items["job:f1"] = { edits: { gap: "No step in the plan to put the fan on." } };
-    const two = buildReview({ built, work, notes, look, discoveries: discoveries(all), tz, saved: saved2, jobFindings: [lel, spools] });
-    const plan = bookOf(two, "Phase 1", tz).areas.find((a) => a.id === "planning")!;
-    expect(Object.fromEntries(plan.items.map((x) => [x.key, x.rootCause]))).toEqual({ "job:f1": "No step in the plan to put the fan on.", "job:f2": "" });
-    const slide = deckSlides(two, o).find((x) => x.kicker.startsWith("2 ") && x.body.k === "table" && x.body.rows.some((row) => row[0] === "Planning"))!;
-    if (slide.body.k !== "table") throw new Error("areas slide is a table");
-    const rows = slide.body.rows.filter((row) => /spools|LEL/.test(row[2]));
-    expect(rows.map((row) => [/spools/.test(row[2]) ? "spools" : "LEL", row[3]])).toContainEqual(["spools", "Not written"]);
-    expect(rows.filter((row) => /LEL/.test(row[2])).every((row) => row[3] === "No step in the plan to put the fan on.")).toBe(true);
-    expect(rows.find((row) => /spools/.test(row[2]))![2]).toMatch(/\nWritten on V-7 - Overhead and Bottoms Piping by /);
-    // The area's own cells run down its rows once.
-    const at = slide.body.rows.findIndex((row) => row[0] === "Planning");
-    expect(slide.body.span!.rows[at]).toBeGreaterThanOrEqual(2);
-    expect(slide.body.span!.rows[at + 1]).toBe(0);
+    expect(bk.actions.filter((a) => a.keys.includes("job:f1")).map((a) => [a.areaName, a.benefit])).toEqual([["Safety, Planning", ""]]);
+    const slide = deckSlides(withJob, o).find((x) => x.title === "V-7 Open Internal Manways")!;
+    expect(slide.body.k === "table" && slide.body.rows.map((row) => row[0])).toEqual(["LEL levels were high in the tower. The fan was not put on until the afternoon."]);
     // Taken off in the review, it stays off.
     const off = emptySaved(); off.items["job:f1"] = { status: "discarded" };
-    expect(bookOf(buildReview({ built, work, notes, look, discoveries: discoveries(all), tz, saved: off, jobFindings: [lel] }), "Phase 1", tz).actions).toEqual([]);
+    expect(bookOf(buildReview({ built, work, notes, look, discoveries: discoveries(all), tz, saved: off, jobFindings: [lel] }), "Phase 1", tz).actions.some((a) => a.keys.includes("job:f1"))).toBe(false);
   });
   it("two findings that ask for the same change are one action, and each points to it", () => {
     // The changes written on Phase 1's findings: only the two materials ones say the same thing.
@@ -371,8 +375,9 @@ describe("the files open on the point of the meeting", () => {
     const gaskets: JobFinding = { ...base, id: "g1", areas: ["logistics"], on: "E-12 - Exchanger", body: "Four conical gaskets were short.", nextTime: asks[4] };
     const tap: JobFinding = { ...base, id: "g2", areas: ["logistics"], on: "E-13 - Air Condenser", body: "Gasket materials were not ordered.", nextTime: `${asks[5]} Include a tap for the tubes.` };
     const bk = bookOf(buildReview({ built, work, notes, look, discoveries: discoveries(all), tz, jobFindings: [gaskets, tap] }), "Phase 1", tz);
-    expect(bk.actions.map((a) => [a.n, a.keys, a.what, a.how])).toEqual([[1, ["job:g1", "job:g2"], asks[4], "Include a tap for the tubes."]]);
-    expect(bk.areas.find((a) => a.id === "logistics")!.items.map((x) => [x.key, x.action])).toEqual([["job:g1", 1], ["job:g2", 1]]);
+    const mine = bk.actions.filter((a) => a.keys.some((k) => k.startsWith("job:")));
+    expect(mine.map((a) => [a.keys, a.what, a.how])).toEqual([[["job:g1", "job:g2"], asks[4], "Include a tap for the tubes."]]);
+    expect(bk.areas.find((a) => a.id === "logistics")!.items.filter((x) => x.key.startsWith("job:")).map((x) => [x.key, x.action])).toEqual([["job:g1", mine[0].n], ["job:g2", mine[0].n]]);
   });
   it("the start-up running long is Execution's share of the late finish", () => {
     const longer = { order: "Start-up", hours: 2.5, kind: "longer" as const, line: "Start-up ran 2.5 h long." };
@@ -387,40 +392,27 @@ describe("the files open on the point of the meeting", () => {
     expect(appliesWord("unit", "turnaround")).toBe("Next event on this unit");
     expect(appliesWord("all", null)).toBe("Every event");
   });
-  it("the deck runs in the review's order: the score, the seven areas, the action plan. Nothing else", () => {
+  it("the deck runs in the review's order: where the late hours went, what the records show, what we change", () => {
     const deck = deckSlides(rk, o);
-    // The areas run over as many slides as it takes to read at 11 pt or more.
-    expect([...new Set(deck.map((x) => x.kicker.replace(/ \(\d+ of \d+\)$/, "")))]).toEqual(["Post-event review", "1 · The score: plan against actual", "2 · What went well, what did not, and why", "3 · What we do about it"]);
-    const score = deck[1].body, plan = deck.find((x) => x.kicker.startsWith("3 "))!.body;
-    const areaBodies = deck.filter((x) => x.kicker.startsWith("2 ")).map((x) => x.body);
-    for (const b of areaBodies) if (b.k === "table" && b.span!.rows.filter((n) => n > 0).length > 1) expect(fitTablePt(b.head, b.rows, b.widths, 12.1, 6.8 - 1.55, b.tags, b.span)).toBeGreaterThanOrEqual(11);
-    const areas = { ...areaBodies[0], rows: areaBodies.flatMap((b) => (b.k === "table" ? b.rows : [])) } as typeof areaBodies[0];
-    // The score: each target with its plan, its actual and a verdict; the tally on top.
-    expect(score.k === "table" && score.head).toEqual(["Measure", "Target", "Actual", "Result"]);
-    expect(score.k === "table" && score.lead).toMatch(/^Where the 46 h went: PSVs 22 h/);
-    // Each line says the category it answers to, under its name.
-    expect(score.k === "table" && score.rows.map((row) => row[0])).toEqual(["Duration\nThe event", "Planned work\nThe event", "Added work\nPlanning", "Man-hours\nContractors", "Cost", "Safety", "Quality\nExecution"]);
-    // The cover says what the review measures, by category, and where each is addressed.
+    expect([...new Set(deck.map((x) => x.kicker.replace(/ \(\d+ of \d+\)$/, "")))]).toEqual(["Post-event review", "1 · Where the late hours went", "2 · What the records show", "3 · What we change next time"]);
+    // Where the late hours went: each piece, its hours, and the finding that explains it, the same as the review.
+    const late = deck[1].body;
+    expect(late.k === "table" && late.head).toEqual(LATE_BARS_HEAD);
+    expect(late.k === "table" && late.rows[0]).toEqual(["PSVs", "22 h", "PSVs set the finish: a line had to be cleaned first"]);
+    expect(late.k === "table" && late.rows[1]).toEqual(["Control Valves", "5 h", "Not explained by the records"]);
+    // The findings, in the review's order, one to a slide (more when a table runs on).
+    const shown = deck.filter((x) => x.kicker.startsWith("2 ")).map((x) => x.title);
+    expect(shown.slice(0, 2)).toEqual(["PSVs set the finish: a line had to be cleaned first", "Clean fuel gas header finished 71 h after its plan: Hydroblast piping sat 63 h before Ancon started it"]);
+    // The cover lists them with the hours of the late finish each explains.
     const cover = deck[0].body;
-    expect(cover.k === "cover" && cover.table!.rows.map((row) => row[0])).toEqual(["The event", "Safety", "Organization", "Planning", "Contractors", "Costs", "Logistics", "Execution"]);
-    expect(cover.k === "cover" && cover.table!.rows.find((row) => row[0] === "Safety")![2]).toBe("Score (Safety); Areas");
-    expect(JSON.stringify(deck)).not.toMatch(/Lenahan|the book/i);
-    // Each action says its category and who it is for.
-    expect(plan.k === "table" && plan.rows[0][0]).toMatch(/^1\. .+\n(Planning|Contractors|Logistics|Execution|Safety|Costs|Organization) · (Every event|Next event on this unit)$/);
-    expect(score.k === "table" && score.tags![0]).toEqual({ text: "Missed", tone: "bad" });
-    expect(score.k === "table" && score.rows[0][3]).toBe("46 h late");
-    expect(score.k === "table" && score.tally!.map((t) => t.label)).toContain("not measured");
-    // The seven areas, by name and in order, each with what went well, what did not, the root cause and the action.
-    expect(areas.k === "table" && areas.head).toEqual(["Area", "What went well", "What did not go well", "Root cause", "Action"]);
-    expect(areas.k === "table" && areas.rows.map((row) => row[0]).filter(Boolean)).toEqual(["Safety", "Organization", "Planning", "Contractors", "Costs", "Logistics", "Execution"]);
-    // Every finding row has its own root cause or says none was written, and its own action.
-    expect(areas.k === "table" && areas.rows.filter((row) => /^No\. \d+$/.test(row[4])).every((row) => row[3].trim().length > 0)).toBe(true);
-    // The action plan answers the six questions.
-    expect(plan.k === "table" && plan.head).toEqual(["What we will do", "How it will be done", "Benefit", "Who", "By", "Cost"]);
-    expect(plan.k === "table" && plan.rows[0].slice(3)).toEqual(["Not set", "Not set", "Not set"]);
-    const first = bookOf(rk, "Phase 1", tz).actions[0];
-    expect([first.n, first.what, first.benefit]).toEqual([1, "Name each day's hand-offs between crews at the shift meeting.", "PSV-021 - E-13 Overhead waited a shift on another crew."]);
-    expect(plan.k === "table" && plan.rows.every((row) => row[0].split("\n")[0].length <= 125 && row[2].length <= 175)).toBe(true);
+    expect(cover.k === "cover" && cover.table!.rows[0]).toEqual(["PSVs set the finish: a line had to be cleaned first", "22 h"]);
+    expect(JSON.stringify(deck)).not.toMatch(/Lenahan|the book|Not measured|Root cause|How it is done well/i);
+    // Each action says what to change, why from this event, and who it is for; who and by when are a person's.
+    const plan = deck.find((x) => x.kicker.startsWith("3 "))!.body;
+    expect(plan.k === "table" && plan.head).toEqual(["What we will do", "Why, from this event", "Who", "By"]);
+    expect(plan.k === "table" && plan.rows[0][0]).toMatch(/^1\. .+\n(Planning|Contractors|Logistics|Execution|Safety|Costs|Organization)(, \w+)* · (Every event|Next event on this unit)$/);
+    expect(plan.k === "table" && plan.rows[0].slice(2)).toEqual(["Not set", "Not set"]);
+    for (const b of deck.map((x) => x.body)) if (b.k === "table") expect(fitTablePt(b.head, b.rows, b.widths, 12.1, 6.8 - 1.55, b.tags, b.span)).toBeGreaterThanOrEqual(11);
     const titles = deck.map((x) => `${x.kicker} ${x.title}`).join(" | ");
     expect(titles).not.toMatch(/backup|definition|closure plan|roadmap|proposed organization|decisions|did not move/i);
     // The records stay in the report. Service is a planned step there, not stuck work.
@@ -471,20 +463,17 @@ describe("the files open on the point of the meeting", () => {
     const a = bookOf(read(sv), "Phase 1", tz).actions.find((x) => x.key === k)!;
     expect([a.who, a.by, a.cost, a.done]).toEqual(["Area coordinator", "Before scope freeze", "$0", true]);
   });
-  it("the report: the headline, the score, the seven areas, the action plan, then each finding with its record", () => {
+  it("the report: the answer, what the records show, what we change, then the records behind it", () => {
     const blocks = reportBlocks(rk, o);
-    expect(blocks.filter((x) => x.k === "h1").slice(0, 5).map((x) => (x.k === "table" ? "" : x.text))).toEqual(["1. Phase 1 finished 46 h late. 22 h of it was PSVs.", "2. The score: plan against actual", "3. What went well, what did not, and why", "4. The action plan", "5. Each finding, with the record behind it"]);
+    expect(blocks.filter((x) => x.k === "h1").slice(0, 5).map((x) => (x.k === "table" ? "" : x.text))).toEqual(["1. Phase 1 finished 46 h late. 22 h of it was PSVs.", "2. What the records show", "3. What we change next time", "4. Checked: did not move the finish", "5. The event in numbers"]);
     const plan = blocks.find((x) => x.k === "table" && x.head[1] === "What we will do");
-    expect(plan?.k === "table" && plan.rows[0].slice(0, 2)).toEqual(["1", "Name each day's hand-offs between crews at the shift meeting."]);
-    expect(blocks.some((x) => x.k === "p" && x.lead === "How it is done well (Planning): ")).toBe(true);
-    expect(blocks.some((x) => x.k === "p" && x.lead === "Root cause: ")).toBe(true);
-    // How to set up what was not measured is laid out step by step at the back.
-    expect(blocks.some((x) => x.k === "h2" && x.text === "A safety record")).toBe(true);
-    // Quality is measured from the work against zero, so it needs no set-up guide.
-    expect(blocks.some((x) => x.k === "h2" && x.text === "A quality plan")).toBe(false);
-    // The work that set the finish has one finding; nothing lists its steps again.
-    expect(blocks.some((x) => x.k === "h1" && /stayed open longest/.test(x.text))).toBe(false);
-    expect(blocks.some((x) => x.k !== "table" && /12 months|closure plan/i.test(x.text))).toBe(false);
+    expect(plan?.k === "table" && plan.rows[0].slice(0, 2)).toEqual(["1", bookOf(rk, "Phase 1", tz).actions[0].what]);
+    const bars = blocks.find((x) => x.k === "table" && x.head[0] === LATE_BARS_HEAD[0]);
+    expect(bars?.k === "table" && bars.rows.length).toBe(5);
+    // Nothing written that this project's records did not say.
+    expect(blocks.some((x) => x.k === "p" && (x.lead === "Root cause: " || x.lead?.startsWith("How it is done well")))).toBe(false);
+    expect(blocks.some((x) => x.k === "h2" && x.text === "A safety record")).toBe(false);
+    expect(blocks.some((x) => x.k !== "table" && /stayed open longest|12 months|closure plan/i.test(x.text))).toBe(false);
   });
   it("a person's own finding goes on the slide by its own one-line title and cost", () => {
     const saved = emptySaved();

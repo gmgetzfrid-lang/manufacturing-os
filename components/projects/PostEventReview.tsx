@@ -1,23 +1,25 @@
 "use client";
 
 // PostEventReview - the look back at a finished event (or one phase of it),
-// drafted from its records (lib/postEventReview). The conclusions come
-// first: what the event showed, most costly first, each with what justifies
-// a change and the change. Under them, each finding with how it is done
-// well, what happened and what to do differently, the questions the records
-// can't answer, and the records themselves for when someone asks.
+// told from its own records (lib/postEventReview, lib/partyLoad).
 //
-// A person keeps, changes, adds to or throws out each finding, adds their
-// own, and answers the questions; Re-analyze reads the records again with
-// those answers. What was kept or changed is never overwritten. Kept
-// findings go to the lessons register. The same review downloads as a Word
-// report and as the meeting slides, and the slides open on screen (View
-// slides) on a computer or a phone.
+// It opens on the answer: how the finish came out against the plan, and
+// where the late hours went, each piece put down to the finding that
+// explains it. Then each finding, most hours of the finish first, with the
+// chart and the jobs that show it: for a party (a contractor or crew), how
+// much of its work was ready at once against how much it was planned to
+// work, which jobs waited, and what they held up after them. Then what to
+// change next time, written from those numbers.
+//
+// What the records show is in the review as it stands: a person can say a
+// finding is not right (with a line why), answer the one question the
+// records leave open, and set a party's crews where its chart is. Nothing
+// here is written that the records or a person did not say. The same review
+// downloads as a Word report and as the meeting slides, and the slides open
+// on screen (View slides) on a computer or a phone.
 
-import { Card } from "@/components/ui/PageHero";
-import HelpTooltip from "@/components/ui/HelpTooltip";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { Check, Download, FileText, HelpCircle, Loader2, Pencil, Plus, Presentation, RefreshCw, RotateCcw, Trash2, X } from "lucide-react";
+import { Check, ChevronDown, Download, Loader2, Plus, Presentation, RefreshCw, RotateCcw, X } from "lucide-react";
 import type { Milestone, MilestoneNote } from "@/types/schema";
 import type { ProgressLogRow } from "@/lib/progressHistory";
 import type { ShiftRecord } from "@/lib/shiftRecord";
@@ -29,24 +31,23 @@ import { discoveries } from "@/lib/discovery";
 import { inPhase, phaseOnDay, type ProjectPhase } from "@/lib/projectPhases";
 import { companyOf } from "@/lib/manpower";
 import { useManpowerSettings } from "@/components/projects/ManpowerSetup";
-import { useCrewSettings } from "@/lib/useCrewSettings";
-import { openContractor } from "@/lib/costsNav";
 import { loadNextPlanSettings } from "@/lib/nextPlanStore";
 import type { StaffingPlans } from "@/lib/staffingPlan";
 import { dayKey, fmtInTz } from "@/lib/scheduleTz";
 import { listMaterials, summarize } from "@/lib/materials";
 import { loadOrg, orgStanding } from "@/lib/eventOrganization";
 import {
-  AREAS, CAUSE_CHOICES, CAUSE_WORD, KNOWN_WORD, RATING_MEANS, RATING_WORD, areaOf, basisOf, buildReview, emptySaved, jobWord, orderWord, pointOf, shiftWord, shiftsWord,
-  type Answer, type CategoryId, type CauseId, type Finding, type Known, type FindingEdit, type JobFinding, type OrgStanding, type Rating, type ReviewSaved,
+  AREAS, areaOf, basisOf, buildReview, emptySaved, pointOf,
+  type CategoryId, type Finding, type FindingEdit, type JobFinding, type OrgStanding, type Question, type Rating, type ReviewSaved,
 } from "@/lib/postEventReview";
-import { changeReview, loadReview, reviewScope, syncLesson } from "@/lib/reviewStore";
-import { CREWS_HEAD, CREWS_NOTE, CREWS_TITLE, appliesWord, crewsRows, deckSlides, fileStem, reviewDocx, reviewPptx, saveFile, type ReviewFileOpts } from "@/lib/reviewFiles";
-import { GUIDES, VERDICT_WORD, bookOf, scoreInputsFrom, type Action, type ScoreInputs, type ScoreRow, type Verdict } from "@/lib/reviewBook";
+import { linksOf, type PartyLoad } from "@/lib/partyLoad";
+import { changeReview, loadAtOnce, loadReview, reviewScope, saveAtOnce, syncLesson } from "@/lib/reviewStore";
+import { appliesWord, deckSlides, fileStem, plannedWord, reviewDocx, reviewPptx, saveFile, type ReviewFileOpts } from "@/lib/reviewFiles";
+import { bookOf, scoreInputsFrom, type Action, type ScoreInputs } from "@/lib/reviewBook";
 import { phaseStats, type CostEntry, type CostLine } from "@/lib/phaseReport";
-import type { AreaId, DelayPart, ScoreEntry } from "@/lib/postEventReview";
-import { overloaded } from "@/lib/crewFlow";
+import type { AreaId } from "@/lib/postEventReview";
 import ReviewSlides from "@/components/projects/ReviewSlides";
+import { IdleBars, LateHours, LoadChart, LoadStrip } from "@/components/projects/ReviewCharts";
 import { useTheme } from "@/components/providers/ThemeProvider";
 import { useOrgBranding } from "@/components/providers/OrgBrandingProvider";
 import { lookFromPalette, lookFromTemplate } from "@/lib/deckLook";
@@ -64,42 +65,31 @@ import type { TemplateInfo } from "@/lib/slideTemplate";
 import { useProjectFindings, useProjectUnit } from "@/components/projects/Findings";
 import { categoriesOf, guessCategories, isLive, leadTag, type Category } from "@/lib/findings";
 import { useProjectType } from "@/lib/shiftTimesStore";
-import { isDefaultType, typeWord } from "@/lib/projectType";
-import { closeNeeds, type NeedGo } from "@/lib/closeNeeds";
-import { requestSetup } from "@/lib/scheduleSetup";
-import CloseNeeds from "@/components/projects/CloseNeeds";
+import { typeWord } from "@/lib/projectType";
 import { appAlert } from "@/components/providers/DialogProvider";
 import LoadingBlock from "@/components/ui/LoadingBlock";
 import MoreMenu from "@/components/ui/MoreMenu";
 import { useDraft, clearDraft } from "@/hooks/useDraft";
 
-const btn = "inline-flex items-center gap-1.5 h-9 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] whitespace-nowrap disabled:opacity-50 transition-colors";
-const dark = btn;
-const pri = "inline-flex items-center justify-center gap-1.5 h-9 px-3.5 rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[14px] font-semibold hover:bg-[var(--color-accent-hover)] whitespace-nowrap disabled:opacity-50 transition-colors";
-const field = "w-full rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 py-1.5 text-[13px] text-[var(--color-text)]";
+const btn = "inline-flex items-center justify-center gap-1.5 h-10 sm:h-9 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] whitespace-nowrap disabled:opacity-50 transition-colors";
+const pri = "inline-flex items-center justify-center gap-1.5 h-10 sm:h-9 px-3.5 rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[14px] font-semibold hover:bg-[var(--color-accent-hover)] whitespace-nowrap disabled:opacity-50 transition-colors";
+const field = "w-full rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 py-1.5 text-[14px] text-[var(--color-text)]";
 const label = "text-[12px] font-semibold text-[var(--color-text-muted)]";
-const RATE_CLS: Record<Rating, string> = {
-  gap: "bg-[color-mix(in_srgb,var(--state-overdue)_14%,transparent)] text-[var(--state-overdue)]",
-  opportunity: "bg-[color-mix(in_srgb,var(--state-held)_14%,transparent)] text-[var(--state-held)]",
-  strength: "bg-[color-mix(in_srgb,var(--state-released)_14%,transparent)] text-[var(--state-released)]",
-  none: "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]",
-};
-
-type Filter = "all" | "pending" | "gap" | "opportunity" | "strength" | "kept" | "discarded";
+const link = "text-[13px] font-semibold text-[var(--color-accent-text)] hover:underline disabled:opacity-50";
+const box = "rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] p-4 sm:p-5";
 
 /** Lesson versions already written this session (see the effect in the review). */
 const SYNCED = new Set<string>();
 
-export default function PostEventReview({ orgId, projectId, projectName, tz, times, phases, milestones, log, notes, records, money, canManage, actor, onReload, onTab, stepsLeft = null, onSteps }: {
+export default function PostEventReview({ orgId, projectId, projectName, tz, times, phases, milestones, log, notes, records, money, canManage, actor, onReload }: {
   orgId: string; projectId: string; projectName: string; tz: string; times: ShiftTimes;
   phases: ProjectPhase[]; milestones: Milestone[]; log: ProgressLogRow[] | null; notes: MilestoneNote[]; records: Map<string, ShiftRecord>;
-  /** The project's budget lines and spend (cost controls), for the score. */
+  /** The project's budget lines and spend (cost controls), for the files. */
   money?: { lines: CostLine[]; entries: CostEntry[]; afe: number | null } | null;
   canManage: boolean; actor: { uid: string; email: string | null };
   /** Read the project's records again. */
   onReload: () => void;
-  onTab: (tab: string) => void;
-  /** Close-out steps still open (PSSR, turnover documents, punch, change orders), and the way to them. */
+  onTab?: (tab: string) => void;
   stepsLeft?: number | null;
   onSteps?: () => void;
 }) {
@@ -110,12 +100,10 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
   const scope = reviewScope(phases.length ? phaseId : null);
   const mp = useManpowerSettings(projectId);
   const [plans, setPlans] = useState<StaffingPlans | null>(null);
-  // Each contractor's rate sheet (Costs > Contractors), for the checklist.
-  const crewSettings = useCrewSettings(projectId);
   const [saved, setSaved] = useState<ReviewSaved | null>(null);
+  const [atOnce, setAtOnce] = useState<Record<string, number>>({});
   const [register, setRegister] = useState<{ lines: number; specIncomplete: number; openQuestions: number; late: number } | null>(null);
   const [organization, setOrganization] = useState<OrgStanding | null>(null);
-  const [targets, setTargets] = useState<Record<string, string> | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -123,24 +111,12 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
   const { palette } = useTheme();
   const { branding } = useOrgBranding();
   const tpl = branding?.slides ?? null;
-  // The project's switch: on the company template (the default when there
-  // is one) or plain. A person who can't change the project still can for
-  // what they're looking at.
   const { choice: savedChoice } = useSlidesChoice(projectId);
   const [ownChoice, setOwnChoice] = useState<boolean | null>(null);
   const useTpl = !!tpl && (ownChoice ?? savedChoice ?? true);
   const wordLook = useMemo(() => lookFromPalette(palette), [palette]);
   const slideLook = useMemo(() => (useTpl && tpl ? lookFromTemplate(tpl) : wordLook), [useTpl, tpl, wordLook]);
-  // Until a person picks one: what needs a decision, else everything.
-  const [filterPick, setFilter] = useState<Filter | null>(null);
-  const [editing, setEditing] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
-  const [infoFor, setInfoFor] = useState<string | null>(null);
-  const [infoText, setInfoText] = useState("");
-  const [answers, setAnswers] = useState<Record<string, Answer>>({});
-  // Answers being typed come back after a reload, per phase.
-  useDraft<Record<string, Answer>>(`review-answers:${projectId}:${scope}`, answers, setAnswers,
-    (v) => !Object.values(v ?? {}).some((a) => a?.cause || a?.known || a?.note?.trim()));
   const [tick, setTick] = useState(0);
   const [viewing, setViewing] = useState(false);
   const [screen, setScreen] = useState<{ deck: ScreenDeck | null; state: "loading" | { error: string } | null }>({ deck: null, state: null });
@@ -152,14 +128,15 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
     setSaved(null);
     void (async () => {
       try {
-        const [s, np, mats, org] = await Promise.all([
+        const [s, np, mats, org, n] = await Promise.all([
           loadReview(projectId, scope),
           loadNextPlanSettings(projectId).catch(() => null),
           listMaterials(projectId).catch(() => ({ rows: [] })),
           loadOrg(projectId).catch(() => null),
+          loadAtOnce(projectId, scope).catch(() => ({})),
         ]);
         if (!live) return;
-        setSaved(s); setPlans(np?.staffing ?? null); setOrganization(orgStanding(org)); setTargets(null);
+        setSaved(s); setPlans(np?.staffing ?? null); setOrganization(orgStanding(org)); setAtOnce(n);
         const mine = mats.rows.filter((r) => !phases.length || !r.phaseId || r.phaseId === phaseId);
         const sum = summarize(mine, Date.now());
         setRegister(!sum.lines ? null : { lines: sum.lines, specIncomplete: sum.specIncomplete, openQuestions: sum.openQuestions, late: sum.late });
@@ -168,9 +145,9 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
     return () => { live = false; };
   }, [projectId, scope, phaseId, phases.length, tick]);
 
-  // The findings written on the job: what the review is built from.
+  // The findings written on the job: part of what the review is built from.
   const { rows: projectFindings } = useProjectFindings(projectId);
-  const buildFor = useCallback((pid: string | null, saved: ReviewSaved) => {
+  const buildFor = useCallback((pid: string | null, saved: ReviewSaved, crews: Record<string, number>) => {
     const mine = phases.length && pid ? inPhase(milestones, phases, pid) : milestones;
     const kids = new Map<string, Milestone[]>();
     for (const m of mine) if (m.parentId) { if (!kids.has(m.parentId)) kids.set(m.parentId, []); kids.get(m.parentId)!.push(m); }
@@ -183,6 +160,7 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
     const ds = discoveries(active);
     const look = buildLookBack({ milestones: active, notes: myNotes, discoveries: ds, now, tz, log: (log ?? []).filter((r) => ids.has(r.milestone_id)) });
     const dependsOn = new Map(mine.filter((x) => x.id).map((x) => [x.id!, x.dependsOn ?? []]));
+    const calendar = new Map(mine.filter((x) => x.id).map((x) => [x.id!, String(((x.attributes ?? {}) as Record<string, unknown>).work_calendar ?? "").trim() || null]));
     // This phase's: on its work, else written on its days.
     const byId = new Map(milestones.filter((x) => x.id).map((x) => [x.id!, x]));
     const jobFindings: JobFinding[] = projectFindings
@@ -193,11 +171,14 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
         const cats: Category[] = named.length ? named : guessCategories(f.body).length ? guessCategories(f.body) : [f.kind === "material" ? "Logistics" : f.kind === "missed_scope" ? "Planning" : "Execution"];
         return { id: f.id, areas: cats.map((c) => c.toLowerCase() as AreaId), kind: f.kind, body: f.body, nextTime: f.nextTime, tag: f.assetTag ?? leadTag(on?.name), on: on?.name ?? null, every: f.appliesTo === "all", by: f.createdByName, at: f.foundAt };
       });
-    return { review: buildReview({ built, work, notes: myNotes, look, discoveries: ds, tz, saved, materials: register, organization, dependsOn, log: (log ?? []).filter((r) => ids.has(r.milestone_id)), jobFindings }), work };
+    return {
+      review: buildReview({ built, work, notes: myNotes, look, discoveries: ds, tz, saved, materials: register, organization, dependsOn, links: linksOf(mine, kids), calendarOf: (id) => calendar.get(id) ?? null, atOnce: crews, log: (log ?? []).filter((r) => ids.has(r.milestone_id)), jobFindings }),
+      work,
+    };
   }, [milestones, phases, notes, log, records, plans, mp, tz, times, register, organization, projectFindings]);
-  const made = useMemo(() => (saved ? buildFor(phases.length ? phaseId : null, saved) : null), [saved, phases.length, phaseId, buildFor]);
+  const made = useMemo(() => (saved ? buildFor(phases.length ? phaseId : null, saved, atOnce) : null), [saved, phases.length, phaseId, buildFor, atOnce]);
   const review = made?.review ?? null;
-  // The score's inputs, from the same shift records, manpower settings and cost lines the rest of the app reads.
+  // The files' inputs, from the same shift records, manpower settings and cost lines the rest of the app reads.
   const scoreIn = useMemo<ScoreInputs>(() => {
     if (!made || !saved) return {};
     const st = money ? phaseStats({ milestones, phases, phase, log, tz, times, now: Date.now(), total: money.afe, lines: money.lines, entries: money.entries }) : null;
@@ -212,26 +193,25 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
       .then((xs) => { if (live) setOthers(Object.fromEntries(xs.filter((x): x is readonly [string, ReviewSaved] => !!x))); });
     return () => { live = false; };
   }, [projectId, phaseId, phases, tick]);
-  const carried = useMemo(() => phases.filter((p) => p.id !== phaseId && others[p.id] && (others[p.id].added.length > 0 || Object.values(others[p.id].items).some((i) => i.status === "kept")))
-    .map((p) => ({ phase: p, actions: bookOf(buildFor(p.id, others[p.id]).review, p.name, tz).actions.filter((a) => !a.done) })).filter((x) => x.actions.length > 0), [phases, phaseId, others, buildFor, tz]);
+  const carried = useMemo(() => phases.filter((p) => p.id !== phaseId && others[p.id] && (others[p.id].added.length > 0 || Object.values(others[p.id].items).some((i) => i.status === "kept" && (i.edits?.owner || i.edits?.due))))
+    .map((p) => ({ phase: p, actions: bookOf(buildFor(p.id, others[p.id], {}).review, p.name, tz).actions.filter((a) => !a.done && (a.who || a.by)) })).filter((x) => x.actions.length > 0), [phases, phaseId, others, buildFor, tz]);
 
   const who = actor.email;
   const ptype = useProjectType(projectId, projectName);
   const typeIn = typeWord(ptype);
   const unit = useProjectUnit(orgId, projectId);
-  // What the review puts on the slide that changes something is in the
-  // lessons register, with who it is for; each version is written once. A
-  // finding written on the job is in it already. One saved before that has
-  // nothing to change ("No job waited on materials") or was taken off since
-  // comes out.
+  // A finding a person kept on purpose (or wrote) is in the lessons register,
+  // with who it is for; each version is written once. One taken out since
+  // comes out. What the records show is in the review without that step,
+  // and goes to the register only when a person keeps it.
   useEffect(() => {
     if (!review || !canManage || !orgId) return;
     const inRegister = new Set(projectFindings.filter((r) => r.source === "review" && r.status === "kept").map((r) => r.sourceRef));
     for (const f of review.findings) {
       if (f.source === "job") continue;
-      if (!(f.status === "kept" && (f.rating === "gap" || f.rating === "opportunity"))) {
+      if (!(f.status === "kept" && !f.auto && (f.rating === "gap" || f.rating === "opportunity"))) {
         const out = `out:${projectId}:${scope}:${f.key}`;
-        if (inRegister.has(`${scope}:${f.key}`) && !SYNCED.has(out)) {
+        if (inRegister.has(`${scope}:${f.key}`) && !SYNCED.has(out) && f.status === "discarded") {
           SYNCED.add(out);
           void syncLesson({ orgId, projectId, projectType: ptype.word, unitCode: unit?.code ?? null, scope, finding: f, kept: false, actor: { id: actor.uid, name: who } }).catch((e) => { SYNCED.delete(out); void appAlert({ title: "Lessons register not updated", message: `"${f.title}" didn't come off the lessons register (${(e as Error).message}). It tries again the next time this review opens.`, tone: "danger" }); });
         }
@@ -249,9 +229,6 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
     catch (e) { setErr((e as Error).message); }
     finally { setBusy(null); }
   };
-  // A kept finding goes to the lessons register under the project's type
-  // (Setup › Project type: "Turnaround"), so later projects of that type, or
-  // the next event on this unit, see it; un-kept or thrown out, it leaves.
   const lesson = async (f: Finding, kept: boolean) => {
     if (f.source === "job") return;
     const ok = await syncLesson({ orgId, projectId, projectType: ptype.word, unitCode: unit?.code ?? null, scope, finding: f, kept, actor: { id: actor.uid, name: who } }).catch((e) => { setErr((e as Error).message); return true; });
@@ -261,61 +238,58 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
     if (!review) return undefined;
     const f = review.findings.find((x) => x.key === key);
     if (!f) return undefined;
-    // The same finding with what was just saved laid over it.
     const it = next.items[key]; const e = it?.edits ?? {};
     if (f.source === "person") { const a = next.added.find((x) => `added:${x.id}` === key); return a ? { ...f, title: a.title ?? f.title, observation: a.observation ?? "", gap: a.gap ?? "", next: a.next ?? "", year: a.year ?? "", owner: a.owner ?? "", effect: a.effect ?? "", why: a.why ?? a.effect ?? f.why, rating: a.rating ?? f.rating, info: it?.info ?? [] } : f; }
     return { ...f, title: e.title ?? f.drafted.title, observation: e.observation ?? f.drafted.observation, rating: e.rating ?? f.drafted.rating, practice: e.practice ?? f.practice, gap: e.gap ?? f.gap, next: e.next ?? f.next, year: e.year ?? f.year, owner: e.owner ?? f.owner, effect: e.effect ?? f.effect, why: e.why ?? f.why, info: it?.info ?? [] };
   };
 
-  const keep = (f: Finding) => void act(`keep:${f.key}`, (s) => { s.items[f.key] = { ...s.items[f.key], status: "kept", basis: basisOf(f), at: Date.now(), by: who }; }, () => lesson(f, true));
-  // Off the slide: a finding on it by default is kept off by saying so ("draft"); one a person accepted goes back to waiting.
-  const unkeep = (f: Finding) => void act(`keep:${f.key}`, (s) => { const it = { ...s.items[f.key] }; if (f.source === "job") it.status = "discarded"; else if (f.auto) it.status = "draft"; else delete it.status; s.items[f.key] = it; }, () => lesson(f, false));
-  const discard = (f: Finding) => void act(`drop:${f.key}`, (s) => { s.items[f.key] = { ...s.items[f.key], status: "discarded", at: Date.now(), by: who }; }, () => (f.status === "kept" || f.source === "person" ? lesson(f, false) : undefined));
-  const restore = (f: Finding) => void act(`drop:${f.key}`, (s) => { const it = { ...s.items[f.key] }; delete it.status; s.items[f.key] = it; }, () => (f.source === "person" ? lesson(f, true) : undefined));
-  const takeDraft = (f: Finding) => void act(`draft:${f.key}`, (s) => { const it = { ...s.items[f.key] }; const e = { ...(it.edits ?? {}) }; delete e.title; delete e.observation; delete e.rating; it.edits = e; it.basis = basisOf(f); s.items[f.key] = it; },
-    (next) => { const g = refind(next, f.key); return g && f.status === "kept" ? lesson(g, true) : undefined; });
+  // Keep: in the review (the default for what the records show), and in the lessons register.
+  const keep = (f: Finding) => void act(`keep:${f.key}`, (s) => { s.items[f.key] = { ...s.items[f.key], status: "kept", notRight: undefined, basis: basisOf(f), at: Date.now(), by: who }; delete s.items[f.key].notRight; }, () => lesson(f, true));
+  // Not right: out of the review and off the slides, with a line why.
+  const notRight = (f: Finding, why: string) => void act(`drop:${f.key}`, (s) => { s.items[f.key] = { ...s.items[f.key], status: "discarded", notRight: why.trim() || undefined, at: Date.now(), by: who }; if (!why.trim()) delete s.items[f.key].notRight; }, () => (f.status === "kept" && !f.auto ? lesson(f, false) : undefined));
+  const putBack = (f: Finding) => void act(`drop:${f.key}`, (s) => { const it = { ...s.items[f.key] }; delete it.status; delete it.notRight; s.items[f.key] = it; });
   const saveEdit = (f: Finding, e: FindingEdit, category?: CategoryId) => void act(`edit:${f.key}`, (s) => {
     if (f.source === "person") { const a = s.added.find((x) => `added:${x.id}` === f.key); if (a) Object.assign(a, e, category ? { category } : {}); return; }
-    // Only what differs from the draft is kept as a change.
     const out: FindingEdit = { ...(s.items[f.key]?.edits ?? {}) };
     for (const k of ["title", "observation"] as const) { const v = (e[k] ?? "").trim(); if (v && v !== f.drafted[k]) out[k] = v; else delete out[k]; }
     for (const k of ["practice", "gap", "next", "year", "owner", "effect", "why", "ask", "because", "due", "cost"] as const) { const v = (e[k] ?? "").trim(); if (v !== f[k]) { if (v) out[k] = v; else delete out[k]; } }
     if (e.rating && e.rating !== f.drafted.rating) out.rating = e.rating; else delete out.rating;
     s.items[f.key] = { ...s.items[f.key], edits: out, basis: basisOf(f), at: Date.now(), by: who };
-  }, (next) => { setEditing(null); const g = refind(next, f.key); return g && (f.status === "kept" || f.source === "person") ? lesson(g, true) : undefined; });
-  const setPlan = (key: string, patch: { owner?: string; due?: string; cost?: string }) => void act(`plan:${key}`, (s) => {
-    const a = s.added.find((x) => `added:${x.id}` === key);
-    if (a) { Object.assign(a, patch); return; }
-    const it = { ...s.items[key] }; const e: Record<string, unknown> = { ...(it.edits ?? {}) };
-    for (const [k, v] of Object.entries(patch)) { const t = (v ?? "").trim(); if (t) e[k] = t; else delete e[k]; }
-    it.edits = e as FindingEdit; s.items[key] = it;
+  }, (next) => { const g = refind(next, f.key); return g && ((f.status === "kept" && !f.auto) || f.source === "person") ? lesson(g, true) : undefined; });
+  const setPlan = (keys: string[], patch: { owner?: string; due?: string }) => void act(`plan:${keys[0]}`, (s) => {
+    for (const key of keys) {
+      const a = s.added.find((x) => `added:${x.id}` === key);
+      if (a) { Object.assign(a, patch); continue; }
+      const it = { ...s.items[key] }; const e: Record<string, unknown> = { ...(it.edits ?? {}) };
+      for (const [k, v] of Object.entries(patch)) { const t = (v ?? "").trim(); if (t) e[k] = t; else delete e[k]; }
+      it.edits = e as FindingEdit; s.items[key] = it;
+    }
   });
   // An action can stand for several findings that asked for the same change: closing it closes each.
   const setDone = (keys: string[], done: boolean) => void act(`done:${keys[0]}`, (s) => { for (const key of keys) { const it = { ...s.items[key] }; if (done) it.done = true; else delete it.done; s.items[key] = it; } });
-  const setScore = (key: string, en: ScoreEntry) => void act(`score:${key}`, (s) => {
-    const out: ScoreEntry = { ...(en.plan?.trim() ? { plan: en.plan.trim() } : {}), ...(en.actual?.trim() ? { actual: en.actual.trim() } : {}), ...(en.verdict ? { verdict: en.verdict } : {}) };
-    if (Object.keys(out).length) s.score[key] = out; else delete s.score[key];
-  });
   const closeCarried = async (pid: string, key: string) => {
     setBusy(`carried:${key}`); setErr(null);
     try { const next = await changeReview(projectId, reviewScope(pid), (s) => { s.items[key] = { ...s.items[key], done: true }; }); setOthers((o) => ({ ...o, [pid]: next })); }
     catch (e) { setErr((e as Error).message); }
     finally { setBusy(null); }
   };
-  const addInfo = (f: Finding) => { const t = infoText.trim(); if (!t) return; void act(`info:${f.key}`, (s) => { const it = { ...s.items[f.key] }; it.info = [...(it.info ?? []), t]; s.items[f.key] = it; }, (next) => { clearDraft(`review-info:${projectId}:${f.key}`); setInfoFor(null); setInfoText(""); const g = refind(next, f.key); return g && (f.status === "kept" || f.source === "person") ? lesson(g, true) : undefined; }); };
-  const dropInfo = (f: Finding, i: number) => void act(`info:${f.key}`, (s) => { const it = { ...s.items[f.key] }; it.info = (it.info ?? []).filter((_, n) => n !== i); s.items[f.key] = it; });
+  const answer = (q: Question, note: string) => void act(`q:${q.key}`, (s) => { const t = note.trim(); if (t) s.answers[q.key] = { note: t, at: Date.now(), by: who }; else delete s.answers[q.key]; });
+  // A party's crews: how many jobs it can work at once, kept with the contractor settings.
+  const setCrews = async (party: string, n: number | null) => {
+    setBusy(`crews:${party}`); setErr(null);
+    try { await saveAtOnce(projectId, scope, party, n); setAtOnce(await loadAtOnce(projectId, scope)); }
+    catch (e) { setErr((e as Error).message); }
+    finally { setBusy(null); }
+  };
   const addFinding = (e: FindingEdit, category: CategoryId) => {
     const id = typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : String(Date.now());
     void act("add", (s) => { s.added.push({ ...e, id, category, at: Date.now(), by: who }); }, async () => {
       clearDraft(`review-add:${projectId}:${scope}`);
       setAdding(false);
       const c = areaOf(category);
-      await lesson({ key: `added:${id}`, category, source: "person", rating: e.rating ?? "opportunity", title: e.title ?? "Finding", observation: e.observation ?? "", evidence: [], practice: "", gap: e.gap ?? "", next: e.next ?? "", year: e.year ?? "", owner: e.owner ?? "", due: e.due ?? "", cost: e.cost ?? "", done: false, auto: false, applies: "all", effect: e.effect ?? "", moved: null, proof: "", why: e.effect ?? "", hours: null, ask: e.ask ?? e.next ?? "", because: e.because ?? e.effect ?? "", info: [], status: "kept", edited: false, stale: false, drafted: { title: e.title ?? c.name, observation: e.observation ?? "", rating: e.rating ?? "opportunity" }, by: who, at: Date.now() }, true);
+      await lesson({ key: `added:${id}`, category, source: "person", rating: e.rating ?? "opportunity", title: e.title ?? "Finding", observation: e.observation ?? "", evidence: [], practice: "", gap: e.gap ?? "", next: e.next ?? "", year: e.year ?? "", owner: e.owner ?? "", due: e.due ?? "", cost: e.cost ?? "", done: false, auto: false, applies: "all", effect: e.effect ?? "", finishH: 0, moved: null, proof: "", why: e.effect ?? "", hours: null, ask: e.ask ?? e.next ?? "", because: e.because ?? e.effect ?? "", info: [], status: "kept", edited: false, stale: false, drafted: { title: e.title ?? c.name, observation: e.observation ?? "", rating: e.rating ?? "opportunity" }, by: who, at: Date.now() }, true);
     });
   };
-  const filled = Object.entries(answers).filter(([, a]) => a.cause || a.known || a.note?.trim());
-  const saveAnswers = () => void act("answers", (s) => { for (const [k, a] of filled) s.answers[k] = { ...(a.cause ? { cause: a.cause } : {}), ...(a.known ? { known: a.known } : {}), ...(a.note?.trim() ? { note: a.note.trim() } : {}), at: Date.now(), by: who }; }, () => { setAnswers({}); onReload(); setTick((t) => t + 1); });
-  const saveTargets = () => { const t = targets; if (!t) return; void act("targets", (s) => { s.targets = Object.fromEntries(Object.entries(t).map(([k, v]) => [k, v.trim()]).filter(([, v]) => v)); }, () => setTargets(null)); };
   const reanalyze = () => { setMsg(null); setErr(null); onReload(); setTick((t) => t + 1); };
 
   const fileOpts = (): ReviewFileOpts => ({ project: projectName, phase: phase?.name ?? null, tz, preparedBy: null, date: fmtInTz(Date.now(), tz, { month: "long", day: "numeric", year: "numeric" }), score: scoreIn, kind: typeIn });
@@ -446,87 +420,67 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
     try { await saveSlidesChoice(projectId, on); } catch (e) { setErr((e as Error).message); }
   };
 
+
   if (!review) return <LoadingBlock what="the review" />;
   const m = review.metrics;
   const late = m.varianceH != null && m.varianceH >= 1;
   const pt = pointOf(review, phase?.name ?? projectName, tz);
   const bk = bookOf(review, phase?.name ?? projectName, tz, scoreIn);
-  // What the review measures that a person has to put in, and where each goes.
-  const bidOf = Object.entries(mp?.bids ?? {});
-  const needs = closeNeeds({
-    typeKnown: !isDefaultType(ptype), typeWord: typeIn,
-    roles: organization ? { recorded: organization.recorded, required: organization.required, filled: organization.filled } : null,
-    companies: [...new Set(made!.work.crews.map((c) => c.company))].sort(),
-    bids: bidOf.filter(([, b]) => b.day?.direct != null || b.night?.direct != null).map(([co]) => co),
-    rates: [...bidOf.filter(([, b]) => b.rate != null).map(([co]) => co), ...Object.keys(crewSettings?.rateSheets ?? {})],
-    staffing: Object.keys(plans ?? {}),
-    headCounts: m.headCounts,
-    incidentsAnswered: scoreIn.incidents ? scoreIn.incidents.answered : null,
-    targets: bk.score.rows.filter((x) => x.key === "added" || x.key === "safety" || x.key === "quality").map((x) => ({ name: x.measure, set: !/not set/i.test(x.plan) })),
-    costs: scoreIn.costs ? { budget: scoreIn.costs.budget, spent: scoreIn.costs.spent } : null,
-    materials: register?.lines ?? null,
-    stepsLeft,
-  });
-  const goNeed = (go: NeedGo) => {
-    if (go.kind === "setup") { requestSetup(go.step); onTab("plan"); }
-    else if (go.kind === "contractors") openContractor(null);
-    else if (go.kind === "tab") onTab(go.tab);
-    else if (go.kind === "score") document.querySelector("[data-review-score]")?.scrollIntoView({ behavior: "smooth", block: "start" });
-    else onSteps?.();
-  };
-  const liveF = review.findings.filter((f) => f.status !== "discarded");
-  const count = (r: Rating) => liveF.filter((f) => f.rating === r).length;
-  const pendingKeys = new Set(pt.pending.map((c) => c.key));
-  const filter: Filter = filterPick === "pending" && !pendingKeys.size ? "all" : filterPick ?? (pendingKeys.size ? "pending" : "all");
-  const shown = review.findings.filter((f) => filter === "discarded" ? f.status === "discarded" : f.status !== "discarded" && (filter === "all" || (filter === "pending" ? pendingKeys.has(f.key) : filter === "kept" ? f.status === "kept" : f.rating === filter)));
-  /** Show the findings that wait for a decision, in the list where each is decided. */
-  const showPending = () => { setFilter("pending"); requestAnimationFrame(() => document.querySelector("[data-findings-list]")?.scrollIntoView({ block: "start", behavior: "smooth" })); };
-  const day = (t: number | null) => (t == null ? "" : fmtInTz(t, tz, { month: "numeric", day: "numeric" }));
-  const when = (t: number) => `${fmtInTz(t, tz, { weekday: "short", month: "numeric", day: "numeric" })} ${fmtInTz(t, tz, { hour: "numeric", minute: "2-digit", hour12: true })}`;
-  const Pill = ({ id, children }: { id: Filter; children: React.ReactNode }) => (
-    <button type="button" onClick={() => setFilter(id)} aria-pressed={filter === id} className={`h-8 px-3 rounded-full border text-[12.5px] font-semibold whitespace-nowrap ${filter === id ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30 border-transparent" : "bg-[var(--color-surface)] text-[var(--color-text)] border-[var(--color-border)]"}`}>{children}</button>
+  const live = review.findings.filter((f) => f.status !== "discarded");
+  const main = live.filter((f) => f.rating === "gap" || f.rating === "opportunity" || f.finishH > 0);
+  const went = live.filter((f) => !main.includes(f) && f.rating === "strength");
+  const quiet = live.filter((f) => !main.includes(f) && !went.includes(f));
+  const out = review.findings.filter((f) => f.status === "discarded");
+  const go = (key: string) => { const el = document.querySelector(`[data-finding="${key.replace(/"/g, "")}"]`); el?.scrollIntoView({ behavior: "smooth", block: "start" }); };
+  const actionOf = new Map(bk.actions.flatMap((a) => a.keys.map((k) => [k, a.n] as const)));
+  const at = (t: number | null) => (t == null ? "Not finished" : `${fmtInTz(t, tz, { weekday: "short", month: "short", day: "numeric" })}, ${fmtInTz(t, tz, { hour: "numeric", minute: "2-digit", hour12: true })}`);
+  const card = (f: Finding) => (
+    <FindingCard key={f.key} f={f} tz={tz} lateH={late ? m.varianceH : null} canManage={canManage} busy={busy} action={actionOf.get(f.key) ?? null}
+      questions={review.questions.filter((q) => q.findingKey === f.key)} answers={saved?.answers ?? {}}
+      onKeep={() => keep(f)} onNotRight={(why) => notRight(f, why)} onAnswer={answer} onCrews={(party, n) => void setCrews(party, n)} />
   );
 
   return (
     <div className="space-y-4" data-post-event-review>
-      <Card label={`Post-event review${phase ? ` · ${phase.name}` : ""}`}
-        action={<div className="flex gap-1.5 flex-wrap">
-          <button type="button" onClick={() => setViewing(true)} disabled={!m.steps} className={dark}><Presentation className="w-4 h-4" /> View slides</button>
+      <div className="min-w-0" data-review-head>
+        <div className="flex items-end gap-x-3 gap-y-2 flex-wrap min-h-8">
+          <h2 className="font-display text-[19px] leading-tight font-semibold text-[var(--color-text)]">Post-event review{phase ? ` · ${phase.name}` : ""}</h2>
+          <div className="flex-1" />
+          <div className="flex gap-1.5 items-center">
+          <button type="button" onClick={() => setViewing(true)} disabled={!m.steps} className={pri}><Presentation className="w-4 h-4" /> View slides</button>
           <MoreMenu items={[
             { icon: <RefreshCw className="w-4 h-4" />, label: "Re-analyze", onClick: () => { if (!busy) reanalyze(); } },
             ...(m.steps ? [
               { icon: <Download className="w-4 h-4" />, label: "Download PowerPoint", onClick: () => { if (!busy) void download("slides"); }, line: true },
               { icon: <Download className="w-4 h-4" />, label: "Download Word report", onClick: () => { if (!busy) void download("word"); } },
             ] : []),
+            ...(canManage ? [{ icon: <Plus className="w-4 h-4" />, label: "Add a finding of your own", onClick: () => setAdding(true), line: true }] : []),
           ]} />
-        </div>}>
-      {phases.length > 0 && (
-        <div className="mb-2 flex items-center gap-2 flex-wrap">
-          <span className={label}>Phase</span>
-          {phases.map((p) => (
-            <button key={p.id} type="button" onClick={() => { setPhaseId(p.id); setEditing(null); setAdding(false); setAnswers({}); }} aria-pressed={p.id === phaseId}
-              className={`h-8 px-3 rounded-full border text-[12.5px] font-semibold ${p.id === phaseId ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30 border-transparent" : "bg-[var(--color-surface)] text-[var(--color-text)] border-[var(--color-border)]"}`}>{p.name}</button>
-          ))}
-          <span className="text-[12px] text-[var(--color-text-muted)]">One phase at a time; each has its own review.</span>
+          </div>
         </div>
-      )}
-      <p className="text-[13px] text-[var(--color-text-muted)]">A suggested finding goes on the slides only when you accept it.{!m.done && m.steps ? ` ${m.steps - m.stepsDone} of ${m.steps} activities are not done yet, so these numbers are to date.` : ""}</p>
-      {(busy === "slides" || busy === "word") && <p role="status" className="mt-2 text-[13px] text-[var(--color-text-muted)]"><Loader2 className="w-3.5 h-3.5 animate-spin inline mr-1.5" />Making the {busy === "word" ? "Word report" : "PowerPoint"}…</p>}
-      {err && <div role="alert" className="mt-2 text-[13px] font-semibold text-rose-800 dark:text-rose-300">{err}</div>}
-      {msg && <div role="status" className="mt-2 text-[13px] font-semibold text-amber-900 dark:text-amber-200">{msg}</div>}
-      {held && !viewing && <div role="status" className="mt-2 flex items-center gap-2 flex-wrap text-[13px] font-semibold text-[var(--color-text)]" data-file-ready><span className="min-w-0 flex-1 basis-40">The file is ready.</span><button type="button" onClick={() => void saveHeld()} className={pri}><Download className="w-4 h-4" /> Save file</button></div>}
-      </Card>
+        {phases.length > 0 && (
+          <div className="mt-2.5 flex items-center gap-2 flex-wrap">
+            {phases.map((p) => (
+              <button key={p.id} type="button" onClick={() => { setPhaseId(p.id); setAdding(false); }} aria-pressed={p.id === phaseId}
+                className={`h-9 px-3.5 rounded-full border text-[13px] font-semibold ${p.id === phaseId ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30 border-transparent" : "bg-[var(--color-surface)] text-[var(--color-text)] border-[var(--color-border)]"}`}>{p.name}</button>
+            ))}
+          </div>
+        )}
+        {(busy === "slides" || busy === "word") && <p role="status" className="mt-2 text-[13px] text-[var(--color-text-muted)]"><Loader2 className="w-3.5 h-3.5 animate-spin inline mr-1.5" />Making the {busy === "word" ? "Word report" : "PowerPoint"}…</p>}
+        {err && <div role="alert" className="mt-2 text-[13px] font-semibold text-[var(--state-overdue)]">{err}</div>}
+        {msg && <div role="status" className="mt-2 text-[13px] font-semibold text-[var(--state-held)]">{msg}</div>}
+        {held && !viewing && <div role="status" className="mt-2 flex items-center gap-2 flex-wrap text-[13px] font-semibold text-[var(--color-text)]" data-file-ready><span className="min-w-0 flex-1 basis-40">The file is ready.</span><button type="button" onClick={() => void saveHeld()} className={btn}><Download className="w-4 h-4" /> Save file</button></div>}
+      </div>
       {viewing && viewSpecs && <ReviewSlides slides={viewSpecs} name={`${phase?.name ?? projectName} post-event review`} onClose={() => setViewing(false)} onDownload={() => void download("slides")} downloading={busy === "slides"} ready={held ? { name: held.name, onSave: () => void saveHeld() } : null} look={slideLook} template={tpl?.name ?? null}
         deck={useTpl ? screen.deck : null} deckState={useTpl ? screen.state : null} choice={tpl ? { on: useTpl, set: (on) => void chooseSlides(on) } : null} edit={slideEdit} />}
 
       {carried.map(({ phase: p, actions }) => (
-        <section key={p.id} className="rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] p-4 sm:p-5" data-review-carried={p.id}>
+        <section key={p.id} className={box} data-review-carried={p.id}>
           <b className="block text-[14px] text-[var(--color-text)]">Open actions from the {p.name} review: {actions.length}</b>
-          <p className="text-[12px] text-[var(--color-text-muted)]">They stay here until each is closed.</p>
           <ul className="mt-2 space-y-2">
             {actions.map((a) => (
               <li key={a.key} className="flex gap-3 items-start text-[13.5px] text-[var(--color-text)]">
-                <div className="min-w-0 flex-1"><b className="block leading-snug">{a.what}</b><span className="text-[12.5px] text-[var(--color-text-muted)]">Who: {a.who || "Not set"} · By: {a.by || "Not set"} · Cost: {a.cost || "Not set"}</span></div>
+                <div className="min-w-0 flex-1"><b className="block leading-snug">{a.what}</b><span className="text-[12.5px] text-[var(--color-text-muted)]">Owner: {a.who || "not set"} · By: {a.by || "not set"}</span></div>
                 {canManage && <button type="button" disabled={!!busy} onClick={() => void closeCarried(p.id, a.key)} className={btn}><Check className="w-4 h-4" /> Done</button>}
               </li>
             ))}
@@ -534,258 +488,74 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
         </section>
       ))}
 
-      {m.steps > 0 && <CloseNeeds needs={needs} onGo={goNeed} />}
-
-      {!m.steps ? <div className="rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] px-4 sm:px-5 py-5 text-[14px] text-[var(--color-text-muted)]">No schedule{phase ? ` for ${phase.name}` : ""} yet, so there is nothing to review.</div> : <>
-        <section className="rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] p-4 sm:p-5" data-review-point>
-          <h3 className="sr-only">{pt.headline}</h3>
-          <HowItEnded m={m} delay={late ? review.finish?.delay ?? [] : []} tz={tz} />
-
-          <div className="mt-5" data-review-score>
-            <div className="flex items-baseline gap-x-3 gap-y-1 flex-wrap">
-              <h4 className="font-display text-[17px] font-semibold text-[var(--color-text)]">The score: plan against actual</h4>
-              <span className="text-[13px] text-[var(--color-text-muted)]">{bk.score.line}</span>
+      {!m.steps ? <div className={`${box} text-[14px] text-[var(--color-text-muted)]`}>No schedule{phase ? ` for ${phase.name}` : ""} yet, so there is nothing to review.</div> : <>
+        <section className={box} data-review-answer>
+          <h3 className="font-display text-[19px] sm:text-[22px] font-semibold leading-snug text-[var(--color-text)]"><Tags text={pt.headline} /></h3>
+          <dl className="mt-3 grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-2.5 text-[13px]">
+            <div><dt className="text-[var(--color-text-muted)]">Baseline finish</dt><dd className="font-semibold text-[15px] text-[var(--color-text)]">{at(m.baselineFinish)}</dd></div>
+            <div><dt className="text-[var(--color-text-muted)]">Actual finish</dt><dd className="font-semibold text-[15px] text-[var(--color-text)]">{at(m.actualFinish)}</dd></div>
+            <div className="col-span-2 sm:col-span-1"><dt className="text-[var(--color-text-muted)]">Against the baseline</dt><dd className={`font-semibold text-[15px] ${m.varianceH == null ? "text-[var(--color-text)]" : m.varianceH >= 1 ? "text-[var(--state-overdue)]" : "text-[var(--state-released)]"}`}>{m.varianceH == null ? `${m.steps - m.stepsDone} of ${m.steps} activities still open` : Math.abs(m.varianceH) < 1 ? "On the baseline finish" : `${Math.abs(m.varianceH)} h ${m.varianceH > 0 ? "late" : "early"}`}</dd></div>
+          </dl>
+          {late && review.lateBars.length > 0 && (
+            <div className="mt-5">
+              <h4 className="text-[15px] font-semibold text-[var(--color-text)]">Where the {m.varianceH} h went</h4>
+              <p className="mb-2.5 text-[12.5px] text-[var(--color-text-muted)]">Each piece of the late finish and the finding that explains it. A bar goes to its finding.</p>
+              <LateHours bars={review.lateBars} late={m.varianceH!} onPick={go} />
             </div>
-            <ScoreTable rows={bk.score.rows} entries={saved?.score} busyKey={busy} canManage={canManage} onSave={setScore} />
+          )}
+          {!m.done && <p className="mt-3 text-[12.5px] text-[var(--color-text-muted)]">{m.steps - m.stepsDone} of {m.steps} activities are not done yet, so these numbers are to date.</p>}
+        </section>
+
+        <section className="space-y-3" data-review-findings>
+          <div className="flex items-baseline gap-x-3 gap-y-0.5 flex-wrap px-0.5">
+            <h3 className="font-display text-[17px] font-semibold text-[var(--color-text)]">What the records show</h3>
+            {main.length > 0 && late && <span className="text-[12.5px] text-[var(--color-text-muted)]">Most hours of the late finish first</span>}
           </div>
-
-          <div className="mt-4" data-review-areas>
-            <b className="text-[14px] text-[var(--color-text)]">2. What went well, what did not, and why</b>
-            <div className="mt-1.5 flex gap-1.5 flex-wrap">
-              {bk.areas.map((a) => <span key={a.id} className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[12px] font-bold ${AREA_CLS[a.state]}`}>{a.name}<span className="font-normal">{a.hours > 0 ? a.tag.toLowerCase() : a.state === "pending" ? `${a.pending} to rule on` : AREA_WORD[a.state]}</span></span>)}
-            </div>
-            <p className="mt-1 text-[12px] text-[var(--color-text-muted)]">Each finding below falls under one of these seven areas. An area is judged only on what you accept.</p>
-          </div>
-
-          <div className="mt-4" data-review-plan>
-            <div className="flex items-baseline gap-x-3 gap-y-1 flex-wrap">
-              <b className="text-[14px] text-[var(--color-text)]">3. The action plan: {bk.actions.length ? `${bk.actions.length} for the next event` : "nothing accepted yet"}</b>
-              <span className="text-[12.5px] text-[var(--color-text-muted)]">Only what you accept or write is an action.</span>
-            </div>
-            {bk.actions.length > 0 && (
-              <ol className="mt-2 space-y-3">
-                {bk.actions.map((a) => <ActionLine key={a.key} a={a} kind={typeIn} busy={busy === `plan:${a.key}` || busy === `done:${a.key}`} canManage={canManage} onPlan={(patch) => setPlan(a.key, patch)} onDone={(d) => setDone(a.keys, d)} />)}
-              </ol>
-            )}
-          </div>
-          {pt.pending.length > 0 && (
-            <div className="mt-4 border-l-2 border-amber-500 pl-3 py-1 flex items-center gap-2 flex-wrap" data-review-pending>
-              <span className="min-w-0 flex-1 basis-56 text-[13px] text-amber-900 dark:text-amber-200"><b>{pt.pending.length === 1 ? "1 finding needs your call" : `${pt.pending.length} findings need your call`}</b> before {pt.pending.length === 1 ? "it goes" : "they go"} on the slide.</span>
-              <button type="button" onClick={showPending} className={dark}>Show {pt.pending.length === 1 ? "it" : "them"}</button>
-            </div>
+          {adding && <div className={box}><FindingForm title="Add a finding of your own" draftKey={`review-add:${projectId}:${scope}`} pickCategory busy={busy === "add"} onCancel={() => setAdding(false)} onSave={(e, c) => addFinding(e, c ?? "execution")} /></div>}
+          {main.length === 0 && <div className={`${box} text-[14px] text-[var(--color-text-muted)]`}>Nothing in the records calls for a change.</div>}
+          {main.map(card)}
+          {went.length > 0 && (
+            <section className={box} data-review-well>
+              <h4 className="text-[14px] font-semibold text-[var(--color-text)]">What went well</h4>
+              <ul className="mt-1.5 space-y-1 text-[13.5px] text-[var(--color-text)] list-disc pl-5">{went.map((f) => <li key={f.key}><b>{f.title}.</b> {f.observation.split("\n")[0]}</li>)}</ul>
+            </section>
+          )}
+          {quiet.length > 0 && (
+            <details className={`${box} !py-3`} data-review-quiet>
+              <summary className="cursor-pointer text-[14px] font-semibold text-[var(--color-text)]">Also checked, did not move the finish ({quiet.length})</summary>
+              <div className="mt-3 space-y-3">{quiet.map(card)}</div>
+            </details>
+          )}
+          {out.length > 0 && (
+            <details className={`${box} !py-3`} data-review-out>
+              <summary className="cursor-pointer text-[14px] font-semibold text-[var(--color-text)]">Taken out of the review ({out.length})</summary>
+              <ul className="mt-2 space-y-2">
+                {out.map((f) => (
+                  <li key={f.key} className="flex items-start gap-3 text-[13.5px]">
+                    <div className="min-w-0 flex-1"><b className="block text-[var(--color-text)]">{f.title}</b><span className="text-[var(--color-text-muted)]">{f.notRight ? `Not right: ${f.notRight}` : "Taken out."}{f.by ? ` (${f.by})` : ""}</span></div>
+                    {canManage && <button type="button" disabled={!!busy} onClick={() => putBack(f)} className={btn}><RotateCcw className="w-4 h-4" /> Put back</button>}
+                  </li>
+                ))}
+              </ul>
+            </details>
           )}
         </section>
 
-
-        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_340px] items-start">
-          <div className="min-w-0 space-y-3 scroll-mt-4" data-findings-list>
-            <div className="flex gap-1.5 items-center">
-              {/* One row that scrolls sideways on a phone, so the list starts high. */}
-              <div className="min-w-0 flex-1 flex gap-1.5 overflow-x-auto sm:flex-wrap pb-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" data-finding-pills>
-              {pt.pending.length > 0 && <Pill id="pending">Needs your call {pt.pending.length}</Pill>}
-              <Pill id="all">All {liveF.length}</Pill>
-              <Pill id="gap">Gaps {count("gap")}</Pill>
-              <Pill id="opportunity">Opportunities {count("opportunity")}</Pill>
-              <Pill id="strength">Strengths {count("strength")}</Pill>
-              <Pill id="kept">Kept {liveF.filter((f) => f.status === "kept").length}</Pill>
-              <Pill id="discarded">Discarded {review.findings.length - liveF.length}</Pill>
-              </div>
-              {canManage && <button type="button" onClick={() => { setAdding(true); setEditing(null); }} className={`${btn} shrink-0`} aria-label="Add a finding"><Plus className="w-4 h-4" /> <span className="hidden sm:inline">Add a finding</span></button>}
-            </div>
-            <p className="text-[11.5px] text-[var(--color-text-muted)]">{RATING_MEANS}</p>
-
-            {adding && <div className="rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] p-4 sm:p-5"><FindingForm title="Add a finding" draftKey={`review-add:${projectId}:${scope}`} pickCategory busy={busy === "add"} onCancel={() => setAdding(false)} onSave={(e, c) => addFinding(e, c ?? "materials")} /></div>}
-
-            {shown.length === 0 && <div className="rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] px-4 sm:px-5 py-5 text-[14px] text-[var(--color-text-muted)]">Nothing here.</div>}
-            {shown.map((f) => {
-              const c = areaOf(f.category);
-              const closes = f.rating === "gap" || f.rating === "opportunity";
-              const asks = review.questions.filter((q) => q.findingKey === f.key).length;
-              return (
-                <article key={f.key} data-finding={f.key} className={`rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] p-4 sm:p-5 ${f.status === "discarded" ? "opacity-70" : ""}`}>
-                  {editing === f.key ? (
-                    <FindingForm title={`Change: ${c.name}`} init={f} pickCategory={f.source === "person"} busy={busy === `edit:${f.key}`} onCancel={() => setEditing(null)} onSave={(e, cat) => saveEdit(f, e, cat)} />
-                  ) : <>
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className={label}>{c.name}</span>
-                      <span className={`text-[11px] font-semibold px-1.5 py-0.5 rounded ${RATE_CLS[f.rating]}`}>{f.rating === "none" && f.moved === 0 ? "No effect on the finish" : RATING_WORD[f.rating]}</span>
-                      {f.source === "person" && <span className="text-[11px] font-bold px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text-muted)]">Added by {f.by ?? "a person"}</span>}
-                      {f.source === "job" && <span className="text-[11px] font-bold px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text)] dark:bg-[var(--color-surface-2)] dark:text-[var(--color-text)]" data-job-finding>Written on the job{f.by ? ` by ${f.by}` : ""}{f.at ? `, ${day(f.at)}` : ""}</span>}
-                      {(f.areas?.length ?? 0) > 1 && <span className="text-[11px] font-bold px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text-muted)]">{f.areas!.map((a) => AREAS.find((x) => x.id === a)?.name).join(" · ")}</span>}
-                      <span className={`ml-auto text-[11px] font-semibold px-2 py-0.5 rounded-full ${f.status === "kept" ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"}`}>
-                        {f.status === "kept" ? `Kept${f.at ? ` ${day(f.at)}` : ""}${f.edited ? " · changed" : ""}` : f.status === "discarded" ? "Discarded" : `Draft${f.edited ? " · changed" : ""}${asks ? ` · ${asks} question${asks === 1 ? "" : "s"} open` : ""}`}
-                      </span>
-                    </div>
-                    <h3 className="mt-1 text-[15.5px] font-semibold text-[var(--color-text)]">{f.title}</h3>
-                    {f.effect && <p className={`mt-0.5 text-[13px] font-bold ${f.moved === 3 ? "text-rose-700 dark:text-rose-400" : "text-[var(--color-text)]"}`} data-finding-effect>{f.effect}</p>}
-                    {closes && f.why && f.why !== f.effect && <p className="mt-0.5 text-[13px] text-[var(--color-text)]">{f.why}</p>}
-                    <dl className="mt-2 grid gap-x-3 gap-y-1.5 sm:grid-cols-[136px_minmax(0,1fr)] text-[13px] text-[var(--color-text)]">
-                      <dt className={`${label} pt-0.5`}>What happened</dt>
-                      <dd>
-                        {f.observation.trim() ? (() => { const ls = f.observation.split("\n").map((l) => l.trim()).filter(Boolean); return ls.length > 1 ? <ul className="list-disc pl-4 space-y-0.5">{ls.map((l, i) => <li key={i}>{l}</li>)}</ul> : <>{ls[0]}</>; })() : <span className="text-[var(--color-text-muted)]">Nothing written.</span>}
-                        {f.info.map((line, i) => (
-                          <div key={i} className="mt-1 flex items-start gap-1.5 text-[12.5px]"><span className="font-bold text-[var(--color-text-muted)] whitespace-nowrap">Added:</span><span className="min-w-0 flex-1">{line}</span>{canManage && <button type="button" aria-label="Remove this line" onClick={() => dropInfo(f, i)} className="text-[var(--color-text-muted)] hover:text-rose-600"><X className="w-3.5 h-3.5" /></button>}</div>
-                        ))}
-                        {f.evidence.length > 0 && f.source !== "job" && (
-                          <details className="mt-1.5">
-                            <summary className="cursor-pointer text-[12px] font-bold text-[var(--color-accent-text)]">From the records ({f.evidence.length})</summary>
-                            <ul className="mt-1 space-y-1 text-[12px] text-[var(--color-text-muted)] list-disc pl-4">{f.evidence.map((e, i) => <li key={i}>{e}</li>)}</ul>
-                          </details>
-                        )}
-                      </dd>
-                      {closes && <>
-                        {f.practice && <><dt className={`${label} pt-0.5`}>Done well</dt><dd className="text-[var(--color-text-muted)]">{f.practice}</dd></>}
-                        <dt className={`${label} pt-0.5`}>Root cause</dt>
-                        <dd data-root-cause>{f.gap || <span className="text-[var(--color-text-muted)]">Not written.{canManage && <> <button type="button" onClick={() => { setEditing(f.key); setAdding(false); }} className="text-[var(--color-accent-text)] hover:underline">Write it</button></>}</span>}</dd>
-                        <dt className={`${label} pt-0.5`}>{f.status === "kept" || f.source === "person" ? "Do differently" : "Suggested change"}</dt><dd>{f.next || <span className="text-[var(--color-text-muted)]">None suggested. Write one with Edit.</span>}{f.owner && <span className="ml-1.5 text-[11px] font-semibold px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text-muted)] whitespace-nowrap">Owner: {f.owner}</span>}</dd>
-                        {f.year && <><dt className={`${label} pt-0.5`}>Longer term</dt><dd>{f.year}</dd></>}
-                      </>}
-                      {!closes && f.next && <><dt className={`${label} pt-0.5`}>Do differently</dt><dd>{f.next}</dd></>}
-                    </dl>
-                    {f.stale && (
-                      <div className="mt-2 border-l-2 border-amber-500 pl-3 py-1 text-[12.5px] text-amber-900 dark:text-amber-200">
-                        <b>The records have changed since this was {f.edited ? "changed" : "kept"}.</b> They now say:<ul className="list-disc pl-4 mt-1">{f.drafted.observation.split("\n").filter(Boolean).map((l, i) => <li key={i}>{l}</li>)}</ul>
-                        {canManage && <div className="mt-1.5 flex gap-1.5 flex-wrap"><button type="button" disabled={!!busy} onClick={() => takeDraft(f)} className={btn}>Use the new draft</button><button type="button" disabled={!!busy} onClick={() => keep(f)} className={btn}>Keep mine as it is</button></div>}
-                      </div>
-                    )}
-                    {infoFor === f.key && (
-                      <div className="mt-2 flex gap-1.5 flex-wrap">
-                        <KeepDraft key={f.key} draftKey={`review-info:${projectId}:${f.key}`} value={infoText} set={setInfoText} />
-                        <textarea autoFocus rows={2} value={infoText} onChange={(e) => setInfoText(e.target.value)} placeholder="What the records don't say (one or two lines)" className={`${field} flex-1 basis-60`} />
-                        <button type="button" disabled={!infoText.trim() || !!busy} onClick={() => addInfo(f)} className={pri}>Add</button>
-                        <button type="button" onClick={() => { setInfoFor(null); setInfoText(""); }} className={btn}>Cancel</button>
-                      </div>
-                    )}
-                    {f.key === "materials" && f.status !== "discarded" && <button type="button" onClick={() => onTab("materials")} className="mt-2 text-[13px] text-[var(--color-accent-text)] hover:underline">Open the materials register</button>}
-                    {f.key === "organization" && f.status !== "discarded" && <button type="button" onClick={() => onTab("members")} className="mt-2 text-[13px] text-[var(--color-accent-text)] hover:underline">{organization?.recorded ? "Open the event organization (Members)" : "Record the roles and who fills each (Members)"}</button>}
-                    {canManage && infoFor !== f.key && (
-                      <div className="mt-3 flex gap-1.5 flex-wrap">
-                        {f.status === "discarded" ? <button type="button" disabled={!!busy} onClick={() => restore(f)} className={btn}><RotateCcw className="w-4 h-4" /> Restore</button> : <>
-                          {f.status === "kept" ? <button type="button" disabled={!!busy} onClick={() => unkeep(f)} className={btn}><Check className="w-4 h-4 text-emerald-600" /> {closes ? (f.auto ? "On the slide (cost the finish) · take off" : "On the slide · undo") : "Kept · undo"}</button>
-                            : <button type="button" disabled={!!busy} onClick={() => keep(f)} className={dark}>{busy === `keep:${f.key}` ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} {closes ? "Accept for the slide" : "Keep"}</button>}
-                          <button type="button" disabled={!!busy} onClick={() => { setEditing(f.key); setAdding(false); }} className={btn}><Pencil className="w-4 h-4" /> Edit</button>
-                          <MoreMenu label="More" items={[
-                            { icon: <Plus className="w-4 h-4" />, label: "Add information", onClick: () => { if (!busy) { setInfoFor(f.key); setInfoText(""); } } },
-                            { icon: <Trash2 className="w-4 h-4" />, label: "Discard", tone: "bad", onClick: () => { if (!busy) discard(f); } },
-                          ]} />
-                        </>}
-                      </div>
-                    )}
-                  </>}
-                </article>
-              );
-            })}
-          </div>
-
-          <aside className="space-y-3">
-            {review.questions.length > 0 ? (
-              <div className="rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] p-4 sm:p-5" data-review-questions>
-                <h3 className="text-[14px] font-semibold text-[var(--color-text)]">Fill in what the records don&rsquo;t say ({review.questions.length})</h3>
-                <div className="mt-2 space-y-2">
-                  {review.questions.map((q) => {
-                    const a = answers[q.key] ?? {};
-                    const set = (patch: Answer) => setAnswers((s) => ({ ...s, [q.key]: { ...s[q.key], ...patch } }));
-                    return (
-                      <div key={q.key} className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-2.5 text-[12.5px]">
-                        <b className="block text-[var(--color-text)]">{q.ask}</b>
-                        {canManage && <div className="mt-1.5 space-y-1.5">
-                          {q.answer === "cause" && (
-                            <select aria-label="Reason" value={a.cause ?? ""} onChange={(e) => set({ cause: (e.target.value || undefined) as CauseId | undefined })} className={field}>
-                              <option value="">Pick a reason</option>
-                              {CAUSE_CHOICES.map((c) => <option key={c} value={c}>{CAUSE_WORD[c]}</option>)}
-                            </select>
-                          )}
-                          {q.answer === "known" && (
-                            <div className="flex gap-1.5 flex-wrap">
-                              {(Object.keys(KNOWN_WORD) as Known[]).map((k) => <button key={k} type="button" aria-pressed={a.known === k} onClick={() => set({ known: a.known === k ? undefined : k })} className={`h-8 px-2.5 rounded-full border text-[12px] font-bold ${a.known === k ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30 border-transparent" : "bg-[var(--color-surface)] text-[var(--color-text)] border-[var(--color-border-strong)]"}`}>{KNOWN_WORD[k]}</button>)}
-                            </div>
-                          )}
-                          <input aria-label="Answer" value={a.note ?? ""} onChange={(e) => set({ note: e.target.value })} placeholder={q.answer === "known" ? "What we do next time (this is the slide line)" : q.answer === "cause" ? "More, if it helps (optional)" : "One line is enough"} className={field} />
-                        </div>}
-                      </div>
-                    );
-                  })}
-                </div>
-                {canManage && <button type="button" disabled={!filled.length || !!busy} onClick={saveAnswers} className={`${pri} w-full mt-2.5`}>{busy === "answers" ? <Loader2 className="w-4 h-4 animate-spin" /> : null} Save {filled.length || ""} answer{filled.length === 1 ? "" : "s"} and re-analyze</button>}
-              </div>
-            ) : (
-              <div className="border-l-2 border-emerald-500 pl-3 py-1 text-[12.5px] text-emerald-900 dark:text-emerald-200"><b>No open questions.</b> Every stuck shift has a reason{review.answeredCount ? ` (${review.answeredCount} answered here)` : ""}.</div>
-            )}
-            <details className="rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] px-4 sm:px-5 py-3.5 text-[13px] text-[var(--color-text-muted)]">
-              <summary className="cursor-pointer text-[13px] font-bold text-[var(--color-text)]">How a finding is drafted</summary>
-              <p className="mt-1">Every number is counted from what was entered. Each finding lists the records behind it. What you kept or changed is never overwritten, and kept findings go to the lessons register.</p>
-              <div className="mt-2 flex gap-1.5 flex-wrap"><button type="button" onClick={() => onTab("reports:asbuilt")} className={btn}><FileText className="w-4 h-4" /> As-built schedule</button></div>
-            </details>
-          </aside>
-        </div>
-
-        <section className="rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] p-4 sm:p-5" data-review-measures>
-          <h3 className="text-[14px] font-semibold text-[var(--color-text)]">Targets for the next event</h3>
-          <p className="text-[12.5px] text-[var(--color-text-muted)]">Nothing is judged against a target until you set it.</p>
-          <div className="mt-2 space-y-2">
-            {review.measures.map((x) => {
-              const cur = (targets ?? saved?.targets ?? {})[x.key] ?? "";
-              const put = (v: string) => setTargets({ ...(targets ?? saved?.targets ?? {}), [x.key]: v });
-              return (
-                <div key={x.key} className="rounded-xl border border-[var(--color-border)] px-3 py-2.5 text-[13px]">
-                  <div className="flex items-baseline gap-x-3 flex-wrap"><b className="text-[var(--color-text)]">{x.measure}</b><span className="ml-auto text-[var(--color-text)]">This event: <b>{x.result}</b></span></div>
-                  <div className="text-[12px] text-[var(--color-text-muted)]">{x.hint}</div>
-                  {canManage ? (
-                    <div className="mt-1.5 flex items-center gap-1.5 flex-wrap">
-                      <span className={label}>Target</span>
-                      {x.picks.map((pk) => <button key={pk} type="button" onClick={() => put(pk)} aria-pressed={cur === pk} className={`h-8 px-2.5 rounded-full border text-[12px] font-bold ${cur === pk ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30 border-transparent" : "bg-[var(--color-surface)] text-[var(--color-text)] border-[var(--color-border-strong)]"}`}>{pk}</button>)}
-                      <input aria-label={`Target: ${x.measure}`} value={cur} onChange={(e) => put(e.target.value)} placeholder="or type your own" className={`${field} !w-44 h-8 !py-0`} />
-                    </div>
-                  ) : <div className="mt-1 text-[12.5px]">{x.set ? <>Target: <b>{x.target}</b></> : <span className="text-[var(--color-text-muted)]">Target: not set</span>}</div>}
-                </div>
-              );
-            })}
-          </div>
-          {canManage && targets && <div className="mt-2.5 flex gap-1.5"><button type="button" disabled={!!busy} onClick={saveTargets} className={pri}>{busy === "targets" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} Save targets</button><button type="button" onClick={() => setTargets(null)} className={btn}>Cancel</button></div>}
+        <section className={box} data-review-plan>
+          <h3 className="font-display text-[17px] font-semibold text-[var(--color-text)]">What we change next time</h3>
+          {bk.actions.length ? (
+            <ol className="mt-3 space-y-4">
+              {bk.actions.map((a) => <ActionLine key={a.key} a={a} kind={typeIn} busy={busy === `plan:${a.key}` || busy === `done:${a.key}`} canManage={canManage} onPlan={(patch) => setPlan(a.keys, patch)} onDone={(d) => setDone(a.keys, d)} onGo={() => go(a.key)} />)}
+            </ol>
+          ) : <p className="mt-1 text-[14px] text-[var(--color-text-muted)]">Nothing in the records calls for a change.</p>}
         </section>
 
-        <details className="rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)]">
-          <summary className="cursor-pointer px-4 py-3 text-[14px] font-semibold text-[var(--color-text)]">The records behind it: every job that waited, by name</summary>
-          <div className="px-4 pb-4 space-y-4">
-            {review.flows.filter(overloaded).map((f) => (
-              <div key={f.crew} data-crew-waits={f.crew}>
-                <h4 className="text-[13px] font-semibold text-[var(--color-text)]">What waited for {f.crew}: {f.jobs.length} job{f.jobs.length === 1 ? "" : "s"}, {f.peak.open} open at once{f.plannedPeak ? ` (plan ${f.plannedPeak})` : ""}</h4>
-                <p className="mb-1.5 text-[12px] text-[var(--color-text-muted)]">Each wait runs from when the job was ready to when {f.crew} started it. Check the &ldquo;ready when&rdquo; step on each: where the schedule has no link the app takes the step planned before it, and you can correct it.</p>
-                <ul className="space-y-2">
-                  {f.jobs.map((j) => (
-                    <li key={j.id} className="rounded-xl border border-[var(--color-border)] px-3 py-2 text-[12.5px] text-[var(--color-text)]">
-                      <div className="flex items-baseline gap-x-3 flex-wrap"><b>{jobWord(j)}</b><span className="ml-auto font-bold">{j.waitH >= 1 ? `Waited ${j.waitH} h` : "No wait"}</span></div>
-                      <div className="mt-0.5 flex items-center gap-1.5 flex-wrap">
-                        <span className="text-[var(--color-text-muted)]">Ready when</span>
-                        {canManage && j.candidates.length > 1 ? (
-                          <select aria-label={`Ready when: ${jobWord(j)}`} value={j.afterId} disabled={!!busy} onChange={(e) => void act(`ready:${j.id}`, (s) => { s.readyAfter = { ...(s.readyAfter ?? {}), [j.id]: e.target.value }; })} className={`${field} !w-auto max-w-full h-8 !py-0`}>
-                            {!j.candidates.some((c) => c.id === j.afterId) && <option value={j.afterId}>{j.after}</option>}
-                            {j.candidates.map((c) => <option key={c.id} value={c.id}>{c.name.replace(/\s*\([^)]*\)/g, "")}{c.order !== j.order ? ` (${c.order})` : ""}</option>)}
-                          </select>
-                        ) : <b>{j.after}</b>}
-                        <span className="text-[var(--color-text-muted)]">was done{j.basis === "guessed" ? " (the last step done before it started: the schedule has no link)" : j.basis === "corrected" ? " (as corrected)" : ""}</span>
-                      </div>
-                      <div className="text-[var(--color-text-muted)]">Ready {when(j.openedAt)} · {f.crew} started {when(j.startedAt)}{j.lateStartH != null && Math.abs(j.lateStartH) >= 1 ? ` · ${Math.abs(j.lateStartH)} h ${j.lateStartH > 0 ? "after" : "before"} its planned start` : ""}{j.crewOn.length ? ` · ${f.crew} was on ${[...new Set(j.crewOn.map(orderWord))].join(", ")}` : ""}</div>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ))}
-            <Table title="Other work orders that finished after their plan" head={["Work order", "Finished after its plan by", "Where the time went"]} empty="None beyond what the findings tell."
-              rows={review.late.filter((o) => !o.told).map((o) => [orderWord(o.order), `${o.lateH} h${o.added ? " (added work)" : ""}`, o.parts.slice(0, 3).map((p) => (p.kind === "over" ? `${p.step.replace(/\s*\([^)]*\)/g, "").replace(/[()]/g, "").trim()}: open ${p.tookH} h, progress logged on ${p.workedShifts} shift${p.workedShifts === 1 ? "" : "s"}, planned as ${p.plannedH} h of work (${p.crew})` : p.kind === "wait" ? `${p.step.replace(/\s*\([^)]*\)/g, "").replace(/[()]/g, "").trim()} sat ${p.hours} h before ${p.crew} started it` : `Started ${p.hours} h after its planned start`)).join("; ") || "Not shown by the record"])} />
-            <Table title={CREWS_TITLE} head={CREWS_HEAD} empty="No work passed between crews." rows={crewsRows(review)} />
-            <p className="-mt-2 text-[12px] text-[var(--color-text-muted)]">{CREWS_NOTE}</p>
-            <Table title={`Started jobs that sat still: ${m.stuckJobs} job${m.stuckJobs === 1 ? "" : "s"}, ${m.stuckShifts} shift${m.stuckShifts === 1 ? "" : "s"} in all`} head={["Job", "Crew", "Shifts", "When", "Why, from the record"]} empty="No started job sat a full shift."
-              rows={review.stuck.map((j) => [jobWord(j), j.crew, String(j.shifts.length), shiftsWord(j.shifts.map((s) => s.key)), [...new Set(j.shifts.map((s) => `${CAUSE_WORD[s.cause]}${s.said ? `: "${s.said}"` : s.crewOn.length ? ` (crew on ${[...new Set(s.crewOn.map(orderWord))].slice(0, 3).join(", ")})` : ""}`))].join(" Then: ")])} />
-            <Table title={`Ready jobs not started: ${m.readyJobs} job${m.readyJobs === 1 ? "" : "s"}, ${m.readyShifts} shift${m.readyShifts === 1 ? "" : "s"} in all`} head={["Ready job", "Crew", "Shifts", "When", "Crew was on"]} empty="No ready job waited a full shift to start."
-              rows={review.ready.map((j) => [jobWord(j), j.crew, String(j.shifts.length), shiftsWord(j.shifts), j.said ?? (j.busyOn.length ? [...new Set(j.busyOn.map(orderWord))].join(", ") : j.crewLogged ? "" : "No work logged by this crew")])} />
-            <Table title={`Out for service (a planned step, not counted as waiting): ${review.service.length} job${review.service.length === 1 ? "" : "s"}`} head={["Job", "Crew", "Shifts away", "Written when it went", "Back"]} empty="Nothing went out for service."
-              rows={review.service.map((j) => [jobWord(j), j.crew, shiftsWord(j.shifts), j.said, j.stillOut ? `Still out past the time quoted: "${j.stillOut.said}"` : "As planned"])} />
-            <Table title={`By shift: ${m.shiftsWithStuck} of ${m.shifts} shifts had a job sitting`} head={["Shift", "Started, sitting still", "Ready, not started", "Together"]} empty="None."
-              rows={review.byShift.map((c) => [shiftWord(c.key), String(c.stuck), String(c.ready), String(c.stuck + c.ready)])} />
-            <Table title={`Found work: ${review.found.length} finding${review.found.length === 1 ? "" : "s"}, ${m.addedSteps} activit${m.addedSteps === 1 ? "y" : "ies"} added`} head={["Finding", "Activities", "Work when approved", "Critical path", "Approved by"]} empty="No work was added during the event."
-              rows={review.found.map((f) => [`${f.what} (${orderWord(f.on)})`, String(f.steps), `${f.hours} h`, f.critical ? "Yes" : "No", f.approvedBy ?? "Not recorded"])} />
-            <p className="text-[11.5px] text-[var(--color-text-muted)]">A job sat a shift when it had started and nothing was logged on it for that whole shift, or was ready and did not start. A job that sits several shifts is counted in each. Night shifts count only for work that ran on nights. Equipment out for repair or calibration is a planned step and is listed apart. A head count was written down on {m.headCounts.shiftsCounted} of the {m.headCounts.shiftsWorked} shifts worked{m.labor ? `; they put ${m.labor.pct}% of labor hours on added work` : ", so labor hours are not estimated"}.</p>
+        <details className={`${box} !py-3`} data-review-definitions>
+          <summary className="cursor-pointer text-[14px] font-semibold text-[var(--color-text)]">How each number is counted</summary>
+          <div className="mt-2 overflow-x-auto">
+            <table className="w-full text-[13px] border-collapse">
+              <tbody>{review.definitions.map((d) => <tr key={d.measure} className="border-b last:border-b-0 border-[var(--color-border)] align-top"><th scope="row" className="text-left font-semibold pr-3 py-1.5 text-[var(--color-text)] whitespace-nowrap">{d.measure}</th><td className="py-1.5 text-[var(--color-text)]">{d.means}</td></tr>)}</tbody>
+            </table>
           </div>
         </details>
       </>}
@@ -793,226 +563,196 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
   );
 }
 
-/** A table that reads as stacked rows on a phone. */
-function Table({ title, head, rows, empty }: { title: string; head: string[]; rows: string[][]; empty: string }) {
+// ─── A finding ─────────────────────────────────────────────────────
+
+function FindingCard({ f, tz, lateH, canManage, busy, action, questions, answers, onKeep, onNotRight, onAnswer, onCrews }: {
+  f: Finding; tz: string; lateH: number | null; canManage: boolean; busy: string | null; action: number | null;
+  questions: Question[]; answers: ReviewSaved["answers"];
+  onKeep: () => void; onNotRight: (why: string) => void; onAnswer: (q: Question, note: string) => void; onCrews: (party: string, n: number | null) => void;
+}) {
+  const [why, setWhy] = useState<string | null>(null);
+  const lines = f.observation.split("\n").map((l) => l.trim()).filter(Boolean);
+  // A party's load and ready work with nobody on it say it in one passage; the rest say it in a line, then their facts.
+  const head = f.idle ? lines.join(" ") : f.load ? lines.slice(0, 3).join(" ") : f.why && f.source === "records" ? f.why : lines[0] ?? "";
+  const rest = f.idle ? [] : f.load ? lines.slice(3) : f.why && f.source === "records" ? lines : lines.slice(1);
+  const showEffect = !!f.effect && !head.includes(f.effect) && !rest.includes(f.effect);
+  const L = f.load;
   return (
-    <div>
-      <h4 className="text-[13px] font-semibold text-[var(--color-text)] mb-1.5">{title}</h4>
-      {rows.length === 0 ? <div className="text-[12.5px] text-[var(--color-text-muted)]">{empty}</div> : <>
-        <div className="hidden sm:block rounded-xl border border-[var(--color-border)] overflow-x-auto">
-          <table className="w-full text-[12.5px] border-collapse">
-            <thead><tr>{head.map((h) => <th key={h} className="text-left px-2.5 py-2 bg-[var(--color-surface-2)] text-[12px] font-semibold text-[var(--color-text-muted)] border-b border-[var(--color-border)]">{h}</th>)}</tr></thead>
-            <tbody>{rows.map((r, i) => <tr key={i} className="border-b last:border-b-0 border-[var(--color-border)] align-top">{r.map((c, n) => <td key={n} className={`px-2.5 py-2 text-[var(--color-text)] ${n === 0 ? "font-bold" : ""}`}>{c}</td>)}</tr>)}</tbody>
-          </table>
+    <article data-finding={f.key} className={`${box} scroll-mt-4`}>
+      <div className="flex items-center gap-2 flex-wrap text-[12px]">
+        <span className={label}>{areaOf(f.category).name}</span>
+        {lateH != null && (f.finishH > 0
+          ? <span className="font-semibold px-1.5 py-0.5 rounded bg-[color-mix(in_srgb,var(--state-overdue)_12%,transparent)] text-[var(--state-overdue)]" data-finish-hours>{f.finishH} h of the {lateH} h late finish</span>
+          : f.moved === 0 ? <span className="font-semibold px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text-muted)]">Did not move the finish</span> : null)}
+        {f.source === "person" && <span className="font-semibold px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text-muted)]">Written in the review{f.by ? ` by ${f.by}` : ""}</span>}
+        {f.source === "job" && <span className="font-semibold px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text-muted)]">{f.where}</span>}
+      </div>
+      <h4 className="mt-1 text-[16px] font-semibold leading-snug text-[var(--color-text)]"><Tags text={f.title} /></h4>
+      {head && <p className="mt-1 text-[14px] leading-relaxed text-[var(--color-text)]" data-finding-headline>{head}</p>}
+      {showEffect && <p className="mt-1 text-[13px] font-semibold text-[var(--color-text)]" data-finding-effect>{f.effect}</p>}
+
+      {L && <LoadBody L={L} tz={tz} canManage={canManage} busy={busy} onCrews={onCrews} />}
+      {f.idle && (
+        <div className="mt-3" data-idle>
+          <IdleBars groups={f.idle.groups.slice(0, 8)} />
+          {f.idle.groups.length > 8 && <p className="mt-1 text-[12px] text-[var(--color-text-muted)]">And {f.idle.groups.length - 8} more in the jobs below.</p>}
         </div>
-        <ul className="sm:hidden space-y-2">
-          {rows.map((r, i) => (
-            <li key={i} className="rounded-xl border border-[var(--color-border)] px-3 py-2 text-[12.5px]">
-              <b className="block text-[var(--color-text)]">{r[0]}</b>
-              {r.slice(1).map((c, n) => c && <div key={n} className="text-[var(--color-text)]"><span className="text-[var(--color-text-muted)]">{head[n + 1]}: </span>{c}</div>)}
-            </li>
-          ))}
-        </ul>
-      </>}
-    </div>
+      )}
+      {rest.length > 0 && <ul className="mt-2 space-y-1 text-[13.5px] text-[var(--color-text)] list-disc pl-5">{rest.map((l, i) => <li key={i}>{l}</li>)}</ul>}
+      {f.info.length > 0 && <ul className="mt-2 space-y-1 text-[13px] text-[var(--color-text)]">{f.info.map((l, i) => <li key={i} className="border-l-2 border-[var(--color-border-strong)] pl-2">{l}</li>)}</ul>}
+
+      {questions.map((q) => <QuestionLine key={q.key} q={q} said={answers[q.key]?.note ?? ""} canManage={canManage} busy={busy === `q:${q.key}`} onSave={(t) => onAnswer(q, t)} />)}
+
+      {(f.jobs?.rows.length || (f.evidence.length > 0 && f.source !== "job")) ? (
+        <details className="mt-3 group" data-finding-jobs>
+          <summary className="cursor-pointer list-none inline-flex items-center gap-1 text-[13px] font-semibold text-[var(--color-accent-text)]"><ChevronDown className="w-4 h-4 transition-transform group-open:rotate-180" />The jobs ({f.jobs?.rows.length ?? f.evidence.length})</summary>
+          {f.jobs ? <JobsTable head={f.jobs.head} rows={f.jobs.rows} /> : <ul className="mt-2 space-y-1 text-[12.5px] text-[var(--color-text)] list-disc pl-5">{f.evidence.map((e, i) => <li key={i}>{e}</li>)}</ul>}
+        </details>
+      ) : null}
+
+      {(f.ask || action != null) && f.rating !== "none" && f.rating !== "strength" && (
+        <p className="mt-3 text-[13px] text-[var(--color-text)]"><span className={label}>Next time </span>{f.ask}{action != null && <span className="text-[var(--color-text-muted)]"> (action {action})</span>}</p>
+      )}
+      {canManage && (
+        <div className="mt-3 flex items-center gap-2 flex-wrap">
+          <div role="group" aria-label="Is this finding right?" className="inline-flex rounded-md border border-[var(--color-border-strong)] overflow-hidden">
+            <button type="button" disabled={!!busy} onClick={() => { setWhy(null); if (f.auto) onKeep(); }} aria-pressed={why == null}
+              title={f.auto ? "It is in the review. Keep also puts it in the lessons register." : "Kept, and in the lessons register."}
+              className={`inline-flex items-center gap-1.5 h-10 sm:h-9 px-3 text-[13.5px] font-semibold ${why == null ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)]" : "bg-[var(--color-surface)] text-[var(--color-text)]"}`}>
+              {busy === `keep:${f.key}` ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} {f.auto ? "Keep" : "Kept"}
+            </button>
+            <button type="button" disabled={!!busy} onClick={() => setWhy("")} aria-pressed={why != null}
+              className={`inline-flex items-center gap-1.5 h-10 sm:h-9 px-3 text-[13.5px] font-semibold border-l border-[var(--color-border-strong)] ${why != null ? "bg-[var(--color-surface-2)] text-[var(--color-text)]" : "bg-[var(--color-surface)] text-[var(--color-text)]"}`}>
+              <X className="w-4 h-4" /> Not right
+            </button>
+          </div>
+          {why != null && (
+            <form className="flex items-center gap-1.5 flex-wrap min-w-0 flex-1 basis-64" onSubmit={(e) => { e.preventDefault(); onNotRight(why); setWhy(null); }}>
+              <input autoFocus value={why} onChange={(e) => setWhy(e.target.value)} placeholder="What is not right? One line." aria-label="What is not right" className={`${field} min-w-0 flex-1 basis-48 h-10 sm:h-9 !py-0`} maxLength={300} />
+              <button type="submit" disabled={!!busy} className={btn}>Take it out</button>
+              <button type="button" onClick={() => setWhy(null)} className={link}>Cancel</button>
+            </form>
+          )}
+        </div>
+      )}
+    </article>
   );
 }
 
-/** The category a new finding is filed under, for each of the seven areas. */
-const AREA_CATEGORY: Record<AreaId, CategoryId> = { safety: "safety", organization: "organization", planning: "planning", contractors: "contractors", costs: "costs", logistics: "materials", execution: "execution" };
-const QUIET = "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] ring-1 ring-inset ring-[var(--color-border)]";
-const VERDICT_CLS: Record<Verdict, string> = {
-  met: "bg-[color-mix(in_srgb,var(--state-released)_14%,transparent)] text-[var(--state-released)]", missed: "bg-[color-mix(in_srgb,var(--state-overdue)_14%,transparent)] text-[var(--state-overdue)]",
-  untargeted: "bg-[color-mix(in_srgb,var(--state-held)_14%,transparent)] text-[var(--state-held)]", unmeasured: QUIET, open: QUIET,
-};
-const AREA_WORD = { finish: "set the finish", time: "cost time", improve: "to improve", pending: "", well: "went well", none: "nothing recorded" } as const;
-const AREA_CLS = { finish: VERDICT_CLS.missed, time: VERDICT_CLS.untargeted, improve: VERDICT_CLS.untargeted, pending: QUIET, well: VERDICT_CLS.met, none: QUIET } as const;
-
-/** How it ended, as labeled cells: plan against actual, and where the late
- *  hours went, each piece with its hours. */
-function HowItEnded({ m, delay, tz }: { m: { baselineFinish: number | null; actualFinish: number | null; varianceH: number | null; steps: number; stepsDone: number }; delay: DelayPart[]; tz: string }) {
-  const at = (t: number | null) => (t == null ? "-" : `${fmtInTz(t, tz, { weekday: "short", month: "short", day: "numeric" })}, ${fmtInTz(t, tz, { hour: "numeric", minute: "2-digit", hour12: true })}`);
-  const v = m.varianceH;
-  const cells: Array<{ k: string; v: React.ReactNode; tone?: "bad" | "good"; note?: string }> = [
-    { k: "Against the baseline", v: v == null ? "Still open" : Math.abs(v) < 1 ? "On time" : `${Math.abs(v)} h ${v > 0 ? "late" : "early"}`, tone: v == null ? undefined : v >= 1 ? "bad" : "good" },
-    { k: "Baseline finish", v: at(m.baselineFinish) },
-    { k: "Actual finish", v: at(m.actualFinish) },
-    { k: "Activities done", v: `${m.stepsDone} of ${m.steps}` },
-  ];
-  const cell = "min-w-0 pr-3 sm:px-4 sm:first:pl-0 sm:border-l sm:first:border-l-0 border-[var(--color-border)]";
+/** A party's load: the chart, where its planned number came from (and the
+ *  place to set its crews), and the jobs that waited with what they held up. */
+function LoadBody({ L, tz, canManage, busy, onCrews }: { L: PartyLoad; tz: string; canManage: boolean; busy: string | null; onCrews: (party: string, n: number | null) => void }) {
+  const [edit, setEdit] = useState<string | null>(null);
+  const jobs = L.waited.length ? [...L.waited].sort((a, b) => a.ready - b.ready).slice(0, 8) : L.idle.slice(0, 6);
+  const saving = busy === `crews:${L.party}`;
   return (
-    <div className="space-y-4" data-review-delay>
-      <dl className="grid grid-cols-2 sm:grid-cols-4 gap-y-3">
-        {cells.map((c) => (
-          <div key={c.k} className={cell}>
-            <dt className="text-[13px] text-[var(--color-text-muted)]">{c.k}</dt>
-            <dd className={`font-display font-semibold tabular-nums leading-tight ${c.k === "Against the baseline" ? "text-[28px]" : "text-[17px] mt-1"} ${c.tone === "bad" ? "text-[var(--state-overdue)]" : c.tone === "good" ? "text-[var(--state-released)]" : "text-[var(--color-text)]"}`}>{c.v}</dd>
-          </div>
-        ))}
-      </dl>
-      {delay.length > 0 && (
-        <div>
-          <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">Where the {v} h went</div>
-          <dl className="mt-1.5 grid grid-cols-2 sm:grid-cols-4 gap-y-3 border-t border-[var(--color-border)] pt-2.5">
-            {delay.map((d, i) => (
-              <div key={i} className={cell} title={d.line}>
-                <dt className="text-[13px] text-[var(--color-text-muted)] truncate">{d.kind === "longer" ? "Start-up ran long" : d.kind === "gap" ? "Start-up began late" : orderWord(d.order)}</dt>
-                <dd className="font-display text-[24px] font-semibold tabular-nums leading-tight text-[var(--state-overdue)]">{d.hours} h</dd>
-              </div>
-            ))}
-          </dl>
+    <div className="mt-3" data-load={L.party}>
+      <LoadChart load={L} tz={tz} />
+      <div className="mt-2 text-[13px] text-[var(--color-text)]" data-planned-at-once>
+        <span>{plannedWord(L, tz)}</span>{" "}
+        {canManage && edit == null && <button type="button" className={link} onClick={() => setEdit(String(L.planned.n))}>Set {L.party}&apos;s crews</button>}
+        {edit != null && (
+          <form className="mt-1.5 flex items-center gap-1.5 flex-wrap" onSubmit={(e) => { e.preventDefault(); const n = Math.round(Number(edit)); if (n >= 1 && n <= 50) { onCrews(L.party, n); setEdit(null); } }}>
+            <label className="inline-flex items-center gap-1.5 text-[13px]">Jobs {L.party} can work at once
+              <input autoFocus type="number" inputMode="numeric" min={1} max={50} value={edit} onChange={(e) => setEdit(e.target.value)} className={`${field} !w-20 h-10 sm:h-9 !py-0`} />
+            </label>
+            <button type="submit" disabled={saving || !(Number(edit) >= 1 && Number(edit) <= 50)} className={btn}>{saving ? <Loader2 className="w-4 h-4 animate-spin" /> : null} Save</button>
+            {L.planned.from === "set" && <button type="button" className={link} onClick={() => { onCrews(L.party, null); setEdit(null); }}>Use the schedule&apos;s {L.planned.sched}</button>}
+            <button type="button" className={link} onClick={() => setEdit(null)}>Cancel</button>
+            <span className="basis-full text-[12px] text-[var(--color-text-muted)]">Kept with {L.party}&apos;s staffing settings for this phase. The review counts again with it.</span>
+          </form>
+        )}
+      </div>
+      {jobs.length > 0 && (
+        <div className="mt-4">
+          <h5 className="mb-1.5 text-[13px] font-semibold text-[var(--color-text)]">{L.waited.length ? `The jobs that waited for ${L.party}, and what they held up` : `${L.party}'s ready jobs with nobody on them`}</h5>
+          <LoadStrip load={L} jobs={jobs} held={L.waited.length ? L.down.held : L.downIdle.held} tz={tz} />
         </div>
       )}
     </div>
   );
 }
 
-/** The score as a table: measure, target, actual and the result as a pill.
- *  What a measure means is in its help; Edit opens the target choices (and
- *  the result, where the records don't have it), with how to record it. */
-function ScoreTable({ rows, entries, busyKey, canManage, onSave }: { rows: ScoreRow[]; entries?: Record<string, ScoreEntry>; busyKey: string | null; canManage: boolean; onSave: (key: string, e: ScoreEntry) => void }) {
-  const [openKey, setOpenKey] = useState<string | null>(null);
+/** The one question the records leave open on a finding: optional, never in the way. */
+function QuestionLine({ q, said, canManage, busy, onSave }: { q: Question; said: string; canManage: boolean; busy: boolean; onSave: (t: string) => void }) {
+  const [text, setText] = useState<string | null>(null);
   return (
-    <div className="mt-2 rounded-lg border border-[var(--color-border)] overflow-hidden">
-      <table className="w-full text-[14px]">
-        <thead className="bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text-muted)] text-left">
-          <tr>
-            <th scope="col" className="font-semibold pl-4 pr-2 sm:px-4 h-10">Measure</th>
-            <th scope="col" className="font-semibold px-4 hidden sm:table-cell">Target</th>
-            <th scope="col" className="font-semibold px-4 hidden sm:table-cell">Actual</th>
-            <th scope="col" className="font-semibold px-2 sm:px-4">Result</th>
-            <th scope="col" className="w-0"><span className="sr-only">Edit</span></th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-[var(--color-border)]">
-          {rows.map((row) => {
-            const entry = entries?.[row.key];
-            const g = row.guide ? GUIDES[row.guide] : null;
-            const editable = canManage && row.entered;
-            const isOpen = openKey === row.key;
-            return (
-              <React.Fragment key={row.key}>
-                <tr className="align-top" data-score={row.key}>
-                  <td className="pl-4 pr-2 sm:px-4 py-2.5">
-                    <span className="inline-flex items-center gap-1 font-semibold text-[var(--color-text)]">{row.measure}<HelpTooltip><span data-score-means>{row.means}</span></HelpTooltip></span>
-                    <div className="sm:hidden mt-0.5 text-[13px] text-[var(--color-text-muted)]">Target: {row.plan}</div>
-                    <div className="sm:hidden text-[13px] text-[var(--color-text)]">Actual: {row.actual}</div>
-                  </td>
-                  <td className="px-4 py-2.5 hidden sm:table-cell text-[var(--color-text)]">{row.plan}</td>
-                  <td className="px-4 py-2.5 hidden sm:table-cell text-[var(--color-text)]">{row.actual}</td>
-                  <td className="px-2 sm:px-4 py-2.5">
-                    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[13px] font-semibold whitespace-nowrap ${VERDICT_CLS[row.verdict]}`}>{VERDICT_WORD[row.verdict]}</span>
-                    {row.result !== VERDICT_WORD[row.verdict] && <div className={`mt-0.5 text-[13px] ${row.verdict === "missed" ? "text-[var(--state-overdue)] font-semibold" : "text-[var(--color-text-muted)]"}`}>{row.result}</div>}
-                  </td>
-                  <td className="pr-2 sm:pr-3 py-2 text-right whitespace-nowrap">
-                    {(editable || g) && (
-                      <button type="button" onClick={() => setOpenKey(isOpen ? null : row.key)} aria-expanded={isOpen} aria-label={editable ? `Edit ${row.measure}` : `How to record ${row.measure}`}
-                        className="inline-flex items-center gap-1.5 h-8 px-2 sm:px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
-                        {editable ? <><Pencil className="w-3.5 h-3.5" /><span className="max-sm:sr-only">Edit</span></> : <><HelpCircle className="w-3.5 h-3.5" /><span className="max-sm:sr-only">How to</span></>}
-                      </button>
-                    )}
-                  </td>
-                </tr>
-                {isOpen && (
-                  <tr className="bg-[var(--color-surface-2)]/60">
-                    <td colSpan={5} className="px-4 py-3">
-                      <ScoreEdit row={row} entry={entry} busy={busyKey === `score:${row.key}`} editable={editable} onSave={(e) => onSave(row.key, e)} onDone={() => setOpenKey(null)} />
-                    </td>
-                  </tr>
-                )}
-              </React.Fragment>
-            );
-          })}
-        </tbody>
+    <div className="mt-3 rounded-md bg-[var(--color-surface-2)] px-3 py-2 text-[13px]" data-question={q.key}>
+      <span className="text-[var(--color-text)]">{q.ask}</span>{" "}
+      {said && text == null && <span className="text-[var(--color-text-muted)]">Answered.</span>}
+      {canManage && text == null && <button type="button" className={link} onClick={() => setText(said)}>{said ? "Change the answer" : "Answer (optional)"}</button>}
+      {text != null && (
+        <form className="mt-1.5 flex items-center gap-1.5 flex-wrap" onSubmit={(e) => { e.preventDefault(); onSave(text); setText(null); }}>
+          <input autoFocus value={text} onChange={(e) => setText(e.target.value)} aria-label={q.ask} placeholder="One line is enough" maxLength={1000} className={`${field} min-w-0 flex-1 basis-56 h-10 sm:h-9 !py-0`} />
+          <button type="submit" disabled={busy} className={btn}>{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : null} Save</button>
+          <button type="button" className={link} onClick={() => setText(null)}>Cancel</button>
+        </form>
+      )}
+    </div>
+  );
+}
+
+/** A table that scrolls inside its box on a phone. */
+function JobsTable({ head, rows }: { head: string[]; rows: string[][] }) {
+  return (
+    <div className="mt-2 rounded-lg border border-[var(--color-border)] overflow-x-auto max-w-full">
+      <table className="w-full min-w-[640px] text-[12.5px] border-collapse">
+        <thead><tr>{head.map((h) => <th key={h} scope="col" className="text-left px-2.5 py-2 bg-[var(--color-surface-2)] font-semibold text-[var(--color-text-muted)] border-b border-[var(--color-border)] whitespace-nowrap">{h}</th>)}</tr></thead>
+        <tbody>{rows.map((r, i) => <tr key={i} className="border-b last:border-b-0 border-[var(--color-border)] align-top">{r.map((c, n) => <td key={n} className={`px-2.5 py-1.5 text-[var(--color-text)] ${n === 0 ? "font-semibold" : ""}`}>{c.split("\n").map((t, k) => <span key={k} className={k ? "block text-[var(--color-text-muted)]" : "block"}>{t}</span>)}</td>)}</tr>)}</tbody>
       </table>
     </div>
   );
 }
 
-/** A score line opened: set the target (a tap, or typed), enter the result
- *  where the records don't have it, and how to record it next time. */
-function ScoreEdit({ row, entry, busy, editable, onSave, onDone }: { row: ScoreRow; entry?: ScoreEntry; busy: boolean; editable: boolean; onSave: (e: ScoreEntry) => void; onDone: () => void }) {
-  const [open, setOpen] = useState<"target" | "result" | null>(null);
-  const [e, setE] = useState<ScoreEntry>(entry ?? {});
-  const g = row.guide ? GUIDES[row.guide] : null;
-  const setTarget = (plan: string) => onSave({ ...(entry ?? {}), plan });
-  const hasTarget = !!entry?.plan || !/not set|no allowance|no baseline/i.test(row.plan);
-  return (
-    <div className="space-y-2.5 text-[14px]">
-      {editable && (
-        <div className="flex items-center gap-1.5 flex-wrap" data-score-target>
-          <span className="text-[13px] font-semibold text-[var(--color-text-muted)] mr-1">{hasTarget ? "Target" : "Set the target"}</span>
-          {row.picks.map((t) => (
-            <button key={t} type="button" disabled={busy} onClick={() => setTarget(t)} aria-pressed={row.plan === t}
-              className={`h-8 px-3 rounded-md text-[13px] font-semibold transition-colors ${row.plan === t ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30" : "bg-[var(--color-surface)] text-[var(--color-text)] ring-1 ring-inset ring-[var(--color-border-strong)] hover:bg-[var(--color-surface-2)]"}`}>{t}</button>
-          ))}
-          <button type="button" onClick={() => { setE(entry ?? {}); setOpen(open === "target" ? null : "target"); }} className="h-8 px-3 rounded-md text-[13px] font-semibold bg-[var(--color-surface)] text-[var(--color-text)] ring-1 ring-inset ring-[var(--color-border-strong)] hover:bg-[var(--color-surface-2)]">{row.picks.length ? "Other" : "Type it"}</button>
-          {!row.fromRecords && <button type="button" onClick={() => { setE(entry ?? {}); setOpen(open === "result" ? null : "result"); }} className="ml-2 text-[13px] text-[var(--color-accent-text)] hover:underline">{entry?.actual ? "Change the result" : "Enter the result"}</button>}
-          <button type="button" onClick={onDone} className="ml-auto text-[13px] text-[var(--color-accent-text)] hover:underline">Close</button>
-        </div>
-      )}
-      {open === "target" && (
-        <div className="flex gap-2 items-end flex-wrap">
-          <label className="block min-w-0 flex-1"><span className={label}>Target</span><input autoFocus value={e.plan ?? ""} onChange={(ev) => setE((x) => ({ ...x, plan: ev.target.value }))} placeholder={row.picks[0] ?? "The target"} className={`${field} mt-0.5`} /></label>
-          <button type="button" disabled={busy} onClick={() => { onSave({ ...(entry ?? {}), plan: e.plan ?? "" }); setOpen(null); }} className={pri}>Save</button>
-          <button type="button" onClick={() => setOpen(null)} className={btn}>Cancel</button>
-        </div>
-      )}
-      {open === "result" && (
-        <div className="grid gap-2 sm:grid-cols-[1fr_auto_auto_auto] items-end">
-          <label className="block"><span className={label}>What happened</span><input autoFocus value={e.actual ?? ""} onChange={(ev) => setE((x) => ({ ...x, actual: ev.target.value }))} placeholder={row.key === "safety" ? "0 recordables, 1 first aid" : row.key === "cost" ? "$612,000 spent" : "The result"} className={`${field} mt-0.5`} /></label>
-          <label className="block"><span className={label}>Against the target</span><select value={e.verdict ?? ""} onChange={(ev) => setE((x) => ({ ...x, verdict: (ev.target.value || undefined) as ScoreEntry["verdict"] }))} className={`${field} mt-0.5`}><option value="">Not judged</option><option value="met">Met</option><option value="missed">Missed</option></select></label>
-          <button type="button" disabled={busy} onClick={() => { onSave({ ...(entry ?? {}), actual: e.actual ?? "", verdict: e.verdict }); setOpen(null); }} className={pri}>Save</button>
-          <button type="button" onClick={() => setOpen(null)} className={btn}>Cancel</button>
-        </div>
-      )}
-      {g && (
-        <div className="text-[13px]" data-guide={g.id}>
-          <div className="font-semibold text-[var(--color-text)]">How to record it next time: {g.title.toLowerCase()}</div>
-          <p className="mt-0.5 text-[var(--color-text)]">{g.what}</p>
-          <ol className="mt-1 list-decimal pl-5 space-y-0.5 text-[var(--color-text)]">{g.steps.map((t, i) => <li key={i}>{t}</li>)}</ol>
-          <p className="mt-1 text-[var(--color-text-muted)]">In the app: {g.inApp}</p>
-        </div>
-      )}
-    </div>
-  );
-}
-
-/** One action: what, how, the benefit, and who, by what date and at what cost. */
-function ActionLine({ a, kind, busy, canManage, onPlan, onDone }: { a: Action; kind: string | null; busy: boolean; canManage: boolean; onPlan: (p: { owner?: string; due?: string; cost?: string }) => void; onDone: (done: boolean) => void }) {
-  const box = (k: "owner" | "due" | "cost", name: string, was: string, hint: string) => (
-    <label className="block min-w-0"><span className={label}>{name}</span>
-      {canManage
-        ? <input key={`${a.key}:${k}:${was}`} defaultValue={was} disabled={busy} placeholder="Not set" title={hint} onBlur={(ev) => { const v = ev.target.value.trim(); if (v !== was) onPlan({ [k]: v }); }} className={`${field} mt-0.5`} data-plan={k} />
-        : <span className="block mt-0.5 text-[13px]">{was || "Not set"}</span>}
-    </label>
-  );
+/** One action: what to change and why, from this event; owner and date set in place. */
+function ActionLine({ a, kind, busy, canManage, onPlan, onDone, onGo }: { a: Action; kind: string | null; busy: boolean; canManage: boolean; onPlan: (p: { owner?: string; due?: string }) => void; onDone: (done: boolean) => void; onGo: () => void }) {
   return (
     <li className={`flex gap-3 text-[var(--color-text)] ${a.done ? "opacity-60" : ""}`} data-conclusion={a.key}>
-      <span className="shrink-0 w-7 h-7 rounded-full bg-[var(--color-text)] text-[var(--color-surface)] text-[13px] font-semibold flex items-center justify-center">{a.n}</span>
+      <span className="shrink-0 w-7 h-7 rounded-full bg-[var(--color-surface-2)] text-[var(--color-text)] text-[13px] font-semibold flex items-center justify-center">{a.n}</span>
       <div className="min-w-0 flex-1">
-        <b className="block text-[15px] leading-snug">{a.what}</b>
-        <div className="mt-1 flex items-center gap-1.5 flex-wrap text-[12px]">
-          <span className={`rounded-full px-2 py-0.5 font-semibold ${a.applies === "all" ? "bg-[var(--color-surface-2)] text-[var(--color-text)] dark:bg-[var(--color-surface-2)] dark:text-[var(--color-text)]" : "bg-[var(--color-border)]/60 text-[var(--color-text-muted)]"}`} data-applies={a.applies}>{appliesWord(a.applies, kind)}</span>
-          <span className="text-[var(--color-text-muted)]">{a.areaName}{a.keys.length > 1 ? `, from ${a.keys.length} findings` : ""}</span>
-
+        <b className="block text-[15px] leading-snug">{a.what}{a.done ? " (done)" : ""}</b>
+        {a.benefit && <p className="mt-0.5 text-[13.5px] text-[var(--color-text)]">{a.benefit}</p>}
+        <div className="mt-1 flex items-center gap-x-2 gap-y-1 flex-wrap text-[12.5px] text-[var(--color-text-muted)]">
+          <span>{a.areaName} · {appliesWord(a.applies, kind)}</span>
+          <button type="button" className={link} onClick={onGo}>See the finding</button>
         </div>
-        {a.how && <p className="mt-1 text-[13px]"><span className={label}>How </span>{a.how}</p>}
-        {a.benefit && <p className="text-[13px] text-[var(--color-text-muted)]"><span className={label}>Benefit </span>{a.benefit}</p>}
-        <div className="mt-2 grid gap-2 grid-cols-3 sm:grid-cols-[repeat(3,minmax(0,10rem))_auto] items-end">
-          {box("owner", "Who", a.who, "Who will do it")}{box("due", "By", a.by, "By what date")}{box("cost", "Cost", a.cost, "What it will cost")}
-          {canManage && <label className="col-span-3 sm:col-span-1 inline-flex items-center gap-1.5 h-9 text-[13px] text-[var(--color-text)] font-semibold"><input type="checkbox" className="w-4 h-4" checked={a.done} disabled={busy} onChange={(ev) => onDone(ev.target.checked)} /> Done</label>}
+        <div className="mt-1 flex items-center gap-x-3 gap-y-1 flex-wrap text-[13px]">
+          <InlineValue name="Owner" value={a.who} canManage={canManage} busy={busy} onSave={(v) => onPlan({ owner: v })} />
+          <InlineValue name="By" value={a.by} canManage={canManage} busy={busy} onSave={(v) => onPlan({ due: v })} />
+          {canManage && <button type="button" disabled={busy} className={link} onClick={() => onDone(!a.done)}>{a.done ? "Not done" : "Mark done"}</button>}
         </div>
       </div>
     </li>
   );
 }
-
-/** Autosaves a shared text field while its editor is open. */
-function KeepDraft({ draftKey, value, set }: { draftKey: string; value: string; set: (v: string) => void }) {
-  useDraft<string>(draftKey, value, set, (v) => !v.trim());
-  return null;
+function InlineValue({ name, value, canManage, busy, onSave }: { name: string; value: string; canManage: boolean; busy: boolean; onSave: (v: string) => void }) {
+  const [edit, setEdit] = useState<string | null>(null);
+  if (edit != null) return (
+    <form className="inline-flex items-center gap-1.5" onSubmit={(e) => { e.preventDefault(); onSave(edit); setEdit(null); }}>
+      <span className="text-[var(--color-text-muted)]">{name}</span>
+      <input autoFocus value={edit} onChange={(e) => setEdit(e.target.value)} aria-label={name} className={`${field} !w-40 h-9 !py-0`} maxLength={120} />
+      <button type="submit" disabled={busy} className={link}>Save</button>
+      <button type="button" className={link} onClick={() => setEdit(null)}>Cancel</button>
+    </form>
+  );
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <span className="text-[var(--color-text-muted)]">{name}:</span>
+      <span className={value ? "text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}>{value || "not set"}</span>
+      {canManage && <button type="button" disabled={busy} className={link} onClick={() => setEdit(value)}>{value ? "Change" : "Set"}</button>}
+    </span>
+  );
 }
+
+/** Text with each equipment tag kept on one line ("E-12" never splits at its hyphen). */
+function Tags({ text }: { text: string }) {
+  const parts = text.split(/(\b[A-Z]{1,4}-\d{1,5}[A-Z]{0,2}\b\.?)/);
+  return <>{parts.map((t, i) => (i % 2 ? <span key={i} className="whitespace-nowrap">{t}</span> : t))}</>;
+}
+
+/** The category a new finding is filed under, for each of the seven areas. */
+const AREA_CATEGORY: Record<AreaId, CategoryId> = { safety: "safety", organization: "organization", planning: "planning", contractors: "contractors", costs: "costs", logistics: "materials", execution: "execution" };
+const RATING_PICK: Array<[Rating, string]> = [["gap", "It cost the event"], ["opportunity", "Do it differently next time"], ["strength", "It worked, keep it"]];
 
 function FindingForm({ title, init, pickCategory, busy, onSave, onCancel, draftKey = null }: {
   title: string; init?: Finding; pickCategory?: boolean; busy: boolean;
@@ -1035,7 +775,7 @@ function FindingForm({ title, init, pickCategory, busy, onSave, onCancel, draftK
       {draft.restored && <p className="text-[12px] text-[var(--color-text-muted)]">What you were writing is back.</p>}
       <div className="grid gap-2.5 sm:grid-cols-2">
         {pickCategory && <label className="block"><span className={label}>Area</span><select value={category} onChange={(ev) => setCategory(ev.target.value as CategoryId)} className={`${field} mt-0.5`}>{AREAS.map((a) => <option key={a.id} value={AREA_CATEGORY[a.id]}>{a.name}</option>)}</select></label>}
-        <label className="block"><span className={label}>Rating</span><select value={e.rating} onChange={(ev) => setE((x) => ({ ...x, rating: ev.target.value as Rating }))} className={`${field} mt-0.5`}>{(["gap", "opportunity", "strength"] as Rating[]).map((r) => <option key={r} value={r}>{RATING_WORD[r]}</option>)}</select></label>
+        <label className="block"><span className={label}>What it is</span><select value={e.rating} onChange={(ev) => setE((x) => ({ ...x, rating: ev.target.value as Rating }))} className={`${field} mt-0.5`}>{RATING_PICK.map(([r, w]) => <option key={r} value={r}>{w}</option>)}</select></label>
       </div>
       <label className="block"><span className={label}>Finding, in one line</span><input value={e.title ?? ""} onChange={(ev) => set("title", ev.target.value)} placeholder="Flange not ordered: the length was not on the drawing" className={`${field} mt-0.5`} /></label>
       {Area({ k: "observation", name: "What happened (one fact a line)", hint: "Which job, which crew, when", rows: 5 })}

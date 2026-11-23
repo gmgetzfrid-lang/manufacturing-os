@@ -353,7 +353,9 @@ export function bookOf(r: Review, name: string, tz: string, x: ScoreInputs = {})
     const area = AREA_OF[c.categoryId];
     // A finding about several areas says each.
     const all = [...new Set([area, ...(c.areas ?? [])])];
-    const same = actions.find((a) => a.applies === c.applies && sameAction(a.what, c.ask));
+    // Each party's load is its own action: the words are alike, the party is not.
+    const own = (k: string) => k.startsWith("contractors:load:");
+    const same = own(c.key) ? undefined : actions.find((a) => a.applies === c.applies && !own(a.key) && sameAction(a.what, c.ask));
     if (same) {
       numOf.set(c.key, same.n); same.keys.push(c.key);
       same.areas = [...new Set([...same.areas, ...all])]; same.areaName = same.areas.map(areaName).join(", ");
