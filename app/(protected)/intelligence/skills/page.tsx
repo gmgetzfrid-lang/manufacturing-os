@@ -20,10 +20,12 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import {
-  Puzzle, Loader2, Trash2, AlertTriangle, Lock, Users,
-  Sparkles, FileSearch, MessageSquareQuote, Boxes, ArrowUpRight,
-} from "lucide-react";
+import { Loader2, Trash2, Lock, Users, Sparkles } from "lucide-react";
+import MoreMenu from "@/components/ui/MoreMenu";
+import { ErrorNote } from "@/components/ui/ErrorNote";
+import { SkeletonRows } from "@/components/ui/Skeleton";
+import { btnIcon } from "@/components/admin/kit";
+import { friendlyError } from "@/lib/friendlyError";
 import { useRole } from "@/components/providers/RoleContext";
 import { PageShell } from "@/components/ui/PageShell";
 import { PageHero, PageBody, Card, heroQuiet } from "@/components/ui/PageHero";
@@ -39,10 +41,10 @@ import {
 } from "@/lib/answerSkills";
 import { appConfirm } from "@/components/providers/DialogProvider";
 
-const KIND_META: Record<string, { label: string; icon: typeof FileSearch }> = {
-  reference: { label: "Cross-reference", icon: FileSearch },
-  shared_entity: { label: "Shared equipment", icon: Boxes },
-  co_citation: { label: "Usage", icon: MessageSquareQuote },
+const KIND_META: Record<string, { label: string }> = {
+  reference: { label: "Cross-reference" },
+  shared_entity: { label: "Shared equipment" },
+  co_citation: { label: "Usage" },
 };
 
 export default function SkillLibraryPage() {
@@ -60,7 +62,7 @@ export default function SkillLibraryPage() {
     try {
       const [lr, as] = await Promise.all([listLinkRules(activeOrgId), listAnswerSkills(activeOrgId)]);
       setRules(lr); setRskills(as); setError(null);
-    } catch (e) { setError((e as Error).message); }
+    } catch (e) { setError(`Couldn't load the skills. ${friendlyError(e)}`); }
   }, [activeOrgId]);
 
   useEffect(() => {
@@ -75,7 +77,7 @@ export default function SkillLibraryPage() {
           seedBuiltinAnswerSkills(activeOrgId, uid),
         ]);
       } catch (e) {
-        if (alive) setError(`The built-in skills couldn't be added: ${(e as Error).message}`);
+        if (alive) setError(`The built-in skills couldn't be added. ${friendlyError(e)}`);
       }
       if (alive) await refresh();
     })();
@@ -95,14 +97,14 @@ export default function SkillLibraryPage() {
   const guard = async (id: string, fn: () => Promise<void>) => {
     setBusyId(id);
     try { await fn(); await refresh(); }
-    catch (e) { setError((e as Error).message); }
+    catch (e) { setError(`That didn't save. ${friendlyError(e)}`); }
     finally { setBusyId(null); }
   };
 
   const removeConfirmed = async (id: string, name: string, fn: () => Promise<void>) => {
     const ok = await appConfirm({
       title: "Delete this skill?",
-      message: `“${name}” stops running and its definition is gone. Anything it already produced stays - it carries its own evidence.`,
+      message: `“${name}” stops running and its definition is gone. Anything it already produced stays, with its own evidence.`,
       confirmLabel: "Delete skill",
       tone: "danger",
     });
@@ -134,30 +136,23 @@ export default function SkillLibraryPage() {
       <span className={`ui-pill ${opts.enabled ? "is-good" : "is-muted"}`}>{opts.enabled ? "On" : "Off"}</span>
     );
 
-  // Whose: built-in, or shared org-wide (brand) or private (grey).
+  // Whose: built-in, or shared org-wide or private, as plain words.
   const whosePill = (r: { builtin_key: string | null; visibility: string; created_by: string | null; created_by_name: string | null }) => (
-    <span className={`ui-pill ${!r.builtin_key && r.visibility === "org" ? "" : "is-muted"}`}>
-      {!r.builtin_key && (r.visibility === "org" ? <Users className="w-3.5 h-3.5" /> : <Lock className="w-3.5 h-3.5" />)}
-      {whose(r)}
-    </span>
+    <span className="text-[14px] text-[var(--color-text-muted)]">{whose(r)}</span>
   );
 
-  // Share and delete, as icon buttons with a visible hover fill.
+  // Share and delete, in one menu per row.
   const rowActions = (opts: {
     id: string; name: string; builtin: boolean; mayManage: boolean; visibility: string;
     onFlip: () => Promise<void>; onDelete: () => Promise<void>;
   }) => !opts.builtin && opts.mayManage ? (
-    <div className="flex items-center justify-end gap-1">
-      <button type="button" onClick={() => void guard(opts.id, opts.onFlip)} disabled={busyId === opts.id}
-        title={opts.visibility === "org" ? "Make private" : "Share org-wide"} aria-label={opts.visibility === "org" ? `Make ${opts.name} private` : `Share ${opts.name} org-wide`}
-        className="w-8 h-8 grid place-items-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
-        {opts.visibility === "org" ? <Lock className="w-4 h-4" /> : <Users className="w-4 h-4" />}
-      </button>
-      <button type="button" onClick={() => void removeConfirmed(opts.id, opts.name, opts.onDelete)} disabled={busyId === opts.id}
-        title="Delete this skill" aria-label={`Delete ${opts.name}`}
-        className="w-8 h-8 grid place-items-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--state-overdue)] hover:bg-[var(--color-surface-2)]">
-        <Trash2 className="w-4 h-4" />
-      </button>
+    <div className="flex items-center justify-end">
+      <MoreMenu iconOnly label={`More for ${opts.name}`} triggerClass={btnIcon} items={[
+        opts.visibility === "org"
+          ? { icon: <Lock className="w-4 h-4" />, label: "Make private", onClick: () => void guard(opts.id, opts.onFlip) }
+          : { icon: <Users className="w-4 h-4" />, label: "Share org-wide", onClick: () => void guard(opts.id, opts.onFlip) },
+        { icon: <Trash2 className="w-4 h-4" />, label: "Delete", tone: "bad", line: true, onClick: () => void removeConfirmed(opts.id, opts.name, opts.onDelete) },
+      ]} />
     </div>
   ) : null;
 
@@ -183,51 +178,43 @@ export default function SkillLibraryPage() {
     <PageShell>
       <PageHero
         kicker="Intelligence · Skills"
-        title={loading ? "Skill library" : notInstalled ? "The skill library isn't installed yet." : `${stats.enabled} of ${stats.total} ${stats.total === 1 ? "skill" : "skills"} on`}
-        sub={
-          <>
-            Describe a skill in plain words and your AI drafts it.
-            {error && <span role="alert" className="block mt-1 text-[var(--state-overdue)] font-semibold"><AlertTriangle className="inline w-3.5 h-3.5 -mt-0.5 mr-1" />{error}</span>}
-          </>
-        }
-        facts={!loading && !notInstalled ? [
-          { label: "Skills", value: stats.total },
-          { label: "On", value: stats.enabled },
+        title={loading ? "Skill library" : notInstalled ? "The skill library isn't installed yet." : stats.total === 0 ? "No skills yet." : `${stats.enabled} of ${stats.total} ${stats.total === 1 ? "skill" : "skills"} on.`}
+        sub="Describe a skill in plain words and your AI drafts it."
+        facts={!loading && !notInstalled && stats.total > 0 ? [
           { label: "Written here", value: stats.custom },
           { label: "By you", value: stats.mine },
         ] : undefined}
+        factsHero="none"
       >
         <ViewTabs tabs={INTELLIGENCE_VIEWS} variant="dark" />
       </PageHero>
 
       <PageBody>
+      {error && <ErrorNote title={error} next="" onRetry={() => void refresh()} />}
       {loading ? (
-        <Card><p className="flex items-center justify-center gap-2 py-12 text-[15px] text-[var(--color-text-muted)]"><Loader2 className="w-5 h-5 animate-spin" /> Loading the skill library…</p></Card>
+        <SkeletonRows rows={5} cols={3} what="the skill library" />
       ) : notInstalled ? (
         <Card>
-          <div className="text-center py-10 space-y-2 max-w-md mx-auto">
-            <span aria-hidden className="ui-icon-tile mx-auto !grid !w-12 !h-12"><Puzzle className="w-6 h-6" /></span>
-            <p className="text-[15px] text-[var(--color-text-muted)]">
-              Run the connection-skills and reasoning-skills migrations on your database, then reload.
-              The built-ins add themselves.
-            </p>
-          </div>
+          <p className="text-[15px] text-[var(--color-text-muted)]">
+            Run the connection-skills and reasoning-skills migrations on your database, then reload.
+            The built-ins add themselves.
+          </p>
         </Card>
       ) : (
         <>
           {/* ── Reasoning skills ─────────────────────────────────────────── */}
           <section>
-            <div className="flex items-end gap-3 mb-2.5 min-h-9">
+            <div className="flex items-end gap-3 mb-3 min-h-9">
               <div className="min-w-0 flex-1">
-                <h2 className="flex items-center gap-2.5 font-display text-[19px] leading-tight font-semibold text-[var(--color-text)]">
-                  <span aria-hidden className="ui-icon-tile is-sm is-solid"><Sparkles className="w-4 h-4" /></span> Reasoning skills
-                  {rskills && rskills.length > 0 && <span className="ui-count is-solid">{rskills.filter((x) => x.enabled).length} on</span>}
+                <h2 className="flex items-baseline gap-2.5 font-display text-[20px] leading-tight font-semibold text-[var(--color-text)]">
+                  Reasoning skills
+                  {rskills && rskills.length > 0 && <span className="ui-count">{rskills.filter((x) => x.enabled).length} on</span>}
                 </h2>
-                <p className="text-[14px] text-[var(--color-text-muted)]">What the AI carries when it answers. Each names when it applies, so several can be on.</p>
+                <p className="mt-0.5 text-[14px] text-[var(--color-text-muted)]">What the AI carries when it answers. Each names when it applies, so several can be on.</p>
               </div>
               {buildButton("reasoning")}
             </div>
-            <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
+            <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
               {rskills === null ? (
                 <p className="px-4 py-3 text-[15px] text-[var(--color-text-muted)]">Run the reasoning-skills migration to unlock this list.</p>
               ) : rskills.length === 0 ? (
@@ -241,8 +228,7 @@ export default function SkillLibraryPage() {
                       return (
                         <tr key={r.id} className={`align-top ${r.enabled ? "" : "text-[var(--color-text-muted)]"}`}>
                           <td className="px-4 py-3 min-w-0">
-                            <div className="flex items-start gap-2.5 min-w-0">
-                            <span aria-hidden className={`ui-icon-tile is-sm mt-px ${r.enabled ? "" : "!bg-[var(--color-surface-2)] !text-[var(--color-text-muted)]"}`}><Sparkles className="w-4 h-4" /></span>
+                            <div className="min-w-0">
                             <div className="min-w-0 flex-1">
                             <div className={`font-semibold ${r.enabled ? "text-[var(--color-text)]" : ""}`}>{r.name}</div>
                             {r.description && <p className="mt-0.5 text-[14px] text-[var(--color-text-muted)] line-clamp-2 max-w-[80ch]">{r.description}</p>}
@@ -257,7 +243,7 @@ export default function SkillLibraryPage() {
                             </div>
                             </div>
                           </td>
-                          <td className="px-4 py-3 hidden md:table-cell whitespace-nowrap"><span className="ui-tag">Answer discipline</span></td>
+                          <td className="px-4 py-3 hidden md:table-cell whitespace-nowrap text-[14px] text-[var(--color-text-muted)]">Answer discipline</td>
                           <td className="px-4 py-3 hidden sm:table-cell">{whosePill(r)}</td>
                           <td className="px-2 sm:px-4 py-3">{toggleButton({ id: r.id, name: r.name, enabled: r.enabled, mayManage, onToggle: () => setAnswerSkillEnabled(r.id, !r.enabled) })}</td>
                           <td className="px-1 sm:px-2 py-2">{rowActions({
@@ -276,22 +262,22 @@ export default function SkillLibraryPage() {
 
           {/* ── Connection skills ────────────────────────────────────────── */}
           <section>
-            <div className="flex items-end gap-3 mb-2.5 min-h-9">
+            <div className="flex items-end gap-3 mb-3 min-h-9">
               <div className="min-w-0 flex-1">
-                <h2 className="flex items-center gap-2.5 font-display text-[19px] leading-tight font-semibold text-[var(--color-text)]">
-                  <span aria-hidden className="ui-icon-tile is-sm is-solid"><Puzzle className="w-4 h-4" /></span> Connection skills
-                  {rules && rules.length > 0 && <span className="ui-count is-solid">{rules.filter((x) => x.enabled).length} on</span>}
+                <h2 className="flex items-baseline gap-2.5 font-display text-[20px] leading-tight font-semibold text-[var(--color-text)]">
+                  Connection skills
+                  {rules && rules.length > 0 && <span className="ui-count">{rules.filter((x) => x.enabled).length} on</span>}
                 </h2>
-                <p className="text-[14px] text-[var(--color-text-muted)]">
+                <p className="mt-0.5 text-[14px] text-[var(--color-text-muted)]">
                   Detectors that grow the org graph; they run with &ldquo;Find connections&rdquo; and findings wait for review.{" "}
-                  <Link href="/admin/proposed-links" className="inline-flex items-center gap-0.5 text-[var(--color-accent-text)] hover:underline">
-                    Review what they found <ArrowUpRight className="w-3.5 h-3.5" />
+                  <Link href="/admin/proposed-links" className="font-semibold text-[var(--color-accent-text)] hover:underline underline-offset-2">
+                    Review what they found
                   </Link>
                 </p>
               </div>
               {buildButton("connection")}
             </div>
-            <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
+            <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
               {rules === null ? (
                 <p className="px-4 py-3 text-[15px] text-[var(--color-text-muted)]">Run the connection-skills migration to unlock this list.</p>
               ) : rules.length === 0 ? (
@@ -302,33 +288,29 @@ export default function SkillLibraryPage() {
                   <tbody className="divide-y divide-[var(--color-border)]">
                     {rules.map((r) => {
                       const meta = KIND_META[r.kind] ?? KIND_META.reference;
-                      const KindIcon = meta.icon;
                       const mayManage = canManageOrg || r.created_by === uid;
                       return (
                         <tr key={r.id} className={`align-top ${r.enabled ? "" : "text-[var(--color-text-muted)]"}`}>
                           <td className="px-4 py-3 min-w-0">
-                            <div className="flex items-start gap-2.5 min-w-0">
-                            <span aria-hidden className={`ui-icon-tile is-sm mt-px ${r.enabled ? "" : "!bg-[var(--color-surface-2)] !text-[var(--color-text-muted)]"}`}><KindIcon className="w-4 h-4" /></span>
+                            <div className="min-w-0">
                             <div className="min-w-0 flex-1">
                             <div className={`font-semibold ${r.enabled ? "text-[var(--color-text)]" : ""}`}>{r.name}</div>
                             {r.description && <p className="mt-0.5 text-[14px] text-[var(--color-text-muted)] line-clamp-2 max-w-[80ch]">{r.description}</p>}
-                            <div className="sm:hidden mt-1 flex flex-wrap gap-1"><span className="ui-tag">{meta.label}</span>{whosePill(r)}</div>
+                            <div className="sm:hidden mt-1 text-[13px] text-[var(--color-text-muted)]">{meta.label} · {whose(r)}</div>
                             {(r.config?.patterns?.length ?? 0) > 0 && (
                               <div className="mt-1.5 flex items-center gap-1 flex-wrap">
                                 {r.config.patterns!.slice(0, 3).map((pt) => (
-                                  <code key={pt} className="ui-tag !font-mono !text-[12.5px] !h-6 max-w-full truncate">{pt}</code>
+                                  <code key={pt} className="ui-tag !font-mono !text-[12px] !h-6 max-w-full truncate">{pt}</code>
                                 ))}
                                 {(r.config.patterns!.length > 3) && (
-                                  <span className="ui-tag is-more !h-6" title={r.config.patterns!.slice(3).join("\n")}>+{r.config.patterns!.length - 3}</span>
+                                  <span className="text-[13px] text-[var(--color-text-muted)]" title={r.config.patterns!.slice(3).join("\n")}>and {r.config.patterns!.length - 3} more</span>
                                 )}
                               </div>
                             )}
                             </div>
                             </div>
                           </td>
-                          <td className="px-4 py-3 hidden md:table-cell whitespace-nowrap">
-                            <span className="ui-tag"><KindIcon className="w-3.5 h-3.5" /> {meta.label}</span>
-                          </td>
+                          <td className="px-4 py-3 hidden md:table-cell whitespace-nowrap text-[14px] text-[var(--color-text-muted)]">{meta.label}</td>
                           <td className="px-4 py-3 hidden sm:table-cell">{whosePill(r)}</td>
                           <td className="px-2 sm:px-4 py-3">{toggleButton({ id: r.id, name: r.name, enabled: r.enabled, mayManage, onToggle: () => setLinkRuleEnabled(r.id, !r.enabled) })}</td>
                           <td className="px-1 sm:px-2 py-2">{rowActions({

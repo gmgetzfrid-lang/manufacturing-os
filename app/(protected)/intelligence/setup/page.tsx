@@ -7,7 +7,9 @@
 
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
-import { GraduationCap, BookMarked, Database, ArrowRight, Loader2 } from "lucide-react";
+import { ArrowRight } from "lucide-react";
+import { ErrorNote } from "@/components/ui/ErrorNote";
+import { SkeletonText } from "@/components/ui/Skeleton";
 import { useRole } from "@/components/providers/RoleContext";
 import { getAiConnections } from "@/lib/knowledge";
 import { PageShell } from "@/components/ui/PageShell";
@@ -20,7 +22,7 @@ export default function IntelligenceSetupPage() {
   const isAdmin = activeRole === "Admin";
   const isController = activeRole === "Admin" || activeRole === "DocCtrl";
   const [data, setData] = useState<Awaited<ReturnType<typeof getAiConnections>> | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<unknown>(null);
   const [reloadTick, setReloadTick] = useState(0);
 
   useEffect(() => {
@@ -28,13 +30,13 @@ export default function IntelligenceSetupPage() {
     let cancelled = false;
     getAiConnections(activeOrgId)
       .then((next) => { if (!cancelled) { setData(next); setLoadError(null); } })
-      .catch((e) => { if (!cancelled) setLoadError((e as Error).message); });
+      .catch((e) => { if (!cancelled) setLoadError(e ?? true); });
     return () => { cancelled = true; };
   }, [activeOrgId, reloadTick]);
 
   if (!activeOrgId) return <div className="p-8 text-[14px] text-[var(--color-text-muted)]">Pick a workspace to continue.</div>;
 
-  const answer = loadError ? "Your AI setup didn't load."
+  const answer = loadError ? "Couldn't load your AI setup."
     : !data ? "AI setup"
       : data.personal?.keyLast4 ? "Your AI key is saved." : "No AI key yet.";
 
@@ -54,13 +56,13 @@ export default function IntelligenceSetupPage() {
       {/* Forms on white sheets; the usage table and the per-job menus get
           the full width, the key forms sit beside each other on a wide screen. */}
         {!data && !loadError && (
-          <Card><p className="py-6 text-center text-[15px] text-[var(--color-text-muted)]"><Loader2 className="w-5 h-5 animate-spin inline mr-2" /> Loading your AI setup…</p></Card>
-        )}
-        {loadError && (
-          <div className="relative pl-4 py-1">
-            <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] rounded-full bg-[var(--state-overdue)]" />
-            <p role="alert" className="text-[15px] font-semibold text-[var(--state-overdue)]">Couldn&apos;t load your AI setup: {loadError}</p>
+          <div className="grid gap-8 xl:grid-cols-2 items-start">
+            <Card label="Your AI key"><SkeletonText lines={3} /></Card>
+            <Card label="Embeddings key"><SkeletonText lines={3} /></Card>
           </div>
+        )}
+        {!!loadError && (
+          <ErrorNote error={loadError} title="Couldn't load your AI setup." onRetry={() => { setLoadError(null); setReloadTick((t) => t + 1); }} />
         )}
         {data && (
           <>
@@ -76,20 +78,20 @@ export default function IntelligenceSetupPage() {
         )}
 
         {/* Org-level teaching + health, for the roles that hold them. */}
-        <Card label={<span className="inline-flex items-center gap-2.5"><span aria-hidden className="ui-icon-tile is-sm is-solid"><GraduationCap className="w-4 h-4" /></span>Teach the workspace</span>} pad={false} className="overflow-hidden">
+        <Card label="Teach the workspace" pad={false} className="overflow-hidden">
           <div className="divide-y divide-[var(--color-border)]">
           {isController && (
-            <SetupLink href="/admin/ai-instructions" icon={GraduationCap}
+            <SetupLink href="/admin/ai-instructions"
               title="AI instructions (playbooks)"
-              body="Standing instructions added to every AI prompt, e.g. 'our drawing types never include vendor codes'." />
+              body="Standing instructions added to every AI prompt, like “our drawing types never include vendor codes”." />
           )}
           {isController && (
-            <SetupLink href="/admin/codebook" icon={BookMarked}
+            <SetupLink href="/admin/codebook"
               title="Site codebook"
               body="Your numbering language: unit codes, equipment prefixes, drawing types. AI import reads your standard." />
           )}
           {isAdmin && (
-            <SetupLink href="/admin/settings" icon={Database}
+            <SetupLink href="/admin/settings"
               title="Database health"
               body="Checks every table the AI features expect and names any migration still to run." />
           )}
@@ -105,17 +107,16 @@ export default function IntelligenceSetupPage() {
   );
 }
 
-function SetupLink({ href, icon: Icon, title, body }: {
-  href: string; icon: React.ComponentType<{ className?: string }>; title: string; body: string;
+function SetupLink({ href, title, body }: {
+  href: string; title: string; body: string;
 }) {
   return (
     <Link href={href} className="group flex items-start gap-3 px-4 py-3 hover:bg-[var(--color-surface-2)] transition-colors">
-      <span aria-hidden className="ui-icon-tile is-sm mt-0.5 group-hover:!bg-[var(--color-main)] group-hover:!text-white transition-colors"><Icon className="w-4 h-4" /></span>
       <div className="flex-1 min-w-0">
         <div className="text-[15px] font-semibold text-[var(--color-text)] group-hover:text-[var(--color-accent-text)]">{title}</div>
         <p className="text-[14px] text-[var(--color-text-muted)]">{body}</p>
       </div>
-      <ArrowRight className="w-4 h-4 text-[var(--color-text-muted)] group-hover:text-[var(--color-accent-text)] mt-1.5 shrink-0" />
+      <ArrowRight aria-hidden className="w-4 h-4 text-[var(--color-text-muted)] group-hover:text-[var(--color-accent-text)] mt-1.5 shrink-0" />
     </Link>
   );
 }

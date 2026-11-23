@@ -15,8 +15,9 @@
 // custom skill's findings only ever queue for review.
 
 import React, { useMemo, useState } from "react";
+import { friendlyError } from "@/lib/friendlyError";
 import {
-  X, Plus, Loader2, Sparkles, FlaskConical, CheckCircle2, AlertTriangle,
+  X, Plus, Loader2, FlaskConical, CheckCircle2, AlertTriangle,
   Users, Lock, Wand2, PenLine, ArrowLeft,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
@@ -99,7 +100,7 @@ export default function SkillStudio({ orgId, userId, userName, kind = "connectio
         setDraftNote(`${json.dropped} drafted pattern${json.dropped === 1 ? "" : "s"} didn't compile and ${json.dropped === 1 ? "was" : "were"} dropped.`);
       }
       setPhase("edit");
-    } catch (e) { setError((e as Error).message); }
+    } catch (e) { setError(friendlyError(e)); }
     finally { setDrafting(false); }
   };
 
@@ -113,7 +114,7 @@ export default function SkillStudio({ orgId, userId, userName, kind = "connectio
       }
       saved.clear();
       onCreated();
-    } catch (e) { setError((e as Error).message); }
+    } catch (e) { setError(friendlyError(e)); }
     finally { setSaving(false); }
   };
 
@@ -126,7 +127,7 @@ export default function SkillStudio({ orgId, userId, userName, kind = "connectio
 
   return (
     <div role="dialog" aria-modal="true" className="fixed inset-0 z-50 flex items-center justify-center bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)] p-4" onClick={onClose}>
-      <div className="w-full max-w-lg max-h-[92vh] overflow-y-auto rounded-lg bg-[var(--color-surface)] shadow-2xl"
+      <div className="w-full max-w-lg max-h-[92vh] overflow-y-auto rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] ui-float ui-float-in"
         onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-2 px-4 py-3 border-b border-[var(--color-border)]">
           {phase === "edit" && (
@@ -135,9 +136,8 @@ export default function SkillStudio({ orgId, userId, userName, kind = "connectio
               <ArrowLeft className="w-4 h-4" />
             </button>
           )}
-          <span aria-hidden className="ui-icon-tile is-sm"><Sparkles className="w-4 h-4" /></span>
           <div className="flex-1">
-            <div className="font-display text-[17px] font-semibold text-[var(--color-text)]">
+            <div className="font-display text-[20px] leading-tight font-semibold text-[var(--color-text)]">
               {phase === "describe"
                 ? (kind === "reasoning" ? "New reasoning skill" : "New connection skill")
                 : (kind === "reasoning" ? "Refine it, then publish" : "Prove it, then publish")}

@@ -11,9 +11,13 @@
 
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
-import { Loader2, ArrowRight, KeyRound, Sparkles, BookOpen, Database, Waypoints, Gauge, Inbox, MessageSquare, GitPullRequest } from "lucide-react";
+import { ArrowRight } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { useRole } from "@/components/providers/RoleContext";
 import { badgeText } from "@/lib/badge";
+import { Skeleton, SkeletonRows } from "@/components/ui/Skeleton";
+import { ErrorNote } from "@/components/ui/ErrorNote";
+import { transitionPush } from "@/lib/viewTransition";
 import { supabase } from "@/lib/supabase";
 import { getAiConnections } from "@/lib/knowledge";
 import { countPendingProposals } from "@/lib/linkProposals";
@@ -37,6 +41,8 @@ interface Status {
   keysKnown?: boolean;
   countsKnown?: boolean;
   coverageKnown?: boolean;
+  /** The index couldn't be checked (said plainly, not as ready). */
+  coverageFailed?: boolean;
 }
 
 const EMPTY_STATUS: Status = {
@@ -48,9 +54,10 @@ const EMPTY_STATUS: Status = {
 
 export default function IntelligencePage() {
   const { activeOrgId, activeRole } = useRole();
+  const router = useRouter();
   const isAdmin = activeRole === "Admin";
   const [status, setStatus] = useState<Status | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
 
   // SUB-500ms CONTRACT. What actually made this page "take forever":
   //   (a) the WHOLE page (even static cards) waited on one Promise.all,
@@ -130,16 +137,19 @@ export default function IntelligencePage() {
           countsKnown: true,
         });
       } catch (e) {
-        if (!cancelled) setError((e as Error).message);
+        if (!cancelled) setError(e ?? true);
       }
     })();
 
+    // No row means nothing to embed yet; a failure is said as "couldn't
+    // check", never a skeleton that waits forever.
     void supabase.rpc("semantic_coverage", { p_org_id: activeOrgId }).then(
       (r) => {
+        if (r.error) { patch({ coverageKnown: true, coverageFailed: true }); return; }
         const row = (r.data?.[0] as { total?: number; embedded?: number } | undefined) ?? null;
-        if (row) patch({ chunksTotal: Number(row.total ?? 0), chunksEmbedded: Number(row.embedded ?? 0), coverageKnown: true });
+        patch({ chunksTotal: Number(row?.total ?? 0), chunksEmbedded: Number(row?.embedded ?? 0), coverageKnown: true, coverageFailed: false });
       },
-      () => undefined,
+      () => patch({ coverageKnown: true, coverageFailed: true }),
     );
 
     if (isAdmin) {
@@ -190,37 +200,39 @@ export default function IntelligencePage() {
   };
   // The four checks, one ruled row each.
   const checks: CheckRow[] = [
-    { pending: !s.keysKnown, ok: !!s.chatKey, title: "Chat key", icon: KeyRound,
+    { pending: !s.keysKnown, ok: !!s.chatKey, title: "Chat key",
       okText: `Claude or OpenAI key active, ending ${s.chatKey}`, fixText: "No key saved, so questions can't run",
       href: "/intelligence/setup", cta: "Add a key" },
-    { pending: !s.keysKnown, ok: !!s.embeddingKey, title: "Embeddings key", icon: Sparkles,
+    { pending: !s.keysKnown, ok: !!s.embeddingKey, title: "Embeddings key",
       okText: `Meaning-based search on, key ending ${s.embeddingKey}`, fixText: "Keyword search only until a Voyage or OpenAI key is added",
       href: "/intelligence/setup", cta: "Add a key" },
-    { pending: !s.countsKnown, ok: s.docs > 0, title: "Knowledge", icon: BookOpen,
+    { pending: !s.countsKnown, ok: s.docs > 0, title: "Knowledge",
       okText: `${s.docs} document${s.docs === 1 ? "" : "s"} across ${s.libraries} librar${s.libraries === 1 ? "y" : "ies"}`, fixText: "Nothing indexed, so the AI has nothing to read yet",
       href: "/knowledge", cta: "Upload documents" },
     s.schemaGaps !== null
-      ? { ok: s.schemaGaps === 0, title: "Database", icon: Database, okText: "All expected tables present",
+      ? { ok: s.schemaGaps === 0, title: "Database", okText: "All expected tables present",
         fixText: `${s.schemaGaps} schema gap${s.schemaGaps === 1 ? "" : "s"}: some features stay empty until migrated`,
         href: "/admin/settings", cta: "Open database health" }
-      : { pending: !s.coverageKnown, ok: s.chunksTotal > 0 ? s.chunksEmbedded > 0 : true, title: "Meaning index", icon: Waypoints,
+      : { pending: !s.coverageKnown, unknown: !!s.coverageFailed, ok: s.chunksTotal > 0 ? s.chunksEmbedded > 0 : true, title: "Meaning index",
         okText: s.chunksTotal > 0 ? `${coveragePct}% of passages embedded` : "Builds after your first uploads",
         fixText: "Index not built yet, so meaning-based linking is off", href: "/knowledge", cta: "Build the index" },
   ];
+  const known = checks.filter((c) => !c.pending);
+  const ready = known.filter((c) => c.ok && !c.unknown).length;
   const facts = s.countsKnown ? [
+    { label: "Waiting on you", value: s.pendingProposals.toLocaleString(), tone: s.pendingProposals > 0 ? "warn" as const : undefined, hero: s.pendingProposals > 0 },
     { label: "Documents", value: s.docs.toLocaleString() },
     { label: "Libraries", value: s.libraries.toLocaleString() },
-    ...(s.chunksTotal > 0 ? [{ label: "Indexed", value: `${coveragePct}%`, tone: coveragePct < 100 ? "warn" as const : undefined }] : []),
-    { label: "Waiting on you", value: s.pendingProposals.toLocaleString(), tone: s.pendingProposals > 0 ? "warn" as const : undefined },
+    ...(s.chunksTotal > 0 ? [{ label: "Indexed", value: `${coveragePct}%` }] : []),
   ] : undefined;
 
   return (
     <PageShell>
       <PageHero
         kicker="Intelligence · Status"
-        title={lead ? lead.text : error ? "Couldn't check the AI." : "Checking the AI…"}
-        sub={error ? <span className="text-[var(--state-overdue)] font-semibold">Couldn&apos;t load the AI status: {error}</span> : undefined}
+        title={lead ? lead.text : error ? "Couldn't check the AI." : <span className="inline-flex items-center gap-3"><span className="sr-only">Checking the AI</span><Skeleton className="!h-7 w-[22rem] max-w-[70vw]" /></span>}
         facts={facts}
+        factsHero={s.pendingProposals > 0 ? "auto" : "none"}
         primary={lead ? (
           <Link href={lead.href} className={heroPrimary}>
             {lead.cta} <ArrowRight className="w-4 h-4" />
@@ -231,8 +243,9 @@ export default function IntelligencePage() {
       </PageHero>
 
       <PageBody>
+          {!!error && <ErrorNote error={error} title="Couldn't load the AI status." onRetry={() => window.location.reload()} />}
           {/* ── Is the machine on? Four checks, one ruled row each. ── */}
-          <Card label={<CardTitle icon={Gauge}>Is it on{(() => { const n = checks.filter((c) => !c.pending && !c.ok).length; return n > 0 ? <span className="ui-count is-warn">{n}</span> : null; })()}</CardTitle>} pad={false} className="overflow-hidden">
+          <Card label={<span className="inline-flex items-baseline gap-2.5">Is it on {known.length === checks.length && <span className={`ui-count ${ready < checks.length ? "is-warn" : ""}`}>{ready} of {checks.length} ready</span>}</span>} pad={false} className="overflow-hidden">
             <table className="w-full text-[15px]">
               <thead className="bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text-muted)] text-left">
                 <tr>
@@ -248,31 +261,32 @@ export default function IntelligencePage() {
           </Card>
 
           {/* ── What is it waiting on from me? ── */}
-          <Card label={<CardTitle icon={Inbox}>Waiting on you{s.countsKnown && s.pendingProposals > 0 ? <span className="ui-count is-warn">{badgeText(s.pendingProposals)}</span> : null}</CardTitle>} pad={false} className="overflow-hidden">
+          <Card label={<span className="inline-flex items-baseline gap-2.5">Waiting on you{s.countsKnown && s.pendingProposals > 0 ? <span className="ui-count is-warn">{badgeText(s.pendingProposals)}</span> : null}</span>} pad={false} className="overflow-hidden">
             {!s.countsKnown ? (
-              <p className="px-4 py-3 flex items-center gap-1.5 text-[14px] text-[var(--color-text-muted)]"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Checking what waits on you…</p>
+              <SkeletonRows rows={1} cols={0} sheet={false} what="what waits on you" />
             ) : (
               <ul className="divide-y divide-[var(--color-border)]">
                 {s.pendingProposals > 0 ? (
                   <li>
                     <Link href="/admin/proposed-links" className="flex items-center gap-4 px-4 py-3 hover:bg-[var(--color-surface-2)] transition-colors">
-                      <span aria-hidden className="ui-icon-tile"><GitPullRequest className="w-[18px] h-[18px]" /></span>
                       <span className="min-w-0 flex-1">
-                        <span className="flex items-center gap-2 text-[15px] font-semibold text-[var(--color-text)]"><span className="ui-count is-warn">{badgeText(s.pendingProposals)}</span> Proposed connections to review</span>
+                        <span className="flex items-center gap-2 text-[15px] font-semibold text-[var(--color-text)]"><span className="ui-pill is-warn">{badgeText(s.pendingProposals)}</span> Proposed connections to review</span>
                         <span className="block text-[14px] text-[var(--color-text-muted)]">Approve or dismiss each, with its evidence.</span>
                       </span>
-                      <ArrowRight className="w-4 h-4 text-[var(--color-text-muted)]" />
+                      <ArrowRight aria-hidden className="w-4 h-4 text-[var(--color-text-muted)]" />
                     </Link>
                   </li>
                 ) : (
-                  <li className="px-4 py-3 text-[15px] text-[var(--color-text-muted)]">Nothing pending. New link proposals show up here as documents get indexed.</li>
+                  <li className="px-4 py-3 flex flex-wrap items-center gap-x-4 gap-y-1">
+                    <span className="flex-1 min-w-[14rem] text-[15px] text-[var(--color-text-muted)]">Nothing waits on you. New link proposals show up here as documents get read.</span>
+                    <Link href="/admin/proposed-links" className="text-[14px] font-semibold text-[var(--color-accent-text)] hover:underline underline-offset-2">Open Review</Link>
+                  </li>
                 )}
                 {s.chunksTotal > 0 && s.chunksEmbedded < s.chunksTotal && !!s.embeddingKey && (
                   <li>
                     <Link href="/knowledge" className="flex items-center gap-4 px-4 py-3 hover:bg-[var(--color-surface-2)] transition-colors">
-                      <span aria-hidden className="ui-icon-tile"><Waypoints className="w-[18px] h-[18px]" /></span>
                       <span className="min-w-0 flex-1">
-                        <span className="flex items-center gap-2 text-[15px] font-semibold text-[var(--color-text)]"><span className="ui-count">{coveragePct}%</span> Meaning index built</span>
+                        <span className="flex items-center gap-2 text-[15px] font-semibold text-[var(--color-text)]"><span className="font-display tabular-nums">{coveragePct}%</span> of the meaning index built</span>
                         <span className="block text-[14px] text-[var(--color-text-muted)]">{s.chunksEmbedded.toLocaleString()} of {s.chunksTotal.toLocaleString()} passages. Finish it from the library page.</span>
                       </span>
                       <ArrowRight className="w-4 h-4 text-[var(--color-text-muted)]" />
@@ -283,14 +297,17 @@ export default function IntelligencePage() {
             )}
           </Card>
 
-          <Card label={<CardTitle icon={MessageSquare}>Recent questions{s.recentAsks.length > 0 ? <span className="ui-count is-solid">{s.recentAsks.length}</span> : null}</CardTitle>} pad={false} className="overflow-hidden"
-            action={<Link href="/assistant" className="text-[14px] text-[var(--color-accent-text)] hover:underline">All conversations</Link>}>
+          <Card label={<span className="inline-flex items-baseline gap-2.5">Recent questions{s.recentAsks.length > 0 ? <span className="ui-count">{s.recentAsks.length}</span> : null}</span>} pad={false} className="overflow-hidden"
+            action={<Link href="/assistant" className="text-[14px] font-semibold text-[var(--color-accent-text)] hover:underline underline-offset-2">All conversations</Link>}>
             {!s.countsKnown ? (
-              <p className="px-4 py-3 flex items-center gap-1.5 text-[14px] text-[var(--color-text-muted)]"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading recent questions…</p>
+              <SkeletonRows rows={3} cols={2} sheet={false} what="recent questions" />
             ) : s.recentAsks.length === 0 ? (
-              <p className="px-4 py-3 text-[15px] text-[var(--color-text-muted)]">
-                Nobody has asked anything yet. Try &ldquo;what do we have on E-101?&rdquo;
-              </p>
+              <div className="px-4 py-3 flex flex-wrap items-center gap-x-4 gap-y-2">
+                <p className="flex-1 min-w-[14rem] text-[15px] text-[var(--color-text-muted)]">Nobody has asked anything yet.</p>
+                <Link href={`/assistant?q=${encodeURIComponent("What do we have on E-101?")}`} className="inline-flex items-center gap-1.5 h-10 pointer-coarse:h-11 px-3.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+                  Ask &ldquo;What do we have on E-101?&rdquo;
+                </Link>
+              </div>
             ) : (
               <table className="w-full text-[15px]">
                 <thead className="bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text-muted)] text-left">
@@ -304,14 +321,11 @@ export default function IntelligencePage() {
                   {s.recentAsks.map((a) => (
                     // The conversation itself: new asks carry the chat thread id;
                     // older rows were backfilled as one-turn threads under their own id.
-                    <tr key={a.id} className="hover:bg-[var(--color-surface-2)]">
+                    <tr key={a.id} className="hover:bg-[var(--color-surface-2)] cursor-pointer" onClick={() => transitionPush(router, `/assistant?thread=${a.threadId ?? a.id}`)}>
                       <td className="px-4 py-3 max-w-0 w-full">
-                        <div className="flex items-center gap-3 min-w-0">
-                          <span aria-hidden className="ui-icon-tile is-sm"><MessageSquare className="w-4 h-4" /></span>
-                          <div className="min-w-0">
-                            <Link href={`/assistant?thread=${a.threadId ?? a.id}`} className="block truncate font-semibold text-[var(--color-text)] hover:text-[var(--color-accent-text)]">{a.question}</Link>
-                            <span className="sm:hidden block text-[13px] text-[var(--color-text-muted)]">{(a.userName ?? "someone").split("@")[0]}, {when(a.at)}</span>
-                          </div>
+                        <div className="min-w-0">
+                          <Link href={`/assistant?thread=${a.threadId ?? a.id}`} onClick={(e) => e.stopPropagation()} className="block truncate font-semibold text-[var(--color-text)] hover:text-[var(--color-accent-text)]">{a.question}</Link>
+                          <span className="sm:hidden block text-[13px] text-[var(--color-text-muted)]">{(a.userName ?? "someone").split("@")[0]}, {when(a.at)}</span>
                         </div>
                       </td>
                       <td className="px-4 py-3 hidden sm:table-cell whitespace-nowrap text-[var(--color-text-muted)]">{(a.userName ?? "someone").split("@")[0]}</td>
@@ -329,18 +343,9 @@ export default function IntelligencePage() {
   );
 }
 
-/** A section heading with its icon on a brand tile and an optional count. */
-function CardTitle({ icon: Icon, children }: { icon: React.ComponentType<{ className?: string }>; children: React.ReactNode }) {
-  return (
-    <span className="inline-flex items-center gap-2.5">
-      <span aria-hidden className="ui-icon-tile is-sm is-solid"><Icon className="w-4 h-4" /></span>
-      {children}
-    </span>
-  );
-}
-
 interface CheckRow {
-  icon: React.ComponentType<{ className?: string }>;
+  /** Couldn't be checked right now. */
+  unknown?: boolean;
   ok: boolean; title: string; okText: string; fixText: string; href: string; cta: string;
   /** Data for this row hasn't arrived yet — "Checking" instead of a default
    *  that would read as a false "No key saved". */
@@ -348,20 +353,20 @@ interface CheckRow {
 }
 
 function CheckLine({ c }: { c: CheckRow }) {
-  const fix = !c.pending && !c.ok
-    ? <Link href={c.href} className="inline-flex items-center gap-1 text-[14px] text-[var(--color-accent-text)] hover:underline whitespace-nowrap">{c.cta} <ArrowRight className="w-3.5 h-3.5" /></Link>
+  const fix = !c.pending && !c.unknown && !c.ok
+    ? <Link href={c.href} className="inline-flex items-center gap-1 text-[14px] font-semibold text-[var(--color-accent-text)] hover:underline underline-offset-2 whitespace-nowrap">{c.cta}</Link>
     : null;
   return (
     <tr className="align-middle">
-      <td className="px-4 py-3 font-semibold text-[var(--color-text)]">
-        <span className="flex items-center gap-2.5">
-          <span aria-hidden className={`ui-icon-tile is-sm ${!c.pending && c.ok ? "is-solid" : ""}`}><c.icon className="w-4 h-4" /></span>
-          {c.title}
-        </span>
-      </td>
+      <td className="px-4 py-3 font-semibold text-[var(--color-text)]">{c.title}</td>
       <td className="px-4 py-3">
         {c.pending ? (
-          <span className="inline-flex items-center gap-1.5 text-[14px] text-[var(--color-text-muted)]"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Checking…</span>
+          <span role="status" className="flex items-center gap-2.5"><span className="sr-only">Checking</span><Skeleton className="!w-16" /><Skeleton className="!w-56 max-w-full" /></span>
+        ) : c.unknown ? (
+          <span className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[14px] pt-0.5">
+            <span className="ui-pill is-muted">Unknown</span>
+            <span className="text-[var(--color-text-muted)]">Couldn&apos;t check it right now. Reload to try again.</span>
+          </span>
         ) : (
           <span className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[14px] pt-0.5">
             <span className={`ui-pill ${c.ok ? "is-good" : "is-warn"}`}>{c.ok ? "Ready" : "Needs you"}</span>
