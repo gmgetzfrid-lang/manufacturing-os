@@ -650,7 +650,7 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
               {activeSessions.length === 0 ? (
                 <div className="p-4 rounded-xl border border-dashed border-[var(--color-border-strong)] text-center text-[var(--color-text-faint)] text-sm">
                   {isOrphaned
-                    ? "This checkout got out of sync - fix it below."
+                    ? "This checkout got out of sync: fix it below."
                     : document.checkedOutBy
                       ? `Held by ${document.checkedOutByName || "another user"}, but their session went missing. An Admin/DocCtrl can force-release it from the row's checkout popover.`
                       : "No one is currently working on this file."}

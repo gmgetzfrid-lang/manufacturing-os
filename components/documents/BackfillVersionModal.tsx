@@ -295,7 +295,7 @@ export default function BackfillVersionModal({
 
           {/* Supersedes picker — only shows if there are existing versions */}
           {existingVersions.length > 0 && (
-            <Field label="Supersedes (optional - slot into the chain)">
+            <Field label="Supersedes (optional: slot into the chain)">
               <select
                 value={supersedesVersionId}
                 onChange={(e) => setSupersedesVersionId(e.target.value)}

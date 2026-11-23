@@ -432,7 +432,7 @@ export default function CheckInPanel({
             recordNote,
             { ticketId: ticket.id, ticketNumber: ticket.number, ...(mocRef ? { moc: mocRef } : {}) },
             selected.outcome === "discrepancy"
-              ? `${userName} reported a field discrepancy - ticket ${ticket.number}${mocStatus === "none" ? " (no MOC on record - flagged)" : mocNumber ? ` (${mocNumber.trim()})` : ""}.`
+              ? `${userName} reported a field discrepancy: ticket ${ticket.number}${mocStatus === "none" ? " (no MOC on record - flagged)" : mocNumber ? ` (${mocNumber.trim()})` : ""}.`
               : `${userName} requested ${selected.ticketKind === "minor" ? "a minor correction" : "a revision"} - ticket ${ticket.number}.`,
           );
           router.push(`/requests/${ticket.id}`);
@@ -450,7 +450,7 @@ export default function CheckInPanel({
               await emit({
                 orgId: doc.orgId!, category: "assignment", kind: "review_requested",
                 title: `Change proposed to ${docLabel}`,
-                body: `${userName} checked in with a proposed change: "${note.trim()}" - review and release it if it's right.`,
+                body: `${userName} checked in with a proposed change: "${note.trim()}": review and release it if it's right.`,
                 resource: { type: "document", id: doc.id! },
                 // The owner must be able to CLICK to the document — a durable
                 // notification with no destination is a dead letter.

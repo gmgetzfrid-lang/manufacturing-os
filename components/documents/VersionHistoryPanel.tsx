@@ -353,7 +353,7 @@ export default function VersionHistoryPanel({
                   {canRevert && currentUserId && doc.orgId && doc.libraryId && v.reviewState !== "in_review" && (
                     <button
                       onClick={() => openCorrect(v)}
-                      title={`Correct the revision label (currently "${v.revisionLabel || "-"}") - audited`} aria-label={`Correct the label of Rev ${v.revisionLabel || ""}`}
+                      title={`Correct the revision label (currently "${v.revisionLabel || "-"}"): audited`} aria-label={`Correct the label of Rev ${v.revisionLabel || ""}`}
                       className="p-1.5 rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-main)] hover:bg-[var(--color-surface)]"
                     >
                       <Pencil className="w-3.5 h-3.5" />
@@ -459,7 +459,7 @@ export default function VersionHistoryPanel({
             <p className="text-[13px] text-[var(--color-text-muted)] mt-1">
               Rev <b className="font-display tabular-nums">{correctTarget.revisionLabel || "-"}</b>
               {correctTarget.id === doc.currentVersionId ? " (current)" : ""} gets a new label.
-              The correction is audited - old and new label, who, when, and why.
+              The correction is audited: old and new label, who, when, and why.
               {correctTarget.id === doc.currentVersionId && " The document's own rev label is updated to match."}
             </p>
             <label className="block mt-3 text-[13px] font-bold text-[var(--color-text-muted)]">

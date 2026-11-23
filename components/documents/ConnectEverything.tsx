@@ -119,7 +119,7 @@ export function useConnectEverything(orgId: string | null, onDone?: () => void) 
     if (!todo.length) { setBulk({ done: 0, total: 0, equipment: 0, removed: 0, added: 0, created: 0, failed: 0, current: null, finished: true, lastError: null }); return; }
     if (!opts.consented) {
       const pagesDue = list.pagesDue ?? todo.length;
-      const ok = window.confirm(`Read ${pagesDue} sheet${pagesDue === 1 ? "" : "s"} in ${todo.length} drawing${todo.length === 1 ? "" : "s"} with your AI model?\n\nOnly sheets not yet read in full are read - sheets already read are left as they are. Each sheet is read zoomed-in, region by region, and its equipment tags are corrected. Billed to your key under your monthly cap. You can stop at any time, and undo the run afterwards.`);
+      const ok = window.confirm(`Read ${pagesDue} sheet${pagesDue === 1 ? "" : "s"} in ${todo.length} drawing${todo.length === 1 ? "" : "s"} with your AI model?\n\nOnly sheets not yet read in full are read: sheets already read are left as they are. Each sheet is read zoomed-in, region by region, and its equipment tags are corrected. Billed to your key under your monthly cap. You can stop at any time, and undo the run afterwards.`);
       if (!ok) return;
     }
     const rid = opts.runId ?? newRunId();
@@ -291,7 +291,7 @@ function AutoReadSwitch({ auto, hasKey, onChange }: { auto: ConnectStatus["ai"][
       </div>
       <div>
         {auto.on
-          ? <>On {auto.mine ? "your" : `${auto.sponsorName ?? "a colleague"}'s`} AI key{auto.mine ? "" : " - switching it off and on moves it to yours"}. Past the cap, new sheets wait in “Read all drawings with AI”.</>
+          ? <>On {auto.mine ? "your" : `${auto.sponsorName ?? "a colleague"}'s`} AI key{auto.mine ? "" : ": switching it off and on moves it to yours"}. Past the cap, new sheets wait in “Read all drawings with AI”.</>
           : hasKey ? <>Off. New sheets are indexed from their text and wait for “Read all drawings with AI”.</> : <>Needs your AI key (Intelligence › Setup).</>}
       </div>
     </div>

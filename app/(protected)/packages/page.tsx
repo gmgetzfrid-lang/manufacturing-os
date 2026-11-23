@@ -143,7 +143,7 @@ export default function PackagesPage() {
     const ok = await appConfirm({
       title: "Refresh this pack's pins?",
       message: moving > 0
-        ? `${moving} drawing${moving === 1 ? "" : "s"} will move to the current revision. Review what changed first if you haven't - then re-print the pack so the paper matches.`
+        ? `${moving} drawing${moving === 1 ? "" : "s"} will move to the current revision. Review what changed first if you haven't. Then re-print the pack so the paper matches.`
         : "Every pin will be re-checked against the current revisions.",
       confirmLabel: "Refresh pins",
     });

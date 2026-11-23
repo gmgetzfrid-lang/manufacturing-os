@@ -12,43 +12,43 @@ export const vDim =
 
 /** The viewer itself: charcoal, raised over the dimmed page (full screen on a phone). */
 export const vPanel =
-  "surface-charcoal absolute inset-0 sm:top-3.5 sm:inset-x-3.5 sm:bottom-0 sm:rounded-t-[20px] overflow-hidden flex flex-col shadow-[0_-30px_60px_-30px_rgb(0_0_0/0.6)] animate-in fade-in duration-200";
+  "surface-charcoal ui-float absolute inset-0 sm:top-3 sm:inset-x-3 sm:bottom-0 sm:rounded-t-xl overflow-hidden flex flex-col animate-in fade-in duration-200 motion-reduce:animate-none";
 
 /** Small line over the title: revision, status. */
 export const vKicker =
-  "truncate text-[13px] font-semibold text-[var(--color-text-muted)]";
+  "truncate text-[13px] text-[var(--color-text-muted)]";
 
 /** The drawing's name: the one big thing in the chrome. */
 export const vTitle =
-  "font-display truncate text-[24px] sm:text-[30px] leading-[1.05] font-semibold tabular-nums text-[var(--color-text)]";
+  "font-display truncate text-[24px] sm:text-[26px] leading-[1.1] font-semibold tabular-nums text-[var(--color-text)]";
 
 /** A quiet icon button on the charcoal. */
 export const vIcon =
-  "w-9 h-9 shrink-0 rounded-[10px] grid place-items-center text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-ink-2)] disabled:opacity-30 disabled:pointer-events-none transition-colors";
+  "w-10 h-10 pointer-coarse:w-11 pointer-coarse:h-11 shrink-0 rounded-lg grid place-items-center text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-ink-2)] disabled:opacity-30 disabled:pointer-events-none transition-colors";
 
 /** A tool button: quiet, or a white pill when it's the chosen one (never
  *  orange: orange is only for the one action). */
-export function vTool(on: boolean, size = "w-9 h-9 sm:w-10 sm:h-10") {
-  return `${size} shrink-0 rounded-[10px] grid place-items-center transition-colors ${on
-    ? "bg-[var(--color-ink-fg)] text-[var(--color-ink)] shadow-sm"
+export function vTool(on: boolean, size = "w-10 h-10 pointer-coarse:w-11 pointer-coarse:h-11") {
+  return `${size} shrink-0 rounded-lg grid place-items-center transition-colors ${on
+    ? "bg-[var(--color-ink-fg)] text-[var(--color-ink)]"
     : "text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-ink-2)]"}`;
 }
 
 /** A quiet text button on the charcoal. */
 export const vQuiet =
-  "inline-flex items-center justify-center gap-1.5 h-9 px-3 shrink-0 rounded-[10px] bg-[var(--color-ink-2)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-ink-line)] disabled:opacity-40 disabled:pointer-events-none transition-colors";
+  "inline-flex items-center justify-center gap-1.5 h-10 pointer-coarse:h-11 px-3 shrink-0 rounded-lg bg-[var(--color-ink-2)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-ink-line)] disabled:opacity-40 disabled:pointer-events-none transition-colors";
 
 /** A pill holding a small set of controls (page arrows, zoom). */
 export const vGroup =
-  "flex items-center h-9 shrink-0 rounded-[10px] bg-[var(--color-ink-2)] text-[13px] font-semibold tabular-nums text-[var(--color-text)]";
+  "flex items-center h-10 pointer-coarse:h-11 shrink-0 rounded-lg bg-[var(--color-ink-2)] text-[14px] font-semibold tabular-nums text-[var(--color-text)]";
 
 /** The one orange action, sized for the chrome. */
 export const vPrimary =
-  "inline-flex items-center justify-center gap-2 h-10 px-4 shrink-0 rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[15px] font-semibold hover:bg-[var(--color-accent-hover)] disabled:opacity-50 transition-colors";
+  "inline-flex items-center justify-center gap-2 h-10 pointer-coarse:h-11 px-4 shrink-0 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[15px] font-semibold hover:bg-[var(--color-accent-hover)] disabled:opacity-50 transition-colors";
 
 /** The way out (X), top right. */
 export const vClose =
-  "w-10 h-10 shrink-0 rounded-[10px] grid place-items-center bg-[var(--color-ink-2)] text-[var(--color-text)] hover:bg-[var(--color-ink-line)] disabled:opacity-50 transition-colors";
+  "w-10 h-10 pointer-coarse:w-11 pointer-coarse:h-11 shrink-0 rounded-lg grid place-items-center bg-[var(--color-ink-2)] text-[var(--color-text)] hover:bg-[var(--color-ink-line)] disabled:opacity-50 transition-colors";
 
 /** A thin line in the chrome that says something about this drawing. */
 export const vNote =

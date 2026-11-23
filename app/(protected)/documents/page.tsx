@@ -365,7 +365,7 @@ export default function DocumentsHomePage() {
               <tr key={lib._id} data-doc-lib={lib._id}
                 onClick={() => { if (!menuOpen) transitionNavigate(() => openLib(lib._id!)); }}
                 className={`group cursor-pointer hover:bg-[var(--color-surface-2)] transition-colors ${isPending ? "opacity-60" : ""}`}>
-                <td className="px-4 py-3">
+                <td className="px-4 py-3 w-full max-w-0">
                   <span className="flex items-center gap-3 min-w-0">
                     {custom
                       ? <NodeCover appearance={{ color: lib.color, icon: lib.icon, coverImageUrl: lib.coverImageUrl, coverTint: lib.coverTint }}
@@ -471,7 +471,7 @@ export default function DocumentsHomePage() {
           {/* Setting libraries up is Doc Control's, now and then: a quiet
               tool, not the page's main action. */}
           {isController && (
-            <Link href="/admin/libraries" className={heroQuiet} title="Create libraries, set their columns and who can read them">
+            <Link href="/admin/libraries" className={heroQuiet} aria-label="Library admin" title="Create libraries, set their columns and who can read them">
               <Settings className="h-4 w-4" /><span className="max-sm:hidden">Library admin</span>
             </Link>
           )}

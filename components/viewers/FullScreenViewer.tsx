@@ -51,6 +51,7 @@ import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/ui/Moda
 import { Button } from "@/components/ui/Button";
 import { useEscapeClose } from "@/hooks/useEscapeClose";
 import { useIsMobile } from "@/hooks/useIsMobile";
+import CopyId from "@/components/ui/CopyId";
 import { vDim, vPanel, vKicker, vTitle, vIcon, vTool, vQuiet, vGroup, vPrimary, vClose, vNote } from "@/components/viewers/viewerChrome";
 import type { DocumentRecord, DocumentVersion } from "@/types/schema";
 import { fileBlobIfStarted, fileLink } from "@/lib/docOpen";
@@ -1051,7 +1052,7 @@ export default function FullScreenViewer({
           timestamp: now,
           expiresAt,
           watermarkText: "UNCONTROLLED - FOR REVIEW ONLY",
-          footerNotice: `${docNumber || title || "Document"} Rev ${rev ?? "?"} WITH MARKUPS at time of export - markups are not part of the controlled revision.`,
+          footerNotice: `${docNumber || title || "Document"} Rev ${rev ?? "?"} WITH MARKUPS at time of export: markups are not part of the controlled revision.`,
           verifyUrl: docRecord?.id && docRecord.currentVersionId && publicOrigin()
             ? `${publicOrigin()}/verify/${docRecord.id}?v=${docRecord.currentVersionId}`
             : undefined,
@@ -1218,7 +1219,9 @@ export default function FullScreenViewer({
                 <> · <span className={statusTone[vb.tone]} title="Status of the live version you're viewing. A copy you download or print is stamped separately.">{statusWord}</span></>
               )}
             </div>
-            <h2 className={vTitle} title={title}>{title}</h2>
+            <h2 className={vTitle} title={title}>
+              {docNumber && docNumber === title ? <CopyId value={docNumber} label="document number" /> : title}
+            </h2>
           </div>
 
           <button ref={closeBtnRef} type="button" data-viewer-close onClick={() => void handleClose()} disabled={committing}

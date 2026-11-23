@@ -312,7 +312,7 @@ export default function CollectionModal({
                 {mode === "create" ? "New Collection" : (collection?.name ?? "Collection")}
               </div>
               <div className="text-[13px] text-[var(--color-text-muted)] truncate">
-                {scope === "org" ? "Visible to everyone in your org" : "Personal - only you can see this"}
+                {scope === "org" ? "Visible to everyone in your org" : "Personal: only you can see this"}
               </div>
             </div>
           </div>

@@ -86,7 +86,7 @@ export default function RevertConfirmModal({
               The current revision will be marked superseded but remain in the history.
             </p>
             <p className="text-[13px] text-[var(--color-text-muted)]">
-              Reverts never overwrite history - the audit chain stays intact and the action is logged with your reason.
+              Reverts never overwrite history: the audit chain stays intact and the action is logged with your reason.
             </p>
           </div>
 

@@ -100,7 +100,7 @@ export default function BulkCheckoutToProjectModal({
     if (kind === "project") {
       if (choice === "new") {
         if (!name.trim()) return setError("Project name is required");
-        if (!description.trim()) return setError("Project description is required - explain what the team will be doing");
+        if (!description.trim()) return setError("Project description is required: explain what the team will be doing");
       } else {
         if (!selectedProjectId) return setError("Pick a project to attach these checkouts to");
       }
@@ -163,7 +163,7 @@ export default function BulkCheckoutToProjectModal({
             </div>
             <div className="text-[13px] text-[var(--color-text-muted)]">
               {kind === "adhoc"
-                ? "Quick checkout - no project required. Auto-expires in 24h if you forget to check back in."
+                ? "Quick checkout: no project required. Auto-expires in 24h if you forget to check back in."
                 : "Attach all checkouts to the same project so the team knows they belong together."}
             </div>
           </div>

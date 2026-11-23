@@ -351,7 +351,7 @@ function Step2Tags({
   if (sourceTags.length === 0) {
     return (
       <div className="text-[13px] text-[var(--color-text-muted)] italic py-6 text-center border border-dashed border-[var(--color-border)] rounded-lg">
-        Source has no asset tags. New documents will start with no tags - you can add them later.
+        Source has no asset tags. New documents will start with no tags: you can add them later.
       </div>
     );
   }
@@ -360,7 +360,7 @@ function Step2Tags({
     <div className="space-y-3">
       <div className="text-[13px] text-[var(--color-text-muted)]">
         Distribute the source&apos;s {sourceTags.length} asset tag{sourceTags.length === 1 ? "" : "s"} across the new sheets.
-        A tag can appear on multiple targets - some equipment legitimately spans sheets.
+        A tag can appear on multiple targets: some equipment legitimately spans sheets.
       </div>
 
       <div className="border border-[var(--color-border)] rounded-lg overflow-hidden">

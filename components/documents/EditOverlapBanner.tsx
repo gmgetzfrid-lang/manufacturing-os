@@ -90,7 +90,7 @@ export default function EditOverlapBanner({
         actorName: currentUserName ?? undefined,
         kind: "overlap_advisory",
         title: `Heads-up: parallel work on ${row.documentLabel}`,
-        body: `${names.join(", ")} all have active edit work on this document. Coordinate before publishing - the second upload will hit a conflict if the bases diverge.`,
+        body: `${names.join(", ")} all have active edit work on this document. Coordinate before publishing: the second upload will hit a conflict if the bases diverge.`,
         link: row.libraryId ? `/documents/${row.libraryId}?doc=${row.documentId}` : undefined,
         resourceType: "document",
         resourceId: row.documentId,

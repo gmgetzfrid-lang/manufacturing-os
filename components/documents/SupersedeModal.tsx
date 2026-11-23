@@ -131,7 +131,7 @@ export default function SupersedeModal({
               Replacement Document Numbers
             </label>
             <div className="text-[13px] text-[var(--color-text-muted)] mt-0.5">
-              Optional. Add by document number - they must already exist in this library.
+              Optional. Add by document number: they must already exist in this library.
             </div>
             <div className="mt-1.5 flex gap-1.5">
               <input

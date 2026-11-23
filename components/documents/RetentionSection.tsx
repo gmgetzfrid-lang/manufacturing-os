@@ -72,7 +72,7 @@ export default function RetentionSection({ doc, orgId, canManage }: {
   // ── Legal hold ──
   const placeHold = async () => {
     if (!doc.id) return;
-    const matter = window.prompt("Legal hold - matter / case name:", hold.matter || "");
+    const matter = window.prompt("Legal hold: matter / case name:", hold.matter || "");
     if (matter == null || !matter.trim()) return;
     const reason = window.prompt("Reason (optional):", "") ?? "";
     setBusy(true);
@@ -81,7 +81,7 @@ export default function RetentionSection({ doc, orgId, canManage }: {
   };
   const release = async () => {
     if (!doc.id) return;
-    const reason = window.prompt("Release the legal hold - reason (optional):", "") ?? "";
+    const reason = window.prompt("Release the legal hold: reason (optional):", "") ?? "";
     setBusy(true);
     try { await releaseLegalHold({ scope: "document", id: doc.id, orgId, reason: reason.trim() || undefined, actorId: uid, actorName: userEmail }); await load(); }
     finally { setBusy(false); }
@@ -92,7 +92,7 @@ export default function RetentionSection({ doc, orgId, canManage }: {
     setBusy(true);
     try {
       const res = await disposeDocument({ documentId: doc.id, orgId, action: "archive", actorId: uid, actorName: userEmail });
-      if (!res.ok) await appAlert({ tone: "danger", message: res.reason === "legal_hold" ? "This record is under a legal hold - release it first." : `Couldn't dispose: ${res.reason ?? "unknown"}` });
+      if (!res.ok) await appAlert({ tone: "danger", message: res.reason === "legal_hold" ? "This record is under a legal hold: release it first." : `Couldn't dispose: ${res.reason ?? "unknown"}` });
       await load();
     } finally { setBusy(false); }
   };

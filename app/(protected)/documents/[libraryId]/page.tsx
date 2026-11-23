@@ -492,7 +492,7 @@ export default function LibraryExplorerPage() {
     } catch (e) {
       console.error("Failed to save uniqueness keys", e);
       const f = translatePostgresError(e, { entity: "library" });
-      setError(`${f.heading} - ${f.message}`);
+      setError(`${f.heading}. ${f.message}`);
     }
   };
 
@@ -520,7 +520,7 @@ export default function LibraryExplorerPage() {
     } catch (e) {
       console.error("Failed to add Sheet column + uniqueness", e);
       const f = translatePostgresError(e, { entity: "library" });
-      setError(`${f.heading} - ${f.message}`);
+      setError(`${f.heading}. ${f.message}`);
     }
   };
 
@@ -1180,7 +1180,7 @@ export default function LibraryExplorerPage() {
       dropFromView(gone);
       setSelectedDocIds(new Set(r.held.map((h) => h.id)));
       if (selectedDoc?.id && gone.has(selectedDoc.id)) setSelectedDoc(null);
-      if (r.held.length) setError(`${r.deleted.length} deleted. ${r.held.length} kept - under a legal hold (e.g. ${r.held[0].label}).`);
+      if (r.held.length) setError(`${r.deleted.length} deleted. ${r.held.length} kept: under a legal hold (e.g. ${r.held[0].label}).`);
       nudgeKnowledgeSources(activeOrgId, libraryId);
     } catch (e) {
       // Loud: a banner at the top of a long list is easy to miss, and a
@@ -2941,7 +2941,7 @@ export default function LibraryExplorerPage() {
     if (fileInputRef.current) fileInputRef.current.value = "";
     if (files.length === 0) return;
     if (!activeOrgId || !uid || !library) {
-      setError("Still loading the library - pick the file again in a moment.");
+      setError("Still loading the library: pick the file again in a moment.");
       return;
     }
     uploadPathsRef.current = new Map(); // flat upload — no tree to recreate
@@ -3388,12 +3388,12 @@ export default function LibraryExplorerPage() {
         uploadFolderPlanRef.current = null;
         setFolderStaged(false);
         landedFilesRef.current = new WeakSet();
-        setNotice(`Upload complete - ${landed.toLocaleString()} file${landed === 1 ? "" : "s"} uploaded${alreadyHere.length ? `, ${alreadyHere.length.toLocaleString()} already there` : ""}, all now in ${currentFolder ? `"${currentFolder.name}"` : library.name}.${notes.length ? " " + notes.join(" ") : ""}`);
+        setNotice(`Uploaded ${landed.toLocaleString()} file${landed === 1 ? "" : "s"}${alreadyHere.length ? `, ${alreadyHere.length.toLocaleString()} already there` : ""}, all now in ${currentFolder ? `"${currentFolder.name}"` : library.name}.${notes.length ? " " + notes.join(" ") : ""}`);
       }
     } catch (e) {
       console.error(e);
       const f = translatePostgresError(e, { entity: "document", field: "document_number" });
-      setError(`${f.heading} - ${f.message}`);
+      setError(`${f.heading}. ${f.message}`);
       throw e;
     } finally {
       endUpload();
@@ -5861,7 +5861,7 @@ export default function LibraryExplorerPage() {
           visibility={library.visibility as NodeVisibility}
           aclChain={[library.acl].filter(Boolean) as AccessControl[]}
           canEdit={isController}
-          title={`${library.name} - library access`}
+          title={`Who can work in ${library.name}`}
         />
       )}
 

@@ -32,7 +32,7 @@ import IsoGuidance from "@/components/ui/IsoGuidance";
 import { friendlyError } from "@/lib/friendlyError";
 const REASON_HELP: Record<string, string> = {
   "Awaiting Engineering":      "Drafting can't advance until an engineer signs off on a design decision.",
-  "Field Verification Needed": "Drawing reflects assumed conditions - someone needs to walk down the unit and confirm.",
+  "Field Verification Needed": "Drawing reflects assumed conditions: someone needs to walk down the unit and confirm.",
   "Missing Vendor Data":       "Waiting on a datasheet, drawing, or spec from a vendor or contractor.",
   "Client Review":             "Drawing is in the client's hands; can't proceed until they return comments or approval.",
 };

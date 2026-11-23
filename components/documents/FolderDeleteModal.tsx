@@ -139,7 +139,7 @@ export default function FolderDeleteModal({
                     {subfolders > 0 ? `, and all ${subfolders.toLocaleString()} subfolder${subfolders === 1 ? "" : "s"} go with ${one ? "it" : "them"}` : ""}.
                     {" "}The empty folder structure can be restored from Recently deleted for 30 days; the documents can&apos;t.</>,
               held > 0)}
-            {option("lift", FolderOutput, "Delete only the folder - keep what's inside", directDocs > 0 || directSubs > 0
+            {option("lift", FolderOutput, "Delete only the folder: keep what's inside", directDocs > 0 || directSubs > 0
                 ? <>Its {directDocs > 0 ? `${directDocs.toLocaleString()} document${directDocs === 1 ? "" : "s"}` : ""}
                     {directDocs > 0 && directSubs > 0 ? " and " : ""}
                     {directSubs > 0 ? `${directSubs} subfolder${directSubs === 1 ? "" : "s"}` : ""} move up into <b>{parentName}</b>. Nothing is deleted except the folder.</>

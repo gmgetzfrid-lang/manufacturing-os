@@ -504,7 +504,7 @@ export default function InspectorPanel({
         const quiet = `${heroQuiet} !h-10 disabled:cursor-not-allowed`;
         const publish = (cls: string) => (
           <button onClick={onRevUp} disabled={pubLocked} className={cls}
-            title={isCheckedOut && !checkedOutByMe ? `Locked: ${selectedDoc.checkedOutByName || "another user"} has this checked out. Publishing over their work is blocked - coordinate or ask them to check in.` : "Publish a new revision"}>
+            title={isCheckedOut && !checkedOutByMe ? `Locked: ${selectedDoc.checkedOutByName || "another user"} has this checked out. Publishing over their work is blocked: coordinate or ask them to check in.` : "Publish a new revision"}>
             {isCheckedOut && !checkedOutByMe ? <><Lock className="w-3.5 h-3.5" /> Locked by {selectedDoc.checkedOutByName || "another user"}</> : <><ArrowUpFromLine className="w-3.5 h-3.5" /> Publish new revision</>}
           </button>
         );

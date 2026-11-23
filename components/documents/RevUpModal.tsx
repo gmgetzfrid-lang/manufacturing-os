@@ -261,11 +261,11 @@ export default function RevUpModal({
     if (!revisionLabel.trim()) return setError("Revision label is required.");
     if (!changeLog.trim()) return setError("Describe what changed (required).");
     if (asBranch && branchReason.trim().length < 5) {
-      return setError("A branch needs a reason (at least 5 characters) - it becomes an open item until reconciled.");
+      return setError("A branch needs a reason (at least 5 characters): it becomes an open item until reconciled.");
     }
     if (lockedByOther && !overrideReason.trim()) {
       return setError(
-        `${doc.checkedOutByName || "Another user"} has this checked out - add a note explaining why you're publishing now.`,
+        `${doc.checkedOutByName || "Another user"} has this checked out: add a note explaining why you're publishing now.`,
       );
     }
     if (mocRequired && mocReference.trim().length < 3) {
@@ -631,7 +631,7 @@ export default function RevUpModal({
                 <option key={v.id} value={v.id}>
                   Rev {v.revisionLabel}
                   {v.id === doc.currentVersionId ? " (current)" : ""}
-                  {v.supersededAt ? " - superseded" : ""}
+                  {v.supersededAt ? ": superseded" : ""}
                 </option>
               ))}
             </select>
@@ -644,7 +644,7 @@ export default function RevUpModal({
 
           {/* Rev label + Issue purpose + Change type */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <Field label="Revision Label *" hint="Free text - e.g. 1, R3, IFC-A">
+            <Field label="Revision Label *" hint="Free text: e.g. 1, R3, IFC-A">
               <input
                 value={revisionLabel}
                 onChange={(e) => setRevisionLabel(e.target.value)}
@@ -709,7 +709,7 @@ export default function RevUpModal({
               field leaves the fold and stands where it can't be missed. */}
           {mocRequired && (
             <Field
-              label={docClassUnknown ? "MOC Reference (required - class unverified)" : "MOC Reference (required - drawing class)"}
+              label={docClassUnknown ? "MOC Reference (required: class unverified)" : "MOC Reference (required: drawing class)"}
               hint={docClassUnknown
                 ? "The document's class couldn't be verified right now, so drawing rules apply: a non-minor revision needs its Management of Change."
                 : "PSM: a non-minor drawing revision needs its Management of Change. Minor/Correction change types are replacement-in-kind and exempt."}

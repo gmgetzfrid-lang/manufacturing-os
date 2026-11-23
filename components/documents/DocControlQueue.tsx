@@ -188,7 +188,7 @@ export default function DocControlQueue({ orgId, currentUser }: DocControlQueueP
 
   const handleResolve = async (branch: RevisionBranch, resolution: "merged" | "withdrawn") => {
     if (resolveNote.trim().length < 5) {
-      setError("A resolution note is required (at least 5 characters) - it goes on the record.");
+      setError("A resolution note is required (at least 5 characters): it goes on the record.");
       return;
     }
     setBusyId(branch.id);

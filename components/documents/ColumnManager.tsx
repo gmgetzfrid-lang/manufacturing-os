@@ -321,7 +321,7 @@ export default function ColumnManager(props: {
                           <button
                             onClick={() => startRename(col.key, col.label)}
                             className="shrink-0 p-2 rounded-lg border-2 border-[var(--color-main)]/25 bg-[var(--color-surface-2)] text-[var(--color-accent-text)] hover:text-[var(--color-accent-hover)] hover:border-[var(--color-main)]/50 transition-colors"
-                            title={`Rename "${col.label}" - works for built-in columns too`}
+                            title={`Rename "${col.label}": works for built-in columns too`}
                           >
                             <Pencil className="h-3.5 w-3.5" />
                           </button>

@@ -131,7 +131,7 @@ export default function ReverseConfirmModal({
               value={reason}
               onChange={(e) => setReason(e.target.value)}
               rows={3}
-              placeholder='e.g. "Wrong split count - should have been 3 sheets, not 2."'
+              placeholder='e.g. "Wrong split count: should have been 3 sheets, not 2."'
               className="mt-1 w-full text-sm border border-[var(--color-border-strong)] rounded px-2.5 py-1.5"
               autoFocus
             />
@@ -209,7 +209,7 @@ function describeReversal(event: TimelineEvent): Description {
         `Source document will return to "Issued" status.`,
         `${newCount} new doc${newCount === 1 ? "" : "s"} from the split will be marked Superseded with reason "Reverted split".`,
         `document_supersessions links from this split will be removed (audit row retains the history).`,
-        `Asset tags on the parked docs are NOT moved back - they stay with the new doc rows for the audit reconstructable.`,
+        `Asset tags on the parked docs are NOT moved back: they stay with the new doc rows for the audit reconstructable.`,
         `Active holds and project memberships carried over during the split stay on the parked docs.`,
       ],
     };

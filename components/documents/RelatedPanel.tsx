@@ -173,7 +173,7 @@ export default function RelatedPanel({
               {r.origin && r.origin !== "human" && (
                 <span
                   title={[
-                    r.origin === "system" ? "Applied automatically - provable connection" : "Approved from a proposal",
+                    r.origin === "system" ? "Applied automatically: provable connection" : "Approved from a proposal",
                     r.evidence?.summary,
                     r.approved_by_name ? `Approved by ${r.approved_by_name}` : null,
                   ].filter(Boolean).join(" · ")}

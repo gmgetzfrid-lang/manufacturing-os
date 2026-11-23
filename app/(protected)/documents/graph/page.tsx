@@ -186,7 +186,7 @@ function GraphPageInner() {
       const msg = (e as Error).message;
       // A dropped connection ("Failed to fetch") mid-refresh must not take a
       // working map away: keep what is on screen and say so quietly.
-      setError(dataRef.current ? `Couldn't refresh the map (${msg}). Showing the last good one - reload the page to try again.` : msg);
+      setError(dataRef.current ? `Couldn't refresh the map (${msg}). Showing the last good one: reload the page to try again.` : msg);
     }
     finally { setLoading(false); }
   }, [activeOrgId, activeRole, controller]);
@@ -548,14 +548,14 @@ function GraphPageInner() {
   const askToRead = async (f: FindCoverage["unreadFolders"][number]) => {
     if (!activeOrgId) return;
     const libs = await listKnowledgeLibraries(activeOrgId).catch(() => [] as KnowledgeLibrary[]);
-    setReadAsk({ folder: f, libs, pick: libs[0]?.id ?? "", busy: false, note: libs.length ? null : "No knowledge library yet - create one under Intelligence › Knowledge first." });
+    setReadAsk({ folder: f, libs, pick: libs[0]?.id ?? "", busy: false, note: libs.length ? null : "No knowledge library yet: create one under Intelligence › Knowledge first." });
   };
   const linkAndRead = async () => {
     if (!readAsk || !activeOrgId || !readAsk.pick) return;
     setReadAsk({ ...readAsk, busy: true, note: null });
     try {
       await estatePost("/api/knowledge/sources", { orgId: activeOrgId, libraryId: readAsk.pick, add: [{ type: readAsk.folder.folderId ? "folder" : "library", id: readAsk.folder.folderId ?? readAsk.folder.libraryId }] });
-      setReadAsk({ ...readAsk, busy: false, note: `Linked. Text pages read for free; pages with no text use vision on the cheap tier within your cap. Indexing runs in the background - or open the knowledge library to watch it.` });
+      setReadAsk({ ...readAsk, busy: false, note: `Linked. Text pages read for free; pages with no text use vision on the cheap tier within your cap. Indexing runs in the background. Open the knowledge library to watch it.` });
     } catch (e) { setReadAsk({ ...readAsk, busy: false, note: (e as Error).message }); }
   };
 
@@ -835,7 +835,7 @@ function GraphPageInner() {
                 <div className="basis-full"><FolderMarkBar orgId={activeOrgId} folderId={focusId.slice(7)} onChanged={() => void refresh()} /></div>
               )}
               {controller && activeOrgId && focusId?.startsWith("lib:") && !selectedEntry && (
-                <button onClick={() => setSetupLib(focusId.slice(4))} title="Say what each level of folders is - operating area, equipment type, equipment - and everything filed underneath inherits it"
+                <button onClick={() => setSetupLib(focusId.slice(4))} title="Say what each level of folders is (operating area, equipment type, equipment) and everything filed underneath inherits it"
                   className="ml-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] px-2 py-1 font-semibold inline-flex items-center gap-1 hover:bg-[var(--color-surface-2)]"><Factory className="w-3 h-3" /> Set up as equipment library</button>
               )}
               {selectedEntry && (
@@ -873,7 +873,7 @@ function GraphPageInner() {
               </button>
               {focusId && <button onClick={up} className="rounded-md bg-[var(--color-surface)]/90 border border-[var(--color-border)] px-2 py-1 inline-flex items-center gap-1"><Minus className="w-3 h-3" /> Up</button>}
               <button onClick={() => graphRef.current?.fit()} className="rounded-md bg-[var(--color-surface)]/90 border border-[var(--color-border)] px-2 py-1 inline-flex items-center gap-1"><Maximize2 className="w-3 h-3" /> Fit</button>
-              <Link href={globalGraphHref(selectedId ?? focusId ?? "")} title="The same node on the Intelligence graph - equipment, units, projects and documents in one web"
+              <Link href={globalGraphHref(selectedId ?? focusId ?? "")} title="The same node on the Intelligence graph: equipment, units, projects and documents in one web"
                 className={`rounded-md bg-[var(--color-surface)]/90 border border-[var(--color-border)] px-2 py-1 inline-flex items-center gap-1 ${selectedId || focusId ? "" : "opacity-50 pointer-events-none"}`}><Globe className="w-3 h-3" /> Global view</Link>
               {!focusId && !unitView && (
                 <span className="rounded-md bg-[var(--color-surface)]/90 border border-[var(--color-border)] px-2 py-1">
@@ -1533,7 +1533,7 @@ function AliasesPanel({ orgId, controller, aliases, uid, userEmail, units, onCha
       {aliases.length === 0 && <div className="text-[13px] text-[var(--color-text-muted)]">No aliases taught yet.</div>}
       {controller ? (
         <div className="space-y-2 pt-2 border-t border-[var(--color-border)]">
-          <input value={term} onChange={(e) => setTerm(e.target.value)} placeholder="What people say - born"
+          <input value={term} onChange={(e) => setTerm(e.target.value)} placeholder="What people say: born"
             className="w-full text-sm rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] px-2 py-1.5" />
           <select value={kind} onChange={(e) => setKind(e.target.value as FinderAliasKind)} className="w-full text-sm rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] px-2 py-1.5">
             <option value="unit">…is a unit</option>
@@ -1546,7 +1546,7 @@ function AliasesPanel({ orgId, controller, aliases, uid, userEmail, units, onCha
               {units.map((u) => <option key={u.code} value={u.label}>{u.label} ({u.code})</option>)}
             </select>
           ) : (
-            <input value={means} onChange={(e) => setMeans(e.target.value)} placeholder={kind === "equipment" ? "The tag - F-101" : "What the files say - crude"}
+            <input value={means} onChange={(e) => setMeans(e.target.value)} placeholder={kind === "equipment" ? "The tag - F-101" : "What the files say: crude"}
               className="w-full text-sm rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] px-2 py-1.5" />
           )}
           {err && <div className="text-[13px] text-[var(--state-overdue)]">{err}</div>}

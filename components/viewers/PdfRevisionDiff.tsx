@@ -539,7 +539,7 @@ export default function PdfRevisionDiff({
             aria-pressed={changesOnly}
             className={toggleBtn(changesOnly)}
             title={changesOnly
-              ? "Showing changes only - unchanged linework is hidden. Click to show everything."
+              ? "Showing changes only: unchanged linework is hidden. Click to show everything."
               : "Hide unchanged (grey) linework and see only what changed"}
           >
             {changesOnly ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
@@ -595,7 +595,7 @@ export default function PdfRevisionDiff({
               className={vTool(panZoom.panMode, "w-9 h-9")}
               aria-pressed={panZoom.panMode}
               aria-label="Pan tool"
-              title={panZoom.panMode ? "Pan tool (drag to move) - click for cursor" : "Cursor - click for the pan/grab hand"}
+              title={panZoom.panMode ? "Pan tool (drag to move): click for cursor" : "Cursor: click for the pan/grab hand"}
             >{panZoom.panMode ? <Hand className="w-4 h-4" /> : <MousePointer2 className="w-4 h-4" />}</button>
           </div>
         </div>

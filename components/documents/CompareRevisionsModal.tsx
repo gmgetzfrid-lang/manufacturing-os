@@ -208,7 +208,7 @@ export default function CompareRevisionsModal({
               <span className="text-sm font-bold text-[var(--color-text)]">Need two revisions on the server to compare</span>
               <span className="text-[13px] mt-1 max-w-md">
                 {versions.length === 1 ? "Only one revision is available. " : "No revisions with files are available. "}
-                {offloadedCount > 0 && `${offloadedCount} older revision${offloadedCount === 1 ? " was" : "s were"} archived off the server for space - restore from the offline archive to compare against them.`}
+                {offloadedCount > 0 && `${offloadedCount} older revision${offloadedCount === 1 ? " was" : "s were"} archived off the server for space: restore from the offline archive to compare against them.`}
               </span>
             </div>
           ) : !baseVersion || !compareVersion || !urls ? (

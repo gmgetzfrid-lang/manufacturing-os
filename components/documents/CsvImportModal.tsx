@@ -123,7 +123,7 @@ export default function CsvImportModal({
   const validateMapping = (): string | null => {
     for (const f of allFields) {
       if (f.required && !mapping[f.key]) {
-        return `Field "${f.label}" is required - pick the CSV column that holds it.`;
+        return `Field "${f.label}" is required: pick the CSV column that holds it.`;
       }
     }
     return null;
