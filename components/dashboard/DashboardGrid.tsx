@@ -2,11 +2,14 @@
 
 // Customizable Home: a control-room overview.
 //
-// The header answers "what needs me" with the counts that back it up
-// (overdue, waiting on you, due this week). Under it: the "Needs you" table,
-// the libraries and projects as compact tables, then the widgets, each a
-// full-width section (its heading on the panel, its content on a white
-// sheet), top to bottom in the order the person chose.
+// The header answers "what needs me": the date as the kicker (no
+// greeting), the answer as the title, ONE large number (overdue when
+// anything is, else what waits on you) and the rest small. Under it: a new
+// workspace's setup checklist (admins, until the essentials are done), the
+// "Needs you" table, the libraries (wide, about 62%) beside your projects
+// (narrow, about 38%), then the widgets, each a full-width section (its
+// heading on the page, its content on a white sheet), top to bottom in the
+// order the person chose.
 //
 // "Customize" arranges that order: drag a widget up or down (a dashed
 // placeholder shows where it lands and the rest re-flows live), drag its
@@ -19,10 +22,11 @@ import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExtern
 import Link from "next/link";
 import SetupChecklist from "@/components/onboarding/SetupChecklist";
 import { Pencil, Check, Plus, Move } from "lucide-react";
-import LoadingBlock from "@/components/ui/LoadingBlock";
+import { SkeletonRows } from "@/components/ui/Skeleton";
+import { friendlyError } from "@/lib/friendlyError";
 import { useRole } from "@/components/providers/RoleContext";
 import { PageShell } from "@/components/ui/PageShell";
-import { PageHero, PageBody, Card, heroPrimary, heroQuiet } from "@/components/ui/PageHero";
+import { PageHero, PageBody, heroPrimary, heroQuiet } from "@/components/ui/PageHero";
 import { useTicketNotifications } from "@/hooks/useTicketNotifications";
 import { buildNeeds, needsFacts } from "@/components/cockpit/needsYou";
 import HomeStrips from "@/components/cockpit/HomeStrips";
@@ -70,10 +74,6 @@ interface ResizeState { id: string; w: number; h: number; }
 // component). Plain value-returning getters: strings compare by value, so
 // useSyncExternalStore sees a stable snapshot within the same minute/day.
 const subscribeNever = () => () => {};
-const greetingNow = () => {
-  const hour = new Date().getHours();
-  return hour < 5 ? "Working late" : hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
-};
 const dateLineNow = () =>
   new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });
 
@@ -94,11 +94,10 @@ export default function DashboardGrid() {
   const [drag, setDrag] = useState<DragState | null>(null);
   const [resizing, setResizing] = useState<ResizeState | null>(null);
 
-  // Greeting + date are LOCAL-TIME values. The page is statically
-  // prerendered, so computing them during render bakes in the build
-  // machine's clock and mismatches the browser at hydration (React #418).
+  // The date is a LOCAL-TIME value. The page is statically prerendered, so
+  // computing it during render bakes in the build machine's clock and
+  // mismatches the browser at hydration (React #418).
   // useSyncExternalStore: deterministic server snapshot, browser value after.
-  const greeting = useSyncExternalStore(subscribeNever, greetingNow, () => "Welcome back");
   const dateLine = useSyncExternalStore(subscribeNever, dateLineNow, () => "");
 
   const [gridWidth, setGridWidth] = useState(0);
@@ -281,12 +280,12 @@ export default function DashboardGrid() {
   const answer = failed
     ? "Couldn't check what needs you."
     : attnLoading && attnCount === 0
-      ? `${greeting}.`
+      ? "Home"
       : attnCount > 0
         ? `${attnCount.toLocaleString()} ${attnCount === 1 ? "thing needs" : "things need"} you.`
         : "Nothing needs you right now.";
   const sub = (() => {
-    if (failed) return <>The list of what waits on you didn&apos;t load: {attnError}</>;
+    if (failed) return <>The list of what waits on you didn&apos;t load. {friendlyError(attnError)}</>;
     if (!lead) return attnLoading ? null : "No requests, reviews or alerts are waiting on you.";
     const todo = lead.todo && !/^[A-Z]{2}/.test(lead.todo) ? lead.todo.charAt(0).toLowerCase() + lead.todo.slice(1) : lead.todo;
     return <>First up: {lead.ref ? <span className="font-display font-semibold tabular-nums text-[var(--color-text)]">{lead.ref} </span> : null}<span className="text-[var(--color-text)]">{lead.name}</span>{todo ? `, ${todo}` : ""}.</>;
@@ -295,14 +294,17 @@ export default function DashboardGrid() {
 
   const band = (
     <PageHero
-      kicker={<>{dateLine || "Home"}{dateLine ? <span className="max-sm:hidden"> · {greeting}</span> : null}</>}
+      kicker={dateLine || "Home"}
       title={answer}
       sub={sub}
+      // One large number: what is late when anything is, else what waits
+      // on you. The others small; zeros muted.
       facts={showFacts ? [
-        { label: "Overdue", value: facts.overdue, tone: facts.overdue > 0 ? "bad" : undefined },
-        { label: "Waiting on you", value: facts.yourTurn },
+        { label: "Overdue", value: facts.overdue, tone: facts.overdue > 0 ? "bad" : undefined, hero: facts.overdue > 0 },
+        { label: "Waiting on you", value: facts.yourTurn, hero: facts.overdue === 0 && facts.yourTurn > 0 },
         { label: "Due this week", value: facts.dueSoon, tone: facts.dueSoon > 0 ? "warn" : undefined },
       ] : undefined}
+      factsHero={showFacts && facts.overdue + facts.yourTurn > 0 ? "auto" : "none"}
       tools={loaded && config ? (
         <>
           <button type="button" onClick={() => setAddOpen(true)} className={heroQuiet} aria-label="Add widget">
@@ -325,11 +327,11 @@ export default function DashboardGrid() {
             <p className="text-[var(--color-text-muted)]">
               {isMobile
                 // Phones can't drag or resize; telling them to reads as broken.
-                ? "Customizing. Reorder and resize on a larger screen. Changes save as you go."
-                : "Customizing. Drag a widget up or down to move it, its bottom corner to change its height. Changes save as you go."}
+                ? "Remove widgets or change their settings here. Move and resize them on a larger screen. Changes save as you go."
+                : "Drag a widget to move it, its bottom corner to change its height. Changes save as you go."}
             </p>
           )}
-          {saveErr && <p role="alert" className="font-semibold text-[var(--state-held)]">Your layout is saved on this device only. The account copy didn&apos;t save: {saveErr}</p>}
+          {saveErr && <p role="alert" className="font-semibold text-[var(--state-held-text)]">Your layout is saved on this device only, so it won&apos;t follow you to another one. {friendlyError(saveErr)}</p>}
         </div>
       )}
     </PageHero>
@@ -341,7 +343,7 @@ export default function DashboardGrid() {
         <div className="mx-auto max-w-[1720px]">
           {band}
           <PageBody>
-            <Card><LoadingBlock what="your Home" rows={6} className="border-0 p-0" /></Card>
+            <SkeletonRows rows={5} cols={2} what="your Home" />
           </PageBody>
         </div>
       </PageShell>
@@ -389,6 +391,9 @@ export default function DashboardGrid() {
       <div className="mx-auto max-w-[1720px]">
       {band}
       <PageBody>
+      {/* A new workspace (admins): the checklist first, step 1 already
+          done; it hides itself once the essentials are in. */}
+      {!editing && <SetupChecklist />}
       {/* Stable measuring wrapper: keeps the ResizeObserver attached across
           view and edit, so the phone breakpoint stays live. */}
       <div ref={gridRef} className="relative">
@@ -465,7 +470,7 @@ export default function DashboardGrid() {
                   zIndex: isDragging ? 30 : 10,
                   cursor: !isResizingThis ? (isDragging ? "grabbing" : "grab") : undefined,
                 }}
-                className={`group/tile relative min-w-0 ${isDragging ? "shadow-2xl shadow-slate-900/30 rounded-lg" : ""} ${
+                className={`group/tile relative min-w-0 ${isDragging ? "ui-float rounded-panel" : ""} ${
                   (drag && !isDragging) || (resizing && !isResizingThis) ? "transition-[grid-row] duration-150" : ""
                 }`}
               >
@@ -484,12 +489,12 @@ export default function DashboardGrid() {
                   className={`absolute -bottom-1 -right-1 w-6 h-6 z-20 cursor-ns-resize touch-none flex items-end justify-end p-1 ${isResizingThis ? "scale-110" : ""}`}
                   title="Drag to change the height"
                 >
-                  <span className="block w-4 h-4 rounded-br-md rounded-tl-sm bg-[var(--color-text-faint)] shadow-md" style={{ clipPath: "polygon(100% 0, 100% 100%, 0 100%)" }} />
+                  <span className="block w-4 h-4 rounded-br-md rounded-tl-sm bg-[var(--color-text-faint)]" style={{ clipPath: "polygon(100% 0, 100% 100%, 0 100%)" }} />
                 </div>
 
                 {/* Live height while resizing. */}
                 {isResizingThis && (
-                  <div className="absolute top-2 left-1/2 -translate-x-1/2 z-30 px-2 py-0.5 rounded-md bg-[var(--color-text)] text-[var(--color-surface)] text-[13px] font-semibold tabular-nums shadow pointer-events-none">
+                  <div className="absolute top-2 left-1/2 -translate-x-1/2 z-30 px-2 py-0.5 rounded-md bg-[var(--color-text)] text-[var(--color-surface)] text-[13px] font-semibold tabular-nums pointer-events-none">
                     {liveH} rows tall
                   </div>
                 )}
@@ -517,9 +522,6 @@ export default function DashboardGrid() {
         </div>
       )}
       </div>
-
-      {/* Setting up a new workspace (admins; hides itself once done or closed): after the work. */}
-      <SetupChecklist />
       </PageBody>
 
       <AddWidgetModal

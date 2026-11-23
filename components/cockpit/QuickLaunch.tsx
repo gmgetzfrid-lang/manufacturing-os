@@ -24,7 +24,8 @@ export function QuickLaunch() {
       {QUICK_ACTIONS.map((a) => {
         const inner = (
           <span className="flex items-center gap-3 px-4 py-3 hover:bg-[var(--color-surface-2)] transition-colors">
-            <span className={`w-9 h-9 rounded-md flex items-center justify-center shrink-0 ${a.tone}`}><a.icon className="w-4 h-4" /></span>
+            {/* A plain muted icon, no tile: the words say what it is. */}
+            <a.icon aria-hidden className="w-[18px] h-[18px] shrink-0 text-[var(--color-text-muted)]" />
             <span className="min-w-0 flex-1">
               <span className="block text-[15px] font-semibold text-[var(--color-text)] truncate">{a.label}</span>
               <span className="block text-[13px] text-[var(--color-text-muted)] truncate">{a.sub}</span>

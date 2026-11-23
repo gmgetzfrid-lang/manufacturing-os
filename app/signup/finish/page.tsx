@@ -7,14 +7,13 @@
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { AlertCircle, Loader2, Lock } from "lucide-react";
-import { AuthCard } from "@/components/marketing/AuthCard";
+import { AlertCircle, Check, Loader2 } from "lucide-react";
+import { AuthCard, authField, authBtn } from "@/components/marketing/AuthCard";
+import { Button } from "@/components/ui/Button";
 import { btnPrimary, link, label } from "@/components/admin/kit";
-import { passwordProblem } from "@/lib/signinPolicy";
+import { MIN_PASSWORD, passwordProblem } from "@/lib/signinPolicy";
+import { friendlyError } from "@/lib/friendlyError";
 import { supabase } from "@/lib/supabase";
-
-const inputCls = "w-full h-11 pl-10 pr-3 bg-[var(--color-surface)] border border-[var(--color-border-strong)] rounded-md text-[15px] text-[var(--color-text)] outline-none focus:border-[var(--color-main)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40 transition-colors placeholder:text-[var(--color-text-faint)]";
-const iconCls = "absolute left-3 top-1/2 -translate-y-1/2 w-[18px] h-[18px] text-[var(--color-text-faint)] pointer-events-none";
 
 type State = { k: "loading" } | { k: "set"; email: string; company: string } | { k: "done"; company: string } | { k: "error"; message: string };
 
@@ -25,7 +24,10 @@ function Finish() {
   const [pw, setPw] = useState("");
   const [pw2, setPw2] = useState("");
   const [busy, setBusy] = useState(false);
+  const [signedIn, setSignedIn] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // A field's problem shows after the person leaves it, never while typing.
+  const [left, setLeft] = useState<{ pw?: boolean; pw2?: boolean }>({});
 
   useEffect(() => {
     let live = true;
@@ -35,7 +37,7 @@ function Finish() {
       const body = (await res.json().catch(() => null)) as { email?: string; company?: string; needsPassword?: boolean; error?: string } | null;
       if (!live) return;
       if (res.status === 402 && tries > 0) { await new Promise((r) => setTimeout(r, 2500)); return ask(tries - 1); }
-      if (!res.ok || !body?.email) { setState({ k: "error", message: body?.error ?? "This page couldn't be opened." }); return; }
+      if (!res.ok || !body?.email) { setState({ k: "error", message: body?.error ? friendlyError(body.error) : "This page couldn't be opened." }); return; }
       setState(body.needsPassword ? { k: "set", email: body.email, company: body.company ?? "" } : { k: "done", company: body.company ?? "" });
     };
     void ask(6).catch(() => { if (live) setState({ k: "error", message: "Couldn't reach the server. Reload this page." }); });
@@ -55,9 +57,11 @@ function Finish() {
       if (!res.ok || !body?.email) throw new Error(body?.error ?? "The password couldn't be set.");
       const { error: signErr } = await supabase.auth.signInWithPassword({ email: body.email, password: pw });
       if (signErr) { setState({ k: "done", company: state.company }); return; }
+      setBusy(false);
+      setSignedIn(true);
       router.replace("/admin/users");
     } catch (err) {
-      setError((err as Error).message);
+      setError(friendlyError(err));
       setBusy(false);
     }
   };
@@ -65,51 +69,61 @@ function Finish() {
   if (state.k === "loading") {
     return (
       <AuthCard title="Setting up your workspace." sub="This takes a few seconds after paying.">
-        <p role="status" className="flex items-center gap-2 text-[15px] text-[var(--color-text-muted)]"><Loader2 className="w-5 h-5 animate-spin" /> Working…</p>
+        <p role="status" className="flex items-center gap-2 text-reading text-[var(--color-text-muted)]">
+          <Loader2 aria-hidden className="w-5 h-5 motion-safe:animate-spin" /> Making your workspace
+        </p>
       </AuthCard>
     );
   }
   if (state.k === "error") {
     return (
-      <AuthCard title="Something's not right." footer={<p className="text-[14px]"><Link href="/" className={link}>Go to sign in</Link></p>}>
-        <p role="alert" className="flex items-start gap-2 text-[15px] font-semibold text-[var(--state-overdue)]"><AlertCircle className="w-4 h-4 shrink-0 mt-1" /> {state.message}</p>
+      <AuthCard title="This didn't open." footer={<p className="text-[14px]"><Link href="/" className={link}>Go to sign in</Link></p>}>
+        <p role="alert" className="flex items-start gap-2 text-reading font-semibold text-[var(--state-overdue-text)]"><AlertCircle aria-hidden className="w-4 h-4 shrink-0 mt-1" /> {state.message}</p>
+        <p className="mt-2 text-[14px] text-[var(--color-text-muted)]">Open the link from the payment page again, or sign in if your password is already set.</p>
       </AuthCard>
     );
   }
   if (state.k === "done") {
     return (
       <AuthCard title="Your workspace is ready." sub={state.company}>
-        <p className="text-[15px] text-[var(--color-text)]">Your password is set. Sign in to start adding your people.</p>
-        <Link href="/" className={`${btnPrimary} w-full h-11 mt-5`}>Sign in</Link>
+        <p className="text-reading text-[var(--color-text)]">Your password is set. Sign in to start adding your people.</p>
+        <Link href="/" className={`${btnPrimary} ${authBtn} mt-6`}>Sign in</Link>
       </AuthCard>
     );
   }
+  const weakNow = left.pw && pw ? passwordProblem(pw, state.email) : null;
+  const mismatchNow = left.pw2 && pw2 && pw2 !== pw ? "The two passwords don't match." : null;
+  const ready = !!pw && pw === pw2 && !passwordProblem(pw, state.email);
   return (
-    <AuthCard title="Set your password." sub={`${state.company} · ${state.email}`}>
+    <AuthCard title="Set your password." sub={[state.company, state.email].filter(Boolean).join(", ")}>
       {error && (
-        <div role="alert" className="mb-4 flex items-start gap-2 text-[var(--state-overdue)]">
-          <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+        <div role="alert" className="mb-5 flex items-start gap-2 text-[var(--state-overdue-text)]">
+          <AlertCircle aria-hidden className="w-4 h-4 shrink-0 mt-0.5" />
           <p className="text-[14px] font-semibold">{error}</p>
         </div>
       )}
-      <form onSubmit={submit} className="space-y-4">
+      <form onSubmit={submit}>
         <div>
           <label htmlFor="fin-pw" className={label}>Password</label>
-          <div className="relative">
-            <Lock className={iconCls} />
-            <input id="fin-pw" type="password" value={pw} onChange={(e) => setPw(e.target.value)} className={inputCls} placeholder="At least 12 characters" autoComplete="new-password" minLength={12} required />
-          </div>
+          <input id="fin-pw" type="password" value={pw} onChange={(e) => setPw(e.target.value)} onBlur={() => setLeft((l) => ({ ...l, pw: true }))}
+            className={authField} autoComplete="new-password" minLength={MIN_PASSWORD} required
+            aria-invalid={!!weakNow} aria-describedby="fin-pw-note" />
+          <p id="fin-pw-note" className={`mt-1.5 text-[13px] ${weakNow ? "font-semibold text-[var(--state-overdue-text)]" : "text-[var(--color-text-muted)]"}`}>
+            {weakNow ?? (pw && !passwordProblem(pw, state.email)
+              ? <span className="inline-flex items-center gap-1 text-[var(--state-released-text)]"><Check aria-hidden className="w-3.5 h-3.5" /> Strong enough</span>
+              : `At least ${MIN_PASSWORD} characters, with numbers or symbols.`)}
+          </p>
         </div>
-        <div>
+        <div className="mt-4">
           <label htmlFor="fin-pw2" className={label}>Password again</label>
-          <div className="relative">
-            <Lock className={iconCls} />
-            <input id="fin-pw2" type="password" value={pw2} onChange={(e) => setPw2(e.target.value)} className={inputCls} autoComplete="new-password" minLength={12} required />
-          </div>
+          <input id="fin-pw2" type="password" value={pw2} onChange={(e) => setPw2(e.target.value)} onBlur={() => setLeft((l) => ({ ...l, pw2: true }))}
+            className={authField} autoComplete="new-password" minLength={MIN_PASSWORD} required
+            aria-invalid={!!mismatchNow} aria-describedby={mismatchNow ? "fin-pw2-note" : undefined} />
+          {mismatchNow && <p id="fin-pw2-note" className="mt-1.5 text-[13px] font-semibold text-[var(--state-overdue-text)]">{mismatchNow}</p>}
         </div>
-        <button type="submit" disabled={busy} className={`${btnPrimary} w-full h-11`}>
-          {busy ? <><Loader2 className="w-5 h-5 animate-spin" /> Setting it…</> : "Set password and sign in"}
-        </button>
+        <Button type="submit" variant={ready ? "primary" : "secondary"} loading={busy} done={signedIn} doneLabel="Signed in" className={`mt-6 ${authBtn}`}>
+          {busy ? "Setting it" : "Set password and sign in"}
+        </Button>
       </form>
     </AuthCard>
   );

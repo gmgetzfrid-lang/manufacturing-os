@@ -147,8 +147,8 @@ export function DraftingRequestsBody() {
                 const on = stage === s.key;
                 return (
                   <button key={s.key} type="button" aria-pressed={on} onClick={() => setStage(on ? null : s.key)}
-                    className={`ui-tag ${on ? "!bg-[var(--color-main)] !text-white !border-[var(--color-main)]" : ""}`}>
-                    {s.label} <span className="tabular-nums opacity-80">{s.count}</span>
+                    className={`ui-tag ${on ? "!bg-[var(--color-surface)] !border-[var(--color-current)] !text-[var(--color-text)]" : ""}`}>
+                    {s.label} <span className="font-sans font-normal tabular-nums text-[var(--color-text-muted)]">{s.count}</span>
                   </button>
                 );
               })}

@@ -14,13 +14,14 @@
 import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
-  Compass, BookMarked, Tag, FileStack, Link2, Bot, Waypoints, Loader2,
+  Compass, BookMarked, Tag, FileStack, Link2, Bot, Waypoints,
   Check, ArrowRight,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
 import { PageShell } from "@/components/ui/PageShell";
 import { PageHero, PageBody, Card, StepLine, heroPrimary } from "@/components/ui/PageHero";
+import { SkeletonRows } from "@/components/ui/Skeleton";
 import HelpTooltip from "@/components/ui/HelpTooltip";
 import { Pill } from "@/components/admin/kit";
 
@@ -201,10 +202,12 @@ export default function SetupPage() {
         kicker="Facility setup"
         title={facts === null ? "Setup navigator" : !next ? "Every stage reads healthy." : `${doneCount} of ${stages.length} stages done.`}
         sub={facts === null ? "Reading where your workspace is…" : next ? `Next: ${next.title}. Counts are live, so this picks up where you left off.` : "Nothing is waiting on you."}
+        // The title says the count: the facts stay small.
         facts={facts === null ? undefined : [
           { label: "Done", value: doneCount, tone: doneCount === stages.length ? "good" : undefined },
           { label: "To go", value: stages.length - doneCount },
         ]}
+        factsHero="none"
         primary={next ? <Link href={next.href} className={heroPrimary}>{next.cta} <ArrowRight className="w-4 h-4" /></Link> : undefined}
       >
         {facts !== null && (
@@ -219,9 +222,9 @@ export default function SetupPage() {
 
       <PageBody>
       {facts === null ? (
-        <Card><p className="flex items-center justify-center gap-2 py-12 text-[15px] text-[var(--color-text-muted)]"><Loader2 className="w-5 h-5 animate-spin" /> Reading where your workspace is…</p></Card>
+        <SkeletonRows rows={7} cols={2} what="where your workspace is" />
       ) : (
-        <Card label={<span className="inline-flex items-center gap-2.5"><span aria-hidden className="ui-icon-tile is-sm is-solid"><Compass className="w-4 h-4" /></span>Stages</span>} pad={false} className="overflow-hidden">
+        <Card label="Stages" pad={false} className="overflow-hidden">
           <table className="w-full text-[15px]">
             <thead className="bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text-muted)] text-left max-md:hidden">
               <tr>
@@ -236,24 +239,23 @@ export default function SetupPage() {
               {stages.map((s, i) => {
                 const done = s.checks.every((c) => c.ok);
                 const active = i === firstIncomplete;
-                const StageIcon = s.icon;
                 return (
-                  // The stage you're on: brand tint with the brand edge.
-                  <tr key={s.key} aria-current={active ? "step" : undefined} className={`relative max-md:flex max-md:flex-col max-md:px-4 max-md:py-3 max-md:gap-1.5 ${active ? "bg-[var(--color-accent-soft)]" : ""}`}>
+                  // The stage you're on: a quiet tint with the current edge.
+                  <tr key={s.key} aria-current={active ? "step" : undefined} className={`relative max-md:flex max-md:flex-col max-md:px-4 max-md:py-3 max-md:gap-1.5 ${active ? "bg-[var(--color-surface-2)]" : ""}`}>
                     <td className="relative md:pl-4 md:pr-2 md:py-3 align-top max-md:hidden">
-                      {active && <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] bg-[var(--color-main)]" />}
-                      <span className={`ui-count font-display ${done ? "!bg-[var(--state-released)] !text-white" : active ? "is-solid" : "!bg-[var(--color-surface-2)] !text-[var(--color-text-muted)]"}`}>{i + 1}</span>
+                      {active && <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] bg-[var(--color-current)]" />}
+                      <span className={`font-display tabular-nums ${active ? "font-semibold text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>{i + 1}</span>
                     </td>
-                    <td className="md:px-4 md:py-3 align-top">
+                    <td className="relative md:px-4 md:py-3 align-top">
+                      {active && <span aria-hidden className="md:hidden absolute -left-4 inset-y-[-12px] w-[3px] bg-[var(--color-current)]" />}
                       <div className="flex items-center gap-2.5">
                         <span className="md:hidden font-display tabular-nums text-[var(--color-text-muted)]">{i + 1}.</span>
-                        <span aria-hidden className={`ui-icon-tile is-sm ${active ? "is-solid" : ""}`}><StageIcon className="w-4 h-4" /></span>
-                        <span className={`font-semibold ${active ? "text-[var(--color-accent-text)]" : "text-[var(--color-text)]"}`}>{s.title}</span>
+                        <span className="font-semibold text-[var(--color-text)]">{s.title}</span>
                         <HelpTooltip>{s.blurb}</HelpTooltip>
                       </div>
                     </td>
                     <td className="md:px-4 md:py-3 align-top whitespace-nowrap">
-                      {done ? <Pill tone="good"><Check className="w-3.5 h-3.5" /> Done</Pill> : active ? <Pill tone="solid">Next</Pill> : <Pill>To do</Pill>}
+                      {done ? <Pill tone="good">Done</Pill> : active ? <Pill tone="brand">Next</Pill> : <Pill>To do</Pill>}
                     </td>
                     <td className="md:px-4 md:py-3 align-top">
                       <ul className="space-y-0.5">
@@ -261,7 +263,7 @@ export default function SetupPage() {
                           <li key={c.label} className={`flex items-start gap-2 text-[14px] ${c.ok ? "text-[var(--color-text-muted)]" : "text-[var(--color-text)]"}`}>
                             {c.ok
                               ? <Check aria-label="Done" className="w-4 h-4 mt-0.5 shrink-0 text-[var(--state-released)]" />
-                              : <span aria-label="Not yet" className="w-4 h-4 mt-0.5 shrink-0 grid place-items-center"><span className="w-2 h-2 rounded-full border-2 border-[var(--state-held)]" /></span>}
+                              : <span aria-label="Not yet" className="w-4 h-4 mt-0.5 shrink-0 grid place-items-center"><span className="w-2 h-2 rounded-full border-2 border-[var(--color-text-faint)]" /></span>}
                             {c.label}
                           </li>
                         ))}

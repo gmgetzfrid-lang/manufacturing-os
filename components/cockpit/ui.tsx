@@ -7,22 +7,51 @@
 
 import React from "react";
 import Link from "next/link";
+import { btnRow, btnIcon } from "@/components/admin/kit";
 
 /** One white sheet that holds a table or a ruled list. */
-export const sheet = "rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden";
+export const sheet = "rounded-panel border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden";
 /** A table header row: grey band, muted 13px labels. */
 export const thead = "bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text-muted)] text-left";
 export const th = "font-semibold px-4 h-10 whitespace-nowrap";
 /** A row that opens what it names. */
 export const rowHover = "hover:bg-[var(--color-surface-2)] cursor-pointer transition-colors";
 /** A secondary button in a row: white, ruled, graphite. */
-export const rowBtn =
-  "inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-text-faint)] disabled:opacity-50 transition-colors whitespace-nowrap";
+export const rowBtn = btnRow;
 /** An icon button: visible hover fill, always with an aria-label. */
-export const iconBtn =
-  "inline-flex items-center justify-center w-9 h-9 rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface)] disabled:opacity-40 transition-colors";
+export const iconBtn = btnIcon;
 /** A link in running text or a cell. */
 export const link = "text-[var(--color-accent-text)] hover:underline underline-offset-2";
+
+/** A section's heading on the page: text, a plain muted count after it
+ *  ("Libraries 4"), and its tools on the right. No icon in front. */
+export function SectionHead({ title, count, tone, id, children, className = "" }: {
+  title: React.ReactNode;
+  /** Plain muted figures after the title; nothing when 0 or unset. */
+  count?: number;
+  /** A late or waiting count reads in its state color. */
+  tone?: "bad" | "warn";
+  id?: string;
+  /** Tools on the right (a link, an icon button). */
+  children?: React.ReactNode;
+  className?: string;
+}) {
+  const countCls = tone === "bad" ? "font-semibold text-[var(--state-overdue-text)]"
+    : tone === "warn" ? "font-semibold text-[var(--state-held-text)]"
+      : "font-normal text-[var(--color-text-muted)]";
+  return (
+    <div className={`flex flex-wrap items-end gap-x-3 gap-y-2 mb-3 min-h-8 ${className}`}>
+      <h2 id={id} className="font-display text-section font-semibold text-[var(--color-text)]">
+        {title}
+        {count !== undefined && count > 0 && (
+          <span className={`ml-2 font-sans text-body tabular-nums ${countCls}`}>{count.toLocaleString()}</span>
+        )}
+      </h2>
+      <div className="flex-1" />
+      {children}
+    </div>
+  );
+}
 
 export type StatusTone = "overdue" | "held" | "released" | "neutral" | "muted";
 
@@ -34,8 +63,8 @@ const PILL: Record<StatusTone, string> = {
   muted: "is-muted",
 };
 
-/** A status as a soft colored pill: red late, amber waiting, green done,
- *  brand for normal work, grey for not set. */
+/** A status as a dot and a word: red late, amber waiting (the word in
+ *  color too), green done, brand for normal work, grey for not set. */
 export function StatusTag({ tone, children, className = "" }: { tone: StatusTone; children: React.ReactNode; className?: string }) {
   return <span className={`ui-pill ${PILL[tone]} ${className}`}>{children}</span>;
 }
@@ -63,6 +92,22 @@ export function humanTime(iso: string | null | undefined): string {
   return d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
 }
 
+/** How long ago, in words: "Just now", "12 min ago", "3 h ago",
+ *  "Yesterday", "4 days ago", then the date ("Aug 6"). */
+export function agoWords(iso: string | null | undefined, now = Date.now()): string {
+  if (!iso) return "";
+  const t = new Date(iso).getTime();
+  if (Number.isNaN(t)) return "";
+  const s = Math.max(0, Math.floor((now - t) / 1000));
+  if (s < 60) return "Just now";
+  if (s < 3600) return `${Math.floor(s / 60)} min ago`;
+  if (s < 86_400) return `${Math.floor(s / 3600)} h ago`;
+  const days = Math.floor(s / 86_400);
+  if (days === 1) return "Yesterday";
+  if (days < 7) return `${days} days ago`;
+  return humanDate(iso);
+}
+
 /** Rewrites ISO dates inside a sentence ("was due 2026-08-06") as human ones. */
 export function humanizeDates(text: string): string {
   return text.replace(/\b(\d{4}-\d{2}-\d{2})(?:T[\d:.]+Z?)?\b/g, (m, day: string) => humanDate(day) || m);
@@ -71,33 +116,27 @@ export function humanizeDates(text: string): string {
 /** A small ruled row of counts (label over figure), for a section's footer
  *  or a body's head. Each cell can open what it counts. */
 export function FactRow({ cells, className = "" }: {
-  cells: Array<{ label: React.ReactNode; value: React.ReactNode; href?: string; tone?: "bad" | "warn"; note?: React.ReactNode; icon?: React.ReactNode }>;
+  cells: Array<{ label: React.ReactNode; value: React.ReactNode; href?: string; tone?: "bad" | "warn"; note?: React.ReactNode }>;
   className?: string;
 }) {
-  const tone = (t?: "bad" | "warn") => t === "bad" ? "text-[var(--state-overdue)]" : t === "warn" ? "text-[var(--state-held)]" : "text-[var(--color-text)]";
+  // A zero reads muted; a late or waiting figure in its state color.
+  const tone = (c: { value: React.ReactNode; tone?: "bad" | "warn" }) =>
+    c.value === 0 || c.value === "0" ? "text-[var(--color-text-faint)]"
+      : c.tone === "bad" ? "text-[var(--state-overdue-text)]" : c.tone === "warn" ? "text-[var(--state-held-text)]" : "text-[var(--color-text)]";
   return (
     <div className={`grid grid-cols-1 sm:grid-flow-col sm:auto-cols-fr divide-y sm:divide-y-0 sm:divide-x divide-[var(--color-border)] ${className}`}>
       {cells.map((c, i) => {
-        const text = (
+        const body = (
           <>
             <span className="block min-w-0 text-[13px] text-[var(--color-text-muted)] truncate">{c.label}</span>
             <span className="sm:mt-0.5 flex items-baseline gap-2 min-w-0 shrink-0 sm:shrink">
               {c.note && <span className="sm:order-2 text-[13px] text-[var(--color-text-muted)] truncate">{c.note}</span>}
-              <span className={`font-display text-[20px] sm:text-[22px] leading-none font-semibold tabular-nums ${tone(c.tone)}`}>{c.value}</span>
+              <span className={`font-display text-section font-semibold tabular-nums ${tone(c)}`}>{c.value}</span>
             </span>
           </>
         );
-        // With an icon: the tile at the left, the label and figure beside it.
-        const body = c.icon ? (
-          <>
-            <span aria-hidden className={`ui-icon-tile ${c.tone === "bad" ? "!bg-[var(--state-overdue)] !text-white" : ""}`}>{c.icon}</span>
-            <span className="min-w-0 flex-1 flex items-baseline justify-between gap-3 sm:block">{text}</span>
-          </>
-        ) : text;
         // A phone: one line each, the label left and the figure right.
-        const cell = c.icon
-          ? "min-w-0 px-4 py-2.5 sm:py-3 flex items-center gap-3"
-          : "min-w-0 px-4 py-2.5 sm:py-3 flex items-baseline justify-between gap-3 sm:block";
+        const cell = "min-w-0 px-4 py-2.5 sm:py-3 flex items-baseline justify-between gap-3 sm:block";
         return c.href ? (
           <Link key={i} href={c.href} className={`${cell} hover:bg-[var(--color-surface-2)] transition-colors`}>{body}</Link>
         ) : (

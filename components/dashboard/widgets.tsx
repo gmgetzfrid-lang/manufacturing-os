@@ -23,9 +23,12 @@ import {
   Plus, Zap, Rocket, Loader2, Bell, Layers, Send,
   XCircle, LayoutDashboard,
   Sparkles,
-  type LucideIcon, History, PenLine, FileLock, OctagonPause, Flag, CircleAlert, Lightbulb,
+  type LucideIcon, History, PenLine, FileLock, OctagonPause, Flag,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import { friendlyError } from "@/lib/friendlyError";
+import { SkeletonRows } from "@/components/ui/Skeleton";
+import { useNotificationsSeen } from "@/components/notifications/seen";
 import { useRole } from "@/components/providers/RoleContext";
 import DocThumb from "@/components/documents/DocThumb";
 import DocHoverPreview from "@/components/documents/DocHoverPreview";
@@ -40,7 +43,7 @@ import {
   CommandDeck, roleFocus, exportInboxCsv, formatAgo, type PillarStats,
 } from "@/components/cockpit/CommandDeck";
 import { MiniBars, TrendChip, dayBuckets } from "./viz";
-import { FactRow, StatusTag, rowBtn, link } from "@/components/cockpit/ui";
+import { FactRow, StatusTag, rowBtn, link, SectionHead } from "@/components/cockpit/ui";
 import AskKnowledgeBody from "./bodies/AskKnowledgeBody";
 import DocBrowserBody from "./bodies/DocBrowserBody";
 import {
@@ -107,13 +110,11 @@ function NudgeList({ nudges }: { nudges: ReturnType<typeof computeNudges> }) {
   return (
     <ul className="divide-y divide-[var(--color-border)]">
       {nudges.map((n) => (
-        <li key={n.id} className="py-2.5 flex items-center gap-3 text-[15px] text-[var(--color-text)]">
-          <span aria-hidden className={`ui-icon-tile is-sm ${n.severity === "high" ? "!bg-[color-mix(in_srgb,var(--state-overdue)_14%,transparent)] !text-[var(--state-overdue)]" : "!bg-[color-mix(in_srgb,var(--state-held)_16%,transparent)] !text-[var(--state-held)]"}`}>
-            {n.severity === "high" ? <CircleAlert className="w-4 h-4" /> : <Lightbulb className="w-4 h-4" />}
-          </span>
+        <li key={n.id} className="py-2.5 flex items-baseline gap-3 text-[15px] text-[var(--color-text)]">
+          <span aria-hidden className={`w-[7px] h-[7px] shrink-0 rounded-full -translate-y-px ${n.severity === "high" ? "bg-[var(--state-overdue)]" : "bg-[var(--state-held)]"}`} />
           <span className="flex-1 min-w-0">{n.message}</span>
           {n.actionLabel && n.href && (
-            <Link href={n.href} className={`shrink-0 text-[14px] ${link}`}>{n.actionLabel}</Link>
+            <Link href={n.href} className={`shrink-0 text-[14px] font-semibold ${link}`}>{n.actionLabel}</Link>
           )}
         </li>
       ))}
@@ -245,9 +246,10 @@ function AttentionBody() {
   const handleMarkAll = useCallback(async () => {
     setMarkingAll(true);
     try { await markAllRead(); }
-    catch (e) { void appAlert({ title: "Couldn't mark them read", message: (e as Error).message, tone: "danger" }); }
+    catch (e) { void appAlert({ title: "Couldn't mark them read", message: friendlyError(e), tone: "danger" }); }
     finally { setMarkingAll(false); }
   }, [markAllRead]);
+  const { seenAt } = useNotificationsSeen();
 
   if (loading && items.length === 0) return <Skeleton />;
 
@@ -260,9 +262,10 @@ function AttentionBody() {
         counts={counts}
         filter={filter}
         onFilter={setFilter}
-        onMarkRead={(id) => { void markRead(id).catch((e: unknown) => appAlert({ title: "Couldn't mark it read", message: e instanceof Error ? e.message : String(e), tone: "danger" })); }}
+        onMarkRead={(id) => { void markRead(id).catch((e: unknown) => appAlert({ title: "Couldn't mark it read", message: friendlyError(e), tone: "danger" })); }}
         onMarkAll={handleMarkAll}
         markingAll={markingAll}
+        seenAt={seenAt}
       />
     </div>
   );
@@ -289,9 +292,12 @@ function SuggestedActionsBody() {
 // markup requests (with the live respond actions), my checkouts (with the
 // stale warning), holds I opened, transmittals awaiting receipt, and milestones
 // due this week. Interactive markup respond is preserved via resolveMarkupRequest.
+/** A group inside the Outstanding widget: its name as text and a plain
+ *  count, then its rows. */
 function WidgetCard({
-  icon: Icon, title, count, children,
+  title, count, children,
 }: {
+  /** Kept for older callers; not drawn (headings are text). */
   icon?: LucideIcon;
   title: string;
   count: number;
@@ -300,10 +306,9 @@ function WidgetCard({
 }) {
   return (
     <section className="pt-1">
-      <div className="flex items-center gap-2 pb-1.5 border-b border-[var(--color-border-strong)]">
-        {Icon && <span aria-hidden className="ui-icon-tile is-sm"><Icon className="w-4 h-4" /></span>}
+      <div className="flex items-baseline gap-2 pb-1.5 border-b border-[var(--color-border)]">
         <h3 className="text-[15px] font-semibold text-[var(--color-text)]">{title}</h3>
-        <span className="ui-count">{badgeText(count)}</span>
+        <span className="text-[13px] tabular-nums text-[var(--color-text-muted)]">{badgeText(count)}</span>
       </div>
       {children}
     </section>
@@ -338,7 +343,7 @@ function OutstandingBody() {
       });
       refresh();
     } catch (e) {
-      setResolveError(`${status === "shared" ? "Not marked shared" : "Not declined"}: ${e instanceof Error ? e.message : String(e)}`);
+      setResolveError(`${status === "shared" ? "Not marked shared." : "Not declined."} ${friendlyError(e)}`);
     } finally {
       setResolvingId(null);
     }
@@ -525,12 +530,13 @@ function AdminAnalyticsBody() {
         <div className="mt-4 shrink-0">
           <div className="text-[13px] text-[var(--color-text-muted)] mb-1">Busiest libraries</div>
           <ul className="divide-y divide-[var(--color-border)]">
-            {data!.topLibs.map((l) => (
+            {data!.topLibs.map((l, i) => (
               <li key={l.id}>
                 <Link href={`/documents/${l.id}`} className="group flex items-center gap-3 py-2">
                   <span className="text-[15px] font-semibold text-[var(--color-text)] truncate w-40 group-hover:text-[var(--color-accent-text)]">{l.name}</span>
                   <span className="flex-1 h-2 rounded-sm bg-[var(--color-surface-2)] overflow-hidden">
-                    <span className="block h-full rounded-sm bg-[var(--color-main)]" style={{ width: `${(l.count / maxLib) * 100}%` }} />
+                    {/* The busiest one in the brand color, the rest gray. */}
+                    <span className="block h-full rounded-sm" style={{ width: `${(l.count / maxLib) * 100}%`, background: i === 0 ? "var(--color-current)" : "var(--color-text-faint)" }} />
                   </span>
                   <span className="font-display text-[15px] tabular-nums text-[var(--color-text)] w-14 text-right">{l.count.toLocaleString()}</span>
                 </Link>
@@ -601,14 +607,8 @@ function CommandDeckBody() {
   if (loading && !data) {
     return (
       <section aria-label="Needs you" aria-busy="true" className="h-full">
-        <div className="flex items-end gap-2 mb-2.5 min-h-9">
-          <h2 className="font-display text-[19px] leading-tight font-semibold text-[var(--color-text)]">Needs you</h2>
-          <Loader2 className="w-4 h-4 mb-1 animate-spin text-[var(--color-text-muted)]" />
-        </div>
-        <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4 space-y-3">
-          <div className="h-4 w-2/3 rounded bg-[var(--color-surface-2)] animate-pulse" />
-          <div className="h-4 w-1/2 rounded bg-[var(--color-surface-2)] animate-pulse" />
-        </div>
+        <SectionHead title="Needs you" />
+        <SkeletonRows rows={2} cols={2} what="what needs you" />
       </section>
     );
   }

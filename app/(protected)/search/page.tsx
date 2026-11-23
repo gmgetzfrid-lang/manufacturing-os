@@ -13,7 +13,9 @@ import { useRole } from "@/components/providers/RoleContext";
 import { isControllerRole } from "@/lib/permissions";
 import { PageShell } from "@/components/ui/PageShell";
 import { PageHero, PageBody, Card } from "@/components/ui/PageHero";
-import { sheet, thead, th } from "@/components/cockpit/ui";
+import { ErrorNote } from "@/components/ui/ErrorNote";
+import { transitionPush } from "@/lib/viewTransition";
+import { sheet, thead, th, rowHover, SectionHead } from "@/components/cockpit/ui";
 import { globalSearch, type GlobalHit, type GlobalHitKind } from "@/lib/globalSearch";
 import { useFind } from "@/components/find/useFind";
 import FindPanel from "@/components/find/FindPanel";
@@ -98,21 +100,24 @@ export default function SearchPage() {
 
   return (
     <PageShell width="work">
-      <PageHero kicker="Search" title={answer} sub={answerSub} facts={searchFacts}>
+      {/* The title already says the count, so the facts stay small. */}
+      <PageHero kicker="Search" title={answer} sub={answerSub} facts={searchFacts} factsHero="none">
         <form onSubmit={(e) => e.preventDefault()} className="relative" role="search">
-          <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--color-text-faint)] pointer-events-none" />
+          <Search aria-hidden className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--color-text-muted)] pointer-events-none" />
           <input
             autoFocus
+            type="search"
+            enterKeyHint="search"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Tag, equipment ID, drawing number, words from the drawing"
-            aria-label="Search"
+            placeholder="E-101, 5602-D 1000, or words from the drawing"
+            aria-label="Search tags, equipment IDs, drawing numbers and words from the drawings"
             data-find-input
-            className="w-full h-12 pl-11 pr-11 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] text-base sm:text-[15px] focus:outline-none focus:border-[var(--color-main)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40 transition-colors"
+            className="w-full h-12 pl-11 pr-12 rounded-lg border border-[var(--color-border-control)] bg-[var(--color-surface)] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] text-[16px] sm:text-[15px] [&::-webkit-search-cancel-button]:hidden"
           />
           {query && (
             <button type="button" onClick={() => { setQuery(""); router.replace("/search"); }} title="Clear the search" aria-label="Clear the search"
-              className="absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 grid place-items-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
+              className="absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 pointer-coarse:w-10 pointer-coarse:h-10 grid place-items-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
               <X className="w-4 h-4" />
             </button>
           )}
@@ -131,19 +136,11 @@ export default function SearchPage() {
       )}
 
       {othersFailed && (
-        <Card>
-          <p role="alert" className="text-[15px] text-[var(--state-overdue)]">
-            Couldn&apos;t search requests, projects and notes. Change the search to try again.
-          </p>
-        </Card>
+        <ErrorNote title="Requests, projects and notes weren't searched." next="Change the search to try again." />
       )}
       {others.length > 0 && (
         <section aria-label="Requests, projects, notes">
-          <div className="flex items-center gap-2 mb-2.5 min-h-9">
-            <span aria-hidden className="ui-icon-tile is-sm is-solid"><Search className="w-4 h-4" /></span>
-            <h2 className="font-display text-[19px] leading-tight font-semibold text-[var(--color-text)]">Requests, projects, notes</h2>
-            <span className="ui-count is-solid">{others.length}</span>
-          </div>
+          <SectionHead title="Requests, projects, notes" count={others.length} />
           <div className={sheet}>
             <table className="w-full text-[15px]">
               <thead className={thead}>
@@ -155,17 +152,13 @@ export default function SearchPage() {
               </thead>
               <tbody className="divide-y divide-[var(--color-border)]">
                 {others.map((h) => {
-                  const Icon = OTHER_ICON[h.kind] ?? Search;
                   return (
-                    <tr key={`${h.kind}-${h.id}`} className="hover:bg-[var(--color-surface-2)] cursor-pointer" onClick={() => router.push(h.href)}>
+                    <tr key={`${h.kind}-${h.id}`} className={rowHover} onClick={() => transitionPush(router, h.href)}>
                       <td className="px-4 py-2.5 max-w-0 w-full">
-                        <span className="flex items-start gap-3 min-w-0">
-                          <span aria-hidden className="ui-icon-tile is-sm"><Icon className="w-4 h-4" /></span>
-                          <span className="min-w-0">
-                            <Link href={h.href} onClick={(e) => e.stopPropagation()} className="block truncate font-semibold text-[var(--color-text)] hover:text-[var(--color-accent-text)]">{h.title}</Link>
-                            {h.subtitle && <span className="block text-[13px] text-[var(--color-text-muted)] truncate">{h.subtitle}</span>}
-                            <span className="sm:hidden block text-[13px] text-[var(--color-text-muted)]">{OTHER_LABEL[h.kind]}{h.badge ? `, ${badgeWords(h.badge)}` : ""}</span>
-                          </span>
+                        <span className="block min-w-0">
+                          <Link href={h.href} onClick={(e) => e.stopPropagation()} className="block truncate font-semibold text-[var(--color-text)] hover:text-[var(--color-accent-text)]">{h.title}</Link>
+                          {h.subtitle && <span className="block text-[13px] text-[var(--color-text-muted)] truncate">{h.subtitle}</span>}
+                          <span className="sm:hidden block text-[13px] text-[var(--color-text-muted)]">{OTHER_LABEL[h.kind]}{h.badge ? `, ${badgeWords(h.badge)}` : ""}</span>
                         </span>
                       </td>
                       <td className="px-4 py-2.5 hidden sm:table-cell whitespace-nowrap"><span className="ui-tag is-more">{OTHER_LABEL[h.kind]}</span></td>

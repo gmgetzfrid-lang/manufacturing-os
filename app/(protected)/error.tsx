@@ -27,7 +27,7 @@ export default function ProtectedError({
       <PageHero
         kicker="This page hit an error"
         title="This view stopped."
-        sub="Only this view stopped. The rest of the app still works."
+        sub="The rest of the app still works. Try again; if it stops again, pick another page from the menu and come back later."
         size="md"
         tools={
           <Link href="/dashboard" className={heroQuiet}>
@@ -40,22 +40,19 @@ export default function ProtectedError({
           </button>
         }
       />
-      <PageBody>
-        <Card label="What to do">
-          <p className="text-[14px] text-[var(--color-text-muted)]">
-            Try again first. If it stops again, pick another page from the menu and come back later.
-          </p>
-          {process.env.NODE_ENV !== 'production' && (
-            <details className="mt-4 pt-3 border-t border-[var(--color-border)]">
+      {process.env.NODE_ENV !== 'production' && (
+        <PageBody>
+          <Card>
+            <details>
               <summary className="cursor-pointer text-[13px] font-semibold text-[var(--color-text-muted)]">Developer details</summary>
               <pre className="mt-2 overflow-auto text-xs leading-relaxed text-[var(--color-text)]">
                 {error?.stack ?? String(error)}
                 {error?.digest ? `\n\ndigest: ${error.digest}` : ''}
               </pre>
             </details>
-          )}
-        </Card>
-      </PageBody>
+          </Card>
+        </PageBody>
+      )}
     </PageShell>
   );
 }

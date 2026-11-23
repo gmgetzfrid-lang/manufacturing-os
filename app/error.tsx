@@ -22,7 +22,7 @@ export default function GlobalError({
         <PageHero
           kicker="Something went wrong"
           title="This screen stopped."
-          sub="The app hit an error here. Try again, or reload the page."
+          sub="Try again. If it keeps happening, reload the page and tell your admin what you were doing right before."
           size="md"
           tools={
             <button type="button" onClick={() => window.location.reload()} className={heroQuiet}>
@@ -35,13 +35,10 @@ export default function GlobalError({
             </button>
           }
         />
-        <PageBody>
-          <Card label="What to do">
-            <p className="text-[14px] text-[var(--color-text-muted)]">
-              Try again first. If it keeps happening, share what you were doing right before the error.
-            </p>
-            {process.env.NODE_ENV !== 'production' ? (
-              <details className="mt-4 pt-3 border-t border-[var(--color-border)]">
+        {process.env.NODE_ENV !== 'production' ? (
+          <PageBody>
+            <Card>
+              <details>
                 <summary className="cursor-pointer text-[13px] font-semibold text-[var(--color-text-muted)]">
                   Developer details
                 </summary>
@@ -50,9 +47,9 @@ export default function GlobalError({
                   {error?.digest ? `\n\ndigest: ${error.digest}` : ''}
                 </pre>
               </details>
-            ) : null}
-          </Card>
-        </PageBody>
+            </Card>
+          </PageBody>
+        ) : null}
       </main>
     </div>
   );

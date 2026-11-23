@@ -1,13 +1,13 @@
 "use client";
 
-// ─── ATTENTION FEED ────────────────────────────────────────────────────────
-// Everything that needs you, as the "Needs you" table: late rows first with a
-// red edge, a status and a date on each, one button to open it, and a
-// mark-read button on news. Tabs pick all / your turn / updates; a select
-// narrows to one kind (mentions, documents, requests, checkouts). The SAME
-// unified items the sidebar badge and the header bell count.
+// The attention feed: everything that needs you, as the "Needs you" table:
+// late rows first with a red edge, a status and a date on each, the row
+// opens it, and a mark-read button on news. Underline tabs pick all / your
+// turn / updates (plain counts); quiet chips narrow to one kind (mentions,
+// documents, requests, checkouts). The SAME unified items the sidebar badge
+// and the header bell count.
 //
-// Used on the Inbox, as the dashboard's "Needs you" widget, and in the
+// Used on the Inbox, as the dashboard's "Notifications" widget, and in the
 // notification panel. Behavior is identical in all three.
 
 import React from "react";
@@ -31,6 +31,9 @@ export interface AttentionFeedProps {
    *  sheet of its own, and it runs edge to edge (its rows carry their own
    *  side padding). */
   plain?: boolean;
+  /** When the person last opened their notifications: news after it reads
+   *  as new. */
+  seenAt?: number | null;
 }
 
 const KIND_GROUPS: Array<{ key: string; label: string; match: (k: string) => boolean }> = [
@@ -40,8 +43,9 @@ const KIND_GROUPS: Array<{ key: string; label: string; match: (k: string) => boo
   { key: "locks", label: "Checkouts and holds", match: (k) => k.includes("checkout") || k.includes("lock") || k.includes("hold") || k.includes("conflict") },
 ];
 
-/** A filter tag while it is the filter: brand-filled. */
-const tagOn = "!bg-[var(--color-main)] !text-white !border-[var(--color-main)]";
+/** A filter chip while it is the filter: a quiet edge in the current
+ *  color, never a fill. */
+const tagOn = "!bg-[var(--color-surface)] !border-[var(--color-current)] !text-[var(--color-text)]";
 
 function groupOf(kind: string): string {
   const k = kind.toLowerCase();
@@ -49,7 +53,7 @@ function groupOf(kind: string): string {
   return "other";
 }
 
-export function AttentionFeed({ items, counts, filter, onFilter, onMarkRead, onMarkAll, markingAll, plain = false }: AttentionFeedProps) {
+export function AttentionFeed({ items, counts, filter, onFilter, onMarkRead, onMarkAll, markingAll, plain = false, seenAt }: AttentionFeedProps) {
   const [visibleCount, setVisibleCount] = React.useState(30);
   // Second axis: filter by WHAT the notification is about. A DocCtrl drowning
   // in publish fan-out can isolate their mentions in one step.
@@ -67,30 +71,30 @@ export function AttentionFeed({ items, counts, filter, onFilter, onMarkRead, onM
   const groupCounts = KIND_GROUPS.map((g) => ({ ...g, n: items.filter((i) => groupOf(String(i.kind)) === g.key).length }));
 
   const bar = (
-    <div className={`flex items-end gap-x-3 flex-wrap border-b border-[var(--color-border)] ${plain ? "px-4" : "mb-3"}`}>
-      <div role="tablist" aria-label="Show" className="flex items-end gap-4 min-w-0">
+    <div className={`flex items-end gap-x-3 flex-wrap shadow-[inset_0_-1px_0_var(--color-border)] ${plain ? "px-4" : "mb-3"}`}>
+      <div role="tablist" aria-label="Show" className="flex items-end gap-5 min-w-0">
         {TABS.map((t) => {
           const on = filter === t.key;
           return (
             <button key={t.key} type="button" role="tab" aria-selected={on} onClick={() => onFilter(t.key)}
-              className={`-mb-px inline-flex items-center gap-1.5 h-10 border-b-2 text-[15px] transition-colors ${on
-                ? "border-[var(--color-main)] font-semibold text-[var(--color-text)]"
+              className={`inline-flex items-center gap-1.5 h-10 pointer-coarse:h-11 border-b-2 text-[15px] transition-colors ${on
+                ? "border-[var(--color-current)] font-semibold text-[var(--color-text)]"
                 : "border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
               {t.label}
-              <span className={`ui-count ${on ? "is-solid" : plain ? "" : "!bg-[var(--color-surface)]"}`}>{t.n}</span>
+              <span className={`text-[13px] font-normal tabular-nums ${t.n === 0 ? "text-[var(--color-text-faint)]" : "text-[var(--color-text-muted)]"}`}>{t.n}</span>
             </button>
           );
         })}
       </div>
       <div className="flex-1" />
-      <div className="flex items-center gap-2 pb-1.5">
-        {counts.unread > 0 && (
+      {counts.unread > 0 && (
+        <div className="flex items-center gap-2 pb-1.5">
           <button type="button" onClick={onMarkAll} disabled={markingAll} title="Mark all updates read. Items waiting on you stay until you open them." className={rowBtn}>
             {markingAll ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCheck className="w-3.5 h-3.5" />}
-            <span className="max-sm:sr-only">Mark all read</span>
+            <span className="max-sm:sr-only">Mark updates read</span>
           </button>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 
@@ -103,7 +107,7 @@ export function AttentionFeed({ items, counts, filter, onFilter, onMarkRead, onM
         const on = group === g.key;
         return (
           <button key={g.key} type="button" aria-pressed={on} onClick={() => setGroup(on ? "all" : g.key)} className={`ui-tag ${on ? tagOn : ""}`}>
-            {g.label} <span className="tabular-nums opacity-80">{g.n}</span>
+            {g.label} <span className="font-sans font-normal tabular-nums text-[var(--color-text-muted)]">{g.n}</span>
           </button>
         );
       })}
@@ -111,17 +115,20 @@ export function AttentionFeed({ items, counts, filter, onFilter, onMarkRead, onM
   ) : null;
 
   const body = counts.all === 0 ? (
-    <p className="px-4 py-4 text-[15px] text-[var(--color-text-muted)]">You&apos;re all caught up. Nothing needs your attention right now.</p>
+    <p className="px-4 py-4 text-[15px] text-[var(--color-text-muted)]">Nothing needs you right now.</p>
   ) : rows.length === 0 ? (
-    <p className="px-4 py-4 text-[15px] text-[var(--color-text-muted)]">Nothing in this filter.</p>
+    <p className="px-4 py-4 text-[15px] text-[var(--color-text-muted)]">
+      Nothing here.{" "}
+      <button type="button" onClick={() => { onFilter("all"); setGroup("all"); }} className="font-semibold text-[var(--color-accent-text)] hover:underline underline-offset-2">Show everything</button>
+    </p>
   ) : (
     <>
-      <NeedsTable rows={rows} limit={visibleCount}
+      <NeedsTable rows={rows} limit={visibleCount} seenAt={seenAt}
         onOpen={(r) => { if (r.notificationId) onMarkRead(r.notificationId); }}
         onMarkRead={(r) => { if (r.notificationId) onMarkRead(r.notificationId); }} />
       {rows.length > visibleCount && (
         <div className="border-t border-[var(--color-border)] px-4 py-2.5">
-          <button type="button" onClick={() => setVisibleCount((v) => v + 30)} className="text-[14px] text-[var(--color-accent-text)] hover:underline underline-offset-2">
+          <button type="button" onClick={() => setVisibleCount((v) => v + 30)} className="text-[14px] font-semibold text-[var(--color-accent-text)] hover:underline underline-offset-2">
             Show {Math.min(30, rows.length - visibleCount)} more ({rows.length - visibleCount} not shown)
           </button>
         </div>

@@ -1,6 +1,14 @@
 "use client";
 
-import { AuthCard } from "@/components/marketing/AuthCard";
+// Sign in. Two doors, one loud at a time: "Sign in with Microsoft" (company
+// accounts, most people at a site) is the filled button while the form is
+// empty; once an email and password are typed, the password "Sign in"
+// becomes the filled one and Microsoft steps back. Labels sit above the
+// fields; every press answers at once (a spinner in the button, then a
+// check). Who may sign in and why one is refused are decided by the
+// workspace's sign-in rules (lib/signinCheck), unchanged here.
+
+import { AuthCard, authField, authBtn } from "@/components/marketing/AuthCard";
 import { checkSignin, type SigninVerdict } from "@/lib/signinCheck";
 import { fetchMemberships, pickMembership, SignedOut } from "@/lib/membershipClient";
 import React, { useCallback, useEffect, useRef, useState } from 'react';
@@ -8,8 +16,9 @@ import type { User } from '@supabase/supabase-js';
 import { supabase, setRememberSession, setPreferMicrosoft, prefersMicrosoft } from '@/lib/supabase';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { btnPrimary, btnQuiet, link } from '@/components/admin/kit';
-import { Lock, Mail, Loader2, AlertCircle, Building2, LogOut } from 'lucide-react';
+import { label as fieldLabel, link } from '@/components/admin/kit';
+import { Button } from '@/components/ui/Button';
+import { Loader2, AlertCircle, LogOut } from 'lucide-react';
 import { SlowNotice, useElapsed, startOver } from '@/components/system/SlowNotice';
 
 /** Microsoft's four-square logo (lucide has no brand marks). */
@@ -34,7 +43,7 @@ const SILENT_TRIED_KEY = "manufacturingos.silentSSOAttempted";
 /** Why a sign-in can't go on, in the person's words (null: it can). */
 function refusal(v: SigninVerdict): string | null {
   if (v.action === "not_added") return "This email isn't in a workspace here. Accounts are made by your workspace admin: ask them to add you with this email.";
-  if (v.action === "use_microsoft") return "Your company account signs in with Microsoft. Use Sign in with Microsoft below.";
+  if (v.action === "use_microsoft") return "Your company account signs in with Microsoft. Use Sign in with Microsoft above.";
   if (v.action === "expired") return "Your one-time password expired at the end of the day it was issued, so the account is suspended. Ask your admin to reset it.";
   return null;
 }
@@ -57,6 +66,8 @@ export default function LoginPage() {
   const [error, setError] = useState<string | null>(null);
   const [view, setView] = useState<View>("checking");
   const [authedEmail, setAuthedEmail] = useState<string | null>(null);
+  // The password button's answer once the workspace opens: a check.
+  const [opened, setOpened] = useState(false);
   // A password sign-in in progress decides its own next step (handleLogin).
   const loginInFlight = useRef(false);
   const slowSecs = useElapsed(view === "checking" || loading);
@@ -97,7 +108,7 @@ export default function LoginPage() {
   const openWorkspace = async (userEmail: string | null) => {
     try {
       const answer = await fetchMemberships();
-      if (pickMembership(answer, null)) { router.replace("/dashboard"); return; }
+      if (pickMembership(answer, null)) { setLoading(false); setOpened(true); router.replace("/dashboard"); return; }
       setAuthedEmail(userEmail);
       setView("no-workspace");
     } catch (e) {
@@ -271,19 +282,18 @@ export default function LoginPage() {
     setView("login");
   };
 
-  // The front door is drawn like the app: the grey panel, the answer in the
-  // title block, the form on one white sheet, one filled button.
-  const input = "w-full h-11 pl-10 pr-3 bg-[var(--color-surface)] border border-[var(--color-border-strong)] rounded-md text-[15px] text-[var(--color-text)] outline-none focus:border-[var(--color-main)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40 transition-colors placeholder:text-[var(--color-text-faint)]";
-  const fieldLabel = "block text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5";
-  const primaryBtn = `${btnPrimary} w-full h-11`;
-  const quietBtn = `${btnQuiet} w-full h-11 text-[15px] gap-2.5`;
+  // The form's own button wakes (filled) once there is something to sign
+  // in with; until then Microsoft leads, in its own neutral style.
+  // After "your company account signs in with Microsoft", the password
+  // button stays quiet: the message points up, at Microsoft.
+  const typed = !!email.trim() && !!password && error !== refusal({ action: "use_microsoft" });
 
   // ─── Checking / OAuth redirect in progress ──────────────────────
   if (view === "checking") {
     return (
       <div className="min-h-dvh bg-[var(--color-canvas)] flex flex-col items-center justify-center p-4">
-        <Loader2 className="w-8 h-8 text-[var(--color-text-muted)] animate-spin mb-4" />
-        <p role="status" className="text-[14px] font-medium text-[var(--color-text-muted)]">Signing you in…</p>
+        <Loader2 aria-hidden className="w-8 h-8 text-[var(--color-text-muted)] motion-safe:animate-spin mb-4" />
+        <p role="status" className="text-[15px] text-[var(--color-text-muted)]">Signing you in</p>
         <div className="w-full max-w-sm"><SlowNotice secs={slowSecs} onStartOver={() => startOver()} /></div>
       </div>
     );
@@ -293,17 +303,12 @@ export default function LoginPage() {
   if (view === "no-workspace") {
     return (
       <AuthCard title="Your access is off." sub={authedEmail ?? undefined}>
-        <div className="flex items-start gap-3">
-          <span className="ui-icon-tile is-sm"><Building2 className="w-4 h-4" /></span>
-          <p className="text-[15px] text-[var(--color-text)] leading-snug">
-            Your account is in a workspace, but your access there is suspended. Ask your admin to turn it back on, then sign in again.
-          </p>
-        </div>
-        <div className="mt-5 space-y-2.5">
-          <button type="button" onClick={handleSignOut} className={quietBtn}>
-            <LogOut className="w-4 h-4" /> Sign out
-          </button>
-        </div>
+        <p className="text-reading text-[var(--color-text)]">
+          Your account is in a workspace, but your access there is suspended. Ask your admin to turn it back on, then sign in again.
+        </p>
+        <Button variant="secondary" onClick={handleSignOut} className={`mt-6 ${authBtn}`}>
+          <LogOut aria-hidden className="w-4 h-4" /> Sign out
+        </Button>
       </AuthCard>
     );
   }
@@ -312,7 +317,6 @@ export default function LoginPage() {
   return (
     <AuthCard
       title="Sign in."
-      sub="Your site's drawings, equipment and work."
       footer={<>
         <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 text-[14px]">
           <p className="text-[var(--color-text-muted)]">
@@ -325,79 +329,75 @@ export default function LoginPage() {
         <p className="text-[13px] text-[var(--color-text-muted)]">Version 2.1.0. Authorized use only.</p>
       </>}
     >
-            {/* A problem sits where it happened: right above the form it's about. */}
+            {/* A problem sits where it happened: right above the doors it's about. */}
             {error && (
-              <div role="alert" className="mb-4 flex items-start gap-2 text-[var(--state-overdue)]">
-                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+              <div role="alert" className="mb-5 flex items-start gap-2 text-[var(--state-overdue-text)]">
+                <AlertCircle aria-hidden className="w-4 h-4 shrink-0 mt-0.5" />
                 <p className="text-[14px] font-semibold">{error}</p>
               </div>
             )}
 
-            <form onSubmit={handleLogin} className="space-y-4">
-              <div>
-                <label htmlFor="si-email" className={fieldLabel}>Email</label>
-                <div className="relative">
-                  <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-[18px] h-[18px] text-[var(--color-text-faint)] pointer-events-none" />
-                  <input
-                    id="si-email"
-                    type="email"
-                    autoComplete="email"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    className={input}
-                    placeholder="name@company.com"
-                    required
-                  />
-                </div>
-              </div>
+            {/* Company accounts: Microsoft single sign-on, in Microsoft's
+                own neutral style (white, its four squares). */}
+            <Button variant="secondary" onClick={handleMicrosoft} disabled={loading} loading={oauthLoading} className={`${authBtn} gap-3`}>
+              {!oauthLoading && <MicrosoftLogo className="w-5 h-5" />}
+              {oauthLoading ? "Opening Microsoft" : "Sign in with Microsoft"}
+            </Button>
 
-              <div>
-                <label htmlFor="si-password" className={fieldLabel}>Password</label>
-                <div className="relative">
-                  <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-[18px] h-[18px] text-[var(--color-text-faint)] pointer-events-none" />
-                  <input
-                    id="si-password"
-                    type="password"
-                    autoComplete="current-password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    className={input}
-                    placeholder="Your password"
-                    required
-                  />
-                </div>
-              </div>
-
-              <label className="flex items-center gap-2.5 cursor-pointer select-none">
-                <input
-                  type="checkbox"
-                  checked={keepSignedIn}
-                  onChange={(e) => setKeepSignedIn(e.target.checked)}
-                  className="w-4 h-4 rounded cursor-pointer accent-[var(--color-text)]"
-                />
-                <span className="text-[14px] text-[var(--color-text-muted)]">Keep me signed in on this device</span>
-              </label>
-
-              <button type="submit" disabled={loading || oauthLoading} className={primaryBtn}>
-                {loading ? <><Loader2 className="w-5 h-5 animate-spin" /> Signing in…</> : "Sign in"}
-              </button>
-              {loading && <SlowNotice secs={slowSecs} onStartOver={() => startOver()} />}
-            </form>
-
-            <div className="flex items-center gap-3 my-5">
+            <div className="flex items-center gap-3 my-6" aria-hidden>
               <div className="h-px bg-[var(--color-border)] flex-1" />
-              <span className="text-[13px] text-[var(--color-text-muted)]">or</span>
+              <span className="text-[13px] text-[var(--color-text-muted)]">or with a password</span>
               <div className="h-px bg-[var(--color-border)] flex-1" />
             </div>
 
-            {/* Microsoft / Azure single sign-on */}
-            <button type="button" onClick={handleMicrosoft} disabled={oauthLoading || loading} className={quietBtn}>
-              {oauthLoading ? (
-                <><Loader2 className="w-5 h-5 animate-spin" /> Opening Microsoft…</>
-              ) : (
-                <><MicrosoftLogo className="w-5 h-5" /> Sign in with Microsoft</>
-              )}
-            </button>
+            <form onSubmit={handleLogin}>
+              <div>
+                <label htmlFor="si-email" className={fieldLabel}>Email</label>
+                <input
+                  id="si-email"
+                  type="email"
+                  inputMode="email"
+                  autoComplete="email"
+                  enterKeyHint="next"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  className={authField}
+                  placeholder="name@company.com"
+                  required
+                />
+              </div>
+
+              <div className="mt-4">
+                <label htmlFor="si-password" className={fieldLabel}>Password</label>
+                <input
+                  id="si-password"
+                  type="password"
+                  autoComplete="current-password"
+                  enterKeyHint="go"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className={authField}
+                  required
+                />
+              </div>
+
+              <Button type="submit" variant={typed ? "primary" : "secondary"} disabled={oauthLoading} loading={loading} done={opened} doneLabel="Signed in"
+                className={`mt-6 ${authBtn}`}>
+                {loading ? "Signing in" : "Sign in"}
+              </Button>
+              {loading && <SlowNotice secs={slowSecs} onStartOver={() => startOver()} />}
+            </form>
+
+            {/* For both doors: kept on this device only. */}
+            <label className="mt-5 pt-4 border-t border-[var(--color-border)] flex items-center gap-2.5 min-h-8 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={keepSignedIn}
+                onChange={(e) => setKeepSignedIn(e.target.checked)}
+                className="w-4 h-4 rounded cursor-pointer accent-[var(--color-text)]"
+              />
+              <span className="text-[14px] text-[var(--color-text-muted)]">Keep me signed in on this device</span>
+            </label>
     </AuthCard>
   );
 }

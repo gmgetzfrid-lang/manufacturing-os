@@ -1,35 +1,40 @@
 "use client";
 
 // /inbox: everything that waits on you, in one place. The header says how
-// many things need you and backs it up with counts; then the "Needs you"
-// table (the same feed as the bell), suggested next steps, your queue (one
-// ruled table: markups, requests, holds, transmittals, reviews, sign-offs,
-// acknowledgments, access recertifications, milestones) and what you have
-// checked out.
+// many things need you, with ONE large number (overdue when anything is,
+// else what waits on you); then the "Needs you" table (the same feed as
+// the bell; what came in since you last looked reads as new), suggested
+// next steps, your queue (one ruled table: markups, requests, holds,
+// transmittals, reviews, sign-offs, acknowledgments, access
+// recertifications, milestones) and what you have checked out. Opening
+// the Inbox counts as looking: the bell's "something changed" dot clears.
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import {
-  Send, XCircle, RefreshCw, Download, BellRing, Lightbulb, CircleAlert, ListChecks, PenLine, MailPlus, MessageCircle, Eye,
-  ClipboardCheck, CalendarClock, FileCheck, BadgeCheck, KeyRound, OctagonPause, Flag, CalendarDays,
-} from "lucide-react";
+import { Send, XCircle, RefreshCw, Download } from "lucide-react";
 import { stageLabel, stageTone, StatusTag as StageTag } from "@/components/requests/RequestBits";
 import { useRole } from "@/components/providers/RoleContext";
 import { loadInbox, type InboxSnapshot } from "@/lib/inbox";
 import { useTicketNotifications } from "@/hooks/useTicketNotifications";
 import { resolveMarkupRequest } from "@/lib/markupRequests";
 import { computeNudges } from "@/lib/nudges";
+import { friendlyError } from "@/lib/friendlyError";
 import { useToast } from "@/components/providers/ToastProvider";
+import { appConfirm } from "@/components/providers/DialogProvider";
 import ViewTabs, { HOME_VIEWS } from "@/components/navigation/ViewTabs";
-import LoadingBlock from "@/components/ui/LoadingBlock";
+import { SkeletonRows } from "@/components/ui/Skeleton";
+import { ErrorNote } from "@/components/ui/ErrorNote";
+import { CopyId } from "@/components/ui/CopyId";
+import MoreMenu from "@/components/ui/MoreMenu";
 import { PageShell } from "@/components/ui/PageShell";
-import { PageHero, PageBody, Card as Panel, heroPrimary, heroQuiet } from "@/components/ui/PageHero";
+import { PageHero, PageBody, heroPrimary, heroQuiet } from "@/components/ui/PageHero";
 import MyDeskPanel from "@/components/cockpit/MyDeskPanel";
 import { formatAgo, exportInboxCsv } from "@/components/cockpit/CommandDeck";
 import { AttentionFeed, type AttnFilter } from "@/components/cockpit/AttentionFeed";
 import GroupedTable, { type Group } from "@/components/cockpit/GroupedTable";
 import { buildNeeds, needsFacts } from "@/components/cockpit/needsYou";
-import { StatusTag, rowBtn, link, humanDate } from "@/components/cockpit/ui";
+import { StatusTag, rowBtn, iconBtn, link, humanDate, sheet, SectionHead } from "@/components/cockpit/ui";
+import { useNotificationsSeen, readSeen } from "@/components/notifications/seen";
 
 export default function InboxPage() {
   const { uid, userEmail, activeRole, activeOrgId } = useRole();
@@ -38,12 +43,17 @@ export default function InboxPage() {
     items: attentionItems, count: attentionCount,
     markRead, markAllRead,
   } = useTicketNotifications();
+  // What counts as new here: what came in since the last look, taken as
+  // the page opens; opening it is a look, so the bell's dot clears.
+  const { markSeen } = useNotificationsSeen();
+  const [listSeen] = useState<number | null>(() => (typeof window === "undefined" ? null : readSeen(uid)));
+  useEffect(() => { markSeen(); }, [markSeen]);
   const { showToast } = useToast();
   const [data, setData] = useState<InboxSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [, setLastLoadedAt] = useState<number | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
   const [resolvingId, setResolvingId] = useState<string | null>(null);
   const [attnFilter, setAttnFilter] = useState<AttnFilter>("all");
   const [markingAll, setMarkingAll] = useState(false);
@@ -68,7 +78,7 @@ export default function InboxPage() {
       await markAllRead();
       showToast({ type: "success", title: "All caught up", message: "Cleared your unread notifications." });
     } catch (e) {
-      showToast({ type: "error", title: "Couldn't mark all read", message: (e as Error).message });
+      showToast({ type: "error", title: "Couldn't mark all read", message: friendlyError(e) });
     } finally {
       setMarkingAll(false);
     }
@@ -83,7 +93,8 @@ export default function InboxPage() {
       setData(snap);
       setLastLoadedAt(Date.now());
     } catch (e) {
-      setError((e as Error).message);
+      // Kept as it came; said in plain words where it shows.
+      setError(e ?? "error");
     } finally {
       setLoading(false); setRefreshing(false);
     }
@@ -113,6 +124,12 @@ export default function InboxPage() {
     status: "shared" | "declined",
   ) => {
     if (!uid || !activeOrgId || resolvingId) return;
+    // Declining tells the requester: ask first.
+    if (status === "declined" && !(await appConfirm({
+      title: "Decline this markup request?",
+      message: `${mr.requestedByName ?? "The requester"} will be told you declined${mr.documentNumber ? ` the request on ${mr.documentNumber}` : ""}.`,
+      confirmLabel: "Decline", tone: "danger",
+    }))) return;
     setResolvingId(mr.id);
     try {
       await resolveMarkupRequest({
@@ -133,7 +150,7 @@ export default function InboxPage() {
       });
       await refresh({ background: true });
     } catch (e) {
-      showToast({ type: "error", title: "Couldn't update the request", message: (e as Error).message });
+      showToast({ type: "error", title: "Couldn't update the request", message: friendlyError(e) });
     } finally {
       setResolvingId(null);
     }
@@ -150,7 +167,7 @@ export default function InboxPage() {
           <ViewTabs tabs={HOME_VIEWS} variant="dark" />
         </PageHero>
         <PageBody>
-          <Panel><LoadingBlock what="what needs you" rows={6} className="border-0 p-0" /></Panel>
+          <section><SectionHead title="Needs you" /><SkeletonRows rows={4} cols={2} what="what needs you" /></section>
         </PageBody>
       </PageShell>
     );
@@ -169,7 +186,12 @@ export default function InboxPage() {
   );
   const ticketRows = (list: TicketListItem[]) => list.slice(0, 6).map((t, i) => ({
     key: t.id ?? `t-${i}`,
-    item: <Link href={`/requests/${t.id ?? ""}`} className="group text-[var(--color-text)] hover:text-[var(--color-accent-text)]"><span className="ui-id mr-2 group-hover:underline">{t.ticketId ?? "–"}</span>{t.title ?? "Untitled"}</Link>,
+    item: (
+      <span className="inline-flex items-baseline gap-0.5 min-w-0 max-w-full">
+        {t.ticketId && <CopyId value={t.ticketId} label="request number" className="shrink-0" />}
+        <Link href={`/requests/${t.id ?? ""}`} className="min-w-0 truncate text-[var(--color-text)] hover:text-[var(--color-accent-text)] hover:underline underline-offset-2">{t.title ?? "Untitled"}</Link>
+      </span>
+    ),
     detail: t.status ? <StageTag tone={stageTone(t.status)}>{stageLabel(t.status)}</StageTag> : "–",
     when: ago(t.lastModified),
   }));
@@ -179,25 +201,27 @@ export default function InboxPage() {
   // (What you have checked out is in its own section below, with Release.)
   const groups: Group[] = !data ? [] : [
     {
-      key: "markups", title: "Markup requests for you", icon: <PenLine className="w-4 h-4" />, count: data.markupRequestsToMe.length,
+      key: "markups", title: "Markup requests for you", count: data.markupRequestsToMe.length,
       rows: data.markupRequestsToMe.slice(0, 6).map((mr) => ({
         key: mr.id,
         item: docLink(mr.libraryId ? `/documents/${mr.libraryId}?doc=${mr.documentId}` : "/documents", mr.documentNumber || mr.documentTitle || mr.documentId.slice(0, 8)),
         detail: <>{mr.requestedByName ? `From ${mr.requestedByName}` : ""}{mr.message ? `${mr.requestedByName ? ": " : ""}“${mr.message}”` : ""}</>,
         when: ago(mr.createdAt),
+        // The row's point is "Mark shared"; declining sits in its menu.
         action: (
-          <span className="inline-flex gap-2">
+          <span className="inline-flex items-center gap-1">
             <button type="button" onClick={() => respondToMarkup(mr, "shared")} disabled={resolvingId === mr.id} className={rowBtn}><Send className="w-3.5 h-3.5" /> Mark shared</button>
-            <button type="button" onClick={() => respondToMarkup(mr, "declined")} disabled={resolvingId === mr.id} className={rowBtn}><XCircle className="w-3.5 h-3.5" /> Decline</button>
+            <MoreMenu iconOnly label={`More for ${mr.documentNumber || "this request"}`} triggerClass={iconBtn}
+              items={[{ icon: <XCircle className="w-4 h-4" />, label: "Decline", tone: "bad", onClick: () => respondToMarkup(mr, "declined") }]} />
           </span>
         ),
       })),
     },
-    { key: "assigned", title: "Requests assigned to you", icon: <MailPlus className="w-4 h-4" />, count: data.ticketsAssigned.length, rows: ticketRows(data.ticketsAssigned), more: ticketMore(data.ticketsAssigned.length) },
-    { key: "unread", title: "Requests with new activity", icon: <MessageCircle className="w-4 h-4" />, count: data.ticketsUnread.length, rows: ticketRows(data.ticketsUnread), more: ticketMore(data.ticketsUnread.length) },
-    { key: "watching", title: "Requests you watch", icon: <Eye className="w-4 h-4" />, count: data.ticketsWatching.length, rows: ticketRows(data.ticketsWatching), more: ticketMore(data.ticketsWatching.length) },
+    { key: "assigned", title: "Requests assigned to you", count: data.ticketsAssigned.length, rows: ticketRows(data.ticketsAssigned), more: ticketMore(data.ticketsAssigned.length) },
+    { key: "unread", title: "Requests with new activity", count: data.ticketsUnread.length, rows: ticketRows(data.ticketsUnread), more: ticketMore(data.ticketsUnread.length) },
+    { key: "watching", title: "Requests you watch", count: data.ticketsWatching.length, rows: ticketRows(data.ticketsWatching), more: ticketMore(data.ticketsWatching.length) },
     {
-      key: "reviews", title: "Waiting for your review sign-off", icon: <ClipboardCheck className="w-4 h-4" />, count: data.reviewsPendingOnMe.length,
+      key: "reviews", title: "Waiting for your review sign-off", count: data.reviewsPendingOnMe.length,
       help: "Drafts in review that need your sign-off before they can publish.",
       rows: data.reviewsPendingOnMe.slice(0, 6).map((r) => ({
         key: r.signoffId, late: (r.__ageDays ?? 0) >= 14,
@@ -207,7 +231,7 @@ export default function InboxPage() {
       })),
     },
     {
-      key: "cycles", title: "Periodic reviews you owe", icon: <CalendarClock className="w-4 h-4" />, count: data.reviewCyclesDueOnMe.length,
+      key: "cycles", title: "Periodic reviews you owe", count: data.reviewCyclesDueOnMe.length,
       tone: data.reviewCyclesDueOnMe.some((r) => r.overdue) ? "bad" : undefined,
       help: "Documents whose scheduled review is due. Open each, check it is still right, and mark it reviewed.",
       rows: [...data.reviewCyclesDueOnMe].sort((a, b) => Number(b.overdue) - Number(a.overdue) || String(a.nextReviewDate ?? "").localeCompare(String(b.nextReviewDate ?? ""))).slice(0, 6).map((r) => ({
@@ -221,7 +245,7 @@ export default function InboxPage() {
       more: data.reviewCyclesDueOnMe.length > 6 ? { href: "/register", label: `See all ${data.reviewCyclesDueOnMe.length.toLocaleString()} in the register` } : undefined,
     },
     {
-      key: "dist", title: "Confirm you have these revisions", icon: <FileCheck className="w-4 h-4" />, count: data.distributionAcksPendingOnMe.length,
+      key: "dist", title: "Confirm you have these revisions", count: data.distributionAcksPendingOnMe.length,
       help: "Someone sent you a revision and needs your confirmation for the record. Open the document and select “I have this revision”.",
       rows: data.distributionAcksPendingOnMe.slice(0, 6).map((a) => ({
         key: a.ackId,
@@ -231,7 +255,7 @@ export default function InboxPage() {
       })),
     },
     {
-      key: "acks", title: "Waiting for your acknowledgment", icon: <BadgeCheck className="w-4 h-4" />, count: data.acknowledgmentsPendingOnMe.length,
+      key: "acks", title: "Waiting for your acknowledgment", count: data.acknowledgmentsPendingOnMe.length,
       help: "Controlled revisions you must confirm you have read and understood. Open each and sign.",
       rows: data.acknowledgmentsPendingOnMe.slice(0, 6).map((a) => ({
         key: a.rosterId, late: (a.__ageDays ?? 0) >= 14,
@@ -241,7 +265,7 @@ export default function InboxPage() {
       })),
     },
     {
-      key: "recerts", title: "Access recertification due", icon: <KeyRound className="w-4 h-4" />, count: data.accessRecertsDue.length,
+      key: "recerts", title: "Access recertification due", count: data.accessRecertsDue.length,
       help: "Check who has access to these libraries and recertify it.",
       rows: data.accessRecertsDue.slice(0, 6).map((r) => ({
         key: r.libraryId, late: r.overdue,
@@ -253,7 +277,7 @@ export default function InboxPage() {
       })),
     },
     {
-      key: "holds", title: "Holds you opened", icon: <OctagonPause className="w-4 h-4" />, count: data.myOpenHolds.length,
+      key: "holds", title: "Holds you opened", count: data.myOpenHolds.length,
       rows: data.myOpenHolds.slice(0, 6).map((h, i) => ({
         key: h.id ?? `h-${i}`,
         item: <StatusTag tone="overdue">{h.reason}</StatusTag>,
@@ -263,7 +287,7 @@ export default function InboxPage() {
       more: { href: "/admin/holds", label: "Hold queue" },
     },
     {
-      key: "transmittals", title: "Transmittals waiting for receipt", icon: <Send className="w-4 h-4" />, count: data.transmittalsAwaitingAck.length,
+      key: "transmittals", title: "Transmittals waiting for receipt", count: data.transmittalsAwaitingAck.length,
       help: "Issued to someone who hasn't confirmed receipt yet. Follow up for a clean paper trail.",
       rows: data.transmittalsAwaitingAck.slice(0, 6).map((t) => ({
         key: t.id, late: (t.__ageDays ?? 0) >= 14,
@@ -274,7 +298,7 @@ export default function InboxPage() {
       more: { href: "/transmittals", label: "Transmittal register" },
     },
     {
-      key: "late-ms", title: "Milestones past their date", icon: <Flag className="w-4 h-4" />, tone: "bad", count: data.milestonesOverdue.length,
+      key: "late-ms", title: "Milestones past their date", tone: "bad", count: data.milestonesOverdue.length,
       rows: data.milestonesOverdue.slice(0, 6).map((m, i) => ({
         key: m.id ?? `mo-${i}`, late: true,
         item: m.projectId ? <Link href={`/projects/${m.projectId}?tab=plan`} className="font-semibold text-[var(--color-text)] hover:text-[var(--color-accent-text)]">{m.name}</Link> : <span className="font-semibold">{m.name}</span>,
@@ -283,7 +307,7 @@ export default function InboxPage() {
       })),
     },
     {
-      key: "ms", title: "Milestones due this week", icon: <CalendarDays className="w-4 h-4" />, count: data.milestonesUpcoming.length,
+      key: "ms", title: "Milestones due this week", count: data.milestonesUpcoming.length,
       rows: data.milestonesUpcoming.slice(0, 8).map((m, i) => {
         const d = m.__dueInDays ?? 0;
         return {
@@ -306,22 +330,23 @@ export default function InboxPage() {
       <PageHero
         kicker="Home · Inbox"
         title={answer}
-        sub={error
-          ? <span role="alert" className="text-[var(--state-overdue)] font-semibold">Your queue didn&apos;t load: {error}</span>
-          : lead ? <>First up: {lead.ref ? <span className="font-display font-semibold tabular-nums">{lead.ref} </span> : null}<span className="text-[var(--color-text)]">{lead.name}</span>.</> : null}
+        sub={lead ? <>First up: {lead.ref ? <span className="font-display font-semibold tabular-nums text-[var(--color-text)]">{lead.ref} </span> : null}<span className="text-[var(--color-text)]">{lead.name}</span>.</> : null}
+        // One large number: what is late when anything is, else what waits
+        // on you. The others small; zeros muted.
         facts={[
-          { label: "Overdue", value: facts.overdue, tone: facts.overdue > 0 ? "bad" : undefined },
-          { label: "Waiting on you", value: facts.yourTurn },
+          { label: "Overdue", value: facts.overdue, tone: facts.overdue > 0 ? "bad" : undefined, hero: facts.overdue > 0 },
+          { label: "Waiting on you", value: facts.yourTurn, hero: facts.overdue === 0 && facts.yourTurn > 0 },
           { label: "Due this week", value: facts.dueSoon, tone: facts.dueSoon > 0 ? "warn" : undefined },
         ]}
+        factsHero={facts.overdue + facts.yourTurn > 0 ? "auto" : "none"}
         tools={
           <>
             <button type="button" onClick={() => void refresh()} disabled={loading || refreshing} className={heroQuiet} aria-label="Refresh">
-              <RefreshCw className={`w-4 h-4 ${loading || refreshing ? "animate-spin" : ""}`} /><span className="max-sm:hidden">{loading || refreshing ? "Refreshing" : "Refresh"}</span>
+              <RefreshCw className={`w-4 h-4 ${loading || refreshing ? "motion-safe:animate-spin" : ""}`} /><span className="max-sm:hidden">{loading || refreshing ? "Refreshing" : "Refresh"}</span>
             </button>
             {!!data && (attentionCount + deskCount) > 0 && (
-              <button type="button" onClick={() => exportInboxCsv(data, userEmail ?? undefined)} className={heroQuiet} aria-label="Export" title="Download your queue as a spreadsheet (CSV)">
-                <Download className="w-4 h-4" /><span className="max-sm:hidden">Export</span>
+              <button type="button" onClick={() => exportInboxCsv(data, userEmail ?? undefined)} className={heroQuiet} aria-label="Download as a spreadsheet" title="Download your queue as a spreadsheet (CSV)">
+                <Download className="w-4 h-4" /><span className="max-sm:hidden">Download</span>
               </button>
             )}
           </>
@@ -332,11 +357,10 @@ export default function InboxPage() {
       </PageHero>
 
       <PageBody>
+        {!!error && <ErrorNote error={error} title="Your queue didn't load." onRetry={() => void refresh()} />}
+
         <section aria-label="Needs you">
-          <div className="flex items-center gap-2 mb-1">
-            <span aria-hidden className="ui-icon-tile is-sm is-solid"><BellRing className="w-4 h-4" /></span>
-            <h2 className="font-display text-[19px] leading-tight font-semibold text-[var(--color-text)]">Needs you</h2>
-          </div>
+          <SectionHead title="Needs you" className="!mb-1" />
           <AttentionFeed
             items={filteredAttention}
             counts={attnCounts}
@@ -345,32 +369,28 @@ export default function InboxPage() {
             onMarkRead={(id) => { void markRead(id); }}
             onMarkAll={handleMarkAll}
             markingAll={markingAll}
+            seenAt={listSeen ?? 0}
           />
         </section>
 
         {nudges.length > 0 && (
-          <Panel label={<span className="inline-flex items-center gap-2"><span aria-hidden className="ui-icon-tile is-sm is-solid"><Lightbulb className="w-4 h-4" /></span>Suggested next steps <span className="ui-count is-solid">{nudges.length}</span></span>} pad={false}>
-            <ul className="divide-y divide-[var(--color-border)]">
+          <section aria-label="Suggested next steps">
+            <SectionHead title="Suggested next steps" count={nudges.length} />
+            <ul className={`${sheet} divide-y divide-[var(--color-border)]`}>
               {nudges.map((n) => (
-                <li key={n.id} className="px-4 py-2.5 flex items-center gap-3 text-[15px] text-[var(--color-text)]">
-                  <span aria-hidden className={`ui-icon-tile is-sm ${n.severity === "high" ? "!bg-[color-mix(in_srgb,var(--state-overdue)_14%,transparent)] !text-[var(--state-overdue)]" : "!bg-[color-mix(in_srgb,var(--state-held)_16%,transparent)] !text-[var(--state-held)]"}`}>
-                    {n.severity === "high" ? <CircleAlert className="w-4 h-4" /> : <Lightbulb className="w-4 h-4" />}
-                  </span>
+                <li key={n.id} className="px-4 py-3 flex items-baseline gap-3 text-[15px] text-[var(--color-text)]">
+                  <span aria-hidden className={`w-[7px] h-[7px] shrink-0 rounded-full -translate-y-px ${n.severity === "high" ? "bg-[var(--state-overdue)]" : "bg-[var(--state-held)]"}`} />
                   <span className="flex-1 min-w-0">{n.message}</span>
-                  {n.actionLabel && n.href && <Link href={n.href} className={`shrink-0 text-[14px] ${link}`}>{n.actionLabel}</Link>}
+                  {n.actionLabel && n.href && <Link href={n.href} className={`shrink-0 text-[14px] font-semibold ${link}`}>{n.actionLabel}</Link>}
                 </li>
               ))}
             </ul>
-          </Panel>
+          </section>
         )}
 
         {deskCount > 0 && (
           <section aria-label="Your queue">
-            <div className="flex items-center gap-2 mb-2.5 min-h-9">
-              <span aria-hidden className="ui-icon-tile is-sm is-solid"><ListChecks className="w-4 h-4" /></span>
-              <h2 className="font-display text-[19px] leading-tight font-semibold text-[var(--color-text)]">Your queue</h2>
-              <span className="ui-count is-solid">{deskCount.toLocaleString()}</span>
-            </div>
+            <SectionHead title="Your queue" count={deskCount} />
             <GroupedTable groups={groups} label="Your queue" />
           </section>
         )}

@@ -6,7 +6,10 @@
 
 import { heroPrimary, heroQuiet } from "@/components/ui/PageHero";
 import React, { useEffect, useState } from "react";
-import { X, Loader2, Settings2, RotateCcw } from "lucide-react";
+import { X, RotateCcw } from "lucide-react";
+import { Skeleton } from "@/components/ui/Skeleton";
+import { field, label, btnLink } from "@/components/admin/kit";
+import { Select } from "@/components/ui/Field";
 import { supabase } from "@/lib/supabase";
 import { useRole } from "@/components/providers/RoleContext";
 import { listKnowledgeLibraries } from "@/lib/knowledge";
@@ -53,16 +56,16 @@ export default function WidgetSettingsModal({ widget, onClose, onSave }: Props) 
 
   if (!meta) return null;
   const set = (k: string, v: unknown) => setDraft((d) => ({ ...d, [k]: v }));
-  const input = "w-full h-10 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[15px] text-[var(--color-text)] focus:outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]/40";
+  const input = field;
 
   const renderField = (f: WidgetSettingField) => {
     const v = draft[f.key];
     switch (f.type) {
       case "select":
         return (
-          <select value={(v as string) ?? f.default} onChange={(e) => set(f.key, e.target.value)} className={input}>
+          <Select value={(v as string) ?? f.default} onChange={(e) => set(f.key, e.target.value)} aria-label={f.label}>
             {f.options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-          </select>
+          </Select>
         );
       case "toggle":
         return (
@@ -77,17 +80,17 @@ export default function WidgetSettingsModal({ widget, onClose, onSave }: Props) 
             onChange={(e) => set(f.key, Math.max(f.min, Math.min(f.max, Number(e.target.value) || f.default)))} className={`${input} w-28`} />
         );
       case "knowledgeLibrary":
-        return kLibs === null ? <Loader2 className="w-4 h-4 animate-spin text-[var(--color-text-muted)]" /> : kLibs.length === 0 ? (
+        return kLibs === null ? <Skeleton className="h-10 w-full rounded-lg" /> : kLibs.length === 0 ? (
           <p className="text-[14px] text-[var(--color-text-muted)]">No knowledge libraries yet.</p>
         ) : (
-          <select value={(v as string) ?? ""} onChange={(e) => set(f.key, e.target.value)} className={input}>
+          <Select value={(v as string) ?? ""} onChange={(e) => set(f.key, e.target.value)} aria-label={f.label}>
             <option value="">First library (default)</option>
             {kLibs.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
-          </select>
+          </Select>
         );
       case "docLibraries": {
         const sel = new Set(Array.isArray(v) ? (v as string[]) : []);
-        return docLibs === null ? <Loader2 className="w-4 h-4 animate-spin text-[var(--color-text-muted)]" /> : docLibs.length === 0 ? (
+        return docLibs === null ? <Skeleton className="h-24 w-full rounded-lg" /> : docLibs.length === 0 ? (
           <p className="text-[14px] text-[var(--color-text-muted)]">No libraries yet.</p>
         ) : (
           <div className="max-h-52 overflow-y-auto rounded-lg border border-[var(--color-border)] divide-y divide-[var(--color-border)]">
@@ -107,34 +110,32 @@ export default function WidgetSettingsModal({ widget, onClose, onSave }: Props) 
   return (
     <div role="dialog" aria-modal="true" aria-label={`${meta.title} settings`} className="fixed inset-0 z-[210] flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)]" onClick={onClose} />
-      <div className="relative w-full max-w-md bg-[var(--color-surface)] rounded-lg shadow-2xl overflow-hidden max-h-[85vh] flex flex-col">
+      <div className="relative w-full max-w-md bg-[var(--color-surface)] rounded-panel ui-float ui-float-in overflow-hidden max-h-[85vh] flex flex-col">
         <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--color-border)]">
-          <div className="flex items-center gap-2 min-w-0">
-            <div className="min-w-0">
-              <div className="text-[13px] text-[var(--color-text-muted)] inline-flex items-center gap-1.5"><Settings2 className="w-3.5 h-3.5" /> Widget settings. Only this widget changes.</div>
-              <h2 className="mt-1 font-display text-[24px] leading-tight font-semibold text-[var(--color-text)] truncate">{meta.title}</h2>
-            </div>
+          <div className="min-w-0">
+            <h2 className="font-display text-section font-semibold text-[var(--color-text)] truncate">{meta.title} settings</h2>
+            <p className="mt-0.5 text-[14px] text-[var(--color-text-muted)]">Only this widget changes.</p>
           </div>
-          <button type="button" onClick={onClose} aria-label="Close" className="w-9 h-9 grid place-items-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><X className="w-5 h-5" /></button>
+          <button type="button" onClick={onClose} aria-label="Close" className="w-9 h-9 pointer-coarse:w-11 pointer-coarse:h-11 grid place-items-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><X className="w-5 h-5" /></button>
         </div>
-        <div className="p-5 overflow-y-auto space-y-4">
+        <div className="p-5 overflow-y-auto space-y-5">
           <div>
-            <label className="block text-[13px] text-[var(--color-text-muted)] mb-1">Title</label>
-            <input value={(draft.title as string) ?? ""} onChange={(e) => set("title", e.target.value.slice(0, 60))}
+            <label htmlFor={`ws-title-${widget.id}`} className={label}>Title</label>
+            <input id={`ws-title-${widget.id}`} value={(draft.title as string) ?? ""} onChange={(e) => set("title", e.target.value.slice(0, 60))}
               placeholder={meta.title} className={input} />
-            <p className="text-[13px] text-[var(--color-text-muted)] mt-1">Handy when you have two, like “Ask: Piping”.</p>
+            <p className="text-[13px] text-[var(--color-text-muted)] mt-1.5">Handy when you have two, like &ldquo;Ask: Piping&rdquo;.</p>
           </div>
           {fields.map((f) => (
             <div key={f.key}>
-              <label className="block text-[13px] text-[var(--color-text-muted)] mb-1">{f.label}</label>
+              <div className={label}>{f.label}</div>
               {renderField(f)}
-              {f.help && <p className="text-[13px] text-[var(--color-text-muted)] mt-1">{f.help}</p>}
+              {f.help && <p className="text-[13px] text-[var(--color-text-muted)] mt-1.5">{f.help}</p>}
             </div>
           ))}
         </div>
         <div className="px-5 py-3 border-t border-[var(--color-border)] flex items-center gap-2">
           <button type="button" onClick={() => setDraft({})} title="Back to this widget's defaults"
-            className={`mr-auto ${heroQuiet}`}>
+            className={`mr-auto ${btnLink}`}>
             <RotateCcw className="w-3.5 h-3.5" /> Reset
           </button>
           <button type="button" onClick={onClose} className={heroQuiet}>Cancel</button>

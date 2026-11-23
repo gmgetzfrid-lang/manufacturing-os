@@ -12,10 +12,12 @@
 
 import React, { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { FileDown, GitBranch, Check, Loader2, Clock, FileLock } from "lucide-react";
+import { Check, Loader2, Clock } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { listMyStaleCopies, type StaleCopy } from "@/lib/staleCopies";
-import { StatusTag, rowBtn } from "./ui";
+import { friendlyError } from "@/lib/friendlyError";
+import { SkeletonRows } from "@/components/ui/Skeleton";
+import { StatusTag, rowBtn, sheet, SectionHead } from "./ui";
 
 interface MyCheckout {
   sessionId: string;
@@ -144,7 +146,7 @@ export default function MyDeskPanel({ orgId, uid, userEmail }: MyDeskPanelProps)
       await load();
     } catch (e) {
       console.error("Release from desk failed", e);
-      setReleaseError(`${c.docLabel} wasn't released: ${e instanceof Error ? e.message : String(e)}`);
+      setReleaseError(`${c.docLabel} wasn't released. ${friendlyError(e)}`);
     } finally {
       setReleasingId(null);
     }
@@ -152,7 +154,7 @@ export default function MyDeskPanel({ orgId, uid, userEmail }: MyDeskPanelProps)
 
   const total = checkouts.length + staleCopies.length + branches.length;
   if (loading && total === 0) {
-    return <p className="flex items-center gap-1.5 text-[14px] text-[var(--color-text-muted)]"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading what you have checked out…</p>;
+    return <section aria-label="Checked out to you"><SectionHead title="Checked out to you" /><SkeletonRows rows={2} cols={2} what="what you have checked out" /></section>;
   }
   if (total === 0) return null;
 
@@ -173,22 +175,17 @@ export default function MyDeskPanel({ orgId, uid, userEmail }: MyDeskPanelProps)
   const docHref = (libraryId: string | null, docId: string) =>
     libraryId ? `/documents/${libraryId}?doc=${docId}` : "/documents";
 
-  const band = "px-4 h-10 flex items-center gap-2 bg-[var(--color-surface-2)] text-[14px] font-semibold text-[var(--color-text)] border-t border-[var(--color-border-strong)] first:border-t-0";
-  const count = (n: number) => <span className="ui-count is-solid">{n}</span>;
-  const tile = (icon: React.ReactNode) => <span aria-hidden className="ui-icon-tile is-sm !bg-[var(--color-surface)]">{icon}</span>;
+  const band = "px-4 h-10 flex items-center gap-2 bg-[var(--color-surface-2)] text-[14px] font-semibold text-[var(--color-text)] border-t border-[var(--color-border)] first:border-t-0";
+  const count = (n: number) => <span className="font-normal tabular-nums text-[var(--color-text-muted)]">{n}</span>;
 
   return (
     <section aria-label="Checked out to you">
-      <div className="flex items-center gap-2 mb-2.5 min-h-9">
-        <span aria-hidden className="ui-icon-tile is-sm is-solid"><FileLock className="w-4 h-4" /></span>
-        <h2 className="font-display text-[19px] leading-tight font-semibold text-[var(--color-text)]">Checked out to you</h2>
-        <span className="ui-count is-solid">{total}</span>
-      </div>
-      {releaseError && <p role="alert" className="mb-2 border-l-[3px] border-[var(--state-overdue)] pl-2.5 text-[14px] font-semibold text-[var(--state-overdue)]">{releaseError}</p>}
-      <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
+      <SectionHead title="Checked out to you" count={total} />
+      {releaseError && <p role="alert" className="mb-2 text-[14px] font-semibold text-[var(--state-overdue-text)]">{releaseError}</p>}
+      <div className={sheet}>
         {checkouts.length > 0 && (
           <>
-            <h3 className={band}>{tile(<FileLock className="w-4 h-4" />)}Your checkouts {count(checkouts.length)}</h3>
+            <h3 className={band}>Your checkouts {count(checkouts.length)}</h3>
             <ul className="divide-y divide-[var(--color-border)]">
               {checkouts.map((c) => {
                 const k = clock(c);
@@ -209,8 +206,8 @@ export default function MyDeskPanel({ orgId, uid, userEmail }: MyDeskPanelProps)
                       title="Release it with no changes"
                       className={rowBtn}
                     >
-                      {releasingId === c.sessionId ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
-                      Release
+                      {releasingId === c.sessionId ? <Loader2 className="w-3.5 h-3.5 motion-safe:animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                      {releasingId === c.sessionId ? "Releasing" : "Release"}
                     </button>
                   </li>
                 );
@@ -221,7 +218,7 @@ export default function MyDeskPanel({ orgId, uid, userEmail }: MyDeskPanelProps)
 
         {staleCopies.length > 0 && (
           <>
-            <h3 className={band}>{tile(<FileDown className="w-4 h-4" />)}Your copies that are out of date {count(staleCopies.length)}</h3>
+            <h3 className={band}>Your copies that are out of date {count(staleCopies.length)}</h3>
             <ul className="divide-y divide-[var(--color-border)]">
               {staleCopies.slice(0, 5).map((s) => (
                 <li key={s.documentId}>
@@ -240,7 +237,7 @@ export default function MyDeskPanel({ orgId, uid, userEmail }: MyDeskPanelProps)
 
         {branches.length > 0 && (
           <>
-            <h3 className={band}>{tile(<GitBranch className="w-4 h-4" />)}Your branches to reconcile {count(branches.length)}</h3>
+            <h3 className={band}>Your branches to reconcile {count(branches.length)}</h3>
             <ul className="divide-y divide-[var(--color-border)]">
               {branches.map((b) => (
                 <li key={b.id}>
