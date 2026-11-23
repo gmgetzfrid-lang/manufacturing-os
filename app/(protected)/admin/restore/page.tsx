@@ -366,8 +366,9 @@ export default function RestorePage() {
           </button>
         ) : undefined}
       >
-        <div className="overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-          <div className="min-w-[420px]">
+        {/* On a phone the kicker says "Step 1 of 3"; the path shows from sm up. */}
+        <div className="max-sm:hidden">
+          <div>
             <StepLine steps={steps.map((label, i) => ({
               label,
               state: (i < step ? "done" : i === step ? "now" : "next") as "done" | "now" | "next",

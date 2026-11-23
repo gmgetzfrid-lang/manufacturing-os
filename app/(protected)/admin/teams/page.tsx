@@ -195,7 +195,7 @@ export default function AdminTeamsPage() {
               <div className={`${sheet} mb-3 p-4 flex flex-wrap items-end gap-3`}>
                 <div className="flex-1 min-w-[220px]">
                   <label htmlFor="new-team-name" className={label}>Team name</label>
-                  <input id="new-team-name" autoFocus value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="e.g. Drafting"
+                  <input id="new-team-name" autoFocus value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Drafting"
                     onKeyDown={(e) => e.key === "Enter" && void handleCreate()} className={field} />
                 </div>
                 <div>
