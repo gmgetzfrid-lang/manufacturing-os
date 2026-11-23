@@ -98,7 +98,7 @@ export default function AddWorkPicker({ day: when, tz, milestones, onPick, onNew
             <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-text-faint)]" />
             <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Find equipment or WO #" aria-label="Find a work order"
               autoFocus={typeof window !== "undefined" && window.matchMedia?.("(pointer: fine)").matches}
-              className="w-full h-10 pl-9 pr-3 rounded-[10px] bg-[var(--color-surface-2)] text-[13.5px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] border border-transparent focus:outline-none focus:border-[var(--color-border-strong)]" />
+              className="w-full h-10 pl-9 pr-3 rounded-[10px] bg-[var(--color-surface-2)] text-[14px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] border border-transparent" />
           </div>
         </div>
         <div className="overflow-y-auto">
@@ -106,12 +106,12 @@ export default function AddWorkPicker({ day: when, tz, milestones, onPick, onNew
             <button type="button" onClick={onNew}
               className="w-full text-left px-4 py-3 border-b border-[var(--color-border)] hover:bg-[var(--color-surface-2)]">
               <div className="text-[13px] font-bold text-[var(--color-text)] inline-flex items-center gap-1.5"><Plus className="w-4 h-4" /> New work order</div>
-              <div className="text-[11.5px] text-[var(--color-text-muted)]">Its own WO #, name, steps and crew, not under one already on the schedule</div>
+              <div className="text-[12px] text-[var(--color-text-muted)]">Its own WO #, name, steps and crew, not under one already on the schedule</div>
             </button>
           )}
           {list("Worked this day", onDay)}
           {list(onDay.length ? "Every other work order" : "Work orders", others)}
-          {![...onDay, ...others].some(hit) && <div className="px-4 py-6 text-center text-[12.5px] text-[var(--color-text-muted)]">No work order matches.</div>}
+          {![...onDay, ...others].some(hit) && <div className="px-4 py-6 text-center text-[12px] text-[var(--color-text-muted)]">No work order matches.</div>}
         </div>
       </div>
     </div>

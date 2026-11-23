@@ -24,6 +24,7 @@ function docPill(status: string): string {
   return "";
 }
 import { supabase } from "@/lib/supabase";
+import { sayError } from "@/components/projects/sayError";
 
 interface LinkedDoc {
   linkId: string;
@@ -65,7 +66,7 @@ export default function ProjectDocumentsCard({ orgId, projectId, canManage, uid,
         .select("id, document_id, source, last_seen_at")
         .eq("project_id", projectId)
         .order("last_seen_at", { ascending: false });
-      if (error) throw new Error(error.message);
+      if (error) throw error;
       const linkRows = ((links ?? []) as Array<Record<string, unknown>>);
       const docIds = [...new Set(linkRows.map((l) => String(l.document_id)))];
       const { data: docs } = docIds.length
@@ -90,7 +91,7 @@ export default function ProjectDocumentsCard({ orgId, projectId, canManage, uid,
           };
         }));
     } catch (e) {
-      setErr((e as Error).message);
+      setErr(sayError(e));
     } finally { setLoading(false); }
   }, [projectId]);
   useEffect(() => { void refresh(); }, [refresh]);
@@ -136,11 +137,11 @@ export default function ProjectDocumentsCard({ orgId, projectId, canManage, uid,
         { org_id: orgId, project_id: projectId, document_id: doc.id, source: "manual", last_seen_at: nowIso },
         { onConflict: "project_id,document_id", ignoreDuplicates: false },
       );
-      if (error) throw new Error(error.message);
+      if (error) throw error;
       await activity("doc_added", `${doc.label} attached to the project`, doc.id);
       setQ(""); setResults([]);
       await refresh();
-    } catch (e) { setErr((e as Error).message); }
+    } catch (e) { setErr(sayError(e)); }
     finally { setBusy(null); }
   };
 
@@ -148,10 +149,10 @@ export default function ProjectDocumentsCard({ orgId, projectId, canManage, uid,
     setBusy(r.linkId); setErr(null);
     try {
       const { error } = await supabase.from("project_documents").delete().eq("id", r.linkId);
-      if (error) throw new Error(error.message);
+      if (error) throw error;
       await activity("doc_removed", `${r.label} removed from the project`, r.docId);
       await refresh();
-    } catch (e) { setErr((e as Error).message); }
+    } catch (e) { setErr(sayError(e)); }
     finally { setBusy(null); }
   };
 
@@ -179,7 +180,7 @@ export default function ProjectDocumentsCard({ orgId, projectId, canManage, uid,
               placeholder="Search documents by number or title…"
               autoFocus
               aria-label="Search documents"
-              className="h-10 w-full rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] pl-8 pr-2 text-[15px] focus:border-[var(--color-main)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40 outline-none"
+              className="h-10 w-full rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] pl-8 pr-2 text-[15px]"
             />
           </div>
           {searching && <div className="mt-1.5 text-[13px] text-[var(--color-text-muted)]">Searching…</div>}

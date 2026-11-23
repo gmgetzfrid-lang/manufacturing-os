@@ -37,6 +37,7 @@ import { fmtMoney } from "@/lib/costs";
 import StepPath from "@/components/ui/StepPath";
 import { useDraft } from "@/hooks/useDraft";
 import { appAlert } from "@/components/providers/DialogProvider";
+import { sayError } from "@/components/projects/sayError";
 
 const STEPS = [
   { key: "basics", label: "Basics", icon: Briefcase },
@@ -264,7 +265,7 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
         const basis = await recordBudgetBasis({
           orgId, projectId, parsed: fromDoc.parsed, source: fromDoc.source,
           actor: { uid: actorUserId, email: actorEmail ?? null },
-        }).catch((e) => ({ docId: null, error: (e as Error).message }));
+        }).catch((e) => ({ docId: null, error: sayError(e) }));
         if (basis.error) problems.push(`the budget document (${basis.error})`);
       }
 
@@ -276,7 +277,7 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
           name: r.name.trim(), planned_at: fromDateInput(r.date, timezone, 12) ?? new Date(`${r.date}T12:00:00`).toISOString(),
           status: "planned", created_by: actorUserId,
         }))).then(({ error: msErr }) => { if (msErr) problems.push(`milestones (${msErr.message})`); },
-          (e) => { problems.push(`milestones (${(e as Error).message})`); });
+          (e) => { problems.push(`milestones (${sayError(e)})`); });
       }
 
       // The kind of project, as picked (or read from the name): the
@@ -285,14 +286,14 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
         const guessed = projectTypeOf(null, name);
         const word = kindPick ?? (isDefaultType(guessed) ? (jobKind === "capital" ? "Capital project" : null) : guessed.word);
         const t = word && word !== "Other" ? PROJECT_TYPES.find((x) => x.word === word) : null;
-        if (t) await saveProjectType(projectId, t).catch((e) => { problems.push(`the kind of project (${(e as Error).message})`); });
+        if (t) await saveProjectType(projectId, t).catch((e) => { problems.push(`the kind of project (${sayError(e)})`); });
       }
 
       // Turnover package seeds, sized to the job. Failure is non-fatal —
       // the Quality tab can seed on demand.
       const seeded = await seedTurnoverItems({
         orgId, projectId, jobKind, actor: { uid: actorUserId, email: actorEmail ?? null },
-      }).catch((e) => ({ ok: false, error: (e as Error).message }));
+      }).catch((e) => ({ ok: false, error: sayError(e) }));
       if (!seeded.ok) problems.push(`the turnover list (${seeded.error ?? "not saved"})`);
 
       draft.clear();
@@ -302,7 +303,7 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
         void appAlert({ tone: "danger", message: `The project was made, but these didn't save: ${problems.join("; ")}. Add them on the project.` });
       }
     } catch (e) {
-      setError((e as Error).message);
+      setError(sayError(e));
     } finally { setBusy(false); }
   };
 
@@ -415,7 +416,7 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
                     <div key={i} className="flex items-center gap-2 text-xs rounded-lg border border-[var(--color-border)] px-2.5 py-1.5">
                       <Target className="w-3 h-3 text-[var(--color-text-muted)] shrink-0" />
                       <span className="flex-1 text-[var(--color-text)]">{g}</span>
-                      <button onClick={() => setGoals(goals.filter((_, j) => j !== i))} className="text-[var(--color-text-faint)] hover:text-rose-600"><X className="w-3 h-3" /></button>
+                      <button onClick={() => setGoals(goals.filter((_, j) => j !== i))} className="text-[var(--color-text-faint)] hover:text-[var(--state-overdue-text)]"><X className="w-3 h-3" /></button>
                     </div>
                   ))}
                   <div className="flex items-center gap-2">
@@ -440,10 +441,10 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
             <>
               <StepIntro text="Pick the Summary of Work from document control. Not uploaded yet? Skip and add it later." />
               {sowDoc ? (
-                <div className="flex items-center gap-2 rounded-xl border border-emerald-500/40 bg-emerald-500/[0.06] px-3 py-2.5 text-sm">
-                  <FileText className="w-4 h-4 text-emerald-600 shrink-0" />
+                <div className="flex items-center gap-2 rounded-xl border border-[var(--state-released)] bg-[var(--state-released)]/[0.06] px-3 py-2.5 text-sm">
+                  <FileText className="w-4 h-4 text-[var(--state-released-text)] shrink-0" />
                   <span className="font-bold text-[var(--color-text)] truncate">{sowDoc.label}</span>
-                  <button onClick={() => setSowDoc(null)} className="ml-auto text-[var(--color-text-faint)] hover:text-rose-600"><X className="w-3.5 h-3.5" /></button>
+                  <button onClick={() => setSowDoc(null)} className="ml-auto text-[var(--color-text-faint)] hover:text-[var(--state-overdue-text)]"><X className="w-3.5 h-3.5" /></button>
                 </div>
               ) : (
                 <div>
@@ -453,7 +454,7 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
                       placeholder="Search documents by number or title…"
                       className="w-full pl-9 pr-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)]" />
                   </div>
-                  {sowError && <p className="mt-2 text-xs font-bold text-rose-700 dark:text-rose-300">Couldn&apos;t search documents. Try again.</p>}
+                  {sowError && <p className="mt-2 text-xs font-bold text-[var(--state-overdue-text)]">Couldn&apos;t search documents. Try again.</p>}
                   {sowResults.length > 0 && (
                     <ul className="mt-2 rounded-xl border border-[var(--color-border)] divide-y divide-[var(--color-border)] overflow-hidden">
                       {sowResults.map((d) => (
@@ -491,7 +492,7 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
                     <input value={r.budget} onChange={(e) => setBudgetRows(rows(budgetRows, i, { budget: e.target.value }))}
                       placeholder="Budget (USD)" inputMode="decimal"
                       className="w-32 px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm font-display tabular-nums bg-[var(--color-surface)]" />
-                    <button onClick={() => setBudgetRows(budgetRows.filter((_, j) => j !== i))} className="text-[var(--color-text-faint)] hover:text-rose-600 p-1"><X className="w-3.5 h-3.5" /></button>
+                    <button onClick={() => setBudgetRows(budgetRows.filter((_, j) => j !== i))} className="text-[var(--color-text-faint)] hover:text-[var(--state-overdue-text)] p-1"><X className="w-3.5 h-3.5" /></button>
                   </div>
                 ))}
                 <datalist id="wizard-line-companies">
@@ -517,7 +518,7 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
                       className="flex-1 px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)]" />
                     <input type="date" value={r.date} onChange={(e) => setMilestoneRows(rows(milestoneRows, i, { date: e.target.value }))}
                       className="px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)] [color-scheme:light] dark:[color-scheme:dark]" />
-                    <button onClick={() => setMilestoneRows(milestoneRows.filter((_, j) => j !== i))} className="text-[var(--color-text-faint)] hover:text-rose-600 p-1"><X className="w-3.5 h-3.5" /></button>
+                    <button onClick={() => setMilestoneRows(milestoneRows.filter((_, j) => j !== i))} className="text-[var(--color-text-faint)] hover:text-[var(--state-overdue-text)] p-1"><X className="w-3.5 h-3.5" /></button>
                   </div>
                 ))}
                 <button onClick={() => setMilestoneRows([...milestoneRows, { name: "", date: "" }])}
@@ -541,7 +542,7 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
                     </select>
                     <input value={r.trade} onChange={(e) => setPartyRows(rows(partyRows, i, { trade: e.target.value }))}
                       placeholder="Trade" className="w-32 px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)]" />
-                    <button onClick={() => setPartyRows(partyRows.filter((_, j) => j !== i))} className="text-[var(--color-text-faint)] hover:text-rose-600 p-1"><X className="w-3.5 h-3.5" /></button>
+                    <button onClick={() => setPartyRows(partyRows.filter((_, j) => j !== i))} className="text-[var(--color-text-faint)] hover:text-[var(--state-overdue-text)] p-1"><X className="w-3.5 h-3.5" /></button>
                   </div>
                 ))}
                 <datalist id="wizard-companies">
@@ -554,7 +555,7 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
           )}
 
           {error && (
-            <p role="alert" className="border-l-2 border-rose-500 pl-3 text-xs font-bold text-rose-700 dark:text-rose-300">{error}</p>
+            <p role="alert" className="border-l-2 border-[var(--state-overdue)] pl-3 text-xs font-bold text-[var(--state-overdue-text)]">{error}</p>
           )}
         </div>
 
@@ -592,7 +593,7 @@ function rows<T>(arr: T[], i: number, patch: Partial<T>): T[] {
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div>
-      <label className="text-[13px] font-semibold text-[var(--color-text)] ">{label}</label>
+      <label className="text-[13px] font-semibold text-[var(--color-text)]">{label}</label>
       <div className="mt-1">{children}</div>
     </div>
   );
@@ -613,9 +614,9 @@ function FromDocSummary({ result, onClear }: { result: BudgetReadResult; onClear
     d.goals.length ? `${d.goals.length} goal${d.goals.length === 1 ? "" : "s"}` : null,
   ].filter(Boolean);
   return (
-    <div className="rounded-xl border border-emerald-500/40 bg-emerald-500/[0.06] px-3 py-2.5 text-xs">
+    <div className="rounded-xl border border-[var(--state-released)] bg-[var(--state-released)]/[0.06] px-3 py-2.5 text-xs">
       <div className="flex items-start gap-2">
-        <Sparkles className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+        <Sparkles className="w-4 h-4 text-[var(--state-released-text)] shrink-0 mt-0.5" />
         <div className="min-w-0 flex-1">
           <div className="font-semibold text-[var(--color-text)]">
             Prefilled from {[d.docType, d.docNumber].filter(Boolean).join(" ") || result.source.fileName}
@@ -625,22 +626,22 @@ function FromDocSummary({ result, onClear }: { result: BudgetReadResult; onClear
             {bits.length ? `Found ${bits.join(", ")}. ` : ""}Check each step. What you had typed was kept.
           </div>
           {!recon.balanced && recon.unallocated != null && (
-            <div className="text-[11px] font-bold text-amber-700 dark:text-amber-300 mt-0.5">
+            <div className="text-[11px] font-bold text-[var(--state-held-text)] mt-0.5">
               Lines total {fmtMoney(recon.linesTotal, cur)}: {fmtMoney(Math.abs(recon.unallocated), cur)} {recon.unallocated > 0 ? "short of" : "over"} the authorized amount.
             </div>
           )}
           {result.blankPages.length > 0 && (
-            <div className="text-[11px] font-bold text-amber-700 dark:text-amber-300 mt-0.5">
+            <div className="text-[11px] font-bold text-[var(--state-held-text)] mt-0.5">
               Page{result.blankPages.length === 1 ? "" : "s"} {result.blankPages.join(", ")} came through blank (scanner compression). Anything only there wasn&apos;t read.
             </div>
           )}
           {recon.overBudgetBy != null && recon.overBudgetBy > 0 && (
-            <div className="text-[11px] font-bold text-amber-700 dark:text-amber-300 mt-0.5">
+            <div className="text-[11px] font-bold text-[var(--state-held-text)] mt-0.5">
               {fmtMoney(recon.overBudgetBy, cur)} over the approved budget it cites{d.varianceNote ? `: ${d.varianceNote}` : "."}
             </div>
           )}
         </div>
-        <button onClick={onClear} aria-label="Don't keep this document" className="text-[var(--color-text-faint)] hover:text-rose-600" title="Don't keep this document as the budget basis (prefilled fields stay)"><X className="w-3.5 h-3.5" /></button>
+        <button onClick={onClear} aria-label="Don't keep this document" className="text-[var(--color-text-faint)] hover:text-[var(--state-overdue-text)]" title="Don't keep this document as the budget basis (prefilled fields stay)"><X className="w-3.5 h-3.5" /></button>
       </div>
     </div>
   );
@@ -653,7 +654,7 @@ function BudgetTotal({ rows, authorized, currency }: {
   if (total <= 0) return null;
   const off = authorized != null && Math.abs(authorized - total) > Math.max(1, authorized * 0.005);
   return (
-    <span className={`ml-auto text-[11px] font-bold tabular-nums ${off ? "text-amber-700 dark:text-amber-300" : "text-[var(--color-text-muted)]"}`}>
+    <span className={`ml-auto text-[11px] font-bold tabular-nums ${off ? "text-[var(--state-held-text)]" : "text-[var(--color-text-muted)]"}`}>
       Total {fmtMoney(total, currency)}{authorized != null ? ` of ${fmtMoney(authorized, currency)} authorized` : ""}
     </span>
   );

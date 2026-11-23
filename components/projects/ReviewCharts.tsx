@@ -203,7 +203,7 @@ export function LoadStrip({ load: L, jobs, held, tz }: { load: PartyLoad; jobs: 
           const after = held.filter((h) => h.by === j.id);
           const tip = `${jobName(j)}: ready ${at(j.ready, tz)}${j.start != null ? `, started ${at(j.start, tz)}` : ""}${j.partyH ? `. Waited for ${P} ${j.partyH} h` : ""}${j.nobodyH ? `. Nobody on it ${j.nobodyH} h` : ""}${j.laterH ? `. Plan said later ${j.laterH} h` : ""}.`;
           return (
-            <li key={j.id} className="text-[12.5px]">
+            <li key={j.id} className="text-[12px]">
               <div className="flex items-baseline gap-2 min-w-0">
                 <b className="min-w-0 truncate text-[var(--color-text)]" title={jobName(j)}>{jobName(j)}</b>
                 <span className="ml-auto shrink-0 tabular-nums text-[var(--color-text)]">{j.partyH ? `waited ${j.partyH} h` : ""}{j.partyH && j.nobodyH ? " · " : ""}{j.nobodyH ? `nobody on it ${j.nobodyH} h` : ""}</span>
@@ -235,7 +235,7 @@ export function IdleBars({ groups }: { groups: Array<{ party: string; step: stri
     <ul className="space-y-2" data-idle-bars>
       {groups.map((g, i) => (
         <li key={i} title={`${g.party}, ${g.step}: ${g.jobs.length} job${g.jobs.length === 1 ? "" : "s"}, ${g.hours} h`}>
-          <div className="flex items-baseline gap-2 text-[12.5px] min-w-0">
+          <div className="flex items-baseline gap-2 text-[12px] min-w-0">
             <span className="min-w-0 truncate text-[var(--color-text)]"><b>{g.party}</b> · {g.step} <span className="text-[var(--color-text-muted)]">({g.jobs.length} job{g.jobs.length === 1 ? "" : "s"})</span></span>
             <span className="ml-auto shrink-0 tabular-nums font-semibold text-[var(--color-text)]">{g.hours} h</span>
           </div>

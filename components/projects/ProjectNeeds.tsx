@@ -39,6 +39,7 @@ import { FINDINGS_SQL } from "@/lib/findings";
 import { SourceLine, Switch, NeededChoice } from "@/components/projects/NeedParts";
 import { Card, heroQuiet } from "@/components/ui/PageHero";
 import { btnRow, fieldBox } from "@/components/admin/kit";
+import { sayError } from "@/components/projects/sayError";
 
 type State = "set" | "default" | "open" | "info";
 interface Row { id: string; name: string; value: React.ReactNode; source: Source | null; state: State; action?: React.ReactNode; body?: React.ReactNode }
@@ -186,7 +187,7 @@ export default function ProjectNeeds({ orgId, project, jobKind, phases, steps, m
   const run = async (key: string, fn: () => Promise<{ ok: boolean; error?: string }>) => {
     setBusy(key); setErr(null);
     try { const r = await fn(); if (!r.ok) setErr(r.error ?? "Not saved."); else reload(); }
-    catch (e) { setErr((e as Error).message); }
+    catch (e) { setErr(sayError(e)); }
     finally { setBusy(null); }
   };
 

@@ -71,7 +71,7 @@ export function ShipBar({ shippedAt, shippedBy, tries, canShip, busy, err, onShi
   if (shippedAt) {
     return (
       <div role="status" className="px-4 sm:px-5 py-2.5 border-b border-[var(--color-border)] flex flex-wrap items-center gap-2 text-[13px] text-[var(--color-text)] print:hidden">
-        <Lock className="w-4 h-4 shrink-0 text-emerald-700 dark:text-emerald-400" />
+        <Lock className="w-4 h-4 shrink-0 text-[var(--state-released-text)]" />
         <span className="flex-1 min-w-[200px]"><b>Report locked</b> {when(shippedAt)}{shippedBy ? ` by ${shippedBy}` : ""}{tries ? ` · ${tries} step${tries === 1 ? "" : "s"} asked to try` : ""}. It can&apos;t be changed.</span>
         {canShip && (
           <button onClick={() => { void appConfirm({ message: `Unlock the ${label} report? It can be changed again until it's locked.`, confirmLabel: "Unlock" }).then((ok) => { if (ok) onUnship(); }); }} disabled={busy}
@@ -79,7 +79,7 @@ export function ShipBar({ shippedAt, shippedBy, tries, canShip, busy, err, onShi
             {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Unlock className="w-3.5 h-3.5" />} Unlock to edit
           </button>
         )}
-        {err && <span className="w-full text-rose-700 dark:text-rose-300">{err}</span>}
+        {err && <span className="w-full text-[var(--state-overdue-text)]">{err}</span>}
       </div>
     );
   }
@@ -94,7 +94,7 @@ export function ShipBar({ shippedAt, shippedBy, tries, canShip, busy, err, onShi
           {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Lock className="w-3.5 h-3.5" />} Lock report
         </button>
       ) : <span className="text-[12px]">Only someone who can edit the schedule can lock it.</span>}
-      {err && <span className="w-full text-rose-700 dark:text-rose-300">{err}</span>}
+      {err && <span className="w-full text-[var(--state-overdue-text)]">{err}</span>}
     </div>
   );
 }

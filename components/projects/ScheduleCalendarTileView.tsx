@@ -382,8 +382,8 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
   }, [clock, tz, shiftTimes]);
   const tagOf = (key: string, band: Band) => {
     const k = `${band}:${key}`;
-    if (k === shiftTags.now) return <span className="shrink-0 rounded px-1 text-[11px] leading-[14px] font-semibold bg-rose-600 text-white">Now</span>;
-    if (k === shiftTags.last) return <span title="The shift that just ended: the one to write up" className="shrink-0 rounded px-1 text-[11px] leading-[14px] font-semibold border border-amber-500 text-amber-800 dark:text-amber-300">Last shift</span>;
+    if (k === shiftTags.now) return <span className="shrink-0 rounded px-1 text-[11px] leading-[14px] font-semibold bg-[var(--state-overdue)] text-white">Now</span>;
+    if (k === shiftTags.last) return <span title="The shift that just ended: the one to write up" className="shrink-0 rounded px-1 text-[11px] leading-[14px] font-semibold border border-[var(--state-held)] text-[var(--state-held-text)]">Last shift</span>;
     if (k === shiftTags.next) return <span title="The next shift" className="shrink-0 rounded px-1 text-[11px] leading-[14px] font-semibold border border-[var(--color-border-strong)] text-[var(--color-text)]">Next</span>;
     return null;
   };
@@ -566,7 +566,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
           <span className="text-xs font-bold text-[var(--color-text)]">{selected.size} selected</span>
           <div className="inline-flex items-center gap-1">
             <span className="text-[12px] font-semibold text-[var(--color-text-faint)]">Mark</span>
-            {([["completed", "Done", "bg-emerald-600"], ["in_progress", "Doing", "bg-slate-500"], ["on_hold", "Hold", "bg-amber-500"], ["blocked", "Block", "bg-rose-600"]] as const).map(([s, label, dot]) => (
+            {([["completed", "Done", "bg-[var(--state-released)]"], ["in_progress", "Doing", "bg-slate-500"], ["on_hold", "Hold", "bg-[var(--state-held)]"], ["blocked", "Block", "bg-[var(--state-overdue)]"]] as const).map(([s, label, dot]) => (
               <button key={s} onClick={() => { onBulkStatus?.(Array.from(selected), s); clearSelection(); }} className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] text-[11px] font-bold hover:bg-[var(--color-surface-2)]"><span aria-hidden className={`w-2 h-2 rounded-full ${dot}`} />{label}</button>
             ))}
           </div>
@@ -600,7 +600,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
         </div>
         <span className="text-[12px] font-semibold text-[var(--color-text-muted)]" title={`Days and times are shown in the plant's zone: ${tz}`}>{tzAbbrev(tz, cursor.getTime())}</span>
         <button onClick={goToday} className={QUIET}>
-          <Crosshair className="w-3.5 h-3.5 text-rose-500" /> Today
+          <Crosshair className="w-3.5 h-3.5 text-[var(--state-overdue-text)]" /> Today
         </button>
         <button onClick={() => setAgendaDay(ymd(new Date(), tz))}
           title="Every step for today in one list: enter % done, status, what's blocking it and notes, one after another"
@@ -729,7 +729,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
               <section key={key} data-daykey={key} className="px-2 py-2">
                 <div className="flex items-center gap-2 mb-1.5">
                 <button type="button" onClick={() => setAgendaDay(key)} className="flex-1 min-w-0 flex items-center justify-between gap-2 text-left">
-                  <span className={`text-[12px] font-semibold ${isToday ? "text-rose-600 dark:text-rose-400" : "text-[var(--color-text)]"}`}>
+                  <span className={`text-[12px] font-semibold ${isToday ? "text-[var(--state-overdue-text)]" : "text-[var(--color-text)]"}`}>
                     {fmtInTz(day, tz, { weekday: "long", month: "short", day: "numeric" })}
                   </span>
                   <span className="text-[11px] font-semibold text-[var(--color-text-faint)]">
@@ -767,7 +767,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
                   <div key={key} style={{ gridColumn: `${2 * i + 1} / span 2` }} className="flex items-center justify-center gap-1 px-1 border-r border-[var(--color-border)]">
                     <button type="button" onClick={() => { setAgendaFocus(null); setAgendaDay(key); }}
                       title="Open this day's list: every step, with progress entry"
-                      className={`min-w-0 truncate px-1 py-1.5 text-center text-[12px] font-semibold hover:text-[var(--color-accent-text)] ${isToday ? "text-rose-600 dark:text-rose-400" : "text-[var(--color-text-muted)]"}`}>
+                      className={`min-w-0 truncate px-1 py-1.5 text-center text-[12px] font-semibold hover:text-[var(--color-accent-text)] ${isToday ? "text-[var(--state-overdue-text)]" : "text-[var(--color-text-muted)]"}`}>
                       {fmtInTz(day, tz, { weekday: "short" })} {wallClock(day.getTime(), tz).day}
                       {(() => { const n = uniqueOf(key).filter((p) => !p.idleToday).length; return n > 0 ? <span className="ml-1 font-semibold normal-case tracking-normal text-[var(--color-text-faint)]">· {n}</span> : null; })()}
                     </button>
@@ -789,12 +789,12 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
                   return (
                     <div key={key} data-daykey={key} style={{ gridColumn: `${2 * i + 1} / span 2` }}
                       onDragOver={(e) => { if (canEdit) e.preventDefault(); }} onDrop={(e) => void onDropDay(key, e)}
-                      className={`min-h-0 min-w-0 border-r border-[var(--color-border)] p-1 flex flex-col gap-1 bg-sky-50/40 dark:bg-sky-950/15 ${live ? "ring-2 ring-inset ring-rose-300 dark:ring-rose-800" : ""}`}>
+                      className={`min-h-0 min-w-0 border-r border-[var(--color-border)] p-1 flex flex-col gap-1 bg-sky-50/40 dark:bg-sky-950/15 ${live ? "ring-2 ring-inset ring-[var(--color-border)]" : ""}`}>
                       {bandHead(key, "day", b.day.length, false, true)}
                       {isToday && overdueToday.length > 0 && (
                         <button type="button" onClick={() => openShift(key, "day")}
                           title={overdueToday.slice(0, 6).map((w) => `• ${w.leaf.name}`).join("\n") + (overdueToday.length > 6 ? `\n…and ${overdueToday.length - 6} more` : "")}
-                          className="shrink-0 w-full text-left rounded px-1.5 py-1 border border-rose-300 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/30 text-rose-800 dark:text-rose-300 text-[12px] font-bold hover:bg-rose-100 dark:hover:bg-rose-950/50">
+                          className="shrink-0 w-full text-left rounded px-1.5 py-1 border border-[var(--color-border)] bg-transparent text-[var(--state-overdue-text)] text-[12px] font-bold hover:bg-transparent">
                           {overdueToday.length} carried over, not done
                         </button>
                       )}
@@ -815,7 +815,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
                   title={`${fmtInTz(addDaysUTC(weekDays[0], -1, tz), tz, { weekday: "long" })} night: open its list`}
                   className="min-w-0 border-r border-[var(--color-border)] bg-violet-50/60 dark:bg-violet-950/20 flex flex-col items-center justify-center gap-1 text-violet-900/80 dark:text-violet-200 hover:bg-violet-100/70">
                   <Moon className="w-3.5 h-3.5" aria-hidden />
-                  <span className="text-[13px] font-semibold ">{fmtInTz(addDaysUTC(weekDays[0], -1, tz), tz, { weekday: "short" })}</span>
+                  <span className="text-[13px] font-semibold">{fmtInTz(addDaysUTC(weekDays[0], -1, tz), tz, { weekday: "short" })}</span>
                   {prevNight.length > 0 && <span className="text-[11px] font-bold tabular-nums">{prevNight.length}</span>}
                 </button>
                 {weekDays.map((day, i) => {
@@ -825,7 +825,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
                   return (
                     <div key={key} data-daykey={key} style={{ gridColumn: `${2 * i + 2} / span 2` }}
                       onDragOver={(e) => { if (canEdit) e.preventDefault(); }} onDrop={(e) => void onDropDay(key, e)}
-                      className={`relative min-h-0 min-w-0 border-r border-[var(--color-border)] p-1 flex flex-col gap-1 bg-violet-50/60 dark:bg-violet-950/25 ${live ? "ring-2 ring-inset ring-rose-300 dark:ring-rose-800" : ""}`}>
+                      className={`relative min-h-0 min-w-0 border-r border-[var(--color-border)] p-1 flex flex-col gap-1 bg-violet-50/60 dark:bg-violet-950/25 ${live ? "ring-2 ring-inset ring-[var(--color-border)]" : ""}`}>
                       {/* Midnight: where the night crosses into the next date. */}
                       <span aria-hidden className="pointer-events-none absolute top-0 bottom-0 left-1/2 border-l border-dashed border-violet-300/70 dark:border-violet-800/70" />
                       {bandHead(key, "night", b.night.length, false, true)}
@@ -870,11 +870,11 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
                 const avg = items.length ? Math.round(items.reduce((a, p) => a + ((p.ms.id ? progress?.get(p.ms.id)?.percent : undefined) ?? 0), 0) / items.length) : 0;
                 return (
                   <button key={key} type="button" data-daykey={key} onClick={() => (items.length || canAdd) && setAgendaDay(key)}
-                    className={`min-w-0 border-r border-[var(--color-border)] last:border-r-0 p-1 flex flex-col items-start gap-0.5 text-left ${inMonth ? "bg-[var(--color-surface)]" : "bg-[var(--color-canvas)]/50 dark:bg-transparent"} ${isToday ? "ring-1 ring-inset ring-rose-300" : ""}`}>
-                    <span className={`text-[11px] font-bold ${isToday ? "text-rose-600 dark:text-rose-400" : inMonth ? "text-[var(--color-text)]" : "text-slate-300 dark:text-slate-600"}`}>{wallClock(day.getTime(), tz).day}</span>
+                    className={`min-w-0 border-r border-[var(--color-border)] last:border-r-0 p-1 flex flex-col items-start gap-0.5 text-left ${inMonth ? "bg-[var(--color-surface)]" : "bg-[var(--color-canvas)]/50 dark:bg-transparent"} ${isToday ? "ring-1 ring-inset ring-[var(--color-border)]" : ""}`}>
+                    <span className={`text-[11px] font-bold ${isToday ? "text-[var(--state-overdue-text)]" : inMonth ? "text-[var(--color-text)]" : "text-slate-300 dark:text-slate-600"}`}>{wallClock(day.getTime(), tz).day}</span>
                     {items.length > 0 && <>
                       <span className="text-[11px] font-semibold tabular-nums px-1.5 rounded-full bg-[var(--color-surface-2)] text-[var(--color-text)]">{badgeText(items.length)}</span>
-                      <span className="mt-auto w-full h-1 rounded-full bg-black/10 dark:bg-white/10 overflow-hidden"><span className={`block h-full ${avg >= 100 ? "bg-emerald-500" : "bg-[var(--color-text)]"}`} style={{ width: `${avg}%` }} /></span>
+                      <span className="mt-auto w-full h-1 rounded-full bg-black/10 dark:bg-white/10 overflow-hidden"><span className={`block h-full ${avg >= 100 ? "bg-[var(--state-released)]" : "bg-[var(--color-text)]"}`} style={{ width: `${avg}%` }} /></span>
                     </>}
                   </button>
                 );
@@ -885,14 +885,14 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
                   data-daykey={key}
                   onDragOver={(e) => { if (canEdit) { e.preventDefault(); } }}
                   onDrop={(e) => void onDropDay(key, e)}
-                  className={`group/tile min-h-0 min-w-0 border-r border-[var(--color-border)] last:border-r-0 p-1 flex flex-col gap-1 ${inMonth ? "bg-[var(--color-surface)]" : "bg-[var(--color-canvas)]/50"} ${isToday ? "ring-1 ring-inset ring-rose-300" : ""}`}
+                  className={`group/tile min-h-0 min-w-0 border-r border-[var(--color-border)] last:border-r-0 p-1 flex flex-col gap-1 ${inMonth ? "bg-[var(--color-surface)]" : "bg-[var(--color-canvas)]/50"} ${isToday ? "ring-1 ring-inset ring-[var(--color-border)]" : ""}`}
                 >
                   <div className="shrink-0 flex items-center justify-between gap-1 px-0.5">
                     <button
                       type="button"
                       onClick={() => setAgendaDay(key)}
                       title={`Open ${fmtInTz(day, tz, { weekday: "long", month: "long", day: "numeric" })} - every step due that day, with progress entry`}
-                      className={`inline-flex items-center gap-1 text-[11px] font-bold rounded px-1 -ml-1 hover:bg-[var(--color-accent-soft)] hover:text-[var(--color-accent-text)] transition-colors ${isToday ? "text-rose-600 dark:text-rose-400" : inMonth ? "text-[var(--color-text)]" : "text-slate-300"}`}
+                      className={`inline-flex items-center gap-1 text-[11px] font-bold rounded px-1 -ml-1 hover:bg-[var(--color-accent-soft)] hover:text-[var(--color-accent-text)] transition-colors ${isToday ? "text-[var(--state-overdue-text)]" : inMonth ? "text-[var(--color-text)]" : "text-slate-300"}`}
                     >
                       {wallClock(day.getTime(), tz).day}
                       {items.length > 0 && <span className="text-[13px] font-semibold opacity-0 group-hover/tile:opacity-70">Open day</span>}
@@ -909,7 +909,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
                       type="button"
                       onClick={() => setAgendaDay(key)}
                       title={overdueToday.slice(0, 6).map((w) => `• ${w.leaf.name}`).join("\n") + (overdueToday.length > 6 ? `\n…and ${overdueToday.length - 6} more` : "") + "\nOpen the day view to work them"}
-                      className="shrink-0 w-full text-left rounded px-1.5 py-1 border border-rose-300 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/30 text-rose-800 dark:text-rose-300 text-[12px] font-bold hover:bg-rose-100 dark:hover:bg-rose-950/50"
+                      className="shrink-0 w-full text-left rounded px-1.5 py-1 border border-[var(--color-border)] bg-transparent text-[var(--state-overdue-text)] text-[12px] font-bold hover:bg-transparent"
                     >
                       {overdueToday.length} carried over, not done
                     </button>
@@ -1265,7 +1265,7 @@ function Chip({
                 <span title="Critical-path work on this shift: it sets the finish date" className="shrink-0 rounded px-1 text-[11px] font-semibold leading-[14px] bg-[color-mix(in_srgb,var(--state-overdue)_14%,transparent)] text-[var(--state-overdue)]">Crit</span>
               )}
               {aheadOf && (
-                <span title={`Worked ahead of plan: planned to start ${aheadOf}`} className="shrink-0 rounded px-1 text-[11px] font-semibold leading-[14px] bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-200">Ahead</span>
+                <span title={`Worked ahead of plan: planned to start ${aheadOf}`} className="shrink-0 rounded px-1 text-[11px] font-semibold leading-[14px] bg-transparent text-[var(--state-released-text)]">Ahead</span>
               )}
               {crew === "both" && <ShiftMark work="both" />}
               {crew === "mixed" && (
@@ -1279,7 +1279,7 @@ function Chip({
               {(
                 <button type="button" onClick={(e) => { e.stopPropagation(); if (onToggleExpand) onToggleExpand(e); else onClick(e); }}
                   title={isLeaf ? `${pct}% complete: tap to update` : `${pct}% complete · ${done}/${leafTotal} steps done: tap to update its steps`}
-                  className={`relative inline-flex items-center justify-center rounded-md border px-1 py-0 text-[11px] font-bold tabular-nums after:absolute after:-inset-1 pointer-coarse:after:-inset-2.5 after:content-[''] hover:brightness-95 ${pct >= 100 ? "text-emerald-700 bg-emerald-50 border-emerald-200 dark:text-emerald-300 dark:bg-emerald-950/40 dark:border-emerald-800" : pct > 0 ? "text-[var(--color-text)] bg-[var(--color-surface)] border-[var(--color-border-strong)]" : "text-[var(--color-text-muted)] bg-[var(--color-surface-2)] border-[var(--color-border)]"}`}>
+                  className={`relative inline-flex items-center justify-center rounded-md border px-1 py-0 text-[11px] font-bold tabular-nums after:absolute after:-inset-1 pointer-coarse:after:-inset-2.5 after:content-[''] hover:brightness-95 ${pct >= 100 ? "text-[var(--state-released-text)] bg-transparent border-[var(--color-border)]" : pct > 0 ? "text-[var(--color-text)] bg-[var(--color-surface)] border-[var(--color-border-strong)]" : "text-[var(--color-text-muted)] bg-[var(--color-surface-2)] border-[var(--color-border)]"}`}>
                   {pct}%
                 </button>
               )}
@@ -1299,7 +1299,7 @@ function Chip({
       </div>
       {/* Progress as a hairline along the bottom edge. */}
       <span className="absolute left-1 right-0 bottom-0 h-[2px] bg-black/5" aria-hidden>
-        <span className={`block h-full ${pct >= 100 ? "bg-emerald-500" : "bg-[var(--color-text-muted)]"}`} style={{ width: `${pct}%` }} />
+        <span className={`block h-full ${pct >= 100 ? "bg-[var(--state-released)]" : "bg-[var(--color-text-muted)]"}`} style={{ width: `${pct}%` }} />
       </span>
     </div>
   );
@@ -1307,11 +1307,11 @@ function Chip({
 
 function chipTone(s: MilestoneStatus): string {
   switch (s) {
-    case "completed":   return "bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800 text-emerald-900 dark:text-emerald-200";
+    case "completed":   return "bg-transparent border-[var(--color-border)] text-[var(--state-released-text)]";
     case "in_progress": return "bg-[var(--color-surface)] border-[var(--color-border-strong)] text-[var(--color-text)]";
-    case "on_hold":     return "bg-amber-50 dark:bg-amber-950/40 border-amber-200 dark:border-amber-800 text-amber-900 dark:text-amber-200";
-    case "blocked":     return "bg-rose-50 dark:bg-rose-950/40 border-rose-200 dark:border-rose-800 text-rose-900 dark:text-rose-200";
-    case "missed":      return "bg-rose-100 dark:bg-rose-900/40 border-rose-300 dark:border-rose-700 text-rose-900 dark:text-rose-200";
+    case "on_hold":     return "bg-transparent border-[var(--color-border)] text-[var(--state-held-text)]";
+    case "blocked":     return "bg-transparent border-[var(--color-border)] text-[var(--state-overdue-text)]";
+    case "missed":      return "bg-transparent border-[var(--color-border)] text-[var(--state-overdue-text)]";
     default:            return "bg-[var(--color-surface-2)] border-[var(--color-border)] text-[var(--color-text)]";
   }
 }

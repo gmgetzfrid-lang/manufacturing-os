@@ -45,6 +45,7 @@ import { lastChanges, saidWithLatest } from "@/lib/stepComment";
 import { searchMatcher, hasQuery } from "@/lib/fuzzySearch";
 import { appAlert } from "@/components/providers/DialogProvider";
 import { useDraft } from "@/hooks/useDraft";
+import { sayError } from "@/components/projects/sayError";
 
 interface Props {
   day: string; // "YYYY-MM-DD" in the plant zone
@@ -410,7 +411,7 @@ export default function DayAgendaPanel({
               <div className={`${inline ? "text-[15px] font-bold" : "text-[22px] sm:text-[26px] font-semibold tracking-[-0.02em] leading-[1.1]"} truncate`}>{label}</div>
               <div className="mt-1 text-[12px] text-[var(--color-text-muted)]">
                 {totals.n === 0 ? "Nothing scheduled this day." : <>{totals.n} step{totals.n === 1 ? "" : "s"} · {totals.done} done · {totals.avg}% complete</>}
-                {isToday && live.overdue.length > 0 && <span className="ml-2 font-bold text-rose-700 dark:text-rose-300">{live.overdue.length} carried over</span>}
+                {isToday && live.overdue.length > 0 && <span className="ml-2 font-bold text-[var(--state-overdue-text)]">{live.overdue.length} carried over</span>}
                 {aheadCount > 0 && <span className="ml-2 font-bold text-[var(--color-text)] dark:text-[var(--color-text)]">{aheadCount} worked ahead of plan</span>}
               </div>
             </div>
@@ -422,7 +423,7 @@ export default function DayAgendaPanel({
               <div className="h-full bg-[var(--color-main)]" style={{ width: `${totals.avg}%` }} />
             </div>
           )}
-          {readErr && <div role="alert" className="mt-1.5 text-[11px] font-semibold text-rose-700 dark:text-rose-400">Couldn&apos;t read the steps&apos; comments and history. Close and reopen the day to try again.</div>}
+          {readErr && <div role="alert" className="mt-1.5 text-[11px] font-semibold text-[var(--state-overdue-text)]">Couldn&apos;t read the steps&apos; comments and history. Close and reopen the day to try again.</div>}
           {onAddWork && (
             <button type="button" onClick={onAddWork}
               className="mt-3 inline-flex items-center gap-1.5 h-9 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
@@ -436,7 +437,7 @@ export default function DayAgendaPanel({
                 // A keyboard popping up on a tablet hides half the list: focus only with a mouse.
                 autoFocus={typeof window !== "undefined" && window.matchMedia?.("(pointer: fine)").matches}
                 placeholder="Find equipment, WO # or step, e.g. E-606, 4410037"
-                className="w-full h-9 pl-8 pr-8 rounded-[10px] border border-transparent bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none focus:bg-[var(--color-surface)] focus:border-[var(--color-border-strong)]" />
+                className="w-full h-9 pl-8 pr-8 rounded-[10px] border border-transparent bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:bg-[var(--color-surface)]" />
               {query && <button onClick={() => setQuery("")} className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 text-[var(--color-text-faint)] hover:text-[var(--color-text)]" title="Clear"><XIcon className="w-3.5 h-3.5" /></button>}
             </div>
           )}
@@ -509,10 +510,10 @@ export default function DayAgendaPanel({
                     return (
                       <li key={r.leaf.id} className={openId === r.leaf.id ? "bg-[var(--color-surface-2)]" : ""}>
                       <div className={`relative px-4 py-2 flex items-center gap-3 ${openId === r.leaf.id ? "" : r.live === "started-early" ? "bg-[var(--color-surface-2)]/60" : ""}`}>
-                        {r.live === "overdue" && <span aria-hidden className="absolute left-0 top-1.5 bottom-1.5 w-[3px] rounded-r bg-rose-600" />}
+                        {r.live === "overdue" && <span aria-hidden className="absolute left-0 top-1.5 bottom-1.5 w-[3px] rounded-r bg-[var(--state-overdue)]" />}
                         {/* Day-only or night-only work is marked; round the clock is the norm. */}
                         {(() => { const w = workShiftOf(r.leaf, tz, shiftTimes); return w === "both" ? <span className="w-4 shrink-0" aria-hidden /> : <ShiftMark work={w} />; })()}
-                        <span className={`w-[80px] shrink-0 text-[11px] font-display tabular-nums ${r.live === "overdue" ? "font-semibold text-rose-700 dark:text-rose-300" : r.live === "started-early" ? "font-bold text-[var(--color-text)] dark:text-[var(--color-text)]" : r.live === "done-ahead" ? "font-bold text-emerald-700 dark:text-emerald-300" : "text-[var(--color-text-muted)]"}`}>{windowOf(r)}</span>
+                        <span className={`w-[80px] shrink-0 text-[11px] font-display tabular-nums ${r.live === "overdue" ? "font-semibold text-[var(--state-overdue-text)]" : r.live === "started-early" ? "font-bold text-[var(--color-text)] dark:text-[var(--color-text)]" : r.live === "done-ahead" ? "font-bold text-[var(--state-released-text)]" : "text-[var(--color-text-muted)]"}`}>{windowOf(r)}</span>
                         <span className="shrink-0">
                           <StatusControl
                             status={r.leaf.status} size="sm" variant="dot" disabled={!canEdit || !onSetStatus || !r.leaf.id}
@@ -532,12 +533,12 @@ export default function DayAgendaPanel({
                             <span className="block text-[11px] italic text-[var(--color-text-muted)] break-words">&ldquo;{latestByStep.get(r.leaf.id)!.body}&rdquo;{latestByStep.get(r.leaf.id)!.t < dayStartsAt ? ` · ${fmtInTz(latestByStep.get(r.leaf.id)!.t, tz, { weekday: "short", month: "short", day: "numeric" })}` : ""}</span>
                           )}
                           {r.leaf.status !== "completed" && waitsOn(r.leaf).length > 0 && (
-                            <span className="block text-[11px] font-semibold text-amber-700 dark:text-amber-400 break-words">
+                            <span className="block text-[11px] font-semibold text-[var(--state-held-text)] break-words">
                               Waits on {waitsOn(r.leaf).map((p) => `${ancestorsOf(p)[0]?.name ? `${ancestorsOf(p)[0].name} · ` : ""}${p.name}${p.responsibleParty ? ` (${p.responsibleParty})` : ""}`).join("; ")}
                             </span>
                           )}
                           {(r.leaf.status === "on_hold" || r.leaf.status === "blocked") && (
-                            <span className={`block text-[11px] font-semibold break-words ${r.leaf.status === "blocked" ? "text-rose-700 dark:text-rose-400" : "text-amber-700 dark:text-amber-400"}`}>
+                            <span className={`block text-[11px] font-semibold break-words ${r.leaf.status === "blocked" ? "text-[var(--state-overdue-text)]" : "text-[var(--state-held-text)]"}`}>
                               {r.leaf.status === "blocked" ? "Blocked" : "On hold"}: {r.leaf.statusReason || "no reason recorded"}
                             </span>
                           )}
@@ -560,7 +561,7 @@ export default function DayAgendaPanel({
                           const short = g - pct >= 5;
                           return (
                             <span title={`The plan has this step at ${g}% by ${goalLabel}`}
-                              className={`text-right text-[11px] font-bold tabular-nums leading-tight ${short ? "text-amber-700 dark:text-amber-400" : "text-[var(--color-text-faint)]"}`}>
+                              className={`text-right text-[11px] font-bold tabular-nums leading-tight ${short ? "text-[var(--state-held-text)]" : "text-[var(--color-text-faint)]"}`}>
                               goal {g}%<span className="block font-semibold opacity-80">by {goalLabel}</span>
                             </span>
                           );
@@ -844,7 +845,7 @@ function QuickEdit({ leaf, pct, canEdit, onSetStatus, onSetProgress, onAddNote, 
       // (work in progress always says what got done).
       // A timed change is saved only once it has its time.
       if (progressPending() && !needsNote() && !needsTime()) void commit();
-      else if (!progressPending() && notePending()) { const typed = note.trim(); void writeNote(typed).catch((e) => appAlert({ title: "Note not saved", message: `Your note didn't save (${(e as Error).message}). Here it is to put in again: "${typed}"`, tone: "danger" })); }
+      else if (!progressPending() && notePending()) { const typed = note.trim(); void writeNote(typed).catch((e) => appAlert({ title: "Note not saved", message: `Your note didn't save (${sayError(e)}). Here it is to put in again: "${typed}"`, tone: "danger" })); }
       if (holdPending() && hold && onSetStatus) {
         if (!timed) onSetStatus(id, hold, reason.trim() || undefined);
         else if (reason.trim() && whenAt != null) void saveHold();
@@ -870,7 +871,7 @@ function QuickEdit({ leaf, pct, canEdit, onSetStatus, onSetProgress, onAddNote, 
             onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); if (pctDraft !== "") pickPct(Number(pctDraft)); } }}
             onBlur={() => { if (pctDraft !== "" && Number(pctDraft) !== (stagedPct ?? Math.round(pct))) pickPct(Number(pctDraft)); }}
             aria-label="Percent done"
-            className="h-7 w-12 px-1.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-right font-bold tabular-nums focus:outline-none focus:border-[var(--color-accent-ring)]" />
+            className="h-7 w-12 px-1.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-right font-bold tabular-nums" />
           <span className="font-bold text-[var(--color-text-muted)]">%</span>
         </span>
       </div>
@@ -885,20 +886,20 @@ function QuickEdit({ leaf, pct, canEdit, onSetStatus, onSetProgress, onAddNote, 
       </div>
       {hold && (
         <div className="flex items-center gap-1.5">
-          <span className={`w-16 shrink-0 font-semibold text-[11px] ${timed && holdTouched && !reason.trim() ? "text-amber-700 dark:text-amber-400" : "text-[var(--color-text-muted)]"}`}>
+          <span className={`w-16 shrink-0 font-semibold text-[11px] ${timed && holdTouched && !reason.trim() ? "text-[var(--state-held-text)]" : "text-[var(--color-text-muted)]"}`}>
             Blocking it{timed && holdTouched && <span className="block normal-case tracking-normal">required</span>}
           </span>
           <input value={reason} disabled={ro} autoFocus onChange={(e) => { setReason(e.target.value); setHoldTouched(true); setNeedMsg(null); }}
             onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void saveHold(); } }}
             placeholder="What's stopping it: permit, scaffold, ops release, parts…"
-            className="flex-1 h-7 px-2 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] focus:outline-none focus:border-[var(--color-accent-ring)]" />
+            className="flex-1 h-7 px-2 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)]" />
           <button disabled={ro} onClick={() => void saveHold()} className="h-7 px-2.5 rounded-md font-bold bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)] disabled:opacity-40">
             Save {hold === "blocked" ? "blocked" : "on hold"}{timed && holdTouched && whenAt != null ? ` at ${clock}` : ""}
           </button>
         </div>
       )}
       {timed && starting && (leaf.status === "on_hold" || leaf.status === "blocked") && (
-        <div className="ml-[70px] border-l-2 border-amber-500 pl-2 py-0.5 text-amber-800 dark:text-amber-300">
+        <div className="ml-[70px] border-l-2 border-[var(--state-held)] pl-2 py-0.5 text-[var(--state-held-text)]">
           Taking it off {leaf.status === "on_hold" ? "hold" : "block"}. It was: <b>&ldquo;{leaf.statusReason || "no reason given"}&rdquo;</b>. Say what changed.
         </div>
       )}
@@ -906,7 +907,7 @@ function QuickEdit({ leaf, pct, canEdit, onSetStatus, onSetProgress, onAddNote, 
         <div className="flex flex-wrap items-center gap-1.5">
           {/* When it happened: the shift (this one, or a card further on
               done ahead of plan: now or before) and the time. */}
-          <span className={`w-16 shrink-0 font-semibold text-[11px] ${whenAt == null ? "text-amber-700 dark:text-amber-400" : "text-[var(--color-text-muted)]"}`}>
+          <span className={`w-16 shrink-0 font-semibold text-[11px] ${whenAt == null ? "text-[var(--state-held-text)]" : "text-[var(--color-text-muted)]"}`}>
             When<span className="block normal-case tracking-normal">{whenAt == null ? "required" : "24-hour"}</span>
           </span>
           <span className="inline-flex flex-wrap gap-1" role="group" aria-label="Which shift">
@@ -921,10 +922,10 @@ function QuickEdit({ leaf, pct, canEdit, onSetStatus, onSetProgress, onAddNote, 
           <input ref={clockRef} value={clock} disabled={ro} inputMode="numeric" placeholder="hh:mm" aria-label="Time it happened, 24-hour"
             onChange={(e) => { setClock(typeClock(e.target.value)); setNeedMsg(null); }}
             onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); if (progressPending()) void commit(); else void saveHold(); } }}
-            className={`h-7 w-[64px] px-1.5 rounded-md font-display tabular-nums font-bold pointer-coarse:h-9 focus:outline-none focus:border-[var(--color-accent-ring)] ${whenAt == null ? "border-2 border-amber-400 bg-amber-50/60 dark:bg-amber-950/30" : "border border-[var(--color-border-strong)] bg-[var(--color-surface)]"}`} />
+            className={`h-7 w-[64px] px-1.5 rounded-md font-display tabular-nums font-bold pointer-coarse:h-9   ${whenAt == null ? "border-2 border-[var(--state-held)] bg-transparent" : "border border-[var(--color-border-strong)] bg-[var(--color-surface)]"}`} />
           <button type="button" disabled={ro} onClick={() => { setWi(0); setOtherDay(null); setPicking(false); setClock(new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: tz })); setNeedMsg(null); }}
             className="h-7 px-2 rounded-md border border-[var(--color-border-strong)] font-bold hover:bg-[var(--color-surface-2)] pointer-coarse:h-9">Now</button>
-          <span className="text-[var(--color-text-muted)]">{when && "error" in when ? <span className="font-semibold text-rose-700 dark:text-rose-400">{when.error}</span> : when && "at" in when ? <>{when.moved ? "→ " : "on "}<b className="text-[var(--color-text)]">{shiftWord(when.shift, tz)}</b></> : fmtInTz(win.start, tz, { weekday: "short", month: "short", day: "numeric" })}</span>
+          <span className="text-[var(--color-text-muted)]">{when && "error" in when ? <span className="font-semibold text-[var(--state-overdue-text)]">{when.error}</span> : when && "at" in when ? <>{when.moved ? "→ " : "on "}<b className="text-[var(--color-text)]">{shiftWord(when.shift, tz)}</b></> : fmtInTz(win.start, tz, { weekday: "short", month: "short", day: "numeric" })}</span>
         </div>
       )}
       {timed && choice.ahead && (progressPending() || (holdTouched && !!hold)) && (
@@ -939,14 +940,14 @@ function QuickEdit({ leaf, pct, canEdit, onSetStatus, onSetProgress, onAddNote, 
       {onAddNote && (
         <div className="flex flex-wrap items-center gap-1.5">
           {/* A % being saved needs its comment — said right on the box. */}
-          <span className={`w-16 shrink-0 font-semibold text-[11px] ${needsNote() ? "text-amber-700 dark:text-amber-400" : "text-[var(--color-text-muted)]"}`}>
+          <span className={`w-16 shrink-0 font-semibold text-[11px] ${needsNote() ? "text-[var(--state-held-text)]" : "text-[var(--color-text-muted)]"}`}>
             {needsNote() ? <>{timed && stagedPct === 0 && !starting ? "Why" : starting && (stagedPct ?? 0) <= Math.round(pct) ? "What started" : "What got done"}<span className="block normal-case tracking-normal">required</span></> : noteMode === "edit" ? "Comment" : "Note"}
           </span>
           <input ref={noteRef} value={note} disabled={ro} onChange={(e) => { setNote(e.target.value); setNeedMsg(null); }}
             onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void commit(); } }}
             placeholder={progressPending() ? "e.g. bundle half out · or why it's corrected" : "Comment: shows on the shift report (e.g. sent out for calibration)"}
             aria-required={needsNote()}
-            className={`flex-1 min-w-[180px] h-7 px-2 rounded-md bg-[var(--color-surface)] pointer-coarse:h-9 focus:outline-none focus:border-[var(--color-accent-ring)] ${needMsg && needsNote() ? "border-2 border-rose-500" : needsNote() ? "border-2 border-amber-400 bg-amber-50/60 dark:bg-amber-950/30" : "border border-[var(--color-border-strong)]"}`} />
+            className={`flex-1 min-w-[180px] h-7 px-2 rounded-md bg-[var(--color-surface)] pointer-coarse:h-9   ${needMsg && needsNote() ? "border-2 border-[var(--state-overdue)]" : needsNote() ? "border-2 border-[var(--state-held)] bg-transparent" : "border border-[var(--color-border-strong)]"}`} />
           {progressPending() && (
             <button disabled={ro} onClick={() => void commit()}
               className={`shrink-0 h-7 px-2.5 rounded-md font-semibold bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)] disabled:opacity-40 pointer-coarse:h-9 ${needsNote() || needsTime() ? "opacity-70" : ""}`}>
@@ -962,9 +963,9 @@ function QuickEdit({ leaf, pct, canEdit, onSetStatus, onSetProgress, onAddNote, 
           )}
         </div>
       )}
-      {needMsg && <div className="pl-[70px] font-semibold text-rose-700 dark:text-rose-400">{needMsg}</div>}
+      {needMsg && <div className="pl-[70px] font-semibold text-[var(--state-overdue-text)]">{needMsg}</div>}
       <div className="flex items-center gap-2">
-        {saved && <span className="inline-flex items-center gap-1 font-bold text-emerald-700 dark:text-emerald-400"><Check className="w-3.5 h-3.5" /> {saved}</span>}
+        {saved && <span className="inline-flex items-center gap-1 font-bold text-[var(--state-released-text)]"><Check className="w-3.5 h-3.5" /> {saved}</span>}
         <button onClick={onOpenDetail} className="ml-auto inline-flex items-center gap-1 text-[var(--color-accent-text)] hover:underline">
           <ExternalLink className="w-3 h-3" /> Full details
         </button>

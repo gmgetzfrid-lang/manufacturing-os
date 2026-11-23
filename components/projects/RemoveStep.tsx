@@ -59,17 +59,17 @@ export function RemoveStepDialog({ m, under, userId, userName, userEmail, onDele
             onClose={() => setCancelling(false)} onDone={onCancelled} />
         ) : (
           <div className="border-y border-[var(--color-border)] divide-y divide-[var(--color-border)]">
-            <button type="button" onClick={onDelete} className={`${choice} hover:bg-rose-50 dark:hover:bg-rose-950/30`}>
-              <Trash2 className="w-5 h-5 mt-0.5 text-rose-600 dark:text-rose-400 shrink-0" />
+            <button type="button" onClick={onDelete} className={`${choice} hover:bg-transparent`}>
+              <Trash2 className="w-5 h-5 mt-0.5 text-[var(--state-overdue-text)] shrink-0" />
               <span>
-                <b className="block text-[13.5px] text-[var(--color-text)]">Delete it</b>
+                <b className="block text-[14px] text-[var(--color-text)]">Delete it</b>
                 <span className="block text-[12px] text-[var(--color-text-muted)]">Put in by mistake. Gone, with its comments and progress. Undo right after brings it back.</span>
               </span>
             </button>
-            <button type="button" onClick={() => setCancelling(true)} className={`${choice} hover:bg-amber-50 dark:hover:bg-amber-950/30`}>
-              <Ban className="w-5 h-5 mt-0.5 text-amber-600 dark:text-amber-400 shrink-0" />
+            <button type="button" onClick={() => setCancelling(true)} className={`${choice} hover:bg-transparent`}>
+              <Ban className="w-5 h-5 mt-0.5 text-[var(--state-held-text)] shrink-0" />
               <span>
-                <b className="block text-[13.5px] text-[var(--color-text)]">Cancel it</b>
+                <b className="block text-[14px] text-[var(--color-text)]">Cancel it</b>
                 <span className="block text-[12px] text-[var(--color-text-muted)]">Planned, but not done on this job. Kept on the close-out report as cancelled, with why and where it went.</span>
               </span>
             </button>

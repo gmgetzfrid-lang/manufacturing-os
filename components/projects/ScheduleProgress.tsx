@@ -64,10 +64,10 @@ const STATUS_META: Record<MilestoneStatus, { label: string; tone: string; bar: s
   // The same colours as the timeline and calendar dots.
   planned:     { label: "Planned",     tone: "text-slate-600 dark:text-slate-300",  bar: "bg-[var(--color-border-strong)]",   Icon: Circle },
   in_progress: { label: "In progress", tone: "text-[var(--color-text)] dark:text-[var(--color-text)]",    bar: "bg-[var(--color-main)]/55",    Icon: PauseCircle },
-  completed:   { label: "Completed",   tone: "text-emerald-700 dark:text-emerald-300", bar: "bg-[var(--color-main)]", Icon: CheckCircle2 },
-  missed:      { label: "Missed",      tone: "text-rose-700 dark:text-rose-300",    bar: "bg-[var(--state-overdue)]",    Icon: XCircle },
-  blocked:     { label: "Blocked",     tone: "text-rose-700 dark:text-rose-300",    bar: "bg-[var(--state-overdue)]",    Icon: MinusCircle },
-  on_hold:     { label: "On hold",     tone: "text-amber-700 dark:text-amber-300",   bar: "bg-[var(--state-held)]",   Icon: PauseCircle },
+  completed:   { label: "Completed",   tone: "text-[var(--state-released-text)]", bar: "bg-[var(--color-main)]", Icon: CheckCircle2 },
+  missed:      { label: "Missed",      tone: "text-[var(--state-overdue-text)]",    bar: "bg-[var(--state-overdue)]",    Icon: XCircle },
+  blocked:     { label: "Blocked",     tone: "text-[var(--state-overdue-text)]",    bar: "bg-[var(--state-overdue)]",    Icon: MinusCircle },
+  on_hold:     { label: "On hold",     tone: "text-[var(--state-held-text)]",   bar: "bg-[var(--state-held)]",   Icon: PauseCircle },
 };
 
 export default function ScheduleProgress({ milestones, metrics, projectId, onShowOverdue, onShowBlocked, head, bare }: Props) {
@@ -121,7 +121,7 @@ export default function ScheduleProgress({ milestones, metrics, projectId, onSho
   const held = r.onHold + r.blocked;
   const heldWord = [r.onHold ? `${r.onHold} on hold` : null, r.blocked ? `${r.blocked} blocked` : null].filter(Boolean).join(", ");
 
-  const verdictTone = verdict === "behind" ? "text-rose-700 dark:text-rose-300" : verdict === "ahead" ? "text-emerald-700 dark:text-emerald-300" : "text-[var(--color-text-muted)]";
+  const verdictTone = verdict === "behind" ? "text-[var(--state-overdue-text)]" : verdict === "ahead" ? "text-[var(--state-released-text)]" : "text-[var(--color-text-muted)]";
 
   return (
     <div className={`grid grid-cols-1 lg:grid-cols-3 ${bare ? "gap-x-6 gap-y-4" : "gap-4"}`}>
@@ -153,7 +153,7 @@ export default function ScheduleProgress({ milestones, metrics, projectId, onSho
         <StackedBar counts={metrics.byStatus} />
 
         {/* The counts in one row: zero is faint, colour only where it's off. */}
-        <ul className="mt-2.5 flex flex-wrap gap-x-4 gap-y-1 text-[12.5px]" aria-label="Steps by status">
+        <ul className="mt-2.5 flex flex-wrap gap-x-4 gap-y-1 text-[12px]" aria-label="Steps by status">
           {(Object.keys(STATUS_META) as MilestoneStatus[]).map((s) => {
             const meta = STATUS_META[s];
             const n = metrics.byStatus[s] ?? 0;
@@ -175,7 +175,7 @@ export default function ScheduleProgress({ milestones, metrics, projectId, onSho
           ) : finished ? (
             <>
               <div className="text-[14px] font-bold text-[var(--color-text)]">{r.finishedAt ? humanDateTime(r.finishedAt, tz) : "-"}</div>
-              <div className={`text-[12.5px] mt-0.5 inline-flex items-center gap-1 ${finIsLate ? "text-rose-700 dark:text-rose-300 font-semibold" : "text-emerald-700 dark:text-emerald-300"}`}>
+              <div className={`text-[12px] mt-0.5 inline-flex items-center gap-1 ${finIsLate ? "text-[var(--state-overdue-text)] font-semibold" : "text-[var(--state-released-text)]"}`}>
                 {finIsLate ? <AlertTriangle className="w-3.5 h-3.5" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
                 {[finWords, plannedEndAt ? `planned ${humanDateTime(plannedEndAt, tz)}` : null].filter(Boolean).join(" · ")}
               </div>
@@ -185,7 +185,7 @@ export default function ScheduleProgress({ milestones, metrics, projectId, onSho
           <div className="text-[14px] font-bold text-[var(--color-text)]">
             {forecastEndAt ? (linked ? humanDateTime(forecastEndAt, tz) : humanDate(forecastEndAt, tz)) : plannedEndAt ? humanDate(plannedEndAt, tz) : "-"}
           </div>
-          <div className={`text-[12.5px] mt-0.5 inline-flex items-center gap-1 ${late ? "text-rose-700 dark:text-rose-300 font-semibold" : "text-emerald-700 dark:text-emerald-300"}`}>
+          <div className={`text-[12px] mt-0.5 inline-flex items-center gap-1 ${late ? "text-[var(--state-overdue-text)] font-semibold" : "text-[var(--state-released-text)]"}`}>
             {linked
               ? (slipH >= 0.5 ? <><AlertTriangle className="w-3.5 h-3.5" /> {fmtH(slipH)} late</> : slipH <= -0.5 ? <><CheckCircle2 className="w-3.5 h-3.5" /> {fmtH(-slipH)} early</> : <><CheckCircle2 className="w-3.5 h-3.5" /> On plan</>)
               : late
@@ -197,14 +197,14 @@ export default function ScheduleProgress({ milestones, metrics, projectId, onSho
           )}
           {(overdue.length > 0 || held > 0) && (
             <div className="mt-1.5 flex flex-wrap items-center gap-x-1 text-[13px] font-bold">
-              <AlertTriangle className="w-3.5 h-3.5 text-rose-700 dark:text-rose-300" />
+              <AlertTriangle className="w-3.5 h-3.5 text-[var(--state-overdue-text)]" />
               {overdue.length > 0 && (onShowOverdue
-                ? <button type="button" onClick={onShowOverdue} className="text-rose-700 dark:text-rose-300 underline decoration-dotted underline-offset-2 hover:decoration-solid" title="Show the overdue work">{overdue.length} overdue</button>
-                : <span className="text-rose-700 dark:text-rose-300">{overdue.length} overdue</span>)}
+                ? <button type="button" onClick={onShowOverdue} className="text-[var(--state-overdue-text)] underline decoration-dotted underline-offset-2 hover:decoration-solid" title="Show the overdue work">{overdue.length} overdue</button>
+                : <span className="text-[var(--state-overdue-text)]">{overdue.length} overdue</span>)}
               {overdue.length > 0 && held > 0 && <span className="text-[var(--color-text-muted)]">,</span>}
               {held > 0 && (onShowBlocked
-                ? <button type="button" onClick={onShowBlocked} className="text-amber-700 dark:text-amber-300 underline decoration-dotted underline-offset-2 hover:decoration-solid" title="Review the held work">{heldWord}</button>
-                : <span className="text-amber-700 dark:text-amber-300">{heldWord}</span>)}
+                ? <button type="button" onClick={onShowBlocked} className="text-[var(--state-held-text)] underline decoration-dotted underline-offset-2 hover:decoration-solid" title="Review the held work">{heldWord}</button>
+                : <span className="text-[var(--state-held-text)]">{heldWord}</span>)}
             </div>
           )}
 

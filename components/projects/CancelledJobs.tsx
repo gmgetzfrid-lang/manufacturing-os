@@ -11,6 +11,7 @@ import { fmtInTz } from "@/lib/scheduleTz";
 import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
 import type { CancelledJob } from "@/lib/cancelledJobs";
 import { useDraft } from "@/hooks/useDraft";
+import { sayError } from "@/components/projects/sayError";
 
 export function CancelJobForm({ id, name, steps, userId, userName, userEmail, onDone, onClose }: {
   id: string; name: string; steps: number;
@@ -29,9 +30,9 @@ export function CancelJobForm({ id, name, steps, userId, userName, userEmail, on
       await cancelMilestone({ id, note, movedTo, actorUserId: userId, actorUserName: userName, actorUserEmail: userEmail });
       draft.clear();
       onDone();
-    } catch (e) { setErr((e as Error).message); setBusy(false); }
+    } catch (e) { setErr(sayError(e)); setBusy(false); }
   };
-  const input = "w-full rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1.5 text-[13px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none focus:ring-2 focus:ring-amber-400/60";
+  const input = "w-full rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1.5 text-[13px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] ";
   return (
     <div className="w-full space-y-2">
       <div className="text-[12px] text-[var(--color-text)]">
@@ -47,7 +48,7 @@ export function CancelJobForm({ id, name, steps, userId, userName, userEmail, on
         <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2} maxLength={2000}
           placeholder="Why, and anything to remember" className={`${input} resize-y`} />
       </label>
-      {err && <div className="text-[12px] text-rose-700 dark:text-rose-300">{err}</div>}
+      {err && <div className="text-[12px] text-[var(--state-overdue-text)]">{err}</div>}
       <div className="flex items-center justify-end gap-2">
         <button onClick={onClose} disabled={busy} className="text-[12px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-2 py-1">Back</button>
         <button onClick={() => void save()} disabled={busy}
@@ -71,7 +72,7 @@ export function CancelledJobsList({ jobs, canEdit, userId, userEmail, onChanged 
   const putBack = async (id: string) => {
     setBusy(id); setErr(null);
     try { await restoreCancelledMilestone({ id, actorUserId: userId, actorUserEmail: userEmail }); await onChanged(); }
-    catch (e) { setErr((e as Error).message); }
+    catch (e) { setErr(sayError(e)); }
     finally { setBusy(null); }
   };
   // A long list ends with "Show N more", so it's plain there's more.
@@ -79,10 +80,10 @@ export function CancelledJobsList({ jobs, canEdit, userId, userEmail, onChanged 
   const shown = all ? jobs : jobs.slice(0, SHOW_FIRST);
   return (
     <div className="divide-y divide-[var(--color-border)]">
-      {err && <div className="px-3 py-2 text-[12px] text-rose-700 dark:text-rose-300">{err}</div>}
+      {err && <div className="px-3 py-2 text-[12px] text-[var(--state-overdue-text)]">{err}</div>}
       {shown.map((j) => (
         <div key={j.m.id} className="px-3 py-2 flex items-start gap-3">
-          <div className="flex-1 min-w-0 text-[12.5px] space-y-0.5">
+          <div className="flex-1 min-w-0 text-[12px] space-y-0.5">
             <div className="text-[var(--color-text)]">
               {j.m.workOrderRef && <span className="font-display tabular-nums font-bold">WO {j.m.workOrderRef} · </span>}
               <b className="break-words">{j.m.name}</b>
@@ -90,7 +91,7 @@ export function CancelledJobsList({ jobs, canEdit, userId, userEmail, onChanged 
               {j.steps > 1 && <span className="text-[11px] text-[var(--color-text-muted)]"> · {j.steps} steps</span>}
             </div>
             <div className="text-[var(--color-text)]">
-              <span className="text-[12px] font-semibold text-amber-700 dark:text-amber-400">Moved to </span>
+              <span className="text-[12px] font-semibold text-[var(--state-held-text)]">Moved to </span>
               {j.m.movedTo ? <b>{j.m.movedTo}</b> : <span className="text-[var(--color-text-faint)]">not said</span>}
             </div>
             {j.m.cancelNote && <div className="italic text-[var(--color-text-muted)] break-words">“{j.m.cancelNote}”</div>}

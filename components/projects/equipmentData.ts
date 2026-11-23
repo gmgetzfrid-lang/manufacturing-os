@@ -7,6 +7,7 @@
 import { useCallback, useEffect, useState } from "react";
 import type { Milestone } from "@/types/schema";
 import { loadProjectEquipment, withEquipment, EQUIPMENT_CHANGED, type ProjectEquipmentData, type SavedHere } from "@/lib/projectEquipment";
+import { sayError } from "@/components/projects/sayError";
 
 export const cache = new Map<string, ProjectEquipmentData>();
 // Work orders' equipment, unit and type saved here, by project: shown at
@@ -43,7 +44,7 @@ export function useEquipmentRegistry(orgId: string | null | undefined, projectId
   const [error, setError] = useState<string | null>(null);
   const load = useCallback((fresh: boolean) => {
     if (!orgId) return Promise.resolve();
-    return read(orgId, projectId, fresh).then((d) => { cache.set(projectId, d); setData(d); setError(null); }).catch((e) => setError((e as Error).message));
+    return read(orgId, projectId, fresh).then((d) => { cache.set(projectId, d); setData(d); setError(null); }).catch((e) => setError(sayError(e)));
   }, [orgId, projectId]);
   useEffect(() => {
     void load(false);

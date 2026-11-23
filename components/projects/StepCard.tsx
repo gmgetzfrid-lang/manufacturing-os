@@ -27,6 +27,7 @@ import { appConfirm } from "@/components/providers/DialogProvider";
 import type { ProgressLogRow } from "@/lib/progressHistory";
 import { describeChange } from "@/lib/timeLog";
 import { useDraft } from "@/hooks/useDraft";
+import { sayError } from "@/components/projects/sayError";
 
 /** What a change saves (the schedule's one save — ExecutionView.updateStep). */
 export interface StepUpdate {
@@ -150,7 +151,7 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
       await updateDiscoveryRecord(m.projectId, found.id, { kind: foundEdit.kind, what, foundAt: at, ...(woNow !== (m.workOrderRef ?? "").trim() ? { wo: woNow || null } : {}) });
       window.dispatchEvent(new CustomEvent("schedule:changed"));
       setFoundEdit(null); setSaved(`${k.word}: ${k.found} ${when(at)}`);
-    } catch (e) { setFoundMsg((e as Error).message || "Not saved."); }
+    } catch (e) { setFoundMsg(sayError(e, "Not saved.")); }
     finally { setFoundBusy(false); }
   };
   // Taking it off the schedule: every step it added, with their progress.
@@ -167,7 +168,7 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
     try {
       await deleteDiscovery(m.projectId, found.id);
       window.dispatchEvent(new CustomEvent("schedule:changed"));
-    } catch (e) { setFoundMsg((e as Error).message || "Not deleted."); }
+    } catch (e) { setFoundMsg(sayError(e, "Not deleted.")); }
     finally { setFoundBusy(false); }
   };
   const as = ms(m.actualStartAt), af = m.status === "completed" ? ms(m.actualAt) : NaN;
@@ -358,7 +359,7 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
       if (!(await addComment(t))) { setFixMsg("Time saved; the comment wasn't."); return; }
       window.dispatchEvent(new CustomEvent("milestone-notes:changed"));
       setFixing(null); setSaved(`Saved: ${when(t)}`);
-    } catch (e) { setFixMsg((e as Error).message || "Not saved."); }
+    } catch (e) { setFixMsg(sayError(e, "Not saved.")); }
     finally { setFixBusy(false); }
   };
 
@@ -538,7 +539,7 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
         if (root) { const sc = scrollParentOf(root); anchor.current = { h: root.offsetHeight, sc, top: sc.scrollTop, slack: sc.scrollHeight - sc.scrollTop - sc.clientHeight }; }
         noteDraft.clear(); setSaved(said); setAction(null);
       } else setMsg((x) => x ?? "Not saved.");
-    } catch (e) { setMsg((e as Error).message || "Not saved."); }
+    } catch (e) { setMsg(sayError(e, "Not saved.")); }
     finally { setBusy(false); aheadOk.current = false; ampmOk.current = false; }
   };
 
@@ -599,7 +600,7 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
       changed([m.id]);
       if (notesLeft) { setFixMsg(`${notesLeft} comment${notesLeft === 1 ? " wasn't" : "s weren't"} removed. Try again.`); return; }
       setFixing(null); setSaved(kind === "change" ? `Took back “${x.text}”` : kind === "entry" ? `Removed “${x.text}”` : "Comment removed");
-    } catch (e) { setFixMsg((e as Error).message || "Not removed."); }
+    } catch (e) { setFixMsg(sayError(e, "Not removed.")); }
     finally { setFixBusy(false); }
   };
   const [resetMsg, setResetMsg] = useState<string | null>(null);
@@ -616,7 +617,7 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
       if (r !== "ok") { setResetMsg(r === "missing" ? "Starting over needs the database update (20261109_history_remove.sql) run first." : "Not reset."); return; }
       changed([m.id]);
       setAction(null); setSaved("Started over: not started, nothing recorded");
-    } catch (e) { setResetMsg((e as Error).message || "Not reset."); }
+    } catch (e) { setResetMsg(sayError(e, "Not reset.")); }
     finally { setBusy(false); }
   };
 

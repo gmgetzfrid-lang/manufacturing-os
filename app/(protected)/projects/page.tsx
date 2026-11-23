@@ -34,6 +34,7 @@ import ProjectWizard from "@/components/projects/ProjectWizard";
 import { exportAllProjectsToCsv } from "@/lib/projectExport";
 import StaleCheckoutBanner from "@/components/projects/StaleCheckoutBanner";
 import type { Project, ProjectStatus, Timestamp } from "@/types/schema";
+import { sayError } from "@/components/projects/sayError";
 
 const STATUS_TABS: { value: ProjectStatus | "all"; label: string }[] = [
   { value: "active",    label: "Active" },
@@ -107,7 +108,7 @@ export default function ProjectsPage() {
       setMine(my);
       hasLoadedOnce.current = true;
     } catch (e) {
-      setError((e as Error).message || "Failed to load projects");
+      setError(sayError(e, "Failed to load projects"));
     } finally {
       setLoading(false);
     }
@@ -240,7 +241,7 @@ export default function ProjectsPage() {
         tools={activeOrgId && allProjects.length > 0 ? (
           <MoreMenu triggerClass={heroQuiet} items={[{ icon: <Download className="w-4 h-4" />, label: "Export all to CSV", onClick: async () => {
             try { await exportAllProjectsToCsv(activeOrgId); }
-            catch (e) { await appAlert({ message: (e as Error).message, tone: "danger" }); }
+            catch (e) { await appAlert({ message: sayError(e), tone: "danger" }); }
           } }]} />
         ) : undefined}
         primary={<button type="button" onClick={() => setShowCreate(true)} className={heroPrimary}><Plus className="w-4 h-4" /> New project</button>}

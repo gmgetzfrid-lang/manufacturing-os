@@ -15,10 +15,10 @@ import { ADDED } from "@/lib/discovery";
 const STATUS_CHIPS: Array<{ s: MilestoneStatus; label: string; dot: string }> = [
   { s: "planned", label: "Planned", dot: "bg-slate-400" },
   { s: "in_progress", label: "In progress", dot: "bg-[var(--color-text-muted)]" },
-  { s: "completed", label: "Done", dot: "bg-emerald-500" },
-  { s: "on_hold", label: "On hold", dot: "bg-amber-500" },
-  { s: "blocked", label: "Blocked", dot: "bg-rose-500" },
-  { s: "missed", label: "Missed", dot: "bg-rose-600" },
+  { s: "completed", label: "Done", dot: "bg-[var(--state-released)]" },
+  { s: "on_hold", label: "On hold", dot: "bg-[var(--state-held)]" },
+  { s: "blocked", label: "Blocked", dot: "bg-[var(--state-overdue)]" },
+  { s: "missed", label: "Missed", dot: "bg-[var(--state-overdue)]" },
 ];
 
 interface Props {
@@ -67,7 +67,7 @@ export default function ScheduleFilterBar({ filter, onChange, groups, matchCount
             onChange={(e) => onChange({ ...filter, query: e.target.value })}
             placeholder="Search tasks, work-order number, area, person…"
             aria-label="Search tasks"
-            className="w-full h-9 pl-8 pr-8 text-[13px] rounded-[10px] bg-[var(--color-surface-2)] border border-transparent outline-none placeholder:text-[var(--color-text-faint)] focus:bg-[var(--color-surface)] focus:border-[var(--color-border-strong)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/30"
+            className="w-full h-9 pl-8 pr-8 text-[13px] rounded-[10px] bg-[var(--color-surface-2)] border border-transparent placeholder:text-[var(--color-text-faint)] focus:bg-[var(--color-surface)]"
           />
           {filter.query && (
             <button onClick={() => onChange({ ...filter, query: "" })} className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 rounded hover:bg-[var(--color-surface-2)] text-[var(--color-text-faint)] transition-colors" title="Clear search">

@@ -13,7 +13,7 @@ pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
 export default function PdfPages({ url, width }: { url: string; width: number }) {
   const [pages, setPages] = useState(0);
   const [err, setErr] = useState<string | null>(null);
-  if (err) return <div className="p-6 text-[13px] text-rose-700 dark:text-rose-300">{err}</div>;
+  if (err) return <div className="p-6 text-[13px] text-[var(--state-overdue-text)]">{err}</div>;
   return (
     <Document file={url} options={PDF_DOC_OPTIONS}
       onLoadSuccess={(d) => setPages(d.numPages)}

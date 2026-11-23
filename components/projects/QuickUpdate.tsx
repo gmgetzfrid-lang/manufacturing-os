@@ -30,6 +30,7 @@ import type { Milestone } from "@/types/schema";
 import FileThumb from "@/components/ui/FileThumb";
 import { useFileDrag } from "@/hooks/useFileDrag";
 import { tryUpload } from "@/lib/uploadRetry";
+import { sayError } from "@/components/projects/sayError";
 
 /** A picked file's size: 1.2 MB, 340 KB. */
 const sizeOf = (n: number) => (n >= 1024 * 1024 ? `${(n / (1024 * 1024)).toFixed(1)} MB` : n >= 1024 ? `${Math.round(n / 1024)} KB` : `${n} B`);
@@ -188,7 +189,7 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
       appendWords(words);
       markFile(key, { chars: words.length, error: null });
       return f.lastModified || 0;
-    } catch (e) { markFile(key, { chars: null, error: (e as Error).message }); return null; }
+    } catch (e) { markFile(key, { chars: null, error: sayError(e) }); return null; }
     finally { setFileBusy(null); }
   };
   const addFiles = async (list: FileList | File[] | null) => {
@@ -249,7 +250,7 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
           lines: r.lines.map((l) => ({ ...l, id: `${i}-${l.id}`, part: { key: p.key, label } })),
           unplaced: r.unplaced.map((u) => ({ ...u, why: `${label}: ${u.why}` })),
         };
-      } catch (e) { failed.push(`${label}: ${(e as Error).message}`); }
+      } catch (e) { failed.push(`${label}: ${sayError(e)}`); }
       n++;
       setProgress(`Read ${n} of ${todo.length} shifts…`);
     };
@@ -271,7 +272,7 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
     recRef.current?.stop();
     setBusy(true); setErr(null);
     if (parts?.length) {
-      try { await readParts(parts); } catch (e) { setErr((e as Error).message); } finally { setBusy(false); setProgress(null); }
+      try { await readParts(parts); } catch (e) { setErr(sayError(e)); } finally { setBusy(false); setProgress(null); }
       return;
     }
     const now = Date.now();
@@ -300,7 +301,7 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
       setDefaultPick({ id: first.id, at: first.at });
       setReview({ cat, lines, unplaced, at: now, window: win });
     } catch (e) {
-      setErr((e as Error).message);
+      setErr(sayError(e));
     } finally { setBusy(false); }
   };
 
@@ -370,7 +371,7 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
         const r = await saveQuickStep(id, name, ev, { status: st?.status ?? "planned", pct: st?.pct ?? 0 }, { orgId, userId, userName });
         saved.push(r);
         if (r.warn) warn.push(`${name}: ${r.warn}`);
-      } catch (e) { failed.push(`${name}: ${(e as Error).message}`); }
+      } catch (e) { failed.push(`${name}: ${sayError(e)}`); }
     }
     // Words read as a tag and confirmed on its step: remembered for next time.
     const learned = review.lines.filter((l) => l.include && l.heard && !l.heard.known && l.stepId === l.heard.stepId).map((l) => ({ said: l.heard!.said, as: l.heard!.as }));
@@ -413,11 +414,11 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
           {drag.over && <div className="absolute inset-0 z-[1] flex items-center justify-center rounded-lg text-[13px] font-bold text-[var(--color-text)] pointer-events-none">{drag.say}</div>}
           <textarea value={note} onChange={(e) => setDraft(e.target.value)} rows={note.length > 400 ? 10 : 4} aria-label="What happened"
             placeholder={"What happened? Name the equipment or WO, like you'd tell your relief.\nE-02 channel head is on the ground, they pulled it and washed it, staging to put it back.\nV-1 trays 50%. V-3 on hold, scaffold not built."}
-            className="w-full rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 py-2 text-[14px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none focus:ring-2 focus:ring-[var(--color-main)]/40" />
+            className="w-full rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 py-2 text-[14px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)]" />
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <button type="button" onClick={toggleMic} disabled={!canSpeak} title={canSpeak ? undefined : "Use the microphone on your phone's keyboard to speak into the box"}
-              className={`inline-flex items-center gap-1.5 h-10 px-3 rounded-lg border text-[13px] font-bold disabled:opacity-50 ${listening ? "border-rose-500 bg-rose-600 text-white" : "border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
+              className={`inline-flex items-center gap-1.5 h-10 px-3 rounded-lg border text-[13px] font-bold disabled:opacity-50 ${listening ? "border-[var(--state-overdue)] bg-[var(--state-overdue)] text-white" : "border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
               {listening ? <><MicOff className="w-4 h-4" /> Stop</> : <><Mic className="w-4 h-4" /> Speak</>}
             </button>
             <button type="button" onClick={() => fileRef.current?.click()} disabled={!!fileBusy || busy}
@@ -435,12 +436,12 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
             {!canSpeak && <span className="text-[11px] text-[var(--color-text-muted)]">To talk, use the mic on your keyboard.</span>}
           </div>
           {listening && (
-            <div className="text-[12px] text-rose-700 dark:text-rose-300">
+            <div className="text-[12px] text-[var(--state-overdue-text)]">
               <b>Listening…</b> say what happened, then tap Stop. Noisy? Say tags by letter: “Echo 2”, “Victor 1”, “Papa Sierra Victor 209”.
               {hearing && <div className="mt-0.5 italic text-[var(--color-text-muted)]">Hearing: {hearing}</div>}
             </div>
           )}
-          <div className="text-[11.5px] text-[var(--color-text-muted)]">
+          <div className="text-[12px] text-[var(--color-text-muted)]">
             <button type="button" onClick={() => setShowWords((v) => !v)} aria-expanded={showWords} className="text-[var(--color-accent-text)] hover:underline">Your words ({words.length})</button>
             {showWords && (
               <div className="mt-1 space-y-1.5">
@@ -450,7 +451,7 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
                     {words.map((w) => (
                       <li key={w.said} className="inline-flex items-center gap-1 rounded-full border border-[var(--color-border)] px-2 py-0.5">
                         “{w.said}” = {w.as}
-                        <button type="button" onClick={() => keepWords(words.filter((x) => x !== w))} aria-label={`Forget “${w.said}”`} className="p-0.5 hover:text-rose-700"><X className="w-3 h-3" /></button>
+                        <button type="button" onClick={() => keepWords(words.filter((x) => x !== w))} aria-label={`Forget “${w.said}”`} className="p-0.5 hover:text-[var(--state-overdue-text)]"><X className="w-3 h-3" /></button>
                       </li>
                     ))}
                   </ul>
@@ -458,10 +459,10 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
                 <form onSubmit={(e) => { e.preventDefault(); addWord(); }} className="flex flex-wrap items-center gap-1.5">
                   <span>It hears</span>
                   <input value={teach.said} onChange={(e) => setTeach((t) => ({ ...t, said: e.target.value }))} placeholder="mee too" aria-label="It hears"
-                    className="h-8 w-28 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12.5px] text-[var(--color-text)]" />
+                    className="h-8 w-28 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12px] text-[var(--color-text)]" />
                   <span>I mean</span>
                   <input value={teach.as} onChange={(e) => setTeach((t) => ({ ...t, as: e.target.value }))} placeholder="E-2" aria-label="I mean"
-                    className="h-8 w-24 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12.5px] text-[var(--color-text)]" />
+                    className="h-8 w-24 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12px] text-[var(--color-text)]" />
                   <button type="submit" disabled={!teach.said.trim() || !teach.as.trim()} className="h-8 rounded-md border border-[var(--color-border-strong)] px-2.5 font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">Add word</button>
                 </form>
               </div>
@@ -469,7 +470,7 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
           </div>
           {fileBusy && <div className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-[var(--color-text-muted)]"><Loader2 className="w-3.5 h-3.5 animate-spin" /> {fileBusy}</div>}
           {files.length > 0 && (
-            <div className="space-y-1 text-[11.5px] text-[var(--color-text-muted)]">
+            <div className="space-y-1 text-[12px] text-[var(--color-text-muted)]">
               <ul className="space-y-1">
                 {files.map((f) => (
                   <li key={f.key} className="flex items-center gap-2 min-w-0">
@@ -477,7 +478,7 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
                     <span className="min-w-0 flex-1">
                       <span className="block truncate font-semibold text-[var(--color-text)]">{f.file.name}</span>
                       <span className="block">
-                        {sizeOf(f.file.size)} · {f.error ? <span className="font-semibold text-rose-700 dark:text-rose-400">{f.error}</span>
+                        {sizeOf(f.file.size)} · {f.error ? <span className="font-semibold text-[var(--state-overdue-text)]">{f.error}</span>
                           : f.chars != null ? `read ${f.chars.toLocaleString()} characters` : "reading…"}
                       </span>
                     </span>
@@ -520,7 +521,7 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
                       );
                     })}
                   </div>
-                  <div className="text-[11.5px] text-[var(--color-text-muted)]">What you leave out stays out next time too. Anything already in the app comes in unticked.</div>
+                  <div className="text-[12px] text-[var(--color-text-muted)]">What you leave out stays out next time too. Anything already in the app comes in unticked.</div>
                 </>
               )}
             </div>
@@ -546,15 +547,15 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
                   ))}
                 </span>
               </div>
-              <div className="mt-1 text-[11.5px] text-[var(--color-text-muted)]">
+              <div className="mt-1 text-[12px] text-[var(--color-text-muted)]">
                 {from.id === "now" ? "A time with no date is the last time it came round: today, or last night."
                   : <>A log of the <b className="text-[var(--color-text)]">{shSpan(from.w)}</b>{from.auto ? " (from when the file was last saved; change it if that's wrong)" : ""}. Times with no date are in that shift.</>}
               </div>
             </div>
           )}
-          {err && <div role="alert" className="text-[12px] font-semibold text-rose-700 dark:text-rose-300">{err}</div>}
+          {err && <div role="alert" className="text-[12px] font-semibold text-[var(--state-overdue-text)]">{err}</div>}
           {done && (
-            <div role="status" className={`border-l-2 pl-3 py-1 text-[12px] text-[var(--color-text)] ${done.failed.length ? "border-rose-500" : "border-emerald-500"}`}>
+            <div role="status" className={`border-l-2 pl-3 py-1 text-[12px] text-[var(--color-text)] ${done.failed.length ? "border-[var(--state-overdue)]" : "border-[var(--state-released)]"}`}>
               <div className="flex items-center gap-2">
                 <b className="flex-1">{done.saved.length && done.saved.every((s) => done.undone[s.id] === "Undone") ? "All taken back. Your note is in the box to fix and read again." : done.saved.length ? `Saved ${done.saved.length} step${done.saved.length === 1 ? "" : "s"}.` : "Nothing saved."}</b>
                 {done.saved.some((s) => !done.undone[s.id]) && (
@@ -589,7 +590,7 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
             {review.parts ? (
               <div className="px-4 py-2.5 border-b border-[var(--color-border)] bg-slate-50 dark:bg-[var(--color-surface-2)] text-[12px] text-[var(--color-text-muted)]">
                 <b className="text-[var(--color-text)]">{review.parts.length} shift{review.parts.length === 1 ? "" : "s"} read from your note</b>, newest first. Times are read in their own shift; a line with no time goes in at the end of its shift.
-                {(review.failed?.length ?? 0) > 0 && <div className="mt-1 font-semibold text-rose-700 dark:text-rose-300">Not read: {review.failed!.join(" · ")}. Go back and read it again for those.</div>}
+                {(review.failed?.length ?? 0) > 0 && <div className="mt-1 font-semibold text-[var(--state-overdue-text)]">Not read: {review.failed!.join(" · ")}. Go back and read it again for those.</div>}
               </div>
             ) : (
             <div className="px-4 py-2.5 border-b border-[var(--color-border)] bg-slate-50 dark:bg-[var(--color-surface-2)] text-[12px]">
@@ -616,7 +617,7 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
                 return (
                   <React.Fragment key={l.id}>
                     {head && (
-                      <li className="sticky top-0 z-[1] px-4 py-1.5 bg-[var(--color-surface-2)] text-[11.5px] font-semibold text-[var(--color-text-muted)]">
+                      <li className="sticky top-0 z-[1] px-4 py-1.5 bg-[var(--color-surface-2)] text-[12px] font-semibold text-[var(--color-text-muted)]">
                         {l.part!.label} · {inPart.filter((x) => x.include).length} to save{inPart.some((x) => x.already) ? `, ${inPart.filter((x) => x.already).length} already in` : ""}
                       </li>
                     )}
@@ -633,8 +634,8 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
             </ul>
             {review.unplaced.length > 0 && (
               <div className="px-4 py-3 border-t border-[var(--color-border)] border-l-2 border-l-amber-500">
-                <div className="text-[13px] font-semibold text-amber-800 dark:text-amber-300">Couldn&apos;t place ({review.unplaced.length})</div>
-                <ul className="mt-1 space-y-1 text-[12.5px] text-[var(--color-text)]">
+                <div className="text-[13px] font-semibold text-[var(--state-held-text)]">Couldn&apos;t place ({review.unplaced.length})</div>
+                <ul className="mt-1 space-y-1 text-[12px] text-[var(--color-text)]">
                   {review.unplaced.map((u, i) => (
                     <li key={i} className="flex flex-wrap items-baseline gap-x-2">
                       <span>“{u.text}” <span className="text-[var(--color-text-muted)]">· {u.why}</span></span>
@@ -642,20 +643,20 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
                     </li>
                   ))}
                 </ul>
-                <div className="mt-1 text-[11.5px] text-[var(--color-text-muted)]">Not saved unless you put it on a step.</div>
+                <div className="mt-1 text-[12px] text-[var(--color-text-muted)]">Not saved unless you put it on a step.</div>
               </div>
             )}
           </ModalBody>
           <ModalFooter>
             <div className="w-full flex flex-wrap items-center gap-2">
-              <span className="mr-auto text-[12.5px]">
+              <span className="mr-auto text-[12px]">
                 {blocked.length > 0
-                  ? <b className="text-rose-700 dark:text-rose-300"><AlertTriangle className="inline w-4 h-4 -mt-0.5" /> Hold on: {blocked.length} line{blocked.length === 1 ? "" : "s"} need{blocked.length === 1 ? "s" : ""} you before anything saves. Answer, or untick.</b>
+                  ? <b className="text-[var(--state-overdue-text)]"><AlertTriangle className="inline w-4 h-4 -mt-0.5" /> Hold on: {blocked.length} line{blocked.length === 1 ? "" : "s"} need{blocked.length === 1 ? "s" : ""} you before anything saves. Answer, or untick.</b>
                   : <b className="text-[var(--color-text)]">{ready.length} line{ready.length === 1 ? "" : "s"} ready</b>}
               </span>
-              <button type="button" disabled={saving} onClick={() => setReview(null)} className="rounded-lg border border-[var(--color-border-strong)] px-3 py-2 text-[12.5px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">Back to the note</button>
+              <button type="button" disabled={saving} onClick={() => setReview(null)} className="rounded-lg border border-[var(--color-border-strong)] px-3 py-2 text-[12px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">Back to the note</button>
               <button type="button" disabled={saving || blocked.length > 0 || ready.length === 0} onClick={() => void save()}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--color-accent)] px-4 py-2 text-[12.5px] font-bold text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
+                className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--color-accent)] px-4 py-2 text-[12px] font-bold text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
                 {saving ? <><Loader2 className="w-4 h-4 animate-spin" /> Saving…</> : <><Check className="w-4 h-4" /> Save {ready.length}</>}
               </button>
             </div>
@@ -684,7 +685,7 @@ function LineRow({ l, cat, step, check, tz, times, defaultLabel, choices, onEdit
   const clockOf = (t: number) => fmtInTz(t, tz, { weekday: "short", hour: "numeric", minute: "2-digit", hour12: true });
   const pill = "rounded-full border px-2.5 py-1 text-[12px] font-semibold";
   return (
-    <li className={`px-4 py-3 ${needs.length ? "bg-rose-50/60 dark:bg-rose-950/20" : ""} ${l.include ? "" : "opacity-70"}`}>
+    <li className={`px-4 py-3 ${needs.length ? "bg-transparent" : ""} ${l.include ? "" : "opacity-70"}`}>
       <div className="flex items-start gap-3">
         <input type="checkbox" checked={l.include} onChange={(e) => onEdit({ include: e.target.checked })} aria-label="Include this line"
           className="mt-1 h-5 w-5 shrink-0 accent-[var(--color-text)]" />
@@ -695,16 +696,16 @@ function LineRow({ l, cat, step, check, tz, times, defaultLabel, choices, onEdit
               <div className="text-[11px] font-semibold text-[var(--color-text-muted)] break-words">{[step.wo ? `WO ${step.wo}` : null, step.place].filter(Boolean).join(" · ")}</div>
               <div className="text-[14px] font-bold text-[var(--color-text)] break-words">{step.name}</div>
               {/* How it was found, when the note didn't name it outright. */}
-              {l.found === "context" && l.context && <div className="text-[11.5px] text-[var(--color-text-muted)]">Equipment from earlier in your note: “{l.context}”</div>}
-              {l.found === "only" && <div className="text-[11.5px] text-[var(--color-text-muted)]">Your note doesn&apos;t name the equipment: this is the only open step by that name.</div>}
-              {l.found === "meaning" && <div className="text-[11.5px] font-semibold text-amber-800 dark:text-amber-300">Matched by meaning (no word in common with the step&apos;s name). Check it&apos;s the right step.</div>}
-              {l.woNote && <div className="text-[11.5px] font-semibold text-amber-800 dark:text-amber-300">{l.woNote}</div>}
-              {l.group && <div className="text-[11.5px] text-[var(--color-text-muted)]">Your note says this about {l.group} steps: it goes on each of them.</div>}
+              {l.found === "context" && l.context && <div className="text-[12px] text-[var(--color-text-muted)]">Equipment from earlier in your note: “{l.context}”</div>}
+              {l.found === "only" && <div className="text-[12px] text-[var(--color-text-muted)]">Your note doesn&apos;t name the equipment: this is the only open step by that name.</div>}
+              {l.found === "meaning" && <div className="text-[12px] font-semibold text-[var(--state-held-text)]">Matched by meaning (no word in common with the step&apos;s name). Check it&apos;s the right step.</div>}
+              {l.woNote && <div className="text-[12px] font-semibold text-[var(--state-held-text)]">{l.woNote}</div>}
+              {l.group && <div className="text-[12px] text-[var(--color-text-muted)]">Your note says this about {l.group} steps: it goes on each of them.</div>}
               <button type="button" onClick={() => onEdit({ stepId: null, options: l.options.length ? l.options : [step.id] })} className="text-[13px] text-[var(--color-accent-text)] hover:underline">Wrong step? Pick another</button>
             </div>
           ) : (
             <div className="space-y-1">
-              <div className="text-[12.5px] font-bold text-rose-800 dark:text-rose-200">{l.heard && !l.heard.known && options.length === 1 ? `Heard “${l.heard.said}” as ${l.heard.as}. Is this the step?` : "Which step is it?"}</div>
+              <div className="text-[12px] font-bold text-[var(--state-overdue-text)]">{l.heard && !l.heard.known && options.length === 1 ? `Heard “${l.heard.said}” as ${l.heard.as}. Is this the step?` : "Which step is it?"}</div>
               <div className="flex flex-wrap gap-1.5">
                 {options.map((o) => (
                   <button key={o.id} type="button" onClick={() => onEdit({ stepId: o.id })} className="rounded-lg border px-2.5 py-1.5 text-[12px] font-semibold text-left border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
@@ -721,7 +722,7 @@ function LineRow({ l, cat, step, check, tz, times, defaultLabel, choices, onEdit
               <label className="relative block max-w-md">
                 <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[var(--color-text-faint)]" />
                 <input value={find} onChange={(e) => setFind(e.target.value)} placeholder="Or find it: V-1, WO #, step" aria-label="Find the step"
-                  className="w-full h-8 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] pl-7 pr-2 text-[12.5px]" />
+                  className="w-full h-8 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] pl-7 pr-2 text-[12px]" />
               </label>
               {found.length > 0 && (
                 <div className="flex flex-wrap gap-1.5">
@@ -736,13 +737,13 @@ function LineRow({ l, cat, step, check, tz, times, defaultLabel, choices, onEdit
             {([["start", "Started"], ["progress", "%"], ["done", "Done"], ["hold", "On hold"], ["resume", "Back on"], ["comment", "Comment only"]] as const).map(([a, label]) => (
               <button key={a} type="button" aria-pressed={l.action === a}
                 onClick={() => onEdit({ action: a, expected: false, ...(a === "progress" && l.action !== "progress" ? { percent: null, percentFrom: "said" } : {}) })}
-                className={`rounded-md border px-2 py-0.5 text-[11.5px] font-semibold ${l.action === a ? "border-[var(--color-text)] bg-[var(--color-surface-2)] text-[var(--color-text)]" : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>{label}</button>
+                className={`rounded-md border px-2 py-0.5 text-[12px] font-semibold ${l.action === a ? "border-[var(--color-text)] bg-[var(--color-surface-2)] text-[var(--color-text)]" : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>{label}</button>
             ))}
           </div>
           {l.action === "progress" && step && l.percent != null && l.percentFrom !== "guess" && (
             <label className="flex items-center gap-1.5 text-[12px] text-[var(--color-text-muted)]">
               % now
-              <input inputMode="numeric" aria-label="Percent" value={String(l.percent)} className="h-8 w-16 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12.5px] text-[var(--color-text)]"
+              <input inputMode="numeric" aria-label="Percent" value={String(l.percent)} className="h-8 w-16 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12px] text-[var(--color-text)]"
                 onChange={(e) => { const n = Number(e.target.value.replace(/\D/g, "")); onEdit({ percent: e.target.value.trim() === "" ? null : Math.min(100, Number.isFinite(n) ? n : 0), percentFrom: "said" }); }} />
             </label>
           )}
@@ -752,16 +753,16 @@ function LineRow({ l, cat, step, check, tz, times, defaultLabel, choices, onEdit
               {[...new Set([25, 50, 75, ...(l.suggest != null && l.suggest > step.pct && l.suggest < 100 ? [l.suggest] : [])])].filter((p) => p > step.pct).sort((a, b) => a - b).map((p) => (
                 <button key={p} type="button" onClick={() => onEdit({ percent: p, percentFrom: "said" })} className={`${pill} ${l.percent === p ? "border-transparent bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30" : "border-[var(--color-border-strong)] text-[var(--color-text)]"}`}>{p}%</button>
               ))}
-              <input inputMode="numeric" aria-label="Percent" placeholder="%" className="h-8 w-16 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12.5px]"
+              <input inputMode="numeric" aria-label="Percent" placeholder="%" className="h-8 w-16 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12px]"
                 onChange={(e) => { const n = Number(e.target.value.replace(/\D/g, "")); if (e.target.value && Number.isFinite(n)) onEdit({ percent: Math.min(100, n), percentFrom: "said" }); }} />
             </div>
           )}
           {l.action === "hold" && (
             <input defaultValue={l.reason ?? l.comment ?? ""} onChange={(e) => onEdit({ reason: e.target.value })} placeholder="Why is it on hold?" aria-label="Hold reason"
-              className="w-full max-w-md h-8 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12.5px]" />
+              className="w-full max-w-md h-8 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12px]" />
           )}
           {/* When */}
-          <div className="text-[12.5px]">
+          <div className="text-[12px]">
             {l.at != null ? (
               <span className="text-[var(--color-text)]">
                 <b>{whenWords(l.at, tz, times)}</b>
@@ -770,11 +771,11 @@ function LineRow({ l, cat, step, check, tz, times, defaultLabel, choices, onEdit
               </span>
             ) : l.ampm ? (
               <span className="flex flex-wrap items-center gap-1.5">
-                <span className="font-semibold text-rose-800 dark:text-rose-200">{l.timeWhy}</span>
+                <span className="font-semibold text-[var(--state-overdue-text)]">{l.timeWhy}</span>
                 {l.ampm.map((t) => <button key={t} type="button" onClick={() => onEdit({ at: t, timeFrom: "picked", ampm: undefined })} className={`${pill} border-[var(--color-border-strong)] text-[var(--color-text)]`}>{clockOf(t)}</button>)}
               </span>
             ) : (
-              <span className="font-semibold text-rose-800 dark:text-rose-200">{l.timeWhy ?? "When did it happen?"}</span>
+              <span className="font-semibold text-[var(--state-overdue-text)]">{l.timeWhy ?? "When did it happen?"}</span>
             )}
             {(l.at == null || changing) && !l.ampm && (
               <div className="mt-1 flex flex-wrap gap-1.5">
@@ -790,20 +791,20 @@ function LineRow({ l, cat, step, check, tz, times, defaultLabel, choices, onEdit
           </div>
           {/* Your words, and the comment that goes on the step (editable). */}
           {l.evidence && <div className="text-[12px] italic text-[var(--color-text-muted)] break-words">You said: “{l.evidence}”</div>}
-          {l.heard && (step || l.heard.known) && <div className={`text-[11.5px] ${l.heard.known ? "text-[var(--color-text-muted)]" : "font-semibold text-amber-800 dark:text-amber-300"}`}>Heard “{l.heard.said}” as {l.heard.as}{l.heard.known ? " (your word for it)" : l.stepId === l.heard.stepId ? ". Remembered for next time when you save." : "."}</div>}
-          <label className="block text-[11.5px] text-[var(--color-text-muted)]">
+          {l.heard && (step || l.heard.known) && <div className={`text-[12px] ${l.heard.known ? "text-[var(--color-text-muted)]" : "font-semibold text-[var(--state-held-text)]"}`}>Heard “{l.heard.said}” as {l.heard.as}{l.heard.known ? " (your word for it)" : l.stepId === l.heard.stepId ? ". Remembered for next time when you save." : "."}</div>}
+          <label className="block text-[12px] text-[var(--color-text-muted)]">
             Comment on the step
             <textarea rows={1} value={l.noteText !== undefined ? l.noteText ?? "" : lineComment(l)}
               onChange={(e) => onEdit({ noteText: e.target.value })} placeholder="No comment"
-              className="mt-0.5 block w-full rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1 text-[12.5px] text-[var(--color-text)]" />
+              className="mt-0.5 block w-full rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1 text-[12px] text-[var(--color-text)]" />
           </label>
-          {l.implied && <div className="text-[12px] font-semibold text-amber-800 dark:text-amber-300">Probably done: your note doesn&apos;t say it. Tick to include.</div>}
-          {l.expected && <div className="text-[12px] font-semibold text-amber-800 dark:text-amber-300">Not entered as done: it hasn&apos;t happened yet. Kept as a comment.</div>}
+          {l.implied && <div className="text-[12px] font-semibold text-[var(--state-held-text)]">Probably done: your note doesn&apos;t say it. Tick to include.</div>}
+          {l.expected && <div className="text-[12px] font-semibold text-[var(--state-held-text)]">Not entered as done: it hasn&apos;t happened yet. Kept as a comment.</div>}
           {check.nothing && (l.already && !l.include
             ? <div className="text-[12px] text-[var(--color-text-muted)]">{l.already} Already in the app: left out. Tick it to add your words as a comment.</div>
             : <div className="text-[12px] text-[var(--color-text-muted)]">{check.nothing} Nothing changes; your words go on as a comment.</div>)}
           {needs.length > 0 && (
-            <ul className="text-[12px] font-semibold text-rose-800 dark:text-rose-200 list-disc pl-4">
+            <ul className="text-[12px] font-semibold text-[var(--state-overdue-text)] list-disc pl-4">
               {needs.map((n) => <li key={n}>{n}</li>)}
             </ul>
           )}

@@ -55,6 +55,7 @@ import FileThumb from "@/components/ui/FileThumb";
 import { useFileDrag } from "@/hooks/useFileDrag";
 import { tryUpload } from "@/lib/uploadRetry";
 import { fileSize } from "@/components/projects/cost/FilePreview";
+import { sayError } from "@/components/projects/sayError";
 
 const money = (n: number) => `$${Math.round(n).toLocaleString("en-US")}`;
 // Where the punch list and change order steps come from: the app's own rule.
@@ -315,7 +316,7 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
   const run = async (key: string, fn: () => Promise<{ ok: boolean; error?: string }>) => {
     setBusy(key); setErr(null);
     try { const r = await fn(); if (!r.ok) setErr(r.error ?? "Not saved."); else reload(); }
-    catch (e) { setErr((e as Error).message); }
+    catch (e) { setErr(sayError(e)); }
     finally { setBusy(null); }
   };
 
@@ -472,7 +473,7 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
     {
       state: stateAt(0), title: allWorkDone ? "Work done" : "The work",
       detail: phases.length ? undefined
-        : work.allDone ? <>{work.done} of {work.total} steps{work.finishedAt != null ? `, finished ${when(work.finishedAt)}` : ""}{work.finishedAt != null && work.plannedFinish != null ? <span className={work.hoursAfterPlan != null && work.hoursAfterPlan >= 0.5 ? "text-rose-700 dark:text-rose-400 font-semibold" : ""}> ({vsPlanWords(work.hoursAfterPlan)})</span> : null}.</>
+        : work.allDone ? <>{work.done} of {work.total} steps{work.finishedAt != null ? `, finished ${when(work.finishedAt)}` : ""}{work.finishedAt != null && work.plannedFinish != null ? <span className={work.hoursAfterPlan != null && work.hoursAfterPlan >= 0.5 ? "text-[var(--state-overdue-text)] font-semibold" : ""}> ({vsPlanWords(work.hoursAfterPlan)})</span> : null}.</>
           : work.total ? `${work.total - work.done} of ${work.total} steps not marked done.` : "No schedule yet.",
       action: !allWorkDone && !unscheduled.length ? <button type="button" onClick={() => onTab("work")} className={btn}>Open the work <ArrowRight className="w-3.5 h-3.5" /></button> : null,
       children: workRows,
@@ -524,7 +525,7 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
                 <button type="button" disabled={!!busy} onClick={() => void run("seed", async () => { const r = await seedTurnoverItems({ orgId, projectId, jobKind, actor }); return { ok: r.ok, error: r.error }; })} className={btn}>Start from it ({seedsForJobKind(jobKind).length} documents)</button>
               </>}
               <input value={newDoc} onChange={(e) => setNewDoc(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && newDoc.trim()) { const n = newDoc.trim(); setNewDoc(""); void run("add", async () => { const r = await addTurnoverItem({ orgId, projectId, name: n, required: true, actor }); return { ok: r.ok, error: r.error }; }); } }}
-                placeholder="Add a document this job needs" aria-label="Add a document this job needs" className="h-9 flex-1 min-w-40 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 text-[14px] placeholder:text-[var(--color-text-faint)] outline-none focus:border-[var(--color-main)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40" />
+                placeholder="Add a document this job needs" aria-label="Add a document this job needs" className="h-9 flex-1 min-w-40 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 text-[14px] placeholder:text-[var(--color-text-faint)]" />
               <button type="button" disabled={!newDoc.trim() || !!busy} onClick={() => { const n = newDoc.trim(); setNewDoc(""); void run("add", async () => { const r = await addTurnoverItem({ orgId, projectId, name: n, required: true, actor }); return { ok: r.ok, error: r.error }; }); }} className={btn}><Plus className="w-3.5 h-3.5" /> Add</button>
             </div>
           )}
@@ -666,7 +667,7 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
         <Modal onClose={() => setUploading(null)} size="lg">
           <ModalHeader icon={UploadCloud} title={uploading === "all" ? "Upload the PSSR" : `Upload ${phases.find((p) => p.id === uploading)?.name ?? "the phase"}'s PSSR`} subtitle="Filed where you pick, then read into checklist items. You check them before anything is kept." onClose={() => setUploading(null)} />
           <ModalBody className="!p-0">
-            {err && <div role="alert" className="px-4 pt-3 text-[12.5px] font-semibold text-rose-700 dark:text-rose-400">{err}</div>}
+            {err && <div role="alert" className="px-4 pt-3 text-[12px] font-semibold text-[var(--state-overdue-text)]">{err}</div>}
             <NewChecklistFlow orgId={orgId} projectId={projectId} projectName={projectName} actor={actor}
               part={uploading === "all" ? null : phases.find((p) => p.id === uploading)?.name ?? null}
               onDone={() => { const forPhase = uploading; setUploading(null); void tieNewPssr(forPhase); void projectFileHome(orgId, projectId).then(setHome).catch(() => undefined); }} onCancel={() => setUploading(null)} setErr={setErr} kindDefault="pssr" />
@@ -721,7 +722,7 @@ function Progress({ name, stats, tz, look, lookById, ids, loading, records, mp }
               <div key={r.start} className={`grid grid-cols-[116px_minmax(0,1fr)_auto] gap-2 items-center py-1 text-[12px] ${r.kind === "night" ? "bg-[var(--color-surface-2)]/50" : ""}`}>
                 <span className="text-[var(--color-text)] leading-tight pl-1">{shiftLabel(r)}
                   {r.planEnds && stats.plannedFinish != null && <span className="block text-[11px] font-bold text-[var(--color-text)]">plan finish {fmtInTz(stats.plannedFinish, tz, { hour: "numeric", minute: "2-digit", hour12: true })}</span>}
-                  {r.finishes && stats.finishedAt != null && <span className="block text-[11px] font-bold text-emerald-700 dark:text-emerald-400">all done {fmtInTz(stats.finishedAt, tz, { hour: "numeric", minute: "2-digit", hour12: true })}</span>}
+                  {r.finishes && stats.finishedAt != null && <span className="block text-[11px] font-bold text-[var(--state-released-text)]">all done {fmtInTz(stats.finishedAt, tz, { hour: "numeric", minute: "2-digit", hour12: true })}</span>}
                   {r.current && <span className="block text-[11px] text-[var(--color-text-muted)]">now</span>}</span>
                 <div className="space-y-0.5">
                   {r.plan != null
@@ -730,8 +731,8 @@ function Progress({ name, stats, tz, look, lookById, ids, loading, records, mp }
                   <div className="h-2 rounded-full bg-[var(--color-accent-soft)] overflow-hidden">{r.done != null && <div className={`h-full rounded-full ${red ? "bg-[var(--state-overdue)]" : "bg-[var(--color-main)]"}`} style={{ width: `${Math.min(100, r.done)}%` }} />}</div>
                 </div>
                 <span className="text-right tabular-nums text-[var(--color-text-muted)] leading-tight pr-1">
-                  {r.plan != null ? `${r.plan}%` : "past plan"}{r.done != null ? <> / <b className={red ? "text-rose-700 dark:text-rose-400" : "text-emerald-700 dark:text-emerald-400"}>{r.done}%</b>{r.plan == null && red && <b className="text-rose-700 dark:text-rose-400"> late</b>}</> : " / to come"}
-                  {r.addedKnown > 0 && <span className="block text-[11px] text-amber-700 dark:text-amber-400">added {Math.round((r.addedDone ?? 0) * 10) / 10} of {r.addedKnown} h</span>}
+                  {r.plan != null ? `${r.plan}%` : "past plan"}{r.done != null ? <> / <b className={red ? "text-[var(--state-overdue-text)]" : "text-[var(--state-released-text)]"}>{r.done}%</b>{r.plan == null && red && <b className="text-[var(--state-overdue-text)]"> late</b>}</> : " / to come"}
+                  {r.addedKnown > 0 && <span className="block text-[11px] text-[var(--state-held-text)]">added {Math.round((r.addedDone ?? 0) * 10) / 10} of {r.addedKnown} h</span>}
                 </span>
               </div>
             );
@@ -775,13 +776,13 @@ function SlipStory({ stats, tz, look, lookById, setbacks, steps, loading, counts
   };
   const Cause = ({ x, held, self }: { x: StepLook; held?: Array<{ s: SlipStep; right: string }>; self?: number }) => (
     <li className="py-2">
-      <div className="text-[12.5px] font-bold text-[var(--color-text)] leading-snug">{label(x)}</div>
-      {rootWords(x).slice(0, 3).map((w) => <div key={w} className="text-[12px] text-amber-800 dark:text-amber-300 leading-snug">{w}</div>)}
-      {hands(x) && <div className="text-[11.5px] text-[var(--color-text-muted)] leading-snug">{hands(x)}</div>}
-      {unexplained(x) && whileWaiting(lookById, x, 2).map((w) => <div key={w} className="text-[11.5px] text-[var(--color-text-muted)] leading-snug">While it waited: {w}</div>)}
-      {self != null && self > 0 && <div className="mt-0.5 text-[11.5px] text-[var(--color-text-muted)] leading-snug">{Math.round(self * 10) / 10} h of its own planned work behind then</div>}
+      <div className="text-[12px] font-bold text-[var(--color-text)] leading-snug">{label(x)}</div>
+      {rootWords(x).slice(0, 3).map((w) => <div key={w} className="text-[12px] text-[var(--state-held-text)] leading-snug">{w}</div>)}
+      {hands(x) && <div className="text-[12px] text-[var(--color-text-muted)] leading-snug">{hands(x)}</div>}
+      {unexplained(x) && whileWaiting(lookById, x, 2).map((w) => <div key={w} className="text-[12px] text-[var(--color-text-muted)] leading-snug">While it waited: {w}</div>)}
+      {self != null && self > 0 && <div className="mt-0.5 text-[12px] text-[var(--color-text-muted)] leading-snug">{Math.round(self * 10) / 10} h of its own planned work behind then</div>}
       {held && held.length > 0 && (
-        <div className="mt-0.5 text-[11.5px] text-[var(--color-text-muted)] leading-snug">Held up: {held.map((h) => `${h.s.task ? `${h.s.task} \u203a ` : ""}${h.s.name} (${h.right})`).join("; ")}</div>
+        <div className="mt-0.5 text-[12px] text-[var(--color-text-muted)] leading-snug">Held up: {held.map((h) => `${h.s.task ? `${h.s.task} \u203a ` : ""}${h.s.name} (${h.right})`).join("; ")}</div>
       )}
     </li>
   );
@@ -812,25 +813,25 @@ function SlipStory({ stats, tz, look, lookById, setbacks, steps, loading, counts
       <ul className="mt-1 space-y-0.5 text-[12px] text-[var(--color-text)] leading-snug">
         {slipWords(stats, tz).map((w) => <li key={w}>{w}</li>)}
       </ul>
-      {loading && <div className="mt-2 text-[11.5px] text-[var(--color-text-muted)]">Reading what was recorded on each step…</div>}
+      {loading && <div className="mt-2 text-[12px] text-[var(--color-text-muted)]">Reading what was recorded on each step…</div>}
       {drivers.length > 0 && (
         <>
           <div className={`${head} flex items-center gap-1.5`}>What set the finish <HelpTooltip>The last step done, back through what each waited on (its links). These steps lost time of their own.</HelpTooltip></div>
           <ol className="divide-y divide-[var(--color-border)]/60">{drivers.map((x) => <Cause key={x.id} x={x} />)}</ol>
-          {waited.length > 0 && <div className="text-[11.5px] text-[var(--color-text-muted)] leading-snug">Waited on them: {waited.map((x) => x.name).join(", ")}.</div>}
+          {waited.length > 0 && <div className="text-[12px] text-[var(--color-text-muted)] leading-snug">Waited on them: {waited.map((x) => x.name).join(", ")}.</div>}
         </>
       )}
       {at && behindCauses.length > 0 && (
         <>
           <div className={head}>What put it behind {at.current ? "so far this shift" : "at the end of"} {at.current ? `(${shiftLabel(at)})` : shiftLabel(at)}</div>
-          <div className="text-[11.5px] text-[var(--color-text-muted)]">The steps furthest behind then, under where their delay came from:</div>
+          <div className="text-[12px] text-[var(--color-text-muted)]">The steps furthest behind then, under where their delay came from:</div>
           <ul className="divide-y divide-[var(--color-border)]/60">{behindCauses.map((g) => <Cause key={g.cause.id} x={g.cause} held={g.held} self={g.self} />)}</ul>
         </>
       )}
       {sl.pastPlan.length > 0 && stats.plannedFinish != null && (
         <>
           <div className={head}>Still going when the plan said done ({when(stats.plannedFinish)})</div>
-          <div className="text-[11.5px] text-[var(--color-text)] leading-snug">{sl.pastPlan.slice(0, 10).map((x) => `${slipStepLine(x)}: ${x.finish != null ? `done ${when(x.finish)}` : "not done"}`).join(" · ")}{sl.pastPlan.length > 10 ? ` · and ${sl.pastPlan.length - 10} more` : ""}</div>
+          <div className="text-[12px] text-[var(--color-text)] leading-snug">{sl.pastPlan.slice(0, 10).map((x) => `${slipStepLine(x)}: ${x.finish != null ? `done ${when(x.finish)}` : "not done"}`).join(" · ")}{sl.pastPlan.length > 10 ? ` · and ${sl.pastPlan.length - 10} more` : ""}</div>
         </>
       )}
       {setbacks.length > 0 && (
@@ -840,11 +841,11 @@ function SlipStory({ stats, tz, look, lookById, setbacks, steps, loading, counts
             <li key={x.id} className="py-1.5">
               <div className="flex items-start gap-2">
                 <span className="min-w-0 flex-1 text-[12px] text-[var(--color-text)] leading-snug">{label(x)}</span>
-                <span className="shrink-0 text-[11.5px] tabular-nums text-rose-700 dark:text-rose-400">lost {x.lostH} h</span>
+                <span className="shrink-0 text-[12px] tabular-nums text-[var(--state-overdue-text)]">lost {x.lostH} h</span>
               </div>
-              {lostWords(x).slice(0, 3).map((w) => <div key={w} className="text-[11.5px] text-amber-800 dark:text-amber-300 leading-snug">{w}</div>)}
-              {hands(x) && <div className="text-[11.5px] text-[var(--color-text-muted)] leading-snug">{hands(x)}</div>}
-              {unexplained(x) && whileWaiting(lookById, x, 1).map((w) => <div key={w} className="text-[11.5px] text-[var(--color-text-muted)] leading-snug">While it waited: {w}</div>)}
+              {lostWords(x).slice(0, 3).map((w) => <div key={w} className="text-[12px] text-[var(--state-held-text)] leading-snug">{w}</div>)}
+              {hands(x) && <div className="text-[12px] text-[var(--color-text-muted)] leading-snug">{hands(x)}</div>}
+              {unexplained(x) && whileWaiting(lookById, x, 1).map((w) => <div key={w} className="text-[12px] text-[var(--color-text-muted)] leading-snug">While it waited: {w}</div>)}
             </li>
           ))}</ul>
         </>
@@ -853,7 +854,7 @@ function SlipStory({ stats, tz, look, lookById, setbacks, steps, loading, counts
         <>
           <div className={`${head} flex items-center gap-1.5 mb-1`}>Where the time went <HelpTooltip>Hours each step lost of its own, by cause (waiting on the work before it isn&rsquo;t counted again). Steps run side by side, so these add up to more than the finish&rsquo;s slip.</HelpTooltip></div>
           <div className="space-y-1">{byCause.map((x) => (
-            <div key={x.c} className="grid grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_auto] gap-2 items-center text-[11.5px]">
+            <div key={x.c} className="grid grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_auto] gap-2 items-center text-[12px]">
               <span className="text-[var(--color-text)] leading-tight">{CAUSE_LABEL[x.c]}</span>
               <div className="h-2 rounded-full bg-[var(--color-accent-soft)] overflow-hidden"><div className="h-full rounded-full bg-[var(--state-overdue)]" style={{ width: `${(x.h / maxH) * 100}%` }} /></div>
               <span className="tabular-nums text-[var(--color-text-muted)]">{x.h} h · {x.n} step{x.n === 1 ? "" : "s"}</span>
@@ -944,7 +945,7 @@ function TurnoverRow({ it, canManage, busy, onRequired, onAccept, onFile }: { it
   const send = async (f: File) => {
     setSending(f); setFailed(null);
     try { await onFile(f); }
-    catch (e) { setFailed({ file: f, error: (e as Error).message || "It didn't attach." }); }
+    catch (e) { setFailed({ file: f, error: sayError(e, "It didn't attach.") }); }
     finally { setSending(null); }
   };
   const drag = useFileDrag((fs) => { void send(fs[0]); }, !canAttach || busy || !!sending);
@@ -977,7 +978,7 @@ function TurnoverRow({ it, canManage, busy, onRequired, onAccept, onFile }: { it
       <div className="pb-2 flex items-center gap-2 text-[13px]">
         <FileThumb file={(sending ?? failed!.file)} size={28} />
         <span className="min-w-0 flex-1 truncate text-[var(--color-text)]">{(sending ?? failed!.file).name} <span className="text-[var(--color-text-muted)]">· {fileSize((sending ?? failed!.file).size)}</span>
-          {sending ? <span className="text-[var(--color-text-muted)]"> · attaching…</span> : <span className="block font-semibold text-rose-700 dark:text-rose-300 truncate">{failed!.error}</span>}
+          {sending ? <span className="text-[var(--color-text-muted)]"> · attaching…</span> : <span className="block font-semibold text-[var(--state-overdue-text)] truncate">{failed!.error}</span>}
         </span>
         {failed && !sending && <button type="button" onClick={() => void send(failed.file)} className={small}>Try again</button>}
       </div>

@@ -18,7 +18,7 @@ import type { ShiftWindow } from "@/lib/shiftReport";
 // the number on the charcoal of Present.
 const TONE = [
   { bar: "border-t-[var(--color-border-strong)]", num: "bg-[var(--color-text)] text-[var(--color-surface)]", numDark: "bg-white text-[var(--color-ink)]", kick: "text-[var(--color-text-muted)]", dot: "bg-[var(--color-text-muted)]" },
-  { bar: "border-t-rose-500", num: "bg-rose-600 text-white", numDark: "bg-rose-600 text-white", kick: "text-rose-700 dark:text-rose-300", dot: "bg-rose-500" },
+  { bar: "border-t-rose-500", num: "bg-[var(--state-overdue)] text-white", numDark: "bg-[var(--state-overdue)] text-white", kick: "text-[var(--state-overdue-text)]", dot: "bg-[var(--state-overdue)]" },
   { bar: "border-t-[var(--color-border-strong)]", num: "bg-[var(--color-text)] text-[var(--color-surface)]", numDark: "bg-white text-[var(--color-ink)]", kick: "text-[var(--color-text-muted)]", dot: "bg-[var(--color-text-muted)]" },
 ];
 
@@ -94,7 +94,7 @@ function TopicCard({ t, n, tone, print, onPresent, onUse, chosen }: { t: SafetyT
       </div>
       <h4 className={`mt-1 font-bold leading-tight text-[var(--color-text)] ${print ? "text-[13pt]" : "text-[14px] group-hover:underline underline-offset-2"}`}>{t.title}</h4>
       <p className={`mt-0.5 leading-snug text-[var(--color-text-muted)] ${print ? "text-[9pt]" : "text-[12px]"}`}>{t.why}</p>
-      <ul className={`mt-1.5 leading-snug text-[var(--color-text)] ${print ? "text-[10.5pt] space-y-[4pt]" : "text-[12.5px] space-y-1.5"}`}>
+      <ul className={`mt-1.5 leading-snug text-[var(--color-text)] ${print ? "text-[10.5pt] space-y-[4pt]" : "text-[12px] space-y-1.5"}`}>
         {t.points.map((p, i) => {
           const [lead, rest] = splitLead(p.say);
           return (

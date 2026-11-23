@@ -29,8 +29,8 @@ export function usePhaseStandings(projectId: string | undefined, nowMs: number):
 }
 
 const TONE = {
-  rose: "text-rose-700 dark:text-rose-300", emerald: "text-emerald-700 dark:text-emerald-300",
-  amber: "text-amber-700 dark:text-amber-300", slate: "text-[var(--color-text)]",
+  rose: "text-[var(--state-overdue-text)]", emerald: "text-[var(--state-released-text)]",
+  amber: "text-[var(--state-held-text)]", slate: "text-[var(--color-text)]",
 } as const;
 const BAR = { rose: "bg-[var(--state-overdue)]", emerald: "bg-[var(--color-main)]", amber: "bg-[var(--state-held)]", slate: "bg-[var(--color-main)]" } as const;
 
@@ -53,9 +53,9 @@ export default function PhaseLines({ rows, print }: { rows: PhaseStanding[]; pri
           const body = (
             <>
               <span className="flex items-baseline gap-2 flex-wrap">
-                <b className={`${print ? "text-[13.5px]" : "text-[14px]"} text-[var(--color-text)]`}>{s.name}</b>
-                {p && <span className={`${print ? "text-[11.5px]" : "text-[12px]"} text-[var(--color-text-muted)]`}>{phaseDates(p)}</span>}
-                {s.steps > 0 && <span className={`${print ? "text-[11.5px]" : "text-[12px]"} text-[var(--color-text-muted)]`}>{s.done} of {s.steps} steps</span>}
+                <b className={`${print ? "text-[14px]" : "text-[14px]"} text-[var(--color-text)]`}>{s.name}</b>
+                {p && <span className={`${print ? "text-[12px]" : "text-[12px]"} text-[var(--color-text-muted)]`}>{phaseDates(p)}</span>}
+                {s.steps > 0 && <span className={`${print ? "text-[12px]" : "text-[12px]"} text-[var(--color-text-muted)]`}>{s.done} of {s.steps} steps</span>}
               </span>
               {s.steps > 0 && (
                 <span className="relative mt-1.5 block h-1.5 rounded-full bg-[var(--color-accent-soft)]">

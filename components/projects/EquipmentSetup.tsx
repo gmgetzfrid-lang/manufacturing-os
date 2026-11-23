@@ -27,6 +27,7 @@ import { typeLabel, fromWords, type WoClass } from "@/lib/woClass";
 import { sameEquipmentId, requestOf, equipmentLabel, linkedLabel } from "@/lib/equipmentPick";
 import { EquipmentField } from "@/components/projects/EquipmentPicker";
 import { cache, read, noteSaved, savedHere, forgetRead } from "@/components/projects/equipmentData";
+import { sayError, rawMessage } from "@/components/projects/sayError";
 
 export { withSavedHere, useEquipmentRegistry, noteEquipmentSaved } from "@/components/projects/equipmentData";
 
@@ -38,7 +39,7 @@ export function useProjectEquipment(orgId: string | null | undefined, projectId:
   const [error, setError] = useState<string | null>(null);
   const load = useCallback((fresh: boolean) => {
     if (!orgId) return;
-    void read(orgId, projectId, fresh).then((d) => { cache.set(projectId, d); setData(d); setError(null); }).catch((e) => setError((e as Error).message));
+    void read(orgId, projectId, fresh).then((d) => { cache.set(projectId, d); setData(d); setError(null); }).catch((e) => setError(sayError(e)));
   }, [orgId, projectId]);
   const reload = useCallback(() => load(true), [load]);
   useEffect(() => {
@@ -57,7 +58,7 @@ export function useProjectEquipment(orgId: string | null | undefined, projectId:
   return { data, matches, set, error, reload };
 }
 
-const btn = "inline-flex items-center justify-center gap-1.5 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-[12.5px] font-bold px-3.5 py-2 shadow-sm disabled:opacity-50";
+const btn = "inline-flex items-center justify-center gap-1.5 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-[12px] font-bold px-3.5 py-2 shadow-sm disabled:opacity-50";
 const quiet = "inline-flex items-center gap-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[12px] font-semibold text-[var(--color-text)] px-2.5 py-1.5 disabled:opacity-50";
 const field = "h-9 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[13px] text-[var(--color-text)]";
 
@@ -98,7 +99,7 @@ export function EquipmentStep({ projectId, projectName, milestones, canManage, u
     if (!orgId) return;
     setBusy(what); setErr(null);
     try { await fn(); }
-    catch (e) { setErr(/permission|policy|row-level/i.test((e as Error).message) ? `Linking the project to its units and equipment needs the database update (20261115_project_findings.sql), or an org Admin, Manager, Supervisor or Document Control.` : (e as Error).message); }
+    catch (e) { setErr(/permission|policy|row-level/i.test(rawMessage(e)) ? `Linking the project to its units and equipment needs the database update (20261115_project_findings.sql), or an org Admin, Manager, Supervisor or Document Control.` : sayError(e)); }
     finally { setBusy(null); forgetRead(projectId); window.dispatchEvent(new CustomEvent(EQUIPMENT_CHANGED)); }
   };
   const unitOn = (u: UnitChoice, on: boolean) => { if (orgId && data) void run(`unit:${u.code}`, () => setProjectUnitOn({ orgId, projectId, projectName: name, unit: u, on, before: data.edges, actor })); };
@@ -180,7 +181,7 @@ export function EquipmentStep({ projectId, projectName, milestones, canManage, u
 
   if (!canManage) return <div className="text-[12px] text-[var(--color-text-muted)]">Only the project owner, a co-owner or an admin can change this.</div>;
   if (!orgId) return <div className="text-[12px] text-[var(--color-text-muted)]">Import the schedule first: the work orders come from it.</div>;
-  if (!data) return <div className="flex items-center gap-2 text-[12.5px] text-[var(--color-text-muted)]">{error ? <span className="text-rose-700 dark:text-rose-300">{error}</span> : <><Loader2 className="w-4 h-4 animate-spin" /> Reading the registry…</>}</div>;
+  if (!data) return <div className="flex items-center gap-2 text-[12px] text-[var(--color-text-muted)]">{error ? <span className="text-[var(--state-overdue-text)]">{error}</span> : <><Loader2 className="w-4 h-4 animate-spin" /> Reading the registry…</>}</div>;
 
   // Tags to add: once per tag and unit (three C-01 work orders, one C-01).
   const notIn = [...new Set(todo.filter((m) => m.state === "not_in_registry" && m.tag).map((m) => `${homeOf(m)}:${tagKey(m.tag!)}`))];
@@ -191,7 +192,7 @@ export function EquipmentStep({ projectId, projectName, milestones, canManage, u
       <div className="space-y-1.5">
         <div className="text-[12px] font-semibold text-[var(--color-text-muted)]">Units this project is on</div>
         {data.units.length === 0 ? (
-          <div className="text-[12.5px] text-[var(--color-text-muted)]">No units in the Site Codebook yet. Add them under Admin › Codebook.</div>
+          <div className="text-[12px] text-[var(--color-text-muted)]">No units in the Site Codebook yet. Add them under Admin › Codebook.</div>
         ) : (
           <>
             <div className="flex flex-wrap items-center gap-1.5">
@@ -199,7 +200,7 @@ export function EquipmentStep({ projectId, projectName, milestones, canManage, u
                 const n = woUnits.find(([c]) => c === u.code)?.[1] ?? 0;
                 const own = data.edges.some((e) => e.b === `cbunit:${u.code}` && e.evidence?.source === "setup");
                 return (
-                  <span key={u.code} className="inline-flex items-center gap-1 rounded-full border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] pl-2.5 pr-1 py-1 text-[12.5px] font-semibold text-[var(--color-text)]">
+                  <span key={u.code} className="inline-flex items-center gap-1 rounded-full border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] pl-2.5 pr-1 py-1 text-[12px] font-semibold text-[var(--color-text)]">
                     <span className="min-w-0">{unitName(u)}<span className="font-normal text-[var(--color-text-muted)]">{i === 0 && pUnits.length > 1 ? " · main" : ""}{n ? ` · ${n} WO${n === 1 ? "" : "s"}` : ""}</span></span>
                     {busy === `unit:${u.code}` ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
                       : own ? <button type="button" disabled={!!busy} onClick={() => unitOn(u, false)} aria-label={`Take the project off ${u.label}`} className="p-0.5 rounded-full hover:bg-[var(--color-surface-2)]"><X className="w-3.5 h-3.5" /></button>
@@ -231,13 +232,13 @@ export function EquipmentStep({ projectId, projectName, milestones, canManage, u
 
       {/* Asks waiting on an admin: each opens on its work order, ready to add. */}
       {asks.length > 0 && (
-        <div className="border-l-2 border-amber-500 pl-3 py-1 space-y-2">
-          <div className="text-[12.5px] font-bold text-amber-900 dark:text-amber-200">
+        <div className="border-l-2 border-[var(--state-held)] pl-3 py-1 space-y-2">
+          <div className="text-[12px] font-bold text-[var(--state-held-text)]">
             {asks.length === 1 ? "1 work order is" : `${asks.length} work orders are`} waiting on equipment to be added{canEditEquipment ? "" : " by an admin"}
           </div>
           <ul className="space-y-1.5">
             {asks.map(({ m, r }) => (
-              <li key={m.id} className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[12.5px]">
+              <li key={m.id} className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px]">
                 <span className="flex-1 min-w-[10rem] text-[var(--color-text)]">{m.workOrderRef ? `WO ${m.workOrderRef} · ` : ""}{m.name}<span className="text-[var(--color-text-muted)]">{r.byName ? ` · asked by ${r.byName}` : ""}</span></span>
                 <EquipmentField milestone={m} milestones={milestones} />
               </li>
@@ -263,12 +264,12 @@ export function EquipmentStep({ projectId, projectName, milestones, canManage, u
           </p>
         )}
         {unknownTypes.length > 0 && (
-          <div className="text-[12px] text-amber-800 dark:text-amber-300">
+          <div className="text-[12px] text-[var(--state-held-text)]">
             Equipment type {unknownTypes.map((t) => `${t}`).join(", ")} {unknownTypes.length === 1 ? "is" : "are"} in your equipment numbers but not in the Site Codebook. Add {unknownTypes.length === 1 ? "it" : "them"} under Admin › Codebook to name {unknownTypes.length === 1 ? "it" : "them"}.
           </div>
         )}
         {flaggedAssets.length > 0 && (
-          <div className="border-l-2 border-amber-500 pl-3 py-1 text-[12.5px] text-amber-900 dark:text-amber-200 space-y-1.5">
+          <div className="border-l-2 border-[var(--state-held)] pl-3 py-1 text-[12px] text-[var(--state-held-text)] space-y-1.5">
             <div className="flex items-start gap-2">
               <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
               <span>
@@ -283,11 +284,11 @@ export function EquipmentStep({ projectId, projectName, milestones, canManage, u
           </div>
         )}
         {matches.length === 0 ? (
-          <div className="text-[12.5px] text-[var(--color-text-muted)]">No work orders on the schedule yet.</div>
+          <div className="text-[12px] text-[var(--color-text-muted)]">No work orders on the schedule yet.</div>
         ) : (
           <ul className="rounded-lg border border-[var(--color-border)] divide-y divide-[var(--color-border)]">
             {matches.map((m) => (
-              <li key={m.ownerId} className="px-3 py-2 text-[12.5px]">
+              <li key={m.ownerId} className="px-3 py-2 text-[12px]">
                 <div className="flex flex-wrap items-start gap-x-3 gap-y-1">
                   <div className="flex-1 min-w-[12rem]">
                     <div className="font-semibold text-[var(--color-text)] break-words">{m.title}{m.wo ? <span className="font-normal text-[var(--color-text-muted)]"> · WO {m.wo}</span> : null}</div>
@@ -329,14 +330,14 @@ export function EquipmentStep({ projectId, projectName, milestones, canManage, u
             ))}
           </ul>
         )}
-        {err && <div className="text-[12px] text-rose-700 dark:text-rose-300">{err}</div>}
+        {err && <div className="text-[12px] text-[var(--state-overdue-text)]">{err}</div>}
       </div>
     </div>
   );
 }
 
 const chip = (t: string, tone: "emerald" | "amber" | "slate") => (
-  <span className={`inline-block rounded px-1.5 py-px text-[12px] font-semibold ${tone === "emerald" ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300" : tone === "amber" ? "bg-amber-50 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"}`}>{t}</span>
+  <span className={`inline-block rounded px-1.5 py-px text-[12px] font-semibold ${tone === "emerald" ? "bg-transparent text-[var(--state-released-text)]" : tone === "amber" ? "bg-transparent text-[var(--state-held-text)]" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"}`}>{t}</span>
 );
 
 /** The registry lists the work order's equipment ID under another name
@@ -353,7 +354,7 @@ function NameDiffers({ orgId, m, canRename, busy, onRename }: { orgId: string; m
   }, [orgId, code]);
   const backed = !!m.tag && !!drawn?.some((d) => tagKey(d.tag) === tagKey(m.tag!));
   return (
-    <div className="mt-1.5 border-l-2 border-amber-500 pl-2.5 py-1 text-[12.5px] text-amber-900 dark:text-amber-200 space-y-1.5" data-name-differs>
+    <div className="mt-1.5 border-l-2 border-[var(--state-held)] pl-2.5 py-1 text-[12px] text-[var(--state-held-text)] space-y-1.5" data-name-differs>
       <div><b>{code}</b> is in the equipment list as <b>{m.listedAs}</b>. This work order calls it <b>{m.tag}</b>. It is matched by its equipment number.</div>
       {drawn && drawn.length > 0 && (
         <ul className="space-y-0.5">
@@ -367,7 +368,7 @@ function NameDiffers({ orgId, m, canRename, busy, onRename }: { orgId: string; m
       {/* A rename only on the drawings' word: some sheet prints this name beside this number. */}
       {drawn && !backed && <div>No drawing on file prints {m.tag} beside {code}. Check the work order&apos;s name and its equipment number before changing the list.</div>}
       {backed && (canRename
-        ? <button type="button" disabled={busy} onClick={onRename} className="inline-flex items-center gap-1.5 h-9 px-3 rounded-lg border border-amber-400 dark:border-amber-700 bg-[var(--color-surface)] text-[12.5px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">Rename it {m.tag} in the equipment list</button>
+        ? <button type="button" disabled={busy} onClick={onRename} className="inline-flex items-center gap-1.5 h-9 px-3 rounded-lg border border-[var(--state-held)] bg-[var(--color-surface)] text-[12px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">Rename it {m.tag} in the equipment list</button>
         : <div className="text-[12px]">Only an admin can rename equipment.</div>)}
     </div>
   );
@@ -384,7 +385,7 @@ function MatchLine({ m, where }: { m: WorkOrderMatch; where: (a: RegistryAsset) 
       {m.state === "found" && <>{tag} <span>· in the registry, {m.asset ? where(m.asset) : ""}{m.byId ? ", found by its ID" : ""}</span></>}
       {m.state === "other_unit" && <>{tag} <span>· in the registry under {m.asset ? where(m.asset) : ""}</span></>}
       {m.state === "not_in_registry" && <>{tag} <span>· not in the registry, will be added under its unit</span></>}
-      {m.state === "two_answers" && m.clash && <span className="text-amber-800 dark:text-amber-300">Its name says <b>{equipmentLabel(m.clash.byName)}</b>. Its equipment number {m.cls.code ?? m.clash.byId.code} is <b>{equipmentLabel(m.clash.byId)}</b>. Pick the one it is on.</span>}
+      {m.state === "two_answers" && m.clash && <span className="text-[var(--state-held-text)]">Its name says <b>{equipmentLabel(m.clash.byName)}</b>. Its equipment number {m.cls.code ?? m.clash.byId.code} is <b>{equipmentLabel(m.clash.byId)}</b>. Pick the one it is on.</span>}
       {m.otherUnit && chip("Different unit", "amber")}
     </div>
   );
@@ -444,7 +445,7 @@ function EditRow({ m, data, busy, onSave, onCancel }: {
         <button type="button" disabled={busy} onClick={() => onSave(null, cls)} className={quiet}>No equipment</button>
         <button type="button" disabled={busy} onClick={onCancel} className="text-[12px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-1">Cancel</button>
       </div>
-      {tag.trim() && !known && <div className="text-[11.5px] text-[var(--color-text-muted)]">Not in the registry: it will be added under {unit ? unitName(units.find((u) => u.code === unit)) : "the project's unit"}.</div>}
+      {tag.trim() && !known && <div className="text-[12px] text-[var(--color-text-muted)]">Not in the registry: it will be added under {unit ? unitName(units.find((u) => u.code === unit)) : "the project's unit"}.</div>}
     </form>
   );
 }

@@ -14,6 +14,7 @@ import { updateProjectMeta } from "@/lib/projects";
 import type { Project, ProjectVisibility } from "@/types/schema";
 import TimeZoneSelect from "@/components/projects/TimeZoneSelect";
 import { DEFAULT_SCHEDULE_TZ, normalizeTimeZone, tzLabel } from "@/lib/scheduleTz";
+import { sayError } from "@/components/projects/sayError";
 
 const JOB_KINDS = [
   { v: "small", label: "Small job" },
@@ -29,8 +30,8 @@ function localDay(v: unknown): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
-const inputCls = "mt-1 w-full h-9 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-sm focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none";
-const areaCls = "mt-1 w-full rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 py-2 text-sm resize-y focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none";
+const inputCls = "mt-1 w-full h-9 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-sm ";
+const areaCls = "mt-1 w-full rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 py-2 text-sm resize-y ";
 const labelCls = "text-[12px] font-semibold text-[var(--color-text-muted)]";
 
 export default function EditProjectModal({ project, actorUserId, actorEmail, actorRole, onClose, onSaved }: {
@@ -152,7 +153,7 @@ export default function EditProjectModal({ project, actorUserId, actorEmail, act
         actorUserId, actorEmail, actorRole,
       });
       onSaved();
-    } catch (e) { setError((e as Error).message); }
+    } catch (e) { setError(sayError(e)); }
     finally { setBusy(false); }
   };
 
@@ -168,20 +169,20 @@ export default function EditProjectModal({ project, actorUserId, actorEmail, act
         <div className="p-5 space-y-3">
           <label className="block">
             <span className="text-[12px] font-semibold text-[var(--color-text-muted)]">Name</span>
-            <input value={name} onChange={(e) => setName(e.target.value)} className="mt-1 w-full h-9 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-sm focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none" />
+            <input value={name} onChange={(e) => setName(e.target.value)} className="mt-1 w-full h-9 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-sm" />
           </label>
           <label className="block">
             <span className="text-[12px] font-semibold text-[var(--color-text-muted)]">Description</span>
-            <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={3} className="mt-1 w-full rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 py-2 text-sm resize-y focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none" />
+            <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={3} className="mt-1 w-full rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 py-2 text-sm resize-y" />
           </label>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <label className="block">
               <span className="text-[12px] font-semibold text-[var(--color-text-muted)]">MOC reference</span>
-              <input value={moc} onChange={(e) => setMoc(e.target.value)} className="mt-1 w-full h-9 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-sm font-display tabular-nums focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none" />
+              <input value={moc} onChange={(e) => setMoc(e.target.value)} className="mt-1 w-full h-9 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-sm font-display tabular-nums" />
             </label>
             <label className="block">
               <span className="text-[12px] font-semibold text-[var(--color-text-muted)]">Target completion</span>
-              <input type="date" value={target} onChange={(e) => setTarget(e.target.value)} className="mt-1 w-full h-9 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-sm [color-scheme:light] dark:[color-scheme:dark] focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none" />
+              <input type="date" value={target} onChange={(e) => setTarget(e.target.value)} className="mt-1 w-full h-9 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-sm [color-scheme:light] dark:[color-scheme:dark]" />
             </label>
             <label className="block">
               <span className={labelCls}>Start date</span>
@@ -209,8 +210,8 @@ export default function EditProjectModal({ project, actorUserId, actorEmail, act
                     <div key={i} className="flex items-center gap-2 text-xs rounded-lg border border-[var(--color-border)] px-2.5 py-1.5">
                       <Target className="w-3 h-3 text-[var(--color-text-muted)] shrink-0" />
                       <input value={g} onChange={(e) => setGoals(goals.map((x, j) => (j === i ? e.target.value : x)))} aria-label={`Goal ${i + 1}`}
-                        className="flex-1 min-w-0 bg-transparent text-[var(--color-text)] outline-none" />
-                      <button type="button" onClick={() => setGoals(goals.filter((_, j) => j !== i))} aria-label="Remove goal" className="p-1 text-[var(--color-text-faint)] hover:text-rose-600"><X className="w-3.5 h-3.5" /></button>
+                        className="flex-1 min-w-0 bg-transparent text-[var(--color-text)]" />
+                      <button type="button" onClick={() => setGoals(goals.filter((_, j) => j !== i))} aria-label="Remove goal" className="p-1 text-[var(--color-text-faint)] hover:text-[var(--state-overdue-text)]"><X className="w-3.5 h-3.5" /></button>
                     </div>
                   ))}
                   <div className="flex items-center gap-2">
@@ -227,8 +228,8 @@ export default function EditProjectModal({ project, actorUserId, actorEmail, act
               <div>
                 <span className={labelCls}>Summary of Work</span>
                 {sowDoc ? (
-                  <div className="mt-1 flex items-center gap-2 rounded-lg border border-emerald-500/40 bg-emerald-500/[0.06] px-2.5 py-2 text-sm">
-                    <FileText className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <div className="mt-1 flex items-center gap-2 rounded-lg border border-[var(--state-released)] bg-[var(--state-released)]/[0.06] px-2.5 py-2 text-sm">
+                    <FileText className="w-4 h-4 text-[var(--state-released-text)] shrink-0" />
                     <span className="font-bold text-[var(--color-text)] truncate">{sowDoc.label}</span>
                     <button type="button" onClick={() => setSowDoc(null)} className="ml-auto inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--state-overdue)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Change</button>
                   </div>
@@ -271,7 +272,7 @@ export default function EditProjectModal({ project, actorUserId, actorEmail, act
               {originalTz === DEFAULT_SCHEDULE_TZ && !tzChanged && " Currently UTC: pick the plant's zone so evening work lands on the right day."}
             </div>
             {tzChanged && (
-              <label className="mt-2 flex items-start gap-2 border-l-2 border-amber-500 pl-3 py-1 text-[11px] text-amber-900 dark:text-amber-200">
+              <label className="mt-2 flex items-start gap-2 border-l-2 border-[var(--state-held)] pl-3 py-1 text-[11px] text-[var(--state-held-text)]">
                 <input type="checkbox" checked={keepWallClock} onChange={(e) => setKeepWallClock(e.target.checked)} className="mt-0.5" />
                 <span>
                   <b>Keep the schedule&apos;s times as written:</b> a task at 8:00 ({tzLabel(originalTz)}) becomes 8:00 ({tzLabel(timezone)}).
@@ -303,7 +304,7 @@ export default function EditProjectModal({ project, actorUserId, actorEmail, act
               <div className="mt-1 text-[11px] text-[var(--color-text-faint)]">Only members, the owner, and Document Control can see private projects.</div>
             )}
           </div>
-          {error && <div role="alert" className="border-l-2 border-rose-500 pl-3 py-1 text-xs font-bold text-rose-700 dark:text-rose-300">{error}</div>}
+          {error && <div role="alert" className="border-l-2 border-[var(--state-overdue)] pl-3 py-1 text-xs font-bold text-[var(--state-overdue-text)]">{error}</div>}
         </div>
         <div className="px-5 py-3.5 border-t border-[var(--color-border)] flex items-center justify-end gap-2">
           <button onClick={onClose} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>

@@ -28,7 +28,7 @@ export default function TimeZoneSelect({ value, onChange, className, disabled }:
         value={value}
         onChange={(e) => onChange(e.target.value)}
         disabled={disabled}
-        className="flex-1 min-w-0 h-9 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-sm focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none disabled:opacity-50"
+        className="flex-1 min-w-0 h-9 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-sm disabled:opacity-50"
       >
         {zones.map((z) => <option key={z} value={z}>{z.replace(/_/g, " ")}</option>)}
       </select>

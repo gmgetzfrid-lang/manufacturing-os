@@ -90,6 +90,7 @@ import { supabase } from "@/lib/supabase";
 import type {
   Project, ProjectMember, ProjectMemberRole, ProjectActivity, CheckoutSession, ProjectStatus, Timestamp,
 } from "@/types/schema";
+import { sayError } from "@/components/projects/sayError";
 
 type Tab = "plan" | "today" | "work" | "reports" | "closeout" | "materials" | "documents" | "intake" | "costs" | "quality" | "activity" | "members";
 const SCHEDULE_TABS = ["plan", "today", "work", "reports"] as const;
@@ -352,7 +353,7 @@ export default function ProjectDetailPage() {
       setJobKind(!extErr && ext ? ((ext as { job_kind?: string | null }).job_kind ?? null) : null);
       setCoachKey((k) => k + 1);
     } catch (e) {
-      setError((e as Error).message || "Failed to load project");
+      setError(sayError(e, "Failed to load project"));
     } finally {
       setLoading(false);
     }
@@ -412,7 +413,7 @@ export default function ProjectDetailPage() {
       setCommentDraft("");
       await refresh();
     } catch (e) {
-      setActionError((e as Error).message);
+      setActionError(sayError(e));
     } finally { setPosting(false); }
   };
 
@@ -437,7 +438,7 @@ export default function ProjectDetailPage() {
       setStatusReason("");
       await refresh();
     } catch (e) {
-      setActionError((e as Error).message);
+      setActionError(sayError(e));
     } finally { setTransitionBusy(false); }
   };
 
@@ -589,7 +590,7 @@ export default function ProjectDetailPage() {
       if (watching) await unwatch({ userId: uid, resourceType: "project", resourceId: project.id });
       else await watch({ orgId: project.orgId, userId: uid, resourceType: "project", resourceId: project.id });
       setWatching(!watching);
-    } catch (e) { await appAlert({ message: (e as Error).message, tone: "danger" }); }
+    } catch (e) { await appAlert({ message: sayError(e), tone: "danger" }); }
   };
   // The rare things only: Setup is in sight on the header (and on Plan);
   // a phone's narrow header keeps it here too.
@@ -606,17 +607,17 @@ export default function ProjectDetailPage() {
                 { icon: <FileText className="w-4 h-4" />, label: "Project report", line: true, onClick: async () => {
                   if (!project.id || !project.orgId) return;
                   try { await openProjectReport(project.orgId, project.id); }
-                  catch (e) { await appAlert({ message: (e as Error).message, tone: "danger" }); }
+                  catch (e) { await appAlert({ message: sayError(e), tone: "danger" }); }
                 } },
                 { icon: <Download className="w-4 h-4" />, label: "Export CSV", onClick: async () => {
                   if (!project.id || !project.orgId) return;
                   try { await exportProjectToCsv(project.id, project.orgId); }
-                  catch (e) { await appAlert({ message: (e as Error).message, tone: "danger" }); }
+                  catch (e) { await appAlert({ message: sayError(e), tone: "danger" }); }
                 } },
                 { icon: <ShieldCheck className="w-4 h-4" />, label: "Evidence pack", onClick: async () => {
                   if (!project.id) return;
                   try { await openProjectEvidencePack(project.id); }
-                  catch (e) { await appAlert({ message: (e as Error).message, tone: "danger" }); }
+                  catch (e) { await appAlert({ message: sayError(e), tone: "danger" }); }
                 } },
                 ...(canManage && project.status === "active" ? [
                   { icon: <Pause className="w-4 h-4" />, label: "Pause project", onClick: () => setPendingStatus("paused"), line: true },
@@ -638,7 +639,7 @@ export default function ProjectDetailPage() {
                   try {
                     await deleteProject({ projectId: project.id, actorUserId: uid!, actorEmail: userEmail ?? undefined, actorRole: activeRole ?? undefined });
                     router.push("/projects");
-                  } catch (e) { await appAlert({ message: (e as Error).message, tone: "danger" }); }
+                  } catch (e) { await appAlert({ message: sayError(e), tone: "danger" }); }
                 } }] : []),
               ]} />
   );
@@ -1012,7 +1013,7 @@ export default function ProjectDetailPage() {
               );
             })()}
             <div className="px-6 py-5">
-              <label className="text-[13px] font-semibold text-[var(--color-text)] ">
+              <label className="text-[13px] font-semibold text-[var(--color-text)]">
                 Reason {pendingStatus === "cancelled" ? "*" : "(optional)"}
               </label>
               <textarea
@@ -1020,7 +1021,7 @@ export default function ProjectDetailPage() {
                 onChange={(e) => setStatusReason(e.target.value)}
                 autoFocus
                 rows={3}
-                className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-md text-[15px] bg-[var(--color-surface)] resize-y focus:border-[var(--color-main)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40 outline-none"
+                className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-md text-[15px] bg-[var(--color-surface)] resize-y"
                 placeholder={pendingStatus === "cancelled" ? "Why is this project being cancelled?" : "Optional note for the audit log"}
               />
               {actionError && <div className="mt-2 text-[14px] font-semibold text-[var(--state-overdue)]">{actionError}</div>}
@@ -1221,7 +1222,7 @@ function ActivityTab({
             placeholder="Share an update or ask a question…"
             aria-label="Comment"
             rows={2}
-            className="w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-md text-[15px] bg-[var(--color-surface)] resize-y focus:border-[var(--color-main)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40 outline-none"
+            className="w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-md text-[15px] bg-[var(--color-surface)] resize-y"
           />
           <div className="mt-2 flex items-center justify-end">
             {/* Orange once there's something to post. */}
@@ -1327,7 +1328,7 @@ function MembersTab({
       await updateMember({ projectId: project.id!, userId: m.userId, responsibility: next, actorUserId });
       setEditingResp((p) => { const n = { ...p }; delete n[m.userId]; return n; });
       onAdded();
-    } catch (e) { await appAlert({ message: (e as Error).message, tone: "danger" }); }
+    } catch (e) { await appAlert({ message: sayError(e), tone: "danger" }); }
   };
 
   // Transfer ownership: to a member (preselected from their row) or
@@ -1339,13 +1340,13 @@ function MembersTab({
     <Card label="Add member">
       <div className="flex flex-col sm:flex-row gap-2">
         <input value={addEmail} onChange={(e) => setAddEmail(e.target.value)} placeholder="user@example.com" aria-label="Email"
-          className="flex-1 h-10 px-3 border border-[var(--color-border-strong)] rounded-md text-[15px] bg-[var(--color-surface)] focus:border-[var(--color-main)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40 outline-none" />
+          className="flex-1 h-10 px-3 border border-[var(--color-border-strong)] rounded-md text-[15px] bg-[var(--color-surface)]" />
         <Select value={addRole} onChange={(e) => setAddRole(e.target.value as ProjectMemberRole)} aria-label="Permission">
           {MEMBER_ROLES.map((r) => <option key={r.role} value={r.role}>{r.label}</option>)}
         </Select>
       </div>
       <input value={addResp} onChange={(e) => setAddResp(e.target.value)} placeholder="What they're responsible for (optional)" aria-label="Responsibility"
-        className="mt-2 w-full h-10 px-3 border border-[var(--color-border-strong)] rounded-md text-[15px] bg-[var(--color-surface)] focus:border-[var(--color-main)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40 outline-none" />
+        className="mt-2 w-full h-10 px-3 border border-[var(--color-border-strong)] rounded-md text-[15px] bg-[var(--color-surface)]" />
       <div className="mt-2 flex justify-end">
         {/* Orange once there's someone to add: the event organization's Save may be the orange one until then. */}
         <button onClick={addByEmail} disabled={busy || !addEmail.trim()} className={`inline-flex items-center gap-1.5 h-9 px-3.5 rounded-md text-[14px] font-semibold disabled:opacity-50 ${addEmail.trim() ? "text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)]" : "border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)]"}`}>
@@ -1395,7 +1396,7 @@ function MembersTab({
                       onChange={(e) => setEditingResp((p) => ({ ...p, [m.userId]: e.target.value }))}
                       onKeyDown={(e) => { if (e.key === "Enter") void saveResp(m); if (e.key === "Escape") setEditingResp((p) => { const n = { ...p }; delete n[m.userId]; return n; }); }}
                       placeholder="What is this member responsible for?"
-                      className="flex-1 min-w-0 h-9 px-3 border border-[var(--color-border-strong)] rounded-md text-[14px] bg-[var(--color-surface)] outline-none focus:border-[var(--color-main)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40" />
+                      className="flex-1 min-w-0 h-9 px-3 border border-[var(--color-border-strong)] rounded-md text-[14px] bg-[var(--color-surface)]" />
                     <button type="button" onClick={() => void saveResp(m)} className="h-9 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">Save</button>
                   </div>
                 ) : (
@@ -1442,7 +1443,7 @@ function MembersTab({
                             try {
                               await removeMember({ projectId: project.id!, orgId: project.orgId, userId: m.userId, userName: m.userName ?? undefined, userEmail: m.userEmail ?? undefined, actorUserId, actorEmail });
                               onAdded();
-                            } catch (e) { await appAlert({ message: (e as Error).message, tone: "danger" }); }
+                            } catch (e) { await appAlert({ message: sayError(e), tone: "danger" }); }
                           }}
                           title="Remove from project"
                           aria-label={`Remove ${who}`}

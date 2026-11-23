@@ -28,6 +28,7 @@ import {
   listFindings, listKeptFindings, saveFinding, listAcks, setAck, FindingsMissing,
   type AckStatus, type Category, type Equipment, type Finding, type FindingDraft, type FindingFields, type RecordLesson, type ReviewState,
 } from "@/lib/findings";
+import { sayError, rawMessage } from "@/components/projects/sayError";
 
 export const NEW_FINDING_EVENT = "finding:new";
 /** "Turnaround" in a sentence: "turnaround". */
@@ -47,9 +48,9 @@ const field = "w-full rounded-md border border-[var(--color-border-strong)] bg-[
 const label = "block text-[12px] font-semibold text-[var(--color-text-muted)] mb-1";
 
 const KIND_TONE: Record<FindingFields["kind"], string> = {
-  problem: "bg-rose-500/10 text-rose-700 border-rose-500/30 dark:text-rose-300",
+  problem: "bg-[var(--state-overdue)] text-[var(--state-overdue-text)] border-[var(--state-overdue)]",
   lesson: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)] dark:bg-[var(--color-surface-2)] dark:text-[var(--color-text)] dark:border-[var(--color-border)]",
-  material: "bg-amber-500/10 text-amber-800 border-amber-500/30 dark:text-amber-300",
+  material: "bg-[var(--state-held)] text-[var(--state-held-text)] border-[var(--state-held)]",
   missed_scope: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)] dark:bg-[var(--color-surface-2)] dark:text-[var(--color-text)] dark:border-[var(--color-border)]",
 };
 export function KindChip({ kind }: { kind: FindingFields["kind"] }) {
@@ -60,7 +61,7 @@ const when = (ms: number, tz: string) => fmtInTz(ms, tz, { month: "short", day: 
 const day = (ms: number, tz: string) => fmtInTz(ms, tz, { month: "short", day: "numeric", year: "numeric" });
 
 const missingMsg = `Findings need the database update (${FINDINGS_SQL}) run first. Until then nothing can be saved.`;
-const errText = (e: unknown) => (e instanceof FindingsMissing ? missingMsg : /permission|policy|row-level/i.test((e as Error).message) ? "Only the project's owner, co-owners and editors can change findings." : (e as Error).message);
+const errText = (e: unknown) => (e instanceof FindingsMissing ? missingMsg : /permission|policy|row-level/i.test(rawMessage(e)) ? "Only the project's owner, co-owners and editors can change findings." : sayError(e));
 
 // ─── Data ──────────────────────────────────────────────────────────
 
@@ -189,7 +190,7 @@ function Chips<T extends string>({ value, options, word, onPick, name }: { value
     <div role="radiogroup" aria-label={name} className="flex flex-wrap gap-1.5">
       {options.map((o) => (
         <button key={o} type="button" role="radio" aria-checked={o === value} onClick={() => onPick(o)}
-          className={`min-h-[32px] rounded-lg border px-2.5 text-[12.5px] font-semibold ${o === value
+          className={`min-h-[32px] rounded-lg border px-2.5 text-[12px] font-semibold ${o === value
             ? "border-[var(--color-text)] bg-[var(--color-surface-2)] text-[var(--color-text)]"
             : "border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"}`}>
           {word(o)}
@@ -361,14 +362,14 @@ function FindingDialog({ orgId, projectId, projectType, milestones, canEdit, mil
     <Modal onClose={onClose} size="md">
       <ModalHeader icon={Lightbulb} title="New finding" subtitle={m ? `On ${m.name}` : "A problem, a lesson, a material shortfall or missed scope, for the next job"} onClose={onClose} />
       <ModalBody>
-        {!canEdit ? <div className="text-[12.5px] text-[var(--color-text-muted)]">Only the project&apos;s owner, co-owners and editors can add findings.</div> : (
+        {!canEdit ? <div className="text-[12px] text-[var(--color-text-muted)]">Only the project&apos;s owner, co-owners and editors can add findings.</div> : (
           <>
             <FindingEditor value={v} onChange={setV} equipment={equipment} unitLabel={unit?.label ?? null} autoGuess jobName={m?.name ?? null} defaultTag={eq?.tag ?? null} typeWord={typeWordOf(projectType)} />
-            <p className="mt-3 text-[11.5px] text-[var(--color-text-faint)]">{draft.restored ? "What you were writing is back. " : ""}Saved with who and when. It goes into the post-event review as written.</p>
+            <p className="mt-3 text-[12px] text-[var(--color-text-faint)]">{draft.restored ? "What you were writing is back. " : ""}Saved with who and when. It goes into the post-event review as written.</p>
           </>
         )}
-        {err && <div className="mt-2 text-[12px] text-rose-700 dark:text-rose-300">{err}</div>}
-        {note && <div role="status" className="mt-2 text-[12px] font-semibold text-emerald-700 dark:text-emerald-400">{note}</div>}
+        {err && <div className="mt-2 text-[12px] text-[var(--state-overdue-text)]">{err}</div>}
+        {note && <div role="status" className="mt-2 text-[12px] font-semibold text-[var(--state-released-text)]">{note}</div>}
       </ModalBody>
       <ModalFooter>
         <div className="flex w-full items-center justify-end gap-2">
@@ -423,8 +424,8 @@ export function JobFindings({ orgId, projectId, milestoneIds, tag, tz }: {
           {f.assetTag && <span className="text-[11px] font-bold text-[var(--color-text)]">{f.assetTag}</span>}
           <span className="text-[11px] text-[var(--color-text-faint)]">{from ? `${from} · ` : ""}{day(f.foundAt, tz)}{f.createdByName ? ` · ${f.createdByName}` : ""}</span>
         </div>
-        <div className="text-[12.5px] text-[var(--color-text)] whitespace-pre-line">{plainText(f.body)}</div>
-        {f.nextTime.trim() && <div className="text-[12.5px] text-[var(--color-text)] whitespace-pre-line"><b>Next time:</b> {plainText(f.nextTime)}</div>}
+        <div className="text-[12px] text-[var(--color-text)] whitespace-pre-line">{plainText(f.body)}</div>
+        {f.nextTime.trim() && <div className="text-[12px] text-[var(--color-text)] whitespace-pre-line"><b>Next time:</b> {plainText(f.nextTime)}</div>}
       </li>
     );
   };
@@ -493,14 +494,14 @@ export function FindingsReview({ orgId, projectId, projectType: given, projectNa
     } catch (e) { setErr({ key, text: errText(e) }); } finally { setBusy(null); }
   };
 
-  if (!r.ready) return <div className="flex items-center gap-2 text-[12.5px] text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin" /> Reading the record…</div>;
+  if (!r.ready) return <div className="flex items-center gap-2 text-[12px] text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin" /> Reading the record…</div>;
   const left = r.state.toReview.length;
   return (
     <div className="space-y-3">
-      {r.missing && <p className="border-l-2 border-amber-500 pl-3 text-[12.5px] text-amber-900 dark:text-amber-200">{missingMsg}</p>}
+      {r.missing && <p className="border-l-2 border-[var(--state-held)] pl-3 text-[12px] text-[var(--state-held-text)]">{missingMsg}</p>}
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-        <div className="text-[12.5px] text-[var(--color-text-muted)]">
-          {left ? <><b className="text-[var(--color-text)]">{left} to review</b> · </> : <><b className="text-emerald-700 dark:text-emerald-400">All reviewed</b> · </>}
+        <div className="text-[12px] text-[var(--color-text-muted)]">
+          {left ? <><b className="text-[var(--color-text)]">{left} to review</b> · </> : <><b className="text-[var(--state-released-text)]">All reviewed</b> · </>}
           {r.state.kept.length} kept · {r.state.dropped.length} dropped
         </div>
         {canEdit && !adding && <button type="button" onClick={() => setAdding(true)} className={`${quiet} ml-auto`}><Plus className="w-3.5 h-3.5" /> Add finding</button>}
@@ -508,7 +509,7 @@ export function FindingsReview({ orgId, projectId, projectType: given, projectNa
       <p className="text-[12px] text-[var(--color-text-faint)]">Only kept ones reach the next job&apos;s plan.</p>
 
       {adding && <AddRow orgId={orgId} projectId={projectId} projectType={projectType} equipment={r.equipment} unit={r.unit} actor={actor} onDone={() => setAdding(false)} onNote={setNote} />}
-      {note && <div role="status" className="text-[12px] font-semibold text-emerald-700 dark:text-emerald-400">{note}</div>}
+      {note && <div role="status" className="text-[12px] font-semibold text-[var(--state-released-text)]">{note}</div>}
 
       {left > 0 && (
         <ul className="space-y-2">
@@ -553,7 +554,7 @@ export function FindingsReview({ orgId, projectId, projectType: given, projectNa
           {showDropped && (
             <ul className="mt-1.5 space-y-1">
               {r.state.dropped.map((f) => (
-                <li key={f.id} className="flex items-start gap-2 rounded-lg border border-dashed border-[var(--color-border)] px-3 py-1.5 text-[12.5px] text-[var(--color-text-muted)]">
+                <li key={f.id} className="flex items-start gap-2 rounded-lg border border-dashed border-[var(--color-border)] px-3 py-1.5 text-[12px] text-[var(--color-text-muted)]">
                   <span className="flex-1 min-w-0 break-words line-through decoration-[var(--color-text-faint)]">{f.body}</span>
                   {canEdit && <button type="button" disabled={busy === `row:${f.id}`} onClick={() => void decide(`row:${f.id}`, draftFromRow(f), f, "open")} className={quiet}><RotateCcw className="w-3.5 h-3.5" /> Bring back</button>}
                 </li>
@@ -583,7 +584,7 @@ function ReviewRow({ draft, tz, canEdit, editing, busy, error, equipment, unitLa
   const applies = d.appliesTo === "equipment" ? d.assetTag ?? "Equipment" : d.appliesTo === "unit" ? (unitLabel ? `Unit (${unitLabel})` : "Unit") : APPLIES_WORD[d.appliesTo];
   const from = [d.from, d.on, Number.isFinite(d.foundAt) ? when(d.foundAt, tz) : null, d.by].filter(Boolean).join(" · ");
   return (
-    <li className={`rounded-lg border ${kept ? "border-emerald-500/30" : "border-[var(--color-border)]"} bg-[var(--color-surface)] px-3 py-2.5 text-[12.5px]`}>
+    <li className={`rounded-lg border ${kept ? "border-[var(--state-released)]" : "border-[var(--color-border)]"} bg-[var(--color-surface)] px-3 py-2.5 text-[12px]`}>
       {from && <div className="text-[11px] text-[var(--color-text-faint)] break-words">{from}</div>}
       {!editing ? (
         <>
@@ -592,7 +593,7 @@ function ReviewRow({ draft, tz, canEdit, editing, busy, error, equipment, unitLa
             <span className="flex-1 min-w-0 break-words text-[var(--color-text)]">{d.body}{d.hours ? <span className="text-[var(--color-text-muted)]"> ({d.hours} h{d.source === "discovery" ? " of work added" : d.source === "hold" ? " on hold" : ""})</span> : null}</span>
           </div>
           {d.nextTime.trim() && <div className="mt-1 text-[var(--color-text)]"><span className="text-[12px] font-semibold text-[var(--color-text-muted)]">Next time </span>{d.nextTime}</div>}
-          <div className="mt-1 text-[11.5px] text-[var(--color-text-muted)]">Applies to <b className="text-[var(--color-text)]">{applies}</b> · {d.topic}</div>
+          <div className="mt-1 text-[12px] text-[var(--color-text-muted)]">Applies to <b className="text-[var(--color-text)]">{applies}</b> · {d.topic}</div>
           {canEdit && (
             <div className="mt-2 flex flex-wrap gap-1.5">
               {!kept && <button type="button" disabled={busy} onClick={() => onKeep(draft)} className={dark}>{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} Keep</button>}
@@ -605,7 +606,7 @@ function ReviewRow({ draft, tz, canEdit, editing, busy, error, equipment, unitLa
       ) : (
         <RowEditor draft={draft} busy={busy} kept={kept} equipment={equipment} unitLabel={unitLabel} onKeep={onKeep} onDrop={onDrop} onCancel={onCancel} />
       )}
-      {error && <div className="mt-1.5 text-[12px] text-rose-700 dark:text-rose-300">{error}</div>}
+      {error && <div className="mt-1.5 text-[12px] text-[var(--state-overdue-text)]">{error}</div>}
     </li>
   );
 }
@@ -655,7 +656,7 @@ function AddRow({ orgId, projectId, projectType, equipment, unit, actor, onDone,
         <button type="button" disabled={busy || !v.body.trim()} onClick={keep} className={btn}>{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} Keep</button>
         <button type="button" disabled={busy} onClick={onDone} className="text-[12px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-1">Cancel</button>
       </div>
-      {err && <div className="text-[12px] text-rose-700 dark:text-rose-300">{err}</div>}
+      {err && <div className="text-[12px] text-[var(--state-overdue-text)]">{err}</div>}
     </div>
   );
 }
@@ -682,16 +683,16 @@ export function FindingsGate({ orgId, projectId, onCount, onOpen }: { orgId: str
     <div className="px-6 pt-4">
       <div className="text-[12px] font-semibold text-[var(--color-text-muted)] mb-1.5">Lessons &amp; findings</div>
       {r.ready && r.missing ? (
-        <div className="text-xs text-amber-800 dark:text-amber-300">{missingMsg} Nothing from this job reaches the next one until then.</div>
+        <div className="text-xs text-[var(--state-held-text)]">{missingMsg} Nothing from this job reaches the next one until then.</div>
       ) : left == null ? (
         <div className="flex items-center gap-2 text-xs text-[var(--color-text-muted)]"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Reading the record…</div>
       ) : left > 0 ? (
-        <div className="border-l-2 border-amber-500 pl-3 text-xs text-amber-900 dark:text-amber-200">
+        <div className="border-l-2 border-[var(--state-held)] pl-3 text-xs text-[var(--state-held-text)]">
           <b>Finish the review first: {left} left.</b> What this job taught reaches the next one only once it&apos;s kept.
           <button type="button" onClick={onOpen} className="ml-1 underline">Open the review</button>
         </div>
       ) : (
-        <div className="flex items-center gap-2 text-xs font-bold text-emerald-700 dark:text-emerald-300"><Check className="w-3.5 h-3.5" /> Reviewed · {r.state.kept.length} kept</div>
+        <div className="flex items-center gap-2 text-xs font-bold text-[var(--state-released-text)]"><Check className="w-3.5 h-3.5" /> Reviewed · {r.state.kept.length} kept</div>
       )}
     </div>
   );
@@ -783,7 +784,7 @@ export function PastJobsPanel({ orgId, projectId, projectType: given, milestones
     }
   };
   const row = (x: PastJob) => (
-    <li key={x.finding.id} className="px-3 py-2 text-[12.5px]">
+    <li key={x.finding.id} className="px-3 py-2 text-[12px]">
       <div className="flex items-start gap-2">
         <KindChip kind={x.finding.kind} />
         <div className="flex-1 min-w-0">
@@ -797,13 +798,13 @@ export function PastJobsPanel({ orgId, projectId, projectType: given, milestones
           {(["planned", "not_relevant"] as AckStatus[]).map((s) => (
             <button key={s} type="button" aria-pressed={x.ack?.status === s} onClick={() => void answer(x, x.ack?.status === s ? null : s)}
               className={`min-h-[30px] rounded-lg border px-2.5 text-[12px] font-semibold ${x.ack?.status === s
-                ? s === "planned" ? "border-emerald-500 bg-emerald-500/10 text-emerald-800 dark:text-emerald-300" : "border-[var(--color-text)] bg-[var(--color-surface-2)] text-[var(--color-text)]"
+                ? s === "planned" ? "border-[var(--state-released)] bg-[var(--state-released)] text-[var(--state-released-text)]" : "border-[var(--color-text)] bg-[var(--color-surface-2)] text-[var(--color-text)]"
                 : "border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"}`}>
               {x.ack?.status === s && <Check className="inline w-3.5 h-3.5 mr-0.5 -mt-0.5" />}{ACK_WORD[s]}
             </button>
           ))}
         </div>
-      ) : x.ack ? <div className="mt-1 text-[11.5px] text-[var(--color-text-muted)] sm:pl-[5.5rem]">{ACK_WORD[x.ack.status]}{x.ack.by ? ` · ${x.ack.by}` : ""}</div> : null}
+      ) : x.ack ? <div className="mt-1 text-[12px] text-[var(--color-text-muted)] sm:pl-[5.5rem]">{ACK_WORD[x.ack.status]}{x.ack.by ? ` · ${x.ack.by}` : ""}</div> : null}
     </li>
   );
   return (
@@ -825,7 +826,7 @@ export function PastJobsPanel({ orgId, projectId, projectType: given, milestones
             </div>
           )}
           {showAnswered && <ul className="divide-y divide-[var(--color-border)] border-t border-[var(--color-border)]">{answered.map(row)}</ul>}
-          {err && <div className="px-3 py-1.5 text-[12px] text-rose-700 dark:text-rose-300">{err}</div>}
+          {err && <div className="px-3 py-1.5 text-[12px] text-[var(--state-overdue-text)]">{err}</div>}
         </div>
       )}
     </section>

@@ -22,9 +22,10 @@ import {
 import LoadingBlock from "@/components/ui/LoadingBlock";
 import { appConfirm } from "@/components/providers/DialogProvider";
 import { useDraft, clearDraft } from "@/hooks/useDraft";
+import { sayError } from "@/components/projects/sayError";
 
-const btn = "inline-flex items-center gap-1.5 h-9 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[12.5px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] whitespace-nowrap disabled:opacity-50";
-const pri = "inline-flex items-center justify-center gap-1.5 h-9 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[12.5px] font-semibold whitespace-nowrap disabled:opacity-50";
+const btn = "inline-flex items-center gap-1.5 h-9 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[12px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] whitespace-nowrap disabled:opacity-50";
+const pri = "inline-flex items-center justify-center gap-1.5 h-9 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[12px] font-semibold whitespace-nowrap disabled:opacity-50";
 const field = "w-full rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 py-1.5 text-[13px] text-[var(--color-text)]";
 const label = "text-[12px] font-semibold text-[var(--color-text-muted)]";
 // State as soft pills (app/globals.css .ui-pill): red short, amber waiting, green here.
@@ -65,7 +66,7 @@ export default function MaterialsRegister({ orgId, projectId, phases, canManage,
   const now = useMemo(() => Date.now(), [rows]);
 
   const load = useCallback(() => {
-    listMaterials(projectId).then((r) => setRows(r.rows)).catch((e) => { setErr((e as Error).message); setRows([]); });
+    listMaterials(projectId).then((r) => setRows(r.rows)).catch((e) => { setErr(sayError(e)); setRows([]); });
   }, [projectId]);
   useEffect(() => { load(); }, [load]);
 
@@ -82,14 +83,14 @@ export default function MaterialsRegister({ orgId, projectId, phases, canManage,
       if (!open.row) clearDraft(`material:${projectId}`);
       setOpen(null); load();
     }
-    catch (e) { setErr((e as Error).message); }
+    catch (e) { setErr(sayError(e)); }
     finally { setBusy(false); }
   };
   const remove = async () => {
     if (!open?.row || !(await appConfirm({ message: `Remove "${open.row.item}" from the register?`, tone: "danger", confirmLabel: "Remove" }))) return;
     setBusy(true); setErr(null);
     try { await deleteMaterial(open.row.id, projectId); setOpen(null); load(); }
-    catch (e) { setErr((e as Error).message); }
+    catch (e) { setErr(sayError(e)); }
     finally { setBusy(false); }
   };
 
@@ -101,7 +102,7 @@ export default function MaterialsRegister({ orgId, projectId, phases, canManage,
   // The counts in one line the eye runs along; a bad count in red.
   const Kpi = ({ name, value, detail, bad }: { name: string; value: number; detail: string; bad?: boolean }) => (
     <span className="inline-flex items-baseline gap-1 whitespace-nowrap" title={detail}>
-      <b className={`tabular-nums ${bad && value > 0 ? "text-rose-700 dark:text-rose-400" : "text-[var(--color-text)]"}`}>{value}</b>
+      <b className={`tabular-nums ${bad && value > 0 ? "text-[var(--state-overdue-text)]" : "text-[var(--color-text)]"}`}>{value}</b>
       <span className="text-[var(--color-text-muted)]">{name.toLowerCase()}</span>
     </span>
   );
@@ -112,13 +113,13 @@ export default function MaterialsRegister({ orgId, projectId, phases, canManage,
     return <span className={`${tag} ${age >= QUESTION_LIMIT_H ? red : amber} !whitespace-normal !h-auto py-0.5`}>&ldquo;{r.question}&rdquo; · open {ageWord(age)}{r.questionBy ? ` · asked by ${r.questionBy}` : ""}</span>;
   };
   const specCell = (r: Material) => <>{r.spec || <span className="text-[var(--color-text-muted)]">None written</span>}{r.qty ? <span className="text-[var(--color-text-muted)]"> · qty {r.qty}</span> : null}{r.specMissing.trim() ? <> <span className={`${tag} ${red} !whitespace-normal !h-auto py-0.5`}>Missing: {r.specMissing}</span></> : null}</>;
-  const etaCell = (r: Material) => <>{r.eta ? <span className={late(r, now) ? "font-bold text-rose-700 dark:text-rose-400" : ""}>{dateWord(r.eta)}</span> : null}{r.etaNote ? <span className="text-[var(--color-text-muted)]">{r.eta ? " · " : ""}{r.etaNote}</span> : null}</>;
+  const etaCell = (r: Material) => <>{r.eta ? <span className={late(r, now) ? "font-bold text-[var(--state-overdue-text)]" : ""}>{dateWord(r.eta)}</span> : null}{r.etaNote ? <span className="text-[var(--color-text-muted)]">{r.eta ? " · " : ""}{r.etaNote}</span> : null}</>;
 
   return (
     <div className="space-y-4" data-materials-register>
       <Card label="Materials register" action={canManage ? <button type="button" onClick={() => setOpen({ row: null, fields: blankMaterial(phaseId) })} className={pri}><Plus className="w-4 h-4" /> Add item</button> : undefined}>
       <p className="text-[14px] font-bold text-[var(--color-text)]">{sum.lines === 0 ? "Nothing on it yet. Open it at scope freeze." : sum.needAttention ? `${sum.needAttention} line${sum.needAttention === 1 ? " needs" : "s need"} someone.` : "Every line is on track."}</p>
-      {err && <div role="alert" className="mt-1 text-[13px] font-semibold text-rose-800 dark:text-rose-300">{err}</div>}
+      {err && <div role="alert" className="mt-1 text-[13px] font-semibold text-[var(--state-overdue-text)]">{err}</div>}
 
       <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-[13px]">
         <Kpi name="Lines" value={sum.lines} detail={`${sum.materials} material${sum.materials === 1 ? "" : "s"} · ${sum.offsite} off-site repair${sum.offsite === 1 ? "" : "s"}`} />
@@ -142,7 +143,7 @@ export default function MaterialsRegister({ orgId, projectId, phases, canManage,
         <Card><p className="text-[15px] text-[var(--color-text-muted)]">{scoped.length ? "Nothing under this filter." : <>No lines yet. <HelpTooltip>Add each material and each item sent out for repair, with who owns it and when it&apos;s needed.</HelpTooltip></>}</p></Card>
       ) : <Card pad={false} className="overflow-hidden">
         <div className="hidden md:block overflow-x-auto">
-          <table className="w-full text-[12.5px] border-collapse">
+          <table className="w-full text-[12px] border-collapse">
             <thead><tr>{["Item", "Spec", "Work order", "Owner", "Status", "Need-by", "ETA / return", "Open question"].map((h) => <th key={h} className="text-left px-2.5 py-2 bg-[var(--color-surface-2)] text-[12px] font-semibold text-[var(--color-text-muted)] border-b border-[var(--color-border)]">{h}</th>)}</tr></thead>
             <tbody>
               {shown.map((r) => {
@@ -169,7 +170,7 @@ export default function MaterialsRegister({ orgId, projectId, phases, canManage,
             return (
               <li key={r.id}>
                 <button type="button" disabled={!canManage} onClick={() => setOpen({ row: r, fields: { ...r } })} className={`w-full text-left px-4 py-3 text-[13px] ${why.length ? "bg-[var(--color-surface-2)]" : ""}`}>
-                  <div className="flex items-start gap-2"><b className="min-w-0 flex-1 text-[13.5px] text-[var(--color-text)]">{r.item}</b><span className={`${tag} ${statusTone(r.status)}`}>{STATUS_WORD[r.status]}</span></div>
+                  <div className="flex items-start gap-2"><b className="min-w-0 flex-1 text-[14px] text-[var(--color-text)]">{r.item}</b><span className={`${tag} ${statusTone(r.status)}`}>{STATUS_WORD[r.status]}</span></div>
                   <div className="text-[var(--color-text-muted)]">{[r.kind === "offsite" ? "Off-site repair" : null, r.vendor, r.workOrder].filter(Boolean).join(" · ")}</div>
                   <div className="mt-1 text-[var(--color-text)]"><span className="text-[var(--color-text-muted)]">Spec: </span>{specCell(r)}</div>
                   <div className="text-[var(--color-text)]"><span className="text-[var(--color-text-muted)]">Owner: </span>{r.owner || "none"} · <span className="text-[var(--color-text-muted)]">Need-by: </span>{dateWord(r.needBy) || "not set"}{r.eta || r.etaNote ? <> · <span className="text-[var(--color-text-muted)]">ETA: </span>{etaCell(r)}</> : null}</div>
@@ -215,7 +216,7 @@ function MaterialForm({ f, set, phases, workOrders }: { f: MaterialFields; set: 
     <div className="space-y-3">
       <div className="flex gap-1.5">
         {(["material", "offsite"] as const).map((k) => (
-          <button key={k} type="button" aria-pressed={f.kind === k} onClick={() => set({ kind: k })} className={`h-9 px-3 rounded-lg border text-[12.5px] font-semibold ${f.kind === k ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30 border-transparent" : "bg-[var(--color-surface)] text-[var(--color-text)] border-[var(--color-border-strong)]"}`}>{k === "material" ? "Material to order" : "Off-site repair or calibration"}</button>
+          <button key={k} type="button" aria-pressed={f.kind === k} onClick={() => set({ kind: k })} className={`h-9 px-3 rounded-lg border text-[12px] font-semibold ${f.kind === k ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30 border-transparent" : "bg-[var(--color-surface)] text-[var(--color-text)] border-[var(--color-border-strong)]"}`}>{k === "material" ? "Material to order" : "Off-site repair or calibration"}</button>
         ))}
       </div>
       {text("item", "Item", f.kind === "material" ? "Long weld neck flange" : "FV-008B control valve")}
@@ -237,7 +238,7 @@ function MaterialForm({ f, set, phases, workOrders }: { f: MaterialFields; set: 
         <label className="block"><span className={label}>Need-by</span><input type="date" value={f.needBy ?? ""} onChange={(e) => set({ needBy: e.target.value || null })} className={`${field} mt-0.5`} /></label>
         <label className="block"><span className={label}>{f.kind === "material" ? "ETA" : "Return date"}</span><input type="date" value={f.eta ?? ""} onChange={(e) => set({ eta: e.target.value || null })} className={`${field} mt-0.5`} /></label>
       </div>
-      {incomplete && <p className="text-[12px] font-semibold text-rose-700 dark:text-rose-400">{f.specMissing.trim() ? `It stays at "Spec incomplete" until "${f.specMissing.trim()}" is filled in and that box is cleared.` : "Write the specification to move it to Ready to order."}</p>}
+      {incomplete && <p className="text-[12px] font-semibold text-[var(--state-overdue-text)]">{f.specMissing.trim() ? `It stays at "Spec incomplete" until "${f.specMissing.trim()}" is filled in and that box is cleared.` : "Write the specification to move it to Ready to order."}</p>}
       {text("etaNote", "About the date", f.kind === "material" ? "4 on back order" : "Quoted 72 h")}
       <div className="grid gap-3 sm:grid-cols-2">
         {text("question", "Open question", "How long is the weld neck?")}

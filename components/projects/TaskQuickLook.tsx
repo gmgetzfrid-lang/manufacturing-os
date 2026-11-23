@@ -31,7 +31,7 @@ function Tile({ label, sub, big, small, tone }: { label: string; sub?: string; b
     <div className={`min-w-0 rounded-lg border px-2 py-1.5 sm:px-3 sm:py-2 ${tone === "accent" ? "border-[var(--color-border-strong)] bg-[var(--color-surface-2)] dark:border-[var(--color-border)] dark:bg-[var(--color-surface-2)]" : "border-[var(--color-border)] bg-[var(--color-surface-2)]"}`}>
       <div className="text-[11px] sm:text-[12px] font-semibold text-[var(--color-text-muted)]">{label}{sub && <span className="hidden sm:inline normal-case font-semibold tracking-normal"> · {sub}</span>}</div>
       <div className="text-[13px] sm:text-[14px] font-bold leading-tight text-[var(--color-text)] tabular-nums">{big}</div>
-      {small && <div className="text-[11px] sm:text-[11.5px] leading-snug text-[var(--color-text-muted)]">{small}</div>}
+      {small && <div className="text-[11px] sm:text-[12px] leading-snug text-[var(--color-text-muted)]">{small}</div>}
     </div>
   );
 }
@@ -72,7 +72,7 @@ export function QuickLookCard({ look, goalAt, noteOf, fmt, onOpen, onClose }: {
         <div className="grid grid-cols-3 gap-1.5 sm:gap-2">
           <Tile tone="accent" label={`Goal by ${fmt.T(goalAt.end)}`} sub={`end of ${goalAt.kind} shift`}
             big={done ? "Done" : `${look.goal}%`}
-            small={done ? null : <>now {look.percent}% · <span className={behind ? "font-bold text-rose-700 dark:text-rose-300" : ""}>plan by now {look.planNow}%</span></>} />
+            small={done ? null : <>now {look.percent}% · <span className={behind ? "font-bold text-[var(--state-overdue-text)]" : ""}>plan by now {look.planNow}%</span></>} />
           <Tile label="This step done by" big={fmt.DTs(look.finish)} small={`starts ${fmt.DTs(look.start)}`} />
           {eq ? (
             <Tile label={`${eqName} done by`} big={Number.isFinite(eq.finish) ? fmt.DTs(eq.finish) : "-"} small={`${eq.done} of ${eq.total} steps · ${eq.percent}%`} />
@@ -80,8 +80,8 @@ export function QuickLookCard({ look, goalAt, noteOf, fmt, onOpen, onClose }: {
         </div>
 
         {look.waitsOn.length > 0 && (
-          <div className="mt-3 border-l-2 border-amber-500 pl-3 py-0.5 text-[12.5px]">
-            <b className="text-amber-800 dark:text-amber-300">Can&apos;t start until done: </b>
+          <div className="mt-3 border-l-2 border-[var(--state-held)] pl-3 py-0.5 text-[12px]">
+            <b className="text-[var(--state-held-text)]">Can&apos;t start until done: </b>
             {look.waitsOn.map((s, i) => (
               <span key={s.id}>{i > 0 && " · "}{link(s, "font-semibold text-[var(--color-text)]")} <span className="text-[var(--color-text-muted)]">({s.percent}%, due {fmt.DTs(s.finish)})</span></span>
             ))}
@@ -132,7 +132,7 @@ export function QuickLookCard({ look, goalAt, noteOf, fmt, onOpen, onClose }: {
         {look.nextElsewhere.length > 0 && (
           <>
             <Heading>Also waiting on this step</Heading>
-            <ul className="space-y-0.5 text-[12.5px]">
+            <ul className="space-y-0.5 text-[12px]">
               {look.nextElsewhere.map((s) => (
                 <li key={s.id}>{link(s, "font-semibold text-[var(--color-text)]")} <span className="text-[var(--color-text-muted)]">· {s.parentName} · starts {fmt.DTs(s.start)}</span></li>
               ))}
@@ -146,7 +146,7 @@ export function QuickLookCard({ look, goalAt, noteOf, fmt, onOpen, onClose }: {
             <Heading>Overall tasks it rolls up to</Heading>
             <ul className="space-y-1">
               {above.map((l, i) => (
-                <li key={l.id} className="flex items-baseline gap-2 text-[12.5px]" style={{ paddingLeft: i * 10 }}>
+                <li key={l.id} className="flex items-baseline gap-2 text-[12px]" style={{ paddingLeft: i * 10 }}>
                   <span className="min-w-0 flex-1 truncate text-[var(--color-text)]">{l.name}</span>
                   <span className="shrink-0 text-[var(--color-text-muted)]">done by <b className="font-display tabular-nums text-[var(--color-text)]">{Number.isFinite(l.finish) ? fmt.DTs(l.finish) : "-"}</b> · {l.percent}%</span>
                 </li>
@@ -158,7 +158,7 @@ export function QuickLookCard({ look, goalAt, noteOf, fmt, onOpen, onClose }: {
         {(look.reason || note) && (
           <>
             <Heading>{look.reason ? "Reason it's held" : "Last comment"}</Heading>
-            <p className="text-[12.5px] italic text-[var(--color-text)]">{look.reason ?? note}</p>
+            <p className="text-[12px] italic text-[var(--color-text)]">{look.reason ?? note}</p>
           </>
         )}
       </ModalBody>

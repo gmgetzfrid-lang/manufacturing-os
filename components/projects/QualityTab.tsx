@@ -57,6 +57,7 @@ import { useDraft } from "@/hooks/useDraft";
 import { turnoverSource, jobSizeWord } from "@/lib/requirementSource";
 import { SourceLine } from "@/components/projects/NeedParts";
 import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
+import { sayError } from "@/components/projects/sayError";
 
 type Announce = (message: string, undo: () => void | Promise<void>) => void;
 
@@ -102,7 +103,7 @@ export default function QualityTab({ orgId, projectId, canManage, canEditPunch, 
         .map((m) => (m.user_name && !m.user_name.includes("@") ? m.user_name : m.user_email?.split("@")[0] ?? ""))
         .filter(Boolean))]);
     } catch (e) {
-      setErr((e as Error).message);
+      setErr(sayError(e));
     } finally { setLoading(false); }
     onDataChanged?.();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -152,7 +153,7 @@ export default function QualityTab({ orgId, projectId, canManage, canEditPunch, 
 }
 
 const quietBtn = "inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50";
-const fieldCls = "h-9 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-[14px] outline-none focus:border-[var(--color-main)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40";
+const fieldCls = "h-9 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-[14px] ";
 
 // ── Checklists ───────────────────────────────────────────────────────────
 
@@ -243,7 +244,7 @@ export function NewChecklistFlow({ orgId, projectId, projectName, actor, onDone,
       setDoc(picked);
       setUploading(null);
       await read(picked);
-    } catch (e) { setErr((e as Error).message); if (!filed) setFailed(file); }
+    } catch (e) { setErr(sayError(e)); if (!filed) setFailed(file); }
     finally { setUploading(null); if (fileRef.current) fileRef.current.value = ""; }
   };
   const [reading, setReading] = useState(false);
@@ -286,7 +287,7 @@ export function NewChecklistFlow({ orgId, projectId, projectName, actor, onDone,
       setProposed(body.items);
       setTitle(body.sourceLabel ?? which.label);
     } catch (e) {
-      setErr((e as Error).message);
+      setErr(sayError(e));
     } finally { setReading(false); }
   };
 
@@ -312,7 +313,7 @@ export function NewChecklistFlow({ orgId, projectId, projectName, actor, onDone,
             <div className={`rounded-xl border-2 border-dashed border-[var(--color-border-strong)] bg-[var(--color-surface)] p-3 flex items-center gap-3 flex-wrap ${drag.ring}`}>
               <input ref={fileRef} type="file" accept="application/pdf,.pdf" className="hidden" onChange={(e) => void upload(e.target.files?.[0])} />
               <button type="button" onClick={() => fileRef.current?.click()} disabled={!!uploading || reading || !home?.place}
-                className={`h-9 inline-flex items-center gap-1.5 px-3.5 rounded-lg text-[12.5px] font-semibold disabled:opacity-50 ${home?.place ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]" : "border border-[var(--color-border-strong)] text-[var(--color-text)]"}`}>
+                className={`h-9 inline-flex items-center gap-1.5 px-3.5 rounded-lg text-[12px] font-semibold disabled:opacity-50 ${home?.place ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]" : "border border-[var(--color-border-strong)] text-[var(--color-text)]"}`}>
                 {uploading || reading ? <Loader2 className="w-4 h-4 animate-spin" /> : <UploadCloud className="w-4 h-4" />} {uploading ? "Uploading…" : reading ? "Reading it…" : `Upload the ${kind === "pssr" ? "PSSR" : "checklist"} (PDF)`}
               </button>
               {(uploading || failed) && (
@@ -320,7 +321,7 @@ export function NewChecklistFlow({ orgId, projectId, projectName, actor, onDone,
                   <FileThumb file={(uploading ?? failed)!} size={32} />
                   <span className="min-w-0 truncate text-[var(--color-text)]">{(uploading ?? failed)!.name} <span className="text-[var(--color-text-muted)]">· {fileSize((uploading ?? failed)!.size)}{uploading ? " · uploading…" : " · didn't upload"}</span></span>
                   {failed && !uploading && (
-                    <button type="button" onClick={() => void upload(failed)} className="shrink-0 h-8 inline-flex items-center gap-1.5 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[12.5px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+                    <button type="button" onClick={() => void upload(failed)} className="shrink-0 h-8 inline-flex items-center gap-1.5 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[12px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
                       Try again
                     </button>
                   )}
@@ -336,7 +337,7 @@ export function NewChecklistFlow({ orgId, projectId, projectName, actor, onDone,
             {doc ? (
               <span className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 py-1.5 text-xs font-bold text-[var(--color-text)]">
                 <FileText className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> {doc.label}
-                <button onClick={() => setDoc(null)} className="text-[var(--color-text-faint)] hover:text-rose-600"><X className="w-3 h-3" /></button>
+                <button onClick={() => setDoc(null)} className="text-[var(--color-text-faint)] hover:text-[var(--state-overdue-text)]"><X className="w-3 h-3" /></button>
               </span>
             ) : (
               <span className="relative flex-1 min-w-64">
@@ -389,7 +390,7 @@ export function NewChecklistFlow({ orgId, projectId, projectName, actor, onDone,
                 {p.section && <span className="shrink-0 text-[13px] font-semibold text-[var(--color-text-faint)] mt-0.5">{p.section}</span>}
                 <span className="flex-1 text-[var(--color-text)]">{p.text}</span>
                 <button onClick={() => setProposed(proposed.filter((_, j) => j !== i))}
-                  className="shrink-0 text-[var(--color-text-faint)] hover:text-rose-600"><X className="w-3 h-3" /></button>
+                  className="shrink-0 text-[var(--color-text-faint)] hover:text-[var(--state-overdue-text)]"><X className="w-3 h-3" /></button>
               </li>
             ))}
           </ul>
@@ -411,7 +412,7 @@ function ChecklistCard({ orgId, projectId, checklist, canManage, actor, onChange
 
   const loadItems = useCallback(async () => {
     try { setItems(await listChecklistItems(checklist.id)); }
-    catch (e) { setErr(`Couldn't load the items: ${(e as Error).message}`); setItems([]); }
+    catch (e) { setErr(`Couldn't load the items: ${sayError(e)}`); setItems([]); }
   }, [checklist.id, setErr]);
   useEffect(() => { if (open && items == null) void loadItems(); }, [open, items, loadItems]);
 
@@ -441,7 +442,7 @@ function ChecklistCard({ orgId, projectId, checklist, canManage, actor, onChange
         setErr(`Applied ${applied.applied}; left ${applied.skippedHuman} alone because a human already decided them.`);
       }
     } catch (e) {
-      setErr((e as Error).message);
+      setErr(sayError(e));
     } finally { setBusy(null); }
   };
 
@@ -455,7 +456,7 @@ function ChecklistCard({ orgId, projectId, checklist, canManage, actor, onChange
         setErr("Evidence check: nothing new found. Items are done, decided by a person, or need evidence a person attaches.");
       }
     } catch (e) {
-      setErr((e as Error).message);
+      setErr(sayError(e));
     } finally { setBusy(null); }
   };
 
@@ -514,7 +515,7 @@ function ChecklistCard({ orgId, projectId, checklist, canManage, actor, onChange
         <span className="text-xs font-semibold text-[var(--color-text)]">{checklist.title}</span>
         <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">{CHECKLIST_KIND_LABEL[checklist.kind]}</span>
         {checklist.status === "complete" && (
-          <span className="inline-flex items-center gap-0.5 text-[11px] font-semibold text-emerald-700 dark:text-emerald-300"><ShieldCheck className="w-3 h-3" /> Complete</span>
+          <span className="inline-flex items-center gap-0.5 text-[11px] font-semibold text-[var(--state-released-text)]"><ShieldCheck className="w-3 h-3" /> Complete</span>
         )}
         {progress && checklist.status === "open" && (
           <span className="ml-auto text-[11px] font-bold tabular-nums text-[var(--color-text-muted)]">
@@ -538,7 +539,7 @@ function ChecklistCard({ orgId, projectId, checklist, canManage, actor, onChange
                 {busy === "sweep" ? <Loader2 className="w-3 h-3 animate-spin" /> : <ListChecks className="w-3 h-3" />} Check evidence we already hold
               </button>
               <button onClick={() => void remove()} disabled={busy != null} title="Added by mistake? Take it off the list. It stays on the record, with Undo right after."
-                className="ml-auto inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold text-[var(--color-text-muted)] hover:text-rose-600 hover:bg-rose-500/10 disabled:opacity-50 transition-colors">
+                className="ml-auto inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--state-overdue-text)] hover:bg-[var(--state-overdue)] disabled:opacity-50 transition-colors">
                 {busy === "remove" ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />} Remove
               </button>
               <button onClick={() => void complete()} disabled={busy != null}
@@ -551,7 +552,7 @@ function ChecklistCard({ orgId, projectId, checklist, canManage, actor, onChange
             <div className="flex items-center gap-2 flex-wrap">
               <span className="text-[11px] text-[var(--color-text-muted)]">Complete: its items are locked. Reopen it to change one.</span>
               <button onClick={() => void remove()} disabled={busy != null}
-                className="ml-auto inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold text-[var(--color-text-muted)] hover:text-rose-600 hover:bg-rose-500/10 disabled:opacity-50 transition-colors">
+                className="ml-auto inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--state-overdue-text)] hover:bg-[var(--state-overdue)] disabled:opacity-50 transition-colors">
                 {busy === "remove" ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />} Remove
               </button>
               <button onClick={() => void reopen()} disabled={busy != null}
@@ -629,7 +630,7 @@ function ChecklistItemRow({ orgId, projectId, item, canManage, actor, onChanged,
           {item.evidence.length > 0 && (
             <div className="mt-1 flex flex-wrap gap-1">
               {item.evidence.map((e, i) => (
-                <span key={i} className={`text-[11px] font-bold px-1.5 py-0.5 rounded border ${e.source === "auto" ? "border-emerald-500/40 bg-emerald-500/[0.07] text-emerald-700 dark:text-emerald-300" : "border-[var(--color-border-strong)] bg-[var(--color-surface-2)] text-[var(--color-text)] dark:text-[var(--color-text)]"}`}
+                <span key={i} className={`text-[11px] font-bold px-1.5 py-0.5 rounded border ${e.source === "auto" ? "border-[var(--state-released)] bg-[var(--state-released)]/[0.07] text-[var(--state-released-text)]" : "border-[var(--color-border-strong)] bg-[var(--color-surface-2)] text-[var(--color-text)] dark:text-[var(--color-text)]"}`}
                   title={e.source === "auto" ? "Found by the evidence sweep" : "Attached by a person"}>
                   {e.label}
                 </span>
@@ -641,7 +642,7 @@ function ChecklistItemRow({ orgId, projectId, item, canManage, actor, onChanged,
           <span className="shrink-0 flex items-center gap-1">
             {!na && item.status !== "satisfied" && (
               <button onClick={() => void override({ status: "satisfied" }, "Mark satisfied")}
-                className="px-1.5 py-0.5 rounded text-[11px] font-bold text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/10" title="Mark satisfied with your note on the record">✓ Satisfied</button>
+                className="px-1.5 py-0.5 rounded text-[11px] font-bold text-[var(--state-released-text)] hover:bg-[var(--state-released)]" title="Mark satisfied with your note on the record">✓ Satisfied</button>
             )}
             {!na && item.status === "satisfied" && (
               // One tap back to open. It stays human-decided, so the
@@ -669,8 +670,8 @@ function ChecklistItemRow({ orgId, projectId, item, canManage, actor, onChanged,
 
 function StatusDot({ status }: { status: ChecklistItem["status"] }) {
   const map: Record<string, { c: string; t: string }> = {
-    satisfied: { c: "bg-emerald-500", t: "Satisfied: evidence attached" },
-    needs_evidence: { c: "bg-amber-500", t: "Needs evidence: nothing on file proves it yet" },
+    satisfied: { c: "bg-[var(--state-released)]", t: "Satisfied: evidence attached" },
+    needs_evidence: { c: "bg-[var(--state-held)]", t: "Needs evidence: nothing on file proves it yet" },
     open: { c: "bg-[var(--color-text-faint)]", t: "Open: not checked against evidence yet" },
     na: { c: "bg-[var(--color-border-strong)]", t: "Not applicable to this job" },
   };
@@ -820,10 +821,10 @@ function TurnoverSection({ orgId, projectId, canManage, actor, items, jobKind, p
                       <button onClick={() => void review(it, "received")} className="px-1.5 py-0.5 rounded text-[11px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">Received</button>
                     )}
                     {(it.status === "received" || it.status === "rejected") && (
-                      <button onClick={() => void review(it, "accepted")} className="px-1.5 py-0.5 rounded text-[11px] font-bold text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/10">Accept</button>
+                      <button onClick={() => void review(it, "accepted")} className="px-1.5 py-0.5 rounded text-[11px] font-bold text-[var(--state-released-text)] hover:bg-[var(--state-released)]">Accept</button>
                     )}
                     {it.status === "received" && (
-                      <button onClick={() => void review(it, "rejected")} className="px-1.5 py-0.5 rounded text-[11px] font-bold text-rose-700 dark:text-rose-300 hover:bg-rose-500/10">Reject</button>
+                      <button onClick={() => void review(it, "rejected")} className="px-1.5 py-0.5 rounded text-[11px] font-bold text-[var(--state-overdue-text)] hover:bg-[var(--state-overdue)]">Reject</button>
                     )}
                     {(it.status === "open" || it.status === "received") && (
                       <button onClick={() => void review(it, "waived")} className="px-1.5 py-0.5 rounded text-[11px] font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]">Waive</button>
@@ -1085,7 +1086,7 @@ function PunchSection({ orgId, projectId, canManage, actor, items, parties, peop
                 <span className={`text-[var(--color-text)] ${it.status !== "open" ? "line-through" : ""}`}>{it.title}</span>
                 {where && <span className="text-[11px] text-[var(--color-text-muted)]">{where}</span>}
                 {it.dueDate && it.status === "open" && (
-                  <span className={`text-[11px] font-bold ${overdue ? "text-rose-600 dark:text-rose-400" : "text-[var(--color-text-muted)]"}`}>
+                  <span className={`text-[11px] font-bold ${overdue ? "text-[var(--state-overdue-text)]" : "text-[var(--color-text-muted)]"}`}>
                     due {new Date(it.dueDate + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })}{overdue ? ", overdue" : ""}
                   </span>
                 )}
@@ -1096,9 +1097,9 @@ function PunchSection({ orgId, projectId, canManage, actor, items, parties, peop
                       <Pencil className="w-3 h-3" /> Edit
                     </button>
                     <button onClick={() => void setStatus(it, "done")}
-                      className="px-2 py-1 rounded text-[11px] font-bold text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/10">Done</button>
+                      className="px-2 py-1 rounded text-[11px] font-bold text-[var(--state-released-text)] hover:bg-[var(--state-released)]">Done</button>
                     <button onClick={() => void voidItem(it)}
-                      className="p-1.5 rounded text-[11px] font-bold text-[var(--color-text-faint)] hover:text-rose-600 hover:bg-rose-500/10" title="Void: not a real snag" aria-label="Void: not a real snag"><Ban className="w-3.5 h-3.5" /></button>
+                      className="p-1.5 rounded text-[11px] font-bold text-[var(--color-text-faint)] hover:text-[var(--state-overdue-text)] hover:bg-[var(--state-overdue)]" title="Void: not a real snag" aria-label="Void: not a real snag"><Ban className="w-3.5 h-3.5" /></button>
                   </span>
                 )}
                 {canManage && it.status !== "open" && busy !== it.id && (

@@ -6,6 +6,7 @@
 import { useState } from "react";
 import { Download } from "lucide-react";
 import type { LogFormat } from "@/lib/hourlyLogFiles";
+import { sayError } from "@/components/projects/sayError";
 
 const NAMES: Record<LogFormat, string> = { pdf: "PDF", docx: "Word (.docx)", xlsx: "Excel (.xlsx)" };
 
@@ -24,7 +25,7 @@ export function HourlyLogExport({ formats, what, letterhead, onExport, label = "
   const [msg, setMsg] = useState<string | null>(null);
   const go = async (f: LogFormat) => {
     setOpen(false); setBusy(f); setMsg(null);
-    try { setMsg(await onExport(f)); } catch (e) { setMsg(`Not exported: ${(e as Error).message}`); }
+    try { setMsg(await onExport(f)); } catch (e) { setMsg(`Not exported: ${sayError(e)}`); }
     finally { setBusy(null); }
   };
   return (

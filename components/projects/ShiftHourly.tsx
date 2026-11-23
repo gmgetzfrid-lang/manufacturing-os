@@ -29,8 +29,9 @@ import { timeOnDay } from "@/lib/shiftReport";
 import { dayKey } from "@/lib/scheduleTz";
 import { TimeChip } from "@/components/projects/DateTimePicker";
 import { cleanName, crewNames, renamed, setNames, totalOnSite, withName, withoutName, earlierMeetingLines, hasOwnRoster, meetingEmpty, onSiteCell, type MeetingParts } from "@/lib/shiftMeeting";
+import { sayError } from "@/components/projects/sayError";
 
-const inputCls = "rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 py-1 text-[12.5px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none focus:border-[var(--color-accent-ring)]";
+const inputCls = "rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 py-1 text-[12px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] ";
 const btn = "inline-flex items-center gap-1.5 h-7 px-3 rounded-lg text-[12px] font-bold disabled:opacity-60";
 /** An inline editor's Save: quiet, the report's one orange button is Email / Print. */
 const saveBtn = `${btn} border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]`;
@@ -120,7 +121,7 @@ export function ShiftHourlyBox({ h, edit, print, tz, meetings }: {
   const skipped = new Set([...(h.notes?.skip ?? []), ...(h.meet?.off ?? [])]);
   const removed = h.slots.filter((x) => skipped.has(x.key));
   const run = async (f: () => Promise<void>) => {
-    try { await f(); setMsg(null); } catch (e) { setMsg((e as Error).message); }
+    try { await f(); setMsg(null); } catch (e) { setMsg(sayError(e)); }
   };
   // Off: on the meeting's own record (one meeting, both shifts' logs).
   // Back: there, and any earlier mark on this shift's notes.
@@ -206,7 +207,7 @@ export function ShiftHourlyBox({ h, edit, print, tz, meetings }: {
             const head = r.slot.key === "ot";
             const ot = h.overtime;
             return (
-              <li key={r.slot.key} className="flex items-start gap-2 px-3 py-1.5 text-[12.5px] leading-snug bg-[var(--color-surface-2)]">
+              <li key={r.slot.key} className="flex items-start gap-2 px-3 py-1.5 text-[12px] leading-snug bg-[var(--color-surface-2)]">
                 <span className="w-[66px] shrink-0 font-bold text-[var(--color-text)] whitespace-nowrap tabular-nums">{clocks[i]}</span>
                 <span className="min-w-0 flex-1 font-bold text-[var(--color-text)]">{r.slot.label}</span>
                 {head && edit && ot && otForm == null && (
@@ -261,7 +262,7 @@ export function ShiftHourlyBox({ h, edit, print, tz, meetings }: {
           }
           const note = m ? noteOf(m) : [];
           return (
-            <li key={r.slot.key} className={`grid grid-cols-[66px_minmax(0,1fr)_auto] max-sm:grid-cols-[minmax(0,1fr)_auto] items-start gap-x-2 gap-y-0.5 px-3 py-1.5 text-[12.5px] leading-snug ${isMeeting ? "bg-[var(--color-surface-2)]/30" : ""}`}>
+            <li key={r.slot.key} className={`grid grid-cols-[66px_minmax(0,1fr)_auto] max-sm:grid-cols-[minmax(0,1fr)_auto] items-start gap-x-2 gap-y-0.5 px-3 py-1.5 text-[12px] leading-snug ${isMeeting ? "bg-[var(--color-surface-2)]/30" : ""}`}>
               <span className="font-bold text-[var(--color-text)] whitespace-nowrap tabular-nums">{clocks[i]}{isMeeting && <span className="sm:hidden font-bold"> {label}</span>}</span>
               {/* On a phone the time and its buttons share a line; what happened gets the full width under them. */}
               <div className="min-w-0 max-sm:order-last max-sm:col-span-2">
@@ -280,8 +281,8 @@ export function ShiftHourlyBox({ h, edit, print, tz, meetings }: {
                     (a time fixed, an entry moved or changed): say so, one tap to
                     bring it up to date (what they added stays). */}
                 {edit && r.typed && r.stale && editing !== r.slot.key && (
-                  <div role="status" className="mt-1 space-y-1 border-l-2 border-amber-500 pl-2 py-0.5 text-[11.5px] text-[var(--color-text)]">
-                    <div className="font-semibold text-amber-800 dark:text-amber-300">Typed here, not on the work order now:</div>
+                  <div role="status" className="mt-1 space-y-1 border-l-2 border-[var(--state-held)] pl-2 py-0.5 text-[12px] text-[var(--color-text)]">
+                    <div className="font-semibold text-[var(--state-held-text)]">Typed here, not on the work order now:</div>
                     {(r.mismatch ?? []).map((x) => (
                       <div key={x} className="flex items-start gap-2">
                         <span className="min-w-0 flex-1 break-words italic"><Line text={x} /></span>
@@ -318,7 +319,7 @@ export function ShiftHourlyBox({ h, edit, print, tz, meetings }: {
               {edit && editing !== r.slot.key && isMeeting && (
                 <button type="button" onClick={() => void setOff(r.slot, true)} aria-label={`Remove the ${label.toLowerCase()} from the log`}
                   title="Wasn't held: take it off the log (it can be put back)"
-                  className="shrink-0 p-1 rounded text-[var(--color-text-muted)] hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/40">
+                  className="shrink-0 p-1 rounded text-[var(--color-text-muted)] hover:text-[var(--state-overdue-text)] hover:bg-transparent">
                   <Trash2 className="w-3.5 h-3.5" />
                 </button>
               )}
@@ -345,13 +346,13 @@ export function ShiftHourlyBox({ h, edit, print, tz, meetings }: {
             </button>
           ))}
       {removed.length > 0 && (
-        <div className="text-[11.5px] text-[var(--color-text-muted)]">
+        <div className="text-[12px] text-[var(--color-text-muted)]">
           Taken off the log: {removed.map((x, i) => (
             <span key={x.key}>{i > 0 ? ", " : ""}{titleOf(x) || "Hour"}{edit && <button type="button" onClick={() => void setOff(x, false)} className="ml-1 text-[var(--color-accent-text)] hover:underline">Put back</button>}</span>
           ))}
         </div>
       )}
-      {msg && <div role="alert" className="text-[11.5px] font-semibold text-rose-700 dark:text-rose-400">{msg}</div>}
+      {msg && <div role="alert" className="text-[12px] font-semibold text-[var(--state-overdue-text)]">{msg}</div>}
     </div>
   );
 }
@@ -379,7 +380,7 @@ function HoldCost({ ot, crew, hands, until }: { ot: OtCtx; crew: string; hands: 
   if (perHour == null) return null;
   const m = (n: number) => `$${Math.round(n).toLocaleString("en-US")}`;
   return (
-    <span className="basis-full text-[11.5px] text-[var(--color-text)]" data-hold-cost>
+    <span className="basis-full text-[12px] text-[var(--color-text)]" data-hold-cost>
       {hours != null && hours > 0 ? <><b>{m(holdCost(sheet, mix, plan?.crafts, paid, hands, hours) ?? perHour * hours)}</b> for {hands} hands, {Math.round(hours * 10) / 10} h past the shift</> : <><b>{m(perHour)}</b> for each hour {hands} hands stay past the shift</>}
       {" "}at {co}&apos;s rates. <button type="button" onClick={() => openContractor(co)} className="text-[var(--color-accent-text)] hover:underline">{co}&apos;s cost to date</button>
     </span>
@@ -404,7 +405,7 @@ function HoldOverForm({ ot, adding, onDone, onError }: { ot: OtCtx; adding: bool
       out.push({ id: x.id, crew: x.crew.trim(), hands: x.hands ? Math.max(0, Math.round(Number(x.hands))) : null, note: x.note.trim() || undefined, until, takeover: x.takeover || null, at: was?.at ?? Date.now(), by: was?.by ?? null });
     }
     setBusy(true);
-    try { await ot.save(() => out); onError(null); onDone(); } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
+    try { await ot.save(() => out); onError(null); onDone(); } catch (e) { setErr(sayError(e)); } finally { setBusy(false); }
   };
   return (
     <div className="rounded-lg border border-[var(--color-border)] p-2 space-y-2 text-[12px]">
@@ -426,15 +427,15 @@ function HoldOverForm({ ot, adding, onDone, onError }: { ot: OtCtx; adding: bool
             <option value="">No one takes over</option>
             {ot.crews.map((c) => <option key={c} value={c}>{c} takes over</option>)}
           </select>
-          <button type="button" onClick={() => setRows(rows.filter((_, j) => j !== i))} aria-label={`Take ${x.crew || "this crew"} off overtime`} className="p-1 rounded text-[var(--color-text-muted)] hover:text-rose-700"><Trash2 className="w-3.5 h-3.5" /></button>
+          <button type="button" onClick={() => setRows(rows.filter((_, j) => j !== i))} aria-label={`Take ${x.crew || "this crew"} off overtime`} className="p-1 rounded text-[var(--color-text-muted)] hover:text-[var(--state-overdue-text)]"><Trash2 className="w-3.5 h-3.5" /></button>
           <HoldCost ot={ot} crew={x.crew} hands={Number(x.hands) || 0} until={x.until ? timeAfter(ot.shiftEnd, x.until, ot.tz, timeOnDay, dayKey) : null} />
         </div>
       ))}
       <button type="button" onClick={() => setRows([...rows, blank()])} className="text-[13px] text-[var(--color-accent-text)] hover:underline">+ Another crew</button>
-      {err && <div role="alert" className="text-[11.5px] font-semibold text-rose-700 dark:text-rose-400">{err}</div>}
+      {err && <div role="alert" className="text-[12px] font-semibold text-[var(--state-overdue-text)]">{err}</div>}
       <div className="flex items-center gap-2">
         <button type="button" disabled={busy} onClick={() => void save()} className={saveBtn}>Save</button>
-        <button type="button" onClick={onDone} className="text-[11.5px] text-[var(--color-text-muted)] hover:underline">Cancel</button>
+        <button type="button" onClick={onDone} className="text-[12px] text-[var(--color-text-muted)] hover:underline">Cancel</button>
       </div>
     </div>
   );
@@ -451,7 +452,7 @@ function SentHomeForm({ ot, onDone, onError }: { ot: OtCtx; onDone: () => void; 
     try {
       await ot.save((l) => l.map((x) => (x.until == null ? { ...x, until: t, takeover: takeover || x.takeover || null } : x)));
       onError(null); onDone();
-    } catch (e) { setErr((e as Error).message); }
+    } catch (e) { setErr(sayError(e)); }
   };
   return (
     <div className="rounded-lg border border-[var(--color-border)] p-2 flex flex-wrap items-center gap-1.5 text-[12px]">
@@ -462,8 +463,8 @@ function SentHomeForm({ ot, onDone, onError }: { ot: OtCtx; onDone: () => void; 
         {ot.crews.map((c) => <option key={c} value={c}>{c} takes over</option>)}
       </select>
       <button type="button" onClick={() => void save()} className={saveBtn}>Save</button>
-      <button type="button" onClick={onDone} className="text-[11.5px] text-[var(--color-text-muted)] hover:underline">Cancel</button>
-      {err && <div role="alert" className="w-full text-[11.5px] font-semibold text-rose-700 dark:text-rose-400">{err}</div>}
+      <button type="button" onClick={onDone} className="text-[12px] text-[var(--color-text-muted)] hover:underline">Cancel</button>
+      {err && <div role="alert" className="w-full text-[12px] font-semibold text-[var(--state-overdue-text)]">{err}</div>}
     </div>
   );
 }
@@ -504,7 +505,7 @@ function Items({ text, going, closed }: { text: string; going: string[]; closed:
     <ul className="space-y-0.5">
       {/* A line that finished a whole work order: quiet green. */}
       {items.map((x, i) => (closed.includes(x)
-        ? <li key={i} className="break-words text-emerald-700 dark:text-emerald-400 print:text-emerald-800" title="Work order complete"><Line text={x} /></li>
+        ? <li key={i} className="break-words text-[var(--state-released-text)] print:text-[var(--state-released-text)]" title="Work order complete"><Line text={x} /></li>
         : <li key={i} className="break-words text-[var(--color-text)]"><Line text={x} /></li>))}
       {going.map((x, i) => <li key={`g${i}`} className="break-words text-[var(--color-text-muted)]"><Line text={x} /></li>)}
     </ul>
@@ -520,7 +521,7 @@ export function MeetingBox({ m, edit }: { m: MeetingCtx; edit: boolean }) {
   const list = [...m.crews, ...Object.keys(crews).filter((k) => !m.crews.includes(k))];
   // Plant staff (not on the job) aren't counted.
   const total = totalOnSite(list.map((c) => ({ headcount: crews[c]?.headcount ?? null, plant: !!crews[c]?.plant })));
-  const save = (change: (r: ShiftRecord) => ShiftRecord) => m.save(change).then(() => setMsg(null), (e: Error) => { setMsg(e.message); throw e; });
+  const save = (change: (r: ShiftRecord) => ShiftRecord) => m.save(change).then(() => setMsg(null), (e: Error) => { setMsg(sayError(e)); throw e; });
   // A change makes the crews this shift's own: the carried ones first, then the change.
   const own = (r: ShiftRecord): ShiftRecord => ({ ...r, crews: hasOwnRoster(r) ? r.crews ?? {} : { ...(m.carried?.crews ?? {}) }, meeting: { ...(r.meeting ?? {}), ownCrews: true } });
   const setCrew = (crew: string, f: (c: CrewCount | undefined) => CrewCount | null) => save((r) => {
@@ -539,7 +540,7 @@ export function MeetingBox({ m, edit }: { m: MeetingCtx; edit: boolean }) {
     <div className="mt-1 space-y-1">
       {/* Carried from the last same shift until someone changes or checks it. */}
       {m.carried ? (
-        <div role="status" className="flex flex-wrap items-center gap-x-2 gap-y-1 border-l-2 border-amber-500 pl-2 py-0.5 text-[11.5px] text-amber-800 dark:text-amber-300">
+        <div role="status" className="flex flex-wrap items-center gap-x-2 gap-y-1 border-l-2 border-[var(--state-held)] pl-2 py-0.5 text-[12px] text-[var(--state-held-text)]">
           <AlertTriangle className="w-3.5 h-3.5 shrink-0" aria-hidden />
           <span className="min-w-0 flex-1"><b>Not updated for this shift.</b> Same people and head counts as {m.carried.label}{edit ? ": change anyone who's different." : "."}</span>
           {edit && (
@@ -550,7 +551,7 @@ export function MeetingBox({ m, edit }: { m: MeetingCtx; edit: boolean }) {
           )}
         </div>
       ) : edit && entered ? (
-        <div className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700 dark:text-emerald-400"><Check className="w-3.5 h-3.5" aria-hidden /> Updated for this shift</div>
+        <div className="inline-flex items-center gap-1 text-[11px] font-semibold text-[var(--state-released-text)]"><Check className="w-3.5 h-3.5" aria-hidden /> Updated for this shift</div>
       ) : null}
       <div className="rounded-lg bg-[var(--color-surface-2)]/60">
         <div className={`${grid} px-2 py-1 text-[13px] font-semibold text-[var(--color-text-muted)]`}>
@@ -574,7 +575,7 @@ export function MeetingBox({ m, edit }: { m: MeetingCtx; edit: boolean }) {
       </div>
       <SafetyTopic value={m.record?.meeting?.safety} topics={m.topics} edit={edit}
         onSave={(t) => void save((r) => ({ ...r, meeting: { ...(r.meeting ?? {}), safety: t || undefined } })).catch(() => undefined)} />
-      {msg && <div role="alert" className="text-[11.5px] font-semibold text-rose-700 dark:text-rose-400">{msg}</div>}
+      {msg && <div role="alert" className="text-[12px] font-semibold text-[var(--state-overdue-text)]">{msg}</div>}
     </div>
   );
 }
@@ -614,7 +615,7 @@ function CrewRow({ grid, crew, value, known, edit, plan, onNames, onCount, onTot
         <b className="text-[12px] text-[var(--color-text)] break-words">{crew}</b>
         {edit && onRemove && (
           <button type="button" onClick={onRemove} aria-label={`Take ${crew} off the meeting`} title="Take this company off the meeting"
-            className="shrink-0 p-0.5 rounded text-[var(--color-text-faint)] hover:text-rose-700"><XIcon className="w-3 h-3" /></button>
+            className="shrink-0 p-0.5 rounded text-[var(--color-text-faint)] hover:text-[var(--state-overdue-text)]"><XIcon className="w-3 h-3" /></button>
         )}
         {plan?.first && <PlanBeside plan={plan} count={countOf(value).total} edit={edit} onSame={() => onCount(plan.direct, plan.indirect)} />}
       </div>
@@ -657,7 +658,7 @@ function NamePill({ name, edit, listId, onRename, onRemove }: { name: string; ed
           <button type="button" onClick={() => setEditing(true)} aria-label={`Edit ${name}`} className="ml-0.5 shrink-0 p-1 rounded-full text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface)]">
             <Pencil className="w-3 h-3" />
           </button>
-          <button type="button" onClick={onRemove} aria-label={`Remove ${name}`} className="shrink-0 p-1 rounded-full text-[var(--color-text-muted)] hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/40">
+          <button type="button" onClick={onRemove} aria-label={`Remove ${name}`} className="shrink-0 p-1 rounded-full text-[var(--color-text-muted)] hover:text-[var(--state-overdue-text)] hover:bg-transparent">
             <Trash2 className="w-3 h-3" />
           </button>
         </>
@@ -688,7 +689,7 @@ function NameInput({ init, listId, label, keepOpen, onDone, onClose }: {
         if (e.key === "Escape") { done.current = true; onClose(); }
       }}
       onBlur={() => { if (!done.current) finish(true); }}
-      className="h-6 w-36 max-w-full rounded-full border border-[var(--color-accent-ring)] bg-[var(--color-surface)] px-2 text-[12px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none" />
+      className="h-6 w-36 max-w-full rounded-full border border-[var(--color-accent-ring)] bg-[var(--color-surface)] px-2 text-[12px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)]" />
   );
 }
 
@@ -701,7 +702,7 @@ function PlanBeside({ plan, count, edit, onSame }: { plan: { company: string; he
       <button type="button" onClick={() => openContractor(plan.company)} className="hover:underline" title={`${plan.company}'s staffing plan in Costs, Contractors`}>
         Plan {plan.heads} ({plan.direct} + {plan.indirect}){plan.across > 1 ? ` across ${plan.across} ${plan.company} crews` : ""}
       </button>
-      {diff != null && diff !== 0 && <b className={diff < 0 ? "text-amber-700 dark:text-amber-400" : "text-rose-700 dark:text-rose-400"}>{diff < 0 ? `${-diff} short` : `${diff} over`}</b>}
+      {diff != null && diff !== 0 && <b className={diff < 0 ? "text-[var(--state-held-text)]" : "text-[var(--state-overdue-text)]"}>{diff < 0 ? `${-diff} short` : `${diff} over`}</b>}
       {edit && plan.across === 1 && count !== plan.heads && (
         <button type="button" onClick={onSame} className="h-5 px-1.5 rounded border border-[var(--color-border-strong)] text-[11px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">Same as plan</button>
       )}
@@ -725,7 +726,7 @@ function HeadCount({ crew, value, plant, edit, onSave, onTotal, onPlant }: {
   const [splitOpen, setSplitOpen] = useState(false);
   if (!edit) {
     return (
-      <span className={`block text-right text-[12.5px] tabular-nums whitespace-nowrap ${plant ? "text-[var(--color-text-muted)]" : "w-[6.5rem] text-[var(--color-text)]"}`}>
+      <span className={`block text-right text-[12px] tabular-nums whitespace-nowrap ${plant ? "text-[var(--color-text-muted)]" : "w-[6.5rem] text-[var(--color-text)]"}`}>
         {plant ? "Plant staff" : n.total == null ? "-" : n.split ? <><b>{n.total}</b> <span className="text-[11px] text-[var(--color-text-muted)]">({n.direct} + {n.indirect})</span></> : <b>{n.total}</b>}
       </span>
     );
@@ -807,7 +808,7 @@ function SafetyTopic({ value, topics, edit, onSave }: { value?: string; topics?:
           {edit && (
             <span className="inline-flex items-center">
               <button type="button" onClick={open} aria-label="Edit the safety topic" className="p-1 rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><Pencil className="w-3 h-3" /></button>
-              <button type="button" onClick={() => onSave("")} aria-label="Remove the safety topic" className="p-1 rounded text-[var(--color-text-muted)] hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/40"><Trash2 className="w-3 h-3" /></button>
+              <button type="button" onClick={() => onSave("")} aria-label="Remove the safety topic" className="p-1 rounded text-[var(--color-text-muted)] hover:text-[var(--state-overdue-text)] hover:bg-transparent"><Trash2 className="w-3 h-3" /></button>
             </span>
           )}
         </>
@@ -839,7 +840,7 @@ function HourForm({ init, placeholder, onDone, onCancel }: { init: string; place
         className={`${inputCls} w-full resize-y`} />
       <div className="flex items-center gap-2">
         <button type="button" onClick={() => onDone(text)} className={saveBtn}>Save</button>
-        <button type="button" onClick={onCancel} className="text-[11.5px] text-[var(--color-text-muted)] hover:underline">Cancel</button>
+        <button type="button" onClick={onCancel} className="text-[12px] text-[var(--color-text-muted)] hover:underline">Cancel</button>
       </div>
     </div>
   );

@@ -9,8 +9,9 @@ import { Card } from "@/components/ui/PageHero";
 import React, { useEffect, useMemo, useState } from "react";
 import { Check, Loader2, Plus, X, Network } from "lucide-react";
 import { defaultRoles, loadOrg, orgStanding, saveOrg, type OrgRole } from "@/lib/eventOrganization";
+import { sayError } from "@/components/projects/sayError";
 
-const field = "w-full h-9 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-[14px] text-[var(--color-text)] outline-none focus:border-[var(--color-main)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40 disabled:opacity-70";
+const field = "w-full h-9 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-[14px] text-[var(--color-text)] disabled:opacity-70";
 const label = "text-[13px] font-semibold text-[var(--color-text-muted)]";
 const btn = "inline-flex items-center gap-1.5 h-9 px-3.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] whitespace-nowrap disabled:opacity-50";
 const pri = "inline-flex items-center justify-center gap-1.5 h-9 px-4 rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[14px] font-semibold hover:bg-[var(--color-accent-hover)] whitespace-nowrap disabled:opacity-50";
@@ -29,7 +30,7 @@ export default function EventOrganization({ projectId, canManage, actor, people 
   const [editing, setEditing] = useState(false);
   useEffect(() => {
     let live = true;
-    loadOrg(projectId).then((r) => { if (live) { setRoles(r ?? defaultRoles()); setRecorded(r != null); setDirty(false); } }).catch((e) => { if (live) { setErr((e as Error).message); setRoles(defaultRoles()); } });
+    loadOrg(projectId).then((r) => { if (live) { setRoles(r ?? defaultRoles()); setRecorded(r != null); setDirty(false); } }).catch((e) => { if (live) { setErr(sayError(e)); setRoles(defaultRoles()); } });
     return () => { live = false; };
   }, [projectId]);
   const st = useMemo(() => orgStanding(roles), [roles]);
@@ -41,7 +42,7 @@ export default function EventOrganization({ projectId, canManage, actor, people 
   const save = async () => {
     setBusy(true); setErr(null);
     try { const saved = await saveOrg(projectId, roles.filter((r) => r.role.trim()), { name: actor.email }); setRoles(saved); setRecorded(true); setDirty(false); setEditing(false); }
-    catch (e) { setErr((e as Error).message); }
+    catch (e) { setErr(sayError(e)); }
     finally { setBusy(false); }
   };
   const all = st.required > 0 && st.missing.length === 0;
@@ -101,7 +102,7 @@ export default function EventOrganization({ projectId, canManage, actor, people 
       <div className="px-4 sm:px-5 pb-4 flex items-center gap-2 flex-wrap">
         {canManage && <button type="button" onClick={add} className={btn}><Plus className="w-4 h-4" /> Add a role</button>}
         {canManage && <button type="button" disabled={busy || (!dirty && recorded)} onClick={() => void save()} className={pri}>{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} {recorded ? "Save changes" : "Save as this event's organization"}</button>}
-        {recorded && <button type="button" onClick={() => { setEditing(false); setDirty(false); void loadOrg(projectId).then((r) => { if (r) setRoles(r); }).catch((e) => setErr((e as Error).message)); }} className={btn}>Cancel</button>}
+        {recorded && <button type="button" onClick={() => { setEditing(false); setDirty(false); void loadOrg(projectId).then((r) => { if (r) setRoles(r); }).catch((e) => setErr(sayError(e))); }} className={btn}>Cancel</button>}
         <span className="text-[13px] text-[var(--color-text-muted)]">{!recorded ? "This is the starting list. Nothing counts until you save it." : st.missing.length ? `Not named: ${st.missing.join(", ")}.` : "Every required role has a name."}</span>
       </div>
       </>)}

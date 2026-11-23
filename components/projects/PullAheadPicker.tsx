@@ -14,6 +14,7 @@ import { filterLookAhead, scopeOf } from "@/lib/pullAhead";
 import { capacityOf } from "@/lib/shiftHandover";
 import type { LookAheadItem, PullCrew, ShiftRow, ShiftWindow } from "@/lib/shiftReport";
 import { searchMatcher, hasQuery } from "@/lib/fuzzySearch";
+import { sayError } from "@/components/projects/sayError";
 
 const WINDOWS = [
   { id: "1", label: "Next day", days: 1 },
@@ -93,38 +94,38 @@ export function PullAheadPicker({ items, onLists, next, shiftHours, picked, coun
       <ModalBody className="p-0">
         {/* Crew and how much of its shift is filled */}
         <div className="px-4 pt-3 pb-2.5 border-b border-[var(--color-border)] space-y-2">
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-[12.5px]">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-[12px]">
             <span className="inline-flex items-center gap-1.5 font-bold text-[var(--color-text)]"><Users className="w-4 h-4 text-[var(--color-text-muted)]" /> Crew</span>
             <select value={pull.crew ?? ""} disabled={locked} onChange={(e) => onPull({ ...pull, crew: e.target.value || null })} aria-label="Crew for the extra work"
-              className="h-8 max-w-[240px] rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12.5px] text-[var(--color-text)]">
+              className="h-8 max-w-[240px] rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12px] text-[var(--color-text)]">
               <option value="">Not named</option>
               {crews.map((c) => <option key={c} value={c}>{c}</option>)}
             </select>
             <label className="inline-flex items-center gap-1.5 text-[var(--color-text-muted)]">
               <input type="number" min={0} max={50} step={1} disabled={locked} value={pull.hands} onChange={(e) => onPull({ ...pull, hands: num(e.target.value, 50) })}
-                className="h-8 w-14 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1.5 text-[12.5px] text-[var(--color-text)]" aria-label="Hands" /> hands ×
+                className="h-8 w-14 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1.5 text-[12px] text-[var(--color-text)]" aria-label="Hands" /> hands ×
               <input type="number" min={0} max={24} step={0.5} disabled={locked} value={pull.hours} onChange={(e) => onPull({ ...pull, hours: num(e.target.value, 24) })}
-                className="h-8 w-16 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1.5 text-[12.5px] text-[var(--color-text)]" aria-label="Hours each" /> h
+                className="h-8 w-16 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1.5 text-[12px] text-[var(--color-text)]" aria-label="Hours each" /> h
             </label>
             {onSaveDefault && !locked && (
-              <button type="button" onClick={() => { const p = pull; onSaveDefault(p).then(() => setDefaultState({ for: p, ok: true }), (e: Error) => setDefaultState({ for: p, ok: false, msg: e.message })); }}
+              <button type="button" onClick={() => { const p = pull; onSaveDefault(p).then(() => setDefaultState({ for: p, ok: true }), (e: Error) => setDefaultState({ for: p, ok: false, msg: sayError(e) })); }}
                 className="text-[13px] text-[var(--color-accent-text)] hover:underline">
                 {defaultNow?.ok ? "✓ Default for every shift" : "Make this the default"}
               </button>
             )}
-            {defaultNow && !defaultNow.ok && <span className="w-full text-[11.5px] text-rose-700 dark:text-rose-300">{defaultNow.msg}</span>}
+            {defaultNow && !defaultNow.ok && <span className="w-full text-[12px] text-[var(--state-overdue-text)]">{defaultNow.msg}</span>}
           </div>
           {cap > 0 ? (
             <div className="flex items-center gap-2.5">
               <div className="flex-1 h-2.5 rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden" role="meter" aria-valuemin={0} aria-valuemax={cap} aria-valuenow={Math.min(used, cap)} aria-valuetext={`${used} of ${cap} hours`} aria-label="Hours asked of the crew">
-                <div className={`h-full rounded-full ${over ? "bg-rose-500" : pct >= 85 ? "bg-amber-500" : "bg-emerald-500"}`} style={{ width: `${pct}%` }} />
+                <div className={`h-full rounded-full ${over ? "bg-[var(--state-overdue)]" : pct >= 85 ? "bg-[var(--state-held)]" : "bg-[var(--state-released)]"}`} style={{ width: `${pct}%` }} />
               </div>
-              <span className={`shrink-0 text-[12px] font-bold tabular-nums ${over ? "text-rose-700 dark:text-rose-300" : "text-[var(--color-text)]"}`}>
+              <span className={`shrink-0 text-[12px] font-bold tabular-nums ${over ? "text-[var(--state-overdue-text)]" : "text-[var(--color-text)]"}`}>
                 {used} h of {cap} h{over ? ", over" : ""}
               </span>
             </div>
           ) : (
-            <div className="text-[11.5px] text-[var(--color-text-muted)]">{used > 0 ? `${used} h asked of the shift. ` : ""}Set the crew size to see how full the shift is.</div>
+            <div className="text-[12px] text-[var(--color-text-muted)]">{used > 0 ? `${used} h asked of the shift. ` : ""}Set the crew size to see how full the shift is.</div>
           )}
         </div>
 
@@ -136,10 +137,10 @@ export function PullAheadPicker({ items, onLists, next, shiftHours, picked, coun
               onKeyDown={(e) => { if (e.key === "Enter" && query && only) onToggle(only.row, true); }}
               aria-label="Search the job for a step to add"
               placeholder="Search a work order #, equipment (E-17), step or crew, the whole job"
-              className="w-full h-10 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] pl-8 pr-8 text-[13.5px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none focus:ring-2 focus:ring-[var(--color-main)]/40" />
+              className="w-full h-10 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] pl-8 pr-8 text-[14px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)]" />
             {query && <button type="button" onClick={() => { setQuery(""); searchRef.current?.focus(); }} aria-label="Clear search" className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-[var(--color-text-faint)] hover:text-[var(--color-text)]"><X className="w-4 h-4" /></button>}
           </label>
-          <div className="flex flex-wrap items-center gap-1.5 text-[11.5px]">
+          <div className="flex flex-wrap items-center gap-1.5 text-[12px]">
             {query ? (
               <span className="text-[var(--color-text-muted)]">Searching the whole job · {list.length} to add{listedHits.length ? ` · ${listedHits.length} already listed` : ""}{only ? ". Enter adds it" : ""}</span>
             ) : (
@@ -181,7 +182,7 @@ export function PullAheadPicker({ items, onLists, next, shiftHours, picked, coun
                       title={cant ? (x.blockedBy ? `Can't start: it waits on ${x.blockedBy}, which is blocked or on hold` : `Blocked or on hold${r.reason ? `: ${r.reason}` : ""}`) : on ? "Remove from the shift" : early ? "Not ready yet: add only if you know it can start" : "Add to the shift"}
                       className={`shrink-0 mt-0.5 inline-flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-[12px] font-bold whitespace-nowrap transition-colors disabled:opacity-40 ${on
                         ? "border-transparent bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30"
-                        : early ? "border-amber-400 text-amber-800 dark:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-950/40"
+                        : early ? "border-[var(--state-held)] text-[var(--state-held-text)] hover:bg-transparent"
                           : "border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
                       {on ? <><Check className="w-3.5 h-3.5" /> Added</> : <><Plus className="w-3.5 h-3.5" /> {early && !cant ? "Add anyway" : "Add"}</>}
                     </button>
@@ -192,12 +193,12 @@ export function PullAheadPicker({ items, onLists, next, shiftHours, picked, coun
                         <Ready x={x} kind={kind} />
                         {scope && <Tag tone="amber">{scope}&apos;s scope: coordinate</Tag>}
                       </div>
-                      <div className="mt-0.5 text-[11.5px] text-[var(--color-text-muted)] break-words">
+                      <div className="mt-0.5 text-[12px] text-[var(--color-text-muted)] break-words">
                         {r.path.slice(0, -1).join(" › ") || r.parentName}
                         {r.leaf.workOrderRef ? <> · WO <span className="font-display tabular-nums">{r.leaf.workOrderRef}</span></> : null}
                         {!scope && r.leaf.responsibleParty ? <> · {r.leaf.responsibleParty}</> : null}
                       </div>
-                      <div className="mt-0.5 text-[11.5px] text-[var(--color-text-muted)]">
+                      <div className="mt-0.5 text-[12px] text-[var(--color-text-muted)]">
                         planned {fmt.T(r.crewStart)}{r.crewFinish - r.crewStart < 86_400_000 ? `–${fmt.T(r.crewFinish)}` : ` → ${fmt.D(r.crewFinish)}`}{r.reflowed ? " (crew hours)" : ""} · <b className="text-[var(--color-text)]">{share(r)} h</b> on one shift{r.hoursLeft > shiftHours ? ` (of ${r.hoursLeft} h left)` : ""}{r.percent > 0 ? ` · ${r.percent}% done` : ""}
                       </div>
                     </div>
@@ -210,7 +211,7 @@ export function PullAheadPicker({ items, onLists, next, shiftHours, picked, coun
             <div>
               <div className="px-4 py-1 bg-slate-100 dark:bg-slate-800 text-[12px] font-semibold text-slate-600 dark:text-slate-300">Already listed</div>
               {listedHits.map((x) => (
-                <div key={x.row.leaf.id} className="flex items-start gap-3 px-4 py-2 text-[12.5px]">
+                <div key={x.row.leaf.id} className="flex items-start gap-3 px-4 py-2 text-[12px]">
                   <span className="shrink-0 mt-0.5 rounded-lg border border-[var(--color-border)] px-2.5 py-1.5 text-[11px] font-bold text-[var(--color-text-muted)] whitespace-nowrap">Listed</span>
                   <div className="min-w-0"><b className="text-[var(--color-text)] break-words">{x.row.leaf.name}</b> <span className="text-[var(--color-text-muted)]">· {x.row.parentName} · {x.where}</span></div>
                 </div>
@@ -227,7 +228,7 @@ export function PullAheadPicker({ items, onLists, next, shiftHours, picked, coun
           <span className="flex-1 text-[12px] text-[var(--color-text-muted)]">
             {picked.length ? <><b className="text-[var(--color-text)]">{picked.length} step{picked.length === 1 ? "" : "s"}</b> · {used} h{cap > 0 ? ` of ${cap} h` : ""} · listed under Next shift as &ldquo;could try if possible&rdquo;</> : "Nothing added yet."}
           </span>
-          <button type="button" onClick={onClose} className="rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] px-4 py-2 text-[12.5px] font-bold">Done</button>
+          <button type="button" onClick={onClose} className="rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] px-4 py-2 text-[12px] font-bold">Done</button>
         </div>
       </ModalFooter>
     </Modal>
@@ -246,9 +247,9 @@ function Chip({ on, onClick, children }: { on: boolean; onClick: () => void; chi
 }
 
 function Tag({ tone, children }: { tone: "rose" | "amber" | "emerald" | "slate"; children: React.ReactNode }) {
-  const cls = tone === "rose" ? "bg-rose-100 text-rose-800 border-rose-300 dark:bg-rose-950/40 dark:text-rose-200 dark:border-rose-900"
-    : tone === "amber" ? "bg-amber-100 text-amber-900 border-amber-300 dark:bg-amber-950/40 dark:text-amber-200 dark:border-amber-900"
-      : tone === "emerald" ? "bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-950/40 dark:text-emerald-200 dark:border-emerald-900"
+  const cls = tone === "rose" ? "bg-transparent text-[var(--state-overdue-text)] border-[var(--color-border)]"
+    : tone === "amber" ? "bg-transparent text-[var(--state-held-text)] border-[var(--color-border)]"
+      : tone === "emerald" ? "bg-transparent text-[var(--state-released-text)] border-[var(--color-border)]"
         : "bg-slate-100 text-slate-700 border-slate-300 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700";
   return <span className={`inline-block max-w-full break-words px-1.5 py-px rounded border text-[13px] font-semibold ${cls}`}>{children}</span>;
 }

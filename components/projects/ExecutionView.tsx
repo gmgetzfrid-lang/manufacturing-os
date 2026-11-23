@@ -88,6 +88,7 @@ import ScheduleFilterBar from "@/components/projects/ScheduleFilterBar";
 import { Card } from "@/components/ui/PageHero";
 import { Select } from "@/components/ui/Field";
 import { filterMilestones, isFilterActive, EMPTY_FILTER, type ScheduleFilter } from "@/lib/scheduleFilter";
+import { sayError, rawMessage } from "@/components/projects/sayError";
 
 /** Which part of the project this board is showing (the project's tabs):
  *  Today, the shift's screen; Work, the timeline, calendar and work
@@ -474,7 +475,7 @@ export default function ExecutionView({
         onRefresh();
       }, "default");
     } catch (e) {
-      notify(/critical_override/.test((e as Error).message) ? "Run migration 20261101_critical_path_control.sql first." : `Not saved: ${(e as Error).message}`, "warning");
+      notify(/critical_override/.test(rawMessage(e)) ? "Run migration 20261101_critical_path_control.sql first." : `Not saved: ${sayError(e)}`, "warning");
     }
   }, [canEdit, childrenOf, orgId, projectId, userId, userEmail, onRefresh, announce, notify]);
   const handMarked = useMemo(() => items.filter((t) => t.criticalOverride), [items]);
@@ -488,10 +489,10 @@ export default function ExecutionView({
         await applyBulkFieldChange({ orgId, projectId, field: "criticalOverride", changes: before, summary: { mode: "set", to: "undo" }, actorUserId: userId, actorUserEmail: userEmail });
         onRefresh();
       }, "default");
-    } catch (e) { notify(`Not saved: ${(e as Error).message}`, "warning"); }
+    } catch (e) { notify(`Not saved: ${sayError(e)}`, "warning"); }
   }, [handMarked, orgId, projectId, userId, userEmail, onRefresh, announce, notify]);
   const setCriticalSource = useCallback(async (mode: CriticalMode) => {
-    try { await saveCriticalMode(projectId, mode); } catch (e) { notify((e as Error).message, "warning"); }
+    try { await saveCriticalMode(projectId, mode); } catch (e) { notify(sayError(e), "warning"); }
   }, [projectId, notify]);
 
   // Group color assignment — a phase + all its children share one hue.
@@ -791,13 +792,13 @@ export default function ExecutionView({
       try {
         await updateMilestone({ id, updatedBy: userId, updatedByName: userName, updatedByEmail: userEmail, updatedByRole: userRole, patch: { actualParty: u.doneBy } });
         onRefresh();
-      } catch (e) { notify(`Saved, but not who did it: ${(e as Error).message}`, "warning"); }
+      } catch (e) { notify(`Saved, but not who did it: ${sayError(e)}`, "warning"); }
     }
     // What got done goes on the report (a hold's reason already did).
     if (u.status !== "on_hold" && u.status !== "blocked" && u.note.trim()) await addNote(id, u.note, u.at, u.status);
     if (u.why) {
       try { await addMilestoneNote({ orgId, milestoneId: id, kind: "behind", statusAt: u.status, body: u.why, createdBy: userId, createdByName: userName, happenedAt: new Date(u.at).toISOString() }); }
-      catch (e) { notify((e as Error).message, "warning"); }
+      catch (e) { notify(sayError(e), "warning"); }
     }
     return true;
   }, [byId, tz, setProgress, setStatus, addNote, orgId, userId, userName, userEmail, userRole, notify, onRefresh]);
@@ -812,7 +813,7 @@ export default function ExecutionView({
         ...(t.finish !== undefined ? { actualAt: t.finish != null ? new Date(t.finish).toISOString() : null } : {}), actorUserId: userId, actorUserName: userName });
       onRefresh();
       return true;
-    } catch (e) { forgetTimes([id]); notify((e as Error).message, "warning"); return false; }
+    } catch (e) { forgetTimes([id]); notify(sayError(e), "warning"); return false; }
   }, [canEdit, userId, userName, onRefresh, notify]);
   // Discovery work: found work into the schedule (lib/discovery). Its steps
   // go under the task, linked after the step they follow; what they hold up
@@ -884,7 +885,7 @@ export default function ExecutionView({
       }, plan.impact.critical ? "default" : "success");
       return true;
     } catch (e) {
-      notify(`Not fully saved: ${(e as Error).message}${newTaskId ? " (the work order was added)" : ""}${made.length ? ` (${made.length} step${made.length === 1 ? "" : "s"} were added)` : ""}`, "warning");
+      notify(`Not fully saved: ${sayError(e)}${newTaskId ? " (the work order was added)" : ""}${made.length ? ` (${made.length} step${made.length === 1 ? "" : "s"} were added)` : ""}`, "warning");
       onRefresh();
       return false;
     }
@@ -905,7 +906,7 @@ export default function ExecutionView({
     const who = { updatedBy: userId, updatedByName: userName, updatedByEmail: userEmail, updatedByRole: userRole };
     if (c.in && c.inPatch) {
       try { await updateMilestone({ id: c.in.id, ...who, patch: c.inPatch }); }
-      catch (e) { notify(`Moved, but ${c.in.name}'s crew or hours couldn't be changed: ${(e as Error).message}`, "warning"); }
+      catch (e) { notify(`Moved, but ${c.in.name}'s crew or hours couldn't be changed: ${sayError(e)}`, "warning"); }
     }
     const label = (t: number) => { const w = shiftAt(t, tz, shiftTimes); return `${fmtInTz(w.start, tz, { weekday: "short" })} ${w.kind} ${fmtInTz(t, tz, { hour: "numeric", minute: "2-digit", hour12: true })}`; };
     const made: string[] = [];
@@ -961,10 +962,10 @@ export default function ExecutionView({
       onRefresh();
       if (removed.notDeleted) notify(`${removed.notDeleted} task${removed.notDeleted === 1 ? " wasn't" : "s weren't"} deleted. You may not have permission for ${removed.notDeleted === 1 ? "it" : "them"}.`, "warning");
       announce(`Deleted ${removed.rows.length} task${removed.rows.length === 1 ? "" : "s"}`, async () => {
-        try { await restoreDeletedMilestones(removed); } catch (e) { notify(`Undo failed: ${(e as Error).message}`, "warning"); }
+        try { await restoreDeletedMilestones(removed); } catch (e) { notify(`Undo failed: ${sayError(e)}`, "warning"); }
         onRefresh();
       });
-    } catch (e) { notify((e as Error).message, "warning"); onRefresh(); }
+    } catch (e) { notify(sayError(e), "warning"); onRefresh(); }
   }, [canEdit, selectedIds, childrenOf, orgId, projectId, userId, userEmail, onRefresh, announce, notify]);
 
   // One step deleted from its card, with Undo.
@@ -977,10 +978,10 @@ export default function ExecutionView({
       onRefresh();
       if (removed.notDeleted || removed.rows.length === 0) { notify("It wasn't deleted. You may not have permission for it.", "warning"); return; }
       announce(`Deleted “${truncate(name)}”`, async () => {
-        try { await restoreDeletedMilestones(removed); } catch (e) { notify(`Undo failed: ${(e as Error).message}`, "warning"); }
+        try { await restoreDeletedMilestones(removed); } catch (e) { notify(`Undo failed: ${sayError(e)}`, "warning"); }
         onRefresh();
       });
-    } catch (e) { notify((e as Error).message, "warning"); onRefresh(); }
+    } catch (e) { notify(sayError(e), "warning"); onRefresh(); }
   }, [canEdit, byId, orgId, projectId, userId, userEmail, detailId, onRefresh, announce, notify]);
 
   // Bulk status across the selection (with one undo that restores each
@@ -1364,7 +1365,7 @@ export default function ExecutionView({
               {CRITICAL_MODES.map((x) => <option key={x.value} value={x.value}>{x.label}</option>)}
             </select>
           </label>
-          {canEdit && <span>Tap <Zap className="inline w-3 h-3 text-rose-600" /> on a row to mark it on or off</span>}
+          {canEdit && <span>Tap <Zap className="inline w-3 h-3 text-[var(--state-overdue-text)]" /> on a row to mark it on or off</span>}
           {canEdit && handMarked.length > 0 && (
             <button onClick={() => void clearMarks()} className="text-[var(--color-accent-text)] hover:underline">
               Clear {handMarked.length} hand mark{handMarked.length === 1 ? "" : "s"}
@@ -1504,7 +1505,7 @@ export default function ExecutionView({
           tabIndex={0}
           onKeyDown={onTimelineKeyDown}
           onScroll={onScrollWindow}
-          className="overflow-auto relative outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent-ring)]/40 rounded-b-2xl"
+          className="overflow-auto relative rounded-b-2xl"
           style={{ maxHeight: "70vh" }}
         >
           <div className="flex" style={{ width: leftW + timelineW }}>
@@ -1569,8 +1570,8 @@ export default function ExecutionView({
               <DependencyArrows rows={rows} byId={byId} domain={domain} pxPerDay={pxPerDay} spanOf={spanOf} />
               {todayX >= 0 && todayX <= timelineW && (
                 <div className="absolute z-10 pointer-events-none" style={{ left: todayX, top: AXIS_H, bottom: 0, width: 0 }}>
-                  <div className="absolute top-0 bottom-0 w-px bg-rose-500/80" />
-                  <div className="absolute -top-0 -left-[3px] w-[7px] h-[7px] rounded-full bg-rose-500 shadow" />
+                  <div className="absolute top-0 bottom-0 w-px bg-[var(--state-overdue)]" />
+                  <div className="absolute -top-0 -left-[3px] w-[7px] h-[7px] rounded-full bg-[var(--state-overdue)] shadow" />
                 </div>
               )}
               {rows.slice(win.first, win.last).map((r, j) => (
@@ -1759,22 +1760,22 @@ function CompactSummary({ items, now, shiftTimes, projectId, onOpen }: { items: 
     // A row on the board's card: where the job stands, problems in their colour.
     <button onClick={onOpen} aria-label="Show the summary" className="group w-full flex items-center gap-x-3 gap-y-1 flex-wrap py-2.5 text-[13px] text-left">
       {byPhase ? byPhase.map((s) => (
-        <span key={s.id} className={s.state === "finished" && (s.lateHours ?? 0) >= 0.5 || s.standing === "behind" ? "font-bold text-rose-700 dark:text-rose-300" : "font-bold text-[var(--color-text)]"}>{standingShort(s)}</span>
+        <span key={s.id} className={s.state === "finished" && (s.lateHours ?? 0) >= 0.5 || s.standing === "behind" ? "font-bold text-[var(--state-overdue-text)]" : "font-bold text-[var(--color-text)]"}>{standingShort(s)}</span>
       )) : fin ? (
         <>
           <b className="text-[var(--color-text)]">Finished</b>
-          {finLate && <span className={(fin.lateHours ?? 0) >= 0.5 ? "font-bold text-rose-700 dark:text-rose-300" : "text-[var(--color-text-muted)]"}>{finLate}</span>}
+          {finLate && <span className={(fin.lateHours ?? 0) >= 0.5 ? "font-bold text-[var(--state-overdue-text)]" : "text-[var(--color-text-muted)]"}>{finLate}</span>}
         </>
       ) : (
         <>
       <b className="text-[var(--color-text)]">{r.pctComplete}%</b>
-      <span className={standing === "behind" ? "font-bold text-rose-700 dark:text-rose-300" : standing === "ahead" ? "font-bold text-emerald-700 dark:text-emerald-300" : "text-[var(--color-text-muted)]"}>
+      <span className={standing === "behind" ? "font-bold text-[var(--state-overdue-text)]" : standing === "ahead" ? "font-bold text-[var(--state-released-text)]" : "text-[var(--color-text-muted)]"}>
         {standing === "on track" ? "on track" : standing} · plan {r.expectedPct}%
       </span>
         </>
       )}
-      {r.overdue > 0 && <span className="font-bold text-rose-700 dark:text-rose-300">{r.overdue} overdue</span>}
-      {r.blocked + r.onHold > 0 && <span className="font-bold text-amber-700 dark:text-amber-300">{r.blocked + r.onHold} stuck</span>}
+      {r.overdue > 0 && <span className="font-bold text-[var(--state-overdue-text)]">{r.overdue} overdue</span>}
+      {r.blocked + r.onHold > 0 && <span className="font-bold text-[var(--state-held-text)]">{r.blocked + r.onHold} stuck</span>}
       <span className="ml-auto inline-flex items-center gap-0.5 text-[12px] font-semibold text-[var(--color-text-muted)] group-hover:text-[var(--color-text)]">Summary <ChevronRightIcon className="w-3.5 h-3.5" /></span>
     </button>
   );
@@ -1806,7 +1807,7 @@ function Toolbar({
               {/* Bulk status */}
               <div className="inline-flex items-center gap-1">
                 <span className="text-[12px] font-semibold text-[var(--color-text-faint)]">Mark</span>
-                {([["completed", "Done", "bg-emerald-600"], ["in_progress", "Doing", "bg-slate-500"], ["on_hold", "Hold", "bg-amber-500"], ["blocked", "Block", "bg-rose-600"]] as const).map(([s, label, dot]) => (
+                {([["completed", "Done", "bg-[var(--state-released)]"], ["in_progress", "Doing", "bg-slate-500"], ["on_hold", "Hold", "bg-[var(--state-held)]"], ["blocked", "Block", "bg-[var(--state-overdue)]"]] as const).map(([s, label, dot]) => (
                   <button key={s} onClick={() => onBulkStatus(s)} className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] text-[11px] font-bold hover:bg-[var(--color-surface-2)]">
                     <span aria-hidden className={`w-2 h-2 rounded-full ${dot}`} />{label}
                   </button>
@@ -1836,7 +1837,7 @@ function Toolbar({
       ) : (
         <>
           <button onClick={onToday} className="inline-flex items-center gap-1.5 h-8 px-2.5 rounded-md text-[13px] font-semibold text-[var(--color-text)] border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)]">
-            <Crosshair className="w-3.5 h-3.5 text-rose-500" /> Today
+            <Crosshair className="w-3.5 h-3.5 text-[var(--state-overdue-text)]" /> Today
           </button>
           <div className="w-px h-5 bg-[var(--color-border)]" />
           <button onClick={onExpandAll} className="h-8 px-2.5 rounded-md text-[13px] font-semibold text-[var(--color-text)] border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)]">Expand all</button>
@@ -1966,7 +1967,7 @@ function OutlineRow({
       {criticalMark && (
         <button onClick={criticalMark.onToggle} aria-pressed={criticalMark.on}
           title={`${criticalMark.on ? "On the critical path: tap to take it off" : "Not critical: tap to mark it critical"}${hasChildren ? " (with everything under it)" : ""}${criticalMark.own ? " · marked by hand" : ""}`}
-          className={`shrink-0 w-5 h-5 inline-flex items-center justify-center rounded ${criticalMark.on ? "bg-rose-600 text-white" : "text-slate-300 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40"} ${criticalMark.own ? "ring-1 ring-offset-1 ring-rose-400 dark:ring-offset-slate-900" : ""}`}>
+          className={`shrink-0 w-5 h-5 inline-flex items-center justify-center rounded ${criticalMark.on ? "bg-[var(--state-overdue)] text-white" : "text-slate-300 hover:text-[var(--state-overdue-text)] hover:bg-transparent"} ${criticalMark.own ? "ring-1 ring-offset-1 ring-[var(--state-overdue)] dark:ring-offset-slate-900" : ""}`}>
           <Zap className="w-3 h-3" />
         </button>
       )}
@@ -1995,7 +1996,7 @@ function OutlineRow({
         <div className="flex items-center gap-1.5 text-[11px] text-[var(--color-text-faint)] font-display tabular-nums leading-tight min-w-0">
           {/* A problem sits on its own row: held, blocked, missed or late. */}
           {!hasChildren && (ms.status === "blocked" || ms.status === "missed" || ms.status === "on_hold" || late) && (
-            <span className={`shrink-0 font-sans font-bold ${ms.status === "on_hold" ? "text-amber-700 dark:text-amber-300" : "text-rose-700 dark:text-rose-300"}`}>
+            <span className={`shrink-0 font-sans font-bold ${ms.status === "on_hold" ? "text-[var(--state-held-text)]" : "text-[var(--state-overdue-text)]"}`}>
               {ms.status === "blocked" ? "Blocked" : ms.status === "missed" ? "Missed" : ms.status === "on_hold" ? "On hold" : "Late"}
             </span>
           )}
@@ -2123,7 +2124,7 @@ function Bar({
           <div className={`absolute inset-0 rounded-full ${color.rail} opacity-70`} />
           <div className={`absolute -left-px -top-1 w-[3px] h-4 rounded-sm ${color.rail}`} />
           <div className={`absolute -right-px -top-1 w-[3px] h-4 rounded-sm ${color.rail}`} />
-          <div className="absolute inset-y-0 left-0 rounded-full bg-emerald-500/80" style={{ width: `${pct}%` }} />
+          <div className="absolute inset-y-0 left-0 rounded-full bg-[var(--state-released)]" style={{ width: `${pct}%` }} />
         </div>
         {/* Edge handles — drag to proportionally stretch the whole subtree. */}
         {summaryResizable && (
@@ -2158,7 +2159,7 @@ function Bar({
     return (
       <div className={`absolute group/bar flex items-center gap-1.5 transition-opacity ${dimmed ? "opacity-25" : ""} ${onPath ? "z-10" : ""}`} style={{ top, left: left - 6, height: ROW_H }} title={`${ms.name} - milestone · ${fmtDateUTC(finish, tz)}`}>
         <button onClick={onOpenDetail} className="relative shrink-0" aria-label={`Milestone ${ms.name}`}>
-          <span className={`block w-3 h-3 rotate-45 border-2 border-white shadow ${ms.status === "completed" ? "bg-emerald-500" : onPath ? "bg-rose-500" : "bg-slate-700"}`} />
+          <span className={`block w-3 h-3 rotate-45 border-2 border-white shadow ${ms.status === "completed" ? "bg-[var(--state-released)]" : onPath ? "bg-[var(--state-overdue)]" : "bg-slate-700"}`} />
         </button>
         <span className="whitespace-nowrap text-[11px] font-bold text-[var(--color-text)] max-w-[200px] truncate bg-[var(--color-surface)]/80 rounded px-1">{ms.name}</span>
       </div>
@@ -2177,7 +2178,7 @@ function Bar({
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         style={draggable ? { touchAction: "none" } : undefined}
-        className={`relative w-full h-full rounded-md border ${tone.border} ${tone.bar} shadow-sm overflow-hidden ${draggable ? "cursor-grab active:cursor-grabbing" : ""} ${dragDelta !== 0 || resize ? "ring-2 ring-[var(--color-accent-ring)] z-20" : onPath ? "ring-2 ring-rose-500 ring-offset-1" : ""}`}
+        className={`relative w-full h-full rounded-md border ${tone.border} ${tone.bar} shadow-sm overflow-hidden ${draggable ? "cursor-grab active:cursor-grabbing" : ""} ${dragDelta !== 0 || resize ? "ring-2 ring-[var(--color-accent-ring)] z-20" : onPath ? "ring-2 ring-[var(--state-overdue)] ring-offset-1" : ""}`}
         title={`${ms.name}\n${fmtDateUTC(start, tz)} → ${fmtDateUTC(finish, tz)}${dragDelta ? `\nmove ${dragDelta > 0 ? "+" : ""}${dragDelta}d` : ""}${resize ? `\nresize ${resize.days > 0 ? "+" : ""}${resize.days}d` : ""}`}
       >
         {/* Group-hue cap on the left edge — a quiet identity marker that
@@ -2455,7 +2456,7 @@ function Legend() {
           <span className="w-2.5 h-2.5 rotate-45 bg-slate-700 border border-white" /> Milestone
         </span>
         <span className="inline-flex items-center gap-1.5 text-[11px] text-[var(--color-text-muted)]" title="On the critical path: drives the finish date">
-          <span className="w-3 h-2.5 rounded-sm bg-slate-300 ring-2 ring-rose-500 ring-offset-1" /> Critical path
+          <span className="w-3 h-2.5 rounded-sm bg-slate-300 ring-2 ring-[var(--state-overdue)] ring-offset-1" /> Critical path
         </span>
         <span className="inline-flex items-center gap-1.5 text-[11px] text-[var(--color-text-muted)]" title="Finish-to-start dependency between linked tasks">
           <svg width="22" height="10" className="overflow-visible"><path d="M1 2 L11 2 L11 8 L20 8" fill="none" stroke="#6366f1" strokeWidth="1.5" /><path d="M16 5 L20 8 L16 11" fill="none" stroke="#6366f1" strokeWidth="1.5" /></svg> Dependency
@@ -2510,7 +2511,7 @@ function GroupTasksModal({
       });
       if (res.errors.length > 0) setError(res.errors.join(" · "));
       else onDone();
-    } catch (e) { setError((e as Error).message); }
+    } catch (e) { setError(sayError(e)); }
     finally { setBusy(false); }
   };
 
@@ -2534,7 +2535,7 @@ function GroupTasksModal({
             ))}
           </div>
           {mode === "new" ? (
-            <input value={name} onChange={(e) => setName(e.target.value)} placeholder='e.g. "Phase 2: Tear Down"' autoFocus className="w-full px-3 py-2 text-sm border border-[var(--color-border-strong)] rounded-md outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]/30 focus:border-[var(--color-accent-ring)]" />
+            <input value={name} onChange={(e) => setName(e.target.value)} placeholder='e.g. "Phase 2: Tear Down"' autoFocus className="w-full px-3 py-2 text-sm border border-[var(--color-border-strong)] rounded-md" />
           ) : existingParents.length === 0 ? (
             <div className="text-xs text-[var(--color-text-muted)] italic">No existing parents. Create a new one.</div>
           ) : (
@@ -2549,7 +2550,7 @@ function GroupTasksModal({
               {childNames.length > 12 && <li className="text-[11px] text-[var(--color-text-muted)] italic">+{childNames.length - 12} more</li>}
             </ul>
           </div>
-          {error && <div role="alert" className="text-xs text-rose-700 dark:text-rose-300">{error}</div>}
+          {error && <div role="alert" className="text-xs text-[var(--state-overdue-text)]">{error}</div>}
         </div>
         <div className="px-5 py-3 border-t border-[var(--color-border)] flex items-center justify-end gap-2">
           <button onClick={onClose} disabled={busy} className="text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5 transition-colors">Cancel</button>
@@ -2590,7 +2591,7 @@ function SetDurationModal({ task, actorUserId, onClose, onDone }: { task: Milest
         : { id: task.id, days: Math.round(value), timeZone: tz, actorUserId });
       if (!res.ok) setError(res.error ?? "Couldn't set duration");
       else onDone();
-    } catch (e) { setError(`Couldn't set duration: ${(e as Error).message}`); }
+    } catch (e) { setError(`Couldn't set duration: ${sayError(e)}`); }
     finally { setBusy(false); }
   };
 
@@ -2617,12 +2618,12 @@ function SetDurationModal({ task, actorUserId, onClose, onDone }: { task: Milest
           </div>
           <input type="number" min={unit === "hours" ? 0.25 : 1} max={unit === "hours" ? 2000 : 365} step={unit === "hours" ? 0.25 : 1} value={value}
             onChange={(e) => { const v = Number(e.target.value); setValue(Number.isFinite(v) && v > 0 ? v : unit === "hours" ? 0.25 : 1); }}
-            className="w-full px-3 py-2 text-sm border border-[var(--color-border-strong)] rounded-md outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]/30" />
+            className="w-full px-3 py-2 text-sm border border-[var(--color-border-strong)] rounded-md" />
           <div className="text-[11px] text-[var(--color-text-muted)]">
             Keeps its finish, <b>{fmtInTz(finishAt, tz, { weekday: "short", month: "short", day: "numeric", ...(timed ? { hour: "numeric", minute: "2-digit", hour12: true } : {}) })}</b>;
             {unit === "hours" ? ` starts ${value} h before it.` : days > 1 ? ` starts ${Math.round(days) - 1} day${Math.round(days) - 1 === 1 ? "" : "s"} earlier.` : " a single-day task."}
           </div>
-          {error && <div role="alert" className="text-xs text-rose-700 dark:text-rose-300">{error}</div>}
+          {error && <div role="alert" className="text-xs text-[var(--state-overdue-text)]">{error}</div>}
         </div>
         <div className="px-5 py-3 border-t border-[var(--color-border)] flex items-center justify-end gap-2">
           <button onClick={onClose} disabled={busy} className="text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5 transition-colors">Cancel</button>
@@ -2642,11 +2643,11 @@ function clock12(hm: string): string { const [h, m] = hm.split(":").map(Number);
 
 function statusTone(status: MilestoneStatus): { bar: string; border: string; dotBg: string; dotBorder: string } {
   switch (status) {
-    case "completed":   return { bar: "bg-emerald-500", border: "border-emerald-600", dotBg: "bg-emerald-500", dotBorder: "border-emerald-500" };
+    case "completed":   return { bar: "bg-[var(--state-released)]", border: "border-[var(--state-released)]", dotBg: "bg-[var(--state-released)]", dotBorder: "border-[var(--state-released)]" };
     case "in_progress": return { bar: "bg-slate-600 dark:bg-slate-500",    border: "border-slate-700 dark:border-slate-400",    dotBg: "bg-slate-600 dark:bg-slate-500",    dotBorder: "border-slate-700 dark:border-slate-400" };
-    case "blocked":     return { bar: "bg-rose-500",    border: "border-rose-600",    dotBg: "bg-rose-500",    dotBorder: "border-rose-500" };
-    case "on_hold":     return { bar: "bg-amber-500",   border: "border-amber-600",   dotBg: "bg-amber-500",   dotBorder: "border-amber-500" };
-    case "missed":      return { bar: "bg-rose-600",    border: "border-rose-700",    dotBg: "bg-rose-600",    dotBorder: "border-rose-600" };
+    case "blocked":     return { bar: "bg-[var(--state-overdue)]",    border: "border-[var(--state-overdue)]",    dotBg: "bg-[var(--state-overdue)]",    dotBorder: "border-[var(--state-overdue)]" };
+    case "on_hold":     return { bar: "bg-[var(--state-held)]",   border: "border-[var(--state-held)]",   dotBg: "bg-[var(--state-held)]",   dotBorder: "border-[var(--state-held)]" };
+    case "missed":      return { bar: "bg-[var(--state-overdue)]",    border: "border-[var(--state-overdue)]",    dotBg: "bg-[var(--state-overdue)]",    dotBorder: "border-[var(--state-overdue)]" };
     default:            return { bar: "bg-slate-400",   border: "border-slate-500",   dotBg: "bg-[var(--color-surface)]",       dotBorder: "border-[var(--color-border-strong)]" };
   }
 }

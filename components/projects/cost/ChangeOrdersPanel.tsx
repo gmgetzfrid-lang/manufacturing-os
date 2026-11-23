@@ -26,6 +26,7 @@ import {
 import { Donut } from "@/components/ui/ChartKit";
 import { appConfirm, appPrompt } from "@/components/providers/DialogProvider";
 import { useDraft } from "@/hooks/useDraft";
+import { sayError } from "@/components/projects/sayError";
 
 export default function ChangeOrdersPanel({ orgId, projectId, canManage, actor, accounts, parties, onMoneyMoved, setErr }: {
   orgId: string; projectId: string; canManage: boolean; actor: Actor;
@@ -45,7 +46,7 @@ export default function ChangeOrdersPanel({ orgId, projectId, canManage, actor, 
   const refresh = useCallback(async () => {
     try { setCos(await listChangeOrders(projectId)); setReadErr(null); }
     // Pre-migration the table is absent: say they couldn't be read, not "none".
-    catch (e) { setCos([]); setReadErr((e as Error).message || "Couldn't read the change orders."); }
+    catch (e) { setCos([]); setReadErr(sayError(e, "Couldn't read the change orders.")); }
   }, [projectId]);
   useEffect(() => { void refresh(); }, [refresh]);
 
@@ -88,7 +89,7 @@ export default function ChangeOrdersPanel({ orgId, projectId, canManage, actor, 
       await refresh();
       if (decision === "approved") onMoneyMoved();
     } catch (e) {
-      setErr((e as Error).message);
+      setErr(sayError(e));
     } finally { setBusy(null); }
   };
 
@@ -108,7 +109,7 @@ export default function ChangeOrdersPanel({ orgId, projectId, canManage, actor, 
       await refresh();
       onMoneyMoved();
     } catch (e) {
-      setErr((e as Error).message);
+      setErr(sayError(e));
     } finally { setBusy(null); }
   };
 
@@ -121,7 +122,7 @@ export default function ChangeOrdersPanel({ orgId, projectId, canManage, actor, 
         <GitPullRequestArrow className="w-4 h-4 text-[var(--color-text-muted)]" />
         <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Change orders</span>
         {open.length > 0 && (
-          <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/40">
+          <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded bg-[var(--state-held)] text-[var(--state-held-text)] border border-[var(--state-held)]">
             {open.length} awaiting decision
           </span>
         )}
@@ -144,7 +145,7 @@ export default function ChangeOrdersPanel({ orgId, projectId, canManage, actor, 
       )}
 
       {notice && (
-        <div role="status" className="mx-4 my-2 border-l-2 border-amber-500 pl-3 flex items-center gap-2 text-[11px] font-bold text-amber-800 dark:text-amber-300">
+        <div role="status" className="mx-4 my-2 border-l-2 border-[var(--state-held)] pl-3 flex items-center gap-2 text-[11px] font-bold text-[var(--state-held-text)]">
           <span className="min-w-0 flex-1">{notice}</span>
           <button onClick={() => setNotice(null)} className="ml-auto p-1 text-[var(--color-text-faint)] hover:text-[var(--color-text)]" aria-label="Dismiss"><XIcon className="w-3.5 h-3.5" /></button>
         </div>
@@ -153,7 +154,7 @@ export default function ChangeOrdersPanel({ orgId, projectId, canManage, actor, 
       {cos === null ? (
         <div className="px-4 py-6 flex items-center justify-center gap-2 text-xs text-[var(--color-text-muted)]"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading change orders…</div>
       ) : readErr ? (
-        <div role="alert" className="mx-4 my-3 border-l-2 border-rose-500 pl-3 text-xs text-rose-700 dark:text-rose-300 flex flex-wrap items-center gap-x-3">
+        <div role="alert" className="mx-4 my-3 border-l-2 border-[var(--state-overdue)] pl-3 text-xs text-[var(--state-overdue-text)] flex flex-wrap items-center gap-x-3">
           <span>Couldn&apos;t load change orders: {readErr}</span>
           <button onClick={() => void refresh()} className="text-[var(--color-accent-text)] hover:underline">Try again</button>
         </div>
@@ -209,7 +210,7 @@ function CoRow({ co, canManage, busy, partyName, accountLabel, accounts, decide,
       <div className="flex items-center gap-2 flex-wrap">
         <span className="font-display tabular-nums text-[11px] font-semibold text-[var(--color-text-muted)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded">{co.coNumber}</span>
         <span className="font-bold text-[var(--color-text)]">{co.title}</span>
-        <span className={`font-semibold tabular-nums ${co.amount < 0 ? "text-emerald-700 dark:text-emerald-300" : "text-[var(--color-text)]"}`}>
+        <span className={`font-semibold tabular-nums ${co.amount < 0 ? "text-[var(--state-released-text)]" : "text-[var(--color-text)]"}`}>
           {co.amount < 0 ? `credit ${fmtMoney(Math.abs(co.amount))}` : fmtMoney(co.amount)}
         </span>
         <span className="text-[13px] font-semibold px-1.5 py-0.5 rounded border border-[var(--color-border)] text-[var(--color-text-muted)]"
@@ -217,8 +218,8 @@ function CoRow({ co, canManage, busy, partyName, accountLabel, accounts, decide,
           {CO_REASON_LABEL[co.reasonCode]}
         </span>
         <span className={`text-[11px] font-semibold px-1.5 py-0.5 rounded border ${
-          co.status === "approved" ? "border-emerald-500/40 bg-emerald-500/[0.07] text-emerald-700 dark:text-emerald-300"
-          : co.status === "proposed" ? "border-amber-500/40 bg-amber-500/[0.07] text-amber-700 dark:text-amber-300"
+          co.status === "approved" ? "border-[var(--state-released)] bg-[var(--state-released)]/[0.07] text-[var(--state-released-text)]"
+          : co.status === "proposed" ? "border-[var(--state-held)] bg-[var(--state-held)]/[0.07] text-[var(--state-held-text)]"
           : "border-[var(--color-border)] text-[var(--color-text-faint)]"}`}>
           {co.status}
         </span>
@@ -237,7 +238,7 @@ function CoRow({ co, canManage, busy, partyName, accountLabel, accounts, decide,
               {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />} Approve
             </button>
             <button onClick={() => void decide(co, "rejected")} disabled={busy}
-              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg border border-rose-500/50 text-rose-700 dark:text-rose-300 text-[11px] font-semibold hover:bg-rose-500/10 disabled:opacity-50 transition-colors">
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg border border-[var(--state-overdue)] text-[var(--state-overdue-text)] text-[11px] font-semibold hover:bg-[var(--state-overdue)] disabled:opacity-50 transition-colors">
               <XIcon className="w-3 h-3" /> Reject
             </button>
             <button onClick={onEdit} disabled={busy} title="Change the title, amount, reason or where it posts"
@@ -245,14 +246,14 @@ function CoRow({ co, canManage, busy, partyName, accountLabel, accounts, decide,
               <Pencil className="w-3 h-3" /> Edit
             </button>
             <button onClick={() => void decide(co, "void")} disabled={busy} title="Take the proposal back. It stays on the record as void."
-              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[var(--color-text-faint)] text-[11px] font-bold hover:text-rose-600 hover:bg-rose-500/10 disabled:opacity-50 transition-colors">
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[var(--color-text-faint)] text-[11px] font-bold hover:text-[var(--state-overdue-text)] hover:bg-[var(--state-overdue)] disabled:opacity-50 transition-colors">
               <Ban className="w-3 h-3" /> Withdraw
             </button>
           </span>
         )}
         {co.status === "approved" && canManage && (
           <button onClick={onVoidApproved} disabled={busy} title="Approved in error: its money comes off the budget line and the CO shows as void"
-            className="ml-auto inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[var(--color-text-faint)] text-[11px] font-bold hover:text-rose-600 hover:bg-rose-500/10 disabled:opacity-50 transition-colors">
+            className="ml-auto inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[var(--color-text-faint)] text-[11px] font-bold hover:text-[var(--state-overdue-text)] hover:bg-[var(--state-overdue)] disabled:opacity-50 transition-colors">
             {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Ban className="w-3 h-3" />} Void
           </button>
         )}
@@ -321,7 +322,7 @@ function ProposeForm({ orgId, projectId, actor, accounts, parties, onDone, onCan
       draft.clear();
       onDone();
     } catch (e) {
-      setError((e as Error).message);
+      setError(sayError(e));
     } finally { setSaving(false); }
   };
 
@@ -352,7 +353,7 @@ function ProposeForm({ orgId, projectId, actor, accounts, parties, onDone, onCan
           className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
       </div>
       <div className="flex items-center gap-2">
-        {error && <span role="alert" className="inline-flex items-center gap-1 text-[11px] font-bold text-rose-700 dark:text-rose-300">{error}</span>}
+        {error && <span role="alert" className="inline-flex items-center gap-1 text-[11px] font-bold text-[var(--state-overdue-text)]">{error}</span>}
         <span className="ml-auto flex items-center gap-2">
           <button onClick={onCancel} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>
           <button onClick={() => void submit()} disabled={saving}

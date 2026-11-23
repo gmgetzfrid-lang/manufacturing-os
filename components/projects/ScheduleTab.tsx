@@ -62,6 +62,7 @@ import { splitCancelled } from "@/lib/cancelledJobs";
 import { applyNightStaffing } from "@/lib/nightStaffing";
 import { useShiftTimes } from "@/lib/shiftTimesStore";
 import QuickUpdate from "@/components/projects/QuickUpdate";
+import { sayError } from "@/components/projects/sayError";
 
 // The project's four schedule tabs: Plan (build the schedule as a list,
 // import it, set it up), Today (the shift's screen), Work (the timeline,
@@ -172,7 +173,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
     try {
       const list = await listMilestones({ orgId, projectId, includeGhost: true });
       setMilestones(list);
-    } catch (e) { setError((e as Error).message); }
+    } catch (e) { setError(sayError(e)); }
     finally { setLoading(false); }
   }, [orgId, projectId]);
 
@@ -287,7 +288,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
       await addMilestoneNote({ orgId, milestoneId: id, kind: "note", statusAt: status, body: note, createdBy: userId, createdByName: userName, happenedAt: new Date(when.at).toISOString() });
       await refresh();
       return true;
-    } catch (e) { setError((e as Error).message); return false; }
+    } catch (e) { setError(sayError(e)); return false; }
     finally { setBusy(false); }
   };
 
@@ -312,7 +313,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
       const { deleted } = await clearProjectSchedule({ orgId, projectId, actorUserId: userId, actorUserEmail: userEmail, actorUserRole: userRole });
       setUndoable(deleted > 0 ? { kind: "clear", snapshot, count: deleted } : null);
       await refresh();
-    } catch (e) { setError((e as Error).message); }
+    } catch (e) { setError(sayError(e)); }
     finally { setClearing(false); }
   };
 
@@ -332,7 +333,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
       const { reset } = await resetProjectProgress({ orgId, projectId, actorUserId: userId, actorUserEmail: userEmail, actorUserRole: userRole });
       setUndoable(reset > 0 ? { kind: "reset", snapshot, count: reset } : null);
       await refresh();
-    } catch (e) { setError((e as Error).message); }
+    } catch (e) { setError(sayError(e)); }
     finally { setResetting(false); }
   };
 
@@ -348,7 +349,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
       }
       setUndoable(null);
       await refresh();
-    } catch (e) { setError(`Couldn't undo: ${(e as Error).message}`); }
+    } catch (e) { setError(`Couldn't undo: ${sayError(e)}`); }
     finally { setUndoing(false); }
   };
 
@@ -356,7 +357,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
     if (!(await appConfirm({ message: "Delete this task? This action is audited.", tone: "danger" }))) return;
     setBusy(true);
     try { await deleteMilestone(id, userId); await refresh(); }
-    catch (e) { setError((e as Error).message); }
+    catch (e) { setError(sayError(e)); }
     finally { setBusy(false); }
   };
 
@@ -377,7 +378,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
       const res = await setBaseline({ orgId, projectId, actorUserId: userId, actorUserEmail: userEmail, actorUserRole: userRole, ids: baselineIds });
       if (!res.ok) setError(res.error ?? "Couldn't set baseline.");
       await refresh();
-    } catch (e) { setError((e as Error).message); }
+    } catch (e) { setError(sayError(e)); }
     finally { setBaselineBusy(false); }
   };
 
@@ -398,7 +399,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
   // Right after Clear schedule or Reset progress: put it back.
   const undoRow = undoable && canEdit ? (
     <div role="status" className="flex items-center gap-2 flex-wrap py-2.5 text-[13px] text-[var(--color-text)]">
-      <span aria-hidden className="w-2 h-2 rounded-full bg-amber-500 shrink-0" />
+      <span aria-hidden className="w-2 h-2 rounded-full bg-[var(--state-held)] shrink-0" />
       <span className="flex-1 min-w-48">
         {undoable.kind === "clear"
           ? `Schedule cleared: ${undoable.count} task${undoable.count === 1 ? "" : "s"} deleted.`
@@ -441,7 +442,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
       {error && (
         // Above every panel and day list, so a failed save is never hidden
         // behind the thing you were working in.
-        <div role="alert" className="fixed bottom-4 max-sm:bottom-24 left-1/2 -translate-x-1/2 z-[400] max-w-[92vw] flex items-center gap-2 text-xs text-red-700 dark:text-red-300 bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-800 rounded-lg px-3 py-2 shadow-lg">
+        <div role="alert" className="fixed bottom-4 max-sm:bottom-24 left-1/2 -translate-x-1/2 z-[400] max-w-[92vw] flex items-center gap-2 text-xs text-[var(--state-overdue-text)] bg-transparent border border-[var(--color-border)] rounded-lg px-3 py-2 shadow-lg">
           <AlertTriangle className="w-3.5 h-3.5 shrink-0" /> <span className="flex-1">{error}</span>
           <button onClick={() => setError(null)} className="shrink-0 inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Dismiss</button>
         </div>
@@ -581,7 +582,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
               });
               return true;
             } catch (e) {
-              setError((e as Error).message);
+              setError(sayError(e));
               void refresh();
               return false;
             }
@@ -598,7 +599,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
               setMilestones((arr) => arr.map((m) => (m.id === saved.id ? saved : m)));
               return true;
             } catch (e) {
-              setError((e as Error).message);
+              setError(sayError(e));
               return false;
             }
           }}
@@ -618,7 +619,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
               setMilestones((arr) => arr.map((m) => (m.id === saved.id ? saved : m)));
               return true;
             } catch (e) {
-              setError((e as Error).message);
+              setError(sayError(e));
               return false;
             }
           }}
@@ -1196,7 +1197,7 @@ function AddMilestoneForm({
       });
       draft.clear();
       onCreated(made.id ?? null);
-    } catch (e) { setError((e as Error).message); }
+    } catch (e) { setError(sayError(e)); }
     finally { setBusy(false); }
   };
 

@@ -70,6 +70,7 @@ import { appAlert } from "@/components/providers/DialogProvider";
 import LoadingBlock from "@/components/ui/LoadingBlock";
 import MoreMenu from "@/components/ui/MoreMenu";
 import { useDraft, clearDraft } from "@/hooks/useDraft";
+import { sayError } from "@/components/projects/sayError";
 
 const btn = "inline-flex items-center justify-center gap-1.5 h-10 sm:h-9 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] whitespace-nowrap disabled:opacity-50 transition-colors";
 const pri = "inline-flex items-center justify-center gap-1.5 h-10 sm:h-9 px-3.5 rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[14px] font-semibold hover:bg-[var(--color-accent-hover)] whitespace-nowrap disabled:opacity-50 transition-colors";
@@ -140,7 +141,7 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
         const mine = mats.rows.filter((r) => !phases.length || !r.phaseId || r.phaseId === phaseId);
         const sum = summarize(mine, Date.now());
         setRegister(!sum.lines ? null : { lines: sum.lines, specIncomplete: sum.specIncomplete, openQuestions: sum.openQuestions, late: sum.late });
-      } catch (e) { if (live) { setErr((e as Error).message); setSaved(emptySaved()); } }
+      } catch (e) { if (live) { setErr(sayError(e)); setSaved(emptySaved()); } }
     })();
     return () => { live = false; };
   }, [projectId, scope, phaseId, phases.length, tick]);
@@ -213,25 +214,25 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
         const out = `out:${projectId}:${scope}:${f.key}`;
         if (inRegister.has(`${scope}:${f.key}`) && !SYNCED.has(out) && f.status === "discarded") {
           SYNCED.add(out);
-          void syncLesson({ orgId, projectId, projectType: ptype.word, unitCode: unit?.code ?? null, scope, finding: f, kept: false, actor: { id: actor.uid, name: who } }).catch((e) => { SYNCED.delete(out); void appAlert({ title: "Lessons register not updated", message: `"${f.title}" didn't come off the lessons register (${(e as Error).message}). It tries again the next time this review opens.`, tone: "danger" }); });
+          void syncLesson({ orgId, projectId, projectType: ptype.word, unitCode: unit?.code ?? null, scope, finding: f, kept: false, actor: { id: actor.uid, name: who } }).catch((e) => { SYNCED.delete(out); void appAlert({ title: "Lessons register not updated", message: `"${f.title}" didn't come off the lessons register (${sayError(e)}). It tries again the next time this review opens.`, tone: "danger" }); });
         }
         continue;
       }
       const sig = `${projectId}:${scope}:${f.key}:${f.applies}:${ptype.word}:${unit?.code ?? ""}:${f.title}:${f.next}:${f.ask}`;
       if (SYNCED.has(sig)) continue;
       SYNCED.add(sig);
-      void syncLesson({ orgId, projectId, projectType: ptype.word, unitCode: unit?.code ?? null, scope, finding: f, kept: true, actor: { id: actor.uid, name: who } }).catch((e) => { SYNCED.delete(sig); void appAlert({ title: "Lessons register not updated", message: `"${f.title}" didn't reach the lessons register (${(e as Error).message}). It tries again the next time this review opens.`, tone: "danger" }); });
+      void syncLesson({ orgId, projectId, projectType: ptype.word, unitCode: unit?.code ?? null, scope, finding: f, kept: true, actor: { id: actor.uid, name: who } }).catch((e) => { SYNCED.delete(sig); void appAlert({ title: "Lessons register not updated", message: `"${f.title}" didn't reach the lessons register (${sayError(e)}). It tries again the next time this review opens.`, tone: "danger" }); });
     }
   }, [review, canManage, orgId, projectId, scope, ptype.word, unit?.code, actor.uid, who, projectFindings]);
   const act = async (key: string, change: (s: ReviewSaved) => void, after?: (next: ReviewSaved) => Promise<void> | void) => {
     setBusy(key); setErr(null); setMsg(null);
     try { const next = await changeReview(projectId, scope, change); setSaved(next); await after?.(next); }
-    catch (e) { setErr((e as Error).message); }
+    catch (e) { setErr(sayError(e)); }
     finally { setBusy(null); }
   };
   const lesson = async (f: Finding, kept: boolean) => {
     if (f.source === "job") return;
-    const ok = await syncLesson({ orgId, projectId, projectType: ptype.word, unitCode: unit?.code ?? null, scope, finding: f, kept, actor: { id: actor.uid, name: who } }).catch((e) => { setErr((e as Error).message); return true; });
+    const ok = await syncLesson({ orgId, projectId, projectType: ptype.word, unitCode: unit?.code ?? null, scope, finding: f, kept, actor: { id: actor.uid, name: who } }).catch((e) => { setErr(sayError(e)); return true; });
     if (!ok && kept) setMsg("Kept here. The lessons register (From past jobs) isn't set up in the database yet, so it wasn't added there.");
   };
   const refind = (next: ReviewSaved, key: string): Finding | undefined => {
@@ -270,7 +271,7 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
   const closeCarried = async (pid: string, key: string) => {
     setBusy(`carried:${key}`); setErr(null);
     try { const next = await changeReview(projectId, reviewScope(pid), (s) => { s.items[key] = { ...s.items[key], done: true }; }); setOthers((o) => ({ ...o, [pid]: next })); }
-    catch (e) { setErr((e as Error).message); }
+    catch (e) { setErr(sayError(e)); }
     finally { setBusy(null); }
   };
   const answer = (q: Question, note: string) => void act(`q:${q.key}`, (s) => { const t = note.trim(); if (t) s.answers[q.key] = { note: t, at: Date.now(), by: who }; else delete s.answers[q.key]; });
@@ -278,7 +279,7 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
   const setCrews = async (party: string, n: number | null) => {
     setBusy(`crews:${party}`); setErr(null);
     try { await saveAtOnce(projectId, scope, party, n); setAtOnce(await loadAtOnce(projectId, scope)); }
-    catch (e) { setErr((e as Error).message); }
+    catch (e) { setErr(sayError(e)); }
     finally { setBusy(null); }
   };
   const addFinding = (e: FindingEdit, category: CategoryId) => {
@@ -306,7 +307,7 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
           return { data: await reviewPptx(review, o, { specs, look: slideLook, template: t && tpl ? { ...t, pick: tpl.pick } : null }), name: `${fileStem(o)} slides.pptx`, mime: "application/vnd.openxmlformats-officedocument.presentationml.presentation" };
         })();
       if (!(await saveFile(made.data, made.name, made.mime))) setHeld(made);
-    } catch (e) { setErr(`The file couldn't be made: ${(e as Error).message}`); }
+    } catch (e) { setErr(`The file couldn't be made: ${sayError(e)}`); }
     finally { setBusy(null); }
   };
   const saveHeld = async () => { if (held && (await saveFile(held.data, held.name, held.mime))) setHeld(null); };
@@ -409,7 +410,7 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
         const [{ data, info }, { screenDeck }] = await Promise.all([loadSlideTemplate(tpl), import("@/lib/slidePreview")]);
         const deck = await screenDeck(tpl.path, viewSpecs, { info, data, look: slideLook, pick: tpl.pick, title: `${phase?.name ?? projectName} post-event review` });
         if (live) setScreen({ deck, state: null });
-      } catch (e) { if (live) setScreen({ deck: null, state: { error: (e as Error).message } }); }
+      } catch (e) { if (live) setScreen({ deck: null, state: { error: sayError(e) } }); }
     })();
     return () => { live = false; };
   }, [viewing, useTpl, tpl, viewSpecs, slideLook, phase?.name, projectName]);
@@ -417,7 +418,7 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
   const chooseSlides = async (on: boolean) => {
     setOwnChoice(on);
     if (!canManage) return;
-    try { await saveSlidesChoice(projectId, on); } catch (e) { setErr((e as Error).message); }
+    try { await saveSlidesChoice(projectId, on); } catch (e) { setErr(sayError(e)); }
   };
 
 
@@ -479,8 +480,8 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
           <b className="block text-[14px] text-[var(--color-text)]">Open actions from the {p.name} review: {actions.length}</b>
           <ul className="mt-2 space-y-2">
             {actions.map((a) => (
-              <li key={a.key} className="flex gap-3 items-start text-[13.5px] text-[var(--color-text)]">
-                <div className="min-w-0 flex-1"><b className="block leading-snug">{a.what}</b><span className="text-[12.5px] text-[var(--color-text-muted)]">Owner: {a.who || "not set"} · By: {a.by || "not set"}</span></div>
+              <li key={a.key} className="flex gap-3 items-start text-[14px] text-[var(--color-text)]">
+                <div className="min-w-0 flex-1"><b className="block leading-snug">{a.what}</b><span className="text-[12px] text-[var(--color-text-muted)]">Owner: {a.who || "not set"} · By: {a.by || "not set"}</span></div>
                 {canManage && <button type="button" disabled={!!busy} onClick={() => void closeCarried(p.id, a.key)} className={btn}><Check className="w-4 h-4" /> Done</button>}
               </li>
             ))}
@@ -499,17 +500,17 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
           {late && review.lateBars.length > 0 && (
             <div className="mt-5">
               <h4 className="text-[15px] font-semibold text-[var(--color-text)]">Where the {m.varianceH} h went</h4>
-              <p className="mb-2.5 text-[12.5px] text-[var(--color-text-muted)]">Each piece of the late finish and the finding that explains it. A bar goes to its finding.</p>
+              <p className="mb-2.5 text-[12px] text-[var(--color-text-muted)]">Each piece of the late finish and the finding that explains it. A bar goes to its finding.</p>
               <LateHours bars={review.lateBars} late={m.varianceH!} onPick={go} />
             </div>
           )}
-          {!m.done && <p className="mt-3 text-[12.5px] text-[var(--color-text-muted)]">{m.steps - m.stepsDone} of {m.steps} activities are not done yet, so these numbers are to date.</p>}
+          {!m.done && <p className="mt-3 text-[12px] text-[var(--color-text-muted)]">{m.steps - m.stepsDone} of {m.steps} activities are not done yet, so these numbers are to date.</p>}
         </section>
 
         <section className="space-y-3" data-review-findings>
           <div className="flex items-baseline gap-x-3 gap-y-0.5 flex-wrap px-0.5">
             <h3 className="font-display text-[17px] font-semibold text-[var(--color-text)]">What the records show</h3>
-            {main.length > 0 && late && <span className="text-[12.5px] text-[var(--color-text-muted)]">Most hours of the late finish first</span>}
+            {main.length > 0 && late && <span className="text-[12px] text-[var(--color-text-muted)]">Most hours of the late finish first</span>}
           </div>
           {adding && <div className={box}><FindingForm title="Add a finding of your own" draftKey={`review-add:${projectId}:${scope}`} pickCategory busy={busy === "add"} onCancel={() => setAdding(false)} onSave={(e, c) => addFinding(e, c ?? "execution")} /></div>}
           {main.length === 0 && <div className={`${box} text-[14px] text-[var(--color-text-muted)]`}>Nothing in the records calls for a change.</div>}
@@ -517,7 +518,7 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
           {went.length > 0 && (
             <section className={box} data-review-well>
               <h4 className="text-[14px] font-semibold text-[var(--color-text)]">What went well</h4>
-              <ul className="mt-1.5 space-y-1 text-[13.5px] text-[var(--color-text)] list-disc pl-5">{went.map((f) => <li key={f.key}><b>{f.title}.</b> {f.observation.split("\n")[0]}</li>)}</ul>
+              <ul className="mt-1.5 space-y-1 text-[14px] text-[var(--color-text)] list-disc pl-5">{went.map((f) => <li key={f.key}><b>{f.title}.</b> {f.observation.split("\n")[0]}</li>)}</ul>
             </section>
           )}
           {quiet.length > 0 && (
@@ -531,7 +532,7 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
               <summary className="cursor-pointer text-[14px] font-semibold text-[var(--color-text)]">Taken out of the review ({out.length})</summary>
               <ul className="mt-2 space-y-2">
                 {out.map((f) => (
-                  <li key={f.key} className="flex items-start gap-3 text-[13.5px]">
+                  <li key={f.key} className="flex items-start gap-3 text-[14px]">
                     <div className="min-w-0 flex-1"><b className="block text-[var(--color-text)]">{f.title}</b><span className="text-[var(--color-text-muted)]">{f.notRight ? `Not right: ${f.notRight}` : "Taken out."}{f.by ? ` (${f.by})` : ""}</span></div>
                     {canManage && <button type="button" disabled={!!busy} onClick={() => putBack(f)} className={btn}><RotateCcw className="w-4 h-4" /> Put back</button>}
                   </li>
@@ -598,7 +599,7 @@ function FindingCard({ f, tz, lateH, canManage, busy, action, questions, answers
           {f.idle.groups.length > 8 && <p className="mt-1 text-[12px] text-[var(--color-text-muted)]">And {f.idle.groups.length - 8} more in the jobs below.</p>}
         </div>
       )}
-      {rest.length > 0 && <ul className="mt-2 space-y-1 text-[13.5px] text-[var(--color-text)] list-disc pl-5">{rest.map((l, i) => <li key={i}>{l}</li>)}</ul>}
+      {rest.length > 0 && <ul className="mt-2 space-y-1 text-[14px] text-[var(--color-text)] list-disc pl-5">{rest.map((l, i) => <li key={i}>{l}</li>)}</ul>}
       {f.info.length > 0 && <ul className="mt-2 space-y-1 text-[13px] text-[var(--color-text)]">{f.info.map((l, i) => <li key={i} className="border-l-2 border-[var(--color-border-strong)] pl-2">{l}</li>)}</ul>}
 
       {questions.map((q) => <QuestionLine key={q.key} q={q} said={answers[q.key]?.note ?? ""} canManage={canManage} busy={busy === `q:${q.key}`} onSave={(t) => onAnswer(q, t)} />)}
@@ -606,7 +607,7 @@ function FindingCard({ f, tz, lateH, canManage, busy, action, questions, answers
       {(f.jobs?.rows.length || (f.evidence.length > 0 && f.source !== "job")) ? (
         <details className="mt-3 group" data-finding-jobs>
           <summary className="cursor-pointer list-none inline-flex items-center gap-1 text-[13px] font-semibold text-[var(--color-accent-text)]"><ChevronDown className="w-4 h-4 transition-transform group-open:rotate-180" />The jobs ({f.jobs?.rows.length ?? f.evidence.length})</summary>
-          {f.jobs ? <JobsTable head={f.jobs.head} rows={f.jobs.rows} /> : <ul className="mt-2 space-y-1 text-[12.5px] text-[var(--color-text)] list-disc pl-5">{f.evidence.map((e, i) => <li key={i}>{e}</li>)}</ul>}
+          {f.jobs ? <JobsTable head={f.jobs.head} rows={f.jobs.rows} /> : <ul className="mt-2 space-y-1 text-[12px] text-[var(--color-text)] list-disc pl-5">{f.evidence.map((e, i) => <li key={i}>{e}</li>)}</ul>}
         </details>
       ) : null}
 
@@ -618,11 +619,11 @@ function FindingCard({ f, tz, lateH, canManage, busy, action, questions, answers
           <div role="group" aria-label="Is this finding right?" className="inline-flex rounded-md border border-[var(--color-border-strong)] overflow-hidden">
             <button type="button" disabled={!!busy} onClick={() => { setWhy(null); if (f.auto) onKeep(); }} aria-pressed={why == null}
               title={f.auto ? "It is in the review. Keep also puts it in the lessons register." : "Kept, and in the lessons register."}
-              className={`inline-flex items-center gap-1.5 h-10 sm:h-9 px-3 text-[13.5px] font-semibold ${why == null ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)]" : "bg-[var(--color-surface)] text-[var(--color-text)]"}`}>
+              className={`inline-flex items-center gap-1.5 h-10 sm:h-9 px-3 text-[14px] font-semibold ${why == null ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)]" : "bg-[var(--color-surface)] text-[var(--color-text)]"}`}>
               {busy === `keep:${f.key}` ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} {f.auto ? "Keep" : "Kept"}
             </button>
             <button type="button" disabled={!!busy} onClick={() => setWhy("")} aria-pressed={why != null}
-              className={`inline-flex items-center gap-1.5 h-10 sm:h-9 px-3 text-[13.5px] font-semibold border-l border-[var(--color-border-strong)] ${why != null ? "bg-[var(--color-surface-2)] text-[var(--color-text)]" : "bg-[var(--color-surface)] text-[var(--color-text)]"}`}>
+              className={`inline-flex items-center gap-1.5 h-10 sm:h-9 px-3 text-[14px] font-semibold border-l border-[var(--color-border-strong)] ${why != null ? "bg-[var(--color-surface-2)] text-[var(--color-text)]" : "bg-[var(--color-surface)] text-[var(--color-text)]"}`}>
               <X className="w-4 h-4" /> Not right
             </button>
           </div>
@@ -696,7 +697,7 @@ function QuestionLine({ q, said, canManage, busy, onSave }: { q: Question; said:
 function JobsTable({ head, rows }: { head: string[]; rows: string[][] }) {
   return (
     <div className="mt-2 rounded-lg border border-[var(--color-border)] overflow-x-auto max-w-full">
-      <table className="w-full min-w-[640px] text-[12.5px] border-collapse">
+      <table className="w-full min-w-[640px] text-[12px] border-collapse">
         <thead><tr>{head.map((h) => <th key={h} scope="col" className="text-left px-2.5 py-2 bg-[var(--color-surface-2)] font-semibold text-[var(--color-text-muted)] border-b border-[var(--color-border)] whitespace-nowrap">{h}</th>)}</tr></thead>
         <tbody>{rows.map((r, i) => <tr key={i} className="border-b last:border-b-0 border-[var(--color-border)] align-top">{r.map((c, n) => <td key={n} className={`px-2.5 py-1.5 text-[var(--color-text)] ${n === 0 ? "font-semibold" : ""}`}>{c.split("\n").map((t, k) => <span key={k} className={k ? "block text-[var(--color-text-muted)]" : "block"}>{t}</span>)}</td>)}</tr>)}</tbody>
       </table>
@@ -711,8 +712,8 @@ function ActionLine({ a, kind, busy, canManage, onPlan, onDone, onGo }: { a: Act
       <span className="shrink-0 w-7 h-7 rounded-full bg-[var(--color-surface-2)] text-[var(--color-text)] text-[13px] font-semibold flex items-center justify-center">{a.n}</span>
       <div className="min-w-0 flex-1">
         <b className="block text-[15px] leading-snug">{a.what}{a.done ? " (done)" : ""}</b>
-        {a.benefit && <p className="mt-0.5 text-[13.5px] text-[var(--color-text)]">{a.benefit}</p>}
-        <div className="mt-1 flex items-center gap-x-2 gap-y-1 flex-wrap text-[12.5px] text-[var(--color-text-muted)]">
+        {a.benefit && <p className="mt-0.5 text-[14px] text-[var(--color-text)]">{a.benefit}</p>}
+        <div className="mt-1 flex items-center gap-x-2 gap-y-1 flex-wrap text-[12px] text-[var(--color-text-muted)]">
           <span>{a.areaName} · {appliesWord(a.applies, kind)}</span>
           <button type="button" className={link} onClick={onGo}>See the finding</button>
         </div>

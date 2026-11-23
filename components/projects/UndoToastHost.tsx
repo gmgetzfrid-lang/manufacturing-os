@@ -22,7 +22,7 @@ export default function UndoToastHost({
     <div className="fixed bottom-4 max-sm:bottom-24 left-1/2 -translate-x-1/2 z-[280] flex flex-col items-center gap-2 pointer-events-none">
       {toasts.map((t) => {
         const Icon = t.tone === "warning" ? AlertTriangle : t.tone === "success" ? CheckCircle2 : Info;
-        const accent = t.tone === "warning" ? "text-amber-300" : t.tone === "success" ? "text-emerald-300" : "text-[var(--color-text-muted)]";
+        const accent = t.tone === "warning" ? "text-[var(--state-held-text)]" : t.tone === "success" ? "text-[var(--state-released-text)]" : "text-[var(--color-text-muted)]";
         return (
           <div key={t.id} className="pointer-events-auto flex items-center gap-3 bg-[var(--color-ink)] text-white rounded-xl shadow-2xl ring-1 ring-[var(--color-ink-line)] pl-3 pr-2 py-2 max-w-md animate-[toastin_.15s_ease-out]">
             <Icon className={`w-4 h-4 shrink-0 ${accent}`} />

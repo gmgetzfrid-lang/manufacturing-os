@@ -160,9 +160,9 @@ export default function CalendarQuickView({ task, onDay, others, dayKey, band, d
           <span className="whitespace-nowrap"><b>Task {taskPct}%</b> done{taskPlan != null ? ` · plan ${taskPlan}%` : ""}</span>
           <span className="relative flex-1 min-w-[60px] h-1.5 rounded-full bg-[var(--color-accent-soft)]" aria-hidden>
             <span className="absolute inset-y-0 left-0 rounded-full bg-[var(--color-main)]" style={{ width: `${Math.min(100, taskPct)}%` }} />
-            {taskPlan != null && <span className="absolute -top-[3px] w-0.5 h-3 bg-rose-700" style={{ left: `calc(${Math.min(100, taskPlan)}% - 1px)` }} />}
+            {taskPlan != null && <span className="absolute -top-[3px] w-0.5 h-3 bg-[var(--state-overdue)]" style={{ left: `calc(${Math.min(100, taskPlan)}% - 1px)` }} />}
           </span>
-          {Math.abs(taskHours) >= 0.1 && <b className={`font-display tabular-nums whitespace-nowrap ${taskHours < 0 ? "text-rose-700 dark:text-rose-400" : "text-emerald-700 dark:text-emerald-400"}`}>{taskHours > 0 ? "+" : "−"}{Math.abs(taskHours)} h</b>}
+          {Math.abs(taskHours) >= 0.1 && <b className={`font-display tabular-nums whitespace-nowrap ${taskHours < 0 ? "text-[var(--state-overdue-text)]" : "text-[var(--state-released-text)]"}`}>{taskHours > 0 ? "+" : "−"}{Math.abs(taskHours)} h</b>}
         </div>
       )}
     </div>
@@ -262,7 +262,7 @@ export default function CalendarQuickView({ task, onDay, others, dayKey, band, d
           {showOthers && <ul className="border-t border-[var(--color-border)]">{here.rest.map((m) => stepRow(m, true))}</ul>}
         </div>
       )}
-      {readErr && <div role="alert" className="px-3 py-1.5 border-t border-[var(--color-border)] text-[11px] text-rose-700 dark:text-rose-400">Couldn&apos;t read the comments and history for these steps. Reopen to try again.</div>}
+      {readErr && <div role="alert" className="px-3 py-1.5 border-t border-[var(--color-border)] text-[11px] text-[var(--state-overdue-text)]">Couldn&apos;t read the comments and history for these steps. Reopen to try again.</div>}
       <div className="px-3 py-2 border-t border-[var(--color-border)] flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-[13px] text-[var(--color-text-muted)]">
         {onDiscovery ? (
           <button type="button" onClick={() => onDiscovery(task)} className="inline-flex items-center gap-1 hover:underline text-[var(--color-accent-text)]"><Plus className="w-3.5 h-3.5" /> Discovery or added scope</button>

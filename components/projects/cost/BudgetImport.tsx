@@ -27,6 +27,7 @@ import { useFileDrag } from "@/hooks/useFileDrag";
 import { tryUpload } from "@/lib/uploadRetry";
 import FileThumb from "@/components/ui/FileThumb";
 import { fileSize } from "@/components/projects/cost/FilePreview";
+import { sayError } from "@/components/projects/sayError";
 
 export function BudgetDocDrop({ orgId, projectId, onRead, compact, label }: {
   orgId: string; projectId?: string | null;
@@ -48,7 +49,7 @@ export function BudgetDocDrop({ orgId, projectId, onRead, compact, label }: {
       // repeats both with the same file.
       onRead(await tryUpload(file.name, () => readBudgetDoc({ orgId, projectId, file }), { onRetried: (r) => { setError(null); setFailed(null); onRead(r); } }));
     } catch (e) {
-      setError((e as Error).message);
+      setError(sayError(e));
       setFailed(file);
     } finally { setReading(null); }
   };
@@ -83,7 +84,7 @@ export function BudgetDocDrop({ orgId, projectId, onRead, compact, label }: {
           onChange={(e) => { void read(e.target.files?.[0]); e.target.value = ""; }} />
       </div>
       {error && (
-        <div className="mt-2 flex items-center gap-2 flex-wrap border-l-2 border-rose-500 pl-2 text-[11px] font-bold text-rose-700 dark:text-rose-300">
+        <div className="mt-2 flex items-center gap-2 flex-wrap border-l-2 border-[var(--state-overdue)] pl-2 text-[11px] font-bold text-[var(--state-overdue-text)]">
           {failed && <FileThumb file={failed} size={24} />}
           <span className="min-w-0 flex-1">{failed ? `${failed.name} · ${fileSize(failed.size)}: ` : ""}{error}</span>
           {failed && (
@@ -139,7 +140,7 @@ export function BudgetImportSheet({ orgId, projectId, actor, result, accounts, p
         + (res.skipped.length ? ` · ${res.skipped.length} unchanged` : "")
         + (res.error ? ` · note: ${res.error}` : ""));
     } catch (e) {
-      setError((e as Error).message);
+      setError(sayError(e));
     } finally { setApplying(false); }
   };
 
@@ -212,12 +213,12 @@ export function BudgetImportSheet({ orgId, projectId, actor, result, accounts, p
                   </td>
                   <td className="py-1.5 pr-2">
                     <input value={l.name} onChange={(e) => patch(l.key, { name: e.target.value })}
-                      className="w-full h-7 rounded-md border border-transparent hover:border-[var(--color-border)] focus:border-[var(--color-border-strong)] bg-transparent px-1.5 text-xs font-bold text-[var(--color-text)]" />
+                      className="w-full h-7 rounded-md border border-transparent hover:border-[var(--color-border)] bg-transparent px-1.5 text-xs font-bold text-[var(--color-text)]" />
                     {(exists || upd || l.note) && (
                       <div className="px-1.5 text-[11px] text-[var(--color-text-muted)]">
                         {exists && <span className="font-bold text-[var(--color-text-muted)]">Already a budget line, same budget. </span>}
                         {upd && (
-                          <label className="inline-flex items-center gap-1 font-bold text-amber-800 dark:text-amber-300">
+                          <label className="inline-flex items-center gap-1 font-bold text-[var(--state-held-text)]">
                             <input type="checkbox" checked={!keepBudgets.has(upd.name.toLowerCase())} className="accent-[var(--color-text)]"
                               onChange={(e) => setKeepBudgets((k) => { const n = new Set(k); if (e.target.checked) n.delete(upd.name.toLowerCase()); else n.add(upd.name.toLowerCase()); return n; })} />
                             Change its budget {fmtMoney(upd.from, cur)} → {fmtMoney(upd.to, cur)}
@@ -239,7 +240,7 @@ export function BudgetImportSheet({ orgId, projectId, actor, result, accounts, p
                         placeholder="-" className="w-36 h-7 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-1.5 text-[11px]" />
                       {l.supplier && !exists && (
                         <span title={known ? `Matches ${known.name} on this project` : "New company: it will be added"}
-                          className={`text-[11px] font-semibold ${known ? "text-emerald-600" : "text-[var(--color-text-faint)]"}`}>
+                          className={`text-[11px] font-semibold ${known ? "text-[var(--state-released-text)]" : "text-[var(--color-text-faint)]"}`}>
                           {known ? <Check className="w-3 h-3" /> : "new"}
                         </span>
                       )}
@@ -252,7 +253,7 @@ export function BudgetImportSheet({ orgId, projectId, actor, result, accounts, p
                   </td>
                   <td className="py-1.5 pl-1">
                     <button onClick={() => setLines((ls) => ls.filter((x) => x.key !== l.key))}
-                      className="p-1 text-[var(--color-text-faint)] hover:text-rose-600" title="Remove line"><Trash2 className="w-3 h-3" /></button>
+                      className="p-1 text-[var(--color-text-faint)] hover:text-[var(--state-overdue-text)]" title="Remove line"><Trash2 className="w-3 h-3" /></button>
                   </td>
                 </tr>
               );
@@ -270,7 +271,7 @@ export function BudgetImportSheet({ orgId, projectId, actor, result, accounts, p
           {plan.partiesToCreate.length > 0 ? ` and ${plan.partiesToCreate.length} compan${plan.partiesToCreate.length === 1 ? "y" : "ies"} (${plan.partiesToCreate.join(", ")})` : ""}.
           {" "}No money is posted: quotes and invoices do that.
         </span>
-        {error && <span className="text-[11px] font-bold text-rose-700 dark:text-rose-300">{error}</span>}
+        {error && <span className="text-[11px] font-bold text-[var(--state-overdue-text)]">{error}</span>}
         <span className="ml-auto flex items-center gap-2">
           <button onClick={onClose} disabled={applying} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>
           <button onClick={() => void apply()} disabled={applying || (plan.accountsToCreate.length === 0 && updating === 0 && recon.authorized == null)}
@@ -284,19 +285,19 @@ export function BudgetImportSheet({ orgId, projectId, actor, result, accounts, p
 }
 
 function Fact({ label, value, sub, tone }: { label: string; value: string; sub?: string; tone?: "ok" | "warn" }) {
-  const ring = tone === "warn" ? "border-amber-500/50 bg-amber-500/[0.06]" : tone === "ok" ? "border-emerald-500/40 bg-emerald-500/[0.05]" : "border-[var(--color-border)] bg-[var(--color-surface)]";
+  const ring = tone === "warn" ? "border-[var(--state-held)] bg-[var(--state-held)]/[0.06]" : tone === "ok" ? "border-[var(--state-released)] bg-[var(--state-released)]/[0.05]" : "border-[var(--color-border)] bg-[var(--color-surface)]";
   return (
     <div className={`rounded-xl border px-3 py-2 ${ring}`}>
       <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">{label}</div>
       <div className="text-sm font-semibold tabular-nums text-[var(--color-text)]">{value}</div>
-      {sub && <div className={`text-[11px] font-bold ${tone === "warn" ? "text-amber-700 dark:text-amber-300" : "text-[var(--color-text-muted)]"}`}>{sub}</div>}
+      {sub && <div className={`text-[11px] font-bold ${tone === "warn" ? "text-[var(--state-held-text)]" : "text-[var(--color-text-muted)]"}`}>{sub}</div>}
     </div>
   );
 }
 
 export function BlankPagesNote({ pages }: { pages: number[] }) {
   return (
-    <p className="mx-4 mb-2 border-l-2 border-amber-500 pl-2 text-[11px] font-bold text-amber-800 dark:text-amber-300">
+    <p className="mx-4 mb-2 border-l-2 border-[var(--state-held)] pl-2 text-[11px] font-bold text-[var(--state-held-text)]">
       Page{pages.length === 1 ? "" : "s"} {pages.join(", ")} came through blank, usually scanner compression.
       Anything only on {pages.length === 1 ? "that page" : "those pages"} was not read: check it against the paper.
     </p>

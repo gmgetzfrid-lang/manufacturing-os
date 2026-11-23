@@ -21,6 +21,7 @@ import { woOf } from "@/lib/workOrderCrew";
 import { startMsOf } from "@/lib/calendarPlacement";
 import { searchMatcher, hasQuery } from "@/lib/fuzzySearch";
 import { useDraft } from "@/hooks/useDraft";
+import { sayError } from "@/components/projects/sayError";
 
 const field = "h-9 w-full rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[13px] text-[var(--color-text)] disabled:opacity-50";
 const has = (e?: SheetEntry) => !!e && !!(e.start?.trim() || e.lunchPct?.trim() || e.endPct?.trim() || e.done?.trim() || e.hold || e.note?.trim());
@@ -88,7 +89,7 @@ export default function ShiftSheetEntry({ milestones, progress, tz, times, targe
         try {
           const warn = await saveSheetLine(id, plan.events, { orgId, userId, userName });
           out[id] = { ok: true, msg: warn ?? undefined };
-        } catch (e) { out[id] = { ok: false, msg: (e as Error).message }; }
+        } catch (e) { out[id] = { ok: false, msg: sayError(e) }; }
       }
     };
     await Promise.all([run(), run(), run()]);
@@ -133,13 +134,13 @@ export default function ShiftSheetEntry({ milestones, progress, tz, times, targe
     const isDone = m?.status === "completed";
     const lock = !canEdit || busy || !!done;
     return (
-      <div key={l.id} className={`px-3 py-2.5 ${r && !r.ok ? "bg-rose-50 dark:bg-rose-950/30" : done ? "bg-emerald-50/70 dark:bg-emerald-950/25" : ""}`}>
+      <div key={l.id} className={`px-3 py-2.5 ${r && !r.ok ? "bg-transparent" : done ? "bg-transparent" : ""}`}>
         <div className="grid gap-2 grid-cols-2 sm:grid-cols-[minmax(0,1.5fr)_118px_72px_72px_118px_64px_minmax(0,1fr)] items-center">
           <div className="col-span-2 sm:col-span-1 min-w-0">
             <div className="text-[13px] font-bold text-[var(--color-text)] leading-snug">{l.name}</div>
-            <div className="text-[11.5px] text-[var(--color-text-muted)]">
+            <div className="text-[12px] text-[var(--color-text-muted)]">
               {l.crew || "No crew named"}
-              {isDone && <span className="ml-1.5 font-bold text-emerald-700 dark:text-emerald-400">done</span>}
+              {isDone && <span className="ml-1.5 font-bold text-[var(--state-released-text)]">done</span>}
               {!isDone && m && pctOf(m) > 0 && <span className="ml-1.5 font-semibold">at {Math.round(pctOf(m))}%</span>}
             </div>
           </div>
@@ -156,12 +157,12 @@ export default function ShiftSheetEntry({ milestones, progress, tz, times, targe
           <label className="min-w-0"><span className="sm:hidden block text-[12px] font-semibold text-[var(--color-text-muted)]">Done</span>
             <input type="time" aria-label={`${l.name}: done time`} value={e.done ?? ""} disabled={lock} onChange={(x) => set(l.id, { done: x.target.value })} className={field} />
           </label>
-          <label className="flex items-center gap-1.5 text-[12.5px] font-semibold cursor-pointer select-none">
+          <label className="flex items-center gap-1.5 text-[12px] font-semibold cursor-pointer select-none">
             <input type="checkbox" checked={!!e.hold} disabled={lock} onChange={(x) => set(l.id, { hold: x.target.checked })} className="w-4 h-4 accent-amber-600" /> Hold
           </label>
           <input placeholder={e.hold ? "Why it's held" : "Note"} aria-label={`${l.name}: note`} value={e.note ?? ""} disabled={lock} onChange={(x) => set(l.id, { note: x.target.value })} className={`${field} col-span-2 sm:col-span-1`} />
         </div>
-        {r && <div className={`mt-1 text-[12px] font-semibold ${r.ok ? (r.msg ? "text-amber-700 dark:text-amber-300" : "text-emerald-700 dark:text-emerald-400") : "text-rose-700 dark:text-rose-300"}`}>{r.ok ? (r.msg ?? "Saved") : r.msg}</div>}
+        {r && <div className={`mt-1 text-[12px] font-semibold ${r.ok ? (r.msg ? "text-[var(--state-held-text)]" : "text-[var(--state-released-text)]") : "text-[var(--state-overdue-text)]"}`}>{r.ok ? (r.msg ?? "Saved") : r.msg}</div>}
       </div>
     );
   };
@@ -173,7 +174,7 @@ export default function ShiftSheetEntry({ milestones, progress, tz, times, targe
           <ClipboardPen className="w-5 h-5 mt-0.5 text-[var(--color-text-muted)] shrink-0" />
           <div className="min-w-0 flex-1">
             <div className="text-[15px] font-semibold text-[var(--color-text)]">Enter the shift sheet</div>
-            <div className="text-[12.5px] text-[var(--color-text-muted)]">
+            <div className="text-[12px] text-[var(--color-text-muted)]">
               {target.kind === "day" ? "Day" : "Night"} shift · {dayWord} · {timeWord(target.start)} to {timeWord(target.end)}
               {" · "}{printed ? "the lines as printed" : "the lines as the sheet would print now"}
             </div>
@@ -204,7 +205,7 @@ export default function ShiftSheetEntry({ milestones, progress, tz, times, targe
           })}
           {/* Not on the sheet: find it on the schedule */}
           <div className="px-3 py-3 space-y-2">
-            <div className="text-[12.5px] font-bold text-[var(--color-text)]">Written in at the bottom? Find it on the schedule</div>
+            <div className="text-[12px] font-bold text-[var(--color-text)]">Written in at the bottom? Find it on the schedule</div>
             <div className="relative max-w-xl">
               <Search className="w-4 h-4 absolute left-2.5 top-2.5 text-[var(--color-text-muted)]" />
               <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="E-12, a WO number, a step or a crew" aria-label="Find a step" className={`${field} pl-8`} />
@@ -216,18 +217,18 @@ export default function ShiftSheetEntry({ milestones, progress, tz, times, targe
                     <Plus className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
                     <span className="min-w-0">
                       <span className="block text-[13px] font-semibold text-[var(--color-text)] truncate">{m.name}</span>
-                      <span className="block text-[11.5px] text-[var(--color-text-muted)] truncate">{[parent?.name, woOf(m) ? `WO ${woOf(m)}` : "", m.responsibleParty].filter(Boolean).join(" · ")}</span>
+                      <span className="block text-[12px] text-[var(--color-text-muted)] truncate">{[parent?.name, woOf(m) ? `WO ${woOf(m)}` : "", m.responsibleParty].filter(Boolean).join(" · ")}</span>
                     </span>
                   </button>
                 ))}
               </div>
             )}
-            <div className="text-[11.5px] text-[var(--color-text-muted)]">Not on the schedule at all? Add it as discovery or a new work order from Work, then enter it here.</div>
+            <div className="text-[12px] text-[var(--color-text-muted)]">Not on the schedule at all? Add it as discovery or a new work order from Work, then enter it here.</div>
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2 px-4 py-3 border-t border-[var(--color-border)]">
-          {summary && <span role="status" className="inline-flex items-center gap-1.5 text-[12.5px] font-semibold text-[var(--color-text)]"><CheckCircle2 className="w-4 h-4 text-emerald-600" />{summary}</span>}
-          {!canEdit && <span className="text-[12.5px] text-[var(--color-text-muted)]">You can read this project; entering takes editing rights.</span>}
+          {summary && <span role="status" className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-[var(--color-text)]"><CheckCircle2 className="w-4 h-4 text-[var(--state-released-text)]" />{summary}</span>}
+          {!canEdit && <span className="text-[12px] text-[var(--color-text-muted)]">You can read this project; entering takes editing rights.</span>}
           <span className="ml-auto" />
           <button type="button" onClick={onClose} className="h-9 px-3.5 rounded-lg border border-[var(--color-border-strong)] text-[13px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">{summary ? "Close" : "Cancel"}</button>
           <button type="button" disabled={!canEdit || busy || filled.length === 0 || !userId} onClick={() => void save()}

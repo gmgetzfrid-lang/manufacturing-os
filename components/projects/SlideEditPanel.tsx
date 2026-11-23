@@ -13,6 +13,7 @@ import SignedImg from "@/components/assets/SignedImg";
 import { btnQuiet, btnRow } from "@/components/admin/kit";
 import { normalizeTag } from "@/lib/assets";
 import type { PhotoOption, SlidePicChoice } from "@/lib/slidePictures";
+import { sayError } from "@/components/projects/sayError";
 
 export interface SlideEdit {
   /** The slide's pictures now, whether a person chose them, how many it has room for, and why none when none. */
@@ -47,7 +48,7 @@ export default function SlideEditPanel({ edit, slideKey, slideNo, rowKey, rowKin
   const others = edit.options.filter((o) => !onSlide.includes(o));
   const run = async (what: string, f: () => Promise<void>) => {
     setBusy(what); setErr(null); setSaved(false);
-    try { await f(); setSaved(true); } catch (e) { setErr((e as Error).message); } finally { setBusy(null); }
+    try { await f(); setSaved(true); } catch (e) { setErr(sayError(e)); } finally { setBusy(null); }
   };
   const plain = (p: SlidePicChoice & { url?: string }): SlidePicChoice => ({ path: p.path, caption: p.caption, ...(p.tag ? { tag: p.tag } : {}) });
   const add = (p: SlidePicChoice) => slideKey && run(`add:${p.path}`, async () => {

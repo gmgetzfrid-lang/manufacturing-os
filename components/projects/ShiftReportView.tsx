@@ -110,6 +110,7 @@ import { exportedLabel, logSteps, shiftLog } from "@/lib/hourlyLog";
 import { pngInBrowser, saveHourlyLog, type LogFormat } from "@/lib/hourlyLogFiles";
 import { slotClocks, hourlyRows, hourSlots, breaksOn, breakLabel, plainLine, workOrderClosers, briefNotes, selfNamed } from "@/lib/shiftHourly";
 import { saidWithLatest } from "@/lib/stepComment";
+import { sayError } from "@/components/projects/sayError";
 
 /** The crew the report is narrowed to (tables then drop their Who column). */
 const ReportCrew = React.createContext<string | null>(null);
@@ -203,7 +204,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
     const problem = shiftTimesProblem(timesDraft);
     if (problem) { setTimesMsg(problem); return; }
     try { await saveProjectShiftTimes(projectId, timesDraft); setTimesMsg("Saved for everyone on this project."); setTimesDraft(null); }
-    catch (e) { setTimesMsg((e as Error).message); setTimesDraft(null); }
+    catch (e) { setTimesMsg(sayError(e)); setTimesDraft(null); }
   };
   const [showTimes, setShowTimes] = useState(false);
   // A step with no crew named is reported under its work order's crew.
@@ -342,7 +343,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
     const calculated = links.size;
     return {
       label: CRITICAL_MODES.find((x) => x.value === crit.mode)?.label ?? crit.mode, theirs: crit.ids.size, calculated,
-      onUse: canEdit ? () => { setPathMsg(null); saveCriticalMode(projectId, "links").catch((e: Error) => setPathMsg(e.message)); } : undefined,
+      onUse: canEdit ? () => { setPathMsg(null); saveCriticalMode(projectId, "links").catch((e: Error) => setPathMsg(sayError(e))); } : undefined,
       msg: pathMsg,
     };
   }, [crit, standMs, pathAt, tz, canEdit, projectId, pathMsg]);
@@ -565,9 +566,9 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
       const again = (): void => { void saveShiftRecordAgain(); };
       const saveShiftRecordAgain = async () => {
         try { await saveShiftRecord({ orgId, projectId, shiftKey: key, userId, change }); setRecFail(null); }
-        catch (e2) { setRecFail({ msg: (e2 as Error).message, retry: again }); }
+        catch (e2) { setRecFail({ msg: sayError(e2), retry: again }); }
       };
-      setRecFail({ msg: (e as Error).message, retry: again });
+      setRecFail({ msg: sayError(e), retry: again });
       return false;
     }
   }, [orgId, projectId, userId]);
@@ -701,7 +702,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
         fileName: `${name} - time log${scope === "shift" ? ` ${shift.dayKey} ${shift.kind}` : ""}.xlsx`,
       });
       setLogMsg(`${out.length} entr${out.length === 1 ? "y" : "ies"} exported.`);
-    } catch (e) { setLogMsg(`Not exported: ${(e as Error).message}`); }
+    } catch (e) { setLogMsg(`Not exported: ${sayError(e)}`); }
     setLogBusy(false);
   };
   // The project around the work: its name and the schedule's groups (a
@@ -1072,7 +1073,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
             </div>
             <input type="date" value={shift.dayKey} onChange={(e) => { if (e.target.value) setSel({ dayKey: e.target.value, kind: shift.kind }); }}
               aria-label="Which day's shift"
-              className="h-9 min-w-0 w-[142px] max-md:order-last max-md:basis-full max-md:w-full text-[14px] font-semibold rounded-md px-2.5 bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border-strong)] outline-none focus:border-[var(--color-main)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40" title="Which day's shift to close" />
+              className="h-9 min-w-0 w-[142px] max-md:order-last max-md:basis-full max-md:w-full text-[14px] font-semibold rounded-md px-2.5 bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border-strong)]" title="Which day's shift to close" />
             <button onClick={() => pick(nextShift(shift, tz, times))} className="w-9 h-9 shrink-0 inline-flex items-center justify-center rounded-md hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]" title="Next shift" aria-label="Next shift"><ChevronRight className="w-4 h-4" /></button>
             {/* Back to the shift on now: only once another one is picked. */}
             {/* (On a phone it's in More, so the row stays one row.) */}
@@ -1111,7 +1112,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
                 <BreaksEditor breaks={draft.breaks ?? []} times={draft} onChange={(b) => { setTimesMsg(null); setTimesDraft({ ...draft, breaks: b }); }} />
                 {!timesDraft && timesSaved === false && (
                   <div className="flex justify-end pt-0.5">
-                    <button onClick={() => { void saveProjectShiftTimes(projectId, times).then(() => setTimesMsg("Saved for everyone on this project.")).catch((e: Error) => setTimesMsg(e.message)); }}
+                    <button onClick={() => { void saveProjectShiftTimes(projectId, times).then(() => setTimesMsg("Saved for everyone on this project.")).catch((e: Error) => setTimesMsg(sayError(e))); }}
                       className="inline-flex items-center h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">These are right: confirm</button>
                   </div>
                 )}
@@ -1121,7 +1122,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
                     <button onClick={() => void saveTimes()} className="inline-flex items-center h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">Save for the project</button>
                   </div>
                 )}
-                {timesMsg && <div className={`leading-snug ${/^Saved for everyone/.test(timesMsg) ? "text-emerald-700 dark:text-emerald-400" : "text-rose-700 dark:text-rose-400"}`}>{timesMsg}</div>}
+                {timesMsg && <div className={`leading-snug ${/^Saved for everyone/.test(timesMsg) ? "text-[var(--state-released-text)]" : "text-[var(--state-overdue-text)]"}`}>{timesMsg}</div>}
               </div>
             )}
           </div>
@@ -1217,8 +1218,8 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
       )}
       {recFail && (
         <div role="alert" className="px-4 sm:px-5 py-2.5 border-b border-[var(--color-border)] flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px] text-[var(--color-text)]">
-          <span aria-hidden className="w-2 h-2 rounded-full bg-rose-600 shrink-0" />
-          <span className="flex-1 min-w-[200px]"><b className="text-rose-700 dark:text-rose-300">Didn&apos;t save to the shift&apos;s record:</b> {recFail.msg}</span>
+          <span aria-hidden className="w-2 h-2 rounded-full bg-[var(--state-overdue)] shrink-0" />
+          <span className="flex-1 min-w-[200px]"><b className="text-[var(--state-overdue-text)]">Didn&apos;t save to the shift&apos;s record:</b> {recFail.msg}</span>
           <button type="button" onClick={recFail.retry} className={QUIET}>Try again</button>
         </div>
       )}
@@ -1585,7 +1586,7 @@ function CopyUpdate({ doc, meeting, lh, stamps, primary }: { primary?: boolean; 
                   ))}
                 </div>
                 {(d.formCheck?.length ?? 0) > 0 && (
-                  <ul className="border-l-2 border-amber-500 py-0.5 text-[12px] font-semibold text-amber-800 dark:text-amber-300 list-disc pl-7">
+                  <ul className="border-l-2 border-[var(--state-held)] py-0.5 text-[12px] font-semibold text-[var(--state-held-text)] list-disc pl-7">
                     {d.formCheck!.map((c) => <li key={c}>{c}</li>)}
                   </ul>
                 )}
@@ -1613,7 +1614,7 @@ function CopyUpdate({ doc, meeting, lh, stamps, primary }: { primary?: boolean; 
           </ModalBody>
           <ModalFooter className="flex-wrap">
             {done && (
-              <span role="status" className={`w-full sm:w-auto mr-auto text-[12px] font-bold ${done.ok ? "text-emerald-700 dark:text-emerald-400" : "text-rose-700"}`}>
+              <span role="status" className={`w-full sm:w-auto mr-auto text-[12px] font-bold ${done.ok ? "text-[var(--state-released-text)]" : "text-[var(--state-overdue-text)]"}`}>
                 {!done.ok ? (done.what === "word" ? "Couldn't make the Word file - try again." : "Your browser blocked the copy - try again.") : done.what === "word" ? "Word file saved." : done.what === "email"
                   ? <>Copied - paste into your email (Ctrl+V). <a className="underline" href={`mailto:?subject=${encodeURIComponent(subject)}`}>New email with subject</a></>
                   : "Copied as text - paste anywhere (Ctrl+V)."}
@@ -1733,8 +1734,8 @@ function BreaksEditor({ breaks, onChange, times }: { breaks: ShiftBreak[]; onCha
           <select value={b.minutes} onChange={(e) => set(i, { minutes: Number(e.target.value) })} aria-label="How long" className={sel}>
             {[10, 15, 20, 30, 45, 60].map((m) => <option key={m} value={m}>{m} min</option>)}
           </select>
-          <button type="button" onClick={() => onChange(breaks.filter((_, j) => j !== i))} aria-label="Remove this break" className="p-1 text-[var(--color-text-muted)] hover:text-rose-700"><X className="w-3.5 h-3.5" /></button>
-          {outside(b) && <span className="basis-full text-[11px] font-semibold text-amber-700 dark:text-amber-400">{c12(b.start)} isn&apos;t on the {b.shift} shift ({c12(b.shift === "day" ? ds : ns)} to {c12(b.shift === "day" ? ns : ds)}): it won&apos;t show. AM or PM, or the other shift?</span>}
+          <button type="button" onClick={() => onChange(breaks.filter((_, j) => j !== i))} aria-label="Remove this break" className="p-1 text-[var(--color-text-muted)] hover:text-[var(--state-overdue-text)]"><X className="w-3.5 h-3.5" /></button>
+          {outside(b) && <span className="basis-full text-[11px] font-semibold text-[var(--state-held-text)]">{c12(b.start)} isn&apos;t on the {b.shift} shift ({c12(b.shift === "day" ? ds : ns)} to {c12(b.shift === "day" ? ns : ds)}): it won&apos;t show. AM or PM, or the other shift?</span>}
         </div>
       ))}
       <button type="button" onClick={() => onChange([...breaks, { shift: "day", start: breaks.length ? "12:00" : "09:00", minutes: breaks.length ? 30 : 15, label: breaks.length ? "Lunch" : "Break" }])}
@@ -1890,10 +1891,10 @@ function waitingSection(w: WaitingReady, shift: ShiftWindow, c: Ctx): Sec {
     body: () => (!n && !w.service.length ? <div className="text-[13px] text-[var(--color-text-muted)]">{WAIT_NONE}</div> : (
       <div className="space-y-3 text-[13px]" data-waiting-ready>
         {!n && <div className="text-[var(--color-text-muted)]">{WAIT_NONE}</div>}
-        {w.waiting.length > 0 && <div><div className="text-[12px] font-semibold text-amber-700 dark:text-amber-400">Started, nothing logged this shift ({w.waiting.length})</div><ul>{w.waiting.map((j) => row(j.id, jobWord(j), waitWhy(j), `${j.crew} · ${shiftsWord(j.shifts)}`, j.said ? `"${j.said}"` : null))}</ul></div>}
+        {w.waiting.length > 0 && <div><div className="text-[12px] font-semibold text-[var(--state-held-text)]">Started, nothing logged this shift ({w.waiting.length})</div><ul>{w.waiting.map((j) => row(j.id, jobWord(j), waitWhy(j), `${j.crew} · ${shiftsWord(j.shifts)}`, j.said ? `"${j.said}"` : null))}</ul></div>}
         {w.ready.length > 0 && <div><div className="text-[12px] font-semibold text-[var(--color-text-muted)]">Ready, not started ({w.ready.length})</div><ul>{w.ready.map((j) => row(j.id, jobWord(j), `Ready since ${c.DT(j.readyAt)}`, `${j.crew} · ${shiftsWord(j.shifts)}`, readyWhy(j)))}</ul></div>}
         {w.service.length > 0 && <div><div className="text-[12px] font-semibold text-[var(--color-text-muted)]">{SERVICE_TITLE} ({w.service.length})</div><ul>{w.service.map((j) => row(j.id, jobWord(j), "", j.crew, j.said ? `"${j.said}"` : null))}</ul></div>}
-        <div className="text-[11.5px] text-[var(--color-text-muted)]">A night shift counts only for work that ran on nights. The post-event review counts these the same way.</div>
+        <div className="text-[12px] text-[var(--color-text-muted)]">A night shift counts only for work that ran on nights. The post-event review counts these the same way.</div>
       </div>
     )),
     data: () => waitingBlocks(w, c),
@@ -2170,7 +2171,7 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
       body: (print: boolean) => (
         <SafetyMomentBox jobs={hazardJobs} shift={next} T={c.T} print={print} project={o.safety?.project} recent={o.safety?.recent} label={`${shiftName(next)} ${c.D(next.start)}`}
           chosen={endMeeting?.record?.meeting?.safety}
-          onUse={endMeeting && sh?.edit && !print ? (title) => { void endMeeting.save((r) => ({ ...r, meeting: { ...(r.meeting ?? {}), safety: title } })).catch((e) => appAlert({ title: "Safety topic not saved", message: `"${title}" didn't save to the meeting: ${(e as Error).message}. Pick it again to try again.`, tone: "danger" })); } : undefined} />
+          onUse={endMeeting && sh?.edit && !print ? (title) => { void endMeeting.save((r) => ({ ...r, meeting: { ...(r.meeting ?? {}), safety: title } })).catch((e) => appAlert({ title: "Safety topic not saved", message: `"${title}" didn't save to the meeting: ${sayError(e)}. Pick it again to try again.`, tone: "danger" })); } : undefined} />
       ),
     }] : []),
   ];
@@ -2192,10 +2193,10 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
           {/* Only when the job is behind: on track or ahead, the order the work was done in is not reported. */}
           {o.why && o.why.total >= 0.5 && overall.standing === "behind" && <WhyBehind why={o.why} c={c} print={print} />}
           {!print && o.pathSource && (
-            <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11.5px] text-[var(--color-text-muted)] print:hidden">
+            <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px] text-[var(--color-text-muted)] print:hidden">
               <span>Critical path: <b className="text-[var(--color-text)]">{o.pathSource.label}</b> ({o.pathSource.theirs} step{o.pathSource.theirs === 1 ? "" : "s"}). From the schedule&apos;s links it&apos;s {o.pathSource.calculated}, recalculated as work moves - near-critical and float come with it.</span>
               {o.pathSource.onUse && <button type="button" onClick={o.pathSource.onUse} className="text-[var(--color-accent-text)] hover:underline">Use the calculated path</button>}
-              {o.pathSource.msg && <span className="font-semibold text-amber-700 dark:text-amber-400">{o.pathSource.msg}</span>}
+              {o.pathSource.msg && <span className="font-semibold text-[var(--state-held-text)]">{o.pathSource.msg}</span>}
             </div>
           )}
         </>
@@ -2246,11 +2247,11 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
                 className="inline-flex items-center gap-1.5 h-9 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] print:hidden">
                 <ListChecks className="w-3.5 h-3.5" /> {o.thisPlan.plan ? "Change this shift's plan" : "Plan this shift"}
               </button>
-              <span className="text-[11.5px] text-[var(--color-text-muted)]">{o.thisPlan.plan ? `${planSetText(o.thisPlan.plan, c) ?? "Planned."} The update's "Work to be completed" is this plan.` : "The work after the meeting. Not set: the update lists the schedule's work for the shift."}</span>
+              <span className="text-[12px] text-[var(--color-text-muted)]">{o.thisPlan.plan ? `${planSetText(o.thisPlan.plan, c) ?? "Planned."} The update's "Work to be completed" is this plan.` : "The work after the meeting. Not set: the update lists the schedule's work for the shift."}</span>
             </div>
           )}
-          {checkText && <div className="text-[11.5px] font-semibold text-[var(--color-text)]">{checkText}</div>}
-          {askedText && <div className="text-[11.5px] font-semibold text-slate-700 dark:text-slate-200">{askedText}</div>}
+          {checkText && <div className="text-[12px] font-semibold text-[var(--color-text)]">{checkText}</div>}
+          {askedText && <div className="text-[12px] font-semibold text-slate-700 dark:text-slate-200">{askedText}</div>}
           {doneRows.length > 0 && putBack(print, "done")}
           {doneRows.length > 0 ? (
             <DoneTasks rows={doneTasks} print={print} stamps={!!sh?.stamps} T={c.T} sort={sortOf(print, "done")} onEdit={print ? undefined : editRow} />
@@ -2276,21 +2277,21 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
       flag: null,
       body: (print) => (
         <div className="space-y-2">
-          {!print && planButton && <div className="flex flex-wrap items-center gap-2">{planButton}{!goals.byPlan && <span className="text-[11.5px] text-[var(--color-text-muted)]">No plan set: this list is the schedule&apos;s. Tick the work you&apos;re giving the {next.kind} shift.</span>}</div>}
-          {planSet && <div className="text-[11.5px] font-semibold text-[var(--color-text)]">{planSet} This list is the plan; nothing else is handed to the {next.kind} shift.</div>}
+          {!print && planButton && <div className="flex flex-wrap items-center gap-2">{planButton}{!goals.byPlan && <span className="text-[12px] text-[var(--color-text-muted)]">No plan set: this list is the schedule&apos;s. Tick the work you&apos;re giving the {next.kind} shift.</span>}</div>}
+          {planSet && <div className="text-[12px] font-semibold text-[var(--color-text)]">{planSet} This list is the plan; nothing else is handed to the {next.kind} shift.</div>}
           {next.kind === "night" && o.times.nightJobs === undefined && !goals.byPlan && (
             // Not decided: the list follows the schedule file's hours.
-            <div role="alert" className="border-l-2 border-rose-500 pl-3 py-1 text-[12px] text-[var(--color-text)]">
-              <b className="text-rose-700 dark:text-rose-300">Night shifts aren&apos;t set:</b> this list follows the schedule file&apos;s hours, which can hand day work to nights. Set them once in <b>Schedule setup → Night shifts</b>: which jobs run days and nights.
+            <div role="alert" className="border-l-2 border-[var(--state-overdue)] pl-3 py-1 text-[12px] text-[var(--color-text)]">
+              <b className="text-[var(--state-overdue-text)]">Night shifts aren&apos;t set:</b> this list follows the schedule file&apos;s hours, which can hand day work to nights. Set them once in <b>Schedule setup → Night shifts</b>: which jobs run days and nights.
             </div>
           )}
           {planList.length + tryList.length > 0 && putBack(print, "next")}
           {planList.length + tryList.length === 0 ? <Empty>{goals.byPlan ? "Nothing left open on the plan." : "Nothing is scheduled for the next shift."}</Empty> : (
             <StepTable print={print} box whenHead="When" rightHead="Done → goal" rows={nextRows(print, true)} sort={sortOf(print, "next")} onEdit={print ? undefined : editRow} />
           )}
-          {tryLine && <div className="text-[11.5px] font-semibold text-amber-800 dark:text-amber-300">{tryLine}</div>}
+          {tryLine && <div className="text-[12px] font-semibold text-[var(--state-held-text)]">{tryLine}</div>}
           {goals.pulledHeld.length > 0 && (
-            <div className="text-[11.5px] font-semibold text-rose-700 dark:text-rose-300">
+            <div className="text-[12px] font-semibold text-[var(--state-overdue-text)]">
               Blocked since it was added, not on the list: {goals.pulledHeld.map((r) => `${r.leaf.name}${r.reason ? ` (${r.reason})` : ""}`).join("; ")}.
             </div>
           )}
@@ -2322,13 +2323,13 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
       flag: plan.held.some((r) => r.status === "blocked") ? "rose" : null,
       body: (print: boolean) => (
         <div className="space-y-2">
-          {!print && afterButton && <div className="flex flex-wrap items-center gap-2">{afterButton}{!after.report.goals.byPlan && <span className="text-[11.5px] text-[var(--color-text-muted)]">No plan set: this list is the schedule&apos;s, with what the {next.kind === "day" ? "night" : "day"} crew leaves open. Tick the work you&apos;re giving the {afterNext.kind} shift.</span>}</div>}
-          {afterSet && <div className="text-[11.5px] font-semibold text-[var(--color-text)]">{afterSet} This list is the plan; nothing else is handed to the {afterNext.kind} shift.</div>}
+          {!print && afterButton && <div className="flex flex-wrap items-center gap-2">{afterButton}{!after.report.goals.byPlan && <span className="text-[12px] text-[var(--color-text-muted)]">No plan set: this list is the schedule&apos;s, with what the {next.kind === "day" ? "night" : "day"} crew leaves open. Tick the work you&apos;re giving the {afterNext.kind} shift.</span>}</div>}
+          {afterSet && <div className="text-[12px] font-semibold text-[var(--color-text)]">{afterSet} This list is the plan; nothing else is handed to the {afterNext.kind} shift.</div>}
           {afterList.length === 0 ? <Empty>{after.report.goals.byPlan ? "Nothing left open on the plan." : `Nothing is scheduled for the ${afterNext.kind} shift.`}</Empty> : (
             <StepTable print={print} box whenHead="When" rightHead="Done → goal" rows={afterRows()} onEdit={print ? undefined : editRow} />
           )}
           {plan.held.length > 0 && (
-            <div className="text-[11.5px] font-semibold text-rose-700 dark:text-rose-300">
+            <div className="text-[12px] font-semibold text-[var(--state-overdue-text)]">
               Blocked or on hold, on no shift&apos;s list: {plan.held.map((r) => `${r.leaf.name}${r.reason ? ` (${r.reason})` : ""}`).join("; ")}.
             </div>
           )}
@@ -2373,8 +2374,8 @@ function FollowUpsBox({ open, edit, T, onAdd, onDone }: {
       {open.length === 0 ? <Empty>No follow-up items open.</Empty> : (
         <ul className="space-y-1">
           {open.map((n) => (
-            <li key={n.id} className="flex items-start gap-2 text-[12.5px] text-[var(--color-text)]">
-              <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0" aria-hidden />
+            <li key={n.id} className="flex items-start gap-2 text-[12px] text-[var(--color-text)]">
+              <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-[var(--state-held)] shrink-0" aria-hidden />
               <span className="flex-1 min-w-0 break-words">{n.text}<span className="ml-1.5 text-[11px] text-[var(--color-text-muted)]">{n.from ? `from ${n.from}` : `added ${T(n.at)}`}</span></span>
               {edit && <button type="button" onClick={() => onDone(n)} className="shrink-0 text-[13px] hover:underline text-[var(--color-accent-text)]">Done</button>}
             </li>
@@ -2384,7 +2385,7 @@ function FollowUpsBox({ open, edit, T, onAdd, onDone }: {
       {edit && (
         <div className="flex gap-2">
           <input value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") add(); }} placeholder="Add a follow-up item"
-            aria-label="Add a follow-up item" className="flex-1 min-w-0 h-9 px-2.5 rounded-[10px] border border-transparent bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text)] focus:bg-[var(--color-surface)] focus:border-[var(--color-border-strong)]" />
+            aria-label="Add a follow-up item" className="flex-1 min-w-0 h-9 px-2.5 rounded-[10px] border border-transparent bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text)] focus:bg-[var(--color-surface)]" />
           <button type="button" onClick={add} disabled={!text.trim()} className="h-9 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] text-[13px] font-semibold disabled:opacity-50">Add</button>
         </div>
       )}
@@ -2438,7 +2439,7 @@ function discoverySection(shift: ShiftWindow, c: Ctx, list: Discovery[], onAdd?:
       <div className="space-y-2">
         {ds.inShift.length === 0 ? <Empty>Nothing added this shift.</Empty> : <DiscoveryList list={ds.inShift} c={c} print={print} />}
         {ds.open.length > 0 && (
-          <div className="text-[11.5px] font-semibold text-amber-800 dark:text-amber-300">
+          <div className="text-[12px] font-semibold text-[var(--state-held-text)]">
             Still open from earlier: {ds.open.map((d) => `${d.task?.name ?? ""}: ${d.record.what} (${d.steps.filter((x) => x.status !== "completed").length} of ${d.steps.length} steps open)`).join("; ")}.
           </div>
         )}
@@ -2462,26 +2463,26 @@ function DiscoveryList({ list, c, print, now = false }: { list: Discovery[]; c: 
   now?: boolean }) {
   const impactOf = (d: Discovery) => (now ? impactNowLine(d, c.hrs, c.word, c.tz) : impactLine(d.record.impact, c.hrs, c.word));
   const cell = print ? "px-1 py-[1px]" : "px-2 py-1.5";
-  const impactCls = (d: Discovery) => (d.record.impact.critical ? "text-rose-700 dark:text-rose-400 font-bold" : "text-[var(--color-text)]");
+  const impactCls = (d: Discovery) => (d.record.impact.critical ? "text-[var(--state-overdue-text)] font-bold" : "text-[var(--color-text)]");
   return (
     <>
       {!print && (
         <div className="sm:hidden rounded-md border border-slate-300 dark:border-slate-700 divide-y divide-slate-200 dark:divide-slate-700/60">
           {list.map((d) => (
-            <div key={d.record.id} className="px-3 py-2 text-[12.5px] space-y-0.5">
+            <div key={d.record.id} className="px-3 py-2 text-[12px] space-y-0.5">
               <div className="flex items-start justify-between gap-2">
                 <b className="break-words">{d.task?.name}{d.task?.workOrderRef && <span className="ml-1.5 ui-id text-[12px]">WO {d.task.workOrderRef}</span>}</b>
                 <span className="shrink-0 font-display tabular-nums text-[11px] text-[var(--color-text-muted)]">{c.DTs(d.record.foundAt)}</span>
               </div>
               <div className="break-words"><b className="text-[11px] text-[var(--color-text-muted)] mr-1">{ADDED[kindOf(d.record)].word}</b>{d.record.what}</div>
-              {d.steps.map((m) => <div key={m.id} className="text-[11.5px] text-[var(--color-text-muted)] break-words">{discoveryStepLine(m, c.hrs)}</div>)}
-              <div className={`text-[11.5px] ${impactCls(d)}`}>{impactOf(d)}</div>
+              {d.steps.map((m) => <div key={m.id} className="text-[12px] text-[var(--color-text-muted)] break-words">{discoveryStepLine(m, c.hrs)}</div>)}
+              <div className={`text-[12px] ${impactCls(d)}`}>{impactOf(d)}</div>
             </div>
           ))}
         </div>
       )}
       <div className={print ? "" : "hidden sm:block"}>
-        <table className={`w-full border-collapse ${print ? "text-[8pt]" : "text-[12.5px]"}`}>
+        <table className={`w-full border-collapse ${print ? "text-[8pt]" : "text-[12px]"}`}>
           <thead>
             <tr className="border-b border-slate-300 dark:border-slate-600 text-[11px] font-medium text-slate-500 dark:text-slate-400 text-left">
               <th className={`${cell} w-[92px]`}>When</th><th className={`${cell} w-[18%]`}>Task</th><th className={cell}>What</th><th className={`${cell} w-[30%]`}>Work it added</th><th className={`${cell} w-[22%]`}>What it did</th>
@@ -2533,7 +2534,7 @@ function kickoffSections(k: ReturnType<typeof buildKickoff>, c: Ctx, f?: Finding
           <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5 keep">
             {jobStats.map((x) => <Stat key={x.label} label={x.label} value={x.value} tone={x.tone} />)}
           </div>
-          {unscheduledMsg && <div className="text-[11.5px] font-semibold text-amber-800 dark:text-amber-300">{unscheduledMsg}</div>}
+          {unscheduledMsg && <div className="text-[12px] font-semibold text-[var(--state-held-text)]">{unscheduledMsg}</div>}
         </div>
       ),
       data: () => [{ k: "stats", items: jobStats }, ...(unscheduledMsg ? [{ k: "note", text: unscheduledMsg, tone: "amber" } as ExportBlock] : [])],
@@ -2790,10 +2791,10 @@ function lookBackSections(lb: LookBack, report: ShiftReport, c: Ctx): Sec[] {
   });
   const first = lb.chain.find((l) => l.addedH >= 1);
   const name = (s: StepLook) => `${s.task ? `${s.task} › ` : ""}${s.name}`;
-  const txt = (print: boolean) => (print ? "text-[8.5pt]" : "text-[12.5px]");
+  const txt = (print: boolean) => (print ? "text-[8.5pt]" : "text-[12px]");
   const bullets = (items: string[], tone: "emerald" | "amber", print: boolean) => (
     <ul className={`space-y-1 ${txt(print)}`}>
-      {items.map((x) => <li key={x} className="flex gap-2"><span className={`mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full ${tone === "emerald" ? "bg-emerald-500" : "bg-amber-500"}`} /><span className="text-[var(--color-text)]">{x}</span></li>)}
+      {items.map((x) => <li key={x} className="flex gap-2"><span className={`mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full ${tone === "emerald" ? "bg-[var(--state-released)]" : "bg-[var(--state-held)]"}`} /><span className="text-[var(--color-text)]">{x}</span></li>)}
     </ul>
   );
   return [
@@ -2812,7 +2813,7 @@ function lookBackSections(lb: LookBack, report: ShiftReport, c: Ctx): Sec[] {
               {lb.byCause.map((x) => (
                 <div key={x.cause} className="grid grid-cols-[minmax(0,15rem)_1fr_auto] items-center gap-2 max-sm:grid-cols-[1fr_auto]">
                   <span className="text-[var(--color-text)] break-words max-sm:col-span-2">{CAUSE_LABEL[x.cause]}</span>
-                  <span className="h-2.5 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden"><span className="block h-full rounded-full bg-amber-500" style={{ width: `${Math.round((x.hours / max) * 100)}%` }} /></span>
+                  <span className="h-2.5 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden"><span className="block h-full rounded-full bg-[var(--state-held)]" style={{ width: `${Math.round((x.hours / max) * 100)}%` }} /></span>
                   <span className="tabular-nums text-[var(--color-text-muted)]"><b className="text-[var(--color-text)]">{c.hrs(x.hours)}</b> · {x.steps} step{x.steps === 1 ? "" : "s"}</span>
                 </div>
               ))}
@@ -2835,7 +2836,7 @@ function lookBackSections(lb: LookBack, report: ShiftReport, c: Ctx): Sec[] {
                 <span className="text-[var(--color-text-muted)]"> · {[s.task, s.wo ? `WO ${s.wo}` : null, s.crew].filter(Boolean).join(" · ")}{s.done ? "" : " · forecast"}</span>
                 <div className="text-[var(--color-text-muted)] break-words">{whyLost(s, c).join(" · ")}</div>
               </div>
-              <div className="text-right tabular-nums font-bold text-rose-700 dark:text-rose-400 whitespace-nowrap">{signed(s.lostH)}</div>
+              <div className="text-right tabular-nums font-bold text-[var(--state-overdue-text)] whitespace-nowrap">{signed(s.lostH)}</div>
             </div>
           ))}
           {lb.setbacks.length > setbacks.length && <div className="px-2.5 py-1 text-[var(--color-text-muted)]">+ {lb.setbacks.length - setbacks.length} more, each losing less</div>}
@@ -2857,10 +2858,10 @@ function lookBackSections(lb: LookBack, report: ShiftReport, c: Ctx): Sec[] {
             </li>
           ) : (() => {
             const l = lb.chain[r.i], s = l.step;
-            const tone = l.addedH >= 1 ? "text-rose-700 dark:text-rose-400" : l.addedH <= -1 ? "text-emerald-700 dark:text-emerald-400" : "text-[var(--color-text-muted)]";
+            const tone = l.addedH >= 1 ? "text-[var(--state-overdue-text)]" : l.addedH <= -1 ? "text-[var(--state-released-text)]" : "text-[var(--color-text-muted)]";
             return (
               <li key={s.id} className="keep pl-5 py-1 border-l-2 border-[var(--color-border-strong)] ml-1.5 relative">
-                <span className={`absolute -left-[5px] top-[9px] h-2 w-2 rounded-full ${l.addedH >= 1 ? "bg-rose-500" : l.addedH <= -1 ? "bg-emerald-500" : "bg-slate-400"}`} />
+                <span className={`absolute -left-[5px] top-[9px] h-2 w-2 rounded-full ${l.addedH >= 1 ? "bg-[var(--state-overdue)]" : l.addedH <= -1 ? "bg-[var(--state-released)]" : "bg-slate-400"}`} />
                 <div className="flex flex-wrap items-baseline gap-x-2">
                   <b className="text-[var(--color-text)] break-words">{name(s)}</b>
                   <span className={`font-bold tabular-nums ${tone}`}>{l.addedH >= 1 ? `added ${signed(l.addedH)}` : l.addedH <= -1 ? `made up ${c.hrs(-l.addedH)}` : "passed it on"}</span>
@@ -2892,7 +2893,7 @@ function lookBackSections(lb: LookBack, report: ShiftReport, c: Ctx): Sec[] {
               {lb.ahead.slice(0, 8).map((s) => (
                 <div key={s.id} className="px-2.5 py-1 grid grid-cols-[1fr_auto] gap-x-3">
                   <span className="min-w-0 break-words"><b className="text-[var(--color-text)]">{s.name}</b><span className="text-[var(--color-text-muted)]"> · {[s.task, s.crew].filter(Boolean).join(" · ")}</span></span>
-                  <span className="tabular-nums font-bold text-emerald-700 dark:text-emerald-400 whitespace-nowrap">{c.hrs(-s.finishH)} early</span>
+                  <span className="tabular-nums font-bold text-[var(--state-released-text)] whitespace-nowrap">{c.hrs(-s.finishH)} early</span>
                 </div>
               ))}
             </div>
@@ -2905,7 +2906,7 @@ function lookBackSections(lb: LookBack, report: ShiftReport, c: Ctx): Sec[] {
                 <div key={x.crew} className="px-2.5 py-0.5 grid grid-cols-[1fr_auto_auto] gap-x-3 tabular-nums">
                   <span className="text-[var(--color-text)] truncate">{x.crew}</span>
                   <span className="text-[var(--color-text-muted)]">{x.onPlan} of {x.done} on plan</span>
-                  <span className={`font-bold ${x.done && x.onPlan === x.done ? "text-emerald-700 dark:text-emerald-400" : "text-[var(--color-text-muted)]"}`}>{Math.round((x.onPlan / x.done) * 100)}%</span>
+                  <span className={`font-bold ${x.done && x.onPlan === x.done ? "text-[var(--state-released-text)]" : "text-[var(--color-text-muted)]"}`}>{Math.round((x.onPlan / x.done) * 100)}%</span>
                 </div>
               ))}
             </div>
@@ -2940,7 +2941,7 @@ function cancelledSection(jobs: CancelledJob[], c: Ctx): Sec {
     id: "cancelled", title: "Cancelled from this schedule", short: "Cancelled", count: jobs.length, flag: "amber",
     sub: "Still to be done: moved off this schedule",
     body: (print) => (
-      <div className={`rounded-md border border-[var(--color-border)] border-l-2 border-l-amber-500 divide-y divide-[var(--color-border)] ${print ? "text-[8.5pt]" : "text-[12.5px]"}`}>
+      <div className={`rounded-md border border-[var(--color-border)] border-l-2 border-l-amber-500 divide-y divide-[var(--color-border)] ${print ? "text-[8.5pt]" : "text-[12px]"}`}>
         {jobs.map((j) => (
           <div key={j.m.id ?? j.m.name} className={`keep ${print ? "px-1.5 py-1" : "px-2.5 py-2"} flex flex-col gap-0.5`}>
             <div className="flex items-baseline gap-x-2 flex-wrap">
@@ -2949,11 +2950,11 @@ function cancelledSection(jobs: CancelledJob[], c: Ctx): Sec {
               {j.steps > 1 && <span className="text-[11px] text-[var(--color-text-muted)]">{j.steps} steps</span>}
             </div>
             <div className="text-[var(--color-text)]">
-              <span className="text-[12px] font-semibold text-amber-700 dark:text-amber-400">Moved to </span>
+              <span className="text-[12px] font-semibold text-[var(--state-held-text)]">Moved to </span>
               {j.m.movedTo ? <b>{j.m.movedTo}</b> : <span className="text-[var(--color-text-faint)]">not said</span>}
             </div>
             {j.m.cancelNote && <div className="text-[var(--color-text-muted)] italic">“{j.m.cancelNote}”</div>}
-            <div className="text-[11px] print:text-[10.5px] text-[var(--color-text-faint)]">Cancelled {when(j)}</div>
+            <div className="text-[11px] print:text-[12px] text-[var(--color-text-faint)]">Cancelled {when(j)}</div>
           </div>
         ))}
       </div>
@@ -2981,7 +2982,7 @@ function closeSection(title: string, signers: string[], sub = "Notes, actions an
             <div key={who} className="flex items-end gap-2 text-[11px] text-[var(--color-text-muted)]">
               <span className="w-40 shrink-0">{who}</span>
               <span className="flex-1 border-b border-[var(--color-border-strong)]" />
-              <span className="w-12 border-b border-[var(--color-border-strong)] text-center text-[11px] print:text-[9px]">time</span>
+              <span className="w-12 border-b border-[var(--color-border-strong)] text-center text-[11px] print:text-[12px]">time</span>
             </div>
           ))}
         </div>
@@ -3023,12 +3024,12 @@ function Masthead({ meeting, report, kickoff, closeout, ctx: c, asOf, now, rehea
           </div>
           <div className={print ? "text-[11px] text-slate-700" : "mt-0.5 text-[12px] text-[var(--color-text-muted)]"}>
             {print ? <>{when} · </> : null}as of {c.T(meeting === "turnover" ? asOf : now)} {tzAbbrev(c.tz, now)}
-            {crew && meeting === "turnover" && <span className={`ml-2 whitespace-nowrap px-1.5 py-0.5 rounded text-[11px] print:text-[10px] font-semibold ${print ? "border border-slate-700 text-slate-900" : "border border-[var(--color-border-strong)] text-[var(--color-text)]"}`}>{crew} only</span>}
-            {criticalOnly && meeting === "turnover" && <span className={`ml-2 whitespace-nowrap px-1.5 py-0.5 rounded text-[11px] print:text-[10px] font-semibold ${print ? "border border-rose-700 text-rose-900" : "bg-rose-200 text-rose-950"}`}>Critical path only</span>}
-            {addedOnly && meeting === "turnover" && <span className={`ml-2 whitespace-nowrap px-1.5 py-0.5 rounded text-[11px] print:text-[10px] font-semibold ${print ? "border border-slate-700 text-slate-900" : "border border-[var(--color-border-strong)] text-[var(--color-text)]"}`}>Discovery &amp; added only</span>}
-            {classOnly && meeting === "turnover" && <span className={`ml-2 whitespace-nowrap px-1.5 py-0.5 rounded text-[11px] print:text-[10px] font-semibold ${print ? "border border-slate-700 text-slate-900" : "bg-slate-200 text-slate-950"}`}>{classOnly} only</span>}
-            {rehearsal && meeting === "turnover" && <span className={`ml-2 px-1.5 py-0.5 rounded text-[11px] print:text-[10px] font-semibold ${print ? "border border-amber-700 text-amber-800" : "bg-amber-400 text-slate-900"}`}>Rehearsal: shift not started</span>}
-            {historyNote && meeting === "turnover" && <span className={`ml-2 px-1.5 py-0.5 rounded text-[11px] print:text-[10px] font-bold ${print ? "border border-slate-500 text-slate-700" : "bg-[var(--color-surface-2)] text-[var(--color-text)]"}`}>Earlier shift: {historyNote}</span>}
+            {crew && meeting === "turnover" && <span className={`ml-2 whitespace-nowrap px-1.5 py-0.5 rounded text-[11px] print:text-[12px] font-semibold ${print ? "border border-slate-700 text-slate-900" : "border border-[var(--color-border-strong)] text-[var(--color-text)]"}`}>{crew} only</span>}
+            {criticalOnly && meeting === "turnover" && <span className={`ml-2 whitespace-nowrap px-1.5 py-0.5 rounded text-[11px] print:text-[12px] font-semibold ${print ? "border border-[var(--state-overdue)] text-[var(--state-overdue-text)]" : "bg-transparent text-[var(--state-overdue-text)]"}`}>Critical path only</span>}
+            {addedOnly && meeting === "turnover" && <span className={`ml-2 whitespace-nowrap px-1.5 py-0.5 rounded text-[11px] print:text-[12px] font-semibold ${print ? "border border-slate-700 text-slate-900" : "border border-[var(--color-border-strong)] text-[var(--color-text)]"}`}>Discovery &amp; added only</span>}
+            {classOnly && meeting === "turnover" && <span className={`ml-2 whitespace-nowrap px-1.5 py-0.5 rounded text-[11px] print:text-[12px] font-semibold ${print ? "border border-slate-700 text-slate-900" : "bg-slate-200 text-slate-950"}`}>{classOnly} only</span>}
+            {rehearsal && meeting === "turnover" && <span className={`ml-2 px-1.5 py-0.5 rounded text-[11px] print:text-[12px] font-semibold ${print ? "border border-[var(--state-held)] text-[var(--state-held-text)]" : "bg-[var(--state-held)] text-slate-900"}`}>Rehearsal: shift not started</span>}
+            {historyNote && meeting === "turnover" && <span className={`ml-2 px-1.5 py-0.5 rounded text-[11px] print:text-[12px] font-bold ${print ? "border border-slate-500 text-slate-700" : "bg-[var(--color-surface-2)] text-[var(--color-text)]"}`}>Earlier shift: {historyNote}</span>}
           </div>
         </div>
       </div>
@@ -3038,7 +3039,7 @@ function Masthead({ meeting, report, kickoff, closeout, ctx: c, asOf, now, rehea
 
 function Footnote({ meeting, ctx: c, asOf, now, projectName }: { meeting: MeetingKind; ctx: Ctx; asOf: number; now: number; projectName?: string }) {
   return (
-    <footer className="pt-2 mt-2 border-t border-[var(--color-border)] text-[11px] print:text-[9.5px] text-[var(--color-text-faint)] flex justify-between gap-3 flex-wrap">
+    <footer className="pt-2 mt-2 border-t border-[var(--color-border)] text-[11px] print:text-[12px] text-[var(--color-text-faint)] flex justify-between gap-3 flex-wrap">
       <span>
         {meeting === "turnover" ? `Plan % = work the schedule expected done by ${c.DT(asOf)}, hour-weighted; actual % = progress entered. Gap = the difference in planned work-hours. ` : ""}
         Critical = on the chain that drives the finish date. Hours are planned work-hours. Behind {SEVERE_BEHIND_H} h or more shows red; less, amber.
@@ -3083,7 +3084,7 @@ function StandTiles({ actual, planned, standing, gap, done, total, pastDue, past
   const value = `font-bold tracking-tight tabular-nums leading-tight ${print ? "text-[14pt]" : "text-[22px]"}`;
   const small = `font-medium text-slate-600 dark:text-slate-300 ${print ? "text-[8pt]" : "text-[13px]"}`;
   const sub = `text-slate-500 dark:text-slate-400 ${print ? "text-[7pt]" : "text-[11px]"}`;
-  const gapTone = standing === "behind" ? "text-rose-700 dark:text-rose-400" : standing === "ahead" ? "text-emerald-700 dark:text-emerald-400" : "";
+  const gapTone = standing === "behind" ? "text-[var(--state-overdue-text)]" : standing === "ahead" ? "text-[var(--state-released-text)]" : "";
   // On screen: one compact row, no tiles (no big numbers in the content).
   if (!print) return (
     <dl className="grid grid-cols-2 sm:grid-cols-4 gap-x-6 gap-y-3 keep">
@@ -3092,7 +3093,7 @@ function StandTiles({ actual, planned, standing, gap, done, total, pastDue, past
         <dd className="mt-0.5 text-[14px] font-bold tabular-nums">{actual}% <span className="text-[12px] font-medium text-[var(--color-text-muted)]">of {planned}% planned</span></dd>
         <div className="relative mt-1.5 h-1.5 rounded-full bg-[var(--color-surface-2)]" aria-hidden>
           <div className="absolute inset-y-0 left-0 rounded-full bg-[var(--color-main)]" style={{ width: `${Math.min(100, actual)}%` }} />
-          <div className={`absolute -top-[3px] w-0.5 h-3 ${standing === "behind" ? "bg-rose-700" : "bg-[var(--color-text-muted)]"}`} style={{ left: `calc(${Math.min(100, planned)}% - 1px)` }} />
+          <div className={`absolute -top-[3px] w-0.5 h-3 ${standing === "behind" ? "bg-[var(--state-overdue)]" : "bg-[var(--color-text-muted)]"}`} style={{ left: `calc(${Math.min(100, planned)}% - 1px)` }} />
         </div>
       </div>
       <div className="min-w-0">
@@ -3107,7 +3108,7 @@ function StandTiles({ actual, planned, standing, gap, done, total, pastDue, past
       </div>
       <div className="min-w-0">
         <dt className="text-[13px] font-semibold text-[var(--color-text-muted)]">{pastDueLabel}</dt>
-        <dd className={`mt-0.5 text-[14px] font-bold tabular-nums ${pastDue ? "text-amber-700 dark:text-amber-400" : ""}`}>{pastDue}</dd>
+        <dd className={`mt-0.5 text-[14px] font-bold tabular-nums ${pastDue ? "text-[var(--state-held-text)]" : ""}`}>{pastDue}</dd>
         <dd className="text-[12px] text-[var(--color-text-muted)]">steps past their finish{pastDueHeld ? `, ${pastDueHeld} on hold or blocked` : ""}</dd>
       </div>
     </dl>
@@ -3119,7 +3120,7 @@ function StandTiles({ actual, planned, standing, gap, done, total, pastDue, past
         <div className={value}>{actual}% <span className={small}>of {planned}% planned</span></div>
         <div className="relative mt-1.5 h-1.5 rounded-full bg-slate-200 dark:bg-slate-700" aria-hidden>
           <div className="absolute inset-y-0 left-0 rounded-full bg-[var(--color-main)]" style={{ width: `${Math.min(100, actual)}%` }} />
-          <div className={`absolute -top-[3px] w-0.5 h-3 ${standing === "behind" ? "bg-rose-700" : "bg-slate-500"}`} style={{ left: `calc(${Math.min(100, planned)}% - 1px)` }} />
+          <div className={`absolute -top-[3px] w-0.5 h-3 ${standing === "behind" ? "bg-[var(--state-overdue)]" : "bg-slate-500"}`} style={{ left: `calc(${Math.min(100, planned)}% - 1px)` }} />
         </div>
       </div>
       <div className={tile}>
@@ -3134,7 +3135,7 @@ function StandTiles({ actual, planned, standing, gap, done, total, pastDue, past
       </div>
       <div className={tile}>
         <div className={label}>{pastDueLabel}</div>
-        <div className={`${value} ${pastDue ? "text-amber-700 dark:text-amber-400" : ""}`}>{pastDue}</div>
+        <div className={`${value} ${pastDue ? "text-[var(--state-held-text)]" : ""}`}>{pastDue}</div>
         <div className={sub}>steps past their finish{pastDueHeld ? `, ${pastDueHeld} on hold or blocked` : ""}</div>
       </div>
     </div>
@@ -3154,7 +3155,7 @@ function WhyBehind({ why, c, print }: { why: BehindWhy; c: Ctx; print: boolean }
   const more = why.chains.length - shown.length;
   const text = print ? "text-[8pt]" : "text-[12px]";
   const small = print ? "text-[7.5pt]" : "text-[11px]";
-  const tag = (flag: boolean) => (flag ? "border-rose-300 bg-rose-50 text-rose-900 dark:border-rose-800 dark:bg-rose-950/40 dark:text-rose-200" : "border-slate-300 bg-slate-50 text-slate-800 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-200");
+  const tag = (flag: boolean) => (flag ? "border-[var(--color-border)] bg-transparent text-[var(--state-overdue-text)]" : "border-slate-300 bg-slate-50 text-slate-800 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-200");
   return (
     <div className={print ? "mt-2 rounded-lg border border-slate-200 dark:border-slate-700 px-2 py-1.5 keep" : "mt-4 pt-3 border-t border-[var(--color-border)] keep"}>
       <div className={`font-bold ${print ? "text-[9pt]" : "text-[14px]"}`}>{whyTitle(why, c.hrs)}</div>
@@ -3179,7 +3180,7 @@ function WhyBehind({ why, c, print }: { why: BehindWhy; c: Ctx; print: boolean }
                   {t.waiting && <div className="text-[var(--color-text-muted)] break-words">{t.waiting}</div>}
                   {t.split && <div className={`${small} text-[var(--color-text-faint)]`}>{t.split}</div>}
                 </div>
-                <span className={`shrink-0 font-bold font-display tabular-nums ${l.flag ? "text-rose-700 dark:text-rose-400" : "text-[var(--color-text-muted)]"}`}>{h(ch.hours)}</span>
+                <span className={`shrink-0 font-bold font-display tabular-nums ${l.flag ? "text-[var(--state-overdue-text)]" : "text-[var(--color-text-muted)]"}`}>{h(ch.hours)}</span>
               </li>
             );
           })}
@@ -3198,7 +3199,7 @@ function WhyBehind({ why, c, print }: { why: BehindWhy; c: Ctx; print: boolean }
 }
 
 function Stat({ label, value, tone }: { label: string; value: string; tone: "emerald" | "rose" | "amber" | "slate" }) {
-  const t = tone === "emerald" ? "text-emerald-700 dark:text-emerald-400" : tone === "rose" ? "text-rose-700 dark:text-rose-400" : tone === "amber" ? "text-amber-700 dark:text-amber-400" : "text-[var(--color-text)]";
+  const t = tone === "emerald" ? "text-[var(--state-released-text)]" : tone === "rose" ? "text-[var(--state-overdue-text)]" : tone === "amber" ? "text-[var(--state-held-text)]" : "text-[var(--color-text)]";
   return (
     // On screen a compact label and value (no big numbers); on paper the
     // framed tile it always was (print: classes).
@@ -3213,9 +3214,9 @@ function Stat({ label, value, tone }: { label: string; value: string; tone: "eme
  *  line, the steps a tap away (in print, the line only). */
 function OffPlan({ text, rows, print, c }: { text: string; rows: ShiftRow[]; print: boolean; c: Ctx }) {
   const [open, setOpen] = useState(false);
-  if (print) return <div className="text-[11.5px] text-[var(--color-text-muted)]">{text}</div>;
+  if (print) return <div className="text-[12px] text-[var(--color-text-muted)]">{text}</div>;
   return (
-    <div className="text-[11.5px] text-[var(--color-text-muted)]">
+    <div className="text-[12px] text-[var(--color-text-muted)]">
       <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open} className="inline-flex items-start gap-1 text-left hover:text-[var(--color-text)]">
         <ChevronDown className={`w-3.5 h-3.5 mt-px shrink-0 transition-transform ${open ? "" : "-rotate-90"}`} /> <span>{text}</span>
       </button>
@@ -3235,7 +3236,7 @@ function OffPlan({ text, rows, print, c }: { text: string; rows: ShiftRow[]; pri
 }
 
 function Empty({ children }: { children: React.ReactNode }) {
-  return <div className="py-1 text-[11.5px] text-[var(--color-text-muted)] italic">{children}</div>;
+  return <div className="py-1 text-[12px] text-[var(--color-text-muted)] italic">{children}</div>;
 }
 
 function Blank({ print }: { print: boolean }) {
@@ -3247,7 +3248,7 @@ function Prompts({ items, print, lines = 0, cols = 2 }: { items: string[]; print
   return (
     <ul className={`grid ${lines ? "grid-cols-1" : cols === 3 ? "grid-cols-1 sm:grid-cols-3 print:grid-cols-3" : "grid-cols-1 sm:grid-cols-2"} gap-x-4 gap-y-1 keep`}>
       {items.map((t) => (
-        <li key={t} className="text-[11.5px]">
+        <li key={t} className="text-[12px]">
           <label className="flex items-start gap-1.5">
             {print ? <Box /> : <input type="checkbox" className="mt-0.5 shrink-0" />}
             <span>{t}</span>
@@ -3263,12 +3264,12 @@ function Prompts({ items, print, lines = 0, cols = 2 }: { items: string[]; print
 type TagTone = "rose" | "amber" | "emerald" | "muted" | "wait" | "violet";
 interface TagT { t: string; tone: TagTone }
 function TagChip({ t, tone }: TagT) {
-  const cls = tone === "rose" ? "bg-rose-100 text-rose-800 border-rose-300 dark:bg-rose-950/40 dark:text-rose-200 dark:border-rose-900"
-    : tone === "amber" ? "bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-950/40 dark:text-amber-200 dark:border-amber-900"
-      : tone === "emerald" ? "bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-950/40 dark:text-emerald-200 dark:border-emerald-900"
+  const cls = tone === "rose" ? "bg-transparent text-[var(--state-overdue-text)] border-[var(--color-border)]"
+    : tone === "amber" ? "bg-transparent text-[var(--state-held-text)] border-[var(--color-border)]"
+      : tone === "emerald" ? "bg-transparent text-[var(--state-released-text)] border-[var(--color-border)]"
         : tone === "violet" ? "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border-strong)]"
         : "bg-slate-100 text-slate-600 border-slate-300 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700";
-  return <span className={`inline-block max-w-full whitespace-nowrap px-1 py-px rounded border text-[11px] print:text-[10px] font-bold align-middle ${cls}`}>{t}</span>;
+  return <span className={`inline-block max-w-full whitespace-nowrap px-1 py-px rounded border text-[11px] print:text-[12px] font-bold align-middle ${cls}`}>{t}</span>;
 }
 
 /** The one filled colour on the page: work on the chain that drives the finish. */
@@ -3279,9 +3280,9 @@ function CriticalTag({ print }: { print?: boolean }) {
 /** What's going on with a step, as one quiet line: how far behind (red only
  *  past most of a shift), late, what it waits on — the first word capitalised. */
 const TONE_TEXT: Record<TagTone, string> = {
-  rose: "text-rose-700 dark:text-rose-400 font-semibold",
-  amber: "text-amber-700 dark:text-amber-400 font-medium",
-  emerald: "text-emerald-700 dark:text-emerald-400 font-medium",
+  rose: "text-[var(--state-overdue-text)] font-semibold",
+  amber: "text-[var(--state-held-text)] font-medium",
+  emerald: "text-[var(--state-released-text)] font-medium",
   muted: "text-slate-600 dark:text-slate-300",
   wait: "text-slate-600 dark:text-slate-300",
   violet: "text-[var(--color-text)] font-semibold",
@@ -3405,7 +3406,7 @@ function StepTable({ rows, print, box, rightHead = "", whenHead = "When", ownerL
       className={`text-left hover:underline decoration-dotted underline-offset-2 ${r.done ? "line-through text-slate-400" : cls}`}>{r.name}</button>
   ) : <span className={r.done ? "line-through text-slate-400" : cls}>{r.name}</span>;
   const cell = print ? "px-1 py-[3px]" : "px-2 py-2";
-  const taskCls = `font-semibold text-slate-900 dark:text-slate-50 ${print ? "text-[9pt]" : "text-[13.5px]"}`;
+  const taskCls = `font-semibold text-slate-900 dark:text-slate-50 ${print ? "text-[9pt]" : "text-[14px]"}`;
   return (
     <div ref={sortBox} className="relative">
     {sortLine}
@@ -3429,7 +3430,7 @@ function StepTable({ rows, print, box, rightHead = "", whenHead = "When", ownerL
                   {box && <span className="pt-1"><Box /></span>}
                   {r.n && <span className="pt-0.5"><Num n={r.n.num} /></span>}
                   <div className="flex-1 min-w-0">
-                    <div className="text-[14.5px] leading-snug">
+                    <div className="text-[14px] leading-snug">
                       {flat && r.group.title && <span className="text-slate-500 dark:text-slate-400">{r.group.title} › </span>}
                       {nameOf(r, "font-semibold text-slate-900 dark:text-slate-50")}{critical(r) && <CriticalTag />}{edit(r)}
                     </div>
@@ -3437,8 +3438,8 @@ function StepTable({ rows, print, box, rightHead = "", whenHead = "When", ownerL
                     <div className="mt-1 text-[12px] text-slate-600 dark:text-slate-300">
                       {[!crew && r.who ? r.who : null, r.when, r.wo ? `WO ${r.wo}` : null].filter(Boolean).join(" · ")}
                     </div>
-                    {r.note && <div className="text-[11.5px] italic text-slate-600 dark:text-slate-300 mt-0.5">{r.note}</div>}
-                    {r.why && <div className="text-[11.5px] italic font-medium text-amber-800 dark:text-amber-300 mt-0.5">Why behind: {r.why}</div>}
+                    {r.note && <div className="text-[12px] italic text-slate-600 dark:text-slate-300 mt-0.5">{r.note}</div>}
+                    {r.why && <div className="text-[12px] italic font-medium text-[var(--state-held-text)] mt-0.5">Why behind: {r.why}</div>}
                     {r.inline && <div className="mt-1.5">{r.inline}</div>}
                   </div>
                   <div className="shrink-0 pt-0.5"><Progress right={r.right} /></div>
@@ -3488,13 +3489,13 @@ function StepTable({ rows, print, box, rightHead = "", whenHead = "When", ownerL
                         {!print && r.inline && <span className="ml-2 align-middle">{r.inline}</span>}
                       </div>
                       <StatusLine tags={statusOf(r)} print={print} />
-                      {r.note && <div className={`italic text-slate-600 dark:text-slate-300 mt-0.5 ${print ? "text-[7.5pt]" : "text-[11.5px]"}`}>{r.note}</div>}
-                      {r.why && <div className={`italic font-medium text-amber-800 dark:text-amber-300 mt-0.5 ${print ? "text-[7.5pt]" : "text-[11.5px]"}`}>Why behind: {r.why}</div>}
-                      {ownerLine && <div className="text-[11px] print:text-[10px] text-slate-500 mt-0.5">Owner / decision: <span className="inline-block w-44 border-b border-dotted border-slate-400 align-baseline">&nbsp;</span></div>}
+                      {r.note && <div className={`italic text-slate-600 dark:text-slate-300 mt-0.5 ${print ? "text-[7.5pt]" : "text-[12px]"}`}>{r.note}</div>}
+                      {r.why && <div className={`italic font-medium text-[var(--state-held-text)] mt-0.5 ${print ? "text-[7.5pt]" : "text-[12px]"}`}>Why behind: {r.why}</div>}
+                      {ownerLine && <div className="text-[11px] print:text-[12px] text-slate-500 mt-0.5">Owner / decision: <span className="inline-block w-44 border-b border-dotted border-slate-400 align-baseline">&nbsp;</span></div>}
                     </td>
                     {hasWhen && <td className={`${cell} text-slate-700 dark:text-slate-300 break-words`}>{r.when}</td>}
                     {hasWho && <td className={`${cell} font-medium text-slate-900 dark:text-slate-100 truncate`} title={r.who}>{r.who}</td>}
-                    {hasWo && <td className={`${cell} font-display tabular-nums text-slate-500 dark:text-slate-400 truncate ${print ? "text-[7.5pt]" : "text-[11.5px]"}`}>{r.wo}</td>}
+                    {hasWo && <td className={`${cell} font-display tabular-nums text-slate-500 dark:text-slate-400 truncate ${print ? "text-[7.5pt]" : "text-[12px]"}`}>{r.wo}</td>}
                     <td className={`${cell} text-right`}><Progress right={r.right} print={print} /></td>
                   </tr>
                   {/* The meeting's decision on this step — its own full-width line. */}
@@ -3536,9 +3537,9 @@ function DoneLines({ x, stamps, T, print, onEdit }: { x: DoneTask; stamps: boole
     return (
       <div className="mt-0.5 first:mt-0">
         <span className={`mr-1.5 font-semibold text-slate-500 dark:text-slate-400 ${small}`}>{label}</span>
-        {lead && <span className={`font-display tabular-nums text-slate-600 dark:text-slate-300 mr-1.5 ${print ? "text-[7.5pt]" : "text-[11.5px]"}`}>{lead}</span>}
+        {lead && <span className={`font-display tabular-nums text-slate-600 dark:text-slate-300 mr-1.5 ${print ? "text-[7.5pt]" : "text-[12px]"}`}>{lead}</span>}
         <span>{l.name}</span>
-        {l.critical && <span className={`ml-1.5 font-bold text-rose-700 dark:text-rose-400 ${small}`}>critical path</span>}
+        {l.critical && <span className={`ml-1.5 font-bold text-[var(--state-overdue-text)] ${small}`}>critical path</span>}
         {l.discovery && <span className={`ml-1.5 font-bold text-[var(--color-text)] ${small}`}>{l.discovery}</span>}
         {more > 0 && <span className={`ml-1.5 text-slate-500 dark:text-slate-400 ${small}`}>+{more} more {moreWord}</span>}
         {!print && onEdit && <EditBtn label={l.name} onClick={() => onEdit(l.id)} />}
@@ -3561,18 +3562,18 @@ function DoneTasks({ rows, print, stamps = false, T, sort, onEdit }: { rows: Don
 }) {
   const { box: sortBox, grip, indicator: sortLine, moving } = useSortRows(print ? undefined : sort?.onReorder);
   const hasWo = rows.some((x) => x.wo);
-  const resultCls = (t: string) => (t === "amber" ? "text-amber-700 dark:text-amber-300" : "text-emerald-700 dark:text-emerald-400");
-  const vsCls = (t?: string) => (t === "rose" ? "text-rose-700 dark:text-rose-400" : "text-emerald-700 dark:text-emerald-400");
+  const resultCls = (t: string) => (t === "amber" ? "text-[var(--state-held-text)]" : "text-[var(--state-released-text)]");
+  const vsCls = (t?: string) => (t === "rose" ? "text-[var(--state-overdue-text)]" : "text-[var(--state-released-text)]");
   const cell = print ? "px-1 py-[1px]" : "px-2 py-1.5";
   const pctLine = (x: DoneTask) => [x.taskPct ? `${x.own ? "" : "task "}${x.taskPct.pct}% done${x.taskPct.plan != null ? ` · plan ${x.taskPct.plan}%` : ""}` : null, x.count ?? null].filter(Boolean).join(" · ") || null;
-  const whyLine = (x: DoneTask) => x.why && <div className={`mt-0.5 italic font-medium text-amber-800 dark:text-amber-300 ${print ? "text-[7.5pt]" : "text-[11.5px]"}`}>Why behind: {x.why}</div>;
+  const whyLine = (x: DoneTask) => x.why && <div className={`mt-0.5 italic font-medium text-[var(--state-held-text)] ${print ? "text-[7.5pt]" : "text-[12px]"}`}>Why behind: {x.why}</div>;
   return (
     <div ref={sortBox} className="relative">
       {sortLine}
       {!print && (
         <div className="sm:hidden rounded-md border border-slate-300 dark:border-slate-700 divide-y divide-slate-200 dark:divide-slate-700/60">
           {rows.map((x) => (
-            <div key={x.ids.join(",")} data-sort-id={x.key} className={`group/sort px-3 py-2 text-[12.5px] space-y-0.5 ${moving(x.key) ? "opacity-40" : ""}`}>
+            <div key={x.ids.join(",")} data-sort-id={x.key} className={`group/sort px-3 py-2 text-[12px] space-y-0.5 ${moving(x.key) ? "opacity-40" : ""}`}>
               <div className="flex items-start justify-between gap-2">
                 <b className="text-[var(--color-text)] break-words"><Grip props={grip([x.key], x.task)} />{x.task}{x.critical && <CriticalTag />}{x.woShown && <span className="ml-1.5 font-display tabular-nums font-semibold text-[11px] text-[var(--color-text-muted)]">{/^\d+ WOs$/.test(x.woShown) ? x.woShown : `WO ${x.woShown}`}</span>}</b>
                 {x.vs.text && <b className={`shrink-0 font-display tabular-nums text-[12px] ${vsCls(x.vs.tone)}`}>{x.vs.text}</b>}
@@ -3581,13 +3582,13 @@ function DoneTasks({ rows, print, stamps = false, T, sort, onEdit }: { rows: Don
               <div className="text-[var(--color-text)] break-words"><DoneLines x={x} stamps={stamps} T={T} print={false} onEdit={onEdit} /></div>
               <div className={`font-bold break-words ${resultCls(x.result.tone)}`}>{x.result.text}</div>
               {whyLine(x)}
-              {x.who && <div className="text-[11.5px] text-[var(--color-text-muted)] break-words">{x.who}</div>}
+              {x.who && <div className="text-[12px] text-[var(--color-text-muted)] break-words">{x.who}</div>}
             </div>
           ))}
         </div>
       )}
       <div className={print ? "" : "hidden sm:block"}>
-        <table className={`w-full border-collapse ${print ? "text-[8pt]" : "text-[12.5px]"}`}>
+        <table className={`w-full border-collapse ${print ? "text-[8pt]" : "text-[12px]"}`}>
           <thead>
             <tr className="border-b border-slate-300 dark:border-slate-600 text-[11px] font-medium text-slate-500 dark:text-slate-400 text-left">
               <th className={`${cell} w-[18%]`}>Task</th>{hasWo && <th className={`${cell} w-[62px]`}>WO</th>}<th className={cell}>Last done · In progress</th><th className={`${cell} w-[13%]`}>Who</th>
@@ -3600,7 +3601,7 @@ function DoneTasks({ rows, print, stamps = false, T, sort, onEdit }: { rows: Don
                 <td className={`${cell} font-semibold break-words`}><Grip props={grip([x.key], x.task)} />{x.task}{x.critical && <CriticalTag print={print} />}{pctLine(x) && <div className={`font-normal text-slate-500 dark:text-slate-400 ${print ? "text-[7.5pt]" : "text-[11px]"}`}>{pctLine(x)}</div>}</td>
                 {hasWo && <td className={`${cell} font-display tabular-nums text-[11px] break-words`}>{x.woShown.split(/,\s*/).map((w, i) => <span key={i} className="block">{w}</span>)}</td>}
                 <td className={`${cell} break-words`}><DoneLines x={x} stamps={stamps} T={T} print={print} onEdit={onEdit} /></td>
-                <td className={`${cell} text-[11.5px] text-[var(--color-text-muted)] break-words`}>{x.who}</td>
+                <td className={`${cell} text-[12px] text-[var(--color-text-muted)] break-words`}>{x.who}</td>
                 <td className={`${cell} font-bold break-words ${resultCls(x.result.tone)}`}>{x.result.text}{whyLine(x)}</td>
                 <td className={`${cell} text-right font-display tabular-nums font-bold whitespace-nowrap ${vsCls(x.vs.tone)}`}>{x.vs.text}</td>
               </tr>
@@ -3626,7 +3627,7 @@ function SimpleTable({ head, rows, print }: { head: string[]; rows: Array<{ id: 
         <tbody>
           {rows.map((r) => (
             <tr key={r.id} className="border-t border-slate-200 dark:border-slate-700/60 align-top">
-              {r.cells.map((c, i) => <td key={i} className={`${cell} ${i === 0 ? "" : "whitespace-nowrap font-display tabular-nums text-[11px] print:text-[10.5px]"}`}>{c}</td>)}
+              {r.cells.map((c, i) => <td key={i} className={`${cell} ${i === 0 ? "" : "whitespace-nowrap font-display tabular-nums text-[11px] print:text-[12px]"}`}>{c}</td>)}
             </tr>
           ))}
         </tbody>

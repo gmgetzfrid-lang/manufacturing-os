@@ -80,6 +80,7 @@ import { discoveryOf, impactLine, ADDED, kindOf } from "@/lib/discovery";
 import { IMPORT_KEY, originOf } from "@/lib/origin";
 import { timesOnShift } from "@/lib/stepShift";
 import { EQUIP_REQUEST } from "@/lib/equipmentPick";
+import { sayError, rawMessage } from "@/components/projects/sayError";
 
 const HIDDEN_ATTRS = new Set(["ms_critical", "discovery", IMPORT_KEY, EQUIP_REQUEST]);
 
@@ -114,7 +115,7 @@ export default function TaskDetailPanel({
   }, [onClose]);
   // A failed save says so, here, instead of the control just snapping back.
   const [err, setErr] = useState<string | null>(null);
-  const failed = (e: unknown) => setErr((e as Error)?.message || "That didn't save - try again.");
+  const failed = (e: unknown) => setErr(sayError(e, "That didn't save - try again."));
   const shiftTimes = useShiftTimes(milestone.projectId);
 
   const m = milestone;
@@ -333,7 +334,7 @@ export default function TaskDetailPanel({
 
         <div className="flex-1 overflow-y-auto">
           {err && (
-            <div role="alert" className="mx-4 mt-3 flex items-start gap-2 border-l-2 border-rose-500 pl-2.5 py-1 text-[12px] text-rose-700 dark:text-rose-300">
+            <div role="alert" className="mx-4 mt-3 flex items-start gap-2 border-l-2 border-[var(--state-overdue)] pl-2.5 py-1 text-[12px] text-[var(--state-overdue-text)]">
               <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" /><span className="flex-1">{err}</span>
               <button onClick={() => setErr(null)} className="shrink-0" title="Dismiss" aria-label="Dismiss"><XIcon className="w-3.5 h-3.5" /></button>
             </div>
@@ -399,7 +400,7 @@ export default function TaskDetailPanel({
                   </div>
                   {/* Rolled-up progress bar. */}
                   <div className="mt-2 h-1.5 rounded-full bg-[var(--color-surface-2)] overflow-hidden">
-                    <div className={`h-full ${effPct === 100 ? "bg-emerald-500" : "bg-[var(--color-text)]"}`} style={{ width: `${effPct}%` }} />
+                    <div className={`h-full ${effPct === 100 ? "bg-[var(--state-released)]" : "bg-[var(--color-text)]"}`} style={{ width: `${effPct}%` }} />
                   </div>
                   <div className="mt-2 text-[11px] text-[var(--color-text-faint)] flex items-start gap-1">
                     <Layers className="w-3 h-3 mt-0.5 shrink-0" />
@@ -515,7 +516,7 @@ export default function TaskDetailPanel({
                     {(d.addedAt || d.addedBy || m.createdByName) && (
                       <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5">Added to the schedule{d.addedAt ? ` ${fmtInTz(d.addedAt, tz, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true })}` : ""}{d.addedBy || m.createdByName ? ` by ${d.addedBy || m.createdByName}` : ""}{d.approvedBy ? "" : " · no approval recorded"}</div>
                     )}
-                    <div className={`text-[11px] mt-0.5 ${d.impact.critical ? "font-bold text-rose-700 dark:text-rose-400" : "text-[var(--color-text)]"}`}>When added: {impactLine(d.impact, (h) => `${h} h`, projectWord)}</div>
+                    <div className={`text-[11px] mt-0.5 ${d.impact.critical ? "font-bold text-[var(--state-overdue-text)]" : "text-[var(--color-text)]"}`}>When added: {impactLine(d.impact, (h) => `${h} h`, projectWord)}</div>
                   </div>
                 );
               })()}
@@ -679,7 +680,7 @@ export default function TaskDetailPanel({
                     <input
                       value={noteDraft} onChange={(e) => setNoteDraft(e.target.value)}
                       placeholder="Add a note…"
-                      className="flex-1 text-xs px-2 py-1.5 border border-[var(--color-border-strong)] rounded-md outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]"
+                      className="flex-1 text-xs px-2 py-1.5 border border-[var(--color-border-strong)] rounded-md"
                       onKeyDown={(e) => { if (e.key === "Enter") void addNote(); }}
                     />
                     <button onClick={() => void addNote()} disabled={!noteDraft.trim()} className="p-1.5 rounded-md text-[var(--color-accent-text)] dark:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40" title="Add note">
@@ -688,7 +689,7 @@ export default function TaskDetailPanel({
                   </div>
                 )}
                 {notesErr ? (
-                  <div role="alert" className="text-[11px] font-semibold text-rose-700 dark:text-rose-400">Couldn&apos;t read the activity. <button type="button" onClick={loadNotes} className="underline">Try again</button></div>
+                  <div role="alert" className="text-[11px] font-semibold text-[var(--state-overdue-text)]">Couldn&apos;t read the activity. <button type="button" onClick={loadNotes} className="underline">Try again</button></div>
                 ) : notes.length === 0 ? (
                   <div className="text-[11px] text-[var(--color-text-faint)] italic">No activity yet.</div>
                 ) : (
@@ -720,7 +721,7 @@ export default function TaskDetailPanel({
                             {canEdit && n.kind === "note" && n.id && n.createdBy === userId && (
                               <span className="shrink-0 flex gap-1.5 text-[11px] font-bold">
                                 <button onClick={() => setEditNote({ id: n.id!, body: n.body ?? "" })} className="text-[var(--color-text-faint)] hover:text-[var(--color-text)]">Edit</button>
-                                <button onClick={() => void removeNote(n.id!)} className="text-[var(--color-text-faint)] hover:text-rose-600">Delete</button>
+                                <button onClick={() => void removeNote(n.id!)} className="text-[var(--color-text-faint)] hover:text-[var(--state-overdue-text)]">Delete</button>
                               </span>
                             )}
                           </div>
@@ -746,7 +747,7 @@ export default function TaskDetailPanel({
                   className="inline-flex items-center gap-1.5 text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface)] px-2 py-1 rounded-md">
                   <Ban className="w-3.5 h-3.5" /> Cancel job
                 </button>
-                <button onClick={() => void onDelete()} title="Put in by mistake: gone for good" className="inline-flex items-center gap-1.5 text-[11px] font-bold text-rose-600 dark:text-rose-400 hover:text-rose-800 hover:bg-rose-50 dark:hover:bg-rose-950/40 px-2 py-1 rounded-md">
+                <button onClick={() => void onDelete()} title="Put in by mistake: gone for good" className="inline-flex items-center gap-1.5 text-[11px] font-bold text-[var(--state-overdue-text)] hover:text-[var(--state-overdue-text)] hover:bg-transparent px-2 py-1 rounded-md">
                   <Trash2 className="w-3.5 h-3.5" /> Delete task
                 </button>
               </>
@@ -885,12 +886,12 @@ function EditForm({
         if (moves.length) await applyMilestoneMoves({ orgId: m.orgId, projectId: m.projectId, moves, actorUserId: userId, actorUserName: userName, actorUserEmail: userEmail, actorUserRole: userRole });
       }
       onDone();
-    } catch (e) { setError((e as Error).message); }
+    } catch (e) { setError(sayError(e)); }
     finally { setSaving(false); }
   };
 
   const cls = (field: string) =>
-    `${inp} ${v.errors[field] ? "border-rose-400 focus:ring-rose-400/30" : v.warnings[field] ? "border-amber-400 focus:ring-amber-400/30" : ""}`;
+    `${inp} ${v.errors[field] ? "border-[var(--state-overdue)] " : v.warnings[field] ? "border-[var(--state-held)] " : ""}`;
 
   return (
     <div className="p-4 space-y-3">
@@ -905,7 +906,7 @@ function EditForm({
           <input type="number" min={0} value={durationHours} onChange={(e) => { setDurationHours(e.target.value); setHoursTyped(true); }} className={cls("durationHours")} />
           <Note err={v.errors.durationHours} warn={v.warnings.durationHours} />
           {fromDates > 0 && (Number(durationHours) !== fromDates ? (
-            <span className="block mt-1 text-[11px] text-amber-700 dark:text-amber-400">
+            <span className="block mt-1 text-[11px] text-[var(--state-held-text)]">
               Its dates hold {fromDates} h{crewWord ? ` (${crewWord})` : ""}.{" "}
               <button type="button" onClick={() => { setDurationHours(String(fromDates)); setHoursTyped(false); }} className="underline">Use {fromDates} h</button>
             </span>
@@ -940,7 +941,7 @@ function EditForm({
         </L>
       </div>
       <L label="Description"><textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={3} className={`${inp} resize-y`} /></L>
-      {error && <div role="alert" className="text-xs text-rose-700 dark:text-rose-300">{error}</div>}
+      {error && <div role="alert" className="text-xs text-[var(--state-overdue-text)]">{error}</div>}
       <div className="flex items-center justify-end gap-2 pt-1">
         <button onClick={onCancel} disabled={saving} className="text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5">Cancel</button>
         <button onClick={() => void save()} disabled={saving || !canSave || v.hasErrors} title={v.hasErrors ? "Fix the highlighted fields first" : undefined} className="inline-flex items-center gap-1.5 text-sm font-semibold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] px-4 py-2 rounded-md disabled:opacity-40">
@@ -951,7 +952,7 @@ function EditForm({
   );
 }
 
-const inp = "w-full px-2.5 py-1.5 text-sm border border-[var(--color-border-strong)] rounded-md outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)] focus:border-[var(--color-border-strong)]";
+const inp = "w-full px-2.5 py-1.5 text-sm border border-[var(--color-border-strong)] rounded-md ";
 
 function L({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -966,7 +967,7 @@ function L({ label, children }: { label: string; children: React.ReactNode }) {
 function Note({ err, warn }: { err?: string; warn?: string }) {
   if (!err && !warn) return null;
   return (
-    <div className={`mt-0.5 flex items-start gap-1 text-[11px] ${err ? "text-rose-600 dark:text-rose-400" : "text-amber-600 dark:text-amber-400"}`}>
+    <div className={`mt-0.5 flex items-start gap-1 text-[11px] ${err ? "text-[var(--state-overdue-text)]" : "text-[var(--state-held-text)]"}`}>
       <AlertTriangle className="w-3 h-3 shrink-0 mt-px" /> {err ?? warn}
     </div>
   );
@@ -996,18 +997,18 @@ function Field({ icon, label, children }: { icon: React.ReactNode; label: string
 
 function StatusPill({ status, dotOnly }: { status: MilestoneStatus; dotOnly?: boolean }) {
   const tone =
-    status === "completed"   ? "bg-emerald-500" :
+    status === "completed"   ? "bg-[var(--state-released)]" :
     status === "in_progress" ? "bg-[var(--color-text-muted)]" :
-    status === "on_hold"     ? "bg-amber-500" :
-    status === "blocked"     ? "bg-rose-500" :
-    status === "missed"      ? "bg-rose-600" : "bg-slate-400";
+    status === "on_hold"     ? "bg-[var(--state-held)]" :
+    status === "blocked"     ? "bg-[var(--state-overdue)]" :
+    status === "missed"      ? "bg-[var(--state-overdue)]" : "bg-slate-400";
   if (dotOnly) return <span className={`shrink-0 w-2 h-2 rounded-full ${tone}`} title={labelOf(status)} />;
   const text =
-    status === "completed"   ? "text-emerald-800 dark:text-emerald-300 bg-emerald-100 dark:bg-emerald-900/40 border-emerald-200 dark:border-emerald-800" :
+    status === "completed"   ? "text-[var(--state-released-text)] bg-transparent border-[var(--color-border)]" :
     status === "in_progress" ? "text-[var(--color-text)] dark:text-[var(--color-text)] bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] border-[var(--color-border)] dark:border-[var(--color-border)]" :
-    status === "on_hold"     ? "text-amber-900 dark:text-amber-200 bg-amber-100 dark:bg-amber-900/40 border-amber-200 dark:border-amber-800" :
-    status === "blocked"     ? "text-rose-800 dark:text-rose-300 bg-rose-100 dark:bg-rose-900/40 border-rose-200 dark:border-rose-800" :
-    status === "missed"      ? "text-rose-900 dark:text-rose-200 bg-rose-100 dark:bg-rose-900/40 border-rose-200 dark:border-rose-800" : "text-[var(--color-text)] bg-[var(--color-surface-2)] border-[var(--color-border)]";
+    status === "on_hold"     ? "text-[var(--state-held-text)] bg-transparent border-[var(--color-border)]" :
+    status === "blocked"     ? "text-[var(--state-overdue-text)] bg-transparent border-[var(--color-border)]" :
+    status === "missed"      ? "text-[var(--state-overdue-text)] bg-transparent border-[var(--color-border)]" : "text-[var(--color-text)] bg-[var(--color-surface-2)] border-[var(--color-border)]";
   return <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[12px] font-semibold border ${text}`}><span className={`w-1.5 h-1.5 rounded-full ${tone}`} />{labelOf(status)}</span>;
 }
 
@@ -1097,7 +1098,7 @@ function DependencyEditor({
         if (moves.length) await applyMilestoneMoves({ orgId: milestone.orgId, projectId: milestone.projectId, moves, actorUserId: userId });
       }
       onChanged();
-    } catch (e) { setError((e as Error).message); }
+    } catch (e) { setError(sayError(e)); }
     finally { setSaving(false); }
   };
 
@@ -1159,7 +1160,7 @@ function DependencyEditor({
           ))}
         </select>
       )}
-      {error && <div className="text-[11px] text-rose-600 dark:text-rose-400 mt-1">{error}</div>}
+      {error && <div className="text-[11px] text-[var(--state-overdue-text)] mt-1">{error}</div>}
     </div>
   );
 }
@@ -1210,14 +1211,14 @@ function HoldsUpEditor({ milestone, allTasks, canEdit, userId, onChanged, onSele
       setLocal((x) => { const deps = new Map(x && x.from === allTasks ? x.deps : []); deps.set(t.id!, next); return { from: allTasks, deps }; });
       await updateMilestone({ id: t.id, patch: { dependsOn: next, linkTypes: Object.keys(lt).length ? lt : null }, updatedBy: userId });
       onChanged();
-    } catch (e) { setError((e as Error).message); }
+    } catch (e) { setError(sayError(e)); }
     finally { setSaving(false); }
   };
   if (!me || allTasks.length === 0) return null;
   return (
     <div className="px-5 py-4 border-b border-[var(--color-border)]">
       <div className="flex items-center gap-1.5 mb-1.5">
-        <ArrowRight className="w-3.5 h-3.5 text-amber-600" />
+        <ArrowRight className="w-3.5 h-3.5 text-[var(--state-held-text)]" />
         <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Holds up</span>
         <span className="text-[11px] text-[var(--color-text-faint)]">- can&apos;t start until this is done</span>
       </div>
@@ -1226,12 +1227,12 @@ function HoldsUpEditor({ milestone, allTasks, canEdit, userId, onChanged, onSele
       ) : (
         <div className="space-y-1 mb-1.5">
           {waiting.map((t) => (
-            <div key={t.id} className="flex items-center gap-1.5 rounded-md bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-amber-900 dark:text-amber-200 text-[11px] font-semibold pl-2 pr-1 py-0.5">
+            <div key={t.id} className="flex items-center gap-1.5 rounded-md bg-transparent border border-[var(--color-border)] text-[var(--state-held-text)] text-[11px] font-semibold pl-2 pr-1 py-0.5">
               <button type="button" className="flex-1 min-w-0 break-words text-left hover:underline" onClick={() => onSelectMilestone?.(t)} title={withTask(t, byId)}>
                 {withTask(t, byId)}{t.status === "completed" ? " (done)" : ""}
               </button>
               {canEdit && (
-                <button type="button" disabled={saving} onClick={() => void save(t, depsOf(t).filter((d) => d !== me))} className="p-0.5 rounded-full hover:bg-amber-200/60 text-amber-700 hover:text-amber-900" title="It doesn't wait on this">
+                <button type="button" disabled={saving} onClick={() => void save(t, depsOf(t).filter((d) => d !== me))} className="p-0.5 rounded-full hover:bg-transparent text-[var(--state-held-text)] hover:text-[var(--state-held-text)]" title="It doesn't wait on this">
                   <XIcon className="w-3 h-3" />
                 </button>
               )}
@@ -1247,7 +1248,7 @@ function HoldsUpEditor({ milestone, allTasks, canEdit, userId, onChanged, onSele
           {candidates.map((t) => <option key={t.id} value={t.id!}>{withTask(t, byId)}</option>)}
         </select>
       )}
-      {error && <div className="text-[11px] text-rose-600 dark:text-rose-400 mt-1">{error}</div>}
+      {error && <div className="text-[11px] text-[var(--state-overdue-text)] mt-1">{error}</div>}
     </div>
   );
 }
@@ -1282,7 +1283,7 @@ function AssigneeEditor({ milestone, canEdit, userId, onChanged }: {
         updatedBy: userId,
       });
       onChanged();
-    } catch (e) { await appAlert({ message: (e as Error).message, tone: "danger" }); }
+    } catch (e) { await appAlert({ message: sayError(e), tone: "danger" }); }
     finally { setSaving(false); }
   };
 
@@ -1295,7 +1296,7 @@ function AssigneeEditor({ milestone, canEdit, userId, onChanged }: {
         <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Responsible</span>
         <span className="text-[11px] text-[var(--color-text-faint)]">: the member who owns this deliverable</span>
       </div>
-      {membersErr && <div role="alert" className="mb-1 text-[11px] font-semibold text-rose-700 dark:text-rose-400">Couldn&apos;t read the project&apos;s members, so the list below is short.</div>}
+      {membersErr && <div role="alert" className="mb-1 text-[11px] font-semibold text-[var(--state-overdue-text)]">Couldn&apos;t read the project&apos;s members, so the list below is short.</div>}
       {canEdit ? (
         <select
           value={assignedId}
@@ -1355,18 +1356,18 @@ function CriticalRow({ m, isLeaf, allTasks, critical, canEdit, userId, userEmail
       });
       onChanged();
     } catch (e) {
-      void appAlert({ title: "Not saved", message: /critical_override/.test((e as Error).message) ? "Run migration 20261101_critical_path_control.sql first." : (e as Error).message });
+      void appAlert({ title: "Not saved", message: /critical_override/.test(rawMessage(e)) ? "Run migration 20261101_critical_path_control.sql first." : sayError(e) });
     } finally { setBusy(false); }
   };
   const opt = (v: "yes" | "no" | null, label: string) => (
     <button type="button" disabled={busy} onClick={() => void set(v)} aria-pressed={own === v}
-      className={`px-2 py-0.5 text-[11px] font-bold ${own === v ? (v === "yes" ? "bg-rose-600 text-white" : "bg-slate-800 text-white dark:bg-slate-200 dark:text-slate-900") : "text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"}`}>
+      className={`px-2 py-0.5 text-[11px] font-bold ${own === v ? (v === "yes" ? "bg-[var(--state-overdue)] text-white" : "bg-slate-800 text-white dark:bg-slate-200 dark:text-slate-900") : "text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"}`}>
       {label}
     </button>
   );
   return (
     <Field icon={<Zap className="w-3.5 h-3.5" />} label="Critical path">
-      <span className={onCount ? "font-bold text-rose-700 dark:text-rose-300" : ""}>
+      <span className={onCount ? "font-bold text-[var(--state-overdue-text)]" : ""}>
         {isLeaf ? (onCount ? "On the critical path" : "Not critical") : onCount ? `${onCount} of ${below.filter((t) => !allTasks.some((c) => c.parentId === t.id)).length} steps critical` : "No steps critical"}
       </span>
       <span className="ml-1 text-[11px] text-[var(--color-text-faint)]">· {why}</span>
