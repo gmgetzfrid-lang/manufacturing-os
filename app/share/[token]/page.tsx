@@ -18,9 +18,12 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { useParams } from "next/navigation";
-import { Loader2, Eye, Download, ShieldCheck, KeyRound, FileText } from "lucide-react";
+import { Loader2, Eye, Download, ShieldCheck, FileText } from "lucide-react";
 import { PageHero, PageBody, Card } from "@/components/ui/PageHero";
-import { btnPrimary, btnRow, Problem, shortDateTime } from "@/components/admin/kit";
+import { Problem, shortDateTime } from "@/components/admin/kit";
+import { Button } from "@/components/ui/Button";
+import CopyId from "@/components/ui/CopyId";
+import { SkeletonRows } from "@/components/ui/Skeleton";
 import type { ResolvedShare, ResolvedShareItem } from "@/lib/documentShares";
 
 const SharedPdfViewer = dynamic(() => import("@/components/viewers/SharedPdfViewer"), { ssr: false });
@@ -174,8 +177,8 @@ export default function SharePage() {
   const from = data?.orgName ? `From ${data.orgName}` : "Sent to you";
   if (state === "loading") {
     return (
-      <Shell kicker="Sent to you" title="Opening…">
-        <Card><div className="text-[15px] text-[var(--color-text-muted)] inline-flex items-center gap-2"><Loader2 className="w-5 h-5 animate-spin" /> Opening the link…</div></Card>
+      <Shell kicker="Sent to you" title="Opening the link…">
+        <SkeletonRows rows={2} cols={1} what="the documents" />
       </Shell>
     );
   }
@@ -188,7 +191,7 @@ export default function SharePage() {
   if (state === "error") {
     return (
       <Shell kicker="Sent to you" title="The link couldn't be opened right now." sub="Try again in a minute.">
-        <Card><button type="button" onClick={() => { setState("loading"); void resolve(false); }} className={`${btnPrimary} h-11`}>Try again</button></Card>
+        <div><Button onClick={() => { setState("loading"); void resolve(false); }}>Try again</Button></div>
       </Shell>
     );
   }
@@ -223,22 +226,24 @@ export default function SharePage() {
                 <FileText className="w-5 h-5 shrink-0 text-[var(--color-text-muted)] max-sm:hidden" />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-[16px] font-semibold text-[var(--color-text)]">{itemName(it)}</span>
-                    {it.rev && <span className="text-[14px] text-[var(--color-text-muted)]">Rev {it.rev}</span>}
-                    {it.markedUp && <span className="ui-pill">Marked up</span>}
+                    <span className="text-[16px]">
+                      {it.documentNumber ? <CopyId value={it.documentNumber} label="document number" /> : <span className="font-semibold text-[var(--color-text)]">{itemName(it)}</span>}
+                    </span>
+                    {it.rev && <span className="text-[14px] text-[var(--color-text-muted)]">Rev <span className="ui-id text-[var(--color-text)]">{it.rev}</span></span>}
+                    {it.markedUp && <span className="ui-pill is-muted">Marked up</span>}
                   </div>
                   {it.documentNumber && it.title && <div className="text-[14px] text-[var(--color-text-muted)] mt-0.5 truncate">{it.title}</div>}
-                  {!it.viewable && <div className="text-[13px] text-[var(--state-overdue)] mt-0.5">There&apos;s no file to show for this one.</div>}
+                  {!it.viewable && <div className="text-[13px] text-[var(--color-text-muted)] mt-0.5">There&apos;s no file to show for this one. Ask the person who sent it.</div>}
                 </div>
                 {it.viewable && (
                   <div className="flex items-center gap-2 shrink-0 max-sm:w-full">
-                    <button type="button" onClick={() => void openViewer(it)} className={`${btnRow} h-11 px-4 text-[14px] max-sm:flex-1`}>
+                    <Button variant="secondary" onClick={() => void openViewer(it)} className="max-sm:flex-1">
                       <Eye className="w-4 h-4" /> View
-                    </button>
+                    </Button>
                     {d.allowDownload && (
-                      <button type="button" onClick={() => void download(it)} disabled={downloading === it.documentId} className={`${btnRow} h-11 px-4 text-[14px] max-sm:flex-1`}>
-                        {downloading === it.documentId ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />} Download
-                      </button>
+                      <Button variant="secondary" onClick={() => void download(it)} loading={downloading === it.documentId} className="max-sm:flex-1">
+                        {downloading !== it.documentId && <Download className="w-4 h-4" />} Download
+                      </Button>
                     )}
                   </div>
                 )}
@@ -270,7 +275,7 @@ export default function SharePage() {
           {viewing.error
             ? <>
                 <p className="text-[16px] text-[var(--color-text)] max-w-md">{viewing.error}</p>
-                <button type="button" onClick={closeViewer} className={`${btnPrimary} h-11`}>Back to the list</button>
+                <Button variant="secondary" onClick={closeViewer}>Back to the list</Button>
               </>
             : <p className="text-[15px] text-[var(--color-text-muted)] inline-flex items-center gap-2"><Loader2 className="w-5 h-5 animate-spin" /> Opening {itemName(viewing.item)}…</p>}
         </div>
@@ -320,9 +325,7 @@ function CodeBoxes({ onDone, busy, error, onTyping }: { onDone: (code: string) =
   const code = digits.join("");
   return (
     <form onSubmit={(e) => { e.preventDefault(); onDone(code); }}>
-      <div className="flex items-center gap-2 text-[15px] font-semibold text-[var(--color-text)]">
-        <KeyRound className="w-5 h-5 text-[var(--color-text-muted)]" /> Code
-      </div>
+      <div className="text-[14px] font-semibold text-[var(--color-text)]">Code</div>
       <div className="mt-3 flex items-center gap-2 sm:gap-3" role="group" aria-label="6-digit code">
         {digits.map((v, i) => (
           <React.Fragment key={i}>
@@ -340,15 +343,16 @@ function CodeBoxes({ onDone, busy, error, onTyping }: { onDone: (code: string) =
               inputMode="numeric" pattern="[0-9]*" autoComplete={i === 0 ? "one-time-code" : "off"}
               maxLength={6} disabled={busy}
               aria-label={`Digit ${i + 1}`}
-              className={`w-11 h-14 sm:w-14 sm:h-16 text-center font-mono text-[26px] sm:text-[30px] font-bold rounded-md border-2 bg-[var(--color-surface)] text-[var(--color-text)] outline-none focus:border-[var(--color-main)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40 disabled:opacity-60 ${error ? "border-[var(--state-overdue)]" : "border-[var(--color-border-strong)]"}`}
+              className={`w-11 h-14 sm:w-14 sm:h-16 text-center font-display tabular-nums text-[26px] sm:text-[30px] font-semibold rounded-lg border bg-[var(--color-surface)] text-[var(--color-text)] disabled:opacity-60 ${error ? "border-[var(--state-overdue)]" : "border-[var(--color-border-control)]"}`}
             />
           </React.Fragment>
         ))}
       </div>
       {error && <Problem className="mt-3">{error}</Problem>}
-      <button type="submit" disabled={busy || !/^\d{6}$/.test(code)} className={`${btnPrimary} h-12 mt-4 w-full sm:w-auto sm:min-w-[160px]`}>
-        {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : null} Open
-      </button>
+      <Button type="submit" disabled={!/^\d{6}$/.test(code)} loading={busy} className="mt-4 w-full sm:w-auto sm:min-w-[160px]">
+        Open
+      </Button>
+      {!/^\d{6}$/.test(code) && !busy && <p className="mt-2 text-[13px] text-[var(--color-text-muted)]">Type all six digits to open it.</p>}
     </form>
   );
 }

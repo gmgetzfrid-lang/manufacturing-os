@@ -23,6 +23,7 @@ import SignedImg from "@/components/assets/SignedImg";
 import { listAssetPhotos, type AssetPhoto } from "@/lib/assets";
 import { useRole } from "@/components/providers/RoleContext";
 import DocViewTabs from "@/components/documents/DocViewTabs";
+import plainError from "@/components/documents/plainError";
 import { PageHero } from "@/components/ui/PageHero";
 import HelpTooltip from "@/components/ui/HelpTooltip";
 import FileGraph, { type FileGraphNode, type FileGraphLight, type FileGraphHandle, type FileGraphSatellite } from "@/components/documents/FileGraph";
@@ -687,29 +688,29 @@ function GraphPageInner() {
 
   return (
     <div className="flex flex-col lg:h-[calc(100vh_-_56px_-_var(--staged-tray-h,0px))] px-3 sm:px-4 lg:px-6 pt-4 pb-4">
-      <PageHero size="md" overlap={false} className="!mb-4 !pb-6" kicker="Document control" title={mapAnswer} sub={mapSub} facts={mapFacts}
+      <PageHero size="md" overlap={false} className="!mb-4 !pb-6" kicker="Document control" title={mapAnswer} sub={mapSub} facts={mapFacts} factsHero="none"
         back={cameBack ? { onClick: () => router.back(), label: `Back to ${homeLabel}` } : undefined}>
         <DocViewTabs hrefs={tableHref ? { "/documents": tableHref } : undefined} />
         {error && (
           <div role="alert" className="mt-3 text-[14px] flex items-center gap-2 text-[var(--color-text)]">
-            <AlertTriangle className={`w-4 h-4 shrink-0 ${data ? "text-[var(--state-held)]" : "text-[var(--state-overdue)]"}`} /> <span className="flex-1">{error}</span>
+            <AlertTriangle className={`w-4 h-4 shrink-0 ${data ? "text-[var(--state-held)]" : "text-[var(--state-overdue)]"}`} /> <span className="flex-1">{plainError(error)}</span>
             <button onClick={() => { setError(null); void refresh(); }} className="text-[var(--color-accent-text)] hover:underline">Retry</button>
             <button aria-label="Dismiss" onClick={() => setError(null)} className="w-8 h-8 grid place-items-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface)]"><X className="w-4 h-4" /></button>
           </div>
         )}
       </PageHero>
       {/* A phone stacks the three: find, the map, the details. */}
-      <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-[320px_1fr_380px] rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
+      <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-[320px_1fr_380px] rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
         {/* ── Left: search, drives, aliases ───────────────────────────── */}
         <aside className="border-b lg:border-b-0 lg:border-r border-[var(--color-border)] bg-[var(--color-surface)] flex flex-col min-h-0 min-w-0 h-[55vh] lg:h-auto">
-          <div className="flex border-b border-[var(--color-border)] text-[13px] font-bold">
-            {([["search", "Find", Search], ["links", "Links", Link2], ["drives", "Drives", HardDrive], ["aliases", "Aliases", Tag]] as const).map(([k, label, Icon]) => (
-              <button key={k} onClick={() => setPanel(k)}
-                className={`flex-1 px-2 py-2 inline-flex items-center justify-center gap-1 border-b-2 ${panel === k ? "border-[var(--color-text)] text-[var(--color-text)]" : "border-transparent text-[var(--color-text-muted)]"}`}>
-                <Icon className="w-3.5 h-3.5" /> {label}
-                {k === "drives" && listings.length > 0 && <span className="ml-1 px-1.5 rounded-full bg-[var(--color-surface-2)] text-[var(--color-text)]">{badgeText(listings.length)}</span>}
-                {k === "links" && (data?.edges.length ?? 0) > 0 && <span className="ml-1 px-1.5 rounded-full bg-[var(--color-surface-2)] text-[var(--color-text)]">{badgeText(data!.edges.length)}</span>}
-                {k === "aliases" && aliases.length > 0 && <span className="ml-1 px-1.5 rounded-full bg-[var(--color-surface-2)] text-[var(--color-text)]">{badgeText(aliases.length)}</span>}
+          <div role="tablist" aria-label="Find, links, drives and aliases" className="flex gap-4 px-3 border-b border-[var(--color-border)] text-[14px]">
+            {([["search", "Find"], ["links", "Links"], ["drives", "Drives"], ["aliases", "Aliases"]] as const).map(([k, label]) => (
+              <button key={k} type="button" role="tab" aria-selected={panel === k} onClick={() => setPanel(k)}
+                className={`-mb-px h-10 pointer-coarse:h-11 inline-flex items-center gap-1.5 border-b-2 whitespace-nowrap ${panel === k ? "border-[var(--color-current)] text-[var(--color-text)] font-semibold" : "border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
+                {label}
+                {k === "drives" && listings.length > 0 && <span className="text-[13px] font-normal tabular-nums text-[var(--color-text-muted)]">{badgeText(listings.length)}</span>}
+                {k === "links" && (data?.edges.length ?? 0) > 0 && <span className="text-[13px] font-normal tabular-nums text-[var(--color-text-muted)]">{badgeText(data!.edges.length)}</span>}
+                {k === "aliases" && aliases.length > 0 && <span className="text-[13px] font-normal tabular-nums text-[var(--color-text-muted)]">{badgeText(aliases.length)}</span>}
               </button>
             ))}
           </div>
@@ -717,15 +718,16 @@ function GraphPageInner() {
             {panel === "search" && (
               <>
                 <form onSubmit={(e) => { e.preventDefault(); runSearch(query); }} className="space-y-2">
-                  <label className="text-[13px] font-semibold text-[var(--color-text-muted)]">Say what you&apos;re after</label>
+                  <label htmlFor="graph-find" className="block text-[14px] font-semibold text-[var(--color-text)]">Say what you&apos;re after</label>
                   <textarea
+                    id="graph-find"
                     value={query} onChange={(e) => setQuery(e.target.value)}
                     onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); runSearch(query); } }}
                     rows={3} placeholder="U1-A for the born heater pilot valve in 2018"
-                    className="w-full text-sm rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]"
+                    className="w-full text-[16px] sm:text-[14px] rounded-lg border border-[var(--color-border-control)] bg-[var(--color-surface)] px-3 py-2"
                   />
                   <div className="flex gap-2">
-                    <button type="submit" disabled={loading} className="flex-1 inline-flex items-center justify-center gap-1.5 h-10 rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[15px] font-semibold px-3 hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
+                    <button type="submit" disabled={loading} className="flex-1 inline-flex items-center justify-center gap-1.5 h-10 pointer-coarse:h-11 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[15px] font-semibold px-3 hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
                       {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />} Find
                     </button>
                     {parsed && (

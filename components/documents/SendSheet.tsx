@@ -89,9 +89,9 @@ function Switch({ on, onChange, label, disabled }: { on: boolean; onChange: (v: 
     <button
       type="button" role="switch" aria-checked={on} aria-label={label} disabled={disabled}
       onClick={() => onChange(!on)}
-      className={`relative inline-flex h-7 w-12 items-center rounded-full transition-colors shrink-0 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent-ring)] focus-visible:ring-offset-2 ${on ? "bg-[var(--color-main)]" : "bg-[var(--color-border-strong)]"}`}
+      className={`relative inline-flex h-7 w-12 items-center rounded-full transition-colors shrink-0 disabled:opacity-50 ${on ? "bg-[var(--color-main)]" : "bg-[var(--color-border-control)]"}`}
     >
-      <span className={`inline-block h-6 w-6 transform rounded-full bg-[var(--color-surface)] shadow transition-transform ${on ? "translate-x-[22px]" : "translate-x-0.5"}`} />
+      <span className={`inline-block h-6 w-6 transform rounded-full bg-[var(--color-surface)] ring-1 ring-black/10 transition-transform motion-reduce:transition-none ${on ? "translate-x-[22px]" : "translate-x-0.5"}`} />
     </button>
   );
 }
@@ -259,7 +259,7 @@ export default function SendSheet({ orgId, docs, markedUp, markedUpIds, onClose 
   return createPortal(
     <div className="fixed inset-0 z-[400] flex items-end sm:items-center justify-center sm:p-4" role="dialog" aria-modal="true" aria-labelledby="send-sheet-title">
       <div className="absolute inset-0 bg-[var(--color-ink)]/55 animate-in fade-in" onClick={() => { if (!busy) onClose(); }} />
-      <div className="relative w-full sm:max-w-[580px] max-h-[94dvh] sm:max-h-[90vh] flex flex-col bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border-strong)] rounded-t-2xl sm:rounded-xl shadow-2xl animate-in fade-in slide-in-from-bottom-4 sm:slide-in-from-bottom-0 sm:zoom-in-95">
+      <div className="ui-float relative w-full sm:max-w-[580px] max-h-[94dvh] sm:max-h-[90vh] flex flex-col bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] rounded-t-xl sm:rounded-xl animate-in fade-in slide-in-from-bottom-4 sm:slide-in-from-bottom-0 sm:zoom-in-95 motion-reduce:animate-none">
         <div aria-hidden className="sm:hidden mx-auto mt-2 h-1.5 w-10 rounded-full bg-[var(--color-border-strong)]" />
 
         {/* Title: what is being sent. */}
@@ -355,12 +355,12 @@ export default function SendSheet({ orgId, docs, markedUp, markedUpIds, onClose 
 
                 <div className="mt-4">
                   <div className="text-[14px] font-semibold" id="send-days">Link works for</div>
-                  <div role="radiogroup" aria-labelledby="send-days" className="mt-1.5 grid grid-cols-3 rounded-md border border-[var(--color-border-strong)] overflow-hidden">
-                    {([1, 7, 30] as Days[]).map((d, i) => (
+                  <div role="radiogroup" aria-labelledby="send-days" className="mt-1.5 grid grid-cols-3 gap-1 p-1 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface-2)]">
+                    {([1, 7, 30] as Days[]).map((d) => (
                       <button
                         key={d} type="button" role="radio" aria-checked={days === d} disabled={!!busy}
                         onClick={() => setDays(d)}
-                        className={`h-11 text-[15px] font-semibold transition-colors ${i > 0 ? "border-l border-[var(--color-border-strong)]" : ""} ${days === d ? "bg-[var(--color-main)] text-white" : "bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}
+                        className={`h-10 rounded-md text-[15px] font-semibold transition-colors ${days === d ? "bg-[var(--color-surface)] text-[var(--color-text)] ring-1 ring-[var(--color-border-strong)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}
                       >
                         {d === 1 ? "1 day" : `${d} days`}
                       </button>
@@ -392,7 +392,7 @@ export default function SendSheet({ orgId, docs, markedUp, markedUpIds, onClose 
                   <ShieldCheck className="w-4 h-4 mt-0.5 shrink-0" />
                   <span>Every page is stamped UNCONTROLLED with the revision and a QR code to check it is still current. Each open is logged.</span>
                 </p>
-                {error && <Problem className="mt-3">{error}</Problem>}
+                {error && <Problem className="mt-3" error={error} />}
               </form>
             )}
 
@@ -412,7 +412,7 @@ export default function SendSheet({ orgId, docs, markedUp, markedUpIds, onClose 
 
         {/* The step's buttons: Back on the left, the one main action on the right. */}
         {step !== "who" && (
-          <div className="flex items-center gap-2 px-5 py-3 border-t border-[var(--color-border)] bg-[var(--color-surface-2)] rounded-b-none sm:rounded-b-xl shrink-0 pb-[max(12px,env(safe-area-inset-bottom))]">
+          <div className="flex items-center gap-2 px-5 py-3 border-t border-[var(--color-border)] rounded-b-none sm:rounded-b-xl shrink-0 pb-[max(12px,env(safe-area-inset-bottom))]">
             {step !== "made" && (
               <button type="button" onClick={() => { setError(null); setStep("who"); }} disabled={!!busy} className={`${btnQuiet} h-11`}>
                 <ChevronLeft className="w-4 h-4" /> Back
@@ -448,7 +448,7 @@ function ChoiceButton({ icon: Icon, title, body, onClick }: {
   return (
     <button
       type="button" onClick={onClick}
-      className="group w-full text-left flex items-start gap-3.5 p-4 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:border-[var(--color-main)] hover:bg-[var(--color-surface-2)] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent-ring)]"
+      className="group w-full text-left flex items-start gap-3.5 p-4 rounded-xl border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:border-[var(--color-border-control)] hover:bg-[var(--color-surface-2)] transition-colors"
     >
       <span className="ui-icon-tile shrink-0"><Icon className="w-[18px] h-[18px]" /></span>
       <span className="flex-1 min-w-0">
@@ -609,7 +609,7 @@ function SentLinks({ links, error, retry, docs, copied, copy, turningOff, onTurn
       {links === null && !error && (
         <div className="mt-2 text-[14px] text-[var(--color-text-muted)] inline-flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Looking…</div>
       )}
-      {error && <Problem className="mt-2" retry={retry}>{error}</Problem>}
+      {error && <Problem className="mt-2" retry={retry} error={error} />}
       {links && links.length === 0 && !error && (
         <p className="mt-1 text-[14px] text-[var(--color-text-muted)]">None yet.</p>
       )}

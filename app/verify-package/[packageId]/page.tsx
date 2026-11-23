@@ -6,6 +6,7 @@
 // the current revision? Green = work. Red = at least one sheet changed since
 // printing; the list shows exactly which ones.
 
+import { friendlyError } from "@/lib/friendlyError";
 import React, { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { CheckCircle2, XCircle, Loader2, ShieldQuestion, RefreshCw } from "lucide-react";
@@ -57,7 +58,7 @@ export default function VerifyPackagePage() {
 
   return (
     <div className={`min-h-dvh flex flex-col items-center justify-center p-6 transition-colors duration-500 ${
-      loading || error ? "bg-[var(--color-ink)]" : result?.allFresh ? "bg-emerald-600" : "bg-red-600"
+      loading || error ? "bg-[var(--color-ink)]" : result?.allFresh ? "bg-[var(--state-released)]" : "bg-[var(--state-overdue)]"
     }`}>
       <div className="w-full max-w-sm text-center py-8">
         {loading ? (
@@ -68,14 +69,14 @@ export default function VerifyPackagePage() {
         ) : error ? (
           <div className="text-white/90">
             <ShieldQuestion className="w-16 h-16 mx-auto mb-4 opacity-80" />
-            <h1 className="text-[34px] leading-[1.05] tracking-[-0.02em] font-black mb-3">Can&apos;t verify this code</h1>
-            <p className="text-[14px] opacity-80">{error}</p>
+            <h1 className="text-[34px] leading-[1.05] tracking-[-0.02em] font-bold mb-3">Can&apos;t verify this code</h1>
+            <p className="text-[15px] opacity-90">{friendlyError(error)}</p>
             <p className="text-[13px] opacity-70 mt-4">
               If this QR came from a printed pack, contact Document Control before working from it.
             </p>
             <button
               onClick={() => void check()}
-              className="mt-6 inline-flex items-center gap-2 px-4 py-2 rounded-full bg-white/15 hover:bg-white/25 text-sm font-bold"
+              className="mt-6 inline-flex items-center gap-2 h-11 px-4 rounded-lg bg-white/15 hover:bg-white/25 text-[15px] font-semibold"
             >
               <RefreshCw className="w-4 h-4" /> Try again
             </button>
@@ -87,28 +88,28 @@ export default function VerifyPackagePage() {
             ) : (
               <XCircle className="w-24 h-24 mx-auto text-white mb-4 animate-in zoom-in duration-300" strokeWidth={2.5} />
             )}
-            <h1 className="text-[40px] font-black text-white leading-[1.03] tracking-[-0.03em] mb-3">
-              {result.allFresh ? "PACK IS CURRENT" : "PACK IS STALE"}
+            <h1 className="text-[40px] font-bold text-white leading-[1.03] tracking-[-0.03em] mb-3">
+              {result.allFresh ? "Pack is current" : "Pack is out of date"}
             </h1>
             <p className="text-white/90 text-[15px] font-semibold mb-6">
               {result.allFresh
                 ? "Every sheet in this pack is still the current revision."
-                : `${result.staleCount} of ${result.sheetCount} sheet${result.sheetCount === 1 ? "" : "s"} changed since this pack was printed - get the new sheets before starting work.`}
+                : `${result.staleCount} of ${result.sheetCount} sheet${result.sheetCount === 1 ? "" : "s"} changed since this pack was printed. Get the new sheets before starting work.`}
               {result.closed ? " (This package has been closed.)" : ""}
             </p>
 
-            <div className="bg-[var(--color-surface)] rounded-2xl shadow-2xl p-5 text-left space-y-3">
+            <div className="bg-[var(--color-surface)] rounded-xl ui-float p-5 text-left space-y-3">
               <div>
                 <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">Work package</div>
-                <div className="text-[15px] font-bold text-[var(--color-text)]">{result.name}</div>
+                <div className="text-[15px] font-semibold text-[var(--color-text)]">{result.name}</div>
               </div>
               <div className="pt-2 border-t border-[var(--color-border)] max-h-72 overflow-y-auto space-y-1.5">
                 {result.sheets.map((s, i) => (
                   <div key={i} className="flex items-center justify-between gap-2 text-xs">
                     <span className="truncate text-[var(--color-text)]">{s.label}</span>
-                    <span className={`shrink-0 font-black ${s.fresh ? "text-emerald-600" : "text-red-600"}`}>
+                    <span className={`shrink-0 font-semibold ${s.fresh ? "text-[var(--state-released-text)]" : "text-[var(--state-overdue-text)]"}`}>
                       {s.retired
-                        ? "RETIRED"
+                        ? "Retired"
                         : s.fresh
                           ? `Rev ${s.printedRev ?? "?"} ✓`
                           : `Rev ${s.printedRev ?? "?"} → ${s.currentRev ?? "?"}`}
@@ -122,19 +123,19 @@ export default function VerifyPackagePage() {
               {!result.allFresh && (
                 <div className="pt-2 border-t border-[var(--color-border)] text-[13px] text-[var(--color-text)] leading-relaxed">
                   Do not work from the outdated sheets. Ask the package owner or Document Control
-                  for a re-printed pack - the stale sheets are marked above.
+                  for a re-printed pack. The out-of-date sheets are marked above.
                 </div>
               )}
             </div>
 
             <div className="mt-5 text-[12px] text-white/70">
-              Checked {new Date(result.checkedAt).toLocaleString()} · Refinery OS document control
+              Checked {new Date(result.checkedAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })} by document control.
             </div>
             <button
               onClick={() => void check()}
-              className="mt-3 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/15 hover:bg-white/25 text-white text-xs font-bold"
+              className="mt-3 inline-flex items-center gap-1.5 h-11 px-4 rounded-lg bg-white/15 hover:bg-white/25 text-white text-[15px] font-semibold"
             >
-              <RefreshCw className="w-3 h-3" /> Re-check
+              <RefreshCw className="w-4 h-4" /> Check again
             </button>
           </>
         )}
