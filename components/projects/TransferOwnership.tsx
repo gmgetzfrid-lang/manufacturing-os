@@ -84,7 +84,7 @@ export function TransferOwnershipModal({ project, members, preselect, actorUserI
               </button>
               {pick === "__email__" && (
                 <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="their.email@company.com" aria-label="New owner's email" autoFocus
-                  className="w-full h-9 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-[13px]" />
+                  className="w-full h-9 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-[13px]" />
               )}
             </div>
           </div>

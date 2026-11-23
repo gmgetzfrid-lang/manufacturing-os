@@ -58,6 +58,8 @@ import { turnoverSource, jobSizeWord } from "@/lib/requirementSource";
 import { SourceLine } from "@/components/projects/NeedParts";
 import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
 import { sayError } from "@/components/projects/sayError";
+import { ErrorNote } from "@/components/ui/ErrorNote";
+import { SkeletonRows } from "@/components/ui/Skeleton";
 
 type Announce = (message: string, undo: () => void | Promise<void>) => void;
 
@@ -110,7 +112,7 @@ export default function QualityTab({ orgId, projectId, canManage, canEditPunch, 
   }, [orgId, projectId]);
   useEffect(() => { void refresh(); }, [refresh]);
 
-  if (loading) return <Card><LoadingBlock what="checklists, turnover and punch list" className="border-0 p-0" /></Card>;
+  if (loading) return <SkeletonRows rows={6} cols={2} what="checklists, turnover and punch list" />;
   // Where quality stands, in one line, before the three lists.
   const punchOpen = punch.filter((i) => i.status === "open").length;
   const tp = computeTurnoverProgress(turnover);
@@ -118,25 +120,25 @@ export default function QualityTab({ orgId, projectId, canManage, canEditPunch, 
 
   return (
     <div className="space-y-4">
-      {/* Where quality stands: one ruled cell a number, before the three lists. */}
+      {/* Where quality stands, as small labelled figures: a count when
+          there is one, words when there's nothing (never a dash). */}
       <div>
-        <dl className="grid grid-cols-3 border-y border-[var(--color-border-strong)]">
+        <dl className="flex flex-wrap gap-x-10 gap-y-3">
           {([
-            ["Punch items open", String(punchOpen), punchOpen ? "text-[var(--state-held)]" : "text-[var(--color-text)]", punchOpen ? null : "Clear"],
-            ["Turnover accepted", tp.required ? `${tp.accepted}/${tp.required}` : "-", "text-[var(--color-text)]", tp.required ? null : "None set"],
-            ["Checklists complete", lists.length ? `${lists.filter((c) => c.status === "complete").length}/${lists.length}` : "-", "text-[var(--color-text)]", lists.length ? null : "None yet"],
-          ] as Array<[string, string, string, string | null]>).map(([k, v, tone, note], i) => (
-            <div key={k} className={`py-2.5 pr-3 ${i ? "pl-4 border-l border-[var(--color-border-strong)]" : ""}`}>
+            ["Punch items open", punchOpen ? String(punchOpen) : "None open", punchOpen ? "text-[var(--state-held-text)]" : "text-[var(--color-text-muted)]", !!punchOpen],
+            ["Turnover accepted", tp.required ? `${tp.accepted} of ${tp.required}` : "None required yet", "text-[var(--color-text)]", !!tp.required],
+            ["Checklists complete", lists.length ? `${lists.filter((c) => c.status === "complete").length} of ${lists.length}` : "No checklists yet", "text-[var(--color-text)]", !!lists.length],
+          ] as Array<[string, string, string, boolean]>).map(([k, v, tone, figure]) => (
+            <div key={k} className="min-w-0">
               <dt className="text-[13px] text-[var(--color-text-muted)]">{k}</dt>
-              <dd className={`font-display text-[24px] leading-tight font-semibold tabular-nums ${tone}`}>{v}</dd>
-              {note && <dd className="text-[13px] text-[var(--color-text-muted)]">{note}</dd>}
+              <dd className={`mt-0.5 ${figure ? `font-display text-[20px] leading-tight font-semibold tabular-nums ${tone}` : "text-[15px] leading-[26px] text-[var(--color-text-muted)]"}`}>{v}</dd>
             </div>
           ))}
         </dl>
         {err && (
-          <div role="alert" className="mt-2 flex items-center gap-2 text-[14px] font-semibold text-[var(--state-overdue)]">
-            <span className="min-w-0 flex-1">{err}</span>
-            <button onClick={() => setErr(null)} aria-label="Dismiss" className="shrink-0 p-1 text-[var(--color-text-faint)] hover:text-[var(--color-text)]"><X className="w-3.5 h-3.5" /></button>
+          <div className="mt-3 flex items-start gap-2">
+            <ErrorNote compact className="flex-1" title={err} next="" />
+            <button onClick={() => setErr(null)} aria-label="Dismiss" className="shrink-0 w-8 h-8 pointer-coarse:w-11 pointer-coarse:h-11 -mt-1 inline-flex items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
           </div>
         )}
       </div>
@@ -344,11 +346,11 @@ export function NewChecklistFlow({ orgId, projectId, projectName, actor, onDone,
                 <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[var(--color-text-faint)]" />
                 <input value={query} onChange={(e) => setQuery(e.target.value)} autoFocus
                   placeholder="Or find one already in document control (number or title)…"
-                  className="w-full h-8 pl-8 pr-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-xs" />
+                  className="w-full h-8 pointer-coarse:h-11 pl-8 pr-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-xs" />
               </span>
             )}
             <select value={kind} onChange={(e) => setKind(e.target.value as ChecklistKind)}
-              className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs">
+              className="h-8 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs">
               {(Object.keys(CHECKLIST_KIND_LABEL) as ChecklistKind[]).map((k) => (
                 <option key={k} value={k}>{CHECKLIST_KIND_LABEL[k]}</option>
               ))}
@@ -376,7 +378,7 @@ export function NewChecklistFlow({ orgId, projectId, projectName, actor, onDone,
         <>
           <div className="flex items-center gap-2 flex-wrap">
             <input value={title} onChange={(e) => setTitle(e.target.value)}
-              className="h-8 flex-1 min-w-48 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs font-bold" />
+              className="h-8 pointer-coarse:h-11 flex-1 min-w-48 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs font-bold" />
             <span className="text-[11px] text-[var(--color-text-muted)]">Read {doc?.label ?? "it"}: found {proposed.length} item{proposed.length === 1 ? "" : "s"}. Remove any that aren&apos;t real items, then save.</span>
             <button onClick={() => void save()} disabled={saving || proposed.length === 0}
               className="h-8 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-semibold hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
@@ -563,7 +565,7 @@ function ChecklistCard({ orgId, projectId, checklist, canManage, actor, onChange
           )}
 
           {items == null ? (
-            <div className="py-4 flex items-center justify-center gap-2 text-xs text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin" /> Loading items…</div>
+            <SkeletonRows rows={4} cols={1} what="the items" sheet={false} />
           ) : (
             <div className="rounded-xl border border-[var(--color-border)] overflow-hidden">
               {sections.map(([section, secItems]) => (
@@ -856,7 +858,7 @@ function TurnoverSection({ orgId, projectId, canManage, actor, items, jobKind, p
           <input value={addName} onChange={(e) => setAddName(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter" && addName.trim()) { void (async () => { const r = await addTurnoverItem({ orgId, projectId, name: addName, actor }); if (!r.ok) setErr(r.error ?? null); else { setAddName(""); onChanged(); } })(); } }}
             placeholder="Add a required item, e.g. Torque records"
-            className="h-8 flex-1 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
+            className="h-8 pointer-coarse:h-11 flex-1 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
           <button onClick={() => { if (addName.trim()) void (async () => { const r = await addTurnoverItem({ orgId, projectId, name: addName, actor }); if (!r.ok) setErr(r.error ?? null); else { setAddName(""); onChanged(); } })(); }}
             className="h-8 inline-flex items-center gap-1 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-[11px] font-semibold hover:bg-[var(--color-surface-2)]">
             <Plus className="w-3 h-3" /> Add
@@ -949,7 +951,7 @@ function DocPicker({ orgId, busy, onPick, onClear, onCancel }: {
         <span className="relative flex-1 min-w-56">
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[var(--color-text-faint)]" />
           <input value={query} onChange={(e) => setQuery(e.target.value)} autoFocus placeholder="Find the submitted document (by number or title)…"
-            className="w-full h-8 pl-8 pr-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-xs" />
+            className="w-full h-8 pointer-coarse:h-11 pl-8 pr-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-xs" />
         </span>
         {onClear && <button onClick={onClear} disabled={busy} className={quietBtn}>Take it off</button>}
         <button onClick={onCancel} className={quietBtn}>Cancel</button>
@@ -1032,8 +1034,7 @@ function PunchSection({ orgId, projectId, canManage, actor, items, parties, peop
   return (
     <section className="min-w-0">
       <div className="flex items-center gap-2.5 mb-2.5 min-h-8">
-        <span aria-hidden className="ui-icon-tile is-sm is-solid"><ListChecks className="w-4 h-4" /></span>
-        <h2 className="font-display text-[19px] leading-tight font-semibold text-[var(--color-text)]">Punch list</h2>
+        <h2 className="font-display text-[20px] leading-tight font-semibold text-[var(--color-text)]">Punch list</h2>
         {open.length > 0 && (
           <span className="ml-auto inline-flex items-center gap-1.5 text-[13px] font-semibold text-[var(--color-text)]"><span className="ui-count is-warn">{open.length}</span> open</span>
         )}
@@ -1045,11 +1046,11 @@ function PunchSection({ orgId, projectId, canManage, actor, items, parties, peop
           <input value={title} onChange={(e) => setTitle(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter") void add(); }}
             placeholder="e.g. Reinstall insulation at E-301 north nozzle"
-            className="h-8 flex-1 min-w-56 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
+            className="h-8 pointer-coarse:h-11 flex-1 min-w-56 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
           <input value={location} onChange={(e) => setLocation(e.target.value)} placeholder="Where (optional)" aria-label="Where"
             className={`${fieldCls} w-36`} />
           <input type="date" value={due} onChange={(e) => setDue(e.target.value)} aria-label="Due"
-            className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs [color-scheme:light] dark:[color-scheme:dark]" />
+            className="h-8 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs [color-scheme:light] dark:[color-scheme:dark]" />
           {pickParties.length > 0 && (
             <select value={partyId} onChange={(e) => setPartyId(e.target.value)} aria-label="Contractor" className={fieldCls}>
               <option value="">Contractor…</option>

@@ -459,10 +459,10 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
                 <form onSubmit={(e) => { e.preventDefault(); addWord(); }} className="flex flex-wrap items-center gap-1.5">
                   <span>It hears</span>
                   <input value={teach.said} onChange={(e) => setTeach((t) => ({ ...t, said: e.target.value }))} placeholder="mee too" aria-label="It hears"
-                    className="h-8 w-28 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12px] text-[var(--color-text)]" />
+                    className="h-8 pointer-coarse:h-11 w-28 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12px] text-[var(--color-text)]" />
                   <span>I mean</span>
                   <input value={teach.as} onChange={(e) => setTeach((t) => ({ ...t, as: e.target.value }))} placeholder="E-2" aria-label="I mean"
-                    className="h-8 w-24 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12px] text-[var(--color-text)]" />
+                    className="h-8 pointer-coarse:h-11 w-24 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12px] text-[var(--color-text)]" />
                   <button type="submit" disabled={!teach.said.trim() || !teach.as.trim()} className="h-8 rounded-md border border-[var(--color-border-strong)] px-2.5 font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">Add word</button>
                 </form>
               </div>
@@ -540,7 +540,7 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
                 })}
                 <span className="inline-flex items-center gap-1">
                   <input type="date" value={pickDay} max={dayKey(nowTick, tz)} onChange={(e) => setPickDay(e.target.value)} aria-label="Another day"
-                    className="h-7 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1.5 text-[12px]" />
+                    className="h-7 pointer-coarse:h-11 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1.5 text-[12px]" />
                   {(["day", "night"] as const).map((k) => (
                     <button key={k} type="button" disabled={!pickDay} onClick={() => setFrom({ id: "shift", w: shiftWindow(pickDay, k, tz, times) })}
                       className="rounded-full border border-[var(--color-border-strong)] px-2 py-0.5 font-semibold text-[var(--color-text)] disabled:opacity-40">{k === "day" ? "Day" : "Night"}</button>
@@ -722,7 +722,7 @@ function LineRow({ l, cat, step, check, tz, times, defaultLabel, choices, onEdit
               <label className="relative block max-w-md">
                 <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[var(--color-text-faint)]" />
                 <input value={find} onChange={(e) => setFind(e.target.value)} placeholder="Or find it: V-1, WO #, step" aria-label="Find the step"
-                  className="w-full h-8 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] pl-7 pr-2 text-[12px]" />
+                  className="w-full h-8 pointer-coarse:h-11 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] pl-7 pr-2 text-[12px]" />
               </label>
               {found.length > 0 && (
                 <div className="flex flex-wrap gap-1.5">
@@ -743,7 +743,7 @@ function LineRow({ l, cat, step, check, tz, times, defaultLabel, choices, onEdit
           {l.action === "progress" && step && l.percent != null && l.percentFrom !== "guess" && (
             <label className="flex items-center gap-1.5 text-[12px] text-[var(--color-text-muted)]">
               % now
-              <input inputMode="numeric" aria-label="Percent" value={String(l.percent)} className="h-8 w-16 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12px] text-[var(--color-text)]"
+              <input inputMode="numeric" aria-label="Percent" value={String(l.percent)} className="h-8 pointer-coarse:h-11 w-16 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12px] text-[var(--color-text)]"
                 onChange={(e) => { const n = Number(e.target.value.replace(/\D/g, "")); onEdit({ percent: e.target.value.trim() === "" ? null : Math.min(100, Number.isFinite(n) ? n : 0), percentFrom: "said" }); }} />
             </label>
           )}
@@ -753,13 +753,13 @@ function LineRow({ l, cat, step, check, tz, times, defaultLabel, choices, onEdit
               {[...new Set([25, 50, 75, ...(l.suggest != null && l.suggest > step.pct && l.suggest < 100 ? [l.suggest] : [])])].filter((p) => p > step.pct).sort((a, b) => a - b).map((p) => (
                 <button key={p} type="button" onClick={() => onEdit({ percent: p, percentFrom: "said" })} className={`${pill} ${l.percent === p ? "border-transparent bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30" : "border-[var(--color-border-strong)] text-[var(--color-text)]"}`}>{p}%</button>
               ))}
-              <input inputMode="numeric" aria-label="Percent" placeholder="%" className="h-8 w-16 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12px]"
+              <input inputMode="numeric" aria-label="Percent" placeholder="%" className="h-8 pointer-coarse:h-11 w-16 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12px]"
                 onChange={(e) => { const n = Number(e.target.value.replace(/\D/g, "")); if (e.target.value && Number.isFinite(n)) onEdit({ percent: Math.min(100, n), percentFrom: "said" }); }} />
             </div>
           )}
           {l.action === "hold" && (
             <input defaultValue={l.reason ?? l.comment ?? ""} onChange={(e) => onEdit({ reason: e.target.value })} placeholder="Why is it on hold?" aria-label="Hold reason"
-              className="w-full max-w-md h-8 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12px]" />
+              className="w-full max-w-md h-8 pointer-coarse:h-11 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12px]" />
           )}
           {/* When */}
           <div className="text-[12px]">

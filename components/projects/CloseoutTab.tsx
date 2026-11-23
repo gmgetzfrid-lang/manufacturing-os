@@ -47,7 +47,6 @@ import { useManpowerSettings } from "@/components/projects/ManpowerSetup";
 import { loadShiftRecords, type ShiftRecord } from "@/lib/shiftRecord";
 import { companyOf, handsAt, manpowerSummary, shiftCounts, type ManpowerSettings, type ShiftCount } from "@/lib/manpower";
 import PostEventReview from "@/components/projects/PostEventReview";
-import LoadingBlock from "@/components/ui/LoadingBlock";
 import { Card, heroPrimary, heroQuiet } from "@/components/ui/PageHero";
 import { bandSelect } from "@/components/admin/band";
 import { SubTabs } from "@/components/projects/SubTabs";
@@ -441,7 +440,7 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
           {canManage && (
             <select value="" aria-label={`Phase for ${x.list.title}`} disabled={!!busy}
               onChange={(e) => { const id = e.target.value; if (id) void run("pssr", () => saveCloseoutSettings(projectId, { pssrByPhase: { [id]: { checklistId: x.list.id, notNeeded: false } } })); }}
-              className="h-9 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[14px] font-semibold">
+              className="h-9 pointer-coarse:h-11 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[14px] font-semibold">
               <option value="">Pick the phase</option>
               {phases.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
@@ -517,14 +516,14 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
                   <span>Usual list for a</span>
                   <select value={jobKind ?? "standard"} disabled={!!busy} aria-label="Job size"
                     onChange={(e) => { const k = e.target.value as "small" | "standard" | "capital"; void run("jobsize", async () => { const r = await saveJobKind(projectId, k, userEmail); if (r.ok) onJobKind?.(k); return r; }); }}
-                    className="h-9 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[14px] font-semibold">
+                    className="h-9 pointer-coarse:h-11 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[14px] font-semibold">
                     {JOB_SIZES.map((j) => <option key={j.v} value={j.v}>{j.label}</option>)}
                   </select>
                 </label>
                 <button type="button" disabled={!!busy} onClick={() => void run("seed", async () => { const r = await seedTurnoverItems({ orgId, projectId, jobKind, actor }); return { ok: r.ok, error: r.error }; })} className={btn}>Start from it ({seedsForJobKind(jobKind).length} documents)</button>
               </>}
               <input value={newDoc} onChange={(e) => setNewDoc(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && newDoc.trim()) { const n = newDoc.trim(); setNewDoc(""); void run("add", async () => { const r = await addTurnoverItem({ orgId, projectId, name: n, required: true, actor }); return { ok: r.ok, error: r.error }; }); } }}
-                placeholder="Add a document this job needs" aria-label="Add a document this job needs" className="h-9 flex-1 min-w-40 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 text-[14px] placeholder:text-[var(--color-text-faint)]" />
+                placeholder="Add a document this job needs" aria-label="Add a document this job needs" className="h-9 pointer-coarse:h-11 flex-1 min-w-40 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 text-[14px] placeholder:text-[var(--color-text-faint)]" />
               <button type="button" disabled={!newDoc.trim() || !!busy} onClick={() => { const n = newDoc.trim(); setNewDoc(""); void run("add", async () => { const r = await addTurnoverItem({ orgId, projectId, name: n, required: true, actor }); return { ok: r.ok, error: r.error }; }); }} className={btn}><Plus className="w-3.5 h-3.5" /> Add</button>
             </div>
           )}
@@ -659,7 +658,7 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
             )}
             {stats.lines.length > 0 && <div className="pt-4 border-t border-[var(--color-border)]"><LinesChart rows={stats.lines} cur="USD" bare /></div>}
           </div>
-        ) : <LoadingBlock what="how the job did" className="border-0 p-0" />}
+        ) : <SkeletonRows rows={4} cols={2} what="how the job did" sheet={false} />}
       </Card>
       {uploading && (
         <Modal onClose={() => setUploading(null)} size="lg">

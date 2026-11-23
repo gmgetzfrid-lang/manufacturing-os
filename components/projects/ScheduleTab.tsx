@@ -21,7 +21,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Flag, Plus, Loader2, AlertTriangle, Check, Calendar, ChevronRight, Upload, Eye, EyeOff, Clock, Trash2, RotateCcw, MoreHorizontal, ListChecks } from "lucide-react";
+import { Flag, Plus, Loader2, Check, Calendar, ChevronRight, Upload, Eye, EyeOff, Clock, Trash2, RotateCcw, MoreHorizontal } from "lucide-react";
 import DiscoveryTag from "@/components/projects/DiscoveryTag";
 import { discoveryOf } from "@/lib/discovery";
 import {
@@ -63,6 +63,8 @@ import { applyNightStaffing } from "@/lib/nightStaffing";
 import { useShiftTimes } from "@/lib/shiftTimesStore";
 import QuickUpdate from "@/components/projects/QuickUpdate";
 import { sayError } from "@/components/projects/sayError";
+import { SkeletonRows } from "@/components/ui/Skeleton";
+import { ErrorNote } from "@/components/ui/ErrorNote";
 
 // The project's four schedule tabs: Plan (build the schedule as a list,
 // import it, set it up), Today (the shift's screen), Work (the timeline,
@@ -442,9 +444,9 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
       {error && (
         // Above every panel and day list, so a failed save is never hidden
         // behind the thing you were working in.
-        <div role="alert" className="fixed bottom-4 max-sm:bottom-24 left-1/2 -translate-x-1/2 z-[400] max-w-[92vw] flex items-center gap-2 text-xs text-[var(--state-overdue-text)] bg-transparent border border-[var(--color-border)] rounded-lg px-3 py-2 shadow-lg">
-          <AlertTriangle className="w-3.5 h-3.5 shrink-0" /> <span className="flex-1">{error}</span>
-          <button onClick={() => setError(null)} className="shrink-0 inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Dismiss</button>
+        <div className="ui-float ui-float-in fixed bottom-4 max-sm:bottom-[calc(6rem+env(safe-area-inset-bottom))] left-1/2 -translate-x-1/2 z-[400] w-[min(36rem,92vw)] flex items-start gap-3 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl px-4 py-3">
+          <ErrorNote compact className="flex-1" title={error} next="" />
+          <button onClick={() => setError(null)} className="shrink-0 -my-1 inline-flex items-center justify-center h-8 pointer-coarse:h-11 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">Dismiss</button>
         </div>
       )}
 
@@ -452,20 +454,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
 
       {/* Zero-state onboarding — the front door for a new user. */}
       {/* Loading: the shape of the schedule, never a blank area. */}
-      {loading && (
-        <Card>
-          <div aria-busy="true" aria-label="Loading the schedule" className="space-y-2.5">
-            {[72, 58, 64, 46, 68, 52, 60].map((w, i) => (
-              <div key={i} className="flex items-center gap-3">
-                <div className="h-3.5 w-3.5 rounded bg-[var(--color-surface-2)]" />
-                <div className="h-3.5 rounded bg-[var(--color-surface-2)] animate-pulse" style={{ width: `${w * 0.45}%` }} />
-                <div className="h-3 ml-auto rounded bg-[var(--color-surface-2)] animate-pulse" style={{ width: `${w * 0.4}%` }} />
-              </div>
-            ))}
-            <p className="text-[13px] text-[var(--color-text-muted)]">Loading the schedule…</p>
-          </div>
-        </Card>
-      )}
+      {loading && <SkeletonRows rows={7} cols={2} what="the schedule" />}
       {!loading && milestones.length === 0 && (
         <ScheduleEmptyState
           canEdit={canEdit}
@@ -628,7 +617,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
       {/* Planning view — the schedule as an editable list, on its own card:
           search and filters as a quiet row, then the rows. */}
       {!loading && milestones.length > 0 && view === "planning" && (
-        <Card pad={false} label={<span className="inline-flex items-center gap-2"><span aria-hidden className="ui-icon-tile is-sm is-solid"><ListChecks className="w-4 h-4" /></span>Tasks <span className="ui-count is-solid">{visible.length}</span></span>}
+        <Card pad={false} label={<>Tasks <span className="ml-1 text-[15px] font-normal tabular-nums text-[var(--color-text-muted)]">{visible.length}</span></>}
           action={
             <HelpTooltip>
               <b>Imported rows</b> are read-only milestones from your scheduling tool (P6 / MS Project). They still count toward the earned-value rollup. More › Hide imported rows takes them off this list; they still count.

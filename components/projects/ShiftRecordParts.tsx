@@ -97,7 +97,7 @@ export function DayPick({ value, onChange, tz, disabled, className = "" }: { val
   const [max] = useState(() => dayKey(Date.now(), tz));
   return (
     <input type="date" value={value ?? ""} max={max} disabled={disabled} onChange={(e) => onChange(e.target.value || null)} aria-label="The day it happened"
-      className={`h-8 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1.5 text-[12px] text-[var(--color-text)] ${className}`} />
+      className={`h-8 pointer-coarse:h-11 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1.5 text-[12px] text-[var(--color-text)] ${className}`} />
   );
 }
 

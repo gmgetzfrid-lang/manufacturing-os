@@ -416,8 +416,8 @@ function HoldOverForm({ ot, adding, onDone, onError }: { ot: OtCtx; adding: bool
             {!ot.crews.includes(x.crew) && x.crew && <option value={x.crew}>{x.crew}</option>}
             {ot.crews.map((c) => <option key={c} value={c}>{c}</option>)}
           </select>
-          <input value={x.hands} onChange={(e) => set(i, { hands: e.target.value.replace(/[^0-9]/g, "").slice(0, 3) })} inputMode="numeric" placeholder="Hands" aria-label="How many held over" className={`${inputCls} h-7 w-16`} />
-          <input value={x.note} onChange={(e) => set(i, { note: e.target.value })} placeholder="Who or why (Exchanger hands only)" aria-label="Who or why" className={`${inputCls} h-7 flex-1 min-w-[10rem]`} />
+          <input value={x.hands} onChange={(e) => set(i, { hands: e.target.value.replace(/[^0-9]/g, "").slice(0, 3) })} inputMode="numeric" placeholder="Hands" aria-label="How many held over" className={`${inputCls} h-7 pointer-coarse:h-11 w-16`} />
+          <input value={x.note} onChange={(e) => set(i, { note: e.target.value })} placeholder="Who or why (Exchanger hands only)" aria-label="Who or why" className={`${inputCls} h-7 pointer-coarse:h-11 flex-1 min-w-[10rem]`} />
           <span className="inline-flex items-center gap-1">
             <span className="text-[11px] text-[var(--color-text-muted)]">Sent home</span>
             <TimeChip value={x.until} onChange={(v) => set(i, { until: v })} tz={ot.tz} label="Sent home at" />
@@ -689,7 +689,7 @@ function NameInput({ init, listId, label, keepOpen, onDone, onClose }: {
         if (e.key === "Escape") { done.current = true; onClose(); }
       }}
       onBlur={() => { if (!done.current) finish(true); }}
-      className="h-6 w-36 max-w-full rounded-full border border-[var(--color-accent-ring)] bg-[var(--color-surface)] px-2 text-[12px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)]" />
+      className="h-6 pointer-coarse:h-11 w-36 max-w-full rounded-full border border-[var(--color-accent-ring)] bg-[var(--color-surface)] px-2 text-[12px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)]" />
   );
 }
 
@@ -764,7 +764,7 @@ function HeadCount({ crew, value, plant, edit, onSave, onTotal, onPlant }: {
       onFocus={(e) => e.target.select()}
       onChange={(e) => { const x = e.target.value.replace(/[^0-9]/g, "").slice(0, 4); setTyped((t) => ({ ...t, [k]: x })); }} onBlur={k === "t" ? commitTotal : commit}
       onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
-      className={`${inputCls} block ${wide ? "w-16" : "w-12"} h-8 text-right font-display tabular-nums text-[13px]`} />
+      className={`${inputCls} block ${wide ? "w-16" : "w-12"} h-8 pointer-coarse:h-11 text-right font-display tabular-nums text-[13px]`} />
   );
   const link = "text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)] hover:underline";
   return (
@@ -798,7 +798,7 @@ function SafetyTopic({ value, topics, edit, onSave }: { value?: string; topics?:
         <span className="flex-1 min-w-[12rem] flex items-center gap-1.5">
           <input autoFocus value={v} onChange={(e) => setV(e.target.value)} aria-label="Safety topic" placeholder="What the meeting talked through"
             onKeyDown={(e) => { if (e.key === "Enter") commit(v); if (e.key === "Escape") setEditing(false); }}
-            className={`${inputCls} flex-1 min-w-0 h-7`} />
+            className={`${inputCls} flex-1 min-w-0 h-7 pointer-coarse:h-11`} />
           <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => commit(v)} className={`${saveBtn} h-7`}>Save</button>
           <button type="button" onClick={() => setEditing(false)} className="text-[11px] text-[var(--color-text-muted)] hover:underline">Cancel</button>
         </span>

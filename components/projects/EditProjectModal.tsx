@@ -169,7 +169,7 @@ export default function EditProjectModal({ project, actorUserId, actorEmail, act
         <div className="p-5 space-y-3">
           <label className="block">
             <span className="text-[12px] font-semibold text-[var(--color-text-muted)]">Name</span>
-            <input value={name} onChange={(e) => setName(e.target.value)} className="mt-1 w-full h-9 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-sm" />
+            <input value={name} onChange={(e) => setName(e.target.value)} className="mt-1 w-full h-9 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-sm" />
           </label>
           <label className="block">
             <span className="text-[12px] font-semibold text-[var(--color-text-muted)]">Description</span>
@@ -178,11 +178,11 @@ export default function EditProjectModal({ project, actorUserId, actorEmail, act
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <label className="block">
               <span className="text-[12px] font-semibold text-[var(--color-text-muted)]">MOC reference</span>
-              <input value={moc} onChange={(e) => setMoc(e.target.value)} className="mt-1 w-full h-9 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-sm font-display tabular-nums" />
+              <input value={moc} onChange={(e) => setMoc(e.target.value)} className="mt-1 w-full h-9 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-sm font-display tabular-nums" />
             </label>
             <label className="block">
               <span className="text-[12px] font-semibold text-[var(--color-text-muted)]">Target completion</span>
-              <input type="date" value={target} onChange={(e) => setTarget(e.target.value)} className="mt-1 w-full h-9 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-sm [color-scheme:light] dark:[color-scheme:dark]" />
+              <input type="date" value={target} onChange={(e) => setTarget(e.target.value)} className="mt-1 w-full h-9 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-sm [color-scheme:light] dark:[color-scheme:dark]" />
             </label>
             <label className="block">
               <span className={labelCls}>Start date</span>
@@ -216,7 +216,7 @@ export default function EditProjectModal({ project, actorUserId, actorEmail, act
                   ))}
                   <div className="flex items-center gap-2">
                     <input value={goalDraft} onChange={(e) => setGoalDraft(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addGoal(); } }}
-                      placeholder="Add a goal, e.g. Zero recordables" className="flex-1 h-9 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-sm" />
+                      placeholder="Add a goal, e.g. Zero recordables" className="flex-1 h-9 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-sm" />
                     <button type="button" onClick={addGoal} aria-label="Add goal" className="h-9 w-9 inline-flex items-center justify-center rounded-lg border border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><Plus className="w-4 h-4" /></button>
                   </div>
                 </div>
@@ -238,7 +238,7 @@ export default function EditProjectModal({ project, actorUserId, actorEmail, act
                     <div className="relative">
                       <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--color-text-faint)]" />
                       <input value={sowQuery} onChange={(e) => setSowQuery(e.target.value)} placeholder="Find the scope document by number or title…"
-                        className="w-full h-9 pl-8 pr-2.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-sm" />
+                        className="w-full h-9 pointer-coarse:h-11 pl-8 pr-2.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-sm" />
                     </div>
                     {sowResults.length > 0 && (
                       <ul className="mt-1 rounded-lg border border-[var(--color-border)] divide-y divide-[var(--color-border)] overflow-hidden">

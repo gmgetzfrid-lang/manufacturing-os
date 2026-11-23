@@ -468,7 +468,7 @@ export default function ReportsView(p: Props) {
         ))}
       </span>
       <input type="date" value={shift.dayKey} max={today} onChange={(e) => { if (e.target.value) setShiftPick({ dayKey: e.target.value, kind: shift.kind }); }} aria-label="Date"
-        className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12px] text-[var(--color-text)]" />
+        className="h-8 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12px] text-[var(--color-text)]" />
       {shiftPick && <button type="button" onClick={() => setShiftPick(null)} className="h-8 px-2.5 rounded-lg border border-[var(--color-border)] text-[12px] font-semibold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]">Current shift</button>}
     </>)
   );
@@ -487,7 +487,7 @@ export default function ReportsView(p: Props) {
           className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12px] text-[var(--color-text)]" />
         <span className="text-[12px] text-[var(--color-text-muted)]">to</span>
         <input type="date" value={days.to} min={days.from} onChange={(e) => { if (e.target.value) setRange({ from: days.from > e.target.value ? e.target.value : days.from, to: e.target.value }); }} aria-label="To"
-          className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12px] text-[var(--color-text)]" />
+          className="h-8 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12px] text-[var(--color-text)]" />
         <span className="text-[12px] text-[var(--color-text-muted)]">day and night shifts</span>
       </>)}
       {cover === "shift" && shiftRow}
@@ -531,7 +531,7 @@ export default function ReportsView(p: Props) {
         <>
           {row("Which", <>
             <select value={woShow} onChange={(e) => { const v = e.target.value as Show | "one"; setWoShow(v); setWoAlso([]); if (v === "one" && !woKey) setWoKey(orders[0]?.key ?? ""); }} aria-label="Which work orders"
-              className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12px] text-[var(--color-text)]">
+              className="h-8 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12px] text-[var(--color-text)]">
               {SHOWS.map(([k, l]) => <option key={k} value={k}>{l} ({findOrders(orders, woQuery).filter((o) => showsOrder(o, k, p.marks) && passes(wc, o.owner, woUnits, woTypes)).length})</option>)}
               <option value="one">One work order</option>
             </select>
@@ -547,7 +547,7 @@ export default function ReportsView(p: Props) {
           {woShow === "one" && (
             row("Work order", <>
               <select value={woKey} onChange={(e) => setWoKey(e.target.value)} aria-label="Work order"
-                className="h-8 w-full max-w-[420px] rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12px] text-[var(--color-text)]">
+                className="h-8 pointer-coarse:h-11 w-full max-w-[420px] rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12px] text-[var(--color-text)]">
                 {orders.map((o) => <option key={o.key} value={o.key}>{o.wo ? `WO ${o.wo} · ` : ""}{o.owner.name}</option>)}
               </select>
             </>)
@@ -569,7 +569,7 @@ export default function ReportsView(p: Props) {
               ))}
             </span>
             <input type="date" value={sheetShift.dayKey} onChange={(e) => { if (e.target.value) setSheetPick({ dayKey: e.target.value, kind: sheetShift.kind }); }} aria-label="Date"
-              className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12px] text-[var(--color-text)]" />
+              className="h-8 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12px] text-[var(--color-text)]" />
             {sheetPick && <button type="button" onClick={() => setSheetPick(null)} className="h-8 px-2.5 rounded-lg border border-[var(--color-border)] text-[12px] font-semibold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]">Coming shift</button>}
           </>)}
           <div className="text-[12px] text-[var(--color-text-muted)] pl-0 sm:pl-[108px]">

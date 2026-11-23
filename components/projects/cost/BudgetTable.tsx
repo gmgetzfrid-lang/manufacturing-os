@@ -131,10 +131,10 @@ export default function BudgetTable({ orgId, projectId, accounts, numbers, entri
         <span className="text-[11px] text-[var(--color-text-muted)]">{accounts.length - closedCount} open{closedCount ? ` · ${closedCount} closed` : ""}</span>
         <span className="relative ml-auto">
           <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[var(--color-text-faint)]" />
-          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Find a line" aria-label="Find a line" className="h-8 w-40 pl-7 pr-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[12px]" />
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Find a line" aria-label="Find a line" className="h-8 pointer-coarse:h-11 w-40 pl-7 pr-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[12px]" />
         </span>
         <label className="inline-flex items-center gap-1.5 text-[12px] font-bold text-[var(--color-text)]">Group
-          <select value={groupBy} onChange={(e) => setGroupBy(e.target.value as GroupBy)} aria-label="Group by" className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12px]">
+          <select value={groupBy} onChange={(e) => setGroupBy(e.target.value as GroupBy)} aria-label="Group by" className="h-8 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12px]">
             <option value="none">None</option><option value="type">Type</option><option value="contractor">Contractor</option>{phases.length > 0 && <option value="phase">Phase</option>}
           </select>
         </label>
@@ -149,7 +149,7 @@ export default function BudgetTable({ orgId, projectId, accounts, numbers, entri
         <div className="px-4 py-2 border-b border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center gap-2 flex-wrap text-[12px]">
           <b>{sel.size} picked</b>
           {phases.length > 0 && (
-            <select value="" onChange={(e) => { if (e.target.value) void setPhase(pickedAccounts, e.target.value === "split" ? null : e.target.value); }} aria-label="Set phase" className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 font-bold">
+            <select value="" onChange={(e) => { if (e.target.value) void setPhase(pickedAccounts, e.target.value === "split" ? null : e.target.value); }} aria-label="Set phase" className="h-8 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 font-bold">
               <option value="">Set phase…</option><option value="split">Split by the phases</option>{phases.map((p) => <option key={p.id} value={p.id}>{p.name} only</option>)}
             </select>
           )}
@@ -169,7 +169,7 @@ export default function BudgetTable({ orgId, projectId, accounts, numbers, entri
       {moving && (
         <div className="px-4 py-2 border-b border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center gap-2 flex-wrap text-[12px]">
           <span>Move the spending on <b>{moving.from.name}</b> to</span>
-          <select value={moving.to} onChange={(e) => setMoving({ ...moving, to: e.target.value })} aria-label="Move to" className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 font-bold">
+          <select value={moving.to} onChange={(e) => setMoving({ ...moving, to: e.target.value })} aria-label="Move to" className="h-8 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 font-bold">
             <option value="">Pick a line…</option>
             {accounts.filter((a) => a.id !== moving.from.id && a.status !== "closed").map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
           </select>
@@ -222,18 +222,18 @@ export default function BudgetTable({ orgId, projectId, accounts, numbers, entri
                           </div>
                         </td>
                         <td className={td}>
-                          <select value={a.costType ?? ""} disabled={!canManage || closed} onChange={(e) => void savePatch(a, { costType: e.target.value || null })} aria-label={`${a.name} type`} className="h-8 rounded-md border border-transparent hover:border-[var(--color-border-strong)] bg-transparent px-1 text-[12px] disabled:hover:border-transparent">
+                          <select value={a.costType ?? ""} disabled={!canManage || closed} onChange={(e) => void savePatch(a, { costType: e.target.value || null })} aria-label={`${a.name} type`} className="h-8 pointer-coarse:h-11 rounded-md border border-transparent hover:border-[var(--color-border-strong)] bg-transparent px-1 text-[12px] disabled:hover:border-transparent">
                             <option value="">-</option>{TYPES.map((t) => <option key={t} value={t}>{cap(t)}</option>)}
                           </select>
                         </td>
                         <td className={td}>
-                          <select value={a.partyId ?? ""} disabled={!canManage || closed} onChange={(e) => void savePatch(a, { partyId: e.target.value || null })} aria-label={`${a.name} contractor`} className="h-8 max-w-[160px] rounded-md border border-transparent hover:border-[var(--color-border-strong)] bg-transparent px-1 text-[12px] disabled:hover:border-transparent">
+                          <select value={a.partyId ?? ""} disabled={!canManage || closed} onChange={(e) => void savePatch(a, { partyId: e.target.value || null })} aria-label={`${a.name} contractor`} className="h-8 pointer-coarse:h-11 max-w-[160px] rounded-md border border-transparent hover:border-[var(--color-border-strong)] bg-transparent px-1 text-[12px] disabled:hover:border-transparent">
                             <option value="">-</option>{parties.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
                           </select>
                         </td>
                         {phases.length > 0 && (
                           <td className={td}>
-                            <select value={a.phaseId ?? ""} disabled={!canManage || closed} onChange={(e) => void setPhase([a], e.target.value || null)} aria-label={`${a.name} phase`} className="h-8 rounded-md border border-transparent hover:border-[var(--color-border-strong)] bg-transparent px-1 text-[12px] disabled:hover:border-transparent">
+                            <select value={a.phaseId ?? ""} disabled={!canManage || closed} onChange={(e) => void setPhase([a], e.target.value || null)} aria-label={`${a.name} phase`} className="h-8 pointer-coarse:h-11 rounded-md border border-transparent hover:border-[var(--color-border-strong)] bg-transparent px-1 text-[12px] disabled:hover:border-transparent">
                               <option value="">Split {phases.map((p) => Math.round(p.share)).join("/")}</option>{phases.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
                             </select>
                           </td>
@@ -275,10 +275,10 @@ export default function BudgetTable({ orgId, projectId, accounts, numbers, entri
             {canManage && (
               <tr className="border-t border-[var(--color-border)] bg-[var(--color-surface-2)]/40">
                 <td className={td} />
-                <td className={td}><input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} onKeyDown={(e) => { if (e.key === "Enter") void add(); }} placeholder="+ Add a line: name" aria-label="New line name" className="h-8 w-full rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2" /></td>
-                <td className={td}><select value={draft.type} onChange={(e) => setDraft({ ...draft, type: e.target.value })} aria-label="New line type" className="h-8 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1">{TYPES.map((t) => <option key={t} value={t}>{cap(t)}</option>)}</select></td>
+                <td className={td}><input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} onKeyDown={(e) => { if (e.key === "Enter") void add(); }} placeholder="+ Add a line: name" aria-label="New line name" className="h-8 pointer-coarse:h-11 w-full rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2" /></td>
+                <td className={td}><select value={draft.type} onChange={(e) => setDraft({ ...draft, type: e.target.value })} aria-label="New line type" className="h-8 pointer-coarse:h-11 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1">{TYPES.map((t) => <option key={t} value={t}>{cap(t)}</option>)}</select></td>
                 <td className={td} />{phases.length > 0 && <td className={td} />}
-                <td className={td}><input value={draft.budget} onChange={(e) => setDraft({ ...draft, budget: e.target.value })} onKeyDown={(e) => { if (e.key === "Enter") void add(); }} inputMode="decimal" placeholder="$0" aria-label="New line budget" className="h-8 w-28 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-right" /></td>
+                <td className={td}><input value={draft.budget} onChange={(e) => setDraft({ ...draft, budget: e.target.value })} onKeyDown={(e) => { if (e.key === "Enter") void add(); }} inputMode="decimal" placeholder="$0" aria-label="New line budget" className="h-8 pointer-coarse:h-11 w-28 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-right" /></td>
                 <td colSpan={99} className={td}><button type="button" disabled={busy || !draft.name.trim()} onClick={() => void add()} className="inline-flex items-center gap-1 h-8 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] font-semibold hover:bg-[var(--color-surface-2)] disabled:opacity-50"><Plus className="w-4 h-4" /> Add</button></td>
               </tr>
             )}
@@ -314,7 +314,7 @@ function Cell({ value, display, onSave, disabled, numeric, aria, className = "" 
   return (
     <input autoFocus value={edit} inputMode={numeric ? "decimal" : undefined} aria-label={aria} onChange={(e) => setEdit(e.target.value)}
       onKeyDown={(e) => { if (e.key === "Enter") done(true); if (e.key === "Escape") done(false); }} onBlur={() => done(true)}
-      className={`h-8 ${numeric ? "w-28 text-right" : "w-full"} rounded-md border border-[var(--color-main)] bg-[var(--color-surface)] px-1.5 ${className}`} />
+      className={`h-8 pointer-coarse:h-11 ${numeric ? "w-28 text-right" : "w-full"} rounded-md border border-[var(--color-main)] bg-[var(--color-surface)] px-1.5 ${className}`} />
   );
 }
 

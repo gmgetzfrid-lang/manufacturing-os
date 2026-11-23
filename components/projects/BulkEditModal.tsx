@@ -114,7 +114,7 @@ export default function BulkEditModal({ milestones, selectedIds, startMode, orgI
                 {values.length > 8 && (
                   <div className="relative mb-1.5">
                     <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--color-text-faint)]" />
-                    <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Narrow this list…" aria-label="Narrow the list of names" className={`${inp} h-8 pl-8 text-xs`} />
+                    <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Narrow this list…" aria-label="Narrow the list of names" className={`${inp} h-8 pointer-coarse:h-11 pl-8 text-xs`} />
                   </div>
                 )}
                 <ul className="max-h-44 overflow-y-auto border-y border-[var(--color-border)] divide-y divide-[var(--color-border)]">

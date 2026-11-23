@@ -1410,6 +1410,11 @@ function MembersTab({
             </button>
           </span>
         ) : undefined}>
+        {members.length === 0 ? (
+          <p className="px-4 sm:px-5 py-4 text-[15px] text-[var(--color-text-muted)]">
+            Only the owner{project.ownerUserName ? ` (${project.ownerUserName})` : ""} so far.{canManage ? " Add people below to let them edit or view it." : ""}
+          </p>
+        ) : (
         <table className="w-full text-[14px]">
           <thead className="max-sm:hidden bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text-muted)] text-left">
             <tr className="border-b border-[var(--color-border)]">
@@ -1487,6 +1492,7 @@ function MembersTab({
             })}
           </tbody>
         </table>
+        )}
       </Card>
       {addCard}
     </>

@@ -2360,7 +2360,7 @@ function FollowUpsBox({ open, edit, T, onAdd, onDone }: {
       {edit && (
         <div className="flex gap-2">
           <input value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") add(); }} placeholder="Add a follow-up item"
-            aria-label="Add a follow-up item" className="flex-1 min-w-0 h-9 px-2.5 rounded-[10px] border border-transparent bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text)] focus:bg-[var(--color-surface)]" />
+            aria-label="Add a follow-up item" className="flex-1 min-w-0 h-9 pointer-coarse:h-11 px-2.5 rounded-[10px] border border-transparent bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text)] focus:bg-[var(--color-surface)]" />
           <button type="button" onClick={add} disabled={!text.trim()} className="h-9 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] text-[13px] font-semibold disabled:opacity-50">Add</button>
         </div>
       )}

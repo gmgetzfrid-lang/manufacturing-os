@@ -243,7 +243,7 @@ export default function StatusControl({ status, onPick, disabled, onDisabledClic
                     onChange={(e) => { setReason(e.target.value); setWhyMsg(null); }}
                     onKeyDown={(e) => { if (e.key === "Enter") commit(); }}
                     placeholder={reasonFor === "on_hold" ? "waiting on parts…" : reasonFor === "blocked" ? "what's blocking it…" : reasonFor === "completed" ? "what got done…" : "why…"}
-                    className="w-full h-9 text-[13px] px-2.5 border border-[var(--color-border-strong)] rounded-lg bg-[var(--color-surface)]"
+                    className="w-full h-9 pointer-coarse:h-11 text-[13px] px-2.5 border border-[var(--color-border-strong)] rounded-lg bg-[var(--color-surface)]"
                   />
                 </div>
                 {choices.length > 0 && clockCtx && <WhenFields choices={choices} idx={whenIdx} setIdx={(i) => { setWhenIdx(i); setWhyMsg(null); }} clock={when} setClock={(v) => { setWhen(v); setWhyMsg(null); }} tz={clockCtx.tz} times={clockCtx.times} other={otherDay} setOther={(d) => { setOtherDay(d); setWhyMsg(null); }} />}

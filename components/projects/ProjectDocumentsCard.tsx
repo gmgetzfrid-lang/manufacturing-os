@@ -12,7 +12,7 @@ import HelpTooltip from "@/components/ui/HelpTooltip";
 import { Card } from "@/components/ui/PageHero";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { Search, Plus, X, Loader2, FileText } from "lucide-react";
+import { Search, Plus, X } from "lucide-react";
 
 /** A document's status as a pill: issued green, in review amber, draft grey. */
 function docPill(status: string): string {
@@ -25,6 +25,7 @@ function docPill(status: string): string {
 }
 import { supabase } from "@/lib/supabase";
 import { sayError } from "@/components/projects/sayError";
+import { SkeletonRows } from "@/components/ui/Skeleton";
 
 interface LinkedDoc {
   linkId: string;
@@ -157,7 +158,7 @@ export default function ProjectDocumentsCard({ orgId, projectId, canManage, uid,
   };
 
   return (
-    <Card pad={false} className="overflow-hidden" label={<span className="inline-flex items-center gap-2"><span aria-hidden className="ui-icon-tile is-sm is-solid"><FileText className="w-4 h-4" /></span>Project documents <span className="ui-count is-solid">{rows.length}</span></span>}
+    <Card pad={false} className="overflow-hidden" label={<>Project documents <span className="ml-1 text-[15px] font-normal tabular-nums text-[var(--color-text-muted)]">{rows.length}</span></>}
       action={canManage ? (
         <button
           onClick={() => { setAttachOpen((v) => !v); setQ(""); setResults([]); }}
@@ -204,7 +205,7 @@ export default function ProjectDocumentsCard({ orgId, projectId, canManage, uid,
       )}
 
       {loading ? (
-        <div className="px-4 sm:px-5 py-4 flex items-center gap-2 text-[14px] text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin" /> Loading the project&apos;s documents…</div>
+        <SkeletonRows rows={3} cols={2} what="the project's documents" sheet={false} />
       ) : rows.length === 0 ? (
         <div className="px-4 sm:px-5 py-4 text-[15px] text-[var(--color-text-muted)]">
           None linked yet. <HelpTooltip>A document checked out under this project links itself here{canManage ? ". Attach document links one by hand" : ""}.</HelpTooltip>

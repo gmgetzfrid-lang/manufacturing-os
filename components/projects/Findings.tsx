@@ -277,13 +277,13 @@ export function FindingEditor({ value, onChange, equipment, unitLabel, autoGuess
               <span className="basis-full pl-7 flex flex-wrap items-center gap-2">
                 {!other && equipment.length > 0 ? (
                   <select aria-label="Equipment" value={value.assetTag ?? ""} onChange={(e) => { if (e.target.value === "__other__") { setOther(true); set({ assetTag: null, assetId: null }); } else pickTag(e.target.value); }}
-                    className={`${field} h-9 w-auto min-w-[10rem]`}>
+                    className={`${field} h-9 pointer-coarse:h-11 w-auto min-w-[10rem]`}>
                     <option value="">Pick the equipment…</option>
                     {equipment.map((e) => <option key={e.tag} value={e.tag}>{e.tag}</option>)}
                     <option value="__other__">Another tag…</option>
                   </select>
                 ) : (
-                  <input aria-label="Equipment tag" value={value.assetTag ?? ""} onChange={(e) => pickTag(e.target.value)} placeholder="Tag, e.g. E-12" className={`${field} h-9 w-40`} />
+                  <input aria-label="Equipment tag" value={value.assetTag ?? ""} onChange={(e) => pickTag(e.target.value)} placeholder="Tag, e.g. E-12" className={`${field} h-9 pointer-coarse:h-11 w-40`} />
                 )}
                 {other && equipment.length > 0 && <button type="button" onClick={() => { setOther(false); set({ assetTag: null, assetId: null }); }} className="text-[12px] text-[var(--color-text-muted)] underline">Pick from the work orders</button>}
               </span>

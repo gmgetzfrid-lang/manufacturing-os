@@ -203,7 +203,7 @@ function Picker({ items, out, next, span, onBack, onPick }: {
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--color-text-faint)]" />
           <input autoFocus value={query} onChange={(e) => { setQuery(e.target.value); setMore(false); }} aria-label="Search the job for a work order"
             placeholder="Search a work order #, equipment (E-17), step or crew, the whole job"
-            className="w-full h-10 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] pl-8 pr-8 text-[14px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)]" />
+            className="w-full h-10 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] pl-8 pr-8 text-[14px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)]" />
           {query && <button type="button" onClick={() => setQuery("")} aria-label="Clear search" className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-[var(--color-text-faint)] hover:text-[var(--color-text)]"><X className="w-4 h-4" /></button>}
         </label>
         <div className="flex flex-wrap items-center gap-1.5 text-[12px]">
@@ -298,7 +298,7 @@ function Confirm({ milestones, action, next, now, tz, times, mode, crews, when, 
             <label className="pl-10 mt-1 flex flex-wrap items-center gap-1.5">
               <span className="font-semibold">Who does it</span>
               <select value={crew} onChange={(e) => setCrew(e.target.value)} aria-label="Who does it"
-                className="h-8 max-w-[220px] rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12px] text-[var(--color-text)]">
+                className="h-8 pointer-coarse:h-11 max-w-[220px] rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12px] text-[var(--color-text)]">
                 {[...new Set([crew, ...crews])].map((c) => <option key={c || "none"} value={c}>{c || "Not named"}</option>)}
               </select>
             </label>

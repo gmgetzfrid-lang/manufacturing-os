@@ -67,11 +67,11 @@ import { categoriesOf, guessCategories, isLive, leadTag, type Category } from "@
 import { useProjectType } from "@/lib/shiftTimesStore";
 import { typeWord } from "@/lib/projectType";
 import { appAlert } from "@/components/providers/DialogProvider";
-import LoadingBlock from "@/components/ui/LoadingBlock";
 import MoreMenu from "@/components/ui/MoreMenu";
 import { useDraft, clearDraft } from "@/hooks/useDraft";
 import { sayError } from "@/components/projects/sayError";
 import { SubTabs } from "@/components/projects/SubTabs";
+import { SkeletonRows } from "@/components/ui/Skeleton";
 
 const btn = "inline-flex items-center justify-center gap-1.5 h-10 sm:h-9 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] whitespace-nowrap disabled:opacity-50 transition-colors";
 const pri = "inline-flex items-center justify-center gap-1.5 h-10 sm:h-9 px-3.5 rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[14px] font-semibold hover:bg-[var(--color-accent-hover)] whitespace-nowrap disabled:opacity-50 transition-colors";
@@ -423,7 +423,7 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
   };
 
 
-  if (!review) return <LoadingBlock what="the review" />;
+  if (!review) return <SkeletonRows rows={6} cols={1} what="the review" />;
   const m = review.metrics;
   const late = m.varianceH != null && m.varianceH >= 1;
   const pt = pointOf(review, phase?.name ?? projectName, tz);
@@ -627,7 +627,7 @@ function FindingCard({ f, tz, lateH, canManage, busy, action, questions, answers
           </div>
           {why != null && (
             <form className="flex items-center gap-1.5 flex-wrap min-w-0 flex-1 basis-64" onSubmit={(e) => { e.preventDefault(); onNotRight(why); setWhy(null); }}>
-              <input autoFocus value={why} onChange={(e) => setWhy(e.target.value)} placeholder="What is not right? One line." aria-label="What is not right" className={`${field} min-w-0 flex-1 basis-48 h-10 sm:h-9 !py-0`} maxLength={300} />
+              <input autoFocus value={why} onChange={(e) => setWhy(e.target.value)} placeholder="What is not right? One line." aria-label="What is not right" className={`${field} min-w-0 flex-1 basis-48 h-10 pointer-coarse:h-11 sm:h-9 !py-0`} maxLength={300} />
               <button type="submit" disabled={!!busy} className={btn}>Take it out</button>
               <button type="button" onClick={() => setWhy(null)} className={link}>Cancel</button>
             </form>
@@ -653,7 +653,7 @@ function LoadBody({ L, tz, canManage, busy, onCrews }: { L: PartyLoad; tz: strin
         {edit != null && (
           <form className="mt-1.5 flex items-center gap-1.5 flex-wrap" onSubmit={(e) => { e.preventDefault(); const n = Math.round(Number(edit)); if (n >= 1 && n <= 50) { onCrews(L.party, n); setEdit(null); } }}>
             <label className="inline-flex items-center gap-1.5 text-[13px]">Jobs {L.party} can work at once
-              <input autoFocus type="number" inputMode="numeric" min={1} max={50} value={edit} onChange={(e) => setEdit(e.target.value)} className={`${field} !w-20 h-10 sm:h-9 !py-0`} />
+              <input autoFocus type="number" inputMode="numeric" min={1} max={50} value={edit} onChange={(e) => setEdit(e.target.value)} className={`${field} !w-20 h-10 pointer-coarse:h-11 sm:h-9 !py-0`} />
             </label>
             <button type="submit" disabled={saving || !(Number(edit) >= 1 && Number(edit) <= 50)} className={btn}>{saving ? <Loader2 className="w-4 h-4 animate-spin" /> : null} Save</button>
             {L.planned.from === "set" && <button type="button" className={link} onClick={() => { onCrews(L.party, null); setEdit(null); }}>Use the schedule&apos;s {L.planned.sched}</button>}
@@ -682,7 +682,7 @@ function QuestionLine({ q, said, canManage, busy, onSave }: { q: Question; said:
       {canManage && text == null && <button type="button" className={link} onClick={() => setText(said)}>{said ? "Change the answer" : "Answer (optional)"}</button>}
       {text != null && (
         <form className="mt-1.5 flex items-center gap-1.5 flex-wrap" onSubmit={(e) => { e.preventDefault(); onSave(text); setText(null); }}>
-          <input autoFocus value={text} onChange={(e) => setText(e.target.value)} aria-label={q.ask} placeholder="One line is enough" maxLength={1000} className={`${field} min-w-0 flex-1 basis-56 h-10 sm:h-9 !py-0`} />
+          <input autoFocus value={text} onChange={(e) => setText(e.target.value)} aria-label={q.ask} placeholder="One line is enough" maxLength={1000} className={`${field} min-w-0 flex-1 basis-56 h-10 pointer-coarse:h-11 sm:h-9 !py-0`} />
           <button type="submit" disabled={busy} className={btn}>{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : null} Save</button>
           <button type="button" className={link} onClick={() => setText(null)}>Cancel</button>
         </form>
@@ -729,7 +729,7 @@ function InlineValue({ name, value, canManage, busy, onSave }: { name: string; v
   if (edit != null) return (
     <form className="inline-flex items-center gap-1.5" onSubmit={(e) => { e.preventDefault(); onSave(edit); setEdit(null); }}>
       <span className="text-[var(--color-text-muted)]">{name}</span>
-      <input autoFocus value={edit} onChange={(e) => setEdit(e.target.value)} aria-label={name} className={`${field} !w-40 h-9 !py-0`} maxLength={120} />
+      <input autoFocus value={edit} onChange={(e) => setEdit(e.target.value)} aria-label={name} className={`${field} !w-40 h-9 pointer-coarse:h-11 !py-0`} maxLength={120} />
       <button type="submit" disabled={busy} className={link}>Save</button>
       <button type="button" className={link} onClick={() => setEdit(null)}>Cancel</button>
     </form>

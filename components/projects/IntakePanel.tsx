@@ -21,8 +21,8 @@ import { finalizeReviewedRevision } from "@/lib/reviewControl";
 import { appConfirm } from "@/components/providers/DialogProvider";
 import TransitionInPanel from "@/components/projects/TransitionInPanel";
 import { flagCollisionToDrafting, TransitionCandidate, TransitionImpact } from "@/lib/transitionIn";
-import LoadingBlock from "@/components/ui/LoadingBlock";
 import { sayError } from "@/components/projects/sayError";
+import { SkeletonRows } from "@/components/ui/Skeleton";
 
 interface IntakeLink {
   id: string; token: string; companyName: string; contactEmail: string | null;
@@ -324,7 +324,7 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
       : (res.error ?? "Couldn't flag the collision."));
   };
 
-  if (loading) return <Card><LoadingBlock what="intake" className="border-0 p-0" /></Card>;
+  if (loading) return <SkeletonRows rows={5} cols={2} what="intake" />;
 
   return (
     <div className="space-y-4">
@@ -407,7 +407,7 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
                     {busy === l.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <CalendarPlus className="w-3 h-3" />} 7 more days
                   </button>
                   <input type="date" value={extendDay} onChange={(e) => setExtendDay(e.target.value)} min={dayOfIso(new Date().toISOString())} aria-label="New end date"
-                    className="h-7 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs [color-scheme:light] dark:[color-scheme:dark]" />
+                    className="h-7 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs [color-scheme:light] dark:[color-scheme:dark]" />
                   <button onClick={() => extendDay && void extend(l, endOfDayIso(extendDay))} disabled={busy === l.id || !extendDay}
                     className="px-2 py-1 rounded-md border border-[var(--color-border-strong)] text-[11px] font-bold hover:border-[var(--color-accent-ring)] disabled:opacity-50">Set date</button>
                   <button onClick={() => void extend(l, null)} disabled={busy === l.id}
@@ -442,7 +442,7 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
                           onChange={(e) => searchAssignable(e.target.value)}
                           placeholder="Search documents by number or title…"
                           autoFocus
-                          className="h-7 w-full rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] pl-6 pr-2 text-xs"
+                          className="h-7 pointer-coarse:h-11 w-full rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] pl-6 pr-2 text-xs"
                         />
                       </div>
                       {assignSearching && <div className="mt-1 text-[11px] text-[var(--color-text-faint)]">Searching…</div>}
@@ -475,15 +475,15 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
           <div className="pt-3 border-t border-[var(--color-border)] space-y-2">
             <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">New submit link</div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              <input value={company} onChange={(e) => setCompany(e.target.value)} placeholder="Company name (stamped on every submission)" className="h-9 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-[13px]" />
-              <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Contact email (optional)" className="h-9 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-[13px]" />
+              <input value={company} onChange={(e) => setCompany(e.target.value)} placeholder="Company name (stamped on every submission)" className="h-9 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-[13px]" />
+              <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Contact email (optional)" className="h-9 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-[13px]" />
               {!intakeLibraryId && (
-                <select value={libPick} onChange={(e) => setLibPick(e.target.value)} className="h-9 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-[13px]">
+                <select value={libPick} onChange={(e) => setLibPick(e.target.value)} className="h-9 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-[13px]">
                   <option value="">Intake documents live in library…</option>
                   {libs.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
                 </select>
               )}
-              <input type="date" value={expires} onChange={(e) => setExpires(e.target.value)} min={new Date().toISOString().slice(0, 10)} className="h-9 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-[13px] [color-scheme:light] dark:[color-scheme:dark]" title="Expiry (optional)" />
+              <input type="date" value={expires} onChange={(e) => setExpires(e.target.value)} min={new Date().toISOString().slice(0, 10)} className="h-9 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-[13px] [color-scheme:light] dark:[color-scheme:dark]" title="Expiry (optional)" />
             </div>
             <label className="flex items-start gap-2 text-[13px] text-[var(--color-text)]">
               <input type="checkbox" checked={trusted} onChange={(e) => setTrusted(e.target.checked)} className="mt-0.5" />

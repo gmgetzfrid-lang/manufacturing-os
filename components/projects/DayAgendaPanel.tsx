@@ -437,7 +437,7 @@ export default function DayAgendaPanel({
                 // A keyboard popping up on a tablet hides half the list: focus only with a mouse.
                 autoFocus={typeof window !== "undefined" && window.matchMedia?.("(pointer: fine)").matches}
                 placeholder="Find equipment, WO # or step, e.g. E-606, 4410037"
-                className="w-full h-9 pl-8 pr-8 rounded-[10px] border border-transparent bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:bg-[var(--color-surface)]" />
+                className="w-full h-9 pointer-coarse:h-11 pl-8 pr-8 rounded-[10px] border border-transparent bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:bg-[var(--color-surface)]" />
               {query && <button onClick={() => setQuery("")} className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 text-[var(--color-text-faint)] hover:text-[var(--color-text)]" title="Clear"><XIcon className="w-3.5 h-3.5" /></button>}
             </div>
           )}
@@ -871,7 +871,7 @@ function QuickEdit({ leaf, pct, canEdit, onSetStatus, onSetProgress, onAddNote, 
             onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); if (pctDraft !== "") pickPct(Number(pctDraft)); } }}
             onBlur={() => { if (pctDraft !== "" && Number(pctDraft) !== (stagedPct ?? Math.round(pct))) pickPct(Number(pctDraft)); }}
             aria-label="Percent done"
-            className="h-7 w-12 px-1.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-right font-bold tabular-nums" />
+            className="h-7 pointer-coarse:h-11 w-12 px-1.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-right font-bold tabular-nums" />
           <span className="font-bold text-[var(--color-text-muted)]">%</span>
         </span>
       </div>
@@ -892,7 +892,7 @@ function QuickEdit({ leaf, pct, canEdit, onSetStatus, onSetProgress, onAddNote, 
           <input value={reason} disabled={ro} autoFocus onChange={(e) => { setReason(e.target.value); setHoldTouched(true); setNeedMsg(null); }}
             onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void saveHold(); } }}
             placeholder="What's stopping it: permit, scaffold, ops release, parts…"
-            className="flex-1 h-7 px-2 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)]" />
+            className="flex-1 h-7 pointer-coarse:h-11 px-2 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)]" />
           <button disabled={ro} onClick={() => void saveHold()} className="h-7 px-2.5 rounded-md font-bold bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)] disabled:opacity-40">
             Save {hold === "blocked" ? "blocked" : "on hold"}{timed && holdTouched && whenAt != null ? ` at ${clock}` : ""}
           </button>

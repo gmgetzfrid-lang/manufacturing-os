@@ -5,7 +5,7 @@
 // the report's place marked; nudge the margins; print a test page.
 
 import React, { useState } from "react";
-import { FileUp, Loader2, Presentation, Printer, Trash2 } from "lucide-react";
+import { FileUp, Loader2, Printer, Trash2 } from "lucide-react";
 import { useOrgBranding } from "@/components/providers/OrgBrandingProvider";
 import SlideTemplateSetup from "@/components/branding/SlideTemplateSetup";
 import { saveSlidesChoice, useSlidesChoice } from "@/lib/slidesChoice";
@@ -164,7 +164,7 @@ export function LetterheadStep({ projectId, canManage }: { projectId: string; ca
                 <label key={k} className="flex items-center justify-between gap-2 text-[12px] text-[var(--color-text-muted)] capitalize">
                   {k}
                   <input type="number" step={0.05} min={0} value={lh.margins[k]} onChange={(e) => margin(k, Number(e.target.value))}
-                    className="h-8 w-20 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[13px] text-[var(--color-text)] tabular-nums" />
+                    className="h-8 pointer-coarse:h-11 w-20 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[13px] text-[var(--color-text)] tabular-nums" />
                 </label>
               ))}
             </div>
@@ -228,7 +228,6 @@ export function SlidesStep({ projectId, canManage }: { projectId: string; canMan
   return (
     <section id="slides" className="mt-6 pt-5 border-t border-[var(--color-border)] scroll-mt-20" data-slides-step>
       <div className="flex items-center gap-2.5 flex-wrap">
-        <span aria-hidden className="ui-icon-tile is-sm is-solid"><Presentation className="w-4 h-4" /></span>
         <h3 className="min-w-0 flex-1 text-[16px] font-semibold text-[var(--color-text)]">Slides</h3>
         {t && (
           <div role="radiogroup" aria-label="This project's slides" className="inline-flex rounded-md border border-[var(--color-border-strong)] overflow-hidden text-[14px] font-semibold">

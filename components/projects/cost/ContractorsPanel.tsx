@@ -439,7 +439,7 @@ function CrewsSection(p: SectionProps) {
           </span>
         ))}
         {p.canManage && others.length > 0 && (
-          <select aria-label={`Add a crew to ${co}`} value="" onChange={(e) => e.target.value && void assign(e.target.value, co)} className={`${field} h-8 text-[12px]`}>
+          <select aria-label={`Add a crew to ${co}`} value="" onChange={(e) => e.target.value && void assign(e.target.value, co)} className={`${field} h-8 pointer-coarse:h-11 text-[12px]`}>
             <option value="">+ A crew of {co}&rsquo;s</option>
             {others.map((c) => <option key={c} value={c}>{c}</option>)}
           </select>
@@ -648,7 +648,7 @@ function PlanGridView(p: SectionProps & { plan: StaffingPlan; onChange: ((next: 
                   {keys.map((k) => {
                     const n = mix(k)[c.name] ?? 0;
                     return <td key={k} className="px-0.5 py-1 text-center">{p.onChange
-                      ? <input aria-label={`${c.name}, ${shiftLabel(k)}`} inputMode="numeric" value={n || ""} onChange={(e) => set(c.name, k, e.target.value)} className={`w-10 h-8 rounded-md border text-center tabular-nums ${n ? "border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] font-bold" : "border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text-faint)]"}`} />
+                      ? <input aria-label={`${c.name}, ${shiftLabel(k)}`} inputMode="numeric" value={n || ""} onChange={(e) => set(c.name, k, e.target.value)} className={`w-10 h-8 pointer-coarse:h-11 rounded-md border text-center tabular-nums ${n ? "border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] font-bold" : "border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text-faint)]"}`} />
                       : <span className={`tabular-nums ${n ? "font-bold" : "text-[var(--color-text-faint)]"}`}>{n || "·"}</span>}</td>;
                   })}
                 </tr>

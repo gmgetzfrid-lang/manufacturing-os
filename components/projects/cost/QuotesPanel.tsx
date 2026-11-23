@@ -770,7 +770,7 @@ function PostControls({ accounts, busy, onPost, label, suggested }: {
   return (
     <span className="inline-flex items-center gap-1">
       <select value={accountId} onChange={(e) => setAccountId(e.target.value)}
-        className="h-6 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1 text-[11px] max-w-36">
+        className="h-6 pointer-coarse:h-11 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1 text-[11px] max-w-36">
         <option value="">Budget line…</option>
         {accounts.map((a) => <option key={a.id} value={a.id}>{a.code ? `${a.code} ` : ""}{a.name}</option>)}
       </select>
@@ -849,19 +849,19 @@ function CorrectForm({ doc, actor, groups, onDone, onCancel, setErr }: {
       <label className="block">
         <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Total</span>
         <input value={total} onChange={(e) => setTotal(e.target.value)} inputMode="decimal" placeholder="e.g. 182,000"
-          className="mt-0.5 block h-8 w-32 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs font-display tabular-nums" />
+          className="mt-0.5 block h-8 pointer-coarse:h-11 w-32 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs font-display tabular-nums" />
       </label>
       <label className="block">
         <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Vendor</span>
         <input value={vendor} onChange={(e) => setVendor(e.target.value)} placeholder="Company name"
-          className="mt-0.5 block h-8 w-48 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
+          className="mt-0.5 block h-8 pointer-coarse:h-11 w-48 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
       </label>
       {doc.kind === "quote" && (
         <label className="block">
           <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">RFQ group</span>
           <input value={group} onChange={(e) => setGroup(e.target.value)} list={listId} placeholder="The scope being bid"
             title="Quotes with the same group name are compared side by side."
-            className="mt-0.5 block h-8 w-48 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
+            className="mt-0.5 block h-8 pointer-coarse:h-11 w-48 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
           <datalist id={listId}>{groups.map((g) => <option key={g} value={g} />)}</datalist>
         </label>
       )}
@@ -918,11 +918,11 @@ function UploadRow({ orgId, projectId, actor, kind, existingGroups, onDone, setE
           onChange={(e) => { setFile(e.target.files?.[0] ?? null); setFailed(null); e.target.value = ""; }} />
       </label>
       <input value={vendor} onChange={(e) => setVendor(e.target.value)} placeholder="Vendor (or let the AI read it)"
-        className="h-8 w-52 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
+        className="h-8 pointer-coarse:h-11 w-52 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
       {kind === "quote" && (
         <>
           <input value={group} onChange={(e) => setGroup(e.target.value)} placeholder="RFQ group: the scope being bid" list="rfq-groups"
-            className="h-8 w-56 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs"
+            className="h-8 pointer-coarse:h-11 w-56 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs"
             title="Quotes sharing a group name tabulate side by side." />
           <datalist id="rfq-groups">
             {existingGroups.map((g) => <option key={g} value={g} />)}
@@ -1040,9 +1040,9 @@ function QuoteLinksSection({ orgId, projectId, actor, existingGroups, setErr }: 
       </div>
       <div className="flex items-center gap-2 flex-wrap">
         <input value={company} onChange={(e) => setCompany(e.target.value)} placeholder="Company name"
-          className="h-8 w-48 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
+          className="h-8 pointer-coarse:h-11 w-48 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
         <input value={group} onChange={(e) => setGroup(e.target.value)} placeholder="RFQ group (optional)" list="rfq-groups-link"
-          className="h-8 w-56 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
+          className="h-8 pointer-coarse:h-11 w-56 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
         <datalist id="rfq-groups-link">
           {existingGroups.map((g) => <option key={g} value={g} />)}
         </datalist>

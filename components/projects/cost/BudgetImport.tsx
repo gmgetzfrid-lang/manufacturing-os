@@ -213,7 +213,7 @@ export function BudgetImportSheet({ orgId, projectId, actor, result, accounts, p
                   </td>
                   <td className="py-1.5 pr-2">
                     <input value={l.name} onChange={(e) => patch(l.key, { name: e.target.value })}
-                      className="w-full h-7 rounded-md border border-transparent hover:border-[var(--color-border)] bg-transparent px-1.5 text-xs font-bold text-[var(--color-text)]" />
+                      className="w-full h-7 pointer-coarse:h-11 rounded-md border border-transparent hover:border-[var(--color-border)] bg-transparent px-1.5 text-xs font-bold text-[var(--color-text)]" />
                     {(exists || upd || l.note) && (
                       <div className="px-1.5 text-[11px] text-[var(--color-text-muted)]">
                         {exists && <span className="font-bold text-[var(--color-text-muted)]">Already a budget line, same budget. </span>}
@@ -230,14 +230,14 @@ export function BudgetImportSheet({ orgId, projectId, actor, result, accounts, p
                   </td>
                   <td className="py-1.5 pr-2">
                     <select value={l.costType} onChange={(e) => patch(l.key, { costType: e.target.value as CostType })}
-                      className="h-7 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-1 text-[11px]">
+                      className="h-7 pointer-coarse:h-11 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-1 text-[11px]">
                       {COST_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
                     </select>
                   </td>
                   <td className="py-1.5 pr-2">
                     <div className="flex items-center gap-1">
                       <input value={l.supplier ?? ""} onChange={(e) => patch(l.key, { supplier: e.target.value.trim() ? e.target.value : null })}
-                        placeholder="-" className="w-36 h-7 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-1.5 text-[11px]" />
+                        placeholder="-" className="w-36 h-7 pointer-coarse:h-11 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-1.5 text-[11px]" />
                       {l.supplier && !exists && (
                         <span title={known ? `Matches ${known.name} on this project` : "New company: it will be added"}
                           className={`text-[11px] font-semibold ${known ? "text-[var(--state-released-text)]" : "text-[var(--color-text-faint)]"}`}>
@@ -249,7 +249,7 @@ export function BudgetImportSheet({ orgId, projectId, actor, result, accounts, p
                   <td className="py-1.5 text-right">
                     <input value={l.amount ?? ""} inputMode="decimal"
                       onChange={(e) => { const n = Number(e.target.value.replace(/[^0-9.]/g, "")); patch(l.key, { amount: e.target.value.trim() && Number.isFinite(n) ? n : null }); }}
-                      className="w-28 h-7 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-1.5 text-[11px] text-right font-display tabular-nums" />
+                      className="w-28 h-7 pointer-coarse:h-11 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-1.5 text-[11px] text-right font-display tabular-nums" />
                   </td>
                   <td className="py-1.5 pl-1">
                     <button onClick={() => setLines((ls) => ls.filter((x) => x.key !== l.key))}

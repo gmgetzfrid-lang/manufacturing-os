@@ -671,13 +671,13 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
               <label className="block">
                 <span className="block mb-1 text-[13px] font-semibold text-[var(--color-text-muted)]">{ADDED[foundEdit.kind].what}</span>
                 <input value={foundEdit.what} onChange={(e) => { setFoundEdit({ ...foundEdit, what: e.target.value }); setFoundMsg(null); }} aria-label={ADDED[foundEdit.kind].what}
-                  className="h-9 w-full rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[14px] text-[var(--color-text)]" />
+                  className="h-9 pointer-coarse:h-11 w-full rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[14px] text-[var(--color-text)]" />
               </label>
               <div>
                 <span className="block mb-1 text-[13px] font-semibold text-[var(--color-text-muted)]">Work order #</span>
                 <div className="flex flex-wrap items-center gap-1.5">
                   <input value={foundEdit.wo} onChange={(e) => { setFoundEdit({ ...foundEdit, wo: e.target.value }); setFoundMsg(null); }} aria-label="Work order number" placeholder="e.g. 310990"
-                    className="h-9 w-36 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 font-display tabular-nums text-[14px] text-[var(--color-text)]" />
+                    className="h-9 pointer-coarse:h-11 w-36 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 font-display tabular-nums text-[14px] text-[var(--color-text)]" />
                   {!m.workOrderRef?.trim() && wo && foundEdit.wo.trim() !== wo && (
                     <button type="button" onClick={() => setFoundEdit({ ...foundEdit, wo })} className={SEC}>Same as the task: {wo}</button>
                   )}
@@ -783,10 +783,10 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
               <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Resource</span>
               {byOther ? (
                 <input value={by} onChange={(e) => { setBy(e.target.value); setMsg(null); }} autoFocus placeholder="Crew or company" aria-label="Resource"
-                  className="h-9 flex-1 min-w-[10rem] rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[14px]" />
+                  className="h-9 pointer-coarse:h-11 flex-1 min-w-[10rem] rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[14px]" />
               ) : (
                 <select value={by} onChange={(e) => { if (e.target.value === "__other__") { setByOther(true); setBy(""); } else setBy(e.target.value); setMsg(null); }} aria-label="Resource"
-                  className="h-9 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[14px] font-semibold text-[var(--color-text)]">
+                  className="h-9 pointer-coarse:h-11 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[14px] font-semibold text-[var(--color-text)]">
                   {[...new Set([doer, planned, ...crewChoices].filter(Boolean))].map((c) => <option key={c} value={c}>{c}{c === planned && doer !== planned ? " (planned)" : ""}</option>)}
                   {!doer && <option value="">No crew named</option>}
                   <option value={"__other__"}>Other…</option>
@@ -798,12 +798,12 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
           {action !== "edit" && (
             <input value={note} onChange={(e) => { setNote(e.target.value); setMsg(null); }} onKeyDown={(e) => { if (e.key === "Enter") void save(); }}
               placeholder={action === "hold" ? "Why? (required)" : action === "reopen" ? "Why reopen? (required)" : action === "comment" ? "The comment" : "Comment (optional)"} aria-label="Comment" autoFocus={action === "comment"}
-              className="h-9 w-full rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[14px]" />
+              className="h-9 pointer-coarse:h-11 w-full rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[14px]" />
           )}
           {hours < -0.05 && !done && (action === "start" || action === "progress" || action === "finish" || action === "resume") && (
             showWhy
               ? <input value={why} onChange={(e) => setWhy(e.target.value)} placeholder="Why it's behind (optional)" aria-label="Why it's behind"
-                className="h-9 w-full rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[14px]" />
+                className="h-9 pointer-coarse:h-11 w-full rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[14px]" />
               : <button type="button" onClick={() => setShowWhy(true)} className={`self-start ${LINK}`}>Add why it&apos;s behind</button>
           )}
           {msg && <div role="alert" className="font-semibold text-[var(--state-overdue)]">{msg}</div>}
@@ -876,7 +876,7 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
                         {(x.comment || onUpdate) && (
                           <input value={fixText} onChange={(e) => { setFixText(e.target.value); setFixMsg(null); }} onKeyDown={(e) => { if (e.key === "Enter") void saveFix(x); }}
                             placeholder={x.comment ? undefined : "Add a comment (optional)"} aria-label="Comment" disabled={fixBusy}
-                            className="h-9 w-full rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[14px]" />
+                            className="h-9 pointer-coarse:h-11 w-full rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[14px]" />
                         )}
                         {fixMsg && <div role="alert" className="font-semibold text-[var(--state-overdue)]">{fixMsg}</div>}
                         <div className="flex items-center gap-2">

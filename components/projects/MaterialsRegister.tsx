@@ -19,10 +19,10 @@ import {
   QUESTION_LIMIT_H, STATUSES, STATUS_WORD, ageWord, arrived, attention, blankMaterial, deleteMaterial, late, listMaterials, questionAgeH, questionOpen,
   saveMaterial, specIncomplete, statusAllowed, summarize, type Material, type MaterialFields, type MaterialStatus,
 } from "@/lib/materials";
-import LoadingBlock from "@/components/ui/LoadingBlock";
 import { appConfirm } from "@/components/providers/DialogProvider";
 import { useDraft, clearDraft } from "@/hooks/useDraft";
 import { sayError } from "@/components/projects/sayError";
+import { SkeletonRows } from "@/components/ui/Skeleton";
 
 const btn = "inline-flex items-center gap-1.5 h-9 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[12px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] whitespace-nowrap disabled:opacity-50";
 const pri = "inline-flex items-center justify-center gap-1.5 h-9 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[12px] font-semibold whitespace-nowrap disabled:opacity-50";
@@ -94,7 +94,7 @@ export default function MaterialsRegister({ orgId, projectId, phases, canManage,
     finally { setBusy(false); }
   };
 
-  if (!rows) return <Card><LoadingBlock what="the materials register" className="border-0 p-0" /></Card>;
+  if (!rows) return <SkeletonRows rows={6} cols={3} what="the materials register" />;
 
   const Pill = ({ id, children }: { id: Filter; children: React.ReactNode }) => (
     <button type="button" onClick={() => setFilter(id)} aria-pressed={filter === id} className={bandSegItem(filter === id)}>{children}</button>
@@ -135,7 +135,7 @@ export default function MaterialsRegister({ orgId, projectId, phases, canManage,
           <Pill id="offsite">Off-site repairs <span className="tabular-nums text-[var(--color-text-muted)]">{sum.offsite}</span></Pill>
           <Pill id="received">Received <span className="tabular-nums text-[var(--color-text-muted)]">{sum.received}</span></Pill>
         </div>
-        {phases.length > 0 && <select aria-label="Phase" value={phaseId ?? ""} onChange={(e) => setPhaseId(e.target.value || null)} className={`${field} !w-auto ml-auto h-8 !py-0`}><option value="">All phases</option>{phases.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select>}
+        {phases.length > 0 && <select aria-label="Phase" value={phaseId ?? ""} onChange={(e) => setPhaseId(e.target.value || null)} className={`${field} !w-auto ml-auto h-8 pointer-coarse:h-11 !py-0`}><option value="">All phases</option>{phases.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select>}
       </div>
       </Card>
 

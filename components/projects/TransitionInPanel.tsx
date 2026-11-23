@@ -19,6 +19,7 @@ import {
   listTransitionCandidates, scanTransitionImpact, adoptDocument,
 } from "@/lib/transitionIn";
 import { sayError } from "@/components/projects/sayError";
+import { SkeletonRows } from "@/components/ui/Skeleton";
 
 export default function TransitionInPanel({ orgId, projectId, intakeCollectionId, canManage, uid, userEmail, onFlagCollision }: {
   orgId: string; projectId: string; intakeCollectionId: string; canManage: boolean;
@@ -139,7 +140,7 @@ export default function TransitionInPanel({ orgId, projectId, intakeCollectionId
   };
 
   if (loading && candidates.length === 0) {
-    return <div className="py-6 flex items-center justify-center gap-2 text-xs text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin" /> Checking the intake folder…</div>;
+    return <SkeletonRows rows={3} cols={1} what="the intake" sheet={false} />;
   }
   // Nothing to transition: stay out of the way, unless the read failed.
   if (candidates.length === 0) return msg ? <Card><div role="alert" className="text-[13px] font-bold text-[var(--state-overdue-text)]">{msg}</div></Card> : null;

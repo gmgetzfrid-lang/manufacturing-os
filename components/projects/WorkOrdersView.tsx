@@ -269,7 +269,7 @@ export default function WorkOrdersView({ milestones, cancelled = [], childrenByP
           {query && <button type="button" onClick={() => setQuery("")} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Clear</button>}
         </label>
         <select value={who ?? "__all"} onChange={(e) => setWho(e.target.value === "__all" ? null : e.target.value)} aria-label="Who"
-          className={`h-9 rounded-[10px] border px-2 text-[13px] font-semibold text-[var(--color-text)] ${who != null ? "border-[var(--color-text)] bg-[var(--color-surface)]" : "border-transparent bg-[var(--color-surface-2)]"}`}>
+          className={`h-9 pointer-coarse:h-11 rounded-[10px] border px-2 text-[13px] font-semibold text-[var(--color-text)] ${who != null ? "border-[var(--color-text)] bg-[var(--color-surface)]" : "border-transparent bg-[var(--color-surface-2)]"}`}>
           <option value="__all">Everyone</option>
           {whoList.map(([k, x]) => <option key={k || "__none"} value={k}>{k ? x.name : "No crew named"} ({x.steps} step{x.steps === 1 ? "" : "s"})</option>)}
         </select>
@@ -386,9 +386,9 @@ export default function WorkOrdersView({ milestones, cancelled = [], childrenByP
                 {isOpen && <span aria-hidden className="absolute left-0 top-0 bottom-0 w-[3px] z-30 bg-[var(--color-main)]" />}
                 <button type="button" onClick={() => toggle(o.key)} aria-expanded={isOpen} aria-label={`${isOpen ? "Close" : "Open"} ${name}`}
                   ref={(el) => { if (el) heads.current.set(o.key, el); else heads.current.delete(o.key); }}
-                  className={`w-full text-left px-3 sm:px-4 py-3 ${isOpen ? "sticky top-0 z-20 bg-[var(--color-accent-soft)] border-b border-[var(--color-border-strong)]" : "hover:bg-[var(--color-surface-2)]/60"}`}>
+                  className={`w-full text-left px-3 sm:px-4 py-3 ${isOpen ? "sticky top-0 z-20 bg-[var(--color-surface-2)] border-b border-[var(--color-border-strong)]" : "hover:bg-[var(--color-surface-2)]/60"}`}>
                   <div className="flex items-start gap-2.5">
-                    <span className={`mt-0.5 ui-icon-tile is-sm ${isOpen ? "is-solid" : ""}`} aria-hidden>
+                    <span className="mt-0.5 shrink-0 text-[var(--color-text-muted)]" aria-hidden>
                       <ChevronDown className={`w-4 h-4 ui-chevron${(isOpen) ? " rotate-180" : ""}`} />
                     </span>
                     <div className="flex-1 min-w-0">

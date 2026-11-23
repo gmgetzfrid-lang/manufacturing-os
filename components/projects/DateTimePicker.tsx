@@ -170,7 +170,7 @@ function TimeSheet({ title, hm, start, onSet, onClose }: { title: string; hm: st
           <input value={typed ?? shown} onChange={(e) => type(e.target.value)} onFocus={(e) => e.currentTarget.select()} autoFocus={fine}
             onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); set(); } }}
             aria-label="Type the time" inputMode="text" autoComplete="off" spellCheck={false} enterKeyHint="done"
-            className={`w-[118px] h-9 rounded-lg border px-2 text-right text-[15px] font-bold tabular-nums bg-[var(--color-surface-2)]  ${bad ? "border-[var(--state-overdue)]" : "border-transparent "}`} />
+            className={`w-[118px] h-9 pointer-coarse:h-11 rounded-lg border px-2 text-right text-[15px] font-bold tabular-nums bg-[var(--color-surface-2)]  ${bad ? "border-[var(--state-overdue)]" : "border-transparent "}`} />
           <button type="button" onClick={onClose} aria-label="Close" className="shrink-0 -mr-1.5 w-8 h-8 inline-flex items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
         </div>
         <div className="relative flex justify-center gap-2">

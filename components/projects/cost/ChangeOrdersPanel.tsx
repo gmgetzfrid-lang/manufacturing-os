@@ -27,6 +27,7 @@ import { Donut } from "@/components/ui/ChartKit";
 import { appConfirm, appPrompt } from "@/components/providers/DialogProvider";
 import { useDraft } from "@/hooks/useDraft";
 import { sayError } from "@/components/projects/sayError";
+import { SkeletonRows } from "@/components/ui/Skeleton";
 
 export default function ChangeOrdersPanel({ orgId, projectId, canManage, actor, accounts, parties, onMoneyMoved, setErr }: {
   orgId: string; projectId: string; canManage: boolean; actor: Actor;
@@ -152,7 +153,7 @@ export default function ChangeOrdersPanel({ orgId, projectId, canManage, actor, 
       )}
 
       {cos === null ? (
-        <div className="px-4 py-6 flex items-center justify-center gap-2 text-xs text-[var(--color-text-muted)]"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading change orders…</div>
+        <SkeletonRows rows={3} cols={2} what="change orders" sheet={false} />
       ) : readErr ? (
         <div role="alert" className="mx-4 my-3 border-l-2 border-[var(--state-overdue)] pl-3 text-xs text-[var(--state-overdue-text)] flex flex-wrap items-center gap-x-3">
           <span>Couldn&apos;t load change orders: {readErr}</span>
@@ -227,7 +228,7 @@ function CoRow({ co, canManage, busy, partyName, accountLabel, accounts, decide,
           <span className="ml-auto inline-flex items-center gap-1.5">
             {!co.costAccountId && (
               <select value={accountPick} onChange={(e) => setAccountPick(e.target.value)}
-                className="h-6 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1 text-[11px] max-w-40"
+                className="h-6 pointer-coarse:h-11 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1 text-[11px] max-w-40"
                 title="Approval posts money. Pick where it lands.">
                 <option value="">Posts to budget line…</option>
                 {accounts.map((a) => <option key={a.id} value={a.id}>{a.code ? `${a.code} ` : ""}{a.name}</option>)}
@@ -330,27 +331,27 @@ function ProposeForm({ orgId, projectId, actor, accounts, parties, onDone, onCan
     <div className="px-4 py-3 border-b border-[var(--color-border)] bg-[var(--color-surface-2)] space-y-2">
       <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
         <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="What changed? (title)" autoFocus
-          className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs col-span-2" />
+          className="h-8 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs col-span-2" />
         <input value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="Amount (− = credit)" inputMode="decimal"
-          className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs font-display tabular-nums" />
+          className="h-8 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs font-display tabular-nums" />
         <select value={reason} onChange={(e) => setReason(e.target.value as CoReason)}
-          className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs">
+          className="h-8 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs">
           {(Object.keys(CO_REASON_LABEL) as CoReason[]).map((r) => (
             <option key={r} value={r}>{CO_REASON_LABEL[r]}</option>
           ))}
         </select>
         <select value={accountId} onChange={(e) => setAccountId(e.target.value)}
-          className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs col-span-2">
+          className="h-8 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs col-span-2">
           <option value="">Budget line it posts to (required to approve)…</option>
           {accounts.map((a) => <option key={a.id} value={a.id}>{a.code ? `${a.code} ` : ""}{a.name}</option>)}
         </select>
         <select value={partyId} onChange={(e) => setPartyId(e.target.value)}
-          className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs">
+          className="h-8 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs">
           <option value="">Contractor / vendor…</option>
           {pickParties.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
         </select>
         <input value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="Detail (goes on the record)"
-          className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
+          className="h-8 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
       </div>
       <div className="flex items-center gap-2">
         {error && <span role="alert" className="inline-flex items-center gap-1 text-[11px] font-bold text-[var(--state-overdue-text)]">{error}</span>}
