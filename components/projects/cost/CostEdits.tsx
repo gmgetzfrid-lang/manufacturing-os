@@ -100,8 +100,10 @@ export function AfeCard({ orgId, projectId, afe, linesTotal, cur, canManage, act
   );
 }
 
-function AfeEditor({ orgId, projectId, afe, actor, cur, onCancel, onSaved }: {
+export function AfeEditor({ orgId, projectId, afe, actor, cur, onCancel, onSaved, quietSave }: {
   orgId: string; projectId: string; afe: Afe; actor: Actor; cur: string; onCancel: () => void; onSaved: (msg: string) => void;
+  /** Shown where the page's one orange button is another's: Save is a white button. */
+  quietSave?: boolean;
 }) {
   const [num, setNum] = useState(afe.afeNumber ?? "");
   const [acct, setAcct] = useState(afe.chargeAccount ?? "");
@@ -154,7 +156,7 @@ function AfeEditor({ orgId, projectId, afe, actor, cur, onCancel, onSaved }: {
       </div>
       {err && <div role="alert" className="text-[12px] text-rose-700 dark:text-rose-300">{err}</div>}
       <div className="flex gap-2">
-        <button type="button" onClick={() => void save()} disabled={busy || !changed} className={primary}>{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} Save AFE</button>
+        <button type="button" onClick={() => void save()} disabled={busy || !changed} className={quietSave ? quiet : primary}>{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} Save AFE</button>
         <button type="button" onClick={onCancel} disabled={busy} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>
       </div>
     </div>

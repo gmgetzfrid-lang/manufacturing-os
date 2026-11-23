@@ -55,7 +55,7 @@ import { ProjectTypeProvider } from "@/components/projects/ProjectTypeContext";
 import ExecutionView from "@/components/projects/ExecutionView";
 import { CancelledJobsBar } from "@/components/projects/CancelledJobs";
 import { ScheduleSetup, ScheduleSetupButton, SetupNotice } from "@/components/projects/ScheduleSetup";
-import type { SetupItem } from "@/lib/scheduleSetup";
+import { requestSetup, type SetupItem } from "@/lib/scheduleSetup";
 import { Card, heroPrimary } from "@/components/ui/PageHero";
 import { FindingHost, FindingsReviewHost, PastJobsPanel } from "@/components/projects/Findings";
 import { splitCancelled } from "@/lib/cancelledJobs";
@@ -178,6 +178,15 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
 
   useEffect(() => { void refresh(); }, [refresh]);
   useEffect(() => { refreshRef.current = () => { void refresh(); }; }, [refresh]);
+  // A change made outside this tab's own views (the baseline set from
+  // Setup opened on another part of the page): Shift and Work re-read
+  // through their board; Plan re-reads here.
+  useEffect(() => {
+    if (mode !== "plan") return;
+    const on = () => { void refresh(); };
+    window.addEventListener("schedule:changed", on);
+    return () => window.removeEventListener("schedule:changed", on);
+  }, [mode, refresh]);
 
   // Live multi-user sync: another planner's edits stream in (debounced) so
   // two people can work the same schedule without silently overwriting each
@@ -423,8 +432,9 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
     <PhaseProvider value={phaseCtx}>
     <EquipmentScopeProvider value={equipmentScope}>
     <div className="space-y-4">
-      {/* The wizard, and what's still to set up (shown on the first card below). */}
-      <ScheduleSetup {...setupProps} onMissing={setSetupMissing} />
+      {/* What's still to set up (shown on the first card below). The wizard
+          itself opens from the project page's own copy, on every tab. */}
+      <ScheduleSetup {...setupProps} onMissing={setSetupMissing} listen={false} />
       {/* + Finding (a step, a work order, an hour) and the close-out review, on every tab. */}
       <FindingHost orgId={orgId} projectId={projectId} milestones={allMilestones} canEdit={canEdit} />
       <FindingsReviewHost orgId={orgId} projectId={projectId} canEdit={canEdit} timeZone={tz} />
@@ -481,7 +491,8 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
                   {/* Which clock the schedule runs on. Every date and time below is the
                       plant's; a project without a zone still reads as UTC, so say so. */}
                   {tz === DEFAULT_SCHEDULE_TZ ? (
-                    <span>Times are in <b className="text-[var(--color-text)]">UTC</b>. Set the plant&apos;s timezone under <b className="text-[var(--color-text)]">Edit project</b> so days and shifts line up for everyone.</span>
+                    <span>Times are in <b className="text-[var(--color-text)]">UTC</b>, the app default.{" "}
+                      {canManage ? <button type="button" onClick={() => requestSetup("timezone")} className="font-semibold text-[var(--color-accent-text)] hover:underline">Set the plant time zone</button> : "The project owner sets the plant time zone"} so days and shifts line up for everyone.</span>
                   ) : (
                     <span className="inline-flex items-center gap-1"><Clock className="w-3.5 h-3.5 shrink-0" /> Plant time, {tzLabel(tz)}.</span>
                   )}

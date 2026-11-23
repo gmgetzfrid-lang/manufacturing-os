@@ -1,19 +1,21 @@
 "use client";
 
 // /projects/[id] — project detail. Its tabs, the work first:
-//   Plan     — the schedule as a list: import it, set it up, add to it
-//   Today    — the shift's screen: meetings, hour by hour, turnover, Lock report
+//   Plan     — what this project needs (every requirement, from setup to
+//              close-out, changed in place), then the schedule as a list
+//   Shift    — the shift's screen: meetings, hour by hour, turnover, Lock report
 //   Work     — the timeline, calendar and work orders
 //   Reports  — every report, one name each, and the field forms
 //   Close-out — what's left to close the job, and how it did
-// then Documents, Costs, Quality, Intake, Activity and Members.
+// then the records used every week, in sight: Documents, Costs, Quality,
+// Materials and Members; the rare ones (Intake, Activity) under More.
 // A project opens on Plan until work starts, then on Shift, and on
 // Close-out once every step is done.
 //
-// Project owner gets a settings strip up top with status-transition buttons:
-// Pause / Resume / Complete / Cancel / Archive, and Reopen on a completed,
-// cancelled or archived project. Status changes auto-release every active
-// checkout (handled in lib/projects.ts).
+// The header carries Setup (opened in place, on any tab, at any part); the
+// Project menu holds only the rare things: phases, edit details, follow,
+// the exports, and Pause / Complete / Cancel / Archive / Reopen / Delete.
+// Status changes auto-release every active checkout (lib/projects.ts).
 
 import React, { useCallback, useEffect, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
@@ -23,7 +25,7 @@ import {
   CheckCircle2, XCircle, Archive as ArchiveIcon, Layers, Send, Settings2,
   Users, FileText, Activity as ActivityIcon,
   Hash, Trash2, Plus, Flag, X, Download, Target, ShieldCheck, Pencil, CircleDollarSign, Package, Lock,
-  UploadCloud, ClipboardList, Sun, FileBarChart, RotateCcw, ListChecks,
+  UploadCloud, ClipboardList, Sun, FileBarChart, RotateCcw, ListChecks, Bell, BellOff,
 } from "lucide-react";
 import { PageHero, PageBody, Card, StepLine, heroPrimary, heroQuiet, type HeroFact } from "@/components/ui/PageHero";
 import { listMilestones } from "@/lib/milestones";
@@ -47,12 +49,14 @@ import QualityTab from "@/components/projects/QualityTab";
 import MaterialsRegister from "@/components/projects/MaterialsRegister";
 import EventOrganization from "@/components/projects/EventOrganization";
 import ProjectCoach from "@/components/projects/ProjectCoach";
+import ProjectNeeds from "@/components/projects/ProjectNeeds";
+import SetupHost from "@/components/projects/SetupHost";
+import { isWatching, watch, unwatch } from "@/lib/subscriptions";
 import { openProjectReport } from "@/lib/projectReport";
 import { FindingsReviewModal, FindingsGate } from "@/components/projects/Findings";
 import { gatherProjectSnapshot } from "@/lib/projectSnapshot";
 import type { ProjectStateSnapshot } from "@/lib/projectHealth";
 import { exportProjectToCsv } from "@/lib/projectExport";
-import WatchButton from "@/components/ui/WatchButton";
 import QuickNoteComposer from "@/components/notes/QuickNoteComposer";
 import PresenceIndicator from "@/components/ui/PresenceIndicator";
 import { useRole } from "@/components/providers/RoleContext";
@@ -92,15 +96,22 @@ const SCHEDULE_TABS = ["plan", "today", "work", "reports"] as const;
 type ScheduleTabId = (typeof SCHEDULE_TABS)[number];
 const isScheduleTab = (t: Tab | null): t is ScheduleTabId => !!t && (SCHEDULE_TABS as readonly string[]).includes(t);
 const TABS: readonly Tab[] = ["plan", "today", "work", "reports", "closeout", "materials", "documents", "intake", "costs", "quality", "activity", "members"];
-/** The tabs for running the job, and the project's records. */
+/** The tabs for running the job, from the plan to the close-out. */
 const MAIN_TABS: Array<{ id: Tab; label: string; icon: typeof Sun }> = [
   { id: "plan", label: "Plan", icon: ClipboardList }, { id: "today", label: "Shift", icon: Sun }, { id: "work", label: "Work", icon: Flag },
   { id: "reports", label: "Reports", icon: FileBarChart }, { id: "closeout", label: "Close-out", icon: ListChecks },
 ];
+/** The project's records used every week, in sight beside them: the
+ *  documents, the costs (contractors, staffing plans, invoices, change
+ *  orders), quality (punch list, checklists, turnover package), materials
+ *  and who's on the job. Close-out and the review send people to these. */
 const RECORD_TABS: Array<{ id: Tab; label: string; icon: typeof Sun }> = [
-  { id: "materials", label: "Materials", icon: Package }, { id: "costs", label: "Costs", icon: CircleDollarSign }, { id: "quality", label: "Quality", icon: ShieldCheck },
-  { id: "documents", label: "Documents", icon: FileText }, { id: "members", label: "Members", icon: Users }, { id: "intake", label: "Intake", icon: UploadCloud },
-  { id: "activity", label: "Activity", icon: ActivityIcon },
+  { id: "documents", label: "Documents", icon: FileText }, { id: "costs", label: "Costs", icon: CircleDollarSign }, { id: "quality", label: "Quality", icon: ShieldCheck },
+  { id: "materials", label: "Materials", icon: Package }, { id: "members", label: "Members", icon: Users },
+];
+/** The rare ones, under More: contractor upload links and the full history. */
+const MORE_TABS: Array<{ id: Tab; label: string; icon: typeof Sun }> = [
+  { id: "intake", label: "Intake", icon: UploadCloud }, { id: "activity", label: "Activity", icon: ActivityIcon },
 ];
 /** The tab a link asks for (older links' "schedule" opened the board: Work).
  *  None: decided by the project. */
@@ -215,6 +226,8 @@ export default function ProjectDetailPage() {
   const [reviewLeft, setReviewLeft] = useState<number | null>(null);
   // Coach re-gathers when page data changes.
   const [coachKey, setCoachKey] = useState(0);
+  // Following the project (bell notifications): set once, so it's in the Project menu.
+  const [watching, setWatching] = useState<boolean | null>(null);
 
   const isOwner = project && uid && project.ownerUserId === uid;
   const isMember = members.some((m) => m.userId === uid);
@@ -269,7 +282,8 @@ export default function ProjectDetailPage() {
   // What's left to close: read here once the work is done; the Close-out
   // tab says it again each time it reads (so the band keeps up with it).
   const closing = !!project && workDone && project.status !== "completed" && project.status !== "cancelled" && project.status !== "archived";
-  const closeRead = useCloseOpen(project?.orgId, project?.id, phases, closing, coachKey);
+  // Read for the Complete dialog too, so it lists the same steps (the PSSR with them).
+  const closeRead = useCloseOpen(project?.orgId, project?.id, phases, closing || pendingStatus === "completed", coachKey);
   const [closeLive, setCloseLive] = useState<CloseOpen | null>(null);
   const close = closing ? closeLive ?? closeRead : null;
 
@@ -356,6 +370,12 @@ export default function ProjectDetailPage() {
   }, [pendingStatus, projectId]);
 
   useEffect(() => { void refresh(); }, [refresh]);
+  useEffect(() => {
+    if (!projectId || !uid) return;
+    let live = true;
+    void isWatching("project", projectId, uid).then((v) => { if (live) setWatching(v); }).catch(() => { if (live) setWatching(null); });
+    return () => { live = false; };
+  }, [projectId, uid]);
 
   // Go to a tab by name; "reports:<report>" opens that report.
   const goTab = useCallback((name: string) => {
@@ -500,7 +520,7 @@ export default function ProjectDetailPage() {
     facts = [{ label: "Steps planned", value: upcoming.steps }];
   }
   else if (st.length && st.every((s) => s.state === "finished")) { answer = "Work done."; facts = [stepsFact, finishFact()]; }
-  if (project.status === "paused" && !sub) sub = canManage ? "Paused. Resume it from the Project menu." : "Paused.";
+  if (project.status === "paused" && !sub) sub = "Paused.";
   const heroFacts = facts.filter((f): f is HeroFact => !!f);
 
   // The phases, joined by one line: each with how it finished (or where it
@@ -535,7 +555,10 @@ export default function ProjectDetailPage() {
   // The one orange action: what's next for the project, unless the tab
   // that does it is the one open (its own button is the orange one there).
   const next: { label: string; tab: Tab; run: () => void } | null =
-    !canManage || project.status === "completed" || project.status === "cancelled" || project.status === "archived" || !standings ? null
+    !canManage || project.status === "completed" || project.status === "cancelled" || project.status === "archived" ? null
+      // Paused: putting it back to work is the next thing, in sight (not in a menu).
+      : project.status === "paused" ? { label: "Resume project", tab: "closeout", run: () => setPendingStatus("active") }
+      : !standings ? null
       : noSchedule ? { label: "Import the schedule", tab: "plan", run: () => goTab("plan") }
         : workDone ? (close && close.open.length === 0 ? { label: "Mark complete", tab: "closeout", run: () => setPendingStatus("completed") } : { label: "Finish close-out", tab: "closeout", run: () => goTab("closeout") })
           : state?.scheduledDone && unscheduled.length ? { label: `Import ${unscheduled[0].name}'s schedule`, tab: "plan", run: () => { setPhase(unscheduled[0].id); goTab("plan"); } }
@@ -545,13 +568,42 @@ export default function ProjectDetailPage() {
   const primary = next && tab !== next.tab && (tab === "plan" || tab === "work" || !tab)
     ? <button type="button" onClick={next.run} className={heroPrimary}>{next.label}</button> : undefined;
 
+  // Setup opens in place, on whichever tab is open (SetupHost below).
+  const openSetup = () => requestSetup();
+  // What this project needs: the Plan tab's list of every requirement.
+  const needsPanel = project.id && project.orgId && uid ? (
+    <ProjectNeeds orgId={project.orgId} project={project} jobKind={jobKind} phases={phases} steps={allSteps} members={members}
+      canManage={!!canManage} uid={uid} userEmail={userEmail ?? null} refreshKey={coachKey}
+      onPhases={() => setShowPhases(true)} onEdit={() => setShowEdit(true)} onTab={goTab} onLessons={() => setReviewOpen(true)}
+      onJobKind={setJobKind} />
+  ) : null;
+  // A person's name from their id (who added a turnover document).
+  const nameOf = (id: string | null | undefined) => {
+    if (!id) return null;
+    const m = members.find((x) => x.userId === id);
+    return m?.userName || m?.userEmail || (id === project.ownerUserId ? project.ownerUserName ?? null : null);
+  };
+  const toggleFollow = async () => {
+    if (!project.id || !uid || watching == null) return;
+    try {
+      if (watching) await unwatch({ userId: uid, resourceType: "project", resourceId: project.id });
+      else await watch({ orgId: project.orgId, userId: uid, resourceType: "project", resourceId: project.id });
+      setWatching(!watching);
+    } catch (e) { await appAlert({ message: (e as Error).message, tone: "danger" }); }
+  };
+  // The rare things only: Setup is in sight on the header (and on Plan);
+  // a phone's narrow header keeps it here too.
   const projectMenu = (
               <MoreMenu label="Project" iconOnly={narrow} triggerClass={narrow ? BAND_ICON : heroQuiet} items={[
-                ...(canManage ? [{ icon: <Settings2 className="w-4 h-4" />, label: "Setup", onClick: () => { if (!isScheduleTab(tab)) goTab("plan"); requestSetup(); } }] : []),
+                ...(canManage && narrow ? [{ icon: <Settings2 className="w-4 h-4" />, label: "Setup", onClick: openSetup }] : []),
                 ...(canManage ? [{ icon: <Layers className="w-4 h-4" />, label: phases.length ? "Phases" : "Split into phases", onClick: () => setShowPhases(true) }] : []),
                 ...(canManage ? [{ icon: <Pencil className="w-4 h-4" />, label: "Edit name, dates and details", onClick: () => setShowEdit(true) }] : []),
                 ...(project.linkedTicketId ? [{ icon: <Hash className="w-4 h-4" />, label: "Linked drafting request", onClick: () => router.push(`/requests/${project.linkedTicketId}`) }] : []),
-                { icon: <FileText className="w-4 h-4" />, label: "Report", onClick: async () => {
+                ...(watching != null ? [{ icon: watching ? <BellOff className="w-4 h-4" /> : <Bell className="w-4 h-4" />, label: watching ? "Stop following" : "Follow this project", onClick: toggleFollow }] : []),
+                // What the job taught: the close-out's one review (also a step on Close-out).
+                ...(canManage && (project.status === "completed" || project.status === "active" || project.status === "paused")
+                  ? [{ icon: <Target className="w-4 h-4" />, label: "Lessons & findings", onClick: () => setReviewOpen(true) }] : []),
+                { icon: <FileText className="w-4 h-4" />, label: "Project report", line: true, onClick: async () => {
                   if (!project.id || !project.orgId) return;
                   try { await openProjectReport(project.orgId, project.id); }
                   catch (e) { await appAlert({ message: (e as Error).message, tone: "danger" }); }
@@ -566,9 +618,6 @@ export default function ProjectDetailPage() {
                   try { await openProjectEvidencePack(project.id); }
                   catch (e) { await appAlert({ message: (e as Error).message, tone: "danger" }); }
                 } },
-                // What the job taught: the close-out's one review.
-                ...(canManage && (project.status === "completed" || project.status === "active" || project.status === "paused")
-                  ? [{ icon: <Target className="w-4 h-4" />, label: "Lessons & findings", onClick: () => setReviewOpen(true) }] : []),
                 ...(canManage && project.status === "active" ? [
                   { icon: <Pause className="w-4 h-4" />, label: "Pause project", onClick: () => setPendingStatus("paused"), line: true },
                   { icon: <CheckCircle2 className="w-4 h-4" />, label: "Mark complete", onClick: () => setPendingStatus("completed"), tone: "good" as const },
@@ -626,9 +675,19 @@ export default function ProjectDetailPage() {
           {project.id && project.orgId && uid && (
             <span className="max-md:hidden inline-flex items-center gap-2">
               <PresenceIndicator resourceType="project" resourceId={project.id} userId={uid} userName={userEmail?.split("@")[0]} role={activeRole || undefined} />
-              <WatchButton orgId={project.orgId} userId={uid} resourceType="project" resourceId={project.id}
-                className="!h-9 !px-3 !rounded-md !text-[14px] !font-semibold !border-[var(--color-border-strong)] !bg-[var(--color-surface)] !text-[var(--color-text)] hover:!bg-[var(--color-surface-2)]" />
             </span>
+          )}
+          {/* Paused: Resume in sight on every tab (the band's orange carries it on Plan and Work). */}
+          {canManage && project.status === "paused" && !primary && (
+            <button type="button" onClick={() => setPendingStatus("active")} aria-label="Resume project" title="Resume project" className={narrow ? BAND_ICON : heroQuiet}>
+              <Play className="w-4 h-4" />{!narrow && " Resume"}
+            </button>
+          )}
+          {/* Setup in sight: opens in place, on any tab. */}
+          {canManage && !narrow && (
+            <button type="button" onClick={openSetup} className={heroQuiet} data-header-setup>
+              <Settings2 className="w-4 h-4" /> Setup
+            </button>
           )}
           {projectMenu}
         </>}
@@ -647,34 +706,41 @@ export default function ProjectDetailPage() {
             <StepLine onDark steps={lineSteps} />
           </div>
         )}
-        {/* TABS: the five for running the job, then the project's records.
-            The records sit under More, with the one open in sight. */}
+        {/* TABS: the five for running the job, then the records used every
+            week, all in sight (a phone scrolls the strip sideways). The two
+            rare ones sit under More, with the one open in sight. */}
         <div className="mt-6 sm:mt-7 flex items-end border-b border-[var(--color-border-strong)]">
-          <nav aria-label="Project" className="min-w-0 flex items-end gap-5 sm:gap-7 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          <TabStrip>
             {MAIN_TABS.map((t) => (
               <TabButton key={t.id} active={tab === t.id} onClick={() => setTab(t.id)}>{t.label}</TabButton>
             ))}
-            {RECORD_TABS.filter((t) => t.id === tab).map((t) => (
-              <TabButton key={t.id} active onClick={() => setTab(t.id)}>
+            <span aria-hidden className="shrink-0 self-center w-px h-5 bg-[var(--color-border-strong)]" />
+            {RECORD_TABS.map((t) => (
+              <TabButton key={t.id} active={tab === t.id} onClick={() => setTab(t.id)}>
                 {t.label}{t.id === "documents" && checkouts.length > 0 && <span className="ui-count is-solid">{checkouts.length}</span>}
               </TabButton>
             ))}
-          </nav>
-          <span className="shrink-0 self-center ml-4 sm:ml-6">
+            {MORE_TABS.filter((t) => t.id === tab).map((t) => (
+              <TabButton key={t.id} active onClick={() => setTab(t.id)}>{t.label}</TabButton>
+            ))}
+          </TabStrip>
+          <span className="shrink-0 self-center ml-3 sm:ml-6">
             <MoreMenu label="More" triggerClass="inline-flex items-center justify-center gap-1 h-10 px-2 -mx-2 rounded-md text-[15px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface)]"
-              items={RECORD_TABS.map((t) => ({ icon: <t.icon className="w-4 h-4" />, label: t.label, current: tab === t.id, onClick: () => setTab(t.id) }))} />
+              items={MORE_TABS.map((t) => ({ icon: <t.icon className="w-4 h-4" />, label: t.label, current: tab === t.id, onClick: () => setTab(t.id) }))} />
           </span>
           <div className="ml-auto pl-2 self-center shrink-0 max-sm:hidden">
               <HelpTooltip>
-                <b>Plan</b> - the schedule as a list: import it (P6, MS Project), set it up, add to it.
+                <b>Plan</b> - what this project needs, from setup to close-out, changed right there; then the schedule as a list: import it (P6, MS Project), add to it.
                 <b className="block mt-1">Shift</b> - the shift ending and the next one: meetings, hour by hour, overtime, the turnover, the night plan, Lock report. Any date.
                 <b className="block mt-1">Work</b> - the timeline, calendar and work orders.
                 <b className="block mt-1">Reports</b> - every report, and the field forms.
                 <b className="block mt-1">Close-out</b> - what&rsquo;s left to close the job, and how it did. A finished job opens here.
-                <b className="block mt-1">Materials</b> - the materials register: every material and off-site repair, with its spec, owner, status and need-by date. Open it at scope freeze.
-                <b className="block mt-1">Documents</b> - every checkout attached to this project (active + released).
-                <b className="block mt-1">Activity</b> - the project&rsquo;s full timeline: comments, doc events, holds, milestone hits.
+                <b className="block mt-1">Documents</b> - the project&rsquo;s documents, its scope, and every checkout attached to it.
+                <b className="block mt-1">Costs</b> - contractors (staffing plans, rate sheets), the budget, quotes, invoices and change orders.
+                <b className="block mt-1">Quality</b> - checklists (PSSR, QA/QC), the turnover package and the punch list.
+                <b className="block mt-1">Materials</b> - the materials register: every material and off-site repair, with its spec, owner, status and need-by date.
                 <b className="block mt-1">Members</b> - who&rsquo;s on this project, and the event organization: the roles it requires and who fills each.
+                <b className="block mt-1">More</b> - Intake (contractor upload links) and Activity (the project&rsquo;s full timeline).
               </HelpTooltip>
           </div>
         </div>
@@ -687,6 +753,9 @@ export default function ProjectDetailPage() {
         {tab === "plan" && closing && (
           <ClosePath close={close} standings={standings} when={when} />
         )}
+        {/* Everything this project asks for, from day one, each changed in
+            place. With no schedule yet, importing it comes first (below). */}
+        {tab === "plan" && !noSchedule && needsPanel}
         {/* Health + "what do I feed you": the wizard for the rest of the
             project's life. */}
         {project.id && project.orgId && tab === "plan" && (
@@ -753,6 +822,9 @@ export default function ProjectDetailPage() {
             onLessons={() => setReviewOpen(true)}
             onComplete={() => setPendingStatus("completed")}
             onOpen={setCloseLive}
+            madeAt={project.createdAt ? String(project.createdAt) : null}
+            nameOf={nameOf}
+            onJobKind={setJobKind}
           />
         )}
         {tab === "closeout" && !uid && <Card><LoadingBlock what="close-out" className="border-0 p-0" /></Card>}
@@ -760,6 +832,7 @@ export default function ProjectDetailPage() {
           <MaterialsRegister orgId={project.orgId} projectId={project.id} phases={phases} canManage={!!canManage || access.canEdit} actor={{ uid, email: userEmail }} />
         )}
         {tab === "quality" && project.id && project.orgId && uid && (
+          <ScheduleTzProvider timeZone={project.timezone}>
           <QualityTab
             orgId={project.orgId}
             projectId={project.id}
@@ -772,6 +845,7 @@ export default function ProjectDetailPage() {
             jobKind={jobKind}
             onDataChanged={() => setCoachKey((k) => k + 1)}
           />
+          </ScheduleTzProvider>
         )}
         {tab === "intake" && !canManage && (
           <Card label="Intake">
@@ -822,6 +896,7 @@ export default function ProjectDetailPage() {
             />
           </ScheduleTzProvider>
         )}
+        {tab === "plan" && noSchedule && needsPanel}
         {tab === "members" && project.id && (
           <EventOrganization projectId={project.id} canManage={!!canManage || access.canEdit} actor={{ email: userEmail ?? null }} people={[...new Set(members.map((m) => (m.userName || m.userEmail || "").trim()).filter(Boolean))]} />
         )}
@@ -837,6 +912,13 @@ export default function ProjectDetailPage() {
           />
         )}
       </PageBody>
+
+      {/* Setup, on every tab: opened at the part asked for, in place. */}
+      {uid && project.id && project.orgId && allSteps && (
+        <SetupHost orgId={project.orgId} projectId={project.id} projectName={project.name} timezone={project.timezone} steps={allSteps}
+          canManage={!!canManage} canEdit={access.canEdit} userId={uid} userEmail={userEmail} userRole={activeRole}
+          onProjectChanged={() => void refresh()} />
+      )}
 
       {/* Lessons & findings: the close-out review, from the header or the Complete step. */}
       {reviewOpen && project.id && project.orgId && (
@@ -899,16 +981,20 @@ export default function ProjectDetailPage() {
               </div>
             )}
             {pendingStatus === "completed" && gates && (() => {
+              // The same steps Close-out lists (the PSSR with them), then the checklists.
+              const cr = closeLive ?? closeRead;
+              const pssr = cr ? [...cr.open.map((c) => ({ ...c, ok: false })), ...cr.clear.map((c) => ({ ...c, ok: true }))].find((c) => c.id === "pssr") : undefined;
               const gateLines: Array<{ ok: boolean; text: string }> = [
+                ...(pssr ? [{ ok: pssr.ok, text: `${pssr.name}: ${pssr.detail}` }] : []),
+                { ok: gates.turnoverRequired === 0 || gates.turnoverAccepted >= gates.turnoverRequired, text: gates.turnoverRequired === 0 ? "No turnover documents needed (none were added)" : gates.turnoverAccepted >= gates.turnoverRequired ? "Turnover documents all accepted" : `Turnover documents: ${gates.turnoverAccepted} of ${gates.turnoverRequired} accepted` },
                 { ok: gates.punchOpen === 0, text: gates.punchOpen === 0 ? "Punch list clear" : `${gates.punchOpen} punch item${gates.punchOpen === 1 ? "" : "s"} still open` },
-                { ok: gates.turnoverRequired === 0 || gates.turnoverAccepted >= gates.turnoverRequired, text: gates.turnoverRequired === 0 ? "No turnover requirements set" : gates.turnoverAccepted >= gates.turnoverRequired ? "Turnover package fully accepted" : `Turnover ${gates.turnoverAccepted}/${gates.turnoverRequired} accepted` },
+                { ok: gates.openChangeOrders === 0, text: gates.openChangeOrders === 0 ? "No change orders waiting on a decision" : `${gates.openChangeOrders} change order${gates.openChangeOrders === 1 ? "" : "s"} waiting on a decision` },
                 { ok: gates.checklistOpenItems + gates.checklistNeedsEvidence === 0, text: gates.checklistOpenItems + gates.checklistNeedsEvidence === 0 ? "Checklists clear" : `${gates.checklistOpenItems + gates.checklistNeedsEvidence} checklist item${gates.checklistOpenItems + gates.checklistNeedsEvidence === 1 ? "" : "s"} unresolved` },
-                { ok: gates.openChangeOrders === 0, text: gates.openChangeOrders === 0 ? "No change orders awaiting decision" : `${gates.openChangeOrders} change order${gates.openChangeOrders === 1 ? "" : "s"} awaiting decision` },
               ];
               const failed = gateLines.filter((g) => !g.ok).length;
               return (
                 <div className="px-6 pt-4">
-                  <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5">Closeout gates</div>
+                  <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5">Left to close</div>
                   <ul className="divide-y divide-[var(--color-border)] border-y border-[var(--color-border)]">
                     {gateLines.map((g, i) => (
                       <li key={i} className="flex items-center gap-2 py-1.5 text-[14px] text-[var(--color-text)]">
@@ -996,6 +1082,28 @@ function ClosePath({ close, standings, when }: {
     <Card label="To close the project">
       <PathSteps rows={rows} />
     </Card>
+  );
+}
+
+/** The tab strip: every tab in it, scrolling sideways on a phone; its far
+ *  edge fades while more tabs are past it, so it's plain there are more. */
+function TabStrip({ children }: { children: React.ReactNode }) {
+  const ref = React.useRef<HTMLElement | null>(null);
+  const [more, setMore] = useState(false);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const check = () => setMore(el.scrollLeft + el.clientWidth < el.scrollWidth - 4);
+    check();
+    el.addEventListener("scroll", check, { passive: true });
+    window.addEventListener("resize", check);
+    return () => { el.removeEventListener("scroll", check); window.removeEventListener("resize", check); };
+  }, []);
+  return (
+    <nav ref={ref} aria-label="Project"
+      className={`min-w-0 flex items-end gap-5 sm:gap-7 overflow-x-auto overscroll-x-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden ${more ? "[mask-image:linear-gradient(to_right,black_82%,transparent)]" : ""}`}>
+      {children}
+    </nav>
   );
 }
 

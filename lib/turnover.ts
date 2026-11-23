@@ -41,6 +41,8 @@ export interface TurnoverItem {
   reviewedByName: string | null;
   reviewNote: string | null;
   createdAt: string | null;
+  /** Who added it (a user id). */
+  createdBy?: string | null;
 }
 
 export interface PunchItem {
@@ -113,6 +115,7 @@ function mapItem(r: Record<string, unknown>): TurnoverItem {
     reviewedByName: (r.reviewed_by_name as string | null) ?? null,
     reviewNote: (r.review_note as string | null) ?? null,
     createdAt: (r.created_at as string | null) ?? null,
+    createdBy: (r.created_by as string | null) ?? null,
   };
 }
 

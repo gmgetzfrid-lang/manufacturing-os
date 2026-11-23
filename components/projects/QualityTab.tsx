@@ -43,7 +43,7 @@ import {
   type TurnoverItem, type PunchItem, TURNOVER_STATUS_LABEL,
   listTurnoverItems, seedTurnoverItems, addTurnoverItem, reviewTurnoverItem,
   listPunchItems, addPunchItem, setPunchStatus, computeTurnoverProgress,
-  reopenTurnoverItem, updateTurnoverItem, attachTurnoverDocument, updatePunchItem,
+  reopenTurnoverItem, updateTurnoverItem, attachTurnoverDocument, updatePunchItem, seedsForJobKind,
 } from "@/lib/turnover";
 import type { SegmentedItem } from "@/lib/checklistEngine";
 import { appConfirm, appPrompt } from "@/components/providers/DialogProvider";
@@ -56,6 +56,9 @@ import FileThumb from "@/components/ui/FileThumb";
 import { tryUpload } from "@/lib/uploadRetry";
 import { fileSize } from "@/components/projects/cost/FilePreview";
 import { useDraft } from "@/hooks/useDraft";
+import { turnoverSource, jobSizeWord } from "@/lib/requirementSource";
+import { SourceLine } from "@/components/projects/NeedParts";
+import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
 
 type Announce = (message: string, undo: () => void | Promise<void>) => void;
 
@@ -687,6 +690,8 @@ function TurnoverSection({ orgId, projectId, canManage, actor, items, jobKind, p
   const [busy, setBusy] = useState<string | null>(null);
   const [addName, setAddName] = useState("");
   const progress = useMemo(() => computeTurnoverProgress(items), [items]);
+  const tz = useScheduleTz();
+  const usual = seedsForJobKind(jobKind).length;
   // A row being edited, and one whose document is being picked.
   const [editing, setEditing] = useState<string | null>(null);
   const [attaching, setAttaching] = useState<string | null>(null);
@@ -768,16 +773,18 @@ function TurnoverSection({ orgId, projectId, canManage, actor, items, jobKind, p
         {canManage && (
           <button onClick={() => void seed()} disabled={busy != null}
             className="ml-auto inline-flex items-center gap-1.5 h-9 px-3.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors"
-            title={`Adds the required contents for a ${jobKind ?? "standard"} job (existing items are kept).`}>
-            {busy === "seed" ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />} Seed required contents
+            title={`Adds the usual documents for a ${jobSizeWord(jobKind).toLowerCase()} (the ones already here are kept).`}>
+            {busy === "seed" ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />} Add the usual list ({usual} for a {jobSizeWord(jobKind).toLowerCase()})
           </button>
         )}
+        {/* Where this list came from: the app's default (none), or set for this project. */}
+        <SourceLine source={turnoverSource(items, null)} tz={tz} className="basis-full -mt-1.5" />
       </div>
       <div className="bg-[var(--color-surface)] rounded-lg overflow-hidden border border-[var(--color-border)]">
 
       {items.length === 0 ? (
         <div className="px-4 py-6 text-center text-xs text-[var(--color-text-muted)]">
-          Nothing required yet. Seed the standard contents for this job size, or add items below.
+          Nothing required yet. Add the usual list for the job size, or add documents below.
         </div>
       ) : (
         <ul className="divide-y divide-[var(--color-border)]">
