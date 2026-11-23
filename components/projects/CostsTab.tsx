@@ -376,7 +376,7 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
       {/* ── Parties ── */}
       <Card pad={false} className="overflow-hidden">
         <button onClick={() => setShowParties((v) => !v)} aria-expanded={showParties} className="w-full px-4 sm:px-5 py-3.5 flex items-center gap-2 text-left hover:bg-[var(--color-surface-2)]/40 transition-colors">
-          <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Contractors &amp; vendors · {parties.length}</span>
+          <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Contractors &amp; vendors <span className="font-normal tabular-nums">{parties.length}</span></span>
           <span className="flex-1" />
           <ChevronRight className={`w-4 h-4 text-[var(--color-text-faint)] ui-chevron${(showParties) ? " rotate-90" : ""}`} />
         </button>

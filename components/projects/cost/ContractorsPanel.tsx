@@ -27,19 +27,22 @@ import { lineOfDoc, type CostDocument } from "@/lib/costDocs";
 import type { ProjectPhase } from "@/lib/projectPhases";
 import { appConfirm } from "@/components/providers/DialogProvider";
 import { invalidateCrewSettings } from "@/lib/useCrewSettings";
-import LoadingBlock from "@/components/ui/LoadingBlock";
+import { SkeletonRows } from "@/components/ui/Skeleton";
+import { ErrorNote } from "@/components/ui/ErrorNote";
+import { SubTabs } from "@/components/projects/SubTabs";
 import FileThumb from "@/components/ui/FileThumb";
 import { useFileDrag } from "@/hooks/useFileDrag";
 import { tryUpload } from "@/lib/uploadRetry";
 import { fileSize } from "@/components/projects/cost/FilePreview";
 import { sayError } from "@/components/projects/sayError";
 
-const btn = "inline-flex items-center justify-center gap-1.5 h-9 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[12px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] whitespace-nowrap disabled:opacity-50";
-const pri = "inline-flex items-center justify-center gap-1.5 h-9 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[12px] font-semibold whitespace-nowrap disabled:opacity-50";
-const field = "rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 h-9 text-[13px] text-[var(--color-text)]";
-const label = "text-[12px] font-semibold text-[var(--color-text-muted)]";
-const card = "rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] p-4 sm:p-5";
-const errLine = "border-l-2 border-[var(--state-overdue)] pl-3 py-1 text-[12px] font-semibold text-[var(--state-overdue-text)]";
+const btn = "inline-flex items-center justify-center gap-1.5 h-9 pointer-coarse:h-11 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] whitespace-nowrap disabled:opacity-50 transition-colors";
+const pri = "inline-flex items-center justify-center gap-1.5 h-9 pointer-coarse:h-11 px-3.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[14px] font-semibold hover:bg-[var(--color-accent-hover)] whitespace-nowrap disabled:opacity-50 transition-colors";
+const field = "rounded-lg border border-[var(--color-border-control)] bg-[var(--color-surface)] px-2.5 h-9 pointer-coarse:h-11 text-[14px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)]";
+const label = "text-[13px] font-semibold text-[var(--color-text)]";
+const card = "rounded-xl bg-[var(--color-surface)] border border-[var(--color-border)] p-4 sm:p-5";
+/** An error said plainly where it happened. */
+const Err = ({ children }: { children: React.ReactNode }) => <ErrorNote compact title={children} next="" />;
 
 /** A sheet to read (Excel or CSV): drop it on the button or pick it. */
 function SheetPick({ label: text, cls, disabled, onFile }: { label: React.ReactNode; cls: string; disabled?: boolean; onFile: (f: File) => void }) {
@@ -157,21 +160,18 @@ export default function ContractorsPanel(p: ContractorsProps) {
     }).sort((a, b) => b.c.crews.reduce((n, x) => n + (work.get(x) ?? 0), 0) - a.c.crews.reduce((n, x) => n + (work.get(x) ?? 0), 0) || a.c.company.localeCompare(b.c.company));
   }, [settings, crews, work, records, p.parties, p.docs, p.entries, p.accounts, p.tz, times, now, inScope]);
 
-  if (!settings) return err ? <div role="alert" className={errLine}>Couldn&apos;t load the contractors: {err}</div> : <LoadingBlock what="contractors" />;
+  if (!settings) return err ? <ErrorNote title="Couldn't load the contractors." next={err} onRetry={() => void load()} /> : <SkeletonRows rows={4} cols={2} what="contractors" />;
   const cur = open ? list.find((x) => x.c.company === open) ?? null : null;
   const setS = (f: (s: CrewSettings) => CrewSettings) => setSettings((s) => (s ? f(s) : s));
   const phasePills = p.mode === "staffing" && p.phases.length > 1 ? (
-    <div className="flex flex-wrap gap-1.5" role="group" aria-label="Phase">
-      {[{ id: null as string | null, name: "Whole project" }, ...p.phases.map((x) => ({ id: x.id as string | null, name: x.name }))].map((x) => (
-        <button key={x.id ?? "all"} type="button" aria-pressed={phaseId === x.id} onClick={() => setOwnPhase(x.id)} className={`h-8 px-3 rounded-full border text-[12px] font-bold ${phaseId === x.id ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30 border-transparent" : "border-[var(--color-border-strong)] text-[var(--color-text)]"}`}>{x.name}</button>
-      ))}
-    </div>
+    <SubTabs label="Phase" value={phaseId ?? "__all"} onChange={(id) => setOwnPhase(id === "__all" ? null : id)} className="border-b border-[var(--color-border)]"
+      items={[{ id: "__all", label: "Whole project" }, ...p.phases.map((x) => ({ id: x.id, label: x.name }))]} />
   ) : null;
   if (cur) return <><div className={phasePills ? "mb-3" : ""}>{phasePills}</div><ContractorPage {...p} x={cur} scope={scope} settings={settings} allCrews={crews} setSettings={setS} onBack={() => setOpen(null)} reload={load} paidShift={(c) => paidHoursOf(c, shiftHoursOf(times))} /></>;
 
   if (p.mode === "staffing") return (
     <div className="space-y-3" data-staffing-setup>
-      {err && <div role="alert" className={errLine}>{err}</div>}
+      {err && <Err>{err}</Err>}
       <p className="text-[13px] text-[var(--color-text-muted)]">{(() => { const n = list.filter((x) => !x.plan).length; return list.length ? (n ? `${plural(n, "contractor")} still without a staffing plan.` : "Every contractor has a staffing plan.") : ""; })()}</p>
       {list.length === 0 ? <p className="text-[13px] text-[var(--color-text-muted)]">No contractor crews on the schedule yet.</p> : (
         <ul className="divide-y divide-[var(--color-border)] rounded-xl border border-[var(--color-border)]">
@@ -179,7 +179,7 @@ export default function ContractorsPanel(p: ContractorsProps) {
             const days = x.plan ? Object.keys(x.plan.shifts).map((k) => k.split(":")[0]).sort() : [];
             return (
               <li key={x.c.company} className="flex items-center gap-3 px-3 py-2.5" data-contractor={x.c.company}>
-                <span className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 ${x.plan ? "bg-[var(--state-released)] text-white" : "border border-[var(--color-border-strong)]"}`}>{x.plan && <Check className="w-3.5 h-3.5" />}</span>
+                <span aria-label={x.plan ? "Staffing plan in" : "No staffing plan yet"} className="w-[7px] h-[7px] rounded-full shrink-0" style={{ background: x.plan ? "var(--state-released)" : "var(--state-held)" }} />
                 <span className="min-w-0 flex-1">
                   <b className="block text-[14px] text-[var(--color-text)]">{x.c.company}</b>
                   <span className="block text-[12px] text-[var(--color-text-muted)]">{x.plan ? `${days.length ? `${shortDay(days[0])} to ${shortDay(days[days.length - 1])}` : "No shifts"}` : "No staffing plan yet"}{x.c.crews.length ? ` · crews: ${x.c.crews.join(", ")}` : ""}</span>
@@ -189,8 +189,8 @@ export default function ContractorsPanel(p: ContractorsProps) {
                         const has = !!x.plan && Object.keys(x.plan.shifts).some((k) => { const d = k.split(":")[0]; return (!ph.start || d >= ph.start) && (!ph.end || d <= ph.end); });
                         const src = x.plan ? sourcesOf(x.plan).find((s2) => (!ph.start || s2.from >= ph.start) && (!ph.end || s2.to <= ph.end)) : null;
                         return (
-                          <button key={ph.id} type="button" onClick={() => { setOwnPhase(ph.id); setOpen(x.c.company); }} className={`inline-flex items-center gap-1 h-7 px-2.5 rounded-full border text-[12px] font-bold ${has ? "border-[var(--color-border)] text-[var(--state-released-text)]" : "border-[var(--color-border)] text-[var(--state-held-text)]"}`}>
-                            {has ? <Check className="w-3.5 h-3.5" /> : null}{ph.name}: {has ? (src?.file || "typed in") : p.canManage ? "Upload" : "None"}
+                          <button key={ph.id} type="button" onClick={() => { setOwnPhase(ph.id); setOpen(x.c.company); }} className={`inline-flex items-center gap-1.5 h-8 pointer-coarse:h-11 px-2 -ml-2 rounded-lg text-[13px] hover:bg-[var(--color-surface-2)] ${has ? "text-[var(--color-text)]" : "font-semibold text-[var(--state-held-text)]"}`}>
+                            <span aria-hidden className="w-[7px] h-[7px] rounded-full shrink-0" style={{ background: has ? "var(--state-released)" : "var(--state-held)" }} />{ph.name}: {has ? (src?.file || "typed in") : p.canManage ? "Upload" : "None"}
                           </button>
                         );
                       })}
@@ -209,7 +209,7 @@ export default function ContractorsPanel(p: ContractorsProps) {
 
   return (
     <div className="space-y-4" data-contractors>
-      {err && <div role="alert" className={errLine}>{err}</div>}
+      {err && <Err>{err}</Err>}
       <section className={card}>
         <h3 className="text-[15px] font-semibold text-[var(--color-text)]">What each contractor should send, and what it sent</h3>
         <p className="mt-0.5 text-[13px] text-[var(--color-text-muted)]">{(() => { const n = list.filter((x) => stepsOf(x).some((st) => !st.done)).length; return list.length ? (n ? `${plural(n, "contractor")} with something still to put in.` : "Everything is in for every contractor.") : ""; })()}{scope ? ` Showing ${scope.name}.` : ""}</p>
@@ -252,13 +252,13 @@ function ContractorCard({ x, onOpen }: { x: Crew; onOpen: () => void }) {
       <span className="flex items-center gap-2">
         <HardHat className="w-4 h-4 text-[var(--color-text-muted)]" />
         <b className="min-w-0 flex-1 text-[15px] text-[var(--color-text)] truncate">{x.c.company}</b>
-        <span className={`rounded-full px-2 py-0.5 text-[12px] font-semibold ${left ? "bg-[var(--state-held)] text-[var(--state-held-text)]" : "bg-[var(--state-released)] text-[var(--state-released-text)]"}`}>{left ? `${left} to put in` : "All in"}</span>
+        <span className={`inline-flex items-center gap-1.5 text-[13px] whitespace-nowrap ${left ? "font-semibold text-[var(--state-held-text)]" : "text-[var(--color-text)]"}`}><span aria-hidden className="w-[7px] h-[7px] rounded-full" style={{ background: left ? "var(--state-held)" : "var(--state-released)" }} />{left ? `${left} to put in` : "All in"}</span>
       </span>
       <span className="text-[12px] text-[var(--color-text-muted)]">{x.c.crews.length ? `Crews: ${x.c.crews.join(", ")}` : "No crews on the schedule"}</span>
       <ol className="space-y-1">
         {steps.map((s) => (
           <li key={s.name} className="flex items-center gap-2 text-[12px]">
-            <span className={`w-4 h-4 rounded-full flex items-center justify-center shrink-0 ${s.done ? "bg-[var(--state-released)] text-white" : "border border-[var(--color-border-strong)]"}`}>{s.done && <Check className="w-3 h-3" />}</span>
+            <span aria-label={s.done ? "Done" : "To do"} className="w-[7px] h-[7px] rounded-full shrink-0" style={{ background: s.done ? "var(--state-released)" : "var(--color-border-strong)" }} />
             <span className="font-semibold text-[var(--color-text)]">{s.name}</span>
             <span className="min-w-0 truncate text-[var(--color-text-muted)]">{s.says}</span>
           </li>
@@ -291,7 +291,7 @@ function ContractorPage(p: ContractorsProps & {
         <button type="button" onClick={p.onBack} className={btn}><ArrowLeft className="w-4 h-4" /> {p.mode === "staffing" ? "Staffing plans" : "Contractors"}</button>
         <h3 className="min-w-0 flex-1 text-[15px] font-semibold text-[var(--color-text)] truncate">{co}</h3>
       </div>
-      {err && <div role="alert" className={errLine}>{err}</div>}
+      {err && <Err>{err}</Err>}
 
       {p.mode === "staffing" ? (
         <>
@@ -304,8 +304,8 @@ function ContractorPage(p: ContractorsProps & {
 
       <nav className="flex flex-wrap gap-1.5" aria-label="Sections">
         {steps.map((s, i) => (
-          <button key={s.name} type="button" onClick={() => go(["money", "plan", "rates", "daily"][i])} className={`shrink-0 inline-flex items-center gap-1.5 h-8 px-3 rounded-full border text-[12px] font-bold ${s.done ? "border-[var(--color-border)] text-[var(--state-released-text)]" : "border-[var(--color-border)] text-[var(--state-held-text)]"}`}>
-            {s.done ? <Check className="w-3.5 h-3.5" /> : <span className="w-3.5 h-3.5 rounded-full bg-[var(--state-held)] text-[var(--state-held-text)] text-[11px] font-semibold flex items-center justify-center">!</span>}{s.name}
+          <button key={s.name} type="button" onClick={() => go(["money", "plan", "rates", "daily"][i])} className={`shrink-0 inline-flex items-center gap-1.5 h-8 pointer-coarse:h-11 px-2 rounded-lg text-[14px] hover:bg-[var(--color-surface-2)] ${s.done ? "text-[var(--color-text)]" : "font-semibold text-[var(--state-held-text)]"}`}>
+            <span aria-hidden className="w-[7px] h-[7px] rounded-full shrink-0" style={{ background: s.done ? "var(--state-released)" : "var(--state-held)" }} />{s.name}
           </button>
         ))}
       </nav>
@@ -356,7 +356,7 @@ function Section({ id, title, done, sub, children }: { id: string; title: string
   return (
     <section className={`${card} space-y-3 scroll-mt-4`} data-section={id}>
       <div className="flex items-start gap-2">
-        <span className={`mt-0.5 w-5 h-5 rounded-full flex items-center justify-center shrink-0 ${done ? "bg-[var(--state-released)] text-white" : "bg-[var(--state-held)] text-[var(--state-held-text)]"}`}>{done ? <Check className="w-3.5 h-3.5" /> : <span className="text-[11px] font-semibold">!</span>}</span>
+        <span aria-label={done ? "Done" : "To do"} className="mt-[7px] w-[7px] h-[7px] rounded-full shrink-0" style={{ background: done ? "var(--state-released)" : "var(--state-held)" }} />
         <div className="min-w-0 flex-1"><h4 className="text-[15px] font-semibold text-[var(--color-text)]">{title}</h4>{sub && <p className="text-[12px] text-[var(--color-text-muted)]">{sub}</p>}</div>
       </div>
       {children}
@@ -434,7 +434,7 @@ function CrewsSection(p: SectionProps) {
       <p className="text-[12px] text-[var(--color-text-muted)]">Their head counts at the meeting are {co}&rsquo;s.</p>
       <div className="flex gap-1.5 flex-wrap items-center">
         {x.c.crews.map((c) => (
-          <span key={c} className="inline-flex items-center gap-1 rounded-full border border-[var(--color-border)] px-2.5 py-1 text-[12px] font-semibold text-[var(--color-text)]">{c}
+          <span key={c} className="inline-flex items-center gap-1 rounded-md border border-[var(--color-border-strong)] px-2.5 py-1 text-[13px] text-[var(--color-text)]">{c}
             {p.canManage && p.settings.manpower.companyOf?.[c] === co && <button type="button" aria-label={`Take ${c} off ${co}`} onClick={() => void assign(c, "")} className="text-[var(--color-text-muted)] hover:text-[var(--state-overdue-text)]"><X className="w-3.5 h-3.5" /></button>}
           </span>
         ))}
@@ -559,10 +559,10 @@ function PlanSection(p: SectionProps) {
             <span className={label}>On the tools or supervision (read from each craft&rsquo;s code; tap to change)</span>
             <div className="mt-1 flex gap-1.5 flex-wrap">
               {read.g.crafts.map((c) => (
-                <button key={c.name} type="button" onClick={() => setRead({ ...read, direct: { ...read.direct, [c.name]: !read.direct[c.name] } })} aria-pressed={read.direct[c.name]}
-                  className={`h-8 px-2.5 rounded-full border text-[12px] font-semibold ${read.direct[c.name] ? "border-transparent bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30" : "border-[var(--color-border-strong)] text-[var(--color-text)]"}`}>
-                  {c.name} <span className="opacity-70">{read.direct[c.name] ? "tools" : "supervision"}</span>
-                </button>
+                <label key={c.name} className="inline-flex items-center gap-2 min-h-8 pointer-coarse:min-h-11 pr-3 text-[14px] text-[var(--color-text)] cursor-pointer">
+                  <input type="checkbox" checked={!!read.direct[c.name]} onChange={() => setRead({ ...read, direct: { ...read.direct, [c.name]: !read.direct[c.name] } })} className="w-4 h-4 accent-[var(--color-current)]" />
+                  {c.name} <span className="text-[var(--color-text-muted)]">{read.direct[c.name] ? "on the tools" : "supervision"}</span>
+                </label>
               ))}
             </div>
           </div>
@@ -826,7 +826,7 @@ function DailySection({ x, scope }: { x: Crew; scope: ProjectPhase | null }) {
                   <tr key={r.key} className={`border-t border-[var(--color-border)] ${r.kind === "night" ? "bg-[var(--color-surface-2)]/50" : ""}`} data-crew-shift={r.key}>
                     <td className="px-3 py-1.5 whitespace-nowrap text-[var(--color-text)]">{shiftLabel(r.key)}</td>
                     <td className="px-2 py-1.5 text-right tabular-nums">{ph ?? "-"}</td>
-                    <td className="px-2 py-1.5 text-right tabular-nums">{r.counted != null ? <b>{r.counted}</b> : r.started && ph ? <span className="whitespace-nowrap rounded-full px-2 py-0.5 text-[12px] font-semibold bg-transparent text-[var(--state-held-text)]">Not counted</span> : <span className="text-[var(--color-text-faint)]">to come</span>}</td>
+                    <td className="px-2 py-1.5 text-right tabular-nums">{r.counted != null ? <b>{r.counted}</b> : r.started && ph ? <span className="whitespace-nowrap inline-flex items-center gap-1.5 text-[13px] font-semibold text-[var(--state-held-text)]"><span aria-hidden className="w-[7px] h-[7px] rounded-full bg-[var(--state-held)]" />Not counted</span> : <span className="text-[var(--color-text-faint)]">to come</span>}</td>
                     <td className="px-2 py-1.5 min-w-[170px]">{diff != null && ph != null ? (
                       <span className="flex items-center gap-2">
                         <span className="relative h-2 w-24 rounded-full bg-[var(--color-surface-2)] border border-[var(--color-border)] overflow-hidden shrink-0" aria-hidden>

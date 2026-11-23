@@ -369,7 +369,7 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
             <div className="flex-1 min-w-0">
               <h2 id="new-project-title" className="font-display text-[20px] font-semibold text-[var(--color-text)]">New project</h2>
               <p className="mt-0.5 text-[14px] text-[var(--color-text-muted)]">
-                <span className="font-semibold text-[var(--color-text)]">Step {step + 1} of {PATH.length}: {PATH[step]}.</span>{" "}
+                <span className="max-sm:hidden font-semibold text-[var(--color-text)]">Step {step + 1} of {PATH.length}: {PATH[step]}. </span>
                 {step === REVIEW ? "Check it, then make the project." : step === 0 ? "Only this step is needed." : "Optional: skip it and it comes back on the project."}
                 {draft.restored && step === 0 ? " What you typed before is back." : ""}
               </p>

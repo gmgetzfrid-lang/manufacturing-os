@@ -329,7 +329,7 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
   return (
     <div className="space-y-4">
       {/* Review queue: the point of the whole system. */}
-      <Card label={`Submissions awaiting review · ${pending.length}`}>
+      <Card label={<>Submissions awaiting review <span className="ml-1 text-[15px] font-normal tabular-nums text-[var(--color-text-muted)]">{pending.length}</span></>}>
         {msg && <div role="status" className="mb-2 text-[13px] font-bold text-[var(--color-text)] flex items-center gap-2"><span className="min-w-0 flex-1">{msg}</span><button onClick={() => setMsg(null)} aria-label="Dismiss" className="shrink-0 p-1 text-[var(--color-text-faint)] hover:text-[var(--color-text)]"><X className="w-3.5 h-3.5" /></button></div>}
         {pending.length === 0 && <div className="text-[14px] text-[var(--color-text-muted)]">Nothing waiting for review.</div>}
         <ul className="divide-y divide-[var(--color-border)]">
