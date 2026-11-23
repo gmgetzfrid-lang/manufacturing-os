@@ -387,7 +387,7 @@ function AuditRowItem({ row, docMeta, open, onToggle, onFilterAction, onFilterRe
 
   return (
     <>
-      <tr className={`${tbl.tr} max-md:grid max-md:grid-cols-[1fr_auto] max-md:py-1.5`}>
+      <tr className={`${tbl.tr} max-md:grid max-md:grid-cols-[minmax(0,1fr)_auto] max-md:py-1.5`}>
         <td className={`${tbl.td} relative max-md:hidden whitespace-nowrap text-[14px] text-[var(--color-text-muted)]`}>
           {style.tone === "bad" && <RowEdge tone="bad" />}
           <time dateTime={row.timestamp} title={shortDateTime(row.timestamp)}>{formatTime(row.timestamp)}</time>

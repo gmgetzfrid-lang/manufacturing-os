@@ -327,7 +327,7 @@ export default function LibraryAdminPage() {
                 {filteredLibraries.map((lib) => {
                   const roles = lib.readAccess === "ALL" || !lib.readAccess ? null : lib.readAccess;
                   return (
-                    <tr key={lib.id} className={`${tbl.tr} max-sm:grid max-sm:grid-cols-[1fr_auto]`}>
+                    <tr key={lib.id} className={`${tbl.tr} max-sm:grid max-sm:grid-cols-[minmax(0,1fr)_auto]`}>
                       <td className={`${tbl.td} min-w-0`}>
                         <div className="min-w-0">
                           <Link href={`/documents/${lib.id}`} title={`Open ${lib.name}`} className="font-semibold text-[var(--color-text)] hover:text-[var(--color-accent-text)] hover:underline underline-offset-2">{lib.name}</Link>

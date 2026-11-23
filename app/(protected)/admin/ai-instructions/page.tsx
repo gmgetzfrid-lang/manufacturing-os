@@ -187,7 +187,7 @@ function AiInstructionsInner() {
             </thead>
             <tbody className={tbl.tbody}>
               {sorted.map((r) => (
-                <tr key={r.id} className={`${tbl.tr} max-sm:grid max-sm:grid-cols-[1fr_auto]`}>
+                <tr key={r.id} className={`${tbl.tr} max-sm:grid max-sm:grid-cols-[minmax(0,1fr)_auto]`}>
                   <td className={`${tbl.td} max-sm:col-span-2 max-sm:pb-0`}>
                     <div className="min-w-0">
                       <div className={`font-semibold ${r.enabled ? "text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>{r.title}</div>

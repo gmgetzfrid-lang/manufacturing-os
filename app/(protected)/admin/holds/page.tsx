@@ -178,7 +178,7 @@ export default function HoldsPage() {
                   const lateDays = expectedMs && Date.now() > expectedMs ? Math.round((Date.now() - expectedMs) / 86400_000) : 0;
                   return (
                     <React.Fragment key={h.id}>
-                      <tr className={`${tbl.tr} max-sm:grid max-sm:grid-cols-[1fr_auto] max-sm:py-1`}>
+                      <tr className={`${tbl.tr} max-sm:grid max-sm:grid-cols-[minmax(0,1fr)_auto] max-sm:py-1`}>
                         <td className={`${tbl.td} relative max-sm:pb-0`}>
                           <RowEdge tone={lateDays > 0 ? "bad" : "warn"} />
                           {meta ? (

@@ -411,7 +411,7 @@ function DestinationRow({
   const failed = dest.last_run_status === "failed";
 
   return (
-    <tr className={`${tbl.tr} max-md:grid max-md:grid-cols-[1fr_auto] max-md:py-1.5`}>
+    <tr className={`${tbl.tr} max-md:grid max-md:grid-cols-[minmax(0,1fr)_auto] max-md:py-1.5`}>
       <td className={`${tbl.td} relative align-top max-md:py-1`}>
         {failed && <RowEdge tone="bad" />}
         <div className="flex items-baseline gap-x-2 gap-y-0.5 flex-wrap">
@@ -479,7 +479,7 @@ function RunRow({ run }: { run: Run }) {
   const at = run.completed_at || run.started_at;
   const st = RUN_STATUS[run.status] ?? { tone: "none" as Tone, word: run.status };
   return (
-    <tr className={`${tbl.tr} max-md:grid max-md:grid-cols-[1fr_auto] max-md:py-1.5`}>
+    <tr className={`${tbl.tr} max-md:grid max-md:grid-cols-[minmax(0,1fr)_auto] max-md:py-1.5`}>
       <td className={`${tbl.td} relative align-top max-md:py-0.5 whitespace-nowrap text-[14px] text-[var(--color-text)]`}>
         {run.status === "failed" && <RowEdge tone="bad" />}
         {shortDateTime(at)}

@@ -194,7 +194,7 @@ export default function ScopePage() {
       ) : (
         <div role="tree" aria-label="Plants, units and systems" onKeyDown={onScopeKeys} className={`${tbl.wrap} divide-y divide-[var(--color-border)]`}>
           <div className="max-sm:hidden flex items-center gap-2 px-3 h-10 bg-[var(--color-surface-2)] text-[13px] font-semibold text-[var(--color-text-muted)]">
-            <span className="flex-1 pl-9">Name</span><span className="w-28 text-right">Holds</span>{canEdit && <span className="w-12" />}
+            <span className="flex-1 pl-9">Name</span><span className="w-28 text-right">Contains</span>{canEdit && <span className="w-12" />}
           </div>
           {tree.map(({ plant, units }) => {
             const plantOpen = expandedPlants.has(plant.id!);
@@ -344,7 +344,7 @@ function ScopeRow({
   onEdit?: () => void; onArchive?: () => void;
 }) {
   return (
-    <div role="treeitem" aria-level={level + 1} aria-expanded={onToggle ? !!open : undefined} tabIndex={level === 0 ? 0 : -1} data-tree-row
+    <div role="treeitem" aria-selected={false} aria-level={level + 1} aria-expanded={onToggle ? !!open : undefined} tabIndex={level === 0 ? 0 : -1} data-tree-row
       className={`flex items-center gap-2 pl-2 pr-3 min-h-11 hover:bg-[var(--color-surface-2)] focus:bg-[var(--color-surface-2)] transition-colors ${archived ? "opacity-60" : ""}`}>
       {onToggle ? (
         <button type="button" tabIndex={-1} onClick={onToggle} aria-expanded={open} aria-label={open ? `Close ${name}` : `Open ${name}`}
@@ -352,13 +352,16 @@ function ScopeRow({
           <ChevronRight aria-hidden className={`ui-chevron w-4 h-4 ${open ? "rotate-90" : ""}`} />
         </button>
       ) : <span className="w-7 shrink-0" />}
-      <div className="flex-1 min-w-0 flex items-center gap-2">
-        {code && <span className="ui-tag shrink-0">{code}</span>}
-        <span className={`${level === 0 ? "font-semibold" : ""} text-[15px] text-[var(--color-text)] truncate`}>{name}</span>
-        {archived && <span className="text-[13px] text-[var(--color-text-muted)] shrink-0">Archived</span>}
+      <div className="flex-1 min-w-0 py-1.5">
+        <div className="flex items-center gap-2 min-w-0">
+          {code && <span className="ui-tag shrink-0">{code}</span>}
+          <span className={`${level === 0 ? "font-semibold" : ""} text-[15px] text-[var(--color-text)] sm:truncate break-words min-w-0`}>{name}</span>
+          {archived && <span className="text-[13px] text-[var(--color-text-muted)] shrink-0">Archived</span>}
+        </div>
+        {badge && <div className="sm:hidden text-[13px] text-[var(--color-text-muted)] tabular-nums">{plural(badge.n, badge.one, badge.many)}</div>}
       </div>
       {badge && (
-        <span className={`w-28 text-right shrink-0 text-[14px] tabular-nums ${badge.n === 0 ? "text-[var(--color-text-faint)]" : "text-[var(--color-text-muted)]"}`}>
+        <span className={`max-sm:hidden w-28 text-right shrink-0 text-[14px] tabular-nums ${badge.n === 0 ? "text-[var(--color-text-faint)]" : "text-[var(--color-text-muted)]"}`}>
           {plural(badge.n, badge.one, badge.many)}
         </span>
       )}

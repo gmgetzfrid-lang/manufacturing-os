@@ -1,6 +1,6 @@
 "use client";
 
-// /admin/settings — workspace-level settings.
+// /admin/settings: workspace-level settings.
 //
 // Currently surfaces:
 //   - AI provider status (live vs mock, env var hint)
@@ -12,7 +12,7 @@
 // org-wide categories from here directly.
 
 import React, { useEffect, useState } from "react";
-import { Loader2, CheckCircle2, RefreshCw, Hash, Save, Building2, Mail, Database } from "lucide-react";
+import { RefreshCw } from "lucide-react";
 import Link from "next/link";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
@@ -20,9 +20,12 @@ import { kickEmailDrain } from "@/lib/notifications";
 import { formatTicketNumber, getTicketNumberConfig, TICKET_NUMBER_DEFAULTS, type TicketNumberConfig } from "@/lib/ticketNumber";
 import { PageShell } from "@/components/ui/PageShell";
 import { PageHero, PageBody } from "@/components/ui/PageHero";
-import { tbl, sheet, field, link, btnPrimary, btnQuiet, FormRow, Section, Pill, Problem } from "@/components/admin/kit";
+import { tbl, sheet, field, link, btnIcon, FormRow, Section, StatusTag } from "@/components/admin/kit";
 import { plural } from "@/components/admin/band";
-import LoadingBlock from "@/components/ui/LoadingBlock";
+import { said, responseError } from "@/components/admin/said";
+import { Button, useActionFeedback } from "@/components/ui/Button";
+import { SkeletonRows } from "@/components/ui/Skeleton";
+import { ErrorNote } from "@/components/ui/ErrorNote";
 import { appAlert } from "@/components/providers/DialogProvider";
 import SigninSettings from "@/components/admin/SigninSettings";
 import { domainOf } from "@/lib/signinPolicy";
@@ -50,9 +53,9 @@ export default function WorkspaceSettingsPage() {
   const [failedEmails, setFailedEmails] = useState<number | null>(null);
   const [requeuing, setRequeuing] = useState(false);
   const [numbering, setNumbering] = useState<TicketNumberConfig>(TICKET_NUMBER_DEFAULTS);
-  const [savingNum, setSavingNum] = useState(false);
-  const [numSaved, setNumSaved] = useState(false);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const numFx = useActionFeedback();
+  const [savedNumbering, setSavedNumbering] = useState<string>("");
+  const [loadError, setLoadError] = useState<unknown>(null);
   const [reloadTick, setReloadTick] = useState(0);
 
   useEffect(() => {
@@ -64,7 +67,9 @@ export default function WorkspaceSettingsPage() {
         const { data, error: orgErr } = await supabase.from("orgs").select("*").eq("id", activeOrgId).single();
         if (orgErr) throw orgErr;
         setOrg(data as OrgSummary);
-        setNumbering(await getTicketNumberConfig(activeOrgId));
+        const num = await getTicketNumberConfig(activeOrgId);
+        setNumbering(num);
+        setSavedNumbering(JSON.stringify(num));
         const [{ count: members }, { count: libs }] = await Promise.all([
           supabase.from("org_members").select("*", { count: "exact", head: true }).eq("org_id", activeOrgId).eq("status", "active"),
           supabase.from("libraries").select("*", { count: "exact", head: true }).eq("org_id", activeOrgId),
@@ -90,7 +95,7 @@ export default function WorkspaceSettingsPage() {
           }
         } catch { /* leave unknown */ }
       } catch (e) {
-        setLoadError(e instanceof Error ? e.message : String((e as { message?: string })?.message ?? e));
+        setLoadError(e);
       } finally { setLoading(false); }
     })();
   }, [activeOrgId, reloadTick]);
@@ -110,47 +115,46 @@ export default function WorkspaceSettingsPage() {
         .eq("org_id", activeOrgId).eq("status", "failed").gte("attempt_count", 5);
       setFailedEmails(dead ?? 0);
     } catch (e) {
-      await appAlert({ title: "Couldn't send them again", message: e instanceof Error ? e.message : String((e as { message?: string })?.message ?? e), tone: "danger" });
+      await appAlert({ title: "Couldn't send them again", message: said(e), tone: "danger" });
     } finally { setRequeuing(false); }
   };
 
   const saveNumbering = async () => {
-    if (!activeOrgId || savingNum) return;
-    setSavingNum(true);
-    setNumSaved(false);
+    if (!activeOrgId || numFx.loading) return;
     try {
-      const { error } = await supabase.from("orgs").update({
-        ticket_prefix: numbering.prefix.trim() || null,
-        ticket_record_code: numbering.recordCode.trim() || TICKET_NUMBER_DEFAULTS.recordCode,
-        ticket_number_pad: Math.min(9, Math.max(1, numbering.pad || 4)),
-      }).eq("id", activeOrgId);
-      if (error) throw error;
-      setNumSaved(true);
+      await numFx.run(async () => {
+        const { error } = await supabase.from("orgs").update({
+          ticket_prefix: numbering.prefix.trim() || null,
+          ticket_record_code: numbering.recordCode.trim() || TICKET_NUMBER_DEFAULTS.recordCode,
+          ticket_number_pad: Math.min(9, Math.max(1, numbering.pad || 4)),
+        }).eq("id", activeOrgId);
+        if (error) throw error;
+      });
+      setSavedNumbering(JSON.stringify(numbering));
     } catch (e) {
-      await appAlert({ message: `Couldn't save numbering: ${e instanceof Error ? e.message : String(e)}`, tone: "danger" });
-    } finally {
-      setSavingNum(false);
+      await appAlert({ message: said(e, "Couldn't save the numbering."), tone: "danger" });
     }
   };
 
   if (!canRead) {
     return (
       <PageShell width="work">
-        <PageHero kicker="Admin · Workspace settings" title="Admin and Doc Control only." sub="Only Admin and Doc Control see workspace settings." overlap={false} />
+        <PageHero kicker="Admin · Workspace settings" title="Admin and Doc Control only." sub="Ask an admin to change the workspace's settings." />
       </PageShell>
     );
   }
 
   if (loading) {
-    return <PageShell width="work"><PageHero kicker="Admin · Workspace settings" title="Workspace settings" overlap={false} /><LoadingBlock what="workspace settings" /></PageShell>;
+    return <PageShell width="work"><PageHero kicker="Admin · Workspace settings" title="Workspace settings" /><PageBody><SkeletonRows rows={5} cols={1} what="workspace settings" /></PageBody></PageShell>;
   }
 
   // The answer: what needs attention here, else which workspace this is.
-  const answer = loadError && !org ? "Couldn't load the settings."
+  const answer = loadError != null && !org ? "Couldn't load the settings."
     : failedEmails ? `${plural(failedEmails, "email")} didn't send.`
     : emailQueueStatus === "no-key" ? "Email isn't set up yet."
     : org?.name ?? "Workspace settings";
   const preview = formatTicketNumber(numbering, new Date().getFullYear(), 1);
+  const numDirty = JSON.stringify(numbering) !== savedNumbering;
 
   return (
     <PageShell width="work">
@@ -158,25 +162,62 @@ export default function WorkspaceSettingsPage() {
         kicker="Admin · Workspace settings"
         title={answer}
         sub="Saved changes apply to everyone in the workspace."
+        factsHero={failedEmails ? "auto" : "none"}
         facts={memberCount != null && libraryCount != null ? [
-          { label: "Members", value: memberCount },
+          ...(failedEmails ? [{ label: "Emails not sent", value: failedEmails, tone: "bad" as const, hero: true }] : []),
+          { label: "People", value: memberCount },
           { label: "Libraries", value: libraryCount },
-          ...(failedEmails != null ? [{ label: "Emails not sent", value: failedEmails, tone: failedEmails > 0 ? "bad" as const : undefined }] : []),
         ] : undefined}
       />
 
       <PageBody>
-        {loadError && (
-          <Problem retry={() => setReloadTick((n) => n + 1)}>Couldn&apos;t load the workspace settings: {loadError}</Problem>
+        {loadError != null && (
+          <ErrorNote error={loadError} title="Couldn't load the workspace settings." onRetry={() => setReloadTick((n) => n + 1)} />
         )}
 
-        <div className="grid grid-cols-1 xl:grid-cols-2 gap-x-6 gap-y-8 items-start">
+        {/* Wide: the settings people change. Narrow: what the workspace is. */}
+        <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,62fr)_minmax(0,38fr)] gap-x-6 gap-y-8 items-start">
+          <div className="space-y-8 min-w-0">
           {activeOrgId && <SigninSettings orgId={activeOrgId} canEdit={activeRole === "Admin"} suggestDomain={domainOf(userEmail) || null} />}
 
-          {/* Identity */}
-          <Section label="Workspace" icon={Building2}>
+          {/* Request numbering */}
+          <Section label="Request numbering">
             <div className={`${sheet} divide-y divide-[var(--color-border)]`}>
-              <FormRow label="Name"><div className="@xl:pt-2 text-[15px] text-[var(--color-text)]">{org?.name ?? "-"}</div></FormRow>
+              <FormRow label="Workspace code" htmlFor="num-prefix">
+                <input id="num-prefix" value={numbering.prefix}
+                  onChange={(e) => setNumbering((n) => ({ ...n, prefix: e.target.value.toUpperCase() }))}
+                  placeholder="KE" maxLength={8} autoCapitalize="characters" className={`${field} max-w-[220px]`} />
+              </FormRow>
+              <FormRow label="Record code" htmlFor="num-code">
+                <input id="num-code" value={numbering.recordCode}
+                  onChange={(e) => setNumbering((n) => ({ ...n, recordCode: e.target.value.toUpperCase() }))}
+                  placeholder="DDRT" maxLength={10} autoCapitalize="characters" className={`${field} max-w-[220px]`} />
+              </FormRow>
+              <FormRow label="Number digits" htmlFor="num-pad">
+                <input id="num-pad" type="number" inputMode="numeric" min={1} max={9} value={numbering.pad}
+                  onChange={(e) => setNumbering((n) => ({ ...n, pad: Math.min(9, Math.max(1, parseInt(e.target.value || "4", 10))) }))}
+                  className={`${field} max-w-[120px]`} />
+              </FormRow>
+              <FormRow label="Next number looks like" hint="The count restarts each year and never repeats.">
+                <div className="flex flex-wrap items-center gap-x-5 gap-y-3">
+                  <span className="ui-id text-[20px]">{preview}</span>
+                  <span className="ml-auto inline-flex items-center gap-3">
+                    {numDirty && <span className="text-[13px] text-[var(--color-text-muted)]">Not saved yet</span>}
+                    <Button variant="secondary" {...numFx.state} doneLabel="Saved" onClick={() => void saveNumbering()} disabled={!numDirty && !numFx.done}
+                      title={!numDirty ? "Nothing changed yet" : undefined}>
+                      Save numbering
+                    </Button>
+                  </span>
+                </div>
+              </FormRow>
+            </div>
+          </Section>
+          </div>
+
+          {/* Identity */}
+          <Section label="Workspace">
+            <div className={`${sheet} divide-y divide-[var(--color-border)]`}>
+              <FormRow label="Name"><div className="@xl:pt-2 text-[15px] text-[var(--color-text)]">{org?.name ?? <span className="text-[var(--color-text-faint)]">Not loaded</span>}</div></FormRow>
               {org?.subscribed_plan && <FormRow label="Plan"><div className="@xl:pt-2 text-[15px] text-[var(--color-text)] capitalize">{org.subscribed_plan}</div></FormRow>}
               {org?.subscription_status && <FormRow label="Subscription"><div className="@xl:pt-2 text-[15px] text-[var(--color-text)] capitalize">{org.subscription_status}</div></FormRow>}
               <FormRow label="AI assistance" hint="Set providers in Knowledge, AI settings.">
@@ -185,61 +226,32 @@ export default function WorkspaceSettingsPage() {
             </div>
           </Section>
 
-          {/* Request numbering */}
-          <Section label="Request numbering" icon={Hash}>
-            <div className={`${sheet} divide-y divide-[var(--color-border)]`}>
-              <FormRow label="Workspace code" htmlFor="num-prefix">
-                <input id="num-prefix" value={numbering.prefix}
-                  onChange={(e) => { setNumbering((n) => ({ ...n, prefix: e.target.value.toUpperCase() })); setNumSaved(false); }}
-                  placeholder="e.g. KE" maxLength={8} className={`${field} max-w-[220px]`} />
-              </FormRow>
-              <FormRow label="Record code" htmlFor="num-code">
-                <input id="num-code" value={numbering.recordCode}
-                  onChange={(e) => { setNumbering((n) => ({ ...n, recordCode: e.target.value.toUpperCase() })); setNumSaved(false); }}
-                  placeholder="DDRT" maxLength={10} className={`${field} max-w-[220px]`} />
-              </FormRow>
-              <FormRow label="Number digits" htmlFor="num-pad">
-                <input id="num-pad" type="number" min={1} max={9} value={numbering.pad}
-                  onChange={(e) => { setNumbering((n) => ({ ...n, pad: Math.min(9, Math.max(1, parseInt(e.target.value || "4", 10))) })); setNumSaved(false); }}
-                  className={`${field} max-w-[120px]`} />
-              </FormRow>
-              <FormRow label="Next number looks like" hint="The count restarts each year and never repeats.">
-                <div className="flex flex-wrap items-center gap-x-5 gap-y-3">
-                  <span className="ui-id text-[22px]">{preview}</span>
-                  <button onClick={() => void saveNumbering()} disabled={savingNum} type="button" className={`${btnPrimary} ml-auto`}>
-                    {savingNum ? <Loader2 className="w-4 h-4 animate-spin" /> : numSaved ? <CheckCircle2 className="w-4 h-4" /> : <Save className="w-4 h-4" />}
-                    {numSaved ? "Saved" : "Save numbering"}
-                  </button>
-                </div>
-              </FormRow>
-            </div>
-          </Section>
         </div>
 
         {/* Email delivery */}
-        <Section label="Email delivery" icon={Mail} action={<Link href="/settings/notifications" className={`text-[14px] ${link}`}>My notification preferences</Link>}>
+        <Section label="Email" action={<Link href="/settings/notifications" className={`text-[14px] ${link}`}>Your own email settings</Link>}>
           <div className={`${sheet} divide-y divide-[var(--color-border)]`}>
             <FormRow label="Outbound email" hint="Sent through Resend. Each person picks what they get.">
               <div className="@xl:pt-2">
-                {emailQueueStatus === "ok" && <Pill tone="good">Set up</Pill>}
+                {emailQueueStatus === "ok" && <StatusTag tone="good" colored={false}>Set up</StatusTag>}
                 {emailQueueStatus === "no-key" && (
                   <>
-                    <Pill tone="warn">Not set up: no RESEND_API_KEY</Pill>
+                    <StatusTag tone="warn">Not set up yet</StatusTag>
                     <p className="mt-1 text-[14px] text-[var(--color-text-muted)]">Emails wait as <code className="font-mono text-[13px]">queued</code> until <code className="font-mono text-[13px]">RESEND_API_KEY</code> and <code className="font-mono text-[13px]">RESEND_FROM_EMAIL</code> are set on the server, then all go out.</p>
                   </>
                 )}
-                {emailQueueStatus === "unknown" && <Pill>Not checked yet</Pill>}
+                {emailQueueStatus === "unknown" && <StatusTag tone="none">Not checked yet</StatusTag>}
               </div>
             </FormRow>
             {/* Dead-letter requeue — failed past the auto-retry cap. */}
             {failedEmails !== null && (
               <FormRow label="Didn't send" hint={failedEmails > 0 ? "Each was tried 5 times. Send them again once the cause is fixed." : undefined}>
                 <div className="@xl:pt-1 flex flex-wrap items-center gap-4">
-                  <span className={`ui-count !h-7 !min-w-7 !text-[15px] ${failedEmails > 0 ? "is-bad" : "is-solid"}`}>{failedEmails}</span>
                   {failedEmails > 0 ? (
-                    <button type="button" onClick={() => void requeueFailed()} disabled={requeuing} className={btnQuiet}>
-                      <RefreshCw className={`w-3.5 h-3.5 ${requeuing ? "animate-spin" : ""}`} /> Send again
-                    </button>
+                    <>
+                      <span className="text-[15px] font-semibold text-[var(--state-overdue-text)] tabular-nums">{plural(failedEmails, "email")}</span>
+                      <Button variant="secondary" size="sm" loading={requeuing} onClick={() => void requeueFailed()}>Send again</Button>
+                    </>
                   ) : <span className="text-[15px] text-[var(--color-text-muted)]">Nothing failed to send.</span>}
                 </div>
               </FormRow>
@@ -281,33 +293,33 @@ function SchemaHealthCard({ orgId }: { orgId: string | null }) {
       const res = await fetch(`/api/admin/schema-health?orgId=${encodeURIComponent(orgId)}`, {
         headers: session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {},
       });
+      if (!res.ok) throw await responseError(res);
       const j = await res.json();
-      if (!res.ok) throw new Error(j?.error || `HTTP ${res.status}`);
       setState({ phase: "done", ...j });
     } catch (e) {
-      setState({ phase: "error", message: (e as Error).message });
+      setState({ phase: "error", message: said(e) });
     }
   }, [orgId]);
 
   useEffect(() => { void check(); }, [check]);
 
-  const missing = state.phase === "done" ? state.missingTables.length + state.missingColumns.length : 0;
+  const missing = state.phase === "done" ? (state.missingTables?.length ?? 0) + (state.missingColumns?.length ?? 0) : 0;
   return (
-    <Section label="Database health" icon={Database} action={
-        <button type="button" onClick={() => void check()} disabled={state.phase === "loading"} className={btnQuiet}>
-          <RefreshCw className={`w-3.5 h-3.5 ${state.phase === "loading" ? "animate-spin" : ""}`} /> Check again
+    <Section label="Database" action={
+        <button type="button" onClick={() => void check()} disabled={state.phase === "loading"} className={btnIcon} aria-label="Check the database again" title="Check again">
+          <RefreshCw className={`w-4 h-4 ${state.phase === "loading" ? "animate-spin" : ""}`} />
         </button>
       }>
       {state.phase === "loading" || state.phase === "idle" ? (
-        <div className={`${sheet} px-4 py-3 text-[15px] text-[var(--color-text-muted)] inline-flex w-full items-center gap-2`}><Loader2 className="w-4 h-4 animate-spin" /> Checking every table the app expects…</div>
+        <SkeletonRows rows={1} cols={1} what="the database check" />
       ) : state.phase === "error" ? (
-        <Problem>Couldn&apos;t check: {state.message}</Problem>
+        <ErrorNote compact title="Couldn't check the database." next={state.message} onRetry={() => void check()} />
       ) : state.healthy ? (
-        <div className={`${sheet} px-4 py-3`}><Pill tone="good"><CheckCircle2 className="w-3.5 h-3.5" /> All {state.checkedTables} expected tables are there</Pill></div>
+        <div className={`${sheet} px-4 py-3`}><StatusTag tone="good" colored={false}>All {state.checkedTables} tables the app expects are there</StatusTag></div>
       ) : (
-        <div className={tbl.wrap}>
+        <div className={`${tbl.wrap} !overflow-x-auto`}>
           <div className="px-4 py-3 border-b border-[var(--color-border)]">
-            <Pill tone="warn">{missing} missing piece{missing === 1 ? "" : "s"}</Pill>
+            <StatusTag tone="warn">{plural(missing, "missing piece")}</StatusTag>
             <span className="ml-2 text-[14px] text-[var(--color-text-muted)]">Features that use them show nothing until their migration runs.</span>
           </div>
           <table className={tbl.table}>

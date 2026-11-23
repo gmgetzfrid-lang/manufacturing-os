@@ -188,7 +188,7 @@ export default function PermissionsConsolePage() {
               const libFolders = folders.filter((f) => f.libraryId === lib.id);
               return (
                 <details key={lib.id} className="group/lib" open={libs.length <= 3}>
-                  <summary role="treeitem" className="group/row cursor-pointer list-none [&::-webkit-details-marker]:hidden flex items-center gap-2.5 px-4 min-h-12 select-none hover:bg-[var(--color-surface-2)]">
+                  <summary role="treeitem" aria-selected={false} className="group/row cursor-pointer list-none [&::-webkit-details-marker]:hidden flex items-center gap-2.5 px-4 min-h-12 select-none hover:bg-[var(--color-surface-2)]">
                     <ChevronRight aria-hidden className="ui-chevron w-4 h-4 shrink-0 text-[var(--color-text-muted)] group-open/lib:rotate-90" />
                     <span className="font-semibold text-[var(--color-text)] truncate">{lib.name}</span>
                     <span className="text-[13px] text-[var(--color-text-muted)] max-sm:hidden whitespace-nowrap">{plural(libFolders.length, "folder")}</span>
@@ -200,7 +200,7 @@ export default function PermissionsConsolePage() {
                   <div role="group" className="ml-4 border-l border-[var(--color-border)] pb-1">
                     {libFolders.map((f) => (
                       <details key={f.id} className="group/fold" onToggle={(e) => { if ((e.currentTarget as HTMLDetailsElement).open) void loadDocs(f.id, lib.id); }}>
-                        <summary role="treeitem" className="group/row cursor-pointer list-none [&::-webkit-details-marker]:hidden flex items-center gap-2 pl-4 pr-4 min-h-10 pointer-coarse:min-h-11 select-none border-t border-[var(--color-border)] hover:bg-[var(--color-surface-2)]">
+                        <summary role="treeitem" aria-selected={false} className="group/row cursor-pointer list-none [&::-webkit-details-marker]:hidden flex items-center gap-2 pl-4 pr-4 min-h-10 pointer-coarse:min-h-11 select-none border-t border-[var(--color-border)] hover:bg-[var(--color-surface-2)]">
                           <ChevronRight aria-hidden className="ui-chevron w-3.5 h-3.5 shrink-0 text-[var(--color-text-muted)] group-open/fold:rotate-90" />
                           <FolderOpen aria-hidden className="w-4 h-4 shrink-0 text-[var(--color-text-faint)]" />
                           <span className="text-[14px] text-[var(--color-text)] truncate">{f.name}</span>
@@ -211,7 +211,7 @@ export default function PermissionsConsolePage() {
                         <div role="group" className="ml-4 border-l border-[var(--color-border)]">
                           {loadingDocsFor === f.id && <SkeletonRows rows={2} cols={1} sheet={false} what="documents" className="[&>div]:h-10" />}
                           {(docsByFolder.get(f.id) ?? []).map((d) => (
-                            <div key={d.id} role="treeitem" tabIndex={-1} data-tree-row className="group/row flex items-center gap-2 pl-4 pr-4 min-h-10 pointer-coarse:min-h-11 border-t border-[var(--color-border)] hover:bg-[var(--color-surface-2)] focus:bg-[var(--color-surface-2)]">
+                            <div key={d.id} role="treeitem" aria-selected={false} tabIndex={-1} data-tree-row className="group/row flex items-center gap-2 pl-4 pr-4 min-h-10 pointer-coarse:min-h-11 border-t border-[var(--color-border)] hover:bg-[var(--color-surface-2)] focus:bg-[var(--color-surface-2)]">
                               <FileText aria-hidden className="w-4 h-4 shrink-0 text-[var(--color-text-faint)]" />
                               <span className="ui-id text-[14px] truncate">{d.name}</span>
                               <Vis v={d.visibility} />

@@ -1232,7 +1232,7 @@ export default function StorageBackupPage() {
                         { tone: "none", word: "Nothing linked" };
                       const canDiscard = row.status === "pending" || row.status === "producing" || row.status === "empty";
                       return (
-                        <tr key={row.archiveId} className={`${tbl.tr} max-md:grid max-md:grid-cols-[1fr_auto] max-md:gap-x-2 max-md:py-2`}>
+                        <tr key={row.archiveId} className={`${tbl.tr} max-md:grid max-md:grid-cols-[minmax(0,1fr)_auto] max-md:gap-x-2 max-md:py-2`}>
                           <td className={`${tbl.td} max-md:py-1`}>
                             <CopyId value={row.archiveId} label="archive ID" className="font-mono text-[13px]" />
                             {copiedArchiveId === row.archiveId && <span className="ml-2 text-[12px] text-[var(--color-text-muted)]">Save path copied</span>}
