@@ -58,10 +58,10 @@ describe("every late work order, and where its hours went", () => {
     expect([by("P-101").next, by("P-101").ask, by("P-101").gap]).toEqual(["", "", "No reason was written on the step."]);
     expect(by("S-4").category).toBe("contractors");
     expect(by("PI-220").category).toBe("execution");
-    // None is on the slide: each waits for a person to say what, if anything, to change.
+    // None is an action: the record backs no change for them, so none is written.
     const pt = pointOf(r, "Phase 1", tz);
-    expect(pt.conclusions).toEqual([]);
-    expect(pt.pending.filter((c) => /^(P-101|S-4|PI-220)/.test(c.title)).every((c) => c.ask === "")).toBe(true);
+    expect(pt.conclusions.filter((c) => /^(P-101|S-4|PI-220)/.test(c.title))).toEqual([]);
+    expect(r.findings.filter((f) => /^(P-101|S-4|PI-220)/.test(f.title)).every((f) => f.ask === "")).toBe(true);
   });
   it("a job that finished after its own date but cost nothing is not a finding", () => {
     // It is in the table of late work, for anyone who asks, and nowhere else.
