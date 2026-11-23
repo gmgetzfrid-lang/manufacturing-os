@@ -28,6 +28,18 @@ function starter(): StartViewTransition | null {
   return typeof d.startViewTransition === "function" ? d.startViewTransition.bind(document) : null;
 }
 
+/** The page parts get their transition names only while a transition
+ *  runs (html.vt-on): a view-transition-name makes its element a stacking
+ *  layer, and a permanent one put full-screen dialogs that aren't portaled
+ *  under the top bar. */
+function track(t: { finished: Promise<unknown> }): void {
+  t.finished.catch(() => { /* an interrupted transition is fine */ }).finally(() => document.documentElement.classList.remove("vt-on"));
+}
+function named<T>(run: () => T): T {
+  document.documentElement.classList.add("vt-on");
+  try { return run(); } catch (e) { document.documentElement.classList.remove("vt-on"); throw e; }
+}
+
 /** True when a change would be animated here. */
 export function canViewTransition(): boolean {
   return starter() !== null;
@@ -41,7 +53,7 @@ export function withViewTransition(update: () => void | Promise<void>): void {
   const start = starter();
   if (!start) { void update(); return; }
   try {
-    start(update).finished.catch(() => { /* an interrupted transition is fine */ });
+    track(named(() => start(update)));
   } catch {
     void update();
   }
@@ -58,7 +70,7 @@ export function transitionNavigate(navigate: () => void): void {
   if (!start) { navigate(); return; }
   const before = window.location.pathname + window.location.search;
   try {
-    start(() => new Promise<void>((resolve) => {
+    track(named(() => start(() => new Promise<void>((resolve) => {
       navigate();
       const t0 = performance.now();
       // Rendering is paused during the update, so poll with timers (not
@@ -69,7 +81,7 @@ export function transitionNavigate(navigate: () => void): void {
         window.setTimeout(tick, 16);
       };
       window.setTimeout(tick, 16);
-    })).finished.catch(() => { /* fine */ });
+    }))));
   } catch {
     navigate();
   }

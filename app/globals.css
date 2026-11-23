@@ -749,9 +749,11 @@ html[data-density="compact"] tbody tr {
    Where the browser has view transitions, the page content cross-fades
    and rises a few pixels while the side menu and the top bar hold still;
    elsewhere the swap is instant. Off under reduced motion. */
-.vt-page { view-transition-name: page; }
-.vt-side { view-transition-name: side-menu; }
-.vt-top { view-transition-name: top-bar; }
+/* Named only while a transition runs (lib/viewTransition adds html.vt-on):
+   a permanent name makes each part a stacking layer. */
+html.vt-on .vt-page { view-transition-name: page; }
+html.vt-on .vt-side { view-transition-name: side-menu; }
+html.vt-on .vt-top { view-transition-name: top-bar; }
 @keyframes vt-fade-out { to { opacity: 0; } }
 @keyframes vt-rise-in { from { opacity: 0; transform: translateY(6px); } }
 ::view-transition-old(root), ::view-transition-new(root) { animation-duration: 160ms; animation-timing-function: var(--ease-out-quick); }

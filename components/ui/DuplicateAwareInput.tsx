@@ -106,7 +106,7 @@ export default function DuplicateAwareInput({
       </div>
       {state.kind === "duplicate" && (
         <div className="text-[11px] text-amber-700 flex items-center gap-2">
-          <span>A {fieldLabel} matching <b className="font-mono">{value.trim()}</b> already exists.</span>
+          <span>{/^[aeiou]/i.test(fieldLabel) ? "An" : "A"} {fieldLabel} matching <b className="tabular-nums">{value.trim()}</b> already exists.</span>
           {onEditExisting && state.existingId && (
             <button
               type="button"
