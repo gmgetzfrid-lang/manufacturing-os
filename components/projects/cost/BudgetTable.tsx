@@ -17,6 +17,7 @@ import { canDeleteLine, deleteLine, restoreLine, setLinesClosed, setLinesPhase, 
 import { phaseAmount, type ProjectPhase } from "@/lib/projectPhases";
 import { appConfirm } from "@/components/providers/DialogProvider";
 import { fmtMoney as fmtMoneyCents } from "@/lib/costs";
+import { sayError } from "@/components/projects/sayError";
 
 /** Whole dollars unless there are cents ("$0", "$8,000", "$1,250.50"). */
 function fmtMoney(n: number, cur = "USD"): string {
@@ -70,7 +71,7 @@ export default function BudgetTable({ orgId, projectId, accounts, numbers, entri
   const run = async (fn: () => Promise<{ ok: boolean; error?: string }>, ok?: string) => {
     setBusy(true); setErr(null);
     try { const r = await fn(); if (!r.ok) { setErr(r.error ?? "Not saved."); return false; } if (ok) setNotice(ok); onChanged(); return true; }
-    catch (e) { setErr((e as Error).message || "Not saved."); return false; }
+    catch (e) { setErr(sayError(e, "Not saved.")); return false; }
     finally { setBusy(false); }
   };
   const savePatch = (a: CostAccount, patch: Parameters<typeof saveAccount>[0]["patch"]) => run(() => saveAccount({ orgId, projectId, id: a.id, patch, actor }));
@@ -130,10 +131,10 @@ export default function BudgetTable({ orgId, projectId, accounts, numbers, entri
         <span className="text-[11px] text-[var(--color-text-muted)]">{accounts.length - closedCount} open{closedCount ? ` · ${closedCount} closed` : ""}</span>
         <span className="relative ml-auto">
           <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[var(--color-text-faint)]" />
-          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Find a line" aria-label="Find a line" className="h-8 w-40 pl-7 pr-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[12.5px]" />
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Find a line" aria-label="Find a line" className="h-8 pointer-coarse:h-11 w-40 pl-7 pr-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[12px]" />
         </span>
         <label className="inline-flex items-center gap-1.5 text-[12px] font-bold text-[var(--color-text)]">Group
-          <select value={groupBy} onChange={(e) => setGroupBy(e.target.value as GroupBy)} aria-label="Group by" className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12.5px]">
+          <select value={groupBy} onChange={(e) => setGroupBy(e.target.value as GroupBy)} aria-label="Group by" className="h-8 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12px]">
             <option value="none">None</option><option value="type">Type</option><option value="contractor">Contractor</option>{phases.length > 0 && <option value="phase">Phase</option>}
           </select>
         </label>
@@ -145,30 +146,30 @@ export default function BudgetTable({ orgId, projectId, accounts, numbers, entri
       </div>
 
       {canManage && sel.size > 0 && (
-        <div className="px-4 py-2 border-b border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center gap-2 flex-wrap text-[12.5px]">
+        <div className="px-4 py-2 border-b border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center gap-2 flex-wrap text-[12px]">
           <b>{sel.size} picked</b>
           {phases.length > 0 && (
-            <select value="" onChange={(e) => { if (e.target.value) void setPhase(pickedAccounts, e.target.value === "split" ? null : e.target.value); }} aria-label="Set phase" className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 font-bold">
+            <select value="" onChange={(e) => { if (e.target.value) void setPhase(pickedAccounts, e.target.value === "split" ? null : e.target.value); }} aria-label="Set phase" className="h-8 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 font-bold">
               <option value="">Set phase…</option><option value="split">Split by the phases</option>{phases.map((p) => <option key={p.id} value={p.id}>{p.name} only</option>)}
             </select>
           )}
           <button type="button" disabled={busy} onClick={() => void close(pickedAccounts.filter((a) => a.status !== "closed"), true)} className="h-8 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] font-bold">Close</button>
-          <button type="button" disabled={busy} onClick={() => void remove(pickedAccounts)} className="h-8 px-3 rounded-lg border border-rose-300 bg-[var(--color-surface)] font-bold text-rose-700 dark:text-rose-400">Delete</button>
+          <button type="button" disabled={busy} onClick={() => void remove(pickedAccounts)} className="h-8 px-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] font-bold text-[var(--state-overdue-text)]">Delete</button>
           <button type="button" onClick={() => setSel(new Set())} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Clear</button>
         </div>
       )}
 
       {undo && (
-        <div role="status" className="px-4 py-2 border-b border-[var(--color-border)] flex items-center gap-2 text-[12.5px] font-bold text-[var(--color-text)]">
+        <div role="status" className="px-4 py-2 border-b border-[var(--color-border)] flex items-center gap-2 text-[12px] font-bold text-[var(--color-text)]">
           {undo.name} deleted.
           <button type="button" onClick={() => void undoDelete()} className="inline-flex items-center gap-1 h-7 px-2.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)]"><Undo2 className="w-3.5 h-3.5" /> Undo</button>
         </div>
       )}
 
       {moving && (
-        <div className="px-4 py-2 border-b border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center gap-2 flex-wrap text-[12.5px]">
+        <div className="px-4 py-2 border-b border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center gap-2 flex-wrap text-[12px]">
           <span>Move the spending on <b>{moving.from.name}</b> to</span>
-          <select value={moving.to} onChange={(e) => setMoving({ ...moving, to: e.target.value })} aria-label="Move to" className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 font-bold">
+          <select value={moving.to} onChange={(e) => setMoving({ ...moving, to: e.target.value })} aria-label="Move to" className="h-8 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 font-bold">
             <option value="">Pick a line…</option>
             {accounts.filter((a) => a.id !== moving.from.id && a.status !== "closed").map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
           </select>
@@ -179,7 +180,7 @@ export default function BudgetTable({ orgId, projectId, accounts, numbers, entri
       )}
 
       <div className="overflow-x-auto">
-        <table className="w-full border-collapse text-[12.5px] min-w-[860px]">
+        <table className="w-full border-collapse text-[12px] min-w-[860px]">
           <thead className="bg-[var(--color-surface-2)]">
             <tr>
               {canManage && <th className={`${th} w-8`}><input type="checkbox" aria-label="Pick every line shown" checked={allShown} onChange={() => setSel(allShown ? new Set() : new Set(rows.map((r) => r.account.id)))} className="w-4 h-4 accent-[var(--color-text)]" /></th>}
@@ -210,7 +211,7 @@ export default function BudgetTable({ orgId, projectId, accounts, numbers, entri
                   const share = sharePhase ? (a.phaseId ? (a.phaseId === sharePhase.id ? a.budget : 0) : phaseAmount(a.budget, sharePhase.share)) : 0;
                   return (
                     <React.Fragment key={a.id}>
-                      <tr className={`border-t border-[var(--color-border)] ${closed ? "opacity-55" : ""} ${spent > a.budget && a.budget > 0 ? "bg-rose-500/[0.04]" : ""}`}>
+                      <tr className={`border-t border-[var(--color-border)] ${closed ? "opacity-55" : ""} ${spent > a.budget && a.budget > 0 ? "bg-[var(--state-overdue)]/[0.04]" : ""}`}>
                         {canManage && <td className={td}><input type="checkbox" aria-label={`Pick ${a.name}`} checked={sel.has(a.id)} onChange={() => setSel((s) => { const n = new Set(s); if (n.has(a.id)) n.delete(a.id); else n.add(a.id); return n; })} className="w-4 h-4 accent-[var(--color-text)]" /></td>}
                         <td className={`${td} min-w-[200px]`}>
                           <div className="flex items-center gap-1">
@@ -221,18 +222,18 @@ export default function BudgetTable({ orgId, projectId, accounts, numbers, entri
                           </div>
                         </td>
                         <td className={td}>
-                          <select value={a.costType ?? ""} disabled={!canManage || closed} onChange={(e) => void savePatch(a, { costType: e.target.value || null })} aria-label={`${a.name} type`} className="h-8 rounded-md border border-transparent hover:border-[var(--color-border-strong)] bg-transparent px-1 text-[12.5px] disabled:hover:border-transparent">
+                          <select value={a.costType ?? ""} disabled={!canManage || closed} onChange={(e) => void savePatch(a, { costType: e.target.value || null })} aria-label={`${a.name} type`} className="h-8 pointer-coarse:h-11 rounded-md border border-transparent hover:border-[var(--color-border-strong)] bg-transparent px-1 text-[12px] disabled:hover:border-transparent">
                             <option value="">-</option>{TYPES.map((t) => <option key={t} value={t}>{cap(t)}</option>)}
                           </select>
                         </td>
                         <td className={td}>
-                          <select value={a.partyId ?? ""} disabled={!canManage || closed} onChange={(e) => void savePatch(a, { partyId: e.target.value || null })} aria-label={`${a.name} contractor`} className="h-8 max-w-[160px] rounded-md border border-transparent hover:border-[var(--color-border-strong)] bg-transparent px-1 text-[12.5px] disabled:hover:border-transparent">
+                          <select value={a.partyId ?? ""} disabled={!canManage || closed} onChange={(e) => void savePatch(a, { partyId: e.target.value || null })} aria-label={`${a.name} contractor`} className="h-8 pointer-coarse:h-11 max-w-[160px] rounded-md border border-transparent hover:border-[var(--color-border-strong)] bg-transparent px-1 text-[12px] disabled:hover:border-transparent">
                             <option value="">-</option>{parties.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
                           </select>
                         </td>
                         {phases.length > 0 && (
                           <td className={td}>
-                            <select value={a.phaseId ?? ""} disabled={!canManage || closed} onChange={(e) => void setPhase([a], e.target.value || null)} aria-label={`${a.name} phase`} className="h-8 rounded-md border border-transparent hover:border-[var(--color-border-strong)] bg-transparent px-1 text-[12.5px] disabled:hover:border-transparent">
+                            <select value={a.phaseId ?? ""} disabled={!canManage || closed} onChange={(e) => void setPhase([a], e.target.value || null)} aria-label={`${a.name} phase`} className="h-8 pointer-coarse:h-11 rounded-md border border-transparent hover:border-[var(--color-border-strong)] bg-transparent px-1 text-[12px] disabled:hover:border-transparent">
                               <option value="">Split {phases.map((p) => Math.round(p.share)).join("/")}</option>{phases.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
                             </select>
                           </td>
@@ -251,7 +252,7 @@ export default function BudgetTable({ orgId, projectId, accounts, numbers, entri
                             <button type="button" onClick={() => setMenu(menu === a.id ? null : a.id)} aria-label={`${a.name} actions`} className="w-8 h-8 rounded-lg hover:bg-[var(--color-surface-2)] flex items-center justify-center"><MoreHorizontal className="w-4 h-4" /></button>
                           )}
                           {menu === a.id && (
-                            <div role="menu" className="absolute right-2 top-9 z-20 w-56 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-xl p-1 text-[12.5px]" onMouseLeave={() => setMenu(null)}>
+                            <div role="menu" className="absolute right-2 top-9 z-20 w-56 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-xl p-1 text-[12px]" onMouseLeave={() => setMenu(null)}>
                               <MenuItem onClick={() => { setOpen(a.id); setMenu(null); }}>Entries, history and full edit</MenuItem>
                               {!closed && <MenuItem onClick={() => { setMoving({ from: a, to: "" }); setMenu(null); }}>Move its spending to another line…</MenuItem>}
                               <MenuItem onClick={() => { setMenu(null); void close([a], !closed); }}>{closed ? "Open again" : "Close (kept, out of the totals)"}</MenuItem>
@@ -274,10 +275,10 @@ export default function BudgetTable({ orgId, projectId, accounts, numbers, entri
             {canManage && (
               <tr className="border-t border-[var(--color-border)] bg-[var(--color-surface-2)]/40">
                 <td className={td} />
-                <td className={td}><input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} onKeyDown={(e) => { if (e.key === "Enter") void add(); }} placeholder="+ Add a line: name" aria-label="New line name" className="h-8 w-full rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2" /></td>
-                <td className={td}><select value={draft.type} onChange={(e) => setDraft({ ...draft, type: e.target.value })} aria-label="New line type" className="h-8 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1">{TYPES.map((t) => <option key={t} value={t}>{cap(t)}</option>)}</select></td>
+                <td className={td}><input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} onKeyDown={(e) => { if (e.key === "Enter") void add(); }} placeholder="+ Add a line: name" aria-label="New line name" className="h-8 pointer-coarse:h-11 w-full rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2" /></td>
+                <td className={td}><select value={draft.type} onChange={(e) => setDraft({ ...draft, type: e.target.value })} aria-label="New line type" className="h-8 pointer-coarse:h-11 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1">{TYPES.map((t) => <option key={t} value={t}>{cap(t)}</option>)}</select></td>
                 <td className={td} />{phases.length > 0 && <td className={td} />}
-                <td className={td}><input value={draft.budget} onChange={(e) => setDraft({ ...draft, budget: e.target.value })} onKeyDown={(e) => { if (e.key === "Enter") void add(); }} inputMode="decimal" placeholder="$0" aria-label="New line budget" className="h-8 w-28 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-right" /></td>
+                <td className={td}><input value={draft.budget} onChange={(e) => setDraft({ ...draft, budget: e.target.value })} onKeyDown={(e) => { if (e.key === "Enter") void add(); }} inputMode="decimal" placeholder="$0" aria-label="New line budget" className="h-8 pointer-coarse:h-11 w-28 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-right" /></td>
                 <td colSpan={99} className={td}><button type="button" disabled={busy || !draft.name.trim()} onClick={() => void add()} className="inline-flex items-center gap-1 h-8 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] font-semibold hover:bg-[var(--color-surface-2)] disabled:opacity-50"><Plus className="w-4 h-4" /> Add</button></td>
               </tr>
             )}
@@ -300,7 +301,7 @@ export default function BudgetTable({ orgId, projectId, accounts, numbers, entri
 }
 
 function MenuItem({ children, onClick, danger }: { children: React.ReactNode; onClick: () => void; danger?: boolean }) {
-  return <button type="button" role="menuitem" onClick={onClick} className={`w-full text-left px-2.5 py-2 rounded-lg hover:bg-[var(--color-surface-2)] font-semibold ${danger ? "text-rose-700 dark:text-rose-400" : "text-[var(--color-text)]"}`}>{children}</button>;
+  return <button type="button" role="menuitem" onClick={onClick} className={`w-full text-left px-2.5 py-2 rounded-lg hover:bg-[var(--color-surface-2)] font-semibold ${danger ? "text-[var(--state-overdue-text)]" : "text-[var(--color-text)]"}`}>{children}</button>;
 }
 
 /** A cell edited where it is: tap, type, Enter or leave it to save; Esc to cancel. */
@@ -313,7 +314,7 @@ function Cell({ value, display, onSave, disabled, numeric, aria, className = "" 
   return (
     <input autoFocus value={edit} inputMode={numeric ? "decimal" : undefined} aria-label={aria} onChange={(e) => setEdit(e.target.value)}
       onKeyDown={(e) => { if (e.key === "Enter") done(true); if (e.key === "Escape") done(false); }} onBlur={() => done(true)}
-      className={`h-8 ${numeric ? "w-28 text-right" : "w-full"} rounded-md border border-[var(--color-main)] bg-[var(--color-surface)] px-1.5 ${className}`} />
+      className={`h-8 pointer-coarse:h-11 ${numeric ? "w-28 text-right" : "w-full"} rounded-md border border-[var(--color-main)] bg-[var(--color-surface)] px-1.5 ${className}`} />
   );
 }
 

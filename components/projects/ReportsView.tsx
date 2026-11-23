@@ -48,6 +48,7 @@ import { useWoClasses, passes, WoClassSelects } from "@/components/projects/WoCl
 import { typeLabel, unitLabel, NONE } from "@/lib/woClass";
 import { appAlert } from "@/components/providers/DialogProvider";
 import { requestSetup } from "@/lib/scheduleSetup";
+import { sayError } from "@/components/projects/sayError";
 
 interface Props {
   milestones: Milestone[];
@@ -359,7 +360,7 @@ export default function ReportsView(p: Props) {
           if (alive) setPreview({ kind: "html", html: asBuiltDoc(), landscape: true });
         }
       } catch (e) {
-        if (alive) { setPreview(null); setPreviewErr((e as Error).message); }
+        if (alive) { setPreview(null); setPreviewErr(sayError(e)); }
       } finally {
         if (alive && !meeting) setPreviewBusy(false);
       }
@@ -437,13 +438,13 @@ export default function ReportsView(p: Props) {
         const orgId = live[0]?.orgId;
         if (p.canEdit && p.userId && orgId) {
           void saveShiftRecord({ orgId, projectId, shiftKey: sheetKey, userId: p.userId, change: (r) => ({ ...r, sheet: { ids: sheetIds(sheet), printedAt: Date.now(), by: p.userName ?? null } }) })
-            .catch((e) => appAlert({ title: "Printed, not kept", message: `The sheet printed, but its lines weren't kept with the shift (${(e as Error).message}), so entering it won't show them in this order. Print it again to try again.`, tone: "danger" }));
+            .catch((e) => appAlert({ title: "Printed, not kept", message: `The sheet printed, but its lines weren't kept with the shift (${sayError(e)}), so entering it won't show them in this order. Print it again to try again.`, tone: "danger" }));
         }
         remember({ report: "sheet", label: sheetLabel, shift: sheetPick });
       }
     } catch (e) {
       w?.close();
-      setMsg(`Not made: ${(e as Error).message}`);
+      setMsg(`Not made: ${sayError(e)}`);
     } finally { setBusy(false); }
   };
 
@@ -455,7 +456,7 @@ export default function ReportsView(p: Props) {
   // A labeled line of choices (a function, not a component: its inputs keep focus).
   const row = (label: string, children: React.ReactNode) => (
     <div className="grid grid-cols-[88px_1fr] sm:grid-cols-[100px_1fr] items-center gap-2 min-h-9">
-      <span className="text-[12.5px] font-semibold text-[var(--color-text-muted)]">{label}</span>
+      <span className="text-[12px] font-semibold text-[var(--color-text-muted)]">{label}</span>
       <div className="flex flex-wrap items-center gap-1.5 min-w-0">{children}</div>
     </div>
   );
@@ -467,7 +468,7 @@ export default function ReportsView(p: Props) {
         ))}
       </span>
       <input type="date" value={shift.dayKey} max={today} onChange={(e) => { if (e.target.value) setShiftPick({ dayKey: e.target.value, kind: shift.kind }); }} aria-label="Date"
-        className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12.5px] text-[var(--color-text)]" />
+        className="h-8 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12px] text-[var(--color-text)]" />
       {shiftPick && <button type="button" onClick={() => setShiftPick(null)} className="h-8 px-2.5 rounded-lg border border-[var(--color-border)] text-[12px] font-semibold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]">Current shift</button>}
     </>)
   );
@@ -483,11 +484,11 @@ export default function ReportsView(p: Props) {
       </>)}
       {cover === "range" && row("Days", <>
         <input type="date" value={days.from} max={days.to} onChange={(e) => { if (e.target.value) setRange({ from: e.target.value, to: days.to < e.target.value ? e.target.value : days.to }); }} aria-label="From"
-          className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12.5px] text-[var(--color-text)]" />
+          className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12px] text-[var(--color-text)]" />
         <span className="text-[12px] text-[var(--color-text-muted)]">to</span>
         <input type="date" value={days.to} min={days.from} onChange={(e) => { if (e.target.value) setRange({ from: days.from > e.target.value ? e.target.value : days.from, to: e.target.value }); }} aria-label="To"
-          className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12.5px] text-[var(--color-text)]" />
-        <span className="text-[11.5px] text-[var(--color-text-muted)]">day and night shifts</span>
+          className="h-8 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12px] text-[var(--color-text)]" />
+        <span className="text-[12px] text-[var(--color-text-muted)]">day and night shifts</span>
       </>)}
       {cover === "shift" && shiftRow}
     </>
@@ -496,11 +497,11 @@ export default function ReportsView(p: Props) {
   // to add one, right here: Setup opens at Printed reports, in place.
   const lhRow = sel !== "sheet" && sel !== "timelog" && !(sel === "hourly" && format === "xlsx") ? (
     lh ? row("Letterhead", <>
-      <label className="inline-flex items-center gap-2 text-[12.5px] cursor-pointer select-none">
+      <label className="inline-flex items-center gap-2 text-[12px] cursor-pointer select-none">
         <input type="checkbox" checked={useLh} onChange={(e) => setUseLh(e.target.checked)} className="w-4 h-4 accent-[var(--color-text)]" />
         <span className="font-semibold">{lh.name || "Company letterhead"}</span>
       </label>
-    </>) : row("Letterhead", <span className="text-[12.5px] text-[var(--color-text-muted)]">
+    </>) : row("Letterhead", <span className="text-[12px] text-[var(--color-text-muted)]">
       Plain pages, the app default.{p.canEdit && <> <button type="button" onClick={() => requestSetup("print")} className="font-semibold text-[var(--color-accent-text)] hover:underline">Add the company letterhead</button></>}
     </span>)
   ) : null;
@@ -523,14 +524,14 @@ export default function ReportsView(p: Props) {
       {sel === "timelog" && (
         <>
           {coverRows}
-          {row("Format", <><span className="text-[12.5px] font-semibold">Excel</span></>)}
+          {row("Format", <><span className="text-[12px] font-semibold">Excel</span></>)}
         </>
       )}
       {sel === "workorders" && (
         <>
           {row("Which", <>
             <select value={woShow} onChange={(e) => { const v = e.target.value as Show | "one"; setWoShow(v); setWoAlso([]); if (v === "one" && !woKey) setWoKey(orders[0]?.key ?? ""); }} aria-label="Which work orders"
-              className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12.5px] text-[var(--color-text)]">
+              className="h-8 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12px] text-[var(--color-text)]">
               {SHOWS.map(([k, l]) => <option key={k} value={k}>{l} ({findOrders(orders, woQuery).filter((o) => showsOrder(o, k, p.marks) && passes(wc, o.owner, woUnits, woTypes)).length})</option>)}
               <option value="one">One work order</option>
             </select>
@@ -546,13 +547,13 @@ export default function ReportsView(p: Props) {
           {woShow === "one" && (
             row("Work order", <>
               <select value={woKey} onChange={(e) => setWoKey(e.target.value)} aria-label="Work order"
-                className="h-8 w-full max-w-[420px] rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12.5px] text-[var(--color-text)]">
+                className="h-8 pointer-coarse:h-11 w-full max-w-[420px] rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12px] text-[var(--color-text)]">
                 {orders.map((o) => <option key={o.key} value={o.key}>{o.wo ? `WO ${o.wo} · ` : ""}{o.owner.name}</option>)}
               </select>
             </>)
           )}
           {row("History", <>
-            <label className="inline-flex items-center gap-2 text-[12.5px] cursor-pointer select-none">
+            <label className="inline-flex items-center gap-2 text-[12px] cursor-pointer select-none">
               <input type="checkbox" checked={woHistory} onChange={(e) => setWoHistory(e.target.checked)} className="w-4 h-4 accent-[var(--color-text)]" />
               Every start, % update, hold and comment, with its time
             </label>
@@ -568,7 +569,7 @@ export default function ReportsView(p: Props) {
               ))}
             </span>
             <input type="date" value={sheetShift.dayKey} onChange={(e) => { if (e.target.value) setSheetPick({ dayKey: e.target.value, kind: sheetShift.kind }); }} aria-label="Date"
-              className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12.5px] text-[var(--color-text)]" />
+              className="h-8 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12px] text-[var(--color-text)]" />
             {sheetPick && <button type="button" onClick={() => setSheetPick(null)} className="h-8 px-2.5 rounded-lg border border-[var(--color-border)] text-[12px] font-semibold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]">Coming shift</button>}
           </>)}
           <div className="text-[12px] text-[var(--color-text-muted)] pl-0 sm:pl-[108px]">
@@ -603,7 +604,7 @@ export default function ReportsView(p: Props) {
       )}
       {/* What the job taught: kept for the next one before the project closes. */}
       {meeting === "closeout" && <button type="button" onClick={openFindingsReview} className={secondary}><Lightbulb className="w-4 h-4" /> Lessons &amp; findings</button>}
-      {msg && <span role="status" className={`text-[12px] font-semibold ${/^Not made|blocked/.test(msg) ? "text-rose-700 dark:text-rose-400" : "text-emerald-700 dark:text-emerald-400"}`}>{msg}</span>}
+      {msg && <span role="status" className={`text-[12px] font-semibold ${/^Not made|blocked/.test(msg) ? "text-[var(--state-overdue-text)]" : "text-[var(--state-released-text)]"}`}>{msg}</span>}
     </div>
   );
 
@@ -641,7 +642,7 @@ export default function ReportsView(p: Props) {
                 <ul className="divide-y divide-[var(--color-border)] border-y border-[var(--color-border)]">
                   {madeHere.map((m) => (
                     <li key={`${m.label}:${m.at}`}>
-                      <button type="button" onClick={() => again(m)} className="w-full text-left py-1.5 text-[12.5px] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+                      <button type="button" onClick={() => again(m)} className="w-full text-left py-1.5 text-[12px] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
                         {meta.name} · {m.label} <span className="text-[var(--color-text-muted)]">· {fmtInTz(m.at, tz, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true })}</span>
                       </button>
                     </li>
@@ -698,7 +699,7 @@ export default function ReportsView(p: Props) {
           <EscapeCloses onClose={() => setOnScreen(null)} />
           <div className="sticky top-0 z-10 flex items-center justify-between gap-2 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-2">
             <b className="text-[14px]">{meta.name}</b>
-            <button type="button" onClick={() => setOnScreen(null)} aria-label="Close" className="inline-flex items-center gap-1 h-8 px-3 rounded-lg border border-[var(--color-border-strong)] text-[12.5px] font-bold"><X className="w-4 h-4" /> Close</button>
+            <button type="button" onClick={() => setOnScreen(null)} aria-label="Close" className="inline-flex items-center gap-1 h-8 px-3 rounded-lg border border-[var(--color-border-strong)] text-[12px] font-bold"><X className="w-4 h-4" /> Close</button>
           </div>
           <div className="max-w-[1400px] mx-auto p-3 sm:p-5">
             <ShiftReportView {...base} meetingFixed={meeting} presentOnOpen={onScreen === "present"} />
@@ -807,7 +808,7 @@ function DocView({ preview, busy, err, onFull, fill }: { preview: Preview; busy:
       <div className={`min-h-0 p-3 sm:p-4 ${fill ? "flex-1 overflow-auto" : "lg:flex-1 lg:overflow-auto"}`}>
         <div ref={box} className="w-full">
           {err ? (
-            <div className="rounded-lg bg-[var(--color-surface)] p-6 text-[12.5px] text-rose-700 dark:text-rose-400">Couldn&apos;t show it: {err}</div>
+            <div className="rounded-lg bg-[var(--color-surface)] p-6 text-[12px] text-[var(--state-overdue-text)]">Couldn&apos;t show it: {err}</div>
           ) : !preview ? (
             <div className="mx-auto rounded-sm bg-white shadow flex items-center justify-center text-[12px] text-slate-500" style={{ width: W * fit, height: 1056 * fit }}>
               {busy ? <span className="inline-flex items-center gap-1.5"><Loader2 className="w-4 h-4 animate-spin" /> Getting it ready…</span> : "Pick what to put on it."}
@@ -870,11 +871,11 @@ function FullView({ name, onClose, actions, options, children }: { name: string;
       <div className="flex items-center gap-2 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-3 sm:px-4 py-2">
         <b className="text-[14px] text-[var(--color-text)] mr-auto truncate">{name}</b>
         {options && (
-          <button type="button" onClick={() => setOpts((v) => !v)} aria-pressed={opts} className="lg:hidden inline-flex items-center gap-1 h-8 px-3 rounded-lg border border-[var(--color-border-strong)] text-[12.5px] font-bold text-[var(--color-text)]">
+          <button type="button" onClick={() => setOpts((v) => !v)} aria-pressed={opts} className="lg:hidden inline-flex items-center gap-1 h-8 px-3 rounded-lg border border-[var(--color-border-strong)] text-[12px] font-bold text-[var(--color-text)]">
             <SlidersHorizontal className="w-4 h-4" /> Options
           </button>
         )}
-        <button type="button" onClick={onClose} aria-label="Close" className="inline-flex items-center gap-1 h-8 px-3 rounded-lg border border-[var(--color-border-strong)] text-[12.5px] font-bold text-[var(--color-text)]"><X className="w-4 h-4" /> Close</button>
+        <button type="button" onClick={onClose} aria-label="Close" className="inline-flex items-center gap-1 h-8 px-3 rounded-lg border border-[var(--color-border-strong)] text-[12px] font-bold text-[var(--color-text)]"><X className="w-4 h-4" /> Close</button>
       </div>
       <div className="flex-1 min-h-0 flex flex-col lg:flex-row">
         <aside className={`${opts ? "block" : "hidden"} lg:block lg:w-[360px] shrink-0 max-h-[50vh] lg:max-h-none overflow-y-auto border-b lg:border-b-0 lg:border-r border-[var(--color-border)] bg-[var(--color-surface)] p-4 space-y-4`}>

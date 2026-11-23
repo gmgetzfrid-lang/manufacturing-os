@@ -18,6 +18,7 @@ import { findAssetsByTag } from "@/lib/assets";
 import { listEdgesFor, declareEdge, removeEdge, decideEdge } from "@/lib/estate/client";
 import { labelNodes, type NodeLabel } from "@/lib/estate/labels";
 import { nid, type EstateEdge } from "@/lib/estate/ids";
+import { sayError } from "@/components/projects/sayError";
 
 export default function ProjectScopePanel({ orgId, projectId, projectName, canManage }: { orgId: string; projectId: string; projectName: string; canManage: boolean }) {
   const { uid, userEmail } = useRole();
@@ -36,8 +37,8 @@ export default function ProjectScopePanel({ orgId, projectId, projectName, canMa
     setEdges(list);
     setLabels(await labelNodes(orgId, list.flatMap((e) => [e.a, e.b])));
   }, [orgId, node]);
-  useEffect(() => { void load().catch((e) => setErr((e as Error).message)); }, [load]);
-  useEffect(() => { void loadCodebook(orgId).then((b) => setUnits(b.units.map((u) => ({ code: u.code, label: u.label })))).catch((e) => setErr(`Couldn't load the units: ${(e as Error).message}`)); }, [orgId]);
+  useEffect(() => { void load().catch((e) => setErr(sayError(e))); }, [load]);
+  useEffect(() => { void loadCodebook(orgId).then((b) => setUnits(b.units.map((u) => ({ code: u.code, label: u.label })))).catch((e) => setErr(`Couldn't load the units: ${sayError(e)}`)); }, [orgId]);
 
   const scope = (edges ?? []).filter((e) => e.a === node && e.type === "project_scope");
   const members = (edges ?? []).filter((e) => e.b === node && e.type === "in_project");
@@ -49,7 +50,7 @@ export default function ProjectScopePanel({ orgId, projectId, projectName, canMa
       const u = units.find((x) => x.code === unitPick);
       await declareEdge({ orgId, a: node, b: nid.cbunit(unitPick), type: "project_scope", summary: `Project "${projectName}" covers ${u?.label ?? unitPick} (${unitPick}) - set by hand`, actor: me });
       setUnitPick(""); await load();
-    } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
+    } catch (e) { setErr(sayError(e)); } finally { setBusy(false); }
   };
   const addAsset = async () => {
     const t = tagInput.trim();
@@ -64,16 +65,16 @@ export default function ProjectScopePanel({ orgId, projectId, projectName, canMa
       if (!a) throw new Error(`No equipment tagged "${t}" in the registry.`);
       await declareEdge({ orgId, a: node, b: nid.asset(a.id), type: "project_scope", summary: `Project "${projectName}" covers ${a.tag} - set by hand`, actor: me });
       setTagInput(""); await load();
-    } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
+    } catch (e) { setErr(sayError(e)); } finally { setBusy(false); }
   };
   const drop = async (e: EstateEdge) => {
     setBusy(true);
     try { if (e.origin === "human") await removeEdge(e.id); else await decideEdge(e.id, "dismissed", me); await load(); }
-    catch (x) { setErr((x as Error).message); } finally { setBusy(false); }
+    catch (x) { setErr(sayError(x)); } finally { setBusy(false); }
   };
   const accept = async (e: EstateEdge) => {
     setBusy(true);
-    try { await decideEdge(e.id, "applied", me); await load(); } catch (x) { setErr((x as Error).message); } finally { setBusy(false); }
+    try { await decideEdge(e.id, "applied", me); await load(); } catch (x) { setErr(sayError(x)); } finally { setBusy(false); }
   };
 
   const L = (id: string) => labels.get(id) ?? { label: id };
@@ -83,7 +84,7 @@ export default function ProjectScopePanel({ orgId, projectId, projectName, canMa
     <Card label="Scope: what this project is about"
       action={<Link href={`/graph?focus=${encodeURIComponent(node)}`} className="text-[14px] text-[var(--color-accent-text)] hover:underline inline-flex items-center gap-1 whitespace-nowrap"><Link2 className="w-3.5 h-3.5" /> See on the graph</Link>}>
       <div className="space-y-3">
-        {err && <div role="alert" className="text-[13px] text-rose-700 dark:text-rose-300">{err}</div>}
+        {err && <div role="alert" className="text-[13px] text-[var(--state-overdue-text)]">{err}</div>}
         {edges === null ? (
           <div className="text-[13px] text-[var(--color-text-muted)] inline-flex items-center gap-2"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading the scope…</div>
         ) : (
@@ -93,10 +94,10 @@ export default function ProjectScopePanel({ orgId, projectId, projectName, canMa
               {scope.map((e) => {
                 const l = L(e.b);
                 return (
-                  <span key={e.id} title={e.summary} className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[13px] ${e.status === "pending" ? "bg-amber-500/10" : "bg-[var(--color-surface-2)]"}`}>
+                  <span key={e.id} title={e.summary} className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[13px] ${e.status === "pending" ? "bg-[var(--state-held)]" : "bg-[var(--color-surface-2)]"}`}>
                     <Icon id={e.b} />
                     {l.href ? <Link href={l.href} className="font-bold hover:underline">{l.label}</Link> : <span className="font-bold">{l.label}</span>}
-                    {e.status === "pending" && <span className="text-[11px] text-amber-700 dark:text-amber-300">proposed · {Math.round(e.confidence * 100)}%</span>}
+                    {e.status === "pending" && <span className="text-[11px] text-[var(--state-held-text)]">proposed · {Math.round(e.confidence * 100)}%</span>}
                     {canManage && e.status === "pending" && <button onClick={() => accept(e)} disabled={busy} className="text-[13px] text-[var(--color-accent-text)] hover:underline">accept</button>}
                     {canManage && <button onClick={() => drop(e)} disabled={busy} className="opacity-50 hover:opacity-100" title={e.origin === "human" ? "Remove" : "Dismiss"} aria-label={`${e.origin === "human" ? "Remove" : "Dismiss"} ${l.label}`}><X className="w-3 h-3" /></button>}
                   </span>

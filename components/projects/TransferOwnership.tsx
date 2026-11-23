@@ -11,6 +11,7 @@ import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/ui/Moda
 import { supabase } from "@/lib/supabase";
 import { transferOwnership } from "@/lib/projects";
 import type { Project, ProjectMember, ProjectMemberRole } from "@/types/schema";
+import { sayError } from "@/components/projects/sayError";
 
 const KEEP: Array<{ v: ProjectMemberRole | "leave"; label: string; hint: string }> = [
   { v: "co_owner", label: "Co-owner", hint: "Everything the owner can do, except delete the project or hand it over" },
@@ -60,7 +61,7 @@ export function TransferOwnershipModal({ project, members, preselect, actorUserI
         actorUserId, actorEmail,
       });
       onDone(res.note);
-    } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
+    } catch (e) { setErr(sayError(e)); } finally { setBusy(false); }
   };
 
   const radio = (on: boolean) => `flex items-start gap-2 rounded-lg border px-3 py-2 text-left ${on ? "border-[var(--color-text)] bg-[var(--color-surface-2)] ring-1 ring-[var(--color-text)]" : "border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`;
@@ -83,7 +84,7 @@ export function TransferOwnershipModal({ project, members, preselect, actorUserI
               </button>
               {pick === "__email__" && (
                 <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="their.email@company.com" aria-label="New owner's email" autoFocus
-                  className="w-full h-9 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-[13px]" />
+                  className="w-full h-9 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-[13px]" />
               )}
             </div>
           </div>
@@ -93,12 +94,12 @@ export function TransferOwnershipModal({ project, members, preselect, actorUserI
               {KEEP.map((k) => (
                 <button key={k.v} type="button" role="radio" aria-checked={keepAs === k.v} onClick={() => setKeepAs(k.v)} className={`${radio(keepAs === k.v)} flex-col`}>
                   <span className="text-[13px] font-bold text-[var(--color-text)]">{k.label}</span>
-                  <span className="text-[11.5px] text-[var(--color-text-muted)]">{k.hint}</span>
+                  <span className="text-[12px] text-[var(--color-text-muted)]">{k.hint}</span>
                 </button>
               ))}
             </div>
           </div>
-          {err && <div role="alert" className="text-[12px] text-rose-700 dark:text-rose-300">{err}</div>}
+          {err && <div role="alert" className="text-[12px] text-[var(--state-overdue-text)]">{err}</div>}
         </div>
       </ModalBody>
       <ModalFooter>

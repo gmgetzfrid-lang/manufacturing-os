@@ -35,11 +35,15 @@ import { loadManpowerSettings, companyOf as companyOfCrew, type ManpowerSettings
 import { fmtInTz } from "@/lib/scheduleTz";
 import { supabase } from "@/lib/supabase";
 import { useDraft } from "@/hooks/useDraft";
+import { sayError } from "@/components/projects/sayError";
+import { SubTabs } from "@/components/projects/SubTabs";
+import { SkeletonRows } from "@/components/ui/Skeleton";
+import { ErrorNote } from "@/components/ui/ErrorNote";
 
 /** Width of one shift on the chart: fitted to the space it has (see the
  *  view), between 14 and 56 px. */
 const PxCtx = React.createContext(34);
-const PALETTE = ["#2563eb", "#059669", "#7c3aed", "#64748b", "#0891b2", "#db2777", "#b45309", "#475569", "#0d9488", "#9333ea"];
+const PALETTE = ["var(--color-main)", "color-mix(in srgb, var(--color-text) 72%, var(--color-surface))", "color-mix(in srgb, var(--color-text) 60%, var(--color-surface))"];
 const r1 = (n: number) => Math.round(n * 10) / 10;
 
 interface Props {
@@ -103,7 +107,7 @@ export default function AsBuiltScheduleView(p: Props) {
         if (live) setData({ log: log ?? [], notes, records, mp, settings });
         // Said, not hidden: without the shift records there are no head counts.
         if (live && recordsFailed) setMsg("Couldn't read the shift records: head counts are missing.");
-      } catch (e) { if (live) setErr((e as Error).message); }
+      } catch (e) { if (live) setErr(sayError(e)); }
     })();
     return () => { live = false; };
   // eslint-disable-next-line react-hooks/exhaustive-deps -- the step list, by its ids
@@ -130,14 +134,14 @@ export default function AsBuiltScheduleView(p: Props) {
     const names = [...new Set([...(work?.crews.map((c) => c.crew) ?? []), ...Object.keys(plan?.load ?? {})])];
     return new Map(names.map((n, i) => [n, PALETTE[i % PALETTE.length]]));
   }, [work, plan]);
-  const colorOf = (c: string) => crews.get(c) ?? "#94a3b8";
+  const colorOf = (c: string) => crews.get(c) ?? "var(--viz-neutral)";
 
   const saveChanges = useCallback(async (next: PlanChange[]) => {
     if (!data) return;
     const before = data;
     setData({ ...data, settings: { ...data.settings, changes: { ...data.settings.changes, [scope]: next } } });
     // Not saved: put the plan back as it was, and say so.
-    try { await saveNextPlanChanges(p.projectId, scope, next); setMsg(null); } catch (e) { setData(before); setMsg(`Not saved: ${(e as Error).message}`); }
+    try { await saveNextPlanChanges(p.projectId, scope, next); setMsg(null); } catch (e) { setData(before); setMsg(`Not saved: ${sayError(e)}`); }
   }, [data, scope, p.projectId]);
 
   // The schedule on screen as a Microsoft Project file.
@@ -160,26 +164,22 @@ export default function AsBuiltScheduleView(p: Props) {
   const left = boxW >= 640 ? 290 : 170;
   const px = nShifts && boxW ? Math.max(14, Math.min(56, Math.floor((boxW - left - (cols ? 350 : 0) - 6) / nShifts))) : 34;
 
-  if (err) return <div role="alert" className="border-l-2 border-rose-500 pl-3 py-1 text-[13px] text-rose-700 dark:text-rose-300">Couldn&apos;t read the job: {err}</div>;
-  if (!data || !work || !plan || !check) return <div className="py-10 text-center text-[13px] text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin inline mr-1" /> Reading the job shift by shift…</div>;
-  if (!built.orders.length) return <div className="py-8 text-center text-[13px] text-[var(--color-text-muted)]">No schedule here yet.</div>;
+  if (err) return <ErrorNote title="Couldn't read the job." next={err} />;
+  if (!data || !work || !plan || !check) return <SkeletonRows rows={8} cols={3} what="the job, shift by shift" sheet={false} />;
+  if (!built.orders.length) return <p className="py-6 text-[15px] text-[var(--color-text-muted)]">No schedule here yet. Import it on Plan.</p>;
 
   return (
     <PxCtx.Provider value={px}>
     <div ref={setBox} className={full ? "fixed inset-0 z-[300] overflow-auto bg-[var(--color-canvas)] p-3 sm:p-5 space-y-3" : "space-y-3 min-w-0"}>
       <div className="flex flex-wrap items-center gap-2">
-        <div role="tablist" aria-label="Schedule" className="inline-flex rounded-lg border border-slate-400 overflow-hidden">
-          {([["built", "As-built"], ["next", "Suggested for next time"]] as const).map(([k, label]) => (
-            <button key={k} role="tab" aria-selected={view === k} type="button" onClick={() => setView(k)}
-              className={`px-3 py-1.5 text-[13px] font-bold cursor-pointer ${view === k ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30" : "bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>{label}</button>
-          ))}
-        </div>
+        <SubTabs label="Schedule" value={view} onChange={(k) => setView(k)} className="mr-2"
+          items={[{ id: "built" as const, label: "As-built" }, { id: "next" as const, label: "Suggested for next time" }]} />
         <button type="button" onClick={() => setFull(!full)} className={btnQuiet}>{full ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />} {full ? "Close full screen" : "Full screen"}</button>
         <button type="button" aria-pressed={cols} onClick={() => setCols(!cols)} className={btnQuiet}><CalendarDays className="w-4 h-4" /> {cols ? "Hide dates" : "Show dates"}</button>
         {p.onExcel && view === "built" && <button type="button" onClick={p.onExcel} className={btnQuiet}><Download className="w-4 h-4" /> Excel</button>}
         <button type="button" onClick={() => void toProject()} className={btnQuiet} title="A file Microsoft Project opens: File, Open, XML Format"><Download className="w-4 h-4" /> Microsoft Project</button>
         {p.onPrint && <button type="button" onClick={p.onPrint} className={btnQuiet}><Printer className="w-4 h-4" /> Print</button>}
-        {msg && <span role="status" className="text-[12px] font-semibold text-rose-700 dark:text-rose-400">{msg}</span>}
+        {msg && <ErrorNote compact title={msg} next="" />}
       </div>
       {view === "built"
         ? <BuiltView {...p} cols={cols} built={built} work={work} colorOf={colorOf} changes={changes} onAdd={(c) => void saveChanges([...changes, c])} />
@@ -190,8 +190,21 @@ export default function AsBuiltScheduleView(p: Props) {
   );
 }
 
-const btnQuiet = "inline-flex items-center gap-1.5 rounded-lg border border-slate-400 bg-[var(--color-surface)] px-3 py-1.5 text-[13px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] cursor-pointer disabled:opacity-50";
-const btnPri = "inline-flex items-center gap-1.5 rounded-lg bg-[var(--color-accent)] px-3 py-1.5 text-[13px] font-bold text-[var(--color-accent-fg)] hover:opacity-90 cursor-pointer disabled:opacity-50";
+const btnQuiet = "inline-flex items-center gap-1.5 h-9 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] cursor-pointer disabled:opacity-50 whitespace-nowrap";
+const btnPri = "inline-flex items-center gap-1.5 h-9 pointer-coarse:h-11 rounded-lg bg-[var(--color-accent)] px-3 text-[14px] font-semibold text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)] cursor-pointer disabled:opacity-50 whitespace-nowrap";
+/** Two choices, as plain radio buttons (not a filled toggle). */
+function Choice<T extends string>({ value, onChange, options, label }: { value: T; onChange: (v: T) => void; options: ReadonlyArray<readonly [T, string]>; label: string }) {
+  const name = React.useId();
+  return (
+    <div role="radiogroup" aria-label={label} className="flex flex-wrap gap-x-4 gap-y-1">
+      {options.map(([k, l]) => (
+        <label key={k} className={`inline-flex items-center gap-1.5 min-h-8 pointer-coarse:min-h-11 text-[13px] cursor-pointer ${value === k ? "font-semibold text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>
+          <input type="radio" name={name} checked={value === k} onChange={() => onChange(k)} className="w-4 h-4 accent-[var(--color-current)]" />{l}
+        </label>
+      ))}
+    </div>
+  );
+}
 
 // ── Shared timeline bits ─────────────────────────────────────────────────
 
@@ -234,15 +247,15 @@ function Grid({ shifts }: { shifts: Array<{ kind: string }> }) {
 
 const when = (t: number | null, tz: string) => (t == null ? "-" : `${fmtInTz(t, tz, { weekday: "short", month: "numeric", day: "numeric" })} ${fmtInTz(t, tz, { hour: "numeric", minute: "2-digit", hour12: true })}`);
 const hatch = (a: string, b: string) => ({ background: `repeating-linear-gradient(135deg, ${a} 0 4px, ${b} 4px 8px)` });
-const WAIT = { ...hatch("#fde68a", "#fff7d6"), border: "1px solid #f59e0b" };
-const READY = { ...hatch("#bfdbfe", "#eff6ff"), border: "1px solid #60a5fa" };
+const WAIT = { ...hatch("color-mix(in srgb, var(--state-held) 38%, var(--color-surface))", "color-mix(in srgb, var(--state-held) 10%, var(--color-surface))"), border: "1px solid var(--state-held)" };
+const READY = { ...hatch("color-mix(in srgb, var(--color-text) 16%, var(--color-surface))", "var(--color-surface)"), border: "1px solid var(--viz-neutral)" };
 /** On a work order's own line: a shift between its first and last work with
  *  nothing logged on any of its activities (its "shifts waited"). */
-const ORDER_WAIT = hatch("#94a3b8", "#f1f5f9");
+const ORDER_WAIT = hatch("var(--viz-neutral)", "var(--color-surface-2)");
 
 function Legend({ items }: { items: Array<[React.CSSProperties, string]> }) {
   return (
-    <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11.5px] text-[var(--color-text-muted)]">
+    <div className="flex flex-wrap gap-x-3 gap-y-1 text-[12px] text-[var(--color-text-muted)]">
       {items.map(([st, label]) => <span key={label} className="inline-flex items-center gap-1"><span className="inline-block w-4 h-2.5 rounded-sm" style={st} />{label}</span>)}
     </div>
   );
@@ -287,7 +300,7 @@ function OrderName({ open, onToggle, children }: { open: boolean; onToggle: () =
 
 const cellAct = "sticky left-0 z-[2] bg-[var(--color-surface)] border-r border-[var(--color-border)] align-top px-2 py-1.5 w-[170px] min-w-[170px] max-w-[170px] sm:w-[290px] sm:min-w-[290px] sm:max-w-[290px]";
 const cellDt = "col-x align-top px-2 py-1.5 text-[11px] whitespace-nowrap text-[var(--color-text)]";
-const cellN = "col-x align-top px-1.5 py-1.5 text-center font-bold text-[12.5px] min-w-[44px]";
+const cellN = "col-x align-top px-1.5 py-1.5 text-center font-bold text-[12px] min-w-[44px]";
 
 // ── As-built ─────────────────────────────────────────────────────────────
 
@@ -301,7 +314,7 @@ function BuiltView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: As
   const [open, setOpen] = useState<Set<string>>(new Set());
   const [now] = useState(() => Date.now());
   const planFin = built.planFinish;
-  const line = planFin != null ? <i aria-hidden title="Planned finish" className="absolute top-0 bottom-0 border-l-2 border-red-600" style={{ left: x(planFin) }} /> : null;
+  const line = planFin != null ? <i aria-hidden title="Planned finish" className="absolute top-0 bottom-0 border-l-2 border-[var(--state-overdue)]" style={{ left: x(planFin) }} /> : null;
   const orders = [...built.orders].sort((a, b) => (a.planStart ?? Infinity) - (b.planStart ?? Infinity));
   const t = work.totals;
   const late = built.finish != null && built.planFinish != null ? r1((built.finish - built.planFinish) / 3_600_000) : null;
@@ -318,15 +331,15 @@ function BuiltView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: As
 
   return (
     <div className="space-y-2">
-      <div className="flex flex-wrap gap-2 text-[12.5px]">
+      <div className="flex flex-wrap gap-2 text-[12px]">
         <Chip>Planned finish <b>{when(built.planFinish, tz)}</b></Chip>
-        <Chip>Actual finish <b className={late != null && late > 0.5 ? "text-rose-700 dark:text-rose-400" : ""}>{built.finish != null ? when(built.finish, tz) : "not done yet"}</b>{late != null && Math.abs(late) >= 0.5 ? <span className="text-[var(--color-text-muted)]"> {Math.abs(late)} h {late > 0 ? "late" : "early"}</span> : null}</Chip>
+        <Chip>Actual finish <b className={late != null && late > 0.5 ? "text-[var(--state-overdue-text)]" : ""}>{built.finish != null ? when(built.finish, tz) : "not done yet"}</b>{late != null && Math.abs(late) >= 0.5 ? <span className="text-[var(--color-text-muted)]"> {Math.abs(late)} h {late > 0 ? "late" : "early"}</span> : null}</Chip>
         <Chip><b>{built.steps}</b> activities · <b>{built.added}</b> added during the job</Chip>
         <Chip>Sat in progress: <b>{t.waitedSteps}</b> activities, <b>{t.waitedShifts}</b> shifts</Chip>
         <Chip>Ready but not started: <b>{t.readySteps}</b> activities, <b>{t.readyShifts}</b> shifts</Chip>
       </div>
-      <Legend items={[[{ background: "#2563eb" }, "A step, start to finish (on a step's own line: each shift it was worked)"], [ORDER_WAIT, "Work order open, nothing logged that shift"], [WAIT, "Activity in progress, nothing logged"], [READY, "Ready, not started"], [{ background: "#cbd5e1", height: 4 }, "Plan"], [{ borderLeft: "2px solid #dc2626", width: 2 }, "Planned finish"]]} />
-      <div className="text-[11.5px] text-[var(--color-text-muted)]">Night shifts count as waiting only for work that ran on nights (its crew worked that work order on two or more nights). Day work sitting overnight is not waiting.</div>
+      <Legend items={[[{ background: "var(--color-main)" }, "A step, start to finish (on a step's own line: each shift it was worked)"], [ORDER_WAIT, "Work order open, nothing logged that shift"], [WAIT, "Activity in progress, nothing logged"], [READY, "Ready, not started"], [{ background: "var(--viz-neutral)", height: 4 }, "Plan"], [{ borderLeft: "2px solid var(--state-overdue)", width: 2 }, "Planned finish"]]} />
+      <div className="text-[12px] text-[var(--color-text-muted)]">Night shifts count as waiting only for work that ran on nights (its crew worked that work order on two or more nights). Day work sitting overnight is not waiting.</div>
       <FoldAll open={open.size} total={orders.length} onAll={(all) => setOpen(all ? new Set(orders.map((o) => o.key)) : new Set())} />
       <div className="overflow-auto max-h-[75vh] rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
         <table className={`border-separate border-spacing-0 w-max text-[12px] ${p.cols ? "" : "[&_.col-x]:hidden"}`}>
@@ -352,15 +365,15 @@ function BuiltView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: As
                   <tr className="bg-[var(--color-surface-2)]" data-order={o.key}>
                     <td className={`${cellAct} !bg-[var(--color-surface-2)]`}>
                       <OrderName open={isOpen} onToggle={() => flip(o.key)}>
-                        <div className="font-semibold text-[12.5px] text-[var(--color-text)]">{o.name}</div>
+                        <div className="font-semibold text-[12px] text-[var(--color-text)]">{o.name}</div>
                         {o.foundOn && <div className="text-[11px] font-semibold text-[var(--color-text-muted)]">Found on {o.foundOn}</div>}
-                        <div className="text-[11px] text-[var(--color-text-muted)]">{o.wo ? `${o.wo} · ` : ""}{o.steps.length} step{o.steps.length === 1 ? "" : "s"}{o.steps.some((s) => !s.inPlan) ? ` · ${o.steps.filter((s) => !s.inPlan).length} added` : ""}{!p.cols && ow ? <> · {ow.worked} shift{ow.worked === 1 ? "" : "s"} worked{ow.waited ? <> · <b className="whitespace-nowrap font-semibold text-amber-700 dark:text-amber-400">{ow.waited} waited</b></> : null}</> : null}</div>
+                        <div className="text-[11px] text-[var(--color-text-muted)]">{o.wo ? `${o.wo} · ` : ""}{o.steps.length} step{o.steps.length === 1 ? "" : "s"}{o.steps.some((s) => !s.inPlan) ? ` · ${o.steps.filter((s) => !s.inPlan).length} added` : ""}{!p.cols && ow ? <> · {ow.worked} shift{ow.worked === 1 ? "" : "s"} worked{ow.waited ? <> · <b className="whitespace-nowrap font-semibold text-[var(--state-held-text)]">{ow.waited} waited</b></> : null}</> : null}</div>
                       </OrderName>
                     </td>
                     <td className={cellDt}>{when(o.planStart, tz)}<br />{when(o.planFinish, tz)}</td>
                     <td className={cellDt}>{when(o.start, tz)}<br />{when(o.finish, tz)}</td>
                     <td className={cellN}>{ow?.worked ?? 0}</td>
-                    <td className={`${cellN} ${ow?.waited ? "text-amber-700 dark:text-amber-400" : ""}`}>{ow?.waited || "-"}</td>
+                    <td className={`${cellN} ${ow?.waited ? "text-[var(--state-held-text)]" : ""}`}>{ow?.waited || "-"}</td>
                     <td className="p-0 relative"><div className="relative" style={{ width, height: Math.max(44, 12 + bar.h + 7) }}>
                       <Grid shifts={work.shifts} />
                       {o.planStart != null && o.planFinish != null && <i className="absolute top-1.5 h-1 rounded bg-slate-300" style={{ left: x(o.planStart), width: Math.max(2, x(o.planFinish) - x(o.planStart)) }} />}
@@ -380,7 +393,7 @@ function BuiltView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: As
                           <div className="text-[11px] text-[var(--color-text-muted)]"><b className="inline-block w-2 h-2 rounded-full mr-1 align-middle" style={{ background: p.colorOf(w.crew) }} />{w.crew} · plan {r1(s.plannedH)} h{!p.cols ? ` · ${s.elapsedH != null ? `took ${s.elapsedH} h` : s.status === "done" ? "start not recorded" : s.status === "not_started" ? "not started" : "still going"}` : ""}</div>
                           {w.ready && <div className="text-[11px] text-[var(--color-text-muted)]">Ready {when(w.ready.at, tz)}, waited {w.ready.shifts.length} shift{w.ready.shifts.length === 1 ? "" : "s"} to start: {w.ready.busyOn.length ? `${w.crew} was on ${[...new Set(w.ready.busyOn.map((b) => b.split(" - ")[0]))].join(", ")}` : `${w.crew} logged nothing those shifts`}</div>}
                           {w.waits.map((r, i) => (
-                            <div key={i} className="text-[11px] text-amber-800 dark:text-amber-300">
+                            <div key={i} className="text-[11px] text-[var(--state-held-text)]">
                               Waited {r.shifts} shift{r.shifts === 1 ? "" : "s"}: {r.why.length ? r.why.map((x) => `"${x}"`).join(" · ") : "no reason recorded"}
                               {p.canEdit && r.why.length > 0 && <button type="button" onClick={() => setPlanning({ step: s.id, run: i })} className="ml-1 underline cursor-pointer text-[var(--color-accent-text)]">Plan for it next time</button>}
                               {planning?.step === s.id && planning.run === i && <PlanFor run={r} stepName={s.name} crews={work.crews.map((c) => c.crew)} doneBefore={progressBefore(w.moved, r, idx)} onCancel={() => setPlanning(null)} onSave={(c) => { p.onAdd({ ...c, ...(c.kind === "split" ? { actId: s.id } : {}) } as PlanChange); setPlanning(null); }} />}
@@ -390,7 +403,7 @@ function BuiltView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: As
                         <td className={cellDt}>{when(s.planStart, tz)}<br />{when(s.planFinish, tz)}</td>
                         <td className={cellDt}>{when(s.start, tz)}<br />{when(s.finish, tz)}</td>
                         <td className={cellN}>{w.worked.length}</td>
-                        <td className={`${cellN} ${waited ? "text-amber-700 dark:text-amber-400" : ""}`}>{waited || "-"}</td>
+                        <td className={`${cellN} ${waited ? "text-[var(--state-held-text)]" : ""}`}>{waited || "-"}</td>
                         <td className="p-0 relative"><div className="relative min-h-[42px] h-full" style={{ width }}>
                           <Grid shifts={work.shifts} />
                           {s.planStart != null && s.planFinish != null && <i className="absolute top-1.5 h-1 rounded bg-slate-300" style={{ left: x(s.planStart), width: Math.max(2, x(s.planFinish) - x(s.planStart)) }} />}
@@ -427,13 +440,13 @@ function BuiltView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: As
                   <td className={cellAct}>
                     <div className="font-bold"><b className="inline-block w-2 h-2 rounded-full mr-1 align-middle" style={{ background: p.colorOf(c.crew) }} />{c.crew}</div>
                     <div className="text-[11px] text-[var(--color-text-muted)]">{c.perHand != null ? `${r1(c.perHand)} plan h of work per hand a shift on average` : "too few hands entered to judge"}{c.pace ? ` · ${c.pace.mhPerPlanH} man-hours per plan hour (${c.pace.from === "plan" ? "staffing plan" : c.pace.from === "counted" ? "counts" : "hands per job"})` : ""}</div>
-                    {say("low") && <div className="text-[11px] text-amber-800 dark:text-amber-300">More hands than work logged: {say("low")}</div>}
+                    {say("low") && <div className="text-[11px] text-[var(--state-held-text)]">More hands than work logged: {say("low")}</div>}
                     {say("high") && <div className="text-[11px] text-[var(--color-text-muted)]">Stretched: {say("high")}</div>}
                   </td>
                   <td className="col-x" /><td className="col-x" /><td className="col-x" /><td className="col-x" />
                   <td className="p-0 relative"><div className="relative h-11" style={{ width }}>
                     <Grid shifts={work.shifts} />
-                    {keys.map((k, i) => { const b = c.byShift[k]; if (!b || !(b.counted || b.planned)) return null; const hands = b.planned?.direct ?? b.counted?.direct ?? b.counted?.total; const tone = b.verdict === "low" ? "bg-amber-100 border-amber-400 text-amber-900" : b.verdict === "high" ? "bg-blue-100 border-blue-300 text-blue-900" : "bg-emerald-100 border-emerald-300 text-emerald-900";
+                    {keys.map((k, i) => { const b = c.byShift[k]; if (!b || !(b.counted || b.planned)) return null; const hands = b.planned?.direct ?? b.counted?.direct ?? b.counted?.total; const tone = b.verdict === "low" ? "bg-transparent border-[var(--state-held)] text-[var(--state-held-text)]" : b.verdict === "high" ? "bg-blue-100 border-blue-300 text-blue-900" : "bg-transparent border-[var(--color-border)] text-[var(--state-released-text)]";
                       return <span key={k} title={`${b.planned ? `Planned ${b.planned.direct} on the tools + ${b.planned.indirect}` : ""}${b.counted ? `${b.planned ? "; " : ""}counted ${b.counted.total ?? b.counted.direct}` : ""}; ${b.earned} plan h of work moved`} className={`absolute top-1.5 h-8 rounded border text-center font-semibold text-[11px] leading-[13px] pt-0.5 ${tone}`} style={{ left: i * PX + 2, width: PX - 4 }}>{hands}<small className="block text-[11px] leading-none font-bold">{b.counted && b.planned ? `had ${b.counted.total ?? b.counted.direct}` : `${Math.round(b.earned)} h`}</small></span>; })}
                   </div></td>
                 </tr>
@@ -488,12 +501,10 @@ function PlanFor({ run, stepName, crews, doneBefore, onSave, onCancel }: { run: 
   };
   return (
     <div className="mt-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] p-2 space-y-1.5 text-[var(--color-text)] whitespace-normal">
-      <div className="flex flex-wrap gap-1">
-        {([["pre", "Before the shutdown"], ["split", "As a step in the job"]] as const).map(([k, l]) => <button key={k} type="button" onClick={() => setWhere(k)} className={`rounded-full border px-2 py-0.5 text-[11.5px] font-bold cursor-pointer ${where === k ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30 border-transparent" : "border-slate-400"}`}>{l}</button>)}
-      </div>
+      <Choice label="Where it goes" value={where} onChange={setWhere} options={[["pre", "Before the shutdown"], ["split", "As a step in the job"]] as const} />
       <input value={name} onChange={(e) => setName(e.target.value)} aria-label="What it is" className={`${field} w-full`} />
       {where === "split" && (
-        <div className="flex flex-wrap gap-1.5 items-center text-[11.5px]">
+        <div className="flex flex-wrap gap-1.5 items-center text-[12px]">
           <select value={crew} onChange={(e) => setCrew(e.target.value)} aria-label="Crew" className={field}><option value="">Crew?</option>{crews.map((c) => <option key={c}>{c}</option>)}</select>
           <input value={hours} onChange={(e) => setHours(e.target.value.replace(/[^0-9.]/g, ""))} inputMode="decimal" aria-label="Hours" className={`${field} w-16`} /> h (it waited {run.shifts * 12} h this year)
         </div>
@@ -541,7 +552,7 @@ function NextView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsB
       const wantsSooner = /critical|asap|as soon|sooner|faster|finish|pull in|speed/i.test(said);
       const lever = wantsSooner && (!after || after.finish >= plan.finish - 30 * 60_000) ? finishLever({ ...input, changes: [...p.applied, ...r.changes] }, after ?? plan) : null;
       setAnswer({ ...r, finish: after?.finish ?? null, lever: lever ? { ...lever, change: { ...lever.change, id: `l${Date.now().toString(36)}`, said } } : null });
-    } catch (e) { setAnswer({ understood: "", changes: [], question: null, finish: null, lever: null, err: (e as Error).message }); }
+    } catch (e) { setAnswer({ understood: "", changes: [], question: null, finish: null, lever: null, err: sayError(e) }); }
     finally { setBusy(false); }
   };
   const keep = (list: PlanChange[]) => { p.onChanges([...changes, ...list]); setAnswer(null); setText(""); };
@@ -562,7 +573,7 @@ function NextView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsB
   const orders = [...byOrder.entries()].sort((a, b) => Math.min(...a[1].map((x) => x.start)) - Math.min(...b[1].map((x) => x.start)));
   const kinds = plan.acts.reduce((m, a) => { m[a.kind] = (m[a.kind] ?? 0) + 1; return m; }, {} as Record<string, number>);
   const planFin = built.planFinish;
-  const lines = <>{planFin != null && <i aria-hidden title="This year's planned finish" className="absolute top-0 bottom-0 border-l-2 border-red-600" style={{ left: x(planFin) }} />}<i aria-hidden title="Suggested finish" className="absolute top-0 bottom-0 border-l-2 border-dashed border-blue-600" style={{ left: x(plan.finish) }} /></>;
+  const lines = <>{planFin != null && <i aria-hidden title="This year's planned finish" className="absolute top-0 bottom-0 border-l-2 border-[var(--state-overdue)]" style={{ left: x(planFin) }} />}<i aria-hidden title="Suggested finish" className="absolute top-0 bottom-0 border-l-2 border-dashed border-blue-600" style={{ left: x(plan.finish) }} /></>;
   // What kind of change each activity is: plain tags, the word says it.
   const TAG = "border border-[var(--color-border-strong)] text-[var(--color-text)]";
   const KIND: Record<string, [string, string]> = { new: ["New", TAG], found: ["Added scope", TAG], shorter: ["Shorter", TAG], split: ["Split", TAG], changed: ["Changed", TAG] };
@@ -580,8 +591,8 @@ function NextView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsB
             <button type="button" onClick={() => void send()} disabled={busy || !text.trim() || !p.orgId} className={btnQuiet}>{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />} Send</button>
           </div>
           {answer && (
-            <div className="rounded-lg bg-[var(--color-surface-2)] px-3 py-2 text-[12.5px] space-y-1.5">
-              {answer.err && <p className="text-rose-700 dark:text-rose-300">{answer.err}</p>}
+            <div className="rounded-lg bg-[var(--color-surface-2)] px-3 py-2 text-[12px] space-y-1.5">
+              {answer.err && <p className="text-[var(--state-overdue-text)]">{answer.err}</p>}
               {answer.question && <p><b>{answer.question}</b></p>}
               {answer.understood && <p>{answer.understood}</p>}
               {answer.changes.length > 0 && <ul className="list-disc pl-5">{answer.changes.map((c) => <li key={c.id}>{describe(c, orderName, actName, dayOf)}</li>)}</ul>}
@@ -597,14 +608,14 @@ function NextView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsB
               </div>
             </div>
           )}
-          {!p.orgId && <p className="text-[11.5px] text-[var(--color-text-muted)]">Needs the project&apos;s workspace to talk to the schedule.</p>}
+          {!p.orgId && <p className="text-[12px] text-[var(--color-text-muted)]">Needs the project&apos;s workspace to talk to the schedule.</p>}
         </div>
       )}
 
       {mine.length > 0 && (
         <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3">
-          <div className="font-bold text-[12.5px] mb-1">Your changes ({mine.length})</div>
-          <ul className="space-y-1 text-[12.5px]">
+          <div className="font-bold text-[12px] mb-1">Your changes ({mine.length})</div>
+          <ul className="space-y-1 text-[12px]">
             {mine.map((c) => (
               <li key={c.id} className="flex items-start gap-2">
                 <span className="flex-1">{describe(c, orderName, actName, dayOf)}{c.said ? <span className="text-[var(--color-text-muted)]"> · from &quot;{c.said.slice(0, 120)}&quot;</span> : null}</span>
@@ -615,13 +626,13 @@ function NextView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsB
         </div>
       )}
 
-      <div className="flex flex-wrap gap-2 text-[12.5px]">
-        <Chip>Suggested finish <b>{at(plan.finish)}</b>{!trusted && <span className="font-bold text-amber-800 dark:text-amber-300"> {p.check.can ? "not reliable yet" : "not checked yet"}</span>}</Chip>
+      <div className="flex flex-wrap gap-2 text-[12px]">
+        <Chip>Suggested finish <b>{at(plan.finish)}</b>{!trusted && <span className="font-bold text-[var(--state-held-text)]"> {p.check.can ? "not reliable yet" : "not checked yet"}</span>}</Chip>
         {built.planFinish != null && <Chip>This year: planned <b>{at(built.planFinish)}</b>{built.finish != null && <>, actual <b>{at(built.finish)}</b></>}</Chip>}
         <Chip><b>{plan.acts.length + plan.pre.length}</b> activities{Object.entries(kinds).filter(([k]) => k !== "same").map(([k, n]) => ` · ${n} ${(KIND[k]?.[0] ?? k).toLowerCase()}`).join("")}{plan.pre.length ? ` · ${plan.pre.length} before the shutdown` : ""}</Chip>
         <Chip><CalendarClock className="w-3.5 h-3.5 inline mr-1" />Sets the finish: {drivingOrders.slice(0, 3).join(", ")}</Chip>
       </div>
-      <Legend items={[[{ background: "#2563eb" }, "Crew's work: each piece of a work order's bar is one activity"], [{ background: "#fff", boxShadow: "0 0 0 1.5px #ea580c" }, "Not in this year's plan"], [{ background: "#fee2e2", boxShadow: "0 0 0 1.5px #dc2626" }, "Sets the finish"], [{ borderLeft: "2px solid #dc2626", width: 2 }, "This year's planned finish"], [{ borderLeft: "2px dashed #2563eb", width: 2 }, "Suggested finish"]]} />
+      <Legend items={[[{ background: "var(--color-main)" }, "Crew's work: each piece of a work order's bar is one activity"], [{ background: "var(--color-surface)", boxShadow: "0 0 0 1.5px var(--state-held)" }, "Not in this year's plan"], [{ background: "color-mix(in srgb, var(--state-overdue) 12%, var(--color-surface))", boxShadow: "0 0 0 1.5px var(--state-overdue)" }, "Sets the finish"], [{ borderLeft: "2px solid var(--state-overdue)", width: 2 }, "This year's planned finish"], [{ borderLeft: "2px dashed var(--color-main)", width: 2 }, "Suggested finish"]]} />
 
       <FoldAll open={open.size} total={orders.length} onAll={(all) => setOpen(all ? new Set(orders.map(([k]) => k)) : new Set())} />
       <div className="overflow-auto max-h-[75vh] rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
@@ -636,7 +647,7 @@ function NextView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsB
           <tbody>
             {plan.pre.length > 0 && <SectionRow4 title="Before the shutdown" sub="bookings and materials" width={width} shifts={plan.shifts} />}
             {plan.pre.map((a) => (
-              <tr key={a.id}><td className={cellAct}><div className="font-bold">{a.name} <span className="rounded bg-emerald-100 dark:bg-emerald-950/40 px-1 text-[11px] font-semibold text-emerald-900 dark:text-emerald-300">New</span></div>{a.basis && <div className="text-[11px] text-[var(--color-text-muted)]">{a.basis}</div>}</td><td className={cellN}>-</td><td className={cellDt}>Before Day 1</td><td className={cellDt} /><td className="p-0"><div className="relative h-10" style={{ width }}><Grid shifts={plan.shifts} /><span className="absolute left-1.5 top-2.5 rounded bg-emerald-100 px-1.5 text-[11px] font-bold text-emerald-900">before the shutdown</span></div></td></tr>
+              <tr key={a.id}><td className={cellAct}><div className="font-bold">{a.name} <span className="rounded bg-transparent px-1 text-[11px] font-semibold text-[var(--state-released-text)]">New</span></div>{a.basis && <div className="text-[11px] text-[var(--color-text-muted)]">{a.basis}</div>}</td><td className={cellN}>-</td><td className={cellDt}>Before Day 1</td><td className={cellDt} /><td className="p-0"><div className="relative h-10" style={{ width }}><Grid shifts={plan.shifts} /><span className="absolute left-1.5 top-2.5 rounded bg-transparent px-1.5 text-[11px] font-bold text-[var(--state-released-text)]">before the shutdown</span></div></td></tr>
             ))}
             {orders.map(([key, acts]) => {
               const s0 = Math.min(...acts.map((a) => a.start)), s1 = Math.max(...acts.map((a) => a.finish));
@@ -645,7 +656,7 @@ function NextView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsB
               const isOpen = open.has(key);
               const bar = pieces(acts.filter((a) => a.finish > a.start).flatMap((a) => shiftParts(a, plan.shifts).map(([s0, s1], i, all) => ({
                 key: `${a.id}:${i}`, from: s0, to: s1, color: p.colorOf(a.crew), label: all.length === 1 || (s1 - s0) === Math.max(...all.map(([q0, q1]) => q1 - q0)) ? `${r1(a.hours)} h` : undefined,
-                ring: driving.has(a.id) ? "0 0 0 1.5px #dc2626" : a.kind === "new" || a.kind === "found" ? "0 0 0 1.5px #ea580c" : undefined,
+                ring: driving.has(a.id) ? "0 0 0 1.5px var(--state-overdue)" : a.kind === "new" || a.kind === "found" ? "0 0 0 1.5px var(--state-held)" : undefined,
                 title: `${a.name} · ${a.crew} · ${at(a.start)} to ${at(a.finish)} · ${r1(a.hours)} h, ${a.cal === "both" ? "days and nights" : a.cal === "night" ? "nights" : "days"}${driving.has(a.id) ? " · sets the finish" : ""}`,
               }))), x, 8);
               const bo = built.orders.find((o) => o.key === key);
@@ -654,7 +665,7 @@ function NextView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsB
                   <tr className="bg-[var(--color-surface-2)]" data-order={key}>
                     <td className={`${cellAct} !bg-[var(--color-surface-2)]`}>
                       <OrderName open={isOpen} onToggle={() => flip(key)}>
-                        <div className="font-semibold text-[12.5px]">{orderName.get(key) ?? key}{crit && <span className="ml-1 rounded bg-rose-100 dark:bg-rose-950/40 px-1 text-[11px] font-semibold text-rose-900 dark:text-rose-300">Sets the finish</span>}</div>
+                        <div className="font-semibold text-[12px]">{orderName.get(key) ?? key}{crit && <span className="ml-1 rounded bg-transparent px-1 text-[11px] font-semibold text-[var(--state-overdue-text)]">Sets the finish</span>}</div>
                         {bo?.foundOn && <div className="text-[11px] font-semibold text-[var(--color-text-muted)]">Found on {bo.foundOn}</div>}
                         <div className="text-[11px] text-[var(--color-text-muted)]">{acts.length} activit{acts.length === 1 ? "y" : "ies"} · {r1(acts.reduce((n, a) => n + a.hours, 0))} h{changed ? ` · ${changed} changed` : ""}</div>
                       </OrderName>
@@ -666,16 +677,16 @@ function NextView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsB
                     const k = KIND[a.kind];
                     const isCrit = driving.has(a.id);
                     return (
-                      <tr key={a.id} className={isCrit ? "[&>td:first-child]:shadow-[inset_3px_0_0_#dc2626]" : ""}>
-                        <td className={`${cellAct} ${isCrit ? "!bg-rose-50 dark:!bg-rose-950/20" : ""}`}>
-                          <div className="font-bold">{a.name}{k && <span className={`ml-1 rounded px-1 text-[11px] font-semibold ${k[1]}`}>{k[0]}</span>}{a.heldForCrew && <span className="ml-1 rounded bg-amber-100 dark:bg-amber-950/40 px-1 text-[11px] font-semibold text-amber-900 dark:text-amber-300">Waits for its crew</span>}</div>
+                      <tr key={a.id} className={isCrit ? "[&>td:first-child]:shadow-[inset_3px_0_0_var(--state-overdue)]" : ""}>
+                        <td className={`${cellAct} ${isCrit ? "!bg-transparent dark:!bg-[var(--state-overdue)]" : ""}`}>
+                          <div className="font-bold">{a.name}{k && <span className={`ml-1 rounded px-1 text-[11px] font-semibold ${k[1]}`}>{k[0]}</span>}{a.heldForCrew && <span className="ml-1 rounded bg-transparent px-1 text-[11px] font-semibold text-[var(--state-held-text)]">Waits for its crew</span>}</div>
                           <div className="text-[11px] text-[var(--color-text-muted)]"><b className="inline-block w-2 h-2 rounded-full mr-1 align-middle" style={{ background: p.colorOf(a.crew) }} />{a.crew} · {r1(a.hours)} h · {a.cal === "both" ? "days and nights" : a.cal === "night" ? "nights" : "days"}</div>
                           {a.basis && a.kind !== "found" && <div className="text-[11px] text-[var(--color-text-muted)]">{a.basis}</div>}
                           {a.waitedForCrew && <div className="text-[11px] text-[var(--color-text-muted)]">This year it waited {a.waitedForCrew.shifts} shift{a.waitedForCrew.shifts === 1 ? "" : "s"} for {a.waitedForCrew.crew}{a.waitedForCrew.busyOn.length ? ` (on ${[...new Set(a.waitedForCrew.busyOn.map((b) => b.split(" - ")[0]))].join(", ")})` : ""}. See {a.waitedForCrew.crew} under Crews below.</div>}
                         </td>
                         <td className={cellN}>{r1(a.hours)}</td><td className={cellDt}>{at(a.start)}</td><td className={cellDt}>{at(a.finish)}</td>
                         <td className="p-0"><div className="relative h-11" style={{ width }}><Grid shifts={plan.shifts} />
-                          {shiftParts(a, plan.shifts).map(([s0, s1], i) => <i key={i} title={`${a.name}: ${r1(a.hours)} h, ${a.cal === "both" ? "days and nights" : a.cal === "night" ? "nights" : "days"}`} className="absolute top-3 h-4 rounded-sm" style={{ left: x(s0) + 1, width: Math.max(3, x(s1) - x(s0) - 2), background: p.colorOf(a.crew), boxShadow: a.kind === "new" || a.kind === "found" ? "0 0 0 2px #fff, 0 0 0 3.5px #ea580c" : undefined }} />)}{lines}</div></td>
+                          {shiftParts(a, plan.shifts).map(([s0, s1], i) => <i key={i} title={`${a.name}: ${r1(a.hours)} h, ${a.cal === "both" ? "days and nights" : a.cal === "night" ? "nights" : "days"}`} className="absolute top-3 h-4 rounded-sm" style={{ left: x(s0) + 1, width: Math.max(3, x(s1) - x(s0) - 2), background: p.colorOf(a.crew), boxShadow: a.kind === "new" || a.kind === "found" ? "0 0 0 2px var(--color-surface), 0 0 0 3.5px var(--state-held)" : undefined }} />)}{lines}</div></td>
                       </tr>
                     );
                   })}
@@ -707,8 +718,8 @@ function NextView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsB
                     <div className="font-bold"><b className="inline-block w-2 h-2 rounded-full mr-1 align-middle" style={{ background: p.colorOf(crew) }} />{crew}</div>
                     {size && <div className="text-[11px] font-semibold text-[var(--color-text)]" data-crew-size>{sizeWords(size)}{size.hands ? "" : works.night ? (works.day ? ", days and nights" : ", nights") : ", days"}{days ? `, ${days}` : ""}</div>}
                     {size && <div className="text-[11px] text-[var(--color-text-muted)]">{sourceWords(size, sp.co, dayLabel)}</div>}
-                    {warn && <div role="note" className="mt-0.5 border-l-2 border-amber-500 pl-1.5 text-[11px] text-amber-900 dark:text-amber-200" data-ramp>{warn}</div>}
-                    {idle > 0 && <div className="text-[11px] font-bold text-amber-800 dark:text-amber-300">{idle} shift{idle === 1 ? "" : "s"} on site with nothing to do</div>}
+                    {warn && <div role="note" className="mt-0.5 border-l-2 border-[var(--state-held)] pl-1.5 text-[11px] text-[var(--state-held-text)]" data-ramp>{warn}</div>}
+                    {idle > 0 && <div className="text-[11px] font-bold text-[var(--state-held-text)]">{idle} shift{idle === 1 ? "" : "s"} on site with nothing to do</div>}
                     {sp.plant ? <div className="text-[11px] text-[var(--color-text-muted)]">Kern Energy crew: no contractor staffing plan.</div>
                       : sum ? <div className="text-[11px] text-[var(--color-text-muted)]">Staffing plan ({sp.plan!.file || "typed in"}). <button type="button" onClick={() => openContractor(sp.co)} className="text-[var(--color-accent-text)] hover:underline cursor-pointer">Open it</button></div>
                       : <div className="text-[11px] text-[var(--color-text-muted)]">No staffing plan yet. <button type="button" onClick={() => openContractor(sp.co)} className="text-[var(--color-accent-text)] hover:underline cursor-pointer">Put in {sp.co}&apos;s</button></div>}
@@ -729,7 +740,7 @@ function NextView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsB
                       const plannedHands = sp.plan?.shifts[shiftKey(w)]?.direct;
                       return (
                         <span key={i} title={`${dayLabel(w.start)} ${w.kind}: ${n ? `${n} job${n === 1 ? "" : "s"} going at once, ${Math.round(plan.load[crew]?.[i] ?? 0)} h of work${byHands ? `, about ${v} of the ${cap} on the tools` : cap != null ? ` (held at ${cap} at a time)` : ""}` : "on site, nothing to do"}${plannedHands != null ? `; staffing plan ${plannedHands} on the tools` : ""}`}
-                          className={`absolute top-[22px] h-6 rounded border text-center text-[11px] font-semibold leading-[22px] ${!n ? "bg-amber-50 border-amber-300 text-amber-900 dark:bg-amber-950/30 dark:text-amber-200" : "text-white border-transparent"}`}
+                          className={`absolute top-[22px] h-6 rounded border text-center text-[11px] font-semibold leading-[22px] ${!n ? "bg-transparent border-[var(--color-border)] text-[var(--state-held-text)]" : "text-white border-transparent"}`}
                           style={{ left: i * PX + 2, width: PX - 4, background: n ? p.colorOf(crew) : undefined }}>{n ? v : 0}</span>
                       );
                     })}
@@ -773,7 +784,7 @@ function Taught(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsBui
   return (
     <section className="rounded-xl border-2 border-[var(--color-text)] bg-[var(--color-surface)] p-3 sm:p-4 space-y-3" data-taught>
       <div>
-        <div className={`border-l-2 pl-3 py-1 text-[12.5px] text-[var(--color-text)] ${trusted ? "border-emerald-500" : "border-amber-500"}`} data-check={trusted ? "ok" : check.can ? "off" : "none"}>
+        <div className={`border-l-2 pl-3 py-1 text-[12px] text-[var(--color-text)] ${trusted ? "border-[var(--state-released)]" : "border-[var(--state-held)]"}`} data-check={trusted ? "ok" : check.can ? "off" : "none"}>
           {check.can ? (
             <><b>{trusted ? "Checked against this year." : "Not reliable yet."}</b> This year run back through these rules, each step at the length it really took and the found work in, lands {p.at(check.replay!)}; it really finished {p.at(check.actual!)} ({offWord(check.offH!)}). {trusted ? `Within ${CHECK_H} h, so the rules hold for this job.` : `More than ${CHECK_H} h apart, so the finish below is not a promise.`}
               {!trusted && check.gap && <span className="block mt-1">Where they part: <b>{check.gap.name}</b> ({check.gap.order}) started {p.at(check.gap.start)}, {r1(Math.abs(check.gap.hours))} h {check.gap.hours >= 0 ? "after" : "before"} {check.gap.after} finished; the rules start it right away. If work went on in between, add it to {check.gap.order} with its times and this check runs again with it. If it only waited, that wait is something the schedule can&apos;t see coming.</span>}</>
@@ -810,12 +821,12 @@ function Taught(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsBui
               <li key={l.id} className={`py-2.5 ${out ? "opacity-60" : ""}`} data-lesson={l.id}>
                 <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
                   <span className="rounded bg-[var(--color-surface-2)] px-1.5 text-[11px] font-semibold text-[var(--color-text-muted)]">{AREA_WORD[l.area]}</span>
-                  <b className="order-last basis-full sm:order-none sm:basis-0 sm:flex-1 min-w-0 text-[13.5px] text-[var(--color-text)]">{l.title}</b>
-                  {!out && !l.rule && <span className={`text-[12px] font-bold ${(effects[l.id] ?? 0) >= 0.5 ? "text-emerald-700 dark:text-emerald-400" : (effects[l.id] ?? 0) <= -0.5 ? "text-amber-700 dark:text-amber-400" : "text-[var(--color-text-muted)]"}`}>{effectWord(effects[l.id])}</span>}
+                  <b className="order-last basis-full sm:order-none sm:basis-0 sm:flex-1 min-w-0 text-[14px] text-[var(--color-text)]">{l.title}</b>
+                  {!out && !l.rule && <span className={`text-[12px] font-bold ${(effects[l.id] ?? 0) >= 0.5 ? "text-[var(--state-released-text)]" : (effects[l.id] ?? 0) <= -0.5 ? "text-[var(--state-held-text)]" : "text-[var(--color-text-muted)]"}`}>{effectWord(effects[l.id])}</span>}
                   {p.canEdit && !l.rule && <button type="button" onClick={() => skip(l.id, !out)} className="text-[13px] text-[var(--color-accent-text)] hover:underline cursor-pointer">{out ? "Put back" : "Leave out"}</button>}
                 </div>
-                <p className="mt-0.5 text-[12.5px] text-[var(--color-text-muted)]">{l.saw}</p>
-                <p className="mt-0.5 text-[12.5px] text-[var(--color-text)]">{out ? "Left out of the suggested schedule." : l.does}</p>
+                <p className="mt-0.5 text-[12px] text-[var(--color-text-muted)]">{l.saw}</p>
+                <p className="mt-0.5 text-[12px] text-[var(--color-text)]">{out ? "Left out of the suggested schedule." : l.does}</p>
               </li>
             );
           })}
@@ -830,16 +841,16 @@ function Taught(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsBui
                 <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
                   <span className="rounded bg-[var(--color-surface-2)] px-1.5 text-[11px] font-semibold text-[var(--color-text-muted)]">{r.kind === "found" ? "Found" : "Ran long"}</span>
                   <b className="order-last basis-full sm:order-none sm:basis-0 sm:flex-1 min-w-0 text-[13px] text-[var(--color-text)]">{r.where}</b>
-                  <span className={`text-[12px] font-bold ${r.finishH >= 0.5 ? "text-rose-700 dark:text-rose-400" : "text-[var(--color-text-muted)]"}`}>{r.finishH >= 0.5 ? `finish ${r1(r.finishH)} h later` : "no change to the finish"}</span>
+                  <span className={`text-[12px] font-bold ${r.finishH >= 0.5 ? "text-[var(--state-overdue-text)]" : "text-[var(--color-text-muted)]"}`}>{r.finishH >= 0.5 ? `finish ${r1(r.finishH)} h later` : "no change to the finish"}</span>
                 </div>
-                <p className="mt-0.5 text-[12.5px] text-[var(--color-text-muted)]">{r.kind === "found" ? `Found this year: ${r.title} (${r.crew}, ${r1(r.hours)} h of work).` : `This year: ${r.title}. ${r1(r.hours)} h past plan in all (${r.crew}).`}</p>
+                <p className="mt-0.5 text-[12px] text-[var(--color-text-muted)]">{r.kind === "found" ? `Found this year: ${r.title} (${r.crew}, ${r1(r.hours)} h of work).` : `This year: ${r.title}. ${r1(r.hours)} h past plan in all (${r.crew}).`}</p>
               </li>
             ))}
           </ul>
           {still.length > 0 && <button type="button" onClick={() => setAllRisks(!allRisks)} className="mt-1 text-[13px] text-[var(--color-accent-text)] hover:underline cursor-pointer">{allRisks ? "Hide the ones that don't move the finish" : `${still.length} more that don't move the finish`}</button>}
         </div>
       )}
-      <p className="text-[11.5px] text-[var(--color-text-muted)]">From this job&apos;s record, the same facts the post-event review reads. Each one&apos;s effect is against leaving it out{lessons.some((l) => l.honest) ? "; for time off site, against the real time away on this year's dates" : ""}.</p>
+      <p className="text-[12px] text-[var(--color-text-muted)]">From this job&apos;s record, the same facts the post-event review reads. Each one&apos;s effect is against leaving it out{lessons.some((l) => l.honest) ? "; for time off site, against the real time away on this year's dates" : ""}.</p>
     </section>
   );
 }
@@ -929,11 +940,9 @@ function CrewSizeEdit({ crew, size, pace, mine, onSave, onClear }: { crew: strin
     </div>
   );
   return (
-    <div className="mt-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] p-2 space-y-1.5 whitespace-normal text-[11.5px] text-[var(--color-text)]">
+    <div className="mt-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] p-2 space-y-1.5 whitespace-normal text-[12px] text-[var(--color-text)]">
       {pace != null && (
-        <div className="flex flex-wrap gap-1">
-          {([["hands", "Hands on the tools"], ["jobs", "Jobs at a time"]] as const).map(([k, l]) => <button key={k} type="button" aria-pressed={mode === k} onClick={() => setMode(k)} className={`rounded-full border px-2 py-0.5 text-[11.5px] font-bold cursor-pointer ${mode === k ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30 border-transparent" : "border-slate-400"}`}>{l}</button>)}
-        </div>
+        <Choice label="Set it by" value={mode} onChange={setMode} options={[["hands", "Hands on the tools"], ["jobs", "Jobs at a time"]] as const} />
       )}
       {mode === "jobs"
         ? <label className="flex items-center gap-1.5"><input value={jobs} onChange={(e) => setJobs(e.target.value.replace(/[^0-9]/g, ""))} inputMode="numeric" aria-label={`${crew}: jobs at a time`} className={field} /> jobs at a time</label>

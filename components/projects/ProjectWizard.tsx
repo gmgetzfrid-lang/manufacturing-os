@@ -19,9 +19,12 @@ import React, { useEffect, useMemo, useState } from "react";
 import TimeZoneSelect from "@/components/projects/TimeZoneSelect";
 import { browserTimeZone, fromDateInput } from "@/lib/scheduleTz";
 import {
-  Briefcase, Loader2, Plus, X, ChevronLeft, ChevronRight, Check,
-  Target, FileText, CircleDollarSign, Flag, HardHat, Search, Sparkles,
+  Plus, X, ChevronLeft, ChevronRight, Check, FileText, Search, Sparkles,
 } from "lucide-react";
+import { Button } from "@/components/ui/Button";
+import { ErrorNote } from "@/components/ui/ErrorNote";
+import { FieldError } from "@/components/ui/Field";
+import { field as fieldCls, label as labelCls } from "@/components/admin/kit";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { createProject } from "@/lib/projects";
@@ -37,16 +40,21 @@ import { fmtMoney } from "@/lib/costs";
 import StepPath from "@/components/ui/StepPath";
 import { useDraft } from "@/hooks/useDraft";
 import { appAlert } from "@/components/providers/DialogProvider";
+import { sayError } from "@/components/projects/sayError";
 
+// Steps by topic, then a review of every answer before the project is made.
 const STEPS = [
-  { key: "basics", label: "Basics", icon: Briefcase },
-  { key: "purpose", label: "Purpose & goals", icon: Target },
-  { key: "sow", label: "Summary of Work", icon: FileText },
-  { key: "budget", label: "Budget", icon: CircleDollarSign },
-  { key: "schedule", label: "Schedule", icon: Flag },
-  { key: "team", label: "Team & contractors", icon: HardHat },
+  { key: "basics", label: "Basics" },
+  { key: "purpose", label: "Purpose & goals" },
+  { key: "sow", label: "Summary of Work" },
+  { key: "budget", label: "Budget" },
+  { key: "schedule", label: "Schedule" },
+  { key: "team", label: "Team & contractors" },
 ] as const;
 type StepKey = (typeof STEPS)[number]["key"];
+/** The last screen: every answer, each with a way back to change it. */
+const REVIEW = STEPS.length;
+const PATH = [...STEPS.map((s) => s.label), "Review"];
 
 const JOB_KINDS = [
   { v: "small", label: "Small job", hint: "A repair, a swap, a short scope: light paperwork, quick closeout." },
@@ -111,13 +119,34 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
     listCompanies(orgId).then(setCompanies).catch(() => setCompanies([]));
   }, [orgId]);
 
-  // What they've typed comes back if the page reloads or they close it.
-  type Typed = { name: string; description: string; purpose: string; successCriteria: string; goals: string[] };
-  const typed = useMemo<Typed>(() => ({ name, description, purpose, successCriteria, goals }), [name, description, purpose, successCriteria, goals]);
+  // Basics checked when the person leaves a field (never while typing).
+  const [touched, setTouched] = useState<{ name?: boolean; description?: boolean }>({});
+
+  // What they've typed, on every step, comes back if the page reloads or
+  // they close it; so does the step they were on.
+  type Typed = {
+    name: string; description: string; purpose: string; successCriteria: string; goals: string[];
+    step?: number; jobKind?: string; kindPick?: string | null; moc?: string; targetDate?: string; timezone?: string; visibility?: ProjectVisibility;
+    budgetRows?: typeof budgetRows; milestoneRows?: typeof milestoneRows; partyRows?: typeof partyRows; skipped?: Record<string, boolean>;
+  };
+  const typed = useMemo<Typed>(() => ({ name, description, purpose, successCriteria, goals, step, jobKind, kindPick, moc, targetDate, timezone, visibility, budgetRows, milestoneRows, partyRows, skipped }),
+    [name, description, purpose, successCriteria, goals, step, jobKind, kindPick, moc, targetDate, timezone, visibility, budgetRows, milestoneRows, partyRows, skipped]);
   const draft = useDraft<Typed>(`new-project:${orgId}`, typed, (v) => {
     setName(v.name ?? ""); setDescription(v.description ?? ""); setPurpose(v.purpose ?? "");
     setSuccessCriteria(v.successCriteria ?? ""); setGoals(Array.isArray(v.goals) ? v.goals : []);
-  }, (v) => !v.name?.trim() && !v.description?.trim() && !v.purpose?.trim() && !v.successCriteria?.trim() && !(v.goals?.length));
+    if (typeof v.step === "number" && v.step >= 0 && v.step <= REVIEW) setStep(v.step);
+    if (v.jobKind) setJobKind(v.jobKind);
+    if (v.kindPick !== undefined) setKindPick(v.kindPick);
+    if (typeof v.moc === "string") setMoc(v.moc);
+    if (typeof v.targetDate === "string") setTargetDate(v.targetDate);
+    if (v.timezone) setTimezone(v.timezone);
+    if (v.visibility) setVisibility(v.visibility);
+    if (Array.isArray(v.budgetRows) && v.budgetRows.length) setBudgetRows(v.budgetRows);
+    if (Array.isArray(v.milestoneRows) && v.milestoneRows.length) setMilestoneRows(v.milestoneRows);
+    if (Array.isArray(v.partyRows) && v.partyRows.length) setPartyRows(v.partyRows);
+    if (v.skipped) setSkipped(v.skipped);
+  }, (v) => !v.name?.trim() && !v.description?.trim() && !v.purpose?.trim() && !v.successCriteria?.trim() && !(v.goals?.length)
+    && !v.moc?.trim() && !v.targetDate && !(v.budgetRows ?? []).some((r) => r.name.trim()) && !(v.milestoneRows ?? []).some((r) => r.name.trim()) && !(v.partyRows ?? []).some((r) => r.name.trim()));
 
   const prefillFromDoc = (r: BudgetReadResult) => {
     const doc = r.parsed;
@@ -169,7 +198,8 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
     return () => clearTimeout(t);
   }, [sowQuery, orgId]);
 
-  const stepKey = STEPS[step].key;
+  const stepKey: StepKey | null = step < REVIEW ? STEPS[step].key : null;
+  const basicsOk = !!name.trim() && !!description.trim();
   const stepHasContent: Record<StepKey, boolean> = useMemo(() => ({
     basics: !!name.trim() && !!description.trim(),
     purpose: !!purpose.trim() || goals.length > 0 || !!successCriteria.trim(),
@@ -180,10 +210,11 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
   }), [name, description, purpose, goals, successCriteria, sowDoc, budgetRows, milestoneRows, partyRows]);
 
   const next = (didSkip: boolean) => {
-    setSkipped((s) => ({ ...s, [stepKey]: didSkip }));
     setError(null);
-    if (step < STEPS.length - 1) setStep(step + 1);
-    else void finish({ ...skipped, [stepKey]: didSkip });
+    if (step === REVIEW) { void finish(skipped); return; }
+    if (step === 0 && !basicsOk) { setTouched({ name: true, description: true }); return; }
+    if (stepKey) setSkipped((s) => ({ ...s, [stepKey]: didSkip }));
+    setStep(step + 1);
   };
 
   const finish = async (finalSkips: Record<string, boolean>) => {
@@ -264,7 +295,7 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
         const basis = await recordBudgetBasis({
           orgId, projectId, parsed: fromDoc.parsed, source: fromDoc.source,
           actor: { uid: actorUserId, email: actorEmail ?? null },
-        }).catch((e) => ({ docId: null, error: (e as Error).message }));
+        }).catch((e) => ({ docId: null, error: sayError(e) }));
         if (basis.error) problems.push(`the budget document (${basis.error})`);
       }
 
@@ -276,7 +307,7 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
           name: r.name.trim(), planned_at: fromDateInput(r.date, timezone, 12) ?? new Date(`${r.date}T12:00:00`).toISOString(),
           status: "planned", created_by: actorUserId,
         }))).then(({ error: msErr }) => { if (msErr) problems.push(`milestones (${msErr.message})`); },
-          (e) => { problems.push(`milestones (${(e as Error).message})`); });
+          (e) => { problems.push(`milestones (${sayError(e)})`); });
       }
 
       // The kind of project, as picked (or read from the name): the
@@ -285,14 +316,14 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
         const guessed = projectTypeOf(null, name);
         const word = kindPick ?? (isDefaultType(guessed) ? (jobKind === "capital" ? "Capital project" : null) : guessed.word);
         const t = word && word !== "Other" ? PROJECT_TYPES.find((x) => x.word === word) : null;
-        if (t) await saveProjectType(projectId, t).catch((e) => { problems.push(`the kind of project (${(e as Error).message})`); });
+        if (t) await saveProjectType(projectId, t).catch((e) => { problems.push(`the kind of project (${sayError(e)})`); });
       }
 
       // Turnover package seeds, sized to the job. Failure is non-fatal —
       // the Quality tab can seed on demand.
       const seeded = await seedTurnoverItems({
         orgId, projectId, jobKind, actor: { uid: actorUserId, email: actorEmail ?? null },
-      }).catch((e) => ({ ok: false, error: (e as Error).message }));
+      }).catch((e) => ({ ok: false, error: sayError(e) }));
       if (!seeded.ok) problems.push(`the turnover list (${seeded.error ?? "not saved"})`);
 
       draft.clear();
@@ -302,11 +333,10 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
         void appAlert({ tone: "danger", message: `The project was made, but these didn't save: ${problems.join("; ")}. Add them on the project.` });
       }
     } catch (e) {
-      setError((e as Error).message);
+      setError(sayError(e));
     } finally { setBusy(false); }
   };
 
-  const Icon = STEPS[step].icon;
   // Escape closes, like the X (not while it's saving).
   useEffect(() => {
     const on = (e: KeyboardEvent) => { if (e.key === "Escape" && !busy) onClose(); };
@@ -314,25 +344,42 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
     return () => window.removeEventListener("keydown", on);
   }, [busy, onClose]);
 
+  // A row of inputs that wraps on a phone; each input 16 px there.
+  const rowIn = `${fieldCls} !w-auto min-w-0`;
+  const removeBtn = "shrink-0 w-9 h-9 pointer-coarse:w-11 pointer-coarse:h-11 inline-flex items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--state-overdue-text)] hover:bg-[var(--color-surface-2)]";
+  const addLink = "inline-flex items-center gap-1.5 min-h-9 pointer-coarse:min-h-11 text-[14px] font-semibold text-[var(--color-accent-text)] hover:underline underline-offset-2";
+  const choice = (on: boolean) => `rounded-lg border text-left transition-colors ${on ? "border-[var(--color-current)] ring-1 ring-inset ring-[var(--color-current)] bg-[var(--color-surface)]" : "border-[var(--color-border-strong)] hover:border-[var(--color-border-control)] bg-[var(--color-surface)]"}`;
+  const guessedKind = projectTypeOf(null, name);
+  const kindNow = kindPick ?? (isDefaultType(guessedKind) ? (jobKind === "capital" ? "Capital project" : "Other") : guessedKind.word);
+  const budgetLines = budgetRows.filter((r) => r.name.trim());
+  const budgetSum = budgetLines.reduce((t, r) => t + (Number(r.budget) || 0), 0);
+  const msLines = milestoneRows.filter((r) => r.name.trim() && r.date);
+  const partyLines = partyRows.filter((r) => r.name.trim());
+  // Why Next can't be pressed yet, said beside it.
+  const blocked = step === 0 && !basicsOk
+    ? (!name.trim() && !description.trim() ? "Add a name and a description to go on." : !name.trim() ? "Add a name to go on." : "Add a description to go on.")
+    : null;
+
   return (
-    <div role="dialog" aria-modal="true" aria-label="New project" className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
-      <div className="w-full max-w-2xl bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden animate-in fade-in zoom-in-95">
-        {/* Header + stepper */}
-        <div className="px-6 py-4 border-b border-[var(--color-border)]">
-          <div className="flex items-center gap-3">
-            <div className="p-2 bg-[var(--color-surface-2)] rounded-lg"><Icon className="w-5 h-5 text-[var(--color-text-muted)]" /></div>
+    <div role="dialog" aria-modal="true" aria-labelledby="new-project-title" className="fixed inset-0 z-[200] bg-slate-900/50 flex items-start sm:items-center justify-center overflow-y-auto p-4">
+      <div className="ui-float ui-float-in w-full max-w-2xl bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] overflow-hidden">
+        {/* Where you are: the title, the step by name, and the path of steps. */}
+        <div className="px-6 pt-4 pb-4 border-b border-[var(--color-border)]">
+          <div className="flex items-start gap-3">
             <div className="flex-1 min-w-0">
-              <div className="text-sm font-semibold text-[var(--color-text)]">New project</div>
-              <div className="text-xs text-[var(--color-text-muted)]">
-                {draft.restored ? "Your earlier typing is back. " : ""}Only Basics is needed. Skipped steps come back on the project.
-              </div>
+              <h2 id="new-project-title" className="font-display text-[20px] font-semibold text-[var(--color-text)]">New project</h2>
+              <p className="mt-0.5 text-[14px] text-[var(--color-text-muted)]">
+                <span className="max-sm:hidden font-semibold text-[var(--color-text)]">Step {step + 1} of {PATH.length}: {PATH[step]}. </span>
+                {step === REVIEW ? "Check it, then make the project." : step === 0 ? "Only this step is needed." : "Optional: skip it and it comes back on the project."}
+                {draft.restored && step === 0 ? " What you typed before is back." : ""}
+              </p>
             </div>
-            <button onClick={onClose} disabled={busy} aria-label="Close" className="p-2 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-faint)] hover:text-[var(--color-text)]"><X className="w-4 h-4" /></button>
+            <button onClick={onClose} disabled={busy} aria-label="Close" className="-mr-2 w-9 h-9 pointer-coarse:w-11 pointer-coarse:h-11 inline-flex items-center justify-center rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"><X className="w-4 h-4" /></button>
           </div>
-          <StepPath className="mt-3" steps={STEPS.map((s) => s.label)} current={step} onPick={(i) => { if (!busy) setStep(i); }} />
+          <StepPath className="mt-4 max-sm:mt-2" steps={PATH} current={step} onPick={(i) => { if (!busy) { setError(null); setStep(i); } }} />
         </div>
 
-        <div className="px-6 py-5 space-y-4 max-h-[60vh] overflow-y-auto">
+        <div className="px-6 py-5 space-y-5 max-h-[60vh] overflow-y-auto">
           {step === 0 && (
             <>
               {fromDoc ? (
@@ -341,98 +388,113 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
                 <BudgetDocDrop orgId={orgId} onRead={prefillFromDoc} compact
                   label="Start from an AFE, estimate or budget sheet to fill in every step" />
               )}
-              <Field label="Name *">
-                <input value={name} onChange={(e) => setName(e.target.value)} placeholder="2026 Q1 Turnaround - Unit 300" autoFocus
-                  className="w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)]" />
-              </Field>
-              <Field label="Description *">
-                <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={2}
-                  placeholder="What is this project about? What will the team do?"
-                  className="w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm resize-y bg-[var(--color-surface)]" />
-              </Field>
-              <Field label="Kind of project">
-                {(() => {
-                  const guessed = projectTypeOf(null, name);
-                  const kind = kindPick ?? (isDefaultType(guessed) ? (jobKind === "capital" ? "Capital project" : "Other") : guessed.word);
-                  return (
-                    <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="Kind of project">
-                      {[...PROJECT_TYPES.map((t) => t.word), "Other"].map((w) => (
-                        <button key={w} type="button" role="radio" aria-checked={kind === w} onClick={() => setKindPick(w)}
-                          className={`rounded-lg border px-2.5 py-1.5 text-xs font-bold ${kind === w ? "border-[var(--color-text)] bg-[var(--color-surface-2)] text-[var(--color-text)]" : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-[var(--color-border-strong)]"}`}>
-                          {w}
-                        </button>
-                      ))}
-                    </div>
-                  );
-                })()}
-              </Field>
-              <Field label="Job size">
-                <div className="grid sm:grid-cols-3 gap-2">
-                  {JOB_KINDS.map((k) => (
-                    <button key={k.v} onClick={() => setJobKind(k.v)}
-                      className={`rounded-xl border p-3 text-left transition-colors ${jobKind === k.v ? "border-[var(--color-text)] bg-[var(--color-surface-2)]" : "border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`}>
-                      <div className="text-xs font-semibold text-[var(--color-text)]">{k.label}</div>
-                      <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5">{k.hint}</div>
+              <div>
+                <label htmlFor="np-name" className={labelCls}>Name</label>
+                <input id="np-name" value={name} onChange={(e) => setName(e.target.value)} onBlur={() => setTouched((t) => ({ ...t, name: true }))}
+                  placeholder="e.g. 2026 Q1 Turnaround, Unit 300" autoFocus autoComplete="off"
+                  aria-invalid={touched.name && !name.trim() ? true : undefined} aria-describedby={touched.name && !name.trim() ? "np-name-err" : undefined}
+                  className={fieldCls} />
+                {touched.name && !name.trim() && <FieldError id="np-name-err">Give the project a name people will recognize.</FieldError>}
+              </div>
+              <div>
+                <label htmlFor="np-desc" className={labelCls}>Description</label>
+                <textarea id="np-desc" value={description} onChange={(e) => setDescription(e.target.value)} onBlur={() => setTouched((t) => ({ ...t, description: true }))} rows={2}
+                  placeholder="e.g. Clean and inspect the Transmix exchangers for a one-year run"
+                  aria-invalid={touched.description && !description.trim() ? true : undefined} aria-describedby={touched.description && !description.trim() ? "np-desc-err" : undefined}
+                  className={`${fieldCls} !h-auto min-h-[4.5rem] py-2 resize-y`} />
+                {touched.description && !description.trim() && <FieldError id="np-desc-err">Say in a line what the team will do.</FieldError>}
+              </div>
+              <fieldset>
+                <legend className={labelCls}>Kind of project</legend>
+                <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Kind of project">
+                  {[...PROJECT_TYPES.map((t) => t.word), "Other"].map((w) => (
+                    <button key={w} type="button" role="radio" aria-checked={kindNow === w} onClick={() => setKindPick(w)}
+                      className={`${choice(kindNow === w)} inline-flex items-center gap-1.5 h-9 pointer-coarse:h-11 px-3 text-[14px] ${kindNow === w ? "font-semibold text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>
+                      {kindNow === w && <Check className="w-4 h-4 text-[var(--color-current)]" />}{w}
                     </button>
                   ))}
                 </div>
-              </Field>
-              <div className="grid grid-cols-2 gap-3">
-                <Field label="MOC reference (Management of Change)">
-                  <input value={moc} onChange={(e) => setMoc(e.target.value)} placeholder="MOC-2026-0142"
-                    title="The Management of Change number authorizing this work. PSM requires it before covered processes are changed."
-                    className="w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm font-display tabular-nums bg-[var(--color-surface)]" />
-                </Field>
-                <Field label="Target completion">
-                  <input type="date" value={targetDate} onChange={(e) => setTargetDate(e.target.value)}
-                    className="w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)] [color-scheme:light] dark:[color-scheme:dark]" />
-                </Field>
-              </div>
-              <Field label="Plant timezone">
-                <TimeZoneSelect value={timezone} onChange={setTimezone} />
-                <div className="mt-1 text-[11px] text-[var(--color-text-faint)]">Everyone on the project sees days, times and shifts in this zone.</div>
-              </Field>
-              <Field label="Visibility">
-                <div className="flex bg-[var(--color-surface-2)] p-1 rounded-lg">
-                  <button onClick={() => setVisibility("public")} className={`flex-1 py-1.5 text-xs font-bold rounded-md transition-all ${visibility === "public" ? "bg-[var(--color-surface)] shadow text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>Public (everyone in org)</button>
-                  <button onClick={() => setVisibility("private")} className={`flex-1 py-1.5 text-xs font-bold rounded-md transition-all ${visibility === "private" ? "bg-[var(--color-surface)] shadow text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>Private (members only)</button>
+              </fieldset>
+              <fieldset>
+                <legend className={labelCls}>Job size</legend>
+                <div className="grid sm:grid-cols-3 gap-2" role="radiogroup" aria-label="Job size">
+                  {JOB_KINDS.map((k) => (
+                    <button key={k.v} type="button" role="radio" aria-checked={jobKind === k.v} onClick={() => setJobKind(k.v)} className={`${choice(jobKind === k.v)} p-3`}>
+                      <div className="text-[14px] font-semibold text-[var(--color-text)]">{k.label}</div>
+                      <div className="text-[13px] leading-snug text-[var(--color-text-muted)] mt-0.5">{k.hint}</div>
+                    </button>
+                  ))}
                 </div>
-              </Field>
+              </fieldset>
+              <div className="grid sm:grid-cols-2 gap-x-4 gap-y-5">
+                <div>
+                  <label htmlFor="np-moc" className={labelCls}>MOC number <span className="font-normal text-[var(--color-text-muted)]">(optional)</span></label>
+                  <input id="np-moc" value={moc} onChange={(e) => setMoc(e.target.value)} placeholder="e.g. MOC-2026-0142" autoComplete="off"
+                    title="The Management of Change number authorizing this work. PSM requires it before covered processes are changed."
+                    className={`${fieldCls} font-display tabular-nums`} />
+                </div>
+                <div>
+                  <label htmlFor="np-target" className={labelCls}>Target completion <span className="font-normal text-[var(--color-text-muted)]">(optional)</span></label>
+                  <input id="np-target" type="date" value={targetDate} onChange={(e) => setTargetDate(e.target.value)}
+                    className={`${fieldCls} [color-scheme:light] dark:[color-scheme:dark]`} />
+                </div>
+              </div>
+              <div>
+                <span className={labelCls}>Plant time zone</span>
+                <TimeZoneSelect value={timezone} onChange={setTimezone} />
+                <p className="mt-1.5 text-[13px] text-[var(--color-text-muted)]">Everyone on the project sees days, times and shifts in this zone.</p>
+              </div>
+              <fieldset>
+                <legend className={labelCls}>Who can see it</legend>
+                <div className="flex flex-wrap gap-x-6 gap-y-1">
+                  {([["public", "Everyone in the workspace"], ["private", "Members only"]] as const).map(([v, l]) => (
+                    <label key={v} className={`inline-flex items-center gap-2 min-h-9 pointer-coarse:min-h-11 text-[14px] cursor-pointer ${visibility === v ? "font-semibold text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>
+                      <input type="radio" name="np-visibility" checked={visibility === v} onChange={() => setVisibility(v)} className="w-4 h-4 accent-[var(--color-current)]" />{l}
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
             </>
           )}
 
           {step === 1 && (
             <>
               <StepIntro text="Why this job, and what does done well look like?" />
-              <Field label="Purpose">
-                <textarea value={purpose} onChange={(e) => setPurpose(e.target.value)} rows={2} autoFocus
+              <div>
+                <label htmlFor="np-purpose" className={labelCls}>Purpose</label>
+                <textarea id="np-purpose" value={purpose} onChange={(e) => setPurpose(e.target.value)} rows={2} autoFocus
                   placeholder="e.g. Replace the corroded E-301 exchanger circuits before they force an unplanned outage."
-                  className="w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm resize-y bg-[var(--color-surface)]" />
-              </Field>
-              <Field label="Goals">
-                <div className="space-y-1.5">
-                  {goals.map((g, i) => (
-                    <div key={i} className="flex items-center gap-2 text-xs rounded-lg border border-[var(--color-border)] px-2.5 py-1.5">
-                      <Target className="w-3 h-3 text-[var(--color-text-muted)] shrink-0" />
-                      <span className="flex-1 text-[var(--color-text)]">{g}</span>
-                      <button onClick={() => setGoals(goals.filter((_, j) => j !== i))} className="text-[var(--color-text-faint)] hover:text-rose-600"><X className="w-3 h-3" /></button>
-                    </div>
-                  ))}
-                  <div className="flex items-center gap-2">
-                    <input value={goalDraft} onChange={(e) => setGoalDraft(e.target.value)}
-                      onKeyDown={(e) => { if (e.key === "Enter" && goalDraft.trim()) { setGoals([...goals, goalDraft.trim()]); setGoalDraft(""); } }}
-                      placeholder="Add a goal, then Enter. e.g. Zero recordables"
-                      className="flex-1 px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)]" />
-                    <button onClick={() => { if (goalDraft.trim()) { setGoals([...goals, goalDraft.trim()]); setGoalDraft(""); } }} aria-label="Add goal"
-                      className="p-2 rounded-lg border border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><Plus className="w-4 h-4" /></button>
-                  </div>
+                  className={`${fieldCls} !h-auto min-h-[4.5rem] py-2 resize-y`} />
+              </div>
+              <div>
+                <label htmlFor="np-goal" className={labelCls}>Goals</label>
+                {goals.length > 0 && (
+                  <ul className="mb-2 divide-y divide-[var(--color-border)] border-y border-[var(--color-border)]">
+                    {goals.map((g, i) => (
+                      <li key={i} className="flex items-center gap-2 py-1.5 text-[14px]">
+                        <span className="flex-1 text-[var(--color-text)]">{g}</span>
+                        <button type="button" onClick={() => setGoals(goals.filter((_, j) => j !== i))} aria-label={`Remove goal: ${g}`} className={removeBtn}><X className="w-4 h-4" /></button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                <div className="flex items-center gap-2">
+                  <input id="np-goal" value={goalDraft} onChange={(e) => setGoalDraft(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter" && goalDraft.trim()) { e.preventDefault(); setGoals([...goals, goalDraft.trim()]); setGoalDraft(""); } }}
+                    placeholder="e.g. Zero recordables"
+                    className={`${fieldCls} flex-1`} />
+                  <Button variant="secondary" disabled={!goalDraft.trim()} title={!goalDraft.trim() ? "Type a goal first" : undefined}
+                    onClick={() => { if (goalDraft.trim()) { setGoals([...goals, goalDraft.trim()]); setGoalDraft(""); } }}>
+                    <Plus className="w-4 h-4" /> Add
+                  </Button>
                 </div>
-              </Field>
-              <Field label="Success criteria">
-                <textarea value={successCriteria} onChange={(e) => setSuccessCriteria(e.target.value)} rows={2}
+              </div>
+              <div>
+                <label htmlFor="np-success" className={labelCls}>Success criteria</label>
+                <textarea id="np-success" value={successCriteria} onChange={(e) => setSuccessCriteria(e.target.value)} rows={2}
                   placeholder="e.g. Back in service by June 30, within 5% of budget, turnover package accepted."
-                  className="w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm resize-y bg-[var(--color-surface)]" />
-              </Field>
+                  className={`${fieldCls} !h-auto min-h-[4.5rem] py-2 resize-y`} />
+              </div>
             </>
           )}
 
@@ -440,26 +502,27 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
             <>
               <StepIntro text="Pick the Summary of Work from document control. Not uploaded yet? Skip and add it later." />
               {sowDoc ? (
-                <div className="flex items-center gap-2 rounded-xl border border-emerald-500/40 bg-emerald-500/[0.06] px-3 py-2.5 text-sm">
-                  <FileText className="w-4 h-4 text-emerald-600 shrink-0" />
-                  <span className="font-bold text-[var(--color-text)] truncate">{sowDoc.label}</span>
-                  <button onClick={() => setSowDoc(null)} className="ml-auto text-[var(--color-text-faint)] hover:text-rose-600"><X className="w-3.5 h-3.5" /></button>
+                <div className="flex items-center gap-3 rounded-lg border border-[var(--color-border-strong)] px-3 py-2.5 text-[14px]">
+                  <FileText className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
+                  <span className="font-semibold text-[var(--color-text)] truncate">{sowDoc.label}</span>
+                  <button type="button" onClick={() => setSowDoc(null)} className={`ml-auto ${addLink}`}>Change</button>
                 </div>
               ) : (
                 <div>
+                  <label htmlFor="np-sow" className={labelCls}>Find the document</label>
                   <div className="relative">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--color-text-faint)]" />
-                    <input value={sowQuery} onChange={(e) => setSowQuery(e.target.value)} autoFocus
-                      placeholder="Search documents by number or title…"
-                      className="w-full pl-9 pr-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)]" />
+                    <input id="np-sow" value={sowQuery} onChange={(e) => setSowQuery(e.target.value)} autoFocus
+                      placeholder="Number or title, e.g. SOW-300"
+                      className={`${fieldCls} pl-9`} />
                   </div>
-                  {sowError && <p className="mt-2 text-xs font-bold text-rose-700 dark:text-rose-300">Couldn&apos;t search documents. Try again.</p>}
+                  {sowError && <ErrorNote compact className="mt-2" title="Couldn't search documents." next="Try again in a moment." />}
                   {sowResults.length > 0 && (
-                    <ul className="mt-2 rounded-xl border border-[var(--color-border)] divide-y divide-[var(--color-border)] overflow-hidden">
+                    <ul className="mt-2 rounded-lg border border-[var(--color-border)] divide-y divide-[var(--color-border)] overflow-hidden">
                       {sowResults.map((d) => (
                         <li key={d.id}>
-                          <button onClick={() => setSowDoc(d)} className="w-full px-3 py-2 text-left text-xs font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center gap-2">
-                            <FileText className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> {d.label}
+                          <button type="button" onClick={() => setSowDoc(d)} className="w-full px-3 min-h-10 pointer-coarse:min-h-11 text-left text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center gap-2">
+                            <FileText className="w-4 h-4 text-[var(--color-text-faint)]" /> {d.label}
                           </button>
                         </li>
                       ))}
@@ -475,31 +538,31 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
               <StepIntro text={fromDoc
                 ? `Read from ${fromDoc.source.fileName}. Check each line. The company on a line is who it was budgeted for.`
                 : "One line is enough to start, e.g. Piping subcontract, Scaffolding, Engineering hours."} />
-              <div className="space-y-2">
+              <div className="space-y-3">
                 {budgetRows.map((r, i) => (
-                  <div key={i} className="flex items-center gap-2">
+                  <div key={i} className="flex flex-wrap items-center gap-2">
                     <input value={r.name} onChange={(e) => setBudgetRows(rows(budgetRows, i, { name: e.target.value }))}
-                      placeholder="Budget line name" className="flex-1 px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)]" />
+                      aria-label={`Budget line ${i + 1}`} placeholder="Budget line, e.g. Scaffolding" className={`${rowIn} flex-1 basis-48`} />
                     <select value={r.type} onChange={(e) => setBudgetRows(rows(budgetRows, i, { type: e.target.value as CostType }))}
-                      className="px-2 py-2 border border-[var(--color-border-strong)] rounded-lg text-xs bg-[var(--color-surface)]">
-                      {COST_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+                      aria-label={`Cost type for line ${i + 1}`} className={`${rowIn} w-36 px-2`}>
+                      {COST_TYPES.map((t) => <option key={t} value={t}>{t[0].toUpperCase() + t.slice(1)}</option>)}
                     </select>
                     <input value={r.supplier} onChange={(e) => setBudgetRows(rows(budgetRows, i, { supplier: e.target.value }))}
-                      list="wizard-line-companies" placeholder="Company"
+                      list="wizard-line-companies" placeholder="Company" aria-label={`Company for line ${i + 1}`}
                       title="Who this line is budgeted for: their invoices go to it"
-                      className="w-28 px-2 py-2 border border-[var(--color-border-strong)] rounded-lg text-xs bg-[var(--color-surface)]" />
+                      className={`${rowIn} w-36`} />
                     <input value={r.budget} onChange={(e) => setBudgetRows(rows(budgetRows, i, { budget: e.target.value }))}
-                      placeholder="Budget (USD)" inputMode="decimal"
-                      className="w-32 px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm font-display tabular-nums bg-[var(--color-surface)]" />
-                    <button onClick={() => setBudgetRows(budgetRows.filter((_, j) => j !== i))} className="text-[var(--color-text-faint)] hover:text-rose-600 p-1"><X className="w-3.5 h-3.5" /></button>
+                      placeholder="USD" inputMode="decimal" aria-label={`Budget for line ${i + 1}, USD`}
+                      className={`${rowIn} w-32 text-right font-display tabular-nums`} />
+                    <button type="button" onClick={() => setBudgetRows(budgetRows.filter((_, j) => j !== i))} aria-label={`Remove line ${i + 1}`} className={removeBtn}><X className="w-4 h-4" /></button>
                   </div>
                 ))}
                 <datalist id="wizard-line-companies">
                   {[...new Set([...partyRows.map((p) => p.name.trim()).filter(Boolean), ...companies.map((c) => c.name)])].map((n) => <option key={n} value={n} />)}
                 </datalist>
                 <div className="flex items-center gap-3">
-                  <button onClick={() => setBudgetRows([...budgetRows, { name: "", budget: "", type: "subcontract", supplier: "" }])}
-                    className="inline-flex items-center gap-1 text-[13px] text-[var(--color-accent-text)] hover:underline"><Plus className="w-3.5 h-3.5" /> Add line</button>
+                  <button type="button" onClick={() => setBudgetRows([...budgetRows, { name: "", budget: "", type: "subcontract", supplier: "" }])}
+                    className={addLink}><Plus className="w-4 h-4" /> Add line</button>
                   <BudgetTotal rows={budgetRows} authorized={fromDoc?.parsed.authorizedAmount ?? null} currency={fromDoc?.parsed.currency ?? "USD"} />
                 </div>
               </div>
@@ -509,19 +572,21 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
           {step === 4 && (
             <>
               <StepIntro text="A few dated milestones are enough. Import the full P6 or MS Project schedule later on Plan." />
-              <div className="space-y-2">
+              <div className="space-y-3">
                 {milestoneRows.map((r, i) => (
-                  <div key={i} className="flex items-center gap-2">
+                  <div key={i} className="flex flex-wrap items-center gap-2">
                     <input value={r.name} onChange={(e) => setMilestoneRows(rows(milestoneRows, i, { name: e.target.value }))}
+                      aria-label={`Milestone ${i + 1}`}
                       placeholder={i === 0 ? "e.g. Mobilize" : i === 1 ? "e.g. Demo complete" : "Milestone"}
-                      className="flex-1 px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)]" />
+                      className={`${rowIn} flex-1 basis-48`} />
                     <input type="date" value={r.date} onChange={(e) => setMilestoneRows(rows(milestoneRows, i, { date: e.target.value }))}
-                      className="px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)] [color-scheme:light] dark:[color-scheme:dark]" />
-                    <button onClick={() => setMilestoneRows(milestoneRows.filter((_, j) => j !== i))} className="text-[var(--color-text-faint)] hover:text-rose-600 p-1"><X className="w-3.5 h-3.5" /></button>
+                      aria-label={`Date for milestone ${i + 1}`}
+                      className={`${rowIn} w-44 [color-scheme:light] dark:[color-scheme:dark]`} />
+                    <button type="button" onClick={() => setMilestoneRows(milestoneRows.filter((_, j) => j !== i))} aria-label={`Remove milestone ${i + 1}`} className={removeBtn}><X className="w-4 h-4" /></button>
                   </div>
                 ))}
-                <button onClick={() => setMilestoneRows([...milestoneRows, { name: "", date: "" }])}
-                  className="inline-flex items-center gap-1 text-[13px] text-[var(--color-accent-text)] hover:underline"><Plus className="w-3.5 h-3.5" /> Add milestone</button>
+                <button type="button" onClick={() => setMilestoneRows([...milestoneRows, { name: "", date: "" }])}
+                  className={addLink}><Plus className="w-4 h-4" /> Add milestone</button>
               </div>
             </>
           )}
@@ -529,55 +594,76 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
           {step === 5 && (
             <>
               <StepIntro text="Which companies are working this job? Teammates are added later on Members." />
-              <div className="space-y-2">
+              <div className="space-y-3">
                 {partyRows.map((r, i) => (
-                  <div key={i} className="flex items-center gap-2">
+                  <div key={i} className="flex flex-wrap items-center gap-2">
                     <input value={r.name} onChange={(e) => setPartyRows(rows(partyRows, i, { name: e.target.value }))}
-                      list="wizard-companies" placeholder="Company name"
-                      className="flex-1 px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)]" />
+                      list="wizard-companies" placeholder="Company name" aria-label={`Company ${i + 1}`}
+                      className={`${rowIn} flex-1 basis-48`} />
                     <select value={r.kind} onChange={(e) => setPartyRows(rows(partyRows, i, { kind: e.target.value }))}
-                      className="px-2 py-2 border border-[var(--color-border-strong)] rounded-lg text-xs bg-[var(--color-surface)]">
-                      {["contractor", "vendor", "rental", "internal"].map((k) => <option key={k} value={k}>{k}</option>)}
+                      aria-label={`What company ${i + 1} is`} className={`${rowIn} w-36 px-2`}>
+                      {["contractor", "vendor", "rental", "internal"].map((k) => <option key={k} value={k}>{k[0].toUpperCase() + k.slice(1)}</option>)}
                     </select>
                     <input value={r.trade} onChange={(e) => setPartyRows(rows(partyRows, i, { trade: e.target.value }))}
-                      placeholder="Trade" className="w-32 px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)]" />
-                    <button onClick={() => setPartyRows(partyRows.filter((_, j) => j !== i))} className="text-[var(--color-text-faint)] hover:text-rose-600 p-1"><X className="w-3.5 h-3.5" /></button>
+                      aria-label={`Trade for company ${i + 1}`} placeholder="Trade, e.g. Scaffold" className={`${rowIn} w-40`} />
+                    <button type="button" onClick={() => setPartyRows(partyRows.filter((_, j) => j !== i))} aria-label={`Remove company ${i + 1}`} className={removeBtn}><X className="w-4 h-4" /></button>
                   </div>
                 ))}
                 <datalist id="wizard-companies">
                   {companies.map((c) => <option key={c.id} value={c.name} />)}
                 </datalist>
-                <button onClick={() => setPartyRows([...partyRows, { name: "", kind: "contractor", trade: "" }])}
-                  className="inline-flex items-center gap-1 text-[13px] text-[var(--color-accent-text)] hover:underline"><Plus className="w-3.5 h-3.5" /> Add company</button>
+                <button type="button" onClick={() => setPartyRows([...partyRows, { name: "", kind: "contractor", trade: "" }])}
+                  className={addLink}><Plus className="w-4 h-4" /> Add company</button>
               </div>
             </>
           )}
 
-          {error && (
-            <p role="alert" className="border-l-2 border-rose-500 pl-3 text-xs font-bold text-rose-700 dark:text-rose-300">{error}</p>
+          {step === REVIEW && (
+            // Every answer, each with a way back to its step.
+            <dl className="divide-y divide-[var(--color-border)] border-y border-[var(--color-border)] text-[14px]">
+              {([
+                [0, "Basics", <>
+                  <span className="block font-semibold text-[var(--color-text)]">{name.trim() || "No name yet"}</span>
+                  <span className="block text-[var(--color-text-muted)]">{description.trim() || "No description yet"}</span>
+                  <span className="block text-[var(--color-text-muted)]">{[kindNow, JOB_KINDS.find((k) => k.v === jobKind)?.label, moc.trim() ? `MOC ${moc.trim()}` : null, targetDate ? `Target ${targetDate}` : null, visibility === "private" ? "Members only" : "Everyone in the workspace", timezone].filter(Boolean).join(" · ")}</span>
+                </>],
+                [1, "Purpose & goals", stepHasContent.purpose ? <>
+                  {purpose.trim() && <span className="block text-[var(--color-text)]">{purpose.trim()}</span>}
+                  {goals.length > 0 && <span className="block text-[var(--color-text-muted)]">{goals.length} goal{goals.length === 1 ? "" : "s"}: {goals.join("; ")}</span>}
+                  {successCriteria.trim() && <span className="block text-[var(--color-text-muted)]">Done well: {successCriteria.trim()}</span>}
+                </> : null],
+                [2, "Summary of Work", sowDoc ? <span className="text-[var(--color-text)]">{sowDoc.label}</span> : null],
+                [3, "Budget", budgetLines.length ? <span className="text-[var(--color-text)] tabular-nums">{budgetLines.length} line{budgetLines.length === 1 ? "" : "s"}{budgetSum > 0 ? `, ${fmtMoney(budgetSum, fromDoc?.parsed.currency ?? "USD")}` : ""}{fromDoc ? `, from ${fromDoc.source.fileName}` : ""}</span> : null],
+                [4, "Schedule", msLines.length ? <span className="text-[var(--color-text)]">{msLines.map((m) => `${m.name.trim()} (${m.date})`).join(", ")}</span> : null],
+                [5, "Team & contractors", partyLines.length ? <span className="text-[var(--color-text)]">{partyLines.map((p) => p.name.trim()).join(", ")}</span> : null],
+              ] as Array<[number, string, React.ReactNode]>).map(([i, label, body]) => (
+                <div key={label} className="py-3 grid grid-cols-[minmax(0,9rem)_minmax(0,1fr)_auto] max-sm:grid-cols-[minmax(0,1fr)_auto] gap-x-4 gap-y-1">
+                  <dt className="font-semibold text-[var(--color-text)]">{label}</dt>
+                  <dd className="min-w-0 max-sm:col-span-2 max-sm:row-start-2">{body ?? <span className="text-[var(--color-text-muted)]">Skipped. It comes back on the project to fill in.</span>}</dd>
+                  <dd className="max-sm:col-start-2 max-sm:row-start-1 justify-self-end -my-2"><button type="button" onClick={() => { setError(null); setStep(i); }} className={addLink} aria-label={`Change ${label}`}>Change</button></dd>
+                </div>
+              ))}
+            </dl>
           )}
+
+          {error && <ErrorNote title={error} next="Fix it on its step, then make the project again." />}
         </div>
 
-        {/* Footer */}
-        <div className="px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center gap-2">
+        {/* Back, skip, and the one main button; why it can't be pressed yet. */}
+        <div className="px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex flex-wrap items-center gap-2">
           {step > 0 && (
-            <button onClick={() => setStep(step - 1)} disabled={busy}
-              className="inline-flex items-center gap-1 px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">
-              <ChevronLeft className="w-3.5 h-3.5" /> Back
-            </button>
+            <Button variant="secondary" onClick={() => { setError(null); setStep(step - 1); }} disabled={busy}>
+              <ChevronLeft className="w-4 h-4" /> Back
+            </Button>
           )}
-          <span className="ml-auto flex items-center gap-2">
-            {step > 0 && !stepHasContent[stepKey] && (
-              <button onClick={() => next(true)} disabled={busy}
-                className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">
-                Skip for now
-              </button>
+          <span className="ml-auto flex flex-wrap items-center justify-end gap-x-3 gap-y-2">
+            {blocked && <span className="text-[13px] text-[var(--color-text-muted)]" id="np-next-why">{blocked}</span>}
+            {step > 0 && step < REVIEW && stepKey && !stepHasContent[stepKey] && (
+              <Button variant="ghost" onClick={() => next(true)} disabled={busy}>Skip for now</Button>
             )}
-            <button onClick={() => next(false)} disabled={busy || (step === 0 && (!name.trim() || !description.trim()))}
-              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-semibold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
-              {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : step === STEPS.length - 1 ? <Check className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
-              {step === STEPS.length - 1 ? "Create project" : "Next"}
-            </button>
+            <Button onClick={() => next(false)} disabled={!!blocked} loading={busy} aria-describedby={blocked ? "np-next-why" : undefined}>
+              {step === REVIEW ? <><Check className="w-4 h-4" /> Make the project</> : <>{step === REVIEW - 1 ? "Review" : "Next"} <ChevronRight className="w-4 h-4" /></>}
+            </Button>
           </span>
         </div>
       </div>
@@ -589,17 +675,8 @@ function rows<T>(arr: T[], i: number, patch: Partial<T>): T[] {
   return arr.map((r, j) => (j === i ? { ...r, ...patch } : r));
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div>
-      <label className="text-[13px] font-semibold text-[var(--color-text)] ">{label}</label>
-      <div className="mt-1">{children}</div>
-    </div>
-  );
-}
-
 function StepIntro({ text }: { text: string }) {
-  return <p className="text-xs text-[var(--color-text-muted)]">{text}</p>;
+  return <p className="text-[14px] text-[var(--color-text-muted)]">{text}</p>;
 }
 
 function FromDocSummary({ result, onClear }: { result: BudgetReadResult; onClear: () => void }) {
@@ -613,9 +690,9 @@ function FromDocSummary({ result, onClear }: { result: BudgetReadResult; onClear
     d.goals.length ? `${d.goals.length} goal${d.goals.length === 1 ? "" : "s"}` : null,
   ].filter(Boolean);
   return (
-    <div className="rounded-xl border border-emerald-500/40 bg-emerald-500/[0.06] px-3 py-2.5 text-xs">
+    <div className="rounded-lg border border-[var(--color-border-strong)] px-3 py-2.5 text-[14px]">
       <div className="flex items-start gap-2">
-        <Sparkles className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+        <Sparkles className="w-4 h-4 text-[var(--color-text-muted)] shrink-0 mt-0.5" />
         <div className="min-w-0 flex-1">
           <div className="font-semibold text-[var(--color-text)]">
             Prefilled from {[d.docType, d.docNumber].filter(Boolean).join(" ") || result.source.fileName}
@@ -625,22 +702,22 @@ function FromDocSummary({ result, onClear }: { result: BudgetReadResult; onClear
             {bits.length ? `Found ${bits.join(", ")}. ` : ""}Check each step. What you had typed was kept.
           </div>
           {!recon.balanced && recon.unallocated != null && (
-            <div className="text-[11px] font-bold text-amber-700 dark:text-amber-300 mt-0.5">
+            <div className="text-[11px] font-bold text-[var(--state-held-text)] mt-0.5">
               Lines total {fmtMoney(recon.linesTotal, cur)}: {fmtMoney(Math.abs(recon.unallocated), cur)} {recon.unallocated > 0 ? "short of" : "over"} the authorized amount.
             </div>
           )}
           {result.blankPages.length > 0 && (
-            <div className="text-[11px] font-bold text-amber-700 dark:text-amber-300 mt-0.5">
+            <div className="text-[11px] font-bold text-[var(--state-held-text)] mt-0.5">
               Page{result.blankPages.length === 1 ? "" : "s"} {result.blankPages.join(", ")} came through blank (scanner compression). Anything only there wasn&apos;t read.
             </div>
           )}
           {recon.overBudgetBy != null && recon.overBudgetBy > 0 && (
-            <div className="text-[11px] font-bold text-amber-700 dark:text-amber-300 mt-0.5">
+            <div className="text-[11px] font-bold text-[var(--state-held-text)] mt-0.5">
               {fmtMoney(recon.overBudgetBy, cur)} over the approved budget it cites{d.varianceNote ? `: ${d.varianceNote}` : "."}
             </div>
           )}
         </div>
-        <button onClick={onClear} aria-label="Don't keep this document" className="text-[var(--color-text-faint)] hover:text-rose-600" title="Don't keep this document as the budget basis (prefilled fields stay)"><X className="w-3.5 h-3.5" /></button>
+        <button onClick={onClear} aria-label="Don't keep this document" className="text-[var(--color-text-faint)] hover:text-[var(--state-overdue-text)]" title="Don't keep this document as the budget basis (prefilled fields stay)"><X className="w-3.5 h-3.5" /></button>
       </div>
     </div>
   );
@@ -653,7 +730,7 @@ function BudgetTotal({ rows, authorized, currency }: {
   if (total <= 0) return null;
   const off = authorized != null && Math.abs(authorized - total) > Math.max(1, authorized * 0.005);
   return (
-    <span className={`ml-auto text-[11px] font-bold tabular-nums ${off ? "text-amber-700 dark:text-amber-300" : "text-[var(--color-text-muted)]"}`}>
+    <span className={`ml-auto text-[11px] font-bold tabular-nums ${off ? "text-[var(--state-held-text)]" : "text-[var(--color-text-muted)]"}`}>
       Total {fmtMoney(total, currency)}{authorized != null ? ` of ${fmtMoney(authorized, currency)} authorized` : ""}
     </span>
   );

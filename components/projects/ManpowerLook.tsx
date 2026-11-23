@@ -90,7 +90,7 @@ export default function ManpowerLook({ shifts, records, settings, steps, tz, now
   // Still reading the shift records: say so, never a blank space.
   if (!data) return <LoadingBlock what="the head counts" rows={2} />;
   const { counts, sum, est, wos, addedMH, rate, order } = data;
-  const head = "text-[12.5px] font-bold text-[var(--color-text)]";
+  const head = "text-[12px] font-bold text-[var(--color-text)]";
   if (sum.counted === 0) {
     return (
       <div className="space-y-1">
@@ -133,7 +133,7 @@ export default function ManpowerLook({ shifts, records, settings, steps, tz, now
     <div className="space-y-3">
       <div>
         <div className={head}>Manpower, as counted at the shift meetings</div>
-        <p className="mt-0.5 text-[11.5px] leading-snug text-[var(--color-text-muted)]">
+        <p className="mt-0.5 text-[12px] leading-snug text-[var(--color-text-muted)]">
           Counted on {sum.counted} of {plural(sum.shifts, "shift")}{sum.carried > 0 ? `; ${sum.carried} of those carried over from the shift before, not checked` : ""}. Man-hours are the count times the shift&apos;s hours: who left early or came late isn&apos;t seen.
         </p>
       </div>
@@ -158,7 +158,7 @@ export default function ManpowerLook({ shifts, records, settings, steps, tz, now
           {rows.map((r) => {
             if (r.kind === "gap") {
               return (
-                <div key={r.from.key} className="grid grid-cols-[116px_minmax(0,1fr)] gap-2 py-1 text-[11.5px] text-[var(--color-text-muted)]">
+                <div key={r.from.key} className="grid grid-cols-[116px_minmax(0,1fr)] gap-2 py-1 text-[12px] text-[var(--color-text-muted)]">
                   <span className="pl-1 leading-tight">{labelOf(r.from)}{r.n > 1 && <span className="block">to {labelOf(r.to)}</span>}</span>
                   <span className="italic self-center">{r.n > 1 ? `${r.n} shifts not counted` : "Not counted"}</span>
                 </div>
@@ -176,7 +176,7 @@ export default function ManpowerLook({ shifts, records, settings, steps, tz, now
                   className="w-full grid grid-cols-[116px_minmax(0,1fr)_auto] gap-2 items-center py-1 text-left text-[12px]">
                   <span className="text-[var(--color-text)] leading-tight pl-1 inline-flex items-start gap-0.5">
                     <ChevronRight className={`w-3.5 h-3.5 mt-px shrink-0 ui-chevron${(isOpen) ? " rotate-90" : ""}`} />
-                    <span>{labelOf(c)}{c.carried && <span className="block text-[11px] text-amber-700 dark:text-amber-400">carried, not checked</span>}</span>
+                    <span>{labelOf(c)}{c.carried && <span className="block text-[11px] text-[var(--state-held-text)]">carried, not checked</span>}</span>
                   </span>
                   <span className="relative h-3">
                     <span className={`absolute inset-y-0 left-0 flex gap-[2px] ${c.carried ? "opacity-50" : ""}`} style={{ width: `${(total / max) * 100}%` }}>
@@ -189,7 +189,7 @@ export default function ManpowerLook({ shifts, records, settings, steps, tz, now
                   </span>
                 </button>
                 {isOpen && (
-                  <ul className="pb-1.5 pl-6 pr-1 space-y-0.5 text-[11.5px] text-[var(--color-text-muted)]">
+                  <ul className="pb-1.5 pl-6 pr-1 space-y-0.5 text-[12px] text-[var(--color-text-muted)]">
                     {c.companies.map((x) => {
                       const b = settings?.bids?.[x.company]?.[c.kind];
                       return (
@@ -199,7 +199,7 @@ export default function ManpowerLook({ shifts, records, settings, steps, tz, now
                         </li>
                       );
                     })}
-                    {c.carried && <li className="text-amber-700 dark:text-amber-400">Carried from an earlier {c.kind} shift; nobody changed or confirmed it at this meeting.</li>}
+                    {c.carried && <li className="text-[var(--state-held-text)]">Carried from an earlier {c.kind} shift; nobody changed or confirmed it at this meeting.</li>}
                     <li>{time(c.start)} to {time(c.end)}, {Math.round(c.hours * 10) / 10} h</li>
                   </ul>
                 )}
@@ -228,7 +228,7 @@ export default function ManpowerLook({ shifts, records, settings, steps, tz, now
                   {x.unsplitMH > 0 && <>, {n0(x.unsplitMH)} not split</>}
                   {x.bidMH != null && x.bidMH > 0 && <>; {x.onBidMH < x.totalMH ? <>{n0(x.onBidMH)} on bid shifts, </> : ""}{Math.round((x.onBidMH / x.bidMH) * 100)}% of the bid&apos;s {n0(x.bidMH)}</>}
                 </div>
-                {x.shortShifts > 0 && <div className="text-amber-800 dark:text-amber-300">Short of its bid direct hands on {plural(x.shortShifts, "checked shift")}</div>}
+                {x.shortShifts > 0 && <div className="text-[var(--state-held-text)]">Short of its bid direct hands on {plural(x.shortShifts, "checked shift")}</div>}
                 {r && r.mh > 0 && <div className="text-[var(--color-text-muted)]">{(Math.round((r.mh / r.planH) * 10) / 10).toLocaleString("en-US")} direct man-hours per planned hour of work, on {plural(r.steps, "finished step")}</div>}
                 {x.cost != null && rateSet != null && <div className="text-[var(--color-text-muted)]">{money(x.cost)} at {money(rateSet)} / man-hour: hold it against the invoices</div>}
               </li>
@@ -248,7 +248,7 @@ export default function ManpowerLook({ shifts, records, settings, steps, tz, now
       {wos.length > 0 && (
         <div>
           <div className={head}>Man-hours by work order (estimated)</div>
-          <p className="mt-0.5 text-[11.5px] leading-snug text-[var(--color-text-muted)]">
+          <p className="mt-0.5 text-[12px] leading-snug text-[var(--color-text-muted)]">
             Nobody counts by job: each shift, a company&apos;s direct hours are shared over its work going then, by hours going (holds left out).
             {addedMH > 0 && <> Added work took about {n0(addedMH)} direct man-hours.</>}
             {est.untiedMH > 0 && <> {n0(est.untiedMH)} direct man-hours were counted with none of that company&apos;s work going.</>}
@@ -256,7 +256,7 @@ export default function ManpowerLook({ shifts, records, settings, steps, tz, now
           <ul className="mt-1 divide-y divide-[var(--color-border)]/60 text-[12px]">
             {(allWos ? wos : wos.slice(0, 10)).map((w) => (
               <li key={w.key} className="flex items-baseline gap-2 py-1">
-                <span className="flex-1 min-w-0 break-words text-[var(--color-text)]">{w.label}{w.added && <span className="ml-1.5 text-[11px] font-bold text-amber-700 dark:text-amber-400">added</span>}</span>
+                <span className="flex-1 min-w-0 break-words text-[var(--color-text)]">{w.label}{w.added && <span className="ml-1.5 text-[11px] font-bold text-[var(--state-held-text)]">added</span>}</span>
                 <span className="tabular-nums text-[var(--color-text-muted)]">{n0(w.mh)} h</span>
               </li>
             ))}

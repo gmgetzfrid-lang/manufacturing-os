@@ -14,15 +14,18 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Plus, Search, Lock, ChevronRight, ChevronDown, Download, Briefcase, HardHat, Factory, Wrench } from "lucide-react";
+import { Plus, Search, Lock, ChevronDown, Download } from "lucide-react";
 import { listedTypeOf, typePlural, typeOrder } from "@/lib/projectType";
 import { loadProjectUnits, type UnitChoice } from "@/lib/projectEquipment";
 import { useRole } from "@/components/providers/RoleContext";
 import { appAlert } from "@/components/providers/DialogProvider";
 import { PageShell } from "@/components/ui/PageShell";
 import { PageHero, PageBody, Card, heroPrimary, heroQuiet, type HeroFact } from "@/components/ui/PageHero";
-import { bandInput, bandInputIcon, bandSelect, bandSeg, bandSegItem } from "@/components/admin/band";
-import LoadingBlock from "@/components/ui/LoadingBlock";
+import { bandInput, bandInputIcon, bandSelect } from "@/components/admin/band";
+import { SkeletonRows } from "@/components/ui/Skeleton";
+import { ErrorNote } from "@/components/ui/ErrorNote";
+import { CopyId } from "@/components/ui/CopyId";
+import { SubTabs } from "@/components/projects/SubTabs";
 import MoreMenu from "@/components/ui/MoreMenu";
 import { badgeText } from "@/lib/badge";
 import { listProjects, myProjectIds } from "@/lib/projects";
@@ -34,6 +37,7 @@ import ProjectWizard from "@/components/projects/ProjectWizard";
 import { exportAllProjectsToCsv } from "@/lib/projectExport";
 import StaleCheckoutBanner from "@/components/projects/StaleCheckoutBanner";
 import type { Project, ProjectStatus, Timestamp } from "@/types/schema";
+import { sayError } from "@/components/projects/sayError";
 
 const STATUS_TABS: { value: ProjectStatus | "all"; label: string }[] = [
   { value: "active",    label: "Active" },
@@ -107,7 +111,7 @@ export default function ProjectsPage() {
       setMine(my);
       hasLoadedOnce.current = true;
     } catch (e) {
-      setError((e as Error).message || "Failed to load projects");
+      setError(sayError(e, "Failed to load projects"));
     } finally {
       setLoading(false);
     }
@@ -223,10 +227,12 @@ export default function ProjectsPage() {
             : nActive === 1 ? "You're on 1 active project." : `Your ${nActive} active projects.`)
         : nLate > 0 ? (nLate >= nActive ? (nActive === 1 ? "The active project is late." : `All ${nActive} active projects are late.`) : `${nLate} of ${nActive} active projects ${nLate === 1 ? "is" : "are"} late.`)
           : `${nActive} active project${nActive === 1 ? "" : "s"}.`;
+  // The title already says how many are running: the one number that
+  // matters is how many are late (muted when none), the rest small.
   const facts: HeroFact[] | undefined = loading || (tabCounts.all ?? 0) === 0 || noneOfYours ? undefined : [
-    { label: "Active", value: nActive },
-    { label: "Late", value: nLate, tone: nLate > 0 ? "bad" : undefined },
+    { label: "Late", value: nLate, tone: nLate > 0 ? "bad" : undefined, hero: nLate > 0 },
     { label: "Paused", value: nPaused, tone: nPaused > 0 ? "warn" : undefined },
+    { label: "Completed", value: tabCounts.completed ?? 0 },
   ];
   const shownCount = shownGroups.reduce((n, g) => n + g.items.length, 0);
 
@@ -237,36 +243,31 @@ export default function ProjectsPage() {
         title={answer}
         sub={noneOfYours ? "Switch to All projects to see the workspace." : undefined}
         facts={facts}
+        factsHero={nLate > 0 ? "auto" : "none"}
         tools={activeOrgId && allProjects.length > 0 ? (
           <MoreMenu triggerClass={heroQuiet} items={[{ icon: <Download className="w-4 h-4" />, label: "Export all to CSV", onClick: async () => {
             try { await exportAllProjectsToCsv(activeOrgId); }
-            catch (e) { await appAlert({ message: (e as Error).message, tone: "danger" }); }
+            catch (e) { await appAlert({ message: sayError(e), tone: "danger" }); }
           } }]} />
         ) : undefined}
         primary={<button type="button" onClick={() => setShowCreate(true)} className={heroPrimary}><Plus className="w-4 h-4" /> New project</button>}
       >
-        {/* What steers the list: status, search, unit and kind. */}
-        <div className="space-y-2.5">
+        {/* What steers the list: the status as underline tabs, then whose,
+            search, unit and kind as quiet controls. */}
+        <div className="space-y-3">
+          <SubTabs label="Status" value={statusFilter} onChange={(v) => setStatusFilter(v)}
+            className="border-b border-[var(--color-border)]"
+            items={STATUS_TABS.map((t) => ({ id: t.value, label: t.label, count: tabCounts[t.value] }))} />
           <div className="flex flex-wrap items-center gap-2">
             {/* Whose projects: yours (the default), or every one you can see. */}
-            <div role="radiogroup" aria-label="Whose projects" className={bandSeg}>
-              {([["mine", "Your projects"], ["all", "All projects"]] as const).map(([v, l]) => (
-                <button key={v} type="button" role="radio" aria-checked={scope === v} onClick={() => setScope(v)} className={bandSegItem(scope === v)}>{l}</button>
-              ))}
-            </div>
-            <div role="group" aria-label="Status" className={bandSeg}>
-              {STATUS_TABS.map((t) => {
-                const on = statusFilter === t.value;
-                const n = tabCounts[t.value];
-                return (
-                  <button key={t.value} type="button" onClick={() => setStatusFilter(t.value)} aria-pressed={on} className={bandSegItem(on)}>
-                    {t.label}
-                    {typeof n === "number" && n > 0 && <span className={`ui-count ${on ? "is-solid" : ""}`}>{badgeText(n)}</span>}
-                  </button>
-                );
-              })}
-            </div>
-            <div className="relative flex-1 min-w-[220px] max-w-md">
+            <label className="max-sm:flex-1">
+              <span className="sr-only">Whose projects</span>
+              <select value={scope} onChange={(e) => setScope(e.target.value as "mine" | "all")} className={`${bandSelect} max-sm:w-full`}>
+                <option value="mine">Your projects</option>
+                <option value="all">All projects</option>
+              </select>
+            </label>
+            <div className="relative flex-1 min-w-[220px] max-w-md max-sm:basis-full max-sm:order-first">
               <Search className={bandInputIcon} />
               <input
                 value={search}
@@ -282,54 +283,42 @@ export default function ProjectsPage() {
                 {unitChoices.map((u) => <option key={u.code} value={u.code}>{u.label} ({u.n})</option>)}
               </select>
             )}
+            {/* Kinds of project */}
+            {groups.length > 1 && (
+              <label className="max-sm:flex-1">
+                <span className="sr-only">Kind of project</span>
+                <select value={typeFilter ?? ""} onChange={(e) => setTypeFilter(e.target.value || null)} className={`${bandSelect} max-sm:w-full`}>
+                  <option value="">All kinds</option>
+                  {groups.map((g) => <option key={g.key} value={g.key}>{g.label} ({badgeText(g.items.length)})</option>)}
+                </select>
+              </label>
+            )}
           </div>
-          {/* Kinds of project */}
-          {groups.length > 1 && (
-            <div role="group" aria-label="Kind of project" className={bandSeg}>
-              <button type="button" onClick={() => setTypeFilter(null)} aria-pressed={!typeFilter} className={bandSegItem(!typeFilter)}>All kinds</button>
-              {groups.map((g) => (
-                <button key={g.key} type="button" onClick={() => setTypeFilter(typeFilter === g.key ? null : g.key)} aria-pressed={typeFilter === g.key} className={bandSegItem(typeFilter === g.key)}>
-                  {g.label} <span className={`ui-count ${typeFilter === g.key ? "is-solid" : ""}`}>{badgeText(g.items.length)}</span>
-                </button>
-              ))}
-            </div>
-          )}
         </div>
       </PageHero>
 
       <PageBody>
         {/* RESULTS */}
         {loading ? (
-          <Card><LoadingBlock what="projects" rows={6} className="border-0 p-0" /></Card>
+          <SkeletonRows rows={6} cols={3} what="projects" />
         ) : error ? (
-          <Card>
-            <div role="alert" className="text-[15px] text-[var(--color-text)] flex flex-wrap items-center gap-x-3 gap-y-1">
-              <span>Couldn&apos;t load projects: {error}</span>
-              <button type="button" onClick={() => void refresh()} className="text-[var(--color-accent-text)] hover:underline">Try again</button>
-            </div>
-          </Card>
+          <ErrorNote title="Couldn't load projects." next={error} onRetry={() => void refresh()} />
         ) : yours && allProjects.length > 0 && scopedAll.length === 0 ? (
-          <Card label="Your projects">
-            <p className="flex items-center gap-3 text-[15px] text-[var(--color-text)]">
-              <span aria-hidden className="ui-icon-tile"><Briefcase className="w-5 h-5" /></span>
-              <span>You&apos;re not on any project yet.{" "}
-                <button type="button" onClick={() => setScope("all")} className="text-[var(--color-accent-text)] hover:underline">See all projects</button>
-              </span>
-            </p>
-          </Card>
+          <p className="text-[15px] text-[var(--color-text)]">
+            You&apos;re not on any project yet.{" "}
+            <button type="button" onClick={() => setScope("all")} className="font-semibold text-[var(--color-accent-text)] hover:underline underline-offset-2">See all projects</button>
+          </p>
         ) : scopedProjects.length === 0 ? (
           filterActive && (tabCounts.all ?? 0) > 0 ? (
-            <Card label="No projects match">
-              <p className="text-[15px] text-[var(--color-text-muted)]">
-                {searchQ ? <>Nothing named &ldquo;{searchQ}&rdquo;{statusFilter !== "all" ? ` in ${statusFilter}` : ""}.</> : `Nothing in ${statusFilter}.`}
-                {" "}
-                <button type="button" onClick={() => { setSearch(""); setStatusFilter("all"); }} className="text-[var(--color-accent-text)] hover:underline">
-                  Clear filters
-                </button>
-              </p>
-            </Card>
+            <p className="text-[15px] text-[var(--color-text-muted)]">
+              {searchQ ? <>No project named &ldquo;{searchQ}&rdquo;{statusFilter !== "all" ? ` in ${statusFilter}` : ""}.</> : `No ${statusFilter} projects.`}
+              {" "}
+              <button type="button" onClick={() => { setSearch(""); setStatusFilter("all"); }} className="font-semibold text-[var(--color-accent-text)] hover:underline underline-offset-2">
+                Clear filters
+              </button>
+            </p>
           ) : (
-            <EmptyState />
+            <EmptyState onNew={() => setShowCreate(true)} />
           )
         ) : (
           <>
@@ -337,13 +326,11 @@ export default function ProjectsPage() {
               const open = !folded.has(g.key) || !!typeFilter;
               return (
                 <Card key={g.key} as="section" pad={false} className="overflow-hidden"
-                  label={<span className="inline-flex items-center gap-2"><span aria-hidden className="ui-icon-tile is-sm is-solid">{kindIcon(g.label)}</span>{g.label} <span className="ui-count is-solid">{g.items.length}</span></span>}
-                  action={
-                    <button type="button" onClick={() => toggleFold(g.key)} aria-expanded={open} aria-label={open ? `Fold ${g.label}` : `Show ${g.label}`}
-                      className="w-8 h-8 inline-flex items-center justify-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface)]">
-                      {open ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
-                    </button>
-                  }>
+                  label={<button type="button" onClick={() => toggleFold(g.key)} aria-expanded={open}
+                    className="inline-flex items-center gap-2 -ml-1 pl-1 pr-2 rounded-lg hover:bg-[color-mix(in_srgb,var(--color-text)_6%,transparent)]">
+                    <ChevronDown aria-hidden className={`ui-chevron w-4 h-4 text-[var(--color-text-muted)] ${open ? "" : "-rotate-90"}`} />
+                    {g.label} <span className="text-[15px] font-normal tabular-nums text-[var(--color-text-muted)]">{g.items.length}</span>
+                  </button>}>
                   {open ? <ProjectTable projects={g.items} factsOf={factsOf} /> : (
                     <button type="button" onClick={() => toggleFold(g.key)} className="w-full px-4 h-11 text-left text-[14px] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]">
                       {g.items.length} project{g.items.length === 1 ? "" : "s"} folded away. Show them.
@@ -353,7 +340,9 @@ export default function ProjectsPage() {
               );
             })}
             {shownCount === 0 && (
-              <Card><p className="text-[15px] text-[var(--color-text-muted)]">No projects on that unit.</p></Card>
+              <p className="text-[15px] text-[var(--color-text-muted)]">No projects on that unit.{" "}
+                <button type="button" onClick={() => setUnitPick("")} className="font-semibold text-[var(--color-accent-text)] hover:underline underline-offset-2">Show all units</button>
+              </p>
             )}
             {groups.some((g) => g.label === "Other projects") && (
               <p className="text-[13px] text-[var(--color-text-muted)]">A project goes under its kind from its name, or from Setup › Project type.</p>
@@ -424,14 +413,6 @@ function StatusTag({ status, late, workDone = false }: { status: ProjectStatus; 
   return <span className={`ui-pill ${t.pill}`}>{t.word}</span>;
 }
 
-/** A tile icon for each kind of project. */
-function kindIcon(label: string): React.ReactNode {
-  const l = label.toLowerCase();
-  if (l.includes("turnaround") || l.includes("outage")) return <HardHat className="w-4 h-4" />;
-  if (l.includes("capital")) return <Factory className="w-4 h-4" />;
-  if (l.includes("maint")) return <Wrench className="w-4 h-4" />;
-  return <Briefcase className="w-4 h-4" />;
-}
 
 /** A thin bar and the %: how far the work is. */
 function ProgressBar({ f, className = "" }: { f: RowFacts; className?: string }) {
@@ -459,7 +440,7 @@ function ProjectTable({ projects, factsOf }: { projects: Project[]; factsOf: (p:
   return (
     <>
       {/* Desk: a ruled table. */}
-      <table className="max-sm:hidden w-full text-[15px]">
+      <table className="max-sm:hidden w-full text-[14px]">
         <thead className="bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text-muted)] text-left">
           <tr className="border-b border-[var(--color-border)]">
             <th scope="col" className="font-semibold px-4 h-10">Project</th>
@@ -478,14 +459,14 @@ function ProjectTable({ projects, factsOf }: { projects: Project[]; factsOf: (p:
                 <div className="flex items-baseline gap-2 min-w-0">
                   <Link href={href} className="min-w-0 font-semibold text-[var(--color-text)] hover:text-[var(--color-accent-text)]">{p.name}</Link>
                   {p.visibility === "private" && <span className="shrink-0 inline-flex items-center gap-1 text-[13px] text-[var(--color-text-muted)]"><Lock className="w-3 h-3" /> Private</span>}
-                  {p.mocReference && <span className="shrink-0 ui-id text-[14px]">{p.mocReference}</span>}
+                  {p.mocReference && <CopyId value={p.mocReference} label="MOC number" className="shrink-0 text-[14px]" />}
                 </div>
                 {p.description && <p className="mt-0.5 text-[13px] text-[var(--color-text-muted)] line-clamp-1">{p.description}</p>}
               </td>
               <td className="px-4 py-3"><StatusTag status={p.status} late={f.late} workDone={!!f.progress && f.progress.pct >= 100} /></td>
               <td className="px-4 py-3">
-                {f.progress ? <ProgressBar f={f} /> : f.progress === null ? <span className="text-[14px] text-[var(--color-text-muted)]">No schedule yet</span> : !f.phaseNote ? <span className="text-[var(--color-text-faint)]">-</span> : null}
-                {f.phaseNote && <div className="mt-1"><span className="ui-tag">{f.phaseNote}</span></div>}
+                {f.progress ? <ProgressBar f={f} /> : f.progress === null ? <span className="text-[14px] text-[var(--color-text-muted)]">No schedule yet</span> : null}
+                {f.phaseNote && <div className="mt-0.5 text-[13px] text-[var(--color-text-muted)]">{f.phaseNote}</div>}
               </td>
               <td className="px-4 py-3">
                 {f.dueDay ? (
@@ -493,10 +474,10 @@ function ProjectTable({ projects, factsOf }: { projects: Project[]; factsOf: (p:
                     <div className="font-display font-semibold tabular-nums text-[var(--color-text)]">{f.dueDay}</div>
                     {f.dueNote && <div className={`text-[13px] ${f.late && (f.due?.kind === "past target" || f.due?.kind === "ended") ? "text-[var(--state-overdue)] font-semibold" : "text-[var(--color-text-muted)]"}`}>{f.dueNote}</div>}
                   </>
-                ) : <span className="text-[var(--color-text-faint)]">-</span>}
+                ) : null}
               </td>
               <td className="px-4 py-3 hidden lg:table-cell">
-                <span className="block max-w-[200px] truncate text-[14px] text-[var(--color-text)]" title={p.ownerUserName}>{p.ownerUserName || "-"}</span>
+                <span className="block max-w-[200px] truncate text-[14px] text-[var(--color-text)]" title={p.ownerUserName}>{p.ownerUserName || null}</span>
               </td>
               <td className="px-4 py-3 hidden md:table-cell text-[14px] text-[var(--color-text-muted)] whitespace-nowrap">{formatRelative(p.lastActivityAt)}</td>
             </tr>
@@ -519,7 +500,7 @@ function ProjectTable({ projects, factsOf }: { projects: Project[]; factsOf: (p:
               <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-[13px] text-[var(--color-text-muted)]">
                 {f.progress && <ProgressBar f={f} />}
                 {f.progress === null && <span>No schedule yet</span>}
-                {f.phaseNote && <span className="ui-tag">{f.phaseNote}</span>}
+                {f.phaseNote && <span>{f.phaseNote}</span>}
                 {f.dueDay && <span className={f.late && (f.due?.kind === "past target" || f.due?.kind === "ended") ? "text-[var(--state-overdue)] font-semibold" : ""}>{f.due?.kind === "starts" ? "Starts" : f.due?.kind === "ended" ? "Ended" : "Due"} {f.dueDay}</span>}
               </div>
             </Link>
@@ -530,13 +511,13 @@ function ProjectTable({ projects, factsOf }: { projects: Project[]; factsOf: (p:
   );
 }
 
-// The one way in is New project, up top.
-function EmptyState() {
+// One line and the one way in.
+function EmptyState({ onNew }: { onNew: () => void }) {
   return (
-    <Card label="Projects">
-      <p className="text-[15px] text-[var(--color-text)]">Start one with New project.</p>
-      <p className="text-[13px] text-[var(--color-text-muted)] mt-1">Its schedule, reports, costs and checkouts live there.</p>
-    </Card>
+    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-8 flex flex-wrap items-center gap-x-4 gap-y-3">
+      <p className="flex-1 min-w-[220px] text-[15px] text-[var(--color-text)]">A project holds a job&apos;s schedule, shift reports, costs and close-out.</p>
+      <button type="button" onClick={onNew} className={heroQuiet}><Plus className="w-4 h-4" /> New project</button>
+    </div>
   );
 }
 

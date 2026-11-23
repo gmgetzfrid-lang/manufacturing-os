@@ -14,6 +14,7 @@ import { listStaleCheckoutsForUser } from "@/lib/projects";
 import { reconcileDocumentCheckoutState } from "@/lib/checkoutEpisodes";
 import { supabase } from "@/lib/supabase";
 import type { CheckoutSession } from "@/types/schema";
+import { sayError } from "@/components/projects/sayError";
 
 interface StaleCheckoutBannerProps {
   userId?: string;
@@ -79,7 +80,7 @@ export default function StaleCheckoutBanner({ userId }: StaleCheckoutBannerProps
         released_by: userId,
         released_reason: "User released from stale-checkout banner",
       }).eq("id", row.id);
-      if (error) throw new Error(error.message);
+      if (error) throw error;
       await supabase.from("audit_logs").insert({
         action: "CHECKOUT_RELEASED",
         resource_type: "document", resource_id: row.documentId,
@@ -96,7 +97,7 @@ export default function StaleCheckoutBanner({ userId }: StaleCheckoutBannerProps
       });
       await refresh();
     } catch (e) {
-      setReleaseError(`Couldn't release ${row.docNumber || "the checkout"}: ${(e as Error).message}`);
+      setReleaseError(`Couldn't release ${row.docNumber || "the checkout"}: ${sayError(e)}`);
     } finally { setReleasingId(null); }
   };
 

@@ -14,6 +14,7 @@ import { BULK_FIELDS, valuesIn, planReplace, planSet, valueLabel, type BulkField
 import { applyBulkFieldChange } from "@/lib/milestones";
 import { appConfirm } from "@/components/providers/DialogProvider";
 import { searchFilter } from "@/lib/fuzzySearch";
+import { sayError } from "@/components/projects/sayError";
 
 export default function BulkEditModal({ milestones, selectedIds, startMode, orgId, projectId, userId, userEmail, onClose, onDone }: {
   milestones: Milestone[];
@@ -68,7 +69,7 @@ export default function BulkEditModal({ milestones, selectedIds, startMode, orgI
         orgId, projectId, field: key, changes: back, summary: { mode: "set", to: "(undo)" },
         actorUserId: userId, actorUserEmail: userEmail,
       }));
-    } catch (e) { setError((e as Error).message); setBusy(false); }
+    } catch (e) { setError(sayError(e)); setBusy(false); }
   };
 
   const pickField = (key: string) => {
@@ -77,14 +78,14 @@ export default function BulkEditModal({ milestones, selectedIds, startMode, orgI
     // A fixed-choice field (the crew) is set on the selection.
     if (f.options && selectedIds.size > 0) setMode("set");
   };
-  const inp = "w-full h-9 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-sm text-[var(--color-text)] focus:outline-none focus:border-[var(--color-accent-ring)]";
+  const inp = "w-full h-9 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-sm text-[var(--color-text)] ";
 
   return (
     <Modal onClose={busy ? () => undefined : onClose} size="lg" dismissable={!busy}>
       <ModalHeader icon={Replace} title="Change on many tasks"
         subtitle="Swap a contractor, crew, company or location everywhere it appears, or set it (or day or night) on the tasks you selected." onClose={busy ? undefined : onClose} />
       <ModalBody className="space-y-3">
-        <div className="inline-flex flex-wrap rounded-[10px] bg-[var(--color-surface-2)] p-0.5 gap-0.5 text-[12.5px] font-bold" role="group" aria-label="What to change">
+        <div className="inline-flex flex-wrap rounded-[10px] bg-[var(--color-surface-2)] p-0.5 gap-0.5 text-[12px] font-bold" role="group" aria-label="What to change">
           <button onClick={() => setMode("replace")} aria-pressed={mode === "replace"} className={`h-8 px-3 rounded-lg ${mode === "replace" ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>Replace a name everywhere</button>
           <button onClick={() => selectedIds.size > 0 && setMode("set")} disabled={selectedIds.size === 0} aria-pressed={mode === "set"}
             title={selectedIds.size === 0 ? "Select tasks on the timeline first" : undefined}
@@ -113,7 +114,7 @@ export default function BulkEditModal({ milestones, selectedIds, startMode, orgI
                 {values.length > 8 && (
                   <div className="relative mb-1.5">
                     <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--color-text-faint)]" />
-                    <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Narrow this list…" aria-label="Narrow the list of names" className={`${inp} h-8 pl-8 text-xs`} />
+                    <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Narrow this list…" aria-label="Narrow the list of names" className={`${inp} h-8 pointer-coarse:h-11 pl-8 text-xs`} />
                   </div>
                 )}
                 <ul className="max-h-44 overflow-y-auto border-y border-[var(--color-border)] divide-y divide-[var(--color-border)]">
@@ -122,7 +123,7 @@ export default function BulkEditModal({ milestones, selectedIds, startMode, orgI
                       <button onClick={() => { setFrom(v.value); setClear(false); }} aria-pressed={from === v.value}
                         className={`w-full flex items-center gap-2 px-3 py-2 text-left text-[13px] ${from === v.value ? "bg-[var(--color-text)] font-bold text-[var(--color-surface)]" : "text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
                         <span className="flex-1 truncate">{v.value}</span>
-                        <span className={`shrink-0 text-[11.5px] ${from === v.value ? "opacity-80" : "text-[var(--color-text-muted)]"}`}>{v.count} task{v.count === 1 ? "" : "s"}</span>
+                        <span className={`shrink-0 text-[12px] ${from === v.value ? "opacity-80" : "text-[var(--color-text-muted)]"}`}>{v.count} task{v.count === 1 ? "" : "s"}</span>
                       </button>
                     </li>
                   ))}
@@ -154,14 +155,14 @@ export default function BulkEditModal({ milestones, selectedIds, startMode, orgI
               <input type="checkbox" checked={clear} onChange={(e) => { setClear(e.target.checked); if (e.target.checked) setTo(""); }} className="w-4 h-4 accent-rose-600" />
               {mode === "replace" ? <>Take &ldquo;{from}&rdquo; off and leave no name</> : "Clear it on the selected tasks"}
             </label>
-            {!ready && <p className="text-[11.5px] text-[var(--color-text-muted)]">Nothing changes until you type the new name{mode === "replace" ? ", or tick the box to take it off" : ""}.</p>}
+            {!ready && <p className="text-[12px] text-[var(--color-text-muted)]">Nothing changes until you type the new name{mode === "replace" ? ", or tick the box to take it off" : ""}.</p>}
           </div>
         )}
 
         {plan.length > 0 && (
           <div>
             <span className="block mb-1 text-[13px] font-semibold text-[var(--color-text-muted)]">Will change {plan.length} task{plan.length === 1 ? "" : "s"}</span>
-            <ul className="max-h-48 overflow-y-auto border-y border-[var(--color-border)] divide-y divide-[var(--color-border)] text-[12.5px]">
+            <ul className="max-h-48 overflow-y-auto border-y border-[var(--color-border)] divide-y divide-[var(--color-border)] text-[12px]">
               {plan.slice(0, 200).map((c) => (
                 <li key={c.id} className="px-1 py-1.5 flex items-center gap-2">
                   <span className="w-32 sm:w-44 shrink-0 truncate font-semibold text-[var(--color-text)]" title={c.name}>{c.name}</span>
@@ -174,7 +175,7 @@ export default function BulkEditModal({ milestones, selectedIds, startMode, orgI
             </ul>
           </div>
         )}
-        {error && <div className="text-[12px] font-bold text-rose-700 dark:text-rose-400">{error}</div>}
+        {error && <div className="text-[12px] font-bold text-[var(--state-overdue-text)]">{error}</div>}
       </ModalBody>
       <ModalFooter>
         <button onClick={onClose} disabled={busy} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>

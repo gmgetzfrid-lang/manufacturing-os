@@ -5,9 +5,7 @@
 // and a two-way Needed / Not needed choice.
 
 import React from "react";
-import { Check } from "lucide-react";
 import { sourceWords, type Source } from "@/lib/requirementSource";
-import { bandSeg, bandSegItem } from "@/components/admin/band";
 
 /** "App default: each phase needs its own PSSR" / "Set for this project (Nov 23 by eng)". */
 export function SourceLine({ source, tz, className = "" }: { source: Source; tz: string; className?: string }) {
@@ -26,15 +24,19 @@ export function Switch({ on, label, disabled, onChange }: { on: boolean; label: 
   );
 }
 
-/** Needed / Not needed, for this project. */
+/** Needed / Not needed, for this project: two plain radio buttons (the
+ *  one picked is a filled dot), not a filled toggle. */
 export function NeededChoice({ needed, what, disabled, onChange }: { needed: boolean; what: string; disabled?: boolean; onChange: (needed: boolean) => void }) {
+  const name = React.useId();
   return (
-    <span className={bandSeg} role="radiogroup" aria-label={`${what}: needed for this project?`}>
+    <span className="inline-flex items-center gap-4" role="radiogroup" aria-label={`${what}: needed for this project?`}>
       {[true, false].map((v) => (
-        <button key={String(v)} type="button" role="radio" aria-checked={needed === v} disabled={disabled}
-          onClick={() => { if (needed !== v) onChange(v); }} className={`${bandSegItem(needed === v)} disabled:opacity-60`}>
-          {needed === v && <Check className="w-3.5 h-3.5" />}{v ? "Needed" : "Not needed"}
-        </button>
+        <label key={String(v)} className={`inline-flex items-center gap-2 min-h-9 pointer-coarse:min-h-11 text-[14px] cursor-pointer select-none ${disabled ? "opacity-60 cursor-not-allowed" : ""} ${needed === v ? "text-[var(--color-text)] font-semibold" : "text-[var(--color-text-muted)]"}`}>
+          <input type="radio" name={name} checked={needed === v} disabled={disabled}
+            onChange={() => { if (needed !== v) onChange(v); }}
+            className="w-4 h-4 accent-[var(--color-current)] cursor-pointer disabled:cursor-not-allowed" />
+          {v ? "Needed" : "Not needed"}
+        </label>
       ))}
     </span>
   );

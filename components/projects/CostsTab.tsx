@@ -17,9 +17,11 @@ import { activeOnly } from "@/lib/activeMilestones";
 import { Card } from "@/components/ui/PageHero";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import HelpTooltip from "@/components/ui/HelpTooltip";
-import { bandSeg, bandSegItem } from "@/components/admin/band";
+import { SubTabs } from "@/components/projects/SubTabs";
+import { SkeletonRows } from "@/components/ui/Skeleton";
+import { ErrorNote } from "@/components/ui/ErrorNote";
 import {
-  Plus, X, Loader2, Check, ChevronRight, Landmark, HardHat, AlertTriangle, Ban, LayoutDashboard, ScanSearch, Receipt, GitPullRequestArrow, FileCheck2, FileUp, Hourglass, Pencil, RotateCcw,
+  Plus, X, Loader2, Check, ChevronRight, AlertTriangle, Ban, FileCheck2, FileUp, Hourglass, Pencil, RotateCcw,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import {
@@ -45,8 +47,7 @@ import { phaseStats } from "@/lib/phaseReport";
 import type { ProjectPhase } from "@/lib/projectPhases";
 import ContractorsPanel from "@/components/projects/cost/ContractorsPanel";
 import { OPEN_COSTS_EVENT, takePendingCosts, type CostsViewAsked } from "@/lib/costsNav";
-import LoadingBlock from "@/components/ui/LoadingBlock";
-import { badgeText } from "@/lib/badge";
+import { sayError } from "@/components/projects/sayError";
 
 type CostView = "overview" | "contractors" | "budget" | "quotes" | "invoices" | "changes";
 
@@ -146,7 +147,7 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
       } : null);
       setBudgetHistory(await loadBudgetHistory(projectId));
     } catch (e) {
-      setErr((e as Error).message);
+      setErr(sayError(e));
     } finally { setLoading(false); }
     onDataChanged?.();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -201,25 +202,29 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
   const basisDoc = basis?.docId ? docs.find((d) => d.id === basis.docId) ?? null : null;
 
 
-  if (loading) return <Card><LoadingBlock what="costs" className="border-0 p-0" /></Card>;
+  if (loading) return <SkeletonRows rows={6} cols={3} what="costs" />;
 
   return (
     <div className="space-y-4">
       {preview && <FilePreviewModal file={preview} onClose={() => setPreview(null)} />}
       {/* ── Sub-tabs: one job per screen; what just happened, under them ── */}
       <div>
-      <div className={bandSeg} role="group" aria-label="Costs">
-        <SubTab active={view === "overview"} onClick={() => setView("overview")} icon={<LayoutDashboard className="w-3.5 h-3.5" />} label="Overview" />
-        <SubTab active={view === "contractors"} onClick={() => { setAsked(null); setView("contractors"); }} icon={<HardHat className="w-3.5 h-3.5" />} label="Contractors" />
-        <SubTab active={view === "budget"} onClick={() => setView("budget")} icon={<Landmark className="w-3.5 h-3.5" />} label="Budget" count={accounts.length} />
-        <SubTab active={view === "quotes"} onClick={() => setView("quotes")} icon={<ScanSearch className="w-3.5 h-3.5" />} label="Quotes" count={quoteCount} />
-        <SubTab active={view === "invoices"} onClick={() => setView("invoices")} icon={<Receipt className="w-3.5 h-3.5" />} label="Invoices" count={invoiceOpen} attention={invoiceOpen > 0} />
-        <SubTab active={view === "changes"} onClick={() => setView("changes")} icon={<GitPullRequestArrow className="w-3.5 h-3.5" />} label="Change orders" />
-      </div>
+      {/* The costs' parts as underline tabs; a count is plain figures, a dot
+          marks invoices waiting to be checked. */}
+      <SubTabs label="Costs" value={view ?? "overview"} className="border-b border-[var(--color-border)]"
+        onChange={(id) => { if (id === "contractors") setAsked(null); setView(id); }}
+        items={[
+          { id: "overview" as const, label: "Overview" },
+          { id: "contractors" as const, label: "Contractors" },
+          { id: "budget" as const, label: "Budget", count: accounts.length },
+          { id: "quotes" as const, label: "Quotes", count: quoteCount },
+          { id: "invoices" as const, label: "Invoices", count: invoiceOpen, dot: invoiceOpen > 0 ? "warn" as const : undefined, title: invoiceOpen ? `${invoiceOpen} to check` : undefined },
+          { id: "changes" as const, label: "Change orders" },
+        ]} />
       {err && (
-        <div role="alert" className="mt-2 flex items-center gap-2 text-[14px] font-semibold text-[var(--state-overdue)]">
-          <span className="min-w-0 flex-1">{err}</span>
-          <button onClick={() => setErr(null)} aria-label="Dismiss" className="shrink-0 p-1 text-[var(--color-text-faint)] hover:text-[var(--color-text)]"><X className="w-3.5 h-3.5" /></button>
+        <div className="mt-3 flex items-start gap-2">
+          <ErrorNote compact className="flex-1" title={err} next="" />
+          <button onClick={() => setErr(null)} aria-label="Dismiss" className="shrink-0 w-8 h-8 pointer-coarse:w-11 pointer-coarse:h-11 -mt-1 inline-flex items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
         </div>
       )}
       {notice && (
@@ -276,7 +281,7 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
       )}
 
       {mixedCurrency && (
-        <p className="px-1 text-[13px] font-bold text-amber-800 dark:text-amber-300">
+        <p className="px-1 text-[13px] font-bold text-[var(--state-held-text)]">
           Accounts use mixed currencies ({rollup.currencies.join(", ")}). The totals above add raw numbers. Keep one currency per project.
         </p>
       )}
@@ -353,7 +358,7 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
                       onCancel={() => setEditingLine(null)}
                       onSaved={(msg) => { setEditingLine(null); setNotice(msg); void refresh(); }} />
                   ) : (
-                    <button onClick={() => setEditingLine(account.id)} className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-[var(--color-border-strong)] text-[11.5px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">Change the budget with a reason</button>
+                    <button onClick={() => setEditingLine(account.id)} className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-[var(--color-border-strong)] text-[12px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">Change the budget with a reason</button>
                   )}
                 </div>
               )}
@@ -371,7 +376,7 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
       {/* ── Parties ── */}
       <Card pad={false} className="overflow-hidden">
         <button onClick={() => setShowParties((v) => !v)} aria-expanded={showParties} className="w-full px-4 sm:px-5 py-3.5 flex items-center gap-2 text-left hover:bg-[var(--color-surface-2)]/40 transition-colors">
-          <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Contractors &amp; vendors · {parties.length}</span>
+          <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Contractors &amp; vendors <span className="font-normal tabular-nums">{parties.length}</span></span>
           <span className="flex-1" />
           <ChevronRight className={`w-4 h-4 text-[var(--color-text-faint)] ui-chevron${(showParties) ? " rotate-90" : ""}`} />
         </button>
@@ -406,14 +411,14 @@ export function OutlookCard({ outlook: o, rollup, cur, authorized, onQuotes }: {
           {o.quoted > 0
             ? <>Awarded quotes plus the budget for unquoted lines put the finish at <b className="tabular-nums">{fmtMoney(o.forecast, cur)}</b>
                 {Math.abs(o.variance) >= 1
-                  ? <>: <b className={o.variance > 0 ? "text-rose-700 dark:text-rose-300" : "text-emerald-700 dark:text-emerald-300"}>{fmtMoney(Math.abs(o.variance), cur)} {o.variance > 0 ? "over" : "under"} budget</b></>
+                  ? <>: <b className={o.variance > 0 ? "text-[var(--state-overdue-text)]" : "text-[var(--state-released-text)]"}>{fmtMoney(Math.abs(o.variance), cur)} {o.variance > 0 ? "over" : "under"} budget</b></>
                   : ": on budget"}
-                {vsAuth != null && vsAuth > 0.5 && <>, <b className="text-rose-700 dark:text-rose-300">{fmtMoney(vsAuth, cur)} over the authorization</b> (a supplement may be needed)</>}.</>
+                {vsAuth != null && vsAuth > 0.5 && <>, <b className="text-[var(--state-overdue-text)]">{fmtMoney(vsAuth, cur)} over the authorization</b> (a supplement may be needed)</>}.</>
             : <>No quotes awarded yet, so the forecast is just the budget. <button onClick={onQuotes} className="text-[var(--color-accent-text)] hover:underline">Award quotes</button> and this becomes a real forecast.</>}
         </li>
         {over.map(({ r, ol }) => (
           <li key={r.account.id} className="text-[var(--color-text-muted)]">
-            <AlertTriangle className="w-3 h-3 inline -mt-0.5 text-rose-500" /> {r.account.name}: quoted {fmtMoney(ol!.forecast, cur)} against {fmtMoney(r.account.budget, cur)} budgeted.
+            <AlertTriangle className="w-3 h-3 inline -mt-0.5 text-[var(--state-overdue-text)]" /> {r.account.name}: quoted {fmtMoney(ol!.forecast, cur)} against {fmtMoney(r.account.budget, cur)} budgeted.
           </li>
         ))}
         {o.projectPct != null ? (
@@ -437,18 +442,6 @@ export function OutlookCard({ outlook: o, rollup, cur, authorized, onQuotes }: {
   );
 }
 
-function SubTab({ active, onClick, icon, label, count, attention }: {
-  active: boolean; onClick: () => void; icon: React.ReactNode; label: string; count?: number; attention?: boolean;
-}) {
-  return (
-    <button type="button" onClick={onClick} aria-pressed={active} className={bandSegItem(active)}>
-      {icon} {label}
-      {count != null && count > 0 && (
-        <span className={`text-[12px] font-semibold tabular-nums ${attention ? "text-[var(--state-held)]" : "text-[var(--color-text-muted)]"}`}>{badgeText(count)}</span>
-      )}
-    </button>
-  );
-}
 
 /** "AFE 25008 · $1,250,000 authorized" with how the plan and the spend
  *  sit against it. */
@@ -463,12 +456,12 @@ function BasisLine({ basis, budget, spent, cur, onOpen }: {
       {basis.afeNumber && <span className="font-semibold text-[var(--color-text)]">{basis.afeNumber}</span>}
       {auth != null && <span><span className="font-semibold tabular-nums text-[var(--color-text)]">{fmtMoney(auth, cur)}</span> authorized</span>}
       {auth != null && gap != null && Math.abs(gap) >= 1 && (
-        <span className={gap < 0 ? "font-bold text-rose-700 dark:text-rose-300" : ""}>
+        <span className={gap < 0 ? "font-bold text-[var(--state-overdue-text)]" : ""}>
           budget lines {gap < 0 ? "exceed" : "leave"} {fmtMoney(Math.abs(gap), cur)} {gap < 0 ? "over the authorization" : "unallocated"}
         </span>
       )}
       {auth != null && auth > 0 && (
-        <span className={spent > auth ? "font-bold text-rose-700 dark:text-rose-300" : ""}>
+        <span className={spent > auth ? "font-bold text-[var(--state-overdue-text)]" : ""}>
           {Math.round((spent / auth) * 100)}% of authorization spent
         </span>
       )}
@@ -487,7 +480,7 @@ function MoneyRow({ items }: { items: Array<[label: string, value: string, tone?
       {items.map(([k, v, tone, sub]) => (
         <div key={k} className="min-w-0">
           <dt className="text-[12px] text-[var(--color-text-muted)]">{k}</dt>
-          <dd className={`text-[15px] font-semibold tabular-nums truncate ${tone === "bad" ? "text-rose-700 dark:text-rose-400" : tone === "good" ? "text-emerald-700 dark:text-emerald-400" : "text-[var(--color-text)]"}`}>{v}</dd>
+          <dd className={`text-[15px] font-semibold tabular-nums truncate ${tone === "bad" ? "text-[var(--state-overdue-text)]" : tone === "good" ? "text-[var(--state-released-text)]" : "text-[var(--color-text)]"}`}>{v}</dd>
           {sub && <dd className="text-[12px] text-[var(--color-text-muted)]">{sub}</dd>}
         </div>
       ))}
@@ -522,7 +515,7 @@ function AccountDetail({ orgId, projectId, actor, rollup: r, entries, parties, m
           <label className="block">
             <span className="text-[13px] font-semibold text-[var(--color-text-muted)]" title="Earned value = budget × the pinned task's % complete">Pin to schedule task (for EV)</span>
             <select value={pinDraft} onChange={(e) => void savePin(e.target.value)}
-              className="mt-0.5 h-8 w-64 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs">
+              className="mt-0.5 h-8 pointer-coarse:h-11 w-64 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs">
               <option value="">Not pinned</option>
               {milestones.map((m) => <option key={m.id} value={m.id}>{m.name} ({m.pct}%)</option>)}
             </select>
@@ -546,7 +539,7 @@ function AccountDetail({ orgId, projectId, actor, rollup: r, entries, parties, m
               <span className={`shrink-0 text-[11px] font-semibold px-1.5 py-0.5 rounded border ${
                 e.entryType === "commitment" ? "text-[var(--color-text)] dark:text-[var(--color-text)] border-[var(--color-border-strong)] bg-[var(--color-surface-2)]"
                 : e.entryType === "actual" ? "text-[var(--color-text)] dark:text-[var(--color-text)] border-[var(--color-border-strong)] bg-[var(--color-surface-2)]"
-                : "text-amber-700 dark:text-amber-300 border-amber-500/40 bg-amber-500/10"}`}>
+                : "text-[var(--state-held-text)] border-[var(--state-held)] bg-[var(--state-held)]"}`}>
                 {e.entryType}
               </span>
               <span className={`font-semibold tabular-nums ${e.status === "void" ? "line-through" : ""} text-[var(--color-text)]`}>{fmtMoney(e.amount, cur)}</span>
@@ -567,7 +560,7 @@ function AccountDetail({ orgId, projectId, actor, rollup: r, entries, parties, m
                     if (!res.ok) setErr(res.error ?? "Couldn't void the entry."); else onChanged();
                   }}
                   disabled={busy === e.id}
-                  className="ml-auto shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-bold text-[var(--color-text-faint)] hover:text-rose-600 hover:bg-rose-500/10 transition-colors"
+                  className="ml-auto shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-bold text-[var(--color-text-faint)] hover:text-[var(--state-overdue-text)] hover:bg-[var(--state-overdue)] transition-colors"
                   title="Void (financial records are never deleted)"
                 >
                   <Ban className="w-3 h-3" /> Void
@@ -634,19 +627,19 @@ function EntryForm({ orgId, projectId, accountId, defaultParty, parties, actor, 
         ))}
       </div>
       <input value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="Amount" inputMode="decimal"
-        className="h-8 w-28 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs font-display tabular-nums" />
+        className="h-8 pointer-coarse:h-11 w-28 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs font-display tabular-nums" />
       <input type="date" value={date} onChange={(e) => setDate(e.target.value)}
-        className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs [color-scheme:light] dark:[color-scheme:dark]" />
+        className="h-8 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs [color-scheme:light] dark:[color-scheme:dark]" />
       {parties.length > 0 && (
-        <select value={party} onChange={(e) => setParty(e.target.value)} className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs">
+        <select value={party} onChange={(e) => setParty(e.target.value)} className="h-8 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs">
           <option value="">Party…</option>
           {parties.filter((p) => p.status !== "inactive").map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
         </select>
       )}
       <input value={ref} onChange={(e) => setRef(e.target.value)} placeholder="PO / invoice #"
-        className="h-8 w-32 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs font-display tabular-nums" />
+        className="h-8 pointer-coarse:h-11 w-32 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs font-display tabular-nums" />
       <input value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="Description"
-        className="h-8 flex-1 min-w-32 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
+        className="h-8 pointer-coarse:h-11 flex-1 min-w-32 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
       <button onClick={() => void submit()} disabled={saving}
         className="h-8 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-semibold hover:bg-[var(--color-accent-hover)] disabled:opacity-50 transition-colors">
         {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />} Post
@@ -739,18 +732,18 @@ function PartiesPanel({ orgId, projectId, actor, parties, canManage, onChanged }
       )}
       {canManage && (
         <div className="pt-1 flex items-end gap-2 flex-wrap">
-          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Company name" className="h-8 flex-1 min-w-40 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
-          <select value={kind} onChange={(e) => setKind(e.target.value)} className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs">
+          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Company name" className="h-8 pointer-coarse:h-11 flex-1 min-w-40 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
+          <select value={kind} onChange={(e) => setKind(e.target.value)} className="h-8 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs">
             <option value="contractor">contractor</option>
             <option value="vendor">vendor</option>
             <option value="internal">internal</option>
           </select>
-          <input value={trade} onChange={(e) => setTrade(e.target.value)} placeholder="Trade (piping, E&I…)" className="h-8 w-36 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
-          <input value={contract} onChange={(e) => setContract(e.target.value)} placeholder="Contract value" inputMode="decimal" className="h-8 w-32 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs font-display tabular-nums" />
+          <input value={trade} onChange={(e) => setTrade(e.target.value)} placeholder="Trade (piping, E&I…)" className="h-8 pointer-coarse:h-11 w-36 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
+          <input value={contract} onChange={(e) => setContract(e.target.value)} placeholder="Contract value" inputMode="decimal" className="h-8 pointer-coarse:h-11 w-32 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs font-display tabular-nums" />
           <button onClick={() => void add()} disabled={saving} className="h-8 inline-flex items-center gap-1 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-[11px] font-semibold hover:bg-[var(--color-surface-2)] disabled:opacity-50">
             {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />} Add
           </button>
-          {error && <span className="text-[11px] font-bold text-rose-700 dark:text-rose-300">{error}</span>}
+          {error && <span className="text-[11px] font-bold text-[var(--state-overdue-text)]">{error}</span>}
         </div>
       )}
     </div>
@@ -814,7 +807,7 @@ function PartyEditor({ orgId, projectId, actor, party, onCancel, onSaved }: {
           <input value={contactEmail} onChange={(e) => setContactEmail(e.target.value)} type="email" inputMode="email" placeholder="name@company.com" className={`mt-0.5 ${field}`} /></label>
       </div>
       <div className="flex items-center gap-2">
-        {error && <span className="text-[11px] font-bold text-rose-700 dark:text-rose-300">{error}</span>}
+        {error && <span className="text-[11px] font-bold text-[var(--state-overdue-text)]">{error}</span>}
         <span className="ml-auto flex items-center gap-2">
           <button onClick={onCancel} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>
           <button onClick={() => void save()} disabled={saving} className="h-8 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-semibold hover:bg-[var(--color-accent-hover)] disabled:opacity-50">

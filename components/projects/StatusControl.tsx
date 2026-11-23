@@ -29,10 +29,10 @@ interface Meta { label: string; dot: string; pill: string; Icon: React.Component
 export const STATUS_META: Record<MilestoneStatus, Meta> = {
   planned:     { label: "Planned",     dot: "bg-slate-300 border-slate-400",   pill: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]",     Icon: Circle },
   in_progress: { label: "In progress", dot: "bg-[var(--color-text-muted)] border-[var(--color-border-strong)]",     pill: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]",        Icon: Loader2 },
-  completed:   { label: "Done",        dot: "bg-emerald-500 border-emerald-600",pill: "bg-emerald-100 text-emerald-800 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800",Icon: CircleCheck },
-  on_hold:     { label: "On hold",     dot: "bg-amber-500 border-amber-600",   pill: "bg-amber-100 text-amber-900 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800",     Icon: PauseCircle, needsReason: true },
-  blocked:     { label: "Blocked",     dot: "bg-rose-500 border-rose-600",     pill: "bg-rose-100 text-rose-800 border-rose-200 dark:bg-rose-950/40 dark:text-rose-300 dark:border-rose-800",        Icon: AlertTriangle, needsReason: true },
-  missed:      { label: "Missed",      dot: "bg-rose-600 border-rose-700",     pill: "bg-rose-100 text-rose-900 border-rose-300 dark:bg-rose-950/40 dark:text-rose-300 dark:border-rose-800",        Icon: XCircle },
+  completed:   { label: "Done",        dot: "bg-[var(--state-released)] border-[var(--state-released)]",pill: "bg-transparent text-[var(--state-released-text)] border-[var(--color-border)]",Icon: CircleCheck },
+  on_hold:     { label: "On hold",     dot: "bg-[var(--state-held)] border-[var(--state-held)]",   pill: "bg-transparent text-[var(--state-held-text)] border-[var(--color-border)]",     Icon: PauseCircle, needsReason: true },
+  blocked:     { label: "Blocked",     dot: "bg-[var(--state-overdue)] border-[var(--state-overdue)]",     pill: "bg-transparent text-[var(--state-overdue-text)] border-[var(--color-border)]",        Icon: AlertTriangle, needsReason: true },
+  missed:      { label: "Missed",      dot: "bg-[var(--state-overdue)] border-[var(--state-overdue)]",     pill: "bg-transparent text-[var(--state-overdue-text)] border-[var(--color-border)]",        Icon: XCircle },
 };
 
 export function statusLabel(s: MilestoneStatus): string { return STATUS_META[s].label; }
@@ -236,18 +236,18 @@ export default function StatusControl({ status, onPick, disabled, onDisabledClic
                   <button type="button" onClick={() => setOpen(false)} aria-label="Close" className="-mr-1.5 w-8 h-8 inline-flex items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
                 </div>
                 <div>
-                  <div className="mb-1"><span className="text-[13px] font-semibold text-[var(--color-text-muted)]">{askFor(reasonFor)}</span> <span className="text-[11.5px] text-[var(--color-text-muted)]">(required)</span></div>
+                  <div className="mb-1"><span className="text-[13px] font-semibold text-[var(--color-text-muted)]">{askFor(reasonFor)}</span> <span className="text-[12px] text-[var(--color-text-muted)]">(required)</span></div>
                   <input
                     autoFocus
                     value={reason}
                     onChange={(e) => { setReason(e.target.value); setWhyMsg(null); }}
                     onKeyDown={(e) => { if (e.key === "Enter") commit(); }}
                     placeholder={reasonFor === "on_hold" ? "waiting on parts…" : reasonFor === "blocked" ? "what's blocking it…" : reasonFor === "completed" ? "what got done…" : "why…"}
-                    className="w-full h-9 text-[13px] px-2.5 border border-[var(--color-border-strong)] rounded-lg bg-[var(--color-surface)] outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]/30"
+                    className="w-full h-9 pointer-coarse:h-11 text-[13px] px-2.5 border border-[var(--color-border-strong)] rounded-lg bg-[var(--color-surface)]"
                   />
                 </div>
                 {choices.length > 0 && clockCtx && <WhenFields choices={choices} idx={whenIdx} setIdx={(i) => { setWhenIdx(i); setWhyMsg(null); }} clock={when} setClock={(v) => { setWhen(v); setWhyMsg(null); }} tz={clockCtx.tz} times={clockCtx.times} other={otherDay} setOther={(d) => { setOtherDay(d); setWhyMsg(null); }} />}
-                {whyMsg && <div className="font-semibold text-rose-700 dark:text-rose-400">{whyMsg}</div>}
+                {whyMsg && <div className="font-semibold text-[var(--state-overdue-text)]">{whyMsg}</div>}
                 <div className="flex items-center justify-end gap-1.5">
                   <button onClick={() => setReasonFor(null)} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Back</button>
                   <button

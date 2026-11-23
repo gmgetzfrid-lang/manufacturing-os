@@ -40,8 +40,8 @@ export default function CloseNeeds({ needs, onGo }: { needs: Need[]; onGo: (go: 
         <div className="mt-3 pt-3 border-t border-[var(--color-border)] flex items-center gap-3 flex-wrap" data-need-next={next.id}>
           <span className="min-w-0 flex-1 basis-56">
             <span className="block text-[12px] font-semibold text-[var(--color-text-muted)]">Next</span>
-            <b className="block text-[13.5px] leading-snug text-[var(--color-text)]">{next.title}</b>
-            <span className="block text-[12.5px] text-[var(--color-text-muted)]">{next.status}</span>
+            <b className="block text-[14px] leading-snug text-[var(--color-text)]">{next.title}</b>
+            <span className="block text-[12px] text-[var(--color-text-muted)]">{next.status}</span>
           </span>
           {go(next)}
         </div>
@@ -54,8 +54,8 @@ export default function CloseNeeds({ needs, onGo }: { needs: Need[]; onGo: (go: 
                 {n.done ? <Check className="w-4 h-4" /> : <span className="text-[13px] font-semibold">!</span>}
               </span>
               <span className="min-w-0 flex-1 basis-40">
-                <b className="block text-[13.5px] leading-snug text-[var(--color-text)]">{n.title}</b>
-                <span className="block text-[12.5px] text-[var(--color-text-muted)]">{n.status}</span>
+                <b className="block text-[14px] leading-snug text-[var(--color-text)]">{n.title}</b>
+                <span className="block text-[12px] text-[var(--color-text-muted)]">{n.status}</span>
                 <span className="block text-[12px] text-[var(--color-text-faint)]">{n.category}</span>
               </span>
               {go(n)}

@@ -11,6 +11,7 @@
 // had neither feedback nor undo.
 
 import { useCallback, useRef, useState } from "react";
+import { sayError } from "@/components/projects/sayError";
 
 export interface UndoableToast {
   id: number;
@@ -64,7 +65,7 @@ export function useUndoableActions() {
       // Don't fail silently — the action stays applied, so tell the user
       // instead of closing the toast as if the undo worked.
       pushToast({
-        message: `Couldn't undo: ${(e as Error)?.message || "please refresh and try again"}.`,
+        message: `Couldn't undo: ${sayError(e, "please refresh and try again")}.`,
         tone: "warning",
       });
     }

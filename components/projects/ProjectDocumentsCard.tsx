@@ -12,7 +12,7 @@ import HelpTooltip from "@/components/ui/HelpTooltip";
 import { Card } from "@/components/ui/PageHero";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { Search, Plus, X, Loader2, FileText } from "lucide-react";
+import { Search, Plus, X } from "lucide-react";
 
 /** A document's status as a pill: issued green, in review amber, draft grey. */
 function docPill(status: string): string {
@@ -24,6 +24,8 @@ function docPill(status: string): string {
   return "";
 }
 import { supabase } from "@/lib/supabase";
+import { sayError } from "@/components/projects/sayError";
+import { SkeletonRows } from "@/components/ui/Skeleton";
 
 interface LinkedDoc {
   linkId: string;
@@ -65,7 +67,7 @@ export default function ProjectDocumentsCard({ orgId, projectId, canManage, uid,
         .select("id, document_id, source, last_seen_at")
         .eq("project_id", projectId)
         .order("last_seen_at", { ascending: false });
-      if (error) throw new Error(error.message);
+      if (error) throw error;
       const linkRows = ((links ?? []) as Array<Record<string, unknown>>);
       const docIds = [...new Set(linkRows.map((l) => String(l.document_id)))];
       const { data: docs } = docIds.length
@@ -90,7 +92,7 @@ export default function ProjectDocumentsCard({ orgId, projectId, canManage, uid,
           };
         }));
     } catch (e) {
-      setErr((e as Error).message);
+      setErr(sayError(e));
     } finally { setLoading(false); }
   }, [projectId]);
   useEffect(() => { void refresh(); }, [refresh]);
@@ -136,11 +138,11 @@ export default function ProjectDocumentsCard({ orgId, projectId, canManage, uid,
         { org_id: orgId, project_id: projectId, document_id: doc.id, source: "manual", last_seen_at: nowIso },
         { onConflict: "project_id,document_id", ignoreDuplicates: false },
       );
-      if (error) throw new Error(error.message);
+      if (error) throw error;
       await activity("doc_added", `${doc.label} attached to the project`, doc.id);
       setQ(""); setResults([]);
       await refresh();
-    } catch (e) { setErr((e as Error).message); }
+    } catch (e) { setErr(sayError(e)); }
     finally { setBusy(null); }
   };
 
@@ -148,15 +150,15 @@ export default function ProjectDocumentsCard({ orgId, projectId, canManage, uid,
     setBusy(r.linkId); setErr(null);
     try {
       const { error } = await supabase.from("project_documents").delete().eq("id", r.linkId);
-      if (error) throw new Error(error.message);
+      if (error) throw error;
       await activity("doc_removed", `${r.label} removed from the project`, r.docId);
       await refresh();
-    } catch (e) { setErr((e as Error).message); }
+    } catch (e) { setErr(sayError(e)); }
     finally { setBusy(null); }
   };
 
   return (
-    <Card pad={false} className="overflow-hidden" label={<span className="inline-flex items-center gap-2"><span aria-hidden className="ui-icon-tile is-sm is-solid"><FileText className="w-4 h-4" /></span>Project documents <span className="ui-count is-solid">{rows.length}</span></span>}
+    <Card pad={false} className="overflow-hidden" label={<>Project documents <span className="ml-1 text-[15px] font-normal tabular-nums text-[var(--color-text-muted)]">{rows.length}</span></>}
       action={canManage ? (
         <button
           onClick={() => { setAttachOpen((v) => !v); setQ(""); setResults([]); }}
@@ -179,7 +181,7 @@ export default function ProjectDocumentsCard({ orgId, projectId, canManage, uid,
               placeholder="Search documents by number or title…"
               autoFocus
               aria-label="Search documents"
-              className="h-10 w-full rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] pl-8 pr-2 text-[15px] focus:border-[var(--color-main)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40 outline-none"
+              className="h-10 w-full rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] pl-8 pr-2 text-[15px]"
             />
           </div>
           {searching && <div className="mt-1.5 text-[13px] text-[var(--color-text-muted)]">Searching…</div>}
@@ -203,7 +205,7 @@ export default function ProjectDocumentsCard({ orgId, projectId, canManage, uid,
       )}
 
       {loading ? (
-        <div className="px-4 sm:px-5 py-4 flex items-center gap-2 text-[14px] text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin" /> Loading the project&apos;s documents…</div>
+        <SkeletonRows rows={3} cols={2} what="the project's documents" sheet={false} />
       ) : rows.length === 0 ? (
         <div className="px-4 sm:px-5 py-4 text-[15px] text-[var(--color-text-muted)]">
           None linked yet. <HelpTooltip>A document checked out under this project links itself here{canManage ? ". Attach document links one by hand" : ""}.</HelpTooltip>

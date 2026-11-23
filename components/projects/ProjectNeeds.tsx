@@ -9,7 +9,7 @@
 // at close-out that wasn't on this list from the start.
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { Check, ChevronDown, ChevronUp, Loader2, Plus, Settings2 } from "lucide-react";
+import { Check, ChevronDown, Loader2, Plus, Settings2 } from "lucide-react";
 import type { Milestone, Project, ProjectMember } from "@/types/schema";
 import { supabase } from "@/lib/supabase";
 import { requestSetup, toDo, type SetupItemId } from "@/lib/scheduleSetup";
@@ -38,7 +38,11 @@ import { useFindingsReview } from "@/components/projects/Findings";
 import { FINDINGS_SQL } from "@/lib/findings";
 import { SourceLine, Switch, NeededChoice } from "@/components/projects/NeedParts";
 import { Card, heroQuiet } from "@/components/ui/PageHero";
-import { btnRow, fieldBox } from "@/components/admin/kit";
+import { fieldBox } from "@/components/admin/kit";
+import { Button } from "@/components/ui/Button";
+import { ErrorNote } from "@/components/ui/ErrorNote";
+import { Skeleton } from "@/components/ui/Skeleton";
+import { sayError } from "@/components/projects/sayError";
 
 type State = "set" | "default" | "open" | "info";
 interface Row { id: string; name: string; value: React.ReactNode; source: Source | null; state: State; action?: React.ReactNode; body?: React.ReactNode }
@@ -87,34 +91,48 @@ const joinWords = (xs: string[]) => (xs.length <= 1 ? xs.join("") : `${xs.slice(
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 const money = (n: number) => `$${Math.round(n).toLocaleString("en-US")}`;
 
-/** Where a line stands, at a glance: set, the app's default, still open, or for your information. */
+/** Where a line stands: a dot and a word. Only "To do" is colored (it needs
+ *  someone); set is a green dot with plain words; the app's default and
+ *  lines kept for your information are muted. */
+const MARK: Record<State, { word: string; dot: string; text: string } | null> = {
+  set: { word: "Set", dot: "var(--state-released)", text: "text-[var(--color-text)]" },
+  open: { word: "To do", dot: "var(--state-held)", text: "text-[var(--state-held-text)] font-semibold" },
+  default: { word: "App default", dot: "var(--color-text-faint)", text: "text-[var(--color-text-muted)]" },
+  info: null,
+};
 function Mark({ state }: { state: State }) {
-  if (state === "set") return <span aria-label="Set" className="mt-0.5 w-5 h-5 shrink-0 rounded-full bg-[var(--state-released)] text-white flex items-center justify-center"><Check className="w-3 h-3" strokeWidth={3} /></span>;
-  if (state === "open") return <span aria-label="Still to do" className="mt-0.5 w-5 h-5 shrink-0 rounded-full border-2 border-[var(--state-held)] text-[var(--state-held)] flex items-center justify-center text-[11px] font-bold">!</span>;
-  if (state === "default") return <span aria-label="App default" className="mt-0.5 w-5 h-5 shrink-0 rounded-full border border-[var(--color-border-strong)]" />;
-  return <span aria-hidden className="mt-0.5 w-5 h-5 shrink-0 flex items-center justify-center"><span className="w-1.5 h-1.5 rounded-full bg-[var(--color-text-faint)]" /></span>;
+  const m = MARK[state];
+  if (!m) return null;
+  return (
+    <span className={`inline-flex items-center gap-1.5 text-[13px] whitespace-nowrap ${m.text}`}>
+      <span aria-hidden className="w-[7px] h-[7px] rounded-full shrink-0" style={{ background: m.dot }} />{m.word}
+    </span>
+  );
 }
+
+/** The columns every row lines up on: the need, what it's set to (and where
+ *  that came from), where it stands, and the one way to change it. */
+const COLS = "md:grid md:grid-cols-[minmax(10rem,15rem)_minmax(0,1fr)_7.5rem_10rem] md:gap-x-6 md:items-start";
 
 function NeedRow({ r, tz }: { r: Row; tz: string }) {
   return (
-    <li className="py-2.5 flex items-start gap-3" data-need-row={r.id} data-need-state={r.state}>
-      <Mark state={r.state} />
-      <div className="min-w-0 flex-1">
-        <div className="flex items-start gap-x-3 gap-y-1.5 flex-wrap">
-          <div className="min-w-0 flex-1 basis-52">
-            <div className="text-[14px] leading-snug font-semibold text-[var(--color-text)]">{r.name}</div>
-            <div className="text-[14px] leading-snug text-[var(--color-text)]">{r.value}</div>
-            {r.source && <SourceLine source={r.source} tz={tz} />}
-          </div>
-          {r.action && <div className="shrink-0 flex items-center gap-2">{r.action}</div>}
+    <li className="px-4 sm:px-5 py-3" data-need-row={r.id} data-need-state={r.state}>
+      <div className={`${COLS} max-md:flex max-md:flex-wrap max-md:items-baseline max-md:gap-x-3 max-md:gap-y-1`}>
+        <div className="min-w-0 max-md:flex-1 text-[14px] leading-snug font-semibold text-[var(--color-text)]">{r.name}</div>
+        <div className="min-w-0 max-md:order-3 max-md:basis-full">
+          <div className="text-[14px] leading-snug text-[var(--color-text)]">{r.value}</div>
+          {r.source && <SourceLine source={r.source} tz={tz} className="mt-0.5" />}
         </div>
-        {r.body}
+        <div className="max-md:order-2 md:pt-px"><Mark state={r.state} /></div>
+        <div className="max-md:order-2 max-md:-my-1.5 md:justify-self-end flex items-center justify-end gap-2 min-w-0 md:-mt-1.5">{r.action}</div>
+        {r.body && <div className="md:col-start-2 md:col-span-3 max-md:order-5 max-md:basis-full min-w-0">{r.body}</div>}
       </div>
     </li>
   );
 }
 
-/** One stage: its rows, folded only when the person folds it (remembered on this device). */
+/** One stage: a heading row and its lines, folded only when the person
+ *  folds it (remembered on this device). */
 function Stage({ id, projectId, title, rows, tz }: { id: string; projectId: string; title: string; rows: Row[]; tz: string }) {
   const key = `needs.fold:${projectId}:${id}`;
   const [folded, setFolded] = useState(() => { try { return localStorage.getItem(key) === "1"; } catch { return false; } });
@@ -123,20 +141,22 @@ function Stage({ id, projectId, title, rows, tz }: { id: string; projectId: stri
   const set = rows.filter((r) => r.state === "set").length;
   const settings = rows.filter((r) => r.state !== "info").length;
   return (
-    <section className="min-w-0" data-need-stage={id}>
-      <div className="flex items-center gap-3 border-b border-[var(--color-border-strong)] pb-1.5">
-        <h3 className="font-display text-[16px] font-semibold text-[var(--color-text)]">{title}</h3>
-        <span className="text-[13px] text-[var(--color-text-muted)] tabular-nums">{open ? `${open} to do` : settings ? `${set} of ${settings} set` : ""}</span>
-        <div className="flex-1" />
+    <section className="min-w-0 border-t border-[var(--color-border)] first:border-t-0" data-need-stage={id}>
+      <h3>
         <button type="button" onClick={() => fold(!folded)} aria-expanded={!folded}
-          className="inline-flex items-center gap-1 h-9 px-2 -mr-2 rounded-md text-[13px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
-          {folded ? <>Show {rows.length} <ChevronDown className="w-4 h-4" /></> : <>Hide <ChevronUp className="w-4 h-4" /></>}
+          className="w-full flex items-center gap-3 px-4 sm:px-5 h-11 text-left bg-[var(--color-surface-2)] hover:bg-[color-mix(in_srgb,var(--color-text)_5%,var(--color-surface-2))] transition-colors">
+          <ChevronDown aria-hidden className={`ui-chevron w-4 h-4 shrink-0 text-[var(--color-text-muted)] ${folded ? "-rotate-90" : ""}`} />
+          <span className="font-display text-[15px] font-semibold text-[var(--color-text)]">{title}</span>
+          <span className={`text-[13px] tabular-nums ${open ? "font-semibold text-[var(--state-held-text)]" : "text-[var(--color-text-muted)]"}`}>{open ? `${open} to do` : settings ? `${set} of ${settings} set` : `${rows.length}`}</span>
         </button>
-      </div>
-      {!folded && <ul className="divide-y divide-[var(--color-border)]">{rows.map((r) => <NeedRow key={r.id} r={r} tz={tz} />)}</ul>}
+      </h3>
+      {!folded && <ul className="divide-y divide-[var(--color-border)] border-t border-[var(--color-border)]">{rows.map((r) => <NeedRow key={r.id} r={r} tz={tz} />)}</ul>}
     </section>
   );
 }
+
+/** A row's one way to change it: a quiet link, not a boxed button. */
+const changeLink = "inline-flex items-center min-h-8 pointer-coarse:min-h-11 text-[14px] font-semibold text-[var(--color-accent-text)] hover:underline underline-offset-2 whitespace-nowrap disabled:opacity-50 disabled:no-underline";
 
 export default function ProjectNeeds({ orgId, project, jobKind, phases, steps, members, canManage, uid, userEmail, refreshKey = 0, onPhases, onEdit, onTab, onLessons, onJobKind }: {
   orgId: string; project: Project; jobKind: string | null; phases: ProjectPhase[];
@@ -186,7 +206,7 @@ export default function ProjectNeeds({ orgId, project, jobKind, phases, steps, m
   const run = async (key: string, fn: () => Promise<{ ok: boolean; error?: string }>) => {
     setBusy(key); setErr(null);
     try { const r = await fn(); if (!r.ok) setErr(r.error ?? "Not saved."); else reload(); }
-    catch (e) { setErr((e as Error).message); }
+    catch (e) { setErr(sayError(e)); }
     finally { setBusy(null); }
   };
 
@@ -197,8 +217,8 @@ export default function ProjectNeeds({ orgId, project, jobKind, phases, steps, m
   }, [members, project.ownerUserId, project.ownerUserName]);
   const madeStamp: Stamp = { at: project.createdAt ? String(project.createdAt) : null, by: nameOf(project.createdBy) };
   const item = (id: SetupItemId) => setup.find((i) => i.id === id);
-  const change = (id: SetupItemId, label = "Change") => (canManage ? <button type="button" onClick={() => requestSetup(id)} className={btnRow} data-setup-open={id}>{label}</button> : undefined);
-  const checking = <span className="text-[var(--color-text-muted)]">Checking…</span>;
+  const change = (id: SetupItemId, label = "Change") => (canManage ? <button type="button" onClick={() => requestSetup(id)} className={changeLink} data-setup-open={id}>{label}</button> : undefined);
+  const checking = <span role="status" aria-label="Checking" className="inline-flex w-40 max-w-full align-middle"><Skeleton className="w-full" /></span>;
 
   // ── Before the work ──
   const type = projectTypeOf(times.projectType, project.name);
@@ -227,7 +247,7 @@ export default function ProjectNeeds({ orgId, project, jobKind, phases, steps, m
       value: phases.length ? <>{plural(phases.length, "phase")}: {phases.map((p) => `${p.name} (${phaseDates(p).replace(" – ", " to ")})`).join(", ")}. Each has its own schedule, review and PSSR.</> : "One schedule for the whole project.",
       source: phases.length ? { kind: "set" } : { kind: "default", note: "one phase, the whole project" },
       state: phases.length ? "set" : "default",
-      action: canManage ? <button type="button" onClick={onPhases} className={btnRow}>Change</button> : undefined,
+      action: canManage ? <button type="button" onClick={onPhases} className={changeLink}>Change</button> : undefined,
     },
     {
       id: "jobsize", name: "Job size",
@@ -235,12 +255,12 @@ export default function ProjectNeeds({ orgId, project, jobKind, phases, steps, m
       source: facts?.stamps.jobKind ? { kind: "set", stamp: facts.stamps.jobKind } : ss ? { kind: "made", stamp: madeStamp } : { kind: "default", note: "Standard project" },
       state: jobKind ? "set" : "default",
       action: canManage ? (
-        <label className="inline-flex items-center">
+        <label className="inline-flex items-center md:w-full">
           <span className="sr-only">Job size</span>
           <select value={jobKind ?? "standard"} disabled={busy === "jobsize"} onChange={(e) => {
             const k = e.target.value as "small" | "standard" | "capital";
             void run("jobsize", async () => { const r = await saveJobKind(projectId, k, by); if (r.ok) onJobKind(k); return r; });
-          }} className={`${fieldBox} h-9 text-[14px] font-semibold`}>
+          }} className={`${fieldBox} h-9 pointer-coarse:h-11 md:w-full text-[14px] max-sm:text-[16px]`}>
             {JOB_SIZES.map((j) => <option key={j.v} value={j.v}>{j.label}</option>)}
           </select>
         </label>
@@ -310,7 +330,7 @@ export default function ProjectNeeds({ orgId, project, jobKind, phases, steps, m
       value: !facts ? checking : afe?.authorized != null ? `${afe.afeNumber ? `AFE ${afe.afeNumber}, ` : ""}${money(afe.authorized)} authorized` : "Not set",
       source: !facts ? null : afe?.authorized != null ? { kind: "set", stamp: afeLast ? { at: afeLast.at, by: afeLast.by } : null, note: afeLast?.note ? `${afeLast.note[0].toLowerCase()}${afeLast.note.slice(1)}` : undefined } : ss?.budget === "skipped" ? { kind: "skipped", stamp: madeStamp } : { kind: "asked", by: "the post-event review", note: "budget against spend" },
       state: !facts ? "info" : afe?.authorized != null ? "set" : "open",
-      action: canManage && facts && editing !== "afe" ? <button type="button" onClick={() => setEditing("afe")} className={btnRow}>Change</button> : undefined,
+      action: canManage && facts && editing !== "afe" ? <button type="button" onClick={() => setEditing("afe")} className={changeLink}>Change</button> : undefined,
       body: editing === "afe" && facts ? (
         <div className="mt-2">
           <AfeEditor orgId={orgId} projectId={projectId} afe={afe ?? { afeNumber: null, chargeAccount: null, authorized: null, docId: null }} actor={actor} cur="USD" quietSave
@@ -323,7 +343,7 @@ export default function ProjectNeeds({ orgId, project, jobKind, phases, steps, m
       value: !snap ? checking : missingInfo.length ? `No ${joinWords(missingInfo)} yet.` : "All written.",
       source: !snap ? null : !missingInfo.length ? { kind: "set" } : ss && (ss.sow === "skipped" || ss.purpose === "skipped") ? { kind: "skipped", stamp: madeStamp } : { kind: "asked", by: "the project report" },
       state: !snap ? "info" : missingInfo.length ? "default" : "set",
-      action: canManage ? <button type="button" onClick={onEdit} className={btnRow}>Change</button> : undefined,
+      action: canManage ? <button type="button" onClick={onEdit} className={changeLink}>Change</button> : undefined,
     },
     {
       id: "print", name: "Printed reports and slides",
@@ -338,7 +358,7 @@ export default function ProjectNeeds({ orgId, project, jobKind, phases, steps, m
     {
       id: "heads", name: "Head count at each shift meeting", value: "Taken on Shift, at the meeting.",
       source: { kind: "asked", by: "the post-event review", note: "man-hours and labor cost are worked out from it" }, state: "info",
-      action: <button type="button" onClick={() => onTab("today")} className={btnRow}>Open Shift</button>,
+      action: <button type="button" onClick={() => onTab("today")} className={changeLink}>Open Shift</button>,
     },
     {
       id: "incidents", name: "Incident line on each shift report", value: "Answered on Shift, in the report.",
@@ -349,7 +369,7 @@ export default function ProjectNeeds({ orgId, project, jobKind, phases, steps, m
       value: !facts ? checking : facts.materials == null ? "Couldn't be read." : facts.materials ? `${plural(facts.materials, "line")}.` : "Empty.",
       source: { kind: "asked", by: "the post-event review", note: "parts each job needed, against what was ordered" },
       state: !facts || facts.materials == null ? "info" : facts.materials ? "set" : "open",
-      action: <button type="button" onClick={() => onTab("materials")} className={btnRow}>Open Materials</button>,
+      action: <button type="button" onClick={() => onTab("materials")} className={changeLink}>Open Materials</button>,
     },
   ];
 
@@ -399,17 +419,18 @@ export default function ProjectNeeds({ orgId, project, jobKind, phases, steps, m
       {canManage && (
         <div className="py-2 flex items-center gap-2 flex-wrap">
           {required.length === 0 && (
-            <button type="button" disabled={!!busy} onClick={() => void run("seed", async () => { const r = await seedTurnoverItems({ orgId, projectId, jobKind, actor }); return { ok: r.ok, error: r.error }; })} className={btnRow}>
+            <button type="button" disabled={!!busy} onClick={() => void run("seed", async () => { const r = await seedTurnoverItems({ orgId, projectId, jobKind, actor }); return { ok: r.ok, error: r.error }; })} className={changeLink}>
               Start from the usual list ({usual.length} for a {jobSizeWord(jobKind).toLowerCase()})
             </button>
           )}
-          <input value={newDoc} onChange={(e) => setNewDoc(e.target.value)} aria-label="Add a document this project needs" placeholder="Add a document"
+          <input value={newDoc} onChange={(e) => setNewDoc(e.target.value)} aria-label="Add a document this project needs" placeholder="e.g. Hydrotest record"
             onKeyDown={(e) => { if (e.key === "Enter" && newDoc.trim()) { const n = newDoc.trim(); setNewDoc(""); void run("add", () => addTurnoverItem({ orgId, projectId, name: n, required: true, actor })); } }}
-            className={`${fieldBox} h-9 flex-1 min-w-40 text-[14px]`} />
-          <button type="button" disabled={!newDoc.trim() || !!busy} onClick={() => { const n = newDoc.trim(); setNewDoc(""); void run("add", () => addTurnoverItem({ orgId, projectId, name: n, required: true, actor })); }} className={btnRow}>
+            className={`${fieldBox} h-9 pointer-coarse:h-11 flex-1 min-w-40 text-[14px] max-sm:text-[16px]`} />
+          <Button size="sm" variant="secondary" disabled={!newDoc.trim() || !!busy} title={!newDoc.trim() ? "Type the document's name first" : undefined}
+            onClick={() => { const n = newDoc.trim(); setNewDoc(""); void run("add", () => addTurnoverItem({ orgId, projectId, name: n, required: true, actor })); }}>
             <Plus className="w-3.5 h-3.5" /> Add
-          </button>
-          <button type="button" onClick={() => setEditing(null)} className={btnRow}>Done</button>
+          </Button>
+          <Button size="sm" variant="secondary" onClick={() => setEditing(null)}>Done</Button>
         </div>
       )}
     </div>
@@ -428,7 +449,7 @@ export default function ProjectNeeds({ orgId, project, jobKind, phases, steps, m
       value: !facts ? checking : !items ? "Couldn't be read." : required.length ? `${plural(required.length, "document")} needed, ${inCount} in and accepted.` : "None needed.",
       source: items ? turnoverSource(items, project.createdAt ? String(project.createdAt) : null, nameOf) : null,
       state: !items ? "info" : required.length ? (inCount >= required.length ? "set" : "open") : "default",
-      action: canManage && items && editing !== "turnover" ? <button type="button" onClick={() => setEditing("turnover")} className={btnRow}>Change</button> : undefined,
+      action: canManage && items && editing !== "turnover" ? <button type="button" onClick={() => setEditing("turnover")} className={changeLink}>Change</button> : undefined,
       body: turnoverBody,
     },
     {
@@ -436,63 +457,66 @@ export default function ProjectNeeds({ orgId, project, jobKind, phases, steps, m
       value: !snap ? checking : snap.punchOpen ? `${snap.punchOpen} open` : "Nothing open",
       source: { kind: "default", note: "open punch items count as left to close" },
       state: !snap ? "info" : snap.punchOpen ? "open" : "set",
-      action: <button type="button" onClick={() => onTab("quality")} className={btnRow}>Open Quality</button>,
+      action: <button type="button" onClick={() => onTab("quality")} className={changeLink}>Open Quality</button>,
     },
     {
       id: "co", name: "Change orders decided",
       value: !snap ? checking : snap.openChangeOrders ? `${snap.openChangeOrders} waiting on a decision` : "None waiting",
       source: { kind: "default", note: "change orders waiting on a decision count as left to close" },
       state: !snap ? "info" : snap.openChangeOrders ? "open" : "set",
-      action: <button type="button" onClick={() => onTab("costs")} className={btnRow}>Open Costs</button>,
+      action: <button type="button" onClick={() => onTab("costs")} className={changeLink}>Open Costs</button>,
     },
     {
       id: "checklists", name: "Checklists resolved",
       value: !snap ? checking : !snap.checklistCount ? "No checklists on this project." : snap.checklistOpenItems + snap.checklistNeedsEvidence ? `${plural(snap.checklistOpenItems + snap.checklistNeedsEvidence, "item")} not resolved` : "All resolved",
       source: { kind: "default", note: "unresolved items are listed when you mark the project complete" },
       state: !snap ? "info" : !snap.checklistCount ? "default" : snap.checklistOpenItems + snap.checklistNeedsEvidence ? "open" : "set",
-      action: <button type="button" onClick={() => onTab("quality")} className={btnRow}>Open Quality</button>,
+      action: <button type="button" onClick={() => onTab("quality")} className={changeLink}>Open Quality</button>,
     },
     {
       id: "cost", name: "Final cost posted",
       value: !snap ? checking : `${money(snap.spent)} invoiced${afe?.authorized != null ? ` of ${money(afe.authorized)} AFE` : ""}`,
       source: { kind: "asked", by: "Close-out", note: "post the last invoices before closing" }, state: "info",
-      action: <button type="button" onClick={() => onTab("costs")} className={btnRow}>Open Costs</button>,
+      action: <button type="button" onClick={() => onTab("costs")} className={changeLink}>Open Costs</button>,
     },
     {
       id: "targets", name: "Review targets", value: "Set on the post-event review's score, phase by phase.",
       source: { kind: "asked", by: "the post-event review" }, state: "info",
-      action: <button type="button" onClick={() => { openCloseoutView("review"); onTab("closeout"); }} className={btnRow}>Open the review</button>,
+      action: <button type="button" onClick={() => { openCloseoutView("review"); onTab("closeout"); }} className={changeLink}>Open the review</button>,
     },
     {
       id: "lessons", name: "Lessons & findings",
       value: !findings.ready ? checking : findings.missing ? `Can't be kept yet: run supabase/migrations/${FINDINGS_SQL} in the Supabase SQL editor.` : left ? `${plural(left, "finding")} to review, ${findings.state.kept.length} kept so far.` : `Reviewed, ${findings.state.kept.length} kept.`,
       source: { kind: "asked", by: "Mark complete", note: "it asks you to finish this review first" },
       state: !findings.ready || findings.missing ? "info" : left ? "open" : "set",
-      action: <button type="button" onClick={onLessons} className={btnRow}>Open</button>,
+      action: <button type="button" onClick={onLessons} className={changeLink}>Open</button>,
     },
   ];
 
   const todo = toDo(setup).length;
   return (
-    <Card label="What this project needs" pad={false}
-      action={canManage ? (
-        <button type="button" onClick={() => requestSetup()} className={heroQuiet} data-needs-setup>
-          <Settings2 className="w-4 h-4" /> Setup{todo ? <span className="text-[var(--state-held)]">{` · ${todo} to do`}</span> : <Check className="w-4 h-4 text-[var(--state-released)]" />}
-        </button>
-      ) : undefined}>
-      <div className="px-4 sm:px-5 pt-3 pb-1 text-[14px] text-[var(--color-text-muted)]">
-        Everything this project asks for, from setup to close-out: what each is set to now and where that came from.{" "}
-        {canManage ? "Change any of it here." : "The project owner, a co-owner or an admin changes these."}
-        {err && <span role="alert" className="block mt-1 font-semibold text-[var(--state-overdue)] whitespace-pre-line">{err}</span>}
-        {busy && <span role="status" className="inline-flex items-center gap-1 ml-2 text-[13px]"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Saving…</span>}
-      </div>
-      <div className="px-4 sm:px-5 pb-4 pt-2 grid lg:grid-cols-2 gap-x-10 gap-y-5">
-        <Stage id="before" projectId={projectId} title="Before the work" rows={before} tz={tz} />
-        <div className="space-y-5 min-w-0">
-          <Stage id="shift" projectId={projectId} title="Every shift" rows={shift} tz={tz} />
-          <Stage id="close" projectId={projectId} title="To close" rows={close} tz={tz} />
+    <Card label="What this project needs" pad={false} className="overflow-hidden"
+      action={<span className="flex items-center gap-3">
+        {busy && <span role="status" className="inline-flex items-center gap-1.5 text-[13px] text-[var(--color-text-muted)]"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Saving</span>}
+        {canManage && (
+          <button type="button" onClick={() => requestSetup()} className={heroQuiet} data-needs-setup>
+            <Settings2 className="w-4 h-4" /> Setup{todo ? <span className="font-semibold text-[var(--state-held-text)]">{`${todo} to do`}</span> : <Check aria-label="all set" className="w-4 h-4 text-[var(--state-released)]" />}
+          </button>
+        )}
+      </span>}>
+      {(!canManage || err) && (
+        <div className="px-4 sm:px-5 py-3 border-b border-[var(--color-border)] space-y-1">
+          {!canManage && <p className="text-[14px] text-[var(--color-text-muted)]">The project owner, a co-owner or an admin changes these.</p>}
+          {err && <ErrorNote compact title={err} next="" />}
         </div>
+      )}
+      {/* The columns, once, over all three stages (wide screens). */}
+      <div aria-hidden className={`${COLS} max-md:hidden px-4 sm:px-5 h-9 items-center text-[13px] text-[var(--color-text-muted)] border-b border-[var(--color-border)]`}>
+        <span>Need</span><span>Set to, and where that came from</span><span>Status</span><span />
       </div>
+      <Stage id="before" projectId={projectId} title="Before the work" rows={before} tz={tz} />
+      <Stage id="shift" projectId={projectId} title="Every shift" rows={shift} tz={tz} />
+      <Stage id="close" projectId={projectId} title="To close" rows={close} tz={tz} />
     </Card>
   );
 }

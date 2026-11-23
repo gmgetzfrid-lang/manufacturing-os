@@ -41,6 +41,7 @@ import {
 import { computeBidEconomics, scoreBids, DEFAULT_WEIGHTS, type ParsedQuote } from "@/lib/bidTab";
 import { downloadStarterRfq } from "@/lib/rfqDocx";
 import { appConfirm, appPrompt } from "@/components/providers/DialogProvider";
+import { sayError } from "@/components/projects/sayError";
 
 async function authHeader(): Promise<Record<string, string>> {
   const { data } = await supabase.auth.getSession();
@@ -92,7 +93,7 @@ export default function QuotesPanel({ orgId, projectId, canManage, actor, accoun
       await readCostDoc(orgId, projectId, doc.id);
       onChanged();
     } catch (e) {
-      setErr((e as Error).message);
+      setErr(sayError(e));
     } finally { setBusy(null); }
   };
 
@@ -292,7 +293,7 @@ function InvoicesSection({ orgId, projectId, canManage, actor, accounts, parties
                   {doc.totalAmount != null && <span className="font-semibold tabular-nums text-[var(--color-text)]">{fmtMoney(doc.totalAmount, doc.currency ?? "USD")}</span>}
                   <StatusChip status={doc.status} />
                   {duplicate && (doc.status === "draft" || doc.status === "parsed") && (
-                    <span className="inline-flex items-center gap-1 text-[13px] font-semibold px-1.5 py-0.5 rounded border border-rose-500/50 bg-rose-500/10 text-rose-700 dark:text-rose-300"
+                    <span className="inline-flex items-center gap-1 text-[13px] font-semibold px-1.5 py-0.5 rounded border border-[var(--state-overdue)] bg-[var(--state-overdue)] text-[var(--state-overdue-text)]"
                       title={`Same vendor and ${duplicate.docNumber ? "invoice number" : "amount and date"} as ${duplicate.fileName ?? "another invoice"} (${COST_DOC_STATUS_LABEL[duplicate.status as CostDocument["status"]]?.toLowerCase() ?? duplicate.status}).`}>
                       <CopyIcon className="w-2.5 h-2.5" /> possible duplicate
                     </span>
@@ -403,11 +404,11 @@ function InvoiceDrop({ orgId, projectId, actor, onDone, setErr }: {
         }
         patch(job.key, { state: "reading", error: undefined });
         try { await readCostDoc(orgId, projectId, id); }
-        catch (e) { throw new Error(`Uploaded, but not read: ${(e as Error).message}`); }
+        catch (e) { throw new Error(`Uploaded, but not read: ${sayError(e)}`); }
         patch(job.key, { state: "done" });
       }, { onRetried: () => { patch(job.key, { state: "done", error: undefined }); onDone(); } });
     } catch (e) {
-      patch(job.key, { state: "failed", error: (e as Error).message, docId });
+      patch(job.key, { state: "failed", error: sayError(e), docId });
     }
   };
 
@@ -446,12 +447,12 @@ function InvoiceDrop({ orgId, projectId, actor, onDone, setErr }: {
               <FileThumb file={j.file} size={28} />
               <span className="min-w-0 flex-1">
                 <span className="block truncate font-bold text-[var(--color-text)]">{j.file.name} <span className="font-normal text-[var(--color-text-muted)]">· {fileSize(j.file.size)}</span></span>
-                <span className={`block truncate text-[11px] ${j.state === "failed" ? "font-semibold text-rose-700 dark:text-rose-300" : j.state === "done" ? "text-emerald-700 dark:text-emerald-300" : "text-[var(--color-text-muted)]"}`}>
+                <span className={`block truncate text-[11px] ${j.state === "failed" ? "font-semibold text-[var(--state-overdue-text)]" : j.state === "done" ? "text-[var(--state-released-text)]" : "text-[var(--color-text-muted)]"}`}>
                   {j.state === "waiting" ? "Waiting…" : j.state === "uploading" ? "Uploading…" : j.state === "reading" ? "Reading…" : j.state === "done" ? "Read" : j.error}
                 </span>
               </span>
               {(j.state === "uploading" || j.state === "reading") && <Loader2 className="w-3.5 h-3.5 animate-spin text-[var(--color-text-muted)] shrink-0" />}
-              {j.state === "done" && <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />}
+              {j.state === "done" && <CheckCircle2 className="w-3.5 h-3.5 text-[var(--state-released-text)] shrink-0" />}
               {j.state === "failed" && (
                 <>
                   <button type="button" onClick={() => void retry(j)} className="shrink-0 h-7 px-2.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[11px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">Try again</button>
@@ -553,7 +554,7 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, parties, companie
         <span className="text-xs font-semibold text-[var(--color-text)]">{group}</span>
         <span className="text-[11px] text-[var(--color-text-muted)]">{groupDocs.length} bid{groupDocs.length === 1 ? "" : "s"}</span>
         {awarded && (
-          <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700 dark:text-emerald-300">
+          <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-[var(--state-released-text)]">
             <Trophy className="w-3 h-3" /> Awarded to {awarded.vendorName ?? "vendor"}
           </span>
         )}
@@ -562,8 +563,8 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, parties, companie
       {open && (
         <div className="px-4 pb-4 space-y-2">
           {awarded && canManage && (
-            <div className="flex items-center gap-2 flex-wrap rounded-lg border border-emerald-500/30 bg-emerald-500/[0.05] px-3 py-2 text-[11px]">
-              <Trophy className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+            <div className="flex items-center gap-2 flex-wrap rounded-lg border border-[var(--state-released)] bg-[var(--state-released)]/[0.05] px-3 py-2 text-[11px]">
+              <Trophy className="w-3.5 h-3.5 text-[var(--state-released-text)] shrink-0" />
               <span className="text-[var(--color-text)]">
                 Awarded to <b>{awarded.vendorName ?? "vendor"}</b>
                 {(awarded.totalAmount ?? parsedQuoteFrom(awarded)?.total) != null ? ` for ${fmtMoney((awarded.totalAmount ?? parsedQuoteFrom(awarded)?.total) as number)}` : ""}
@@ -578,7 +579,7 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, parties, companie
           )}
           {unread.length > 0 && (
             <div className="flex items-center gap-2 flex-wrap text-[11px] text-[var(--color-text-muted)]">
-              <AlertTriangle className="w-3.5 h-3.5 text-amber-500" />
+              <AlertTriangle className="w-3.5 h-3.5 text-[var(--state-held-text)]" />
               {unread.length} quote{unread.length === 1 ? "" : "s"} not read yet:
               {unread.map((d) => (
                 <span key={d.id} className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--color-border-strong)] px-2 py-1">
@@ -615,7 +616,7 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, parties, companie
                     const known = companies.find((c) => c.name.toLowerCase() === e.vendorName.toLowerCase()) ?? null;
                     return (
                       <React.Fragment key={e.quoteId}>
-                        <tr className={isAwarded ? "bg-emerald-500/[0.05]" : isDeclined ? "opacity-55" : undefined}>
+                        <tr className={isAwarded ? "bg-[var(--state-released)]/[0.05]" : isDeclined ? "opacity-55" : undefined}>
                           <td className="px-3 py-2">
                             <span className="font-bold text-[var(--color-text)]">{e.vendorName}</span>
                             <PreviewButton file={fileOfDoc(doc)} className="ml-1" />
@@ -628,12 +629,12 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, parties, companie
                               </Link>
                             )}
                             {known?.status === "do_not_use" && (
-                              <span className="ml-1.5 text-[13px] font-semibold px-1.5 py-0.5 rounded border border-rose-500/50 bg-rose-500/10 text-rose-700 dark:text-rose-300">do not use</span>
+                              <span className="ml-1.5 text-[13px] font-semibold px-1.5 py-0.5 rounded border border-[var(--state-overdue)] bg-[var(--state-overdue)] text-[var(--state-overdue-text)]">do not use</span>
                             )}
                             {s?.best && !awarded && (
                               <span className="ml-1.5 text-[11px] font-semibold text-[var(--color-text)]" title="Highest weighted value score - not automatically the winner; you decide.">Best value</span>
                             )}
-                            {isAwarded && <span className="ml-1.5 inline-flex items-center gap-0.5 text-[11px] font-semibold text-emerald-700 dark:text-emerald-300"><Trophy className="w-2.5 h-2.5" /> Awarded</span>}
+                            {isAwarded && <span className="ml-1.5 inline-flex items-center gap-0.5 text-[11px] font-semibold text-[var(--state-released-text)]"><Trophy className="w-2.5 h-2.5" /> Awarded</span>}
                             {isDeclined && <span className="ml-1.5 text-[11px] font-bold text-[var(--color-text-faint)]">Not selected</span>}
                             {bidTools(doc)}
                           </td>
@@ -670,12 +671,12 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, parties, companie
                             <td colSpan={canManage && !awarded ? 7 : 6} className="px-3 pb-2 pt-0">
                               <div className="flex flex-wrap gap-1">
                                 {parsed.find((p) => p.doc.id === e.quoteId)?.quote.exclusions.map((x) => (
-                                  <span key={x} className="text-[11px] font-bold px-1.5 py-0.5 rounded border border-amber-500/40 bg-amber-500/[0.07] text-amber-800 dark:text-amber-300" title="Scope this bid explicitly does NOT include">
+                                  <span key={x} className="text-[11px] font-bold px-1.5 py-0.5 rounded border border-[var(--state-held)] bg-[var(--state-held)]/[0.07] text-[var(--state-held-text)]" title="Scope this bid explicitly does NOT include">
                                     excludes: {x}
                                   </span>
                                 ))}
                                 {e.missingScope.slice(0, 4).map((x) => (
-                                  <span key={x} className="text-[11px] font-bold px-1.5 py-0.5 rounded border border-rose-500/40 bg-rose-500/[0.06] text-rose-700 dark:text-rose-300" title="Other bidders priced this - this bid neither priced nor excluded it">
+                                  <span key={x} className="text-[11px] font-bold px-1.5 py-0.5 rounded border border-[var(--state-overdue)] bg-[var(--state-overdue)]/[0.06] text-[var(--state-overdue-text)]" title="Other bidders priced this - this bid neither priced nor excluded it">
                                     silent gap: {x}
                                   </span>
                                 ))}
@@ -735,10 +736,10 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, parties, companie
 
 function StatusChip({ status }: { status: CostDocument["status"] }) {
   const tone = status === "awarded" || status === "posted"
-    ? "border-emerald-500/40 bg-emerald-500/[0.07] text-emerald-700 dark:text-emerald-300"
+    ? "border-[var(--state-released)] bg-[var(--state-released)]/[0.07] text-[var(--state-released-text)]"
     : status === "parsed" ? "border-[var(--color-border-strong)] bg-[var(--color-surface-2)] text-[var(--color-text)] dark:text-[var(--color-text)]"
     : status === "declined" || status === "void" ? "border-[var(--color-border)] text-[var(--color-text-faint)]"
-    : "border-amber-500/40 bg-amber-500/[0.07] text-amber-700 dark:text-amber-300";
+    : "border-[var(--state-held)] bg-[var(--state-held)]/[0.07] text-[var(--state-held-text)]";
   return (
     <span className={`text-[13px] font-semibold px-1.5 py-0.5 rounded border ${tone}`}>
       {COST_DOC_STATUS_LABEL[status]}
@@ -769,7 +770,7 @@ function PostControls({ accounts, busy, onPost, label, suggested }: {
   return (
     <span className="inline-flex items-center gap-1">
       <select value={accountId} onChange={(e) => setAccountId(e.target.value)}
-        className="h-6 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1 text-[11px] max-w-36">
+        className="h-6 pointer-coarse:h-11 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1 text-[11px] max-w-36">
         <option value="">Budget line…</option>
         {accounts.map((a) => <option key={a.id} value={a.id}>{a.code ? `${a.code} ` : ""}{a.name}</option>)}
       </select>
@@ -778,7 +779,7 @@ function PostControls({ accounts, busy, onPost, label, suggested }: {
         {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckCircle2 className="w-3 h-3" />} {label}
       </button>
       {suggested && accountId === suggested.accountId && (
-        <span className={`text-[11px] font-bold ${suggested.confidence === "high" ? "text-emerald-600" : "text-[var(--color-text-muted)]"}`}
+        <span className={`text-[11px] font-bold ${suggested.confidence === "high" ? "text-[var(--state-released-text)]" : "text-[var(--color-text-muted)]"}`}
           title={`Suggested: ${suggested.reason}`}>
           <Sparkles className="w-2.5 h-2.5 inline -mt-0.5" /> {suggested.confidence === "high" ? "matched" : "suggested"}
         </span>
@@ -801,7 +802,7 @@ function VoidButton({ doc, actor, busy, setBusy, onChanged, setErr }: {
         if (!res.ok) setErr(res.error ?? "Couldn't void."); else onChanged();
       }}
       disabled={busy}
-      className="ml-auto inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-bold text-[var(--color-text-faint)] hover:text-rose-600 hover:bg-rose-500/10 transition-colors">
+      className="ml-auto inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-bold text-[var(--color-text-faint)] hover:text-[var(--state-overdue-text)] hover:bg-[var(--state-overdue)] transition-colors">
       <Ban className="w-3 h-3" /> Void
     </button>
   );
@@ -848,19 +849,19 @@ function CorrectForm({ doc, actor, groups, onDone, onCancel, setErr }: {
       <label className="block">
         <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Total</span>
         <input value={total} onChange={(e) => setTotal(e.target.value)} inputMode="decimal" placeholder="e.g. 182,000"
-          className="mt-0.5 block h-8 w-32 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs font-display tabular-nums" />
+          className="mt-0.5 block h-8 pointer-coarse:h-11 w-32 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs font-display tabular-nums" />
       </label>
       <label className="block">
         <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Vendor</span>
         <input value={vendor} onChange={(e) => setVendor(e.target.value)} placeholder="Company name"
-          className="mt-0.5 block h-8 w-48 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
+          className="mt-0.5 block h-8 pointer-coarse:h-11 w-48 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
       </label>
       {doc.kind === "quote" && (
         <label className="block">
           <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">RFQ group</span>
           <input value={group} onChange={(e) => setGroup(e.target.value)} list={listId} placeholder="The scope being bid"
             title="Quotes with the same group name are compared side by side."
-            className="mt-0.5 block h-8 w-48 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
+            className="mt-0.5 block h-8 pointer-coarse:h-11 w-48 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
           <datalist id={listId}>{groups.map((g) => <option key={g} value={g} />)}</datalist>
         </label>
       )}
@@ -902,7 +903,7 @@ function UploadRow({ orgId, projectId, actor, kind, existingGroups, onDone, setE
         if (!res.ok) throw new Error(res.error ?? "Upload failed.");
       }, { onRetried: cleared });
       cleared();
-    } catch (e) { setFailed((e as Error).message); }
+    } catch (e) { setFailed(sayError(e)); }
     finally { setSaving(false); }
   };
 
@@ -917,11 +918,11 @@ function UploadRow({ orgId, projectId, actor, kind, existingGroups, onDone, setE
           onChange={(e) => { setFile(e.target.files?.[0] ?? null); setFailed(null); e.target.value = ""; }} />
       </label>
       <input value={vendor} onChange={(e) => setVendor(e.target.value)} placeholder="Vendor (or let the AI read it)"
-        className="h-8 w-52 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
+        className="h-8 pointer-coarse:h-11 w-52 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
       {kind === "quote" && (
         <>
           <input value={group} onChange={(e) => setGroup(e.target.value)} placeholder="RFQ group: the scope being bid" list="rfq-groups"
-            className="h-8 w-56 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs"
+            className="h-8 pointer-coarse:h-11 w-56 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs"
             title="Quotes sharing a group name tabulate side by side." />
           <datalist id="rfq-groups">
             {existingGroups.map((g) => <option key={g} value={g} />)}
@@ -932,7 +933,7 @@ function UploadRow({ orgId, projectId, actor, kind, existingGroups, onDone, setE
         className={`h-8 inline-flex items-center gap-1 px-3 rounded-lg text-[11px] font-semibold disabled:opacity-50 transition-colors ${file ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]" : "border border-[var(--color-border-strong)] text-[var(--color-text)]"}`}>
         {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <UploadCloud className="w-3 h-3" />} {failed ? "Try again" : "Upload"}
       </button>
-      {failed && <span role="alert" className="basis-full text-[11px] font-semibold text-rose-700 dark:text-rose-300">{file?.name}: {failed}</span>}
+      {failed && <span role="alert" className="basis-full text-[11px] font-semibold text-[var(--state-overdue-text)]">{file?.name}: {failed}</span>}
     </div>
   );
 }
@@ -990,7 +991,7 @@ function QuoteLinksSection({ orgId, projectId, actor, existingGroups, setErr }: 
       setCompany(""); setGroup("");
       await refresh();
     } catch (e) {
-      setErr((e as Error).message);
+      setErr(sayError(e));
     } finally { setSaving(false); }
   };
 
@@ -1028,7 +1029,7 @@ function QuoteLinksSection({ orgId, projectId, actor, existingGroups, setErr }: 
         turnoverItems: (((to ?? []) as Array<{ name: string }>)).map((t) => t.name),
       });
     } catch (e) {
-      setErr((e as Error).message);
+      setErr(sayError(e));
     }
   };
 
@@ -1039,9 +1040,9 @@ function QuoteLinksSection({ orgId, projectId, actor, existingGroups, setErr }: 
       </div>
       <div className="flex items-center gap-2 flex-wrap">
         <input value={company} onChange={(e) => setCompany(e.target.value)} placeholder="Company name"
-          className="h-8 w-48 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
+          className="h-8 pointer-coarse:h-11 w-48 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
         <input value={group} onChange={(e) => setGroup(e.target.value)} placeholder="RFQ group (optional)" list="rfq-groups-link"
-          className="h-8 w-56 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
+          className="h-8 pointer-coarse:h-11 w-56 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
         <datalist id="rfq-groups-link">
           {existingGroups.map((g) => <option key={g} value={g} />)}
         </datalist>

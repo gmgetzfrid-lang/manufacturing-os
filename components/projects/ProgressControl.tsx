@@ -19,6 +19,7 @@ import { clockForWork } from "@/components/projects/ShiftRecordParts";
 import { dayKey, toDateTimeInput } from "@/lib/scheduleTz";
 import DateTimePicker from "@/components/projects/DateTimePicker";
 import PctSlider from "@/components/projects/PctSlider";
+import { sayError } from "@/components/projects/sayError";
 
 /** The project's clock. Given, the progress form asks which shift a change
  *  counts for — a fix to what last shift entered goes on last shift's
@@ -230,7 +231,7 @@ export function ProgressNoteForm({ percent, start, onSave, onCancel, busy }: {
     try {
       const ok = await onSave(pick!, note.trim(), forShift);
       if (ok === false) setMsg("Not saved.");
-    } catch (e) { setMsg((e as Error).message || "Not saved."); }
+    } catch (e) { setMsg(sayError(e, "Not saved.")); }
     finally { setSaving(false); }
   };
   return (
@@ -242,19 +243,19 @@ export function ProgressNoteForm({ percent, start, onSave, onCancel, busy }: {
         <div className="flex items-baseline gap-1.5">
           <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">What got done</span>
           {wantsNote
-            ? <span className="text-[11.5px] text-[var(--color-text-muted)]">(required)</span>
-            : <span className="text-[11.5px] text-[var(--color-text-faint)]">(optional)</span>}
+            ? <span className="text-[12px] text-[var(--color-text-muted)]">(required)</span>
+            : <span className="text-[12px] text-[var(--color-text-faint)]">(optional)</span>}
         </div>
         <input ref={noteRef} value={note} onChange={(e) => { setNote(e.target.value); setMsg(null); }}
           onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void save(); } if (e.key === "Escape" && onCancel) { e.stopPropagation(); onCancel(); } }}
           placeholder={wantsNote ? "e.g. bundle half out · or why it's corrected" : "Comment"}
           aria-required={wantsNote}
-          className={`w-full h-9 px-2.5 rounded-lg border bg-[var(--color-surface)] text-[13px] pointer-coarse:h-10 focus:outline-none focus:border-[var(--color-accent-ring)] ${missing ? (msg ? "border-2 border-rose-500" : "border-2 border-amber-400 bg-amber-50/60 dark:bg-amber-950/30") : "border-[var(--color-border-strong)]"}`} />
+          className={`w-full h-9 px-2.5 rounded-lg border bg-[var(--color-surface)] text-[13px] pointer-coarse:h-10   ${missing ? (msg ? "border-2 border-[var(--state-overdue)]" : "border-2 border-[var(--state-held)] bg-transparent") : "border-[var(--color-border-strong)]"}`} />
       </div>
       {/* When it happened: the shift and the time — it goes on that
           shift's report at that time. */}
       {choices.length > 0 && <WhenFields choices={choices} idx={whenIdx} setIdx={(i) => { setWhenIdx(i); setMsg(null); }} clock={when} setClock={(v) => { setWhen(v); setMsg(null); }} tz={clockCtx!.tz} times={clockCtx!.times} other={otherDay} setOther={(d) => { setOtherDay(d); setMsg(null); }} disabled={busy || saving} />}
-      {msg && <div className="text-rose-700 dark:text-rose-400 font-semibold">{msg}</div>}
+      {msg && <div className="text-[var(--state-overdue-text)] font-semibold">{msg}</div>}
       <div className="flex items-center gap-2">
         {onCancel && <button type="button" onClick={onCancel} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>}
         <button type="button" disabled={!ready} onClick={() => void save()}
@@ -305,7 +306,7 @@ export default function ProgressControl({ percent, onPick, disabled, onDisabledC
   };
 
   const tone = pct >= 100
-    ? "text-emerald-700 bg-emerald-50 border-emerald-200 dark:text-emerald-300 dark:bg-emerald-950/40 dark:border-emerald-800"
+    ? "text-[var(--state-released-text)] bg-transparent border-[var(--color-border)]"
     : pct > 0
       ? "text-[var(--color-text-muted)] bg-[var(--color-surface-2)] border-[var(--color-border)]"
       : "text-[var(--color-text-muted)] bg-[var(--color-surface-2)] border-[var(--color-border)]";

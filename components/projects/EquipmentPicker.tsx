@@ -27,6 +27,7 @@ import { invalidateAssetCache } from "@/lib/assets";
 import { searchFilter } from "@/lib/fuzzySearch";
 import { nameKey, plainName, scheduleId, sameEquipmentId, linkedLabel, checkNew, unitEquipment, sameNameElsewhere, requestOf, equipmentLabel, descriptionFrom, type PickAsset } from "@/lib/equipmentPick";
 import { splitTag } from "@/lib/codebook";
+import { sayError } from "@/components/projects/sayError";
 
 const btn = "inline-flex items-center justify-center gap-1.5 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-[13px] font-bold px-3.5 h-10 shadow-sm disabled:opacity-50";
 const quiet = "inline-flex items-center justify-center gap-1.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[13px] font-semibold text-[var(--color-text)] px-3 h-10 disabled:opacity-50";
@@ -40,7 +41,7 @@ function AssetText({ a }: { a: PickAsset }) {
   const id = a.code?.trim() || (a.tag.match(/\(([^)]+)\)/)?.[1] ?? "");
   return (
     <span className="flex-1 min-w-0">
-      <span className="block text-[13.5px] text-[var(--color-text)]"><b className="font-display tabular-nums">{plainName(a.tag)}</b>{id ? <span className="font-display tabular-nums text-[var(--color-text-muted)]"> ({id})</span> : <span className="text-[11px] text-[var(--color-text-muted)]"> · no ID</span>}</span>
+      <span className="block text-[14px] text-[var(--color-text)]"><b className="font-display tabular-nums">{plainName(a.tag)}</b>{id ? <span className="font-display tabular-nums text-[var(--color-text-muted)]"> ({id})</span> : <span className="text-[11px] text-[var(--color-text-muted)]"> · no ID</span>}</span>
       {a.description?.trim() && <span className="block text-[12px] text-[var(--color-text-muted)] truncate">{a.description.trim()}</span>}
     </span>
   );
@@ -75,7 +76,7 @@ export function EquipmentField({ milestone, milestones, compact }: { milestone: 
       : eq ? `${eq.tag} · not linked`
         : none ? "No equipment" : "Equipment";
   const tone = asset ? "border-[var(--color-border-strong)] text-[var(--color-text)]"
-    : ask ? "border-amber-300 dark:border-amber-700 text-amber-800 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/30"
+    : ask ? "border-[var(--color-border)] text-[var(--state-held-text)] bg-transparent"
       : "border-dashed border-[var(--color-border-strong)] text-[var(--color-text-muted)]";
   const inner = <><Wrench className="w-3.5 h-3.5 shrink-0" /><span className="truncate">{label}</span>{!asset && !ask && !eq && !none && scope.canEdit && <Plus className="w-3 h-3 shrink-0" />}</>;
   const cls = `inline-flex items-center gap-1.5 max-w-full ${compact ? "h-8 px-2.5 text-[12px]" : "h-8 px-3 text-[12px]"} rounded-lg border font-bold ${tone}`;
@@ -149,7 +150,7 @@ export function EquipmentPicker({ target, milestones, onClose }: { target: Miles
 
   const run = async (key: string, fn: () => Promise<void>) => {
     setBusy(key); setErr(null);
-    try { await fn(); } catch (e) { setErr((e as Error).message); } finally { setBusy(null); }
+    try { await fn(); } catch (e) { setErr(sayError(e)); } finally { setBusy(null); }
   };
   const done = (words: string) => {
     window.dispatchEvent(new CustomEvent(EQUIPMENT_CHANGED));
@@ -206,7 +207,7 @@ export function EquipmentPicker({ target, milestones, onClose }: { target: Miles
     return (
       <Modal onClose={onClose} size="md">
         {header}
-        <ModalBody><div className="flex items-center gap-2 text-[13px] text-[var(--color-text-muted)]">{error ? <span className="text-rose-700 dark:text-rose-300">{error}</span> : <><Loader2 className="w-4 h-4 animate-spin" /> Reading the equipment list…</>}</div></ModalBody>
+        <ModalBody><div className="flex items-center gap-2 text-[13px] text-[var(--color-text-muted)]">{error ? <span className="text-[var(--state-overdue-text)]">{error}</span> : <><Loader2 className="w-4 h-4 animate-spin" /> Reading the equipment list…</>}</div></ModalBody>
       </Modal>
     );
   }
@@ -232,7 +233,7 @@ export function EquipmentPicker({ target, milestones, onClose }: { target: Miles
               <ul className="max-h-[50vh] overflow-y-auto border-y border-[var(--color-border)] divide-y divide-[var(--color-border)]">
                 {shown.map((u) => (
                   <li key={u.code}>
-                    <button type="button" disabled={!!busy} onClick={() => void pickUnit(u)} className="w-full flex items-center gap-2 px-3 min-h-11 text-left text-[13.5px] hover:bg-[var(--color-surface-2)]">
+                    <button type="button" disabled={!!busy} onClick={() => void pickUnit(u)} className="w-full flex items-center gap-2 px-3 min-h-11 text-left text-[14px] hover:bg-[var(--color-surface-2)]">
                       <span className="font-display tabular-nums text-[12px] text-[var(--color-text-muted)] w-8 shrink-0">{u.code}</span>
                       <span className="flex-1 min-w-0 font-semibold text-[var(--color-text)]">{u.label}</span>
                       {busy === `unit:${u.code}` && <Loader2 className="w-4 h-4 animate-spin" />}
@@ -243,7 +244,7 @@ export function EquipmentPicker({ target, milestones, onClose }: { target: Miles
               </ul>
             </>
           )}
-          {err && <p className="text-[12.5px] text-rose-700 dark:text-rose-300">{err}</p>}
+          {err && <p className="text-[12px] text-[var(--state-overdue-text)]">{err}</p>}
         </ModalBody>
       </Modal>
     );
@@ -280,7 +281,7 @@ export function EquipmentPicker({ target, milestones, onClose }: { target: Miles
           )}
           <label className="block"><span className={LBL}>ID</span>
             <input value={adding.code} onChange={(e) => setAdding({ ...adding, code: e.target.value.toUpperCase(), touched: true })} className={`${field} mt-1 font-display tabular-nums`} placeholder={`${adding.unit}10.19`} />
-            <span className="block mt-1 text-[11.5px] text-[var(--color-text-muted)]">
+            <span className="block mt-1 text-[12px] text-[var(--color-text-muted)]">
               {suggested ? (adding.code.trim() === suggested ? `From the schedule's Equipment column for ${owner.workOrderRef ? `WO ${owner.workOrderRef}` : "this work order"}.` : `The schedule's Equipment column says ${suggested}.`)
                 : "Type its ID as the plant numbers it. It isn't worked out from the name: the number after the point isn't the tag's number."}
             </span>
@@ -289,21 +290,21 @@ export function EquipmentPicker({ target, milestones, onClose }: { target: Miles
             <input value={adding.what} onChange={(e) => setAdding({ ...adding, what: e.target.value })} className={`${field} mt-1`} placeholder="Debutanizer Trim Cooler" />
           </label>
           {adding.tag.trim() && (
-            <p className="text-[12.5px] text-[var(--color-text)]">Shows as <b>{equipmentLabel({ tag: adding.tag.trim().toUpperCase(), code: adding.code, description: adding.what })}</b></p>
+            <p className="text-[12px] text-[var(--color-text)]">Shows as <b>{equipmentLabel({ tag: adding.tag.trim().toUpperCase(), code: adding.code, description: adding.what })}</b></p>
           )}
           {units.length === 1 && <p className="text-[12px] text-[var(--color-text-muted)]">On {unitLabel(adding.unit)}.</p>}
           {check.kind === "same_name" && (
-            <div className="border-l-2 border-amber-500 pl-3 py-1 text-[12.5px] text-amber-900 dark:text-amber-200 space-y-2">
+            <div className="border-l-2 border-[var(--state-held)] pl-3 py-1 text-[12px] text-[var(--state-held-text)] space-y-2">
               <p><b>{equipmentLabel(check.asset)} is already on {unitLabel(check.asset.unitCode)}</b>. If it&apos;s that one, link it. With a different ID it&apos;s a different piece: Add makes it its own.</p>
               <button type="button" disabled={!!busy} onClick={() => void link(check.asset)} className={quiet}><Check className="w-4 h-4" /> Link {plainName(check.asset.tag)}</button>
             </div>
           )}
-          {check.kind === "same_id" && <p className="text-[12.5px] text-rose-700 dark:text-rose-300"><AlertTriangle className="inline w-3.5 h-3.5 mr-1" />ID {adding.code.trim()} is already {equipmentLabel(check.asset)} on {unitLabel(check.asset.unitCode)}. Each ID is one piece of equipment.</p>}
-          {check.kind === "bad_id" && adding.code.trim() !== "" && <p className="text-[12.5px] text-rose-700 dark:text-rose-300">{check.words}</p>}
+          {check.kind === "same_id" && <p className="text-[12px] text-[var(--state-overdue-text)]"><AlertTriangle className="inline w-3.5 h-3.5 mr-1" />ID {adding.code.trim()} is already {equipmentLabel(check.asset)} on {unitLabel(check.asset.unitCode)}. Each ID is one piece of equipment.</p>}
+          {check.kind === "bad_id" && adding.code.trim() !== "" && <p className="text-[12px] text-[var(--state-overdue-text)]">{check.words}</p>}
           {sameNameElsewhere(adding.tag, registry, [adding.unit]).length > 0 && check.kind !== "same_name" && (
             <p className="text-[12px] text-[var(--color-text-muted)]">{plainName(adding.tag)} is also on {sameNameElsewhere(adding.tag, registry, [adding.unit]).map((a) => `${unitLabel(a.unitCode)} as ${equipmentLabel(a)}`).join(", ")}: a different piece, with its own ID.</p>
           )}
-          {err && <p className="text-[12.5px] text-rose-700 dark:text-rose-300">{err}</p>}
+          {err && <p className="text-[12px] text-[var(--state-overdue-text)]">{err}</p>}
         </ModalBody>
         <ModalFooter>
           <button type="button" onClick={() => setAdding(null)} className={quiet}>Back</button>
@@ -325,7 +326,7 @@ export function EquipmentPicker({ target, milestones, onClose }: { target: Miles
           From {units.map(unitName).join(" and ")}{current ? <> · now <b className="text-[var(--color-text)]">{(() => { const a = current.assetId ? registry.find((x) => x.id === current.assetId) : undefined; return a ? linkedLabel(a, current.tag) : `${current.tag}${current.assetId ? "" : " (not linked)"}`; })()}</b></> : null}
         </p>
         {ask && (
-          <div className="border-l-2 border-amber-500 pl-3 py-1 text-[12.5px] text-amber-900 dark:text-amber-200 space-y-2">
+          <div className="border-l-2 border-[var(--state-held)] pl-3 py-1 text-[12px] text-[var(--state-held-text)] space-y-2">
             <p><b>{ask.tag}</b> asked for{ask.byName ? ` by ${ask.byName}` : ""}{ask.at ? ` on ${new Date(ask.at).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true })}` : ""}: not in the unit&apos;s list yet.</p>
             <div className="flex flex-wrap gap-2">
               {isAdmin && !registry.some((a) => a.unitCode != null && unitCodes.includes(a.unitCode) && nameKey(a.tag) === nameKey(ask.tag)) && <button type="button" onClick={() => startAdd(ask.tag)} className={btn}><Plus className="w-4 h-4" /> Add {ask.tag}</button>}
@@ -345,12 +346,12 @@ export function EquipmentPicker({ target, milestones, onClose }: { target: Miles
               {busy === idHit.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4 text-[var(--color-text-muted)]" />}
             </button>
             {twoAnswers && guessHit && (
-              <p className="border-l-2 border-amber-500 pl-3 py-1 text-[12.5px] text-amber-900 dark:text-amber-200" data-two-answers>
+              <p className="border-l-2 border-[var(--state-held)] pl-3 py-1 text-[12px] text-[var(--state-held-text)]" data-two-answers>
                 The work order&apos;s name says <b>{equipmentLabel(guessHit)}</b>. Its equipment number <b className="font-display tabular-nums">{fromSchedule}</b> is <b>{equipmentLabel(idHit)}</b>. One of the two is wrong on the work order: pick the one it is on.
               </p>
             )}
             {idNameDiffers && !twoAnswers && (
-              <div className="border-l-2 border-amber-500 pl-3 py-1 space-y-1.5 text-[12.5px] text-amber-900 dark:text-amber-200">
+              <div className="border-l-2 border-[var(--state-held)] pl-3 py-1 space-y-1.5 text-[12px] text-[var(--state-held-text)]">
                 <p>The work order&apos;s equipment number is <b className="font-display tabular-nums">{fromSchedule}</b>. The equipment list has that number as <b>{plainName(idHit.tag)}</b>; this work order calls it <b>{guess}</b>.</p>
                 {drawn.length > 0 && (
                   <ul className="space-y-0.5">
@@ -397,17 +398,17 @@ export function EquipmentPicker({ target, milestones, onClose }: { target: Miles
         )}
         {want && !wantHere && (
           <div className="border-t border-[var(--color-border)] pt-3 space-y-2">
-            <p className="text-[12.5px] text-[var(--color-text)]"><b className="font-display tabular-nums">{want}</b> isn&apos;t in {units.length === 1 ? `${units[0].label}'s` : "the units'"} list.</p>
+            <p className="text-[12px] text-[var(--color-text)]"><b className="font-display tabular-nums">{want}</b> isn&apos;t in {units.length === 1 ? `${units[0].label}'s` : "the units'"} list.</p>
             {elsewhere.length > 0 && <p className="text-[12px] text-[var(--color-text-muted)]">{elsewhere.map((a) => `${equipmentLabel(a)} on ${unitLabel(a.unitCode)}`).join(", ")} {elsewhere.length === 1 ? "is a different piece" : "are different pieces"}: not this unit&apos;s.</p>}
             {isAdmin
               ? <button type="button" disabled={!!busy} onClick={() => startAdd(want)} className={btn}><Plus className="w-4 h-4" /> Add {want} to {units.length === 1 ? units[0].label : "the unit"}</button>
               : ask && nameKey(ask.tag) === nameKey(want)
                 ? <p className="text-[12px] text-[var(--color-text-muted)]">Already asked for.</p>
                 : <button type="button" disabled={!!busy} onClick={() => void askAdmin(want)} className={btn}>{busy === "ask" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />} Ask an admin to add {want}</button>}
-            {!isAdmin && <p className="text-[11.5px] text-[var(--color-text-muted)]">Only admins add equipment to a unit, so nothing gets added twice or wrong.</p>}
+            {!isAdmin && <p className="text-[12px] text-[var(--color-text-muted)]">Only admins add equipment to a unit, so nothing gets added twice or wrong.</p>}
           </div>
         )}
-        {err && <p className="text-[12.5px] text-rose-700 dark:text-rose-300">{err}</p>}
+        {err && <p className="text-[12px] text-[var(--state-overdue-text)]">{err}</p>}
       </ModalBody>
       <ModalFooter>
         <button type="button" disabled={!!busy} onClick={() => void setNone()} className={quiet}><Ban className="w-4 h-4" /> On no equipment</button>

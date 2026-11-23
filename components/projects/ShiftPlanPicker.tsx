@@ -15,6 +15,7 @@ import { searchPlanPool, planToSave, type PlanChoiceGroup } from "@/lib/nightPla
 import { workOrderOfStep } from "@/lib/shiftSheet";
 import type { ShiftPlan, ShiftRow, ShiftWindow } from "@/lib/shiftReport";
 import type { Milestone } from "@/types/schema";
+import { sayError } from "@/components/projects/sayError";
 
 const MAX_HITS = 60;
 
@@ -57,11 +58,11 @@ export function ShiftPlanPicker({ next, groups, pool, byId, plan, locked, fmt, b
 
   const save = async () => {
     setBusy(true); setErr(null);
-    try { await onSave(planToSave(picked.filter((id) => rowOf.has(id)), expect, by, Date.now())); onClose(); } catch (e) { setErr((e as Error).message); setBusy(false); }
+    try { await onSave(planToSave(picked.filter((id) => rowOf.has(id)), expect, by, Date.now())); onClose(); } catch (e) { setErr(sayError(e)); setBusy(false); }
   };
   const remove = async () => {
     setBusy(true); setErr(null);
-    try { await onRemove(); onClose(); } catch (e) { setErr((e as Error).message); setBusy(false); }
+    try { await onRemove(); onClose(); } catch (e) { setErr(sayError(e)); setBusy(false); }
   };
 
   // A group's steps, by work order.
@@ -96,16 +97,16 @@ export function ShiftPlanPicker({ next, groups, pool, byId, plan, locked, fmt, b
               {r.carryOver && <Tag tone="amber">late</Tag>}
               {isHeld && <Tag tone="rose">{r.status === "blocked" ? "blocked" : "on hold"}</Tag>}
             </span>
-            <span className="mt-0.5 block text-[11.5px] text-[var(--color-text-muted)] break-words">
+            <span className="mt-0.5 block text-[12px] text-[var(--color-text-muted)] break-words">
               {[r.leaf.responsibleParty?.trim() || "no crew named", when, `${r.percent}% done`, left > 0 ? `${left} h left` : null].filter(Boolean).join(" · ")}
             </span>
           </span>
         </label>
         {yes && (
-          <label className="shrink-0 flex items-center gap-1 text-[11.5px] text-[var(--color-text-muted)]">
+          <label className="shrink-0 flex items-center gap-1 text-[12px] text-[var(--color-text-muted)]">
             <input inputMode="numeric" value={expect[id] ?? ""} disabled={locked} onChange={(e) => setExpect((cur) => ({ ...cur, [id]: e.target.value.replace(/[^\d]/g, "").slice(0, 3) }))}
               placeholder={r.goalPct != null && r.goalPct > r.percent ? String(r.goalPct) : "-"} aria-label={`% expected by the end of the shift: ${r.leaf.name}`}
-              className="h-8 w-12 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1.5 text-right text-[12.5px] text-[var(--color-text)] tabular-nums" />
+              className="h-8 w-12 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1.5 text-right text-[12px] text-[var(--color-text)] tabular-nums" />
             % by end
           </label>
         )}
@@ -146,7 +147,7 @@ export function ShiftPlanPicker({ next, groups, pool, byId, plan, locked, fmt, b
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--color-text-faint)]" />
             <input ref={searchRef} value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Search the job for a step"
               placeholder="Find any step: WO #, equipment (V-01), step or crew"
-              className="w-full h-10 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] pl-8 pr-8 text-[13.5px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none focus:ring-2 focus:ring-[var(--color-main)]/40" />
+              className="w-full h-10 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] pl-8 pr-8 text-[14px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)]" />
             {query && <button type="button" onClick={() => { setQuery(""); searchRef.current?.focus(); }} aria-label="Clear search" className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-[var(--color-text-faint)] hover:text-[var(--color-text)]"><X className="w-4 h-4" /></button>}
           </label>
           {!plan && !query && picked.length === 0 && (
@@ -161,7 +162,7 @@ export function ShiftPlanPicker({ next, groups, pool, byId, plan, locked, fmt, b
             {hits.length === 0
               ? <div className="px-4 py-10 text-center text-[13px] text-[var(--color-text-muted)]">No open step matches &ldquo;{query}&rdquo;.</div>
               : hits.slice(0, MAX_HITS).map((x) => row(x.row, x.held))}
-            {hits.length > MAX_HITS && <div className="px-4 py-2 text-[11.5px] text-[var(--color-text-muted)]">{hits.length - MAX_HITS} more match. Add a word to narrow it.</div>}
+            {hits.length > MAX_HITS && <div className="px-4 py-2 text-[12px] text-[var(--color-text-muted)]">{hits.length - MAX_HITS} more match. Add a word to narrow it.</div>}
           </div>
         ) : (
           <>
@@ -175,23 +176,23 @@ export function ShiftPlanPicker({ next, groups, pool, byId, plan, locked, fmt, b
       </ModalBody>
       <ModalFooter>
         <div className="flex w-full flex-wrap items-center gap-2">
-          <span className="mr-auto text-[12.5px] font-bold text-[var(--color-text)] tabular-nums">
+          <span className="mr-auto text-[12px] font-bold text-[var(--color-text)] tabular-nums">
             {picked.length} step{picked.length === 1 ? "" : "s"}{picked.length ? ` · ${hrs} h` : ""}
           </span>
-          {err && <span className="w-full text-[12px] text-rose-700 dark:text-rose-300" role="alert">{err}</span>}
+          {err && <span className="w-full text-[12px] text-[var(--state-overdue-text)]" role="alert">{err}</span>}
           {plan && !locked && (
             <button type="button" disabled={busy} onClick={() => void remove()}
-              className="rounded-lg border border-[var(--color-border-strong)] px-3 py-2 text-[12.5px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">
+              className="rounded-lg border border-[var(--color-border-strong)] px-3 py-2 text-[12px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">
               Remove plan
             </button>
           )}
           <button type="button" disabled={busy} onClick={onClose}
-            className="rounded-lg border border-[var(--color-border-strong)] px-3 py-2 text-[12.5px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">
+            className="rounded-lg border border-[var(--color-border-strong)] px-3 py-2 text-[12px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">
             {locked ? "Close" : "Cancel"}
           </button>
           {!locked && (
             <button type="button" disabled={busy || picked.length === 0} onClick={() => void save()}
-              className="rounded-lg bg-[var(--color-accent)] px-4 py-2 text-[12.5px] font-bold text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
+              className="rounded-lg bg-[var(--color-accent)] px-4 py-2 text-[12px] font-bold text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
               {busy ? "Saving…" : "Save plan"}
             </button>
           )}
@@ -202,6 +203,6 @@ export function ShiftPlanPicker({ next, groups, pool, byId, plan, locked, fmt, b
 }
 
 function Tag({ tone, children }: { tone: "rose" | "amber"; children: React.ReactNode }) {
-  const c = tone === "rose" ? "border-rose-300 text-rose-700 dark:border-rose-800 dark:text-rose-300" : "border-amber-300 text-amber-800 dark:border-amber-800 dark:text-amber-300";
+  const c = tone === "rose" ? "border-[var(--color-border)] text-[var(--state-overdue-text)]" : "border-[var(--color-border)] text-[var(--state-held-text)]";
   return <span className={`inline-flex items-center rounded-full border px-1.5 py-px text-[11px] font-bold ${c}`}>{children}</span>;
 }

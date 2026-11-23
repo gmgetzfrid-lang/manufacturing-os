@@ -147,9 +147,9 @@ export default function MovePreviewSheet({ targets, allTasks, deltaDays, onCance
           )}
 
           {warnings.length > 0 && (
-            <div className="border-l-2 border-amber-500 pl-3 space-y-1">
+            <div className="border-l-2 border-[var(--state-held)] pl-3 space-y-1">
               {warnings.map((wn, i) => (
-                <div key={i} className="flex items-start gap-1.5 text-[12px] text-amber-800 dark:text-amber-300">
+                <div key={i} className="flex items-start gap-1.5 text-[12px] text-[var(--state-held-text)]">
                   <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" /> {wn}
                 </div>
               ))}

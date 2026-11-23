@@ -85,7 +85,7 @@ export default function DateTimePicker({ label, value, onChange, tz, times, plan
   return (
     <div className="space-y-1.5">
       <div className="flex items-center justify-between gap-2">
-        <span><span className="text-[13px] font-semibold text-[var(--color-text-muted)]">{label}</span>{hint && <span className="ml-1 text-[11.5px] text-[var(--color-text-muted)]">{hint}</span>}</span>
+        <span><span className="text-[13px] font-semibold text-[var(--color-text-muted)]">{label}</span>{hint && <span className="ml-1 text-[12px] text-[var(--color-text-muted)]">{hint}</span>}</span>
         <span className="flex gap-1">
           {shortcuts.filter((x) => Number.isFinite(x.at)).map((x) => <button key={x.label} type="button" disabled={disabled} onClick={() => take(x.at)} className={small}>{x.label}</button>)}
           {showNow && <button type="button" disabled={disabled} onClick={now} className={small}>Now</button>}
@@ -99,13 +99,13 @@ export default function DateTimePicker({ label, value, onChange, tz, times, plan
           <Clock className="w-4 h-4 opacity-70" />{time ? time12(time) : "Pick time"}
         </button>
         {sh && (!future && t > nowMs + 60_000
-          ? <span className="text-[12px] font-semibold text-amber-700 dark:text-amber-400">{aheadWords(t - nowMs)} from now</span>
+          ? <span className="text-[12px] font-semibold text-[var(--state-held-text)]">{aheadWords(t - nowMs)} from now</span>
           : <span className="text-[12px] text-[var(--color-text-muted)]" title="The shift this time counts for, not the date">{fmtInTz(sh.start, tz, { weekday: "short" })} {sh.kind} shift, {fmtInTz(sh.start, tz, { hour: "numeric", minute: "2-digit", hour12: true })} to {fmtInTz(sh.end, tz, { hour: "numeric", minute: "2-digit", hour12: true })}</span>)}
       </div>
       {date && firstDay && date < firstDay ? (
-        <div className="text-[12px] font-semibold text-rose-700 dark:text-rose-400">Before the job started ({dayWords(firstDay)}). Pick the right day.</div>
+        <div className="text-[12px] font-semibold text-[var(--state-overdue-text)]">Before the job started ({dayWords(firstDay)}). Pick the right day.</div>
       ) : early >= 2 && (
-        <div className="text-[12px] font-semibold text-amber-700 dark:text-amber-400">{early} days before its planned day ({dayWords(plannedDay!)}). Check the day.</div>
+        <div className="text-[12px] font-semibold text-[var(--state-held-text)]">{early} days before its planned day ({dayWords(plannedDay!)}). Check the day.</div>
       )}
       {panel === "date" && <Month value={date} today={today} planned={plannedDay} onPick={pickDay} future={future} earliest={firstDay} />}
       {wheels && <TimeSheet title={label} hm={time} start={startHm} onSet={(h, m) => { setTime(h, m); setWheels(false); }} onClose={() => setWheels(false)} />}
@@ -170,7 +170,7 @@ function TimeSheet({ title, hm, start, onSet, onClose }: { title: string; hm: st
           <input value={typed ?? shown} onChange={(e) => type(e.target.value)} onFocus={(e) => e.currentTarget.select()} autoFocus={fine}
             onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); set(); } }}
             aria-label="Type the time" inputMode="text" autoComplete="off" spellCheck={false} enterKeyHint="done"
-            className={`w-[118px] h-9 rounded-lg border px-2 text-right text-[15px] font-bold tabular-nums bg-[var(--color-surface-2)] focus:outline-none ${bad ? "border-rose-500" : "border-transparent focus:border-[var(--color-border-strong)]"}`} />
+            className={`w-[118px] h-9 pointer-coarse:h-11 rounded-lg border px-2 text-right text-[15px] font-bold tabular-nums bg-[var(--color-surface-2)]  ${bad ? "border-[var(--state-overdue)]" : "border-transparent "}`} />
           <button type="button" onClick={onClose} aria-label="Close" className="shrink-0 -mr-1.5 w-8 h-8 inline-flex items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
         </div>
         <div className="relative flex justify-center gap-2">
@@ -179,7 +179,7 @@ function TimeSheet({ title, hm, start, onSet, onClose }: { title: string; hm: st
           <Wheel label="Minute" items={MINS} index={d.m} onPick={(i) => spun({ m: i })} />
           <Wheel label="AM or PM" items={AMPM} index={d.pm ? 1 : 0} onPick={(i) => spun({ pm: i === 1 })} />
         </div>
-        <div className={`text-[11.5px] text-center ${bad ? "font-semibold text-rose-700 dark:text-rose-400" : "text-[var(--color-text-muted)]"}`}>
+        <div className={`text-[12px] text-center ${bad ? "font-semibold text-[var(--state-overdue-text)]" : "text-[var(--color-text-muted)]"}`}>
           {bad ? "Type it with its a or p: 1130p" : "Spin to the time, then Set. Or type it: 1130p"}
         </div>
         <div className="flex gap-2">
@@ -266,7 +266,7 @@ function Wheel({ label, items, index, onPick }: { label: string; items: string[]
           if (e.key === "ArrowDown") { e.preventDefault(); onPick(clampI(index + 1)); }
           if (e.key === "ArrowUp") { e.preventDefault(); onPick(clampI(index - 1)); }
         }}
-        className="relative h-[200px] cursor-grab active:cursor-grabbing overflow-y-scroll overscroll-contain snap-y snap-mandatory [scrollbar-width:none] [&::-webkit-scrollbar]:hidden focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent-ring)] rounded-md"
+        className="relative h-[200px] cursor-grab active:cursor-grabbing overflow-y-scroll overscroll-contain snap-y snap-mandatory [scrollbar-width:none] [&::-webkit-scrollbar]:hidden rounded-md"
         style={{ paddingBlock: ROW * 2, maskImage: fade, WebkitMaskImage: fade }}>
         {items.map((x, i) => (
           <div key={x} role="option" aria-selected={i === index} aria-label={`${label} ${x}`} onClick={() => { if (!dragged.current) onPick(i); dragged.current = false; }}
@@ -293,7 +293,7 @@ function Month({ value, today, planned, onPick, future, earliest }: { value: str
     <div className="pt-0.5 w-[280px] max-w-full">
       <div className="flex items-center justify-between mb-1">
         <button type="button" aria-label="Previous month" disabled={first} onClick={() => setYm(ym - 1)} className={nav}><ChevronLeft className="w-4 h-4" /></button>
-        <span className="text-[13.5px] font-bold">{new Date(Date.UTC(y, mo, 1)).toLocaleDateString("en-US", { month: "long", year: "numeric", timeZone: "UTC" })}</span>
+        <span className="text-[14px] font-bold">{new Date(Date.UTC(y, mo, 1)).toLocaleDateString("en-US", { month: "long", year: "numeric", timeZone: "UTC" })}</span>
         <button type="button" aria-label="Next month" disabled={latest} onClick={() => setYm(ym + 1)} className={nav}><ChevronRight className="w-4 h-4" /></button>
       </div>
       <div className="grid grid-cols-7 text-center text-[11px] font-semibold text-[var(--color-text-muted)]">

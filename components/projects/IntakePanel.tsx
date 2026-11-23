@@ -21,7 +21,8 @@ import { finalizeReviewedRevision } from "@/lib/reviewControl";
 import { appConfirm } from "@/components/providers/DialogProvider";
 import TransitionInPanel from "@/components/projects/TransitionInPanel";
 import { flagCollisionToDrafting, TransitionCandidate, TransitionImpact } from "@/lib/transitionIn";
-import LoadingBlock from "@/components/ui/LoadingBlock";
+import { sayError } from "@/components/projects/sayError";
+import { SkeletonRows } from "@/components/ui/Skeleton";
 
 interface IntakeLink {
   id: string; token: string; companyName: string; contactEmail: string | null;
@@ -71,8 +72,8 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
         supabase.from("libraries").select("id, name").eq("org_id", orgId).order("name"),
       ]);
       // A failed read says so, instead of looking like no links.
-      if (lkErr) throw new Error(lkErr.message);
-      if (projErr) throw new Error(projErr.message);
+      if (lkErr) throw lkErr;
+      if (projErr) throw projErr;
       const linkRows = (((lk ?? []) as Array<Record<string, unknown>>)).map((r) => ({
         id: String(r.id), token: String(r.token), companyName: String(r.company_name),
         contactEmail: (r.contact_email as string | null) ?? null,
@@ -136,7 +137,7 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
         setPending([]);
       }
     } catch (e) {
-      setMsg(`Couldn't load intake data: ${(e as Error).message}`);
+      setMsg(`Couldn't load intake data: ${sayError(e)}`);
     } finally { setLoading(false); }
   }, [orgId, projectId]);
   useEffect(() => { void refresh(); }, [refresh]);
@@ -159,7 +160,7 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
         expires_at: expires ? new Date(`${expires}T23:59:59`).toISOString() : null,
         created_by: uid,
       });
-      if (error) throw new Error(error.message);
+      if (error) throw error;
       await supabase.from("audit_logs").insert({
         action: "INTAKE_LINK_CREATED",
         resource_type: "project_intake_link", resource_id: projectId,
@@ -173,7 +174,7 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
       let copied = false;
       try { await navigator.clipboard.writeText(portalUrl(token)); copied = true; } catch { /* the Copy button below still works */ }
       setMsg(copied ? `Link for ${name} created and copied. Paste it into your email to them.` : `Link for ${name} created. Copy it below and send it to them.`);
-    } catch (e) { setMsg((e as Error).message); }
+    } catch (e) { setMsg(sayError(e)); }
     finally { setBusy(null); }
   };
 
@@ -214,7 +215,7 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
       setMsg(expiresAt
         ? `${l.companyName}'s link now works through ${new Date(expiresAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}. Same link, nothing to resend.`
         : `${l.companyName}'s link no longer expires.`);
-    } catch (e) { setMsg((e as Error).message); }
+    } catch (e) { setMsg(sayError(e)); }
     finally { setBusy(null); }
   };
 
@@ -255,7 +256,7 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
     try {
       const { error } = await supabase.from("project_intake_links")
         .update({ assigned_doc_ids: ids }).eq("id", l.id);
-      if (error) throw new Error(error.message);
+      if (error) throw error;
       await supabase.from("audit_logs").insert({
         action: "INTAKE_ASSIGNMENT_CHANGED",
         resource_type: "project_intake_link", resource_id: l.id,
@@ -265,7 +266,7 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
       setAssignQ(""); setAssignResults([]);
       await refresh();
       if (addedLabel) setMsg(`${addedLabel} assigned to ${l.companyName}. Revisions they submit come to review.`);
-    } catch (e) { setMsg((e as Error).message); }
+    } catch (e) { setMsg(sayError(e)); }
     finally { setBusy(null); }
   };
 
@@ -279,7 +280,7 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
       if (!res.published) throw new Error(res.reason || "Couldn't approve");
       setMsg(`${p.label} Rev ${p.revLabel ?? ""} approved. It is now the current revision.`);
       await refresh();
-    } catch (e) { setMsg((e as Error).message); }
+    } catch (e) { setMsg(sayError(e)); }
     finally { setBusy(null); }
   };
 
@@ -303,7 +304,7 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
       }).then(() => undefined, () => undefined);
       setMsg(`${p.label} Rev ${p.revLabel ?? ""} rejected. The record and portal now show it as not accepted.`);
       await refresh();
-    } catch (e) { setMsg((e as Error).message); }
+    } catch (e) { setMsg(sayError(e)); }
     finally { setBusy(null); }
   };
 
@@ -323,19 +324,19 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
       : (res.error ?? "Couldn't flag the collision."));
   };
 
-  if (loading) return <Card><LoadingBlock what="intake" className="border-0 p-0" /></Card>;
+  if (loading) return <SkeletonRows rows={5} cols={2} what="intake" />;
 
   return (
     <div className="space-y-4">
       {/* Review queue: the point of the whole system. */}
-      <Card label={`Submissions awaiting review · ${pending.length}`}>
+      <Card label={<>Submissions awaiting review <span className="ml-1 text-[15px] font-normal tabular-nums text-[var(--color-text-muted)]">{pending.length}</span></>}>
         {msg && <div role="status" className="mb-2 text-[13px] font-bold text-[var(--color-text)] flex items-center gap-2"><span className="min-w-0 flex-1">{msg}</span><button onClick={() => setMsg(null)} aria-label="Dismiss" className="shrink-0 p-1 text-[var(--color-text-faint)] hover:text-[var(--color-text)]"><X className="w-3.5 h-3.5" /></button></div>}
         {pending.length === 0 && <div className="text-[14px] text-[var(--color-text-muted)]">Nothing waiting for review.</div>}
         <ul className="divide-y divide-[var(--color-border)]">
           {pending.map((p) => (
             <li key={p.docId} className="py-2.5">
               <div className="flex items-center gap-2 flex-wrap">
-                <Clock className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                <Clock className="w-3.5 h-3.5 text-[var(--state-held-text)] shrink-0" />
                 <span className="text-[14px] font-bold text-[var(--color-text)]">{p.label}</span>
                 <span className="text-[13px] text-[var(--color-text-muted)]">Rev {p.revLabel ?? "-"} · {p.company ?? "external"}{p.submittedAt ? ` · ${new Date(p.submittedAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}` : ""}</span>
                 {canManage && (
@@ -375,7 +376,7 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
                 {l.allowAutoSupersede && <span className="inline-flex items-center gap-0.5 text-[11px] font-bold text-[var(--color-text)] dark:text-[var(--color-text)]"><ShieldCheck className="w-3 h-3" /> trusted</span>}
                 <span className="text-[var(--color-text-faint)]">{l.submissionCount} submission{l.submissionCount === 1 ? "" : "s"}{l.expiresAt && !isExpired(l.expiresAt) ? ` · expires ${new Date(l.expiresAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}` : ""}{l.revokedAt ? " · REVOKED" : ""}</span>
                 {l.expiresAt && isExpired(l.expiresAt) && !l.revokedAt && (
-                  <span className="text-[11px] font-semibold text-rose-700 dark:text-rose-300">expired {new Date(l.expiresAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}</span>
+                  <span className="text-[11px] font-semibold text-[var(--state-overdue-text)]">expired {new Date(l.expiresAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}</span>
                 )}
                 {!l.revokedAt && (
                   <span className="ml-auto flex items-center gap-1 flex-wrap">
@@ -394,7 +395,7 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
                         <FilePlus2 className="w-3 h-3" /> Assign docs
                       </button>
                     )}
-                    {canManage && <button onClick={() => void revoke(l)} disabled={busy === l.id} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-rose-500/40 text-rose-700 dark:text-rose-300 font-bold hover:bg-rose-500/10"><Ban className="w-3 h-3" /> Revoke</button>}
+                    {canManage && <button onClick={() => void revoke(l)} disabled={busy === l.id} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-[var(--state-overdue)] text-[var(--state-overdue-text)] font-bold hover:bg-[var(--state-overdue)]"><Ban className="w-3 h-3" /> Revoke</button>}
                   </span>
                 )}
               </div>
@@ -406,7 +407,7 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
                     {busy === l.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <CalendarPlus className="w-3 h-3" />} 7 more days
                   </button>
                   <input type="date" value={extendDay} onChange={(e) => setExtendDay(e.target.value)} min={dayOfIso(new Date().toISOString())} aria-label="New end date"
-                    className="h-7 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs [color-scheme:light] dark:[color-scheme:dark]" />
+                    className="h-7 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs [color-scheme:light] dark:[color-scheme:dark]" />
                   <button onClick={() => extendDay && void extend(l, endOfDayIso(extendDay))} disabled={busy === l.id || !extendDay}
                     className="px-2 py-1 rounded-md border border-[var(--color-border-strong)] text-[11px] font-bold hover:border-[var(--color-accent-ring)] disabled:opacity-50">Set date</button>
                   <button onClick={() => void extend(l, null)} disabled={busy === l.id}
@@ -424,7 +425,7 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
                         <span key={id} className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-[var(--color-surface-2)] border border-[var(--color-border-strong)] text-[11px] font-bold text-[var(--color-text)]">
                           {docLabels.get(id) ?? "Document"}
                           {canManage && (
-                            <button onClick={() => void updateAssigned(l, l.assignedDocIds.filter((x) => x !== id))} disabled={busy === l.id} title="Unassign" className="text-[var(--color-text-faint)] hover:text-rose-600">
+                            <button onClick={() => void updateAssigned(l, l.assignedDocIds.filter((x) => x !== id))} disabled={busy === l.id} title="Unassign" className="text-[var(--color-text-faint)] hover:text-[var(--state-overdue-text)]">
                               <X className="w-3 h-3" />
                             </button>
                           )}
@@ -441,7 +442,7 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
                           onChange={(e) => searchAssignable(e.target.value)}
                           placeholder="Search documents by number or title…"
                           autoFocus
-                          className="h-7 w-full rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] pl-6 pr-2 text-xs"
+                          className="h-7 pointer-coarse:h-11 w-full rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] pl-6 pr-2 text-xs"
                         />
                       </div>
                       {assignSearching && <div className="mt-1 text-[11px] text-[var(--color-text-faint)]">Searching…</div>}
@@ -474,15 +475,15 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
           <div className="pt-3 border-t border-[var(--color-border)] space-y-2">
             <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">New submit link</div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              <input value={company} onChange={(e) => setCompany(e.target.value)} placeholder="Company name (stamped on every submission)" className="h-9 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-[13px]" />
-              <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Contact email (optional)" className="h-9 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-[13px]" />
+              <input value={company} onChange={(e) => setCompany(e.target.value)} placeholder="Company name (stamped on every submission)" className="h-9 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-[13px]" />
+              <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Contact email (optional)" className="h-9 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-[13px]" />
               {!intakeLibraryId && (
-                <select value={libPick} onChange={(e) => setLibPick(e.target.value)} className="h-9 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-[13px]">
+                <select value={libPick} onChange={(e) => setLibPick(e.target.value)} className="h-9 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-[13px]">
                   <option value="">Intake documents live in library…</option>
                   {libs.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
                 </select>
               )}
-              <input type="date" value={expires} onChange={(e) => setExpires(e.target.value)} min={new Date().toISOString().slice(0, 10)} className="h-9 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-[13px] [color-scheme:light] dark:[color-scheme:dark]" title="Expiry (optional)" />
+              <input type="date" value={expires} onChange={(e) => setExpires(e.target.value)} min={new Date().toISOString().slice(0, 10)} className="h-9 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-[13px] [color-scheme:light] dark:[color-scheme:dark]" title="Expiry (optional)" />
             </div>
             <label className="flex items-start gap-2 text-[13px] text-[var(--color-text)]">
               <input type="checkbox" checked={trusted} onChange={(e) => setTrusted(e.target.checked)} className="mt-0.5" />

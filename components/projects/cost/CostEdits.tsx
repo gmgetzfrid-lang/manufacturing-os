@@ -16,10 +16,11 @@ import { PreviewButton, fileSize, type PreviewFile } from "@/components/projects
 import { useFileDrag } from "@/hooks/useFileDrag";
 import { tryUpload } from "@/lib/uploadRetry";
 import FileThumb from "@/components/ui/FileThumb";
+import { sayError } from "@/components/projects/sayError";
 
 const field = "h-9 w-full rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-[13px] text-[var(--color-text)]";
 const label = "block text-[13px] font-semibold text-[var(--color-text-muted)] mb-1";
-const primary = "inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[12.5px] font-semibold hover:bg-[var(--color-accent-hover)] disabled:opacity-50";
+const primary = "inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[12px] font-semibold hover:bg-[var(--color-accent-hover)] disabled:opacity-50";
 const quiet = "inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-[var(--color-border-strong)] text-[12px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50";
 
 const dateOf = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : "");
@@ -62,7 +63,7 @@ export function AfeCard({ orgId, projectId, afe, linesTotal, cur, canManage, act
           <div className={label}>Budget lines</div>
           <div className="text-[13px] tabular-nums text-[var(--color-text)]">
             <b>{fmtMoney(linesTotal, cur)}</b>
-            {left != null && Math.abs(left) >= 1 && <span className={left < 0 ? " text-rose-700 dark:text-rose-300 font-bold" : " text-[var(--color-text-muted)]"}>{left < 0 ? ` · ${fmtMoney(-left, cur)} more than authorized` : ` · ${fmtMoney(left, cur)} not on a line yet`}</span>}
+            {left != null && Math.abs(left) >= 1 && <span className={left < 0 ? " text-[var(--state-overdue-text)] font-bold" : " text-[var(--color-text-muted)]"}>{left < 0 ? ` · ${fmtMoney(-left, cur)} more than authorized` : ` · ${fmtMoney(left, cur)} not on a line yet`}</span>}
           </div>
         </div>
         <div className="ml-auto flex items-center gap-1.5">
@@ -131,7 +132,7 @@ export function AfeEditor({ orgId, projectId, afe, actor, cur, onCancel, onSaved
         ? await tryUpload(file.name, async () => { const r = await run(); if (!r.ok && /didn't upload/.test(r.error ?? "")) throw new Error(r.error); return r; }, { onRetried: done })
         : await run();
       done(res);
-    } catch (e) { setErr((e as Error).message); }
+    } catch (e) { setErr(sayError(e)); }
     finally { setBusy(false); }
   };
   return (
@@ -151,10 +152,10 @@ export function AfeEditor({ orgId, projectId, afe, actor, cur, onCancel, onSaved
           {!file && <FileUp className="w-3.5 h-3.5" />} <span className="truncate">{drag.over ? drag.say : file ? `${file.name} · ${fileSize(file.size)}` : "Replace the AFE document"}</span>
           <input type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg" className="sr-only" onChange={(e) => { setFile(e.target.files?.[0] ?? null); e.target.value = ""; }} />
         </label>
-        {file && <button type="button" onClick={() => setFile(null)} className="text-[11.5px] text-[var(--color-text-muted)] underline">Keep the current one</button>}
+        {file && <button type="button" onClick={() => setFile(null)} className="text-[12px] text-[var(--color-text-muted)] underline">Keep the current one</button>}
         <span className="text-[11px] text-[var(--color-text-faint)]">{file ? "The old document stays on file." : "Or drop it here. The old document stays on file."}</span>
       </div>
-      {err && <div role="alert" className="text-[12px] text-rose-700 dark:text-rose-300">{err}</div>}
+      {err && <div role="alert" className="text-[12px] text-[var(--state-overdue-text)]">{err}</div>}
       <div className="flex gap-2">
         <button type="button" onClick={() => void save()} disabled={busy || !changed} className={quietSave ? quiet : primary}>{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} Save AFE</button>
         <button type="button" onClick={onCancel} disabled={busy} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>
@@ -231,7 +232,7 @@ export function LineEditor({ orgId, projectId, account, parties, actor, onCancel
           <input id={`lw-${account.id}`} value={note} onChange={(e) => setNote(e.target.value)} className={field} placeholder="e.g. Revised quote after the scope walk" />
         </div>
       </div>
-      {err && <div className="text-[12px] text-rose-700 dark:text-rose-300">{err}</div>}
+      {err && <div className="text-[12px] text-[var(--state-overdue-text)]">{err}</div>}
       <div className="flex gap-2">
         <button type="button" onClick={() => void save()} disabled={busy} className={primary}>{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} Save line</button>
         <button type="button" onClick={onCancel} disabled={busy} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>
@@ -244,7 +245,7 @@ export function LineEditor({ orgId, projectId, account, parties, actor, onCancel
 export function BudgetHistory({ changes, cur }: { changes: BudgetChange[]; cur: string }) {
   if (!changes.length) return null;
   return (
-    <div className="text-[11.5px]">
+    <div className="text-[12px]">
       <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-0.5">Budget changes</div>
       <ol className="space-y-0.5">
         {changes.map((c, i) => (
@@ -281,7 +282,7 @@ export function EntryRevise({ orgId, projectId, entry, cur, actor, onDone, onCan
       <div className="flex-1 min-w-[12rem]"><label className={label} htmlFor={`ew-${entry.id}`}>Why</label><input id={`ew-${entry.id}`} value={note} onChange={(e) => setNote(e.target.value)} className={field} placeholder="e.g. Revised quote 11/02" /></div>
       <button type="button" onClick={() => void save()} disabled={busy} className={primary}>{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} Save</button>
       <button type="button" onClick={onCancel} disabled={busy} aria-label="Cancel" className="p-2 text-[var(--color-text-muted)] hover:text-[var(--color-text)]"><X className="w-4 h-4" /></button>
-      {err && <div className="w-full text-[12px] text-rose-700 dark:text-rose-300">{err}</div>}
+      {err && <div className="w-full text-[12px] text-[var(--state-overdue-text)]">{err}</div>}
     </div>
   );
 }

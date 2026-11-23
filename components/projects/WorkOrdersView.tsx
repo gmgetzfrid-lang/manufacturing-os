@@ -39,6 +39,7 @@ import AddWorkPicker from "@/components/projects/AddWorkPicker";
 import { useWoClasses, passes, WoClassSelects } from "@/components/projects/WoClassFilter";
 import { typeLabel, unitLabel } from "@/lib/woClass";
 import MoreMenu from "@/components/ui/MoreMenu";
+import { sayError } from "@/components/projects/sayError";
 
 // A quiet button on the white card; the one orange one is New work order.
 const QUIET = "inline-flex items-center justify-center gap-1.5 h-9 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors";
@@ -184,7 +185,7 @@ export default function WorkOrdersView({ milestones, cancelled = [], childrenByP
       const scope = `${SHOW_WORD[show]}${query.trim() ? ` · search “${query.trim()}”` : ""}${format === "history" ? " · with each step's history" : ""}`;
       printHtml(await workOrdersPrintDocument({ shown, milestones, projectId, projectName, tz, times, progress, format, scope, lh, word }), w);
     } catch (e) {
-      w.document.body.textContent = `Couldn't get the work orders ready: ${(e as Error).message}`;
+      w.document.body.textContent = `Couldn't get the work orders ready: ${sayError(e)}`;
     }
   };
 
@@ -202,7 +203,7 @@ export default function WorkOrdersView({ milestones, cancelled = [], childrenByP
   const originBlock = (o: WorkOrder) => {
     const w = workOrderOrigin(o.owner, o.steps, fmt);
     const block = (key: string, lines: string[], tone?: string) => (
-      <div key={key} className="text-[11.5px] leading-snug">
+      <div key={key} className="text-[12px] leading-snug">
         {lines.map((l, i) => <div key={l} className={i === 0 ? `font-semibold ${tone ?? "text-[var(--color-text)]"}` : "text-[var(--color-text-muted)]"}>{l}</div>)}
       </div>
     );
@@ -222,7 +223,7 @@ export default function WorkOrdersView({ milestones, cancelled = [], childrenByP
       <>
         {descOf(o.owner) && <div className="text-[12px] text-[var(--color-text)] line-clamp-2 break-words">{descOf(o.owner)}</div>}
         {/* Its class, crews and added work as tags; how far, in words. */}
-        <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[12.5px] text-[var(--color-text-muted)]">
+        <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[12px] text-[var(--color-text-muted)]">
           {classWords(o.owner) && <span className="ui-tag is-more">{classWords(o.owner)}</span>}
           {o.crews.slice(0, 4).map((c) => <span key={c} className="ui-tag">{c}</span>)}
           {o.crews.length > 4 && <span className="ui-tag is-more" title={o.crews.slice(4).join(", ")}>+{o.crews.length - 4}</span>}
@@ -233,7 +234,7 @@ export default function WorkOrdersView({ milestones, cancelled = [], childrenByP
           ))}
           {!single && <span><span className="font-display font-semibold tabular-nums text-[var(--color-text)]">{o.done}</span> of <span className="font-display font-semibold tabular-nums text-[var(--color-text)]">{o.steps.length}</span> steps done</span>}
         </div>
-        <div className="mt-1 grid grid-cols-[auto_1fr] gap-x-2 text-[11.5px]">
+        <div className="mt-1 grid grid-cols-[auto_1fr] gap-x-2 text-[12px]">
           <span className="text-[var(--color-text-muted)]">Plan</span>
           <span className="text-[var(--color-text)]">{fmt(o.planStart)} → {fmt(o.planFinish)}</span>
           <span className="text-[var(--color-text-muted)]">Actual</span>
@@ -261,14 +262,14 @@ export default function WorkOrdersView({ milestones, cancelled = [], childrenByP
           onPick={(t) => { setPicking(false); onDiscovery(t); }} onNew={onNewWorkOrder ? () => { setPicking(false); onNewWorkOrder(); } : undefined} onClose={() => setPicking(false)} />
       )}
       <div className="px-3 sm:px-4 py-3 flex flex-wrap items-center gap-2">
-        <label className="flex items-center gap-1.5 h-9 flex-1 min-w-[220px] max-w-[420px] rounded-[10px] bg-[var(--color-surface-2)] border border-transparent px-2.5 focus-within:bg-[var(--color-surface)] focus-within:border-[var(--color-border-strong)]">
+        <label className="flex items-center gap-1.5 h-9 flex-1 min-w-[220px] max-w-[420px] rounded-[10px] bg-[var(--color-surface-2)] border border-transparent px-2.5 focus-within:bg-[var(--color-surface)]">
           <Search className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
           <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="WO #, equipment, step, crew…" aria-label="Search work orders"
-            className="flex-1 min-w-0 bg-transparent text-[13px] outline-none" />
+            className="flex-1 min-w-0 bg-transparent text-[13px]" />
           {query && <button type="button" onClick={() => setQuery("")} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Clear</button>}
         </label>
         <select value={who ?? "__all"} onChange={(e) => setWho(e.target.value === "__all" ? null : e.target.value)} aria-label="Who"
-          className={`h-9 rounded-[10px] border px-2 text-[13px] font-semibold text-[var(--color-text)] ${who != null ? "border-[var(--color-text)] bg-[var(--color-surface)]" : "border-transparent bg-[var(--color-surface-2)]"}`}>
+          className={`h-9 pointer-coarse:h-11 rounded-[10px] border px-2 text-[13px] font-semibold text-[var(--color-text)] ${who != null ? "border-[var(--color-text)] bg-[var(--color-surface)]" : "border-transparent bg-[var(--color-surface-2)]"}`}>
           <option value="__all">Everyone</option>
           {whoList.map(([k, x]) => <option key={k || "__none"} value={k}>{k ? x.name : "No crew named"} ({x.steps} step{x.steps === 1 ? "" : "s"})</option>)}
         </select>
@@ -348,8 +349,8 @@ export default function WorkOrdersView({ milestones, cancelled = [], childrenByP
           )}
         </span>
       </div>
-      {printMsg && <div role="alert" className="px-3 sm:px-4 pb-2 text-[12px] font-semibold text-rose-700 dark:text-rose-400">{printMsg}</div>}
-      {preErr && <div role="alert" className="px-3 sm:px-4 pb-2 text-[12px] font-semibold text-rose-700 dark:text-rose-400">Couldn&apos;t read the steps&apos; comments and history. They&apos;re missing below until the page is opened again.</div>}
+      {printMsg && <div role="alert" className="px-3 sm:px-4 pb-2 text-[12px] font-semibold text-[var(--state-overdue-text)]">{printMsg}</div>}
+      {preErr && <div role="alert" className="px-3 sm:px-4 pb-2 text-[12px] font-semibold text-[var(--state-overdue-text)]">Couldn&apos;t read the steps&apos; comments and history. They&apos;re missing below until the page is opened again.</div>}
 
       {showCancelled ? (
         cancelledShown.length === 0 ? (
@@ -385,9 +386,9 @@ export default function WorkOrdersView({ milestones, cancelled = [], childrenByP
                 {isOpen && <span aria-hidden className="absolute left-0 top-0 bottom-0 w-[3px] z-30 bg-[var(--color-main)]" />}
                 <button type="button" onClick={() => toggle(o.key)} aria-expanded={isOpen} aria-label={`${isOpen ? "Close" : "Open"} ${name}`}
                   ref={(el) => { if (el) heads.current.set(o.key, el); else heads.current.delete(o.key); }}
-                  className={`w-full text-left px-3 sm:px-4 py-3 ${isOpen ? "sticky top-0 z-20 bg-[var(--color-accent-soft)] border-b border-[var(--color-border-strong)]" : "hover:bg-[var(--color-surface-2)]/60"}`}>
+                  className={`w-full text-left px-3 sm:px-4 py-3 ${isOpen ? "sticky top-0 z-20 bg-[var(--color-surface-2)] border-b border-[var(--color-border-strong)]" : "hover:bg-[var(--color-surface-2)]/60"}`}>
                   <div className="flex items-start gap-2.5">
-                    <span className={`mt-0.5 ui-icon-tile is-sm ${isOpen ? "is-solid" : ""}`} aria-hidden>
+                    <span className="mt-0.5 shrink-0 text-[var(--color-text-muted)]" aria-hidden>
                       <ChevronDown className={`w-4 h-4 ui-chevron${(isOpen) ? " rotate-180" : ""}`} />
                     </span>
                     <div className="flex-1 min-w-0">
@@ -463,7 +464,7 @@ export default function WorkOrdersView({ milestones, cancelled = [], childrenByP
                             onDone={() => { setCancelling(null); toggle(o.key); onCancelled?.(); }} />
                         ) : (
                           <button type="button" onClick={() => setCancelling(o.key)} title="Planned, but not done here: kept on record as cancelled, with why (and where it moved)"
-                            className="inline-flex items-center gap-1.5 text-[11.5px] font-bold text-[var(--color-text-muted)] hover:text-rose-700 dark:hover:text-rose-400 hover:bg-[var(--color-surface-2)] px-2 py-1 rounded-md">
+                            className="inline-flex items-center gap-1.5 text-[12px] font-bold text-[var(--color-text-muted)] hover:text-[var(--state-overdue-text)] hover:bg-[var(--color-surface-2)] px-2 py-1 rounded-md">
                             <Ban className="w-3.5 h-3.5" /> Cancel work order
                           </button>
                         )}

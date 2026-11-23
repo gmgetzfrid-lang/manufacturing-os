@@ -9,6 +9,7 @@ import dynamic from "next/dynamic";
 import { Download, ExternalLink, Eye, FileText, Loader2, X } from "lucide-react";
 import { resolveFileUrl } from "@/lib/storage";
 import { fmtMoney } from "@/lib/costs";
+import { sayError } from "@/components/projects/sayError";
 
 const PdfPages = dynamic(() => import("@/components/projects/cost/PdfPages"), { ssr: false, loading: () => <Waiting /> });
 
@@ -35,7 +36,7 @@ export function FilePreviewModal({ file, onClose }: { file: PreviewFile; onClose
   const [width, setWidth] = useState(800);
   useEffect(() => {
     let alive = true;
-    void resolveFileUrl(file.key).then((u) => { if (alive) setUrl(u); }).catch((e) => { if (alive) setErr((e as Error).message || "The file couldn't be opened."); });
+    void resolveFileUrl(file.key).then((u) => { if (alive) setUrl(u); }).catch((e) => { if (alive) setErr(sayError(e, "The file couldn't be opened.")); });
     return () => { alive = false; };
   }, [file.key]);
   useEffect(() => {
@@ -58,14 +59,14 @@ export function FilePreviewModal({ file, onClose }: { file: PreviewFile; onClose
           <FileText className="w-4 h-4 shrink-0 text-[var(--color-text-muted)]" />
           <div className="min-w-0 flex-1">
             <div className="text-[13px] font-semibold text-[var(--color-text)] truncate">{file.name ?? "File"}</div>
-            {file.sub && <div className="text-[11.5px] text-[var(--color-text-muted)] truncate">{file.sub}</div>}
+            {file.sub && <div className="text-[12px] text-[var(--color-text-muted)] truncate">{file.sub}</div>}
           </div>
           {url && <a href={url} target="_blank" rel="noopener noreferrer" className={`${btn} max-sm:hidden`}><ExternalLink className="w-3.5 h-3.5" /> Open</a>}
           {url && <a href={url} download={file.name ?? undefined} className={btn}><Download className="w-3.5 h-3.5" /><span className="max-sm:hidden">Download</span></a>}
           <button type="button" onClick={onClose} aria-label="Close" className="p-2 rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
         </div>
         <div ref={box} className="flex-1 min-h-0 overflow-auto bg-[var(--color-surface-2)]">
-          {err ? <div className="p-6 text-[13px] text-rose-700 dark:text-rose-300">{err}</div>
+          {err ? <div className="p-6 text-[13px] text-[var(--state-overdue-text)]">{err}</div>
             : !url ? <Waiting />
             : isPdf(file) ? <PdfPages url={url} width={width} />
             : isImage(file) ? (

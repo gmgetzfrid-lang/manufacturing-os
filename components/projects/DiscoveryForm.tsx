@@ -22,6 +22,7 @@ import type { CriticalMode } from "@/lib/criticalPath";
 import DateTimePicker from "@/components/projects/DateTimePicker";
 import CrewPicker from "@/components/projects/CrewPicker";
 import { inheritedWorkOrders } from "@/lib/workOrderCrew";
+import { sayError } from "@/components/projects/sayError";
 
 const ms = (v: unknown) => (v == null ? NaN : Date.parse(String(v)));
 // The time at the tap (saving), not at render.
@@ -184,19 +185,19 @@ export default function DiscoveryForm({ milestones, task: startTask, newWo, tz, 
     if (foundAt > clock() + 60_000) { setMsg(`When it was ${k.found} can't be in the future.`); return; }
     if (!draft) return;
     setBusy(true); setMsg(null);
-    const ok = await onSave({ ...draft, wo: noWo ? null : wo.trim() }, now).catch((e: Error) => { setMsg(e.message); return false; });
+    const ok = await onSave({ ...draft, wo: noWo ? null : wo.trim() }, now).catch((e: Error) => { setMsg(sayError(e)); return false; });
     setBusy(false);
     if (ok) { whatDraft.clear(); onClose(); }
   };
 
-  const inp = "h-8 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12.5px] text-[var(--color-text)] focus:outline-none focus:border-[var(--color-accent-ring)]";
+  const inp = "h-8 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12px] text-[var(--color-text)] ";
   const lbl = "block mb-1 text-[13px] font-semibold text-[var(--color-text-muted)]";
   // A choice: picked is dark, the rest a quiet fill.
   const chip = (on: boolean) => `h-8 px-3 rounded-lg text-[12px] font-bold ${on ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`;
   return (
     <div ref={boxRef} aria-modal="true" className="fixed inset-0 z-[185] bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)] animate-in fade-in" onClick={onClose}>
       <div role="dialog" aria-label="Add work to the schedule" onClick={(e) => e.stopPropagation()}
-        className="absolute left-1/2 top-10 -translate-x-1/2 w-[560px] max-w-[96vw] max-h-[88dvh] overflow-y-auto rounded-2xl bg-[var(--color-surface)] text-[var(--color-text)] shadow-2xl text-[12.5px] max-sm:left-0 max-sm:right-0 max-sm:top-auto max-sm:bottom-0 max-sm:translate-x-0 max-sm:w-full max-sm:max-w-none max-sm:rounded-b-none max-sm:max-h-[92dvh]">
+        className="absolute left-1/2 top-10 -translate-x-1/2 w-[560px] max-w-[96vw] max-h-[88dvh] overflow-y-auto rounded-2xl bg-[var(--color-surface)] text-[var(--color-text)] shadow-2xl text-[12px] max-sm:left-0 max-sm:right-0 max-sm:top-auto max-sm:bottom-0 max-sm:translate-x-0 max-sm:w-full max-sm:max-w-none max-sm:rounded-b-none max-sm:max-h-[92dvh]">
         <div className="sticky top-0 z-10 flex items-start justify-between gap-2 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-4 pt-3 pb-2.5">
           <div className="min-w-0">
             <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">Into the schedule</div>
@@ -224,11 +225,11 @@ export default function DiscoveryForm({ milestones, task: startTask, newWo, tz, 
           {isNew ? (
             <>
               <label className="block">
-                <span className={lbl}>Work order name <span className="normal-case tracking-normal font-normal text-[11.5px] text-[var(--color-text-muted)]">(required)</span></span>
+                <span className={lbl}>Work order name <span className="normal-case tracking-normal font-normal text-[12px] text-[var(--color-text-muted)]">(required)</span></span>
                 <input value={woName} onChange={(e) => { setWoName(e.target.value); setMsg(null); }} placeholder="e.g. P-7C: Replace pump seal" className={`${inp} w-full`} />
               </label>
               <label className="block">
-                <span className={lbl}>Goes under <span className="normal-case tracking-normal font-normal text-[11.5px] text-[var(--color-text-muted)]">(required)</span></span>
+                <span className={lbl}>Goes under <span className="normal-case tracking-normal font-normal text-[12px] text-[var(--color-text-muted)]">(required)</span></span>
                 <select value={underId} onChange={(e) => { setUnderId(e.target.value); setMsg(null); }} aria-label="Goes under" className={`${inp} w-full`}>
                   <option value="">Pick where it goes</option>
                   {groups.map((g) => <option key={g.id} value={g.id}>{g.label}</option>)}
@@ -244,12 +245,12 @@ export default function DiscoveryForm({ milestones, task: startTask, newWo, tz, 
             </label>
           )}
           <label className="block">
-            <span className={lbl}>{k.what} <span className="normal-case tracking-normal font-normal text-[11.5px] text-[var(--color-text-muted)]">(required)</span></span>
+            <span className={lbl}>{k.what} <span className="normal-case tracking-normal font-normal text-[12px] text-[var(--color-text-muted)]">(required)</span></span>
             <textarea value={what} onChange={(e) => { setWhat(e.target.value); setMsg(null); }} rows={2} placeholder={kind === "added" ? "e.g. Clean the downcomers while the tower is open" : "e.g. Tray 14 cracked at the weld - needs repair before close-up"}
               className={`${inp} w-full h-auto py-1.5`} />
           </label>
           <div className="space-y-1">
-            <span className={lbl}>Work order # <span className="normal-case tracking-normal font-normal text-[11.5px] text-[var(--color-text-muted)]">(required)</span></span>
+            <span className={lbl}>Work order # <span className="normal-case tracking-normal font-normal text-[12px] text-[var(--color-text-muted)]">(required)</span></span>
             <div className="flex flex-wrap items-center gap-1.5">
               <input value={wo} onChange={(e) => { setWo(e.target.value); setNoWo(false); setMsg(null); }} placeholder="e.g. 310990" aria-label="Work order number"
                 className={`${inp} w-36 font-display tabular-nums`} />
@@ -295,13 +296,13 @@ export default function DiscoveryForm({ milestones, task: startTask, newWo, tz, 
               {/* After work that isn't done: it waits for it — say so, so two
                   jobs meant to run side by side aren't put one after the other. */}
               {afterId && steps.find((s) => s.id === afterId)?.status !== "completed" && (
-                <span className="mt-1 block text-[11px] font-semibold text-amber-800 dark:text-amber-300">
+                <span className="mt-1 block text-[11px] font-semibold text-[var(--state-held-text)]">
                   One after the other: it waits until “{afterName}” is done{follows != null ? ` (planned ${fmt(follows)})` : ""}. Running side by side? Pick what they both start after.
                 </span>
               )}
             </label>
             <div>
-              <span className={lbl}>Holds up <span className="normal-case tracking-normal font-normal text-[11.5px] text-[var(--color-text-muted)]">(can&apos;t start until it&apos;s done)</span></span>
+              <span className={lbl}>Holds up <span className="normal-case tracking-normal font-normal text-[12px] text-[var(--color-text-muted)]">(can&apos;t start until it&apos;s done)</span></span>
               <div className="max-h-28 overflow-y-auto border-y border-[var(--color-border)] py-1 space-y-0.5">
                 {steps.filter((s) => s.id !== afterId && s.status !== "completed").map((s) => (
                   <label key={s.id} className="flex items-start gap-1.5">
@@ -332,7 +333,7 @@ export default function DiscoveryForm({ milestones, task: startTask, newWo, tz, 
               : <DateTimePicker label="Planned start" value={startV} onChange={(v) => { setStartV(v); setMsg(null); }} tz={tz} times={times} future showNow={false} />}
           </div>
           <label className="block">
-            <span className={lbl}>Approved by <span className="normal-case tracking-normal font-normal text-[11.5px] text-[var(--color-text-muted)]">(optional)</span></span>
+            <span className={lbl}>Approved by <span className="normal-case tracking-normal font-normal text-[12px] text-[var(--color-text-muted)]">(optional)</span></span>
             <input value={approvedBy} onChange={(e) => setApprovedBy(e.target.value)} placeholder={`e.g. ${ptype.short} manager / owner rep`} className={`${inp} w-full`} />
           </label>
 
@@ -343,7 +344,7 @@ export default function DiscoveryForm({ milestones, task: startTask, newWo, tz, 
               <>
                 <div className="font-bold">{impactLine(plan.impact, hrs, typeWord(ptype))}</div>
                 <div>{isNew ? <>{taskName}: done <b>{fmt(plan.impact.taskFinish[1])}</b></> : <>{taskName}: finish {fmt(plan.impact.taskFinish[0])} → <b>{fmt(plan.impact.taskFinish[1])}</b></>}</div>
-                <div>{ptype.word} (forecast): {fmt(plan.impact.finish[0])} → <b className={plan.impact.finish[1] > plan.impact.finish[0] + 6 * 60_000 ? "text-rose-700 dark:text-rose-400" : ""}>{fmt(plan.impact.finish[1])}</b>
+                <div>{ptype.word} (forecast): {fmt(plan.impact.finish[0])} → <b className={plan.impact.finish[1] > plan.impact.finish[0] + 6 * 60_000 ? "text-[var(--state-overdue-text)]" : ""}>{fmt(plan.impact.finish[1])}</b>
                   {!isNew && plan.impact.finish[1] <= plan.impact.finish[0] + 6 * 60_000 && plan.impact.taskFinish[1] > plan.impact.taskFinish[0] ? ": it fits in the float" : ""}</div>
                 <div className="text-[var(--color-text-muted)]">New work: {plan.steps.map((s) => `${s.name} ${fmt(Date.parse(s.plannedStartAt))} → ${fmt(Date.parse(s.plannedAt))}`).join("; ")}</div>
                 {plan.impact.pushed.length > 0 && (
@@ -352,7 +353,7 @@ export default function DiscoveryForm({ milestones, task: startTask, newWo, tz, 
               </>
             )}
           </div>
-          {msg && <div role="alert" className="font-semibold text-rose-700 dark:text-rose-400">{msg}</div>}
+          {msg && <div role="alert" className="font-semibold text-[var(--state-overdue-text)]">{msg}</div>}
           <div className="flex items-center justify-end gap-2 pt-1">
             <button type="button" onClick={onClose} className="h-9 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] font-semibold hover:bg-[var(--color-surface-2)]">Cancel</button>
             <button type="button" onClick={() => void save()} disabled={busy}

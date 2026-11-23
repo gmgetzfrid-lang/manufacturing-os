@@ -214,11 +214,11 @@ export default function ReviewSlides({ slides, name, onClose, onDownload, downlo
             </div>
             {more.sections.map((sec, i) => (
               <div key={i} className="mt-4">
-                <div className="text-[13px] font-semibold " style={{ color: C.acc }}>{T(sec.title)}</div>
+                <div className="text-[13px] font-semibold" style={{ color: C.acc }}>{T(sec.title)}</div>
                 {sec.numbered
-                  ? <ol className="mt-1.5 list-decimal pl-5 space-y-1.5 text-[14.5px] leading-snug">{sec.lines.map((l, n) => <li key={n}>{T(l)}</li>)}</ol>
-                  : sec.lines.length === 1 ? <p className="mt-1.5 text-[14.5px] leading-snug">{T(sec.lines[0])}</p>
-                    : <ul className="mt-1.5 list-disc pl-5 space-y-1.5 text-[14.5px] leading-snug">{sec.lines.map((l, n) => <li key={n}>{T(l)}</li>)}</ul>}
+                  ? <ol className="mt-1.5 list-decimal pl-5 space-y-1.5 text-[14px] leading-snug">{sec.lines.map((l, n) => <li key={n}>{T(l)}</li>)}</ol>
+                  : sec.lines.length === 1 ? <p className="mt-1.5 text-[14px] leading-snug">{T(sec.lines[0])}</p>
+                    : <ul className="mt-1.5 list-disc pl-5 space-y-1.5 text-[14px] leading-snug">{sec.lines.map((l, n) => <li key={n}>{T(l)}</li>)}</ul>}
               </div>
             ))}
           </div>
@@ -425,7 +425,7 @@ function Page({ spec, open }: { spec: SlideSpec; open?: Open }) {
   const b = spec.body;
   return (
     <div className="px-4 py-5">
-      <div className="text-[13px] font-semibold " style={{ color: C.acc }}>{T(spec.kicker)}</div>
+      <div className="text-[13px] font-semibold" style={{ color: C.acc }}>{T(spec.kicker)}</div>
       <h2 className="mt-1 text-[21px] font-semibold leading-tight" style={{ color: C.heading }}>{T(spec.title)}</h2>
       {spec.pics && spec.pics.length > 0 && (
         <div className={`mt-3 grid gap-2 ${spec.pics.length > 1 ? "grid-cols-2" : "grid-cols-1"}`} data-slide-pics>
@@ -440,7 +440,7 @@ function Page({ spec, open }: { spec: SlideSpec; open?: Open }) {
       )}
       {b.k === "cover" && <>
         {b.sub && <p className="mt-2 text-[14px]" style={{ color: C.soft }}>{T(b.sub)}</p>}
-        {b.table && <><div className="mt-5 text-[13px] font-semibold " style={{ color: C.acc }}>{T(b.tableTitle ?? "What this review measures")}</div><div className="mt-2"><Rows head={b.table.head} rows={b.table.rows} /></div></>}
+        {b.table && <><div className="mt-5 text-[13px] font-semibold" style={{ color: C.acc }}>{T(b.tableTitle ?? "What this review measures")}</div><div className="mt-2"><Rows head={b.table.head} rows={b.table.rows} /></div></>}
         {!b.table && <ol className="mt-5 space-y-1.5 text-[15px]">{b.agenda.map((t, i) => <li key={i}>{i + 1}. {T(t)}</li>)}</ol>}
         <p className="mt-6 text-[13px]" style={{ color: C.soft }}>{T(b.meta)}</p>
       </>}
@@ -472,7 +472,7 @@ function PanePage({ pane }: { pane: SlidePane }) {
     <div>
       {pane.title && <div className={label} style={{ color: C.acc }}>{T(pane.title)}</div>}
       {items.length > 0 && (
-        <div className="mt-1.5 text-[14.5px] leading-snug">
+        <div className="mt-1.5 text-[14px] leading-snug">
           {items.map((it, i) => <div key={i} className={`flex gap-2 mb-1.5 ${it.bold ? "font-semibold mt-3" : ""} ${it.sub ? "pl-4" : ""}`}>{!it.bold && <span aria-hidden>•</span>}<span>{T(it.text)}</span></div>)}
         </div>
       )}

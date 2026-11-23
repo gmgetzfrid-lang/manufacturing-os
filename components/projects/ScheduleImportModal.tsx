@@ -37,6 +37,7 @@ import StepPath from "@/components/ui/StepPath";
 import FileThumb from "@/components/ui/FileThumb";
 import { useFileDrag } from "@/hooks/useFileDrag";
 import { tryUpload } from "@/lib/uploadRetry";
+import { sayError } from "@/components/projects/sayError";
 
 /** A picked file's size: 1.2 MB, 340 KB. */
 function sizeOf(n: number): string {
@@ -136,7 +137,7 @@ export default function ScheduleImportModal({
     try {
       await undoImport({ orgId, projectId, snapshot, insertedIds: importResult.insertedIds ?? [], replaced, actorUserId: userId, actorUserEmail: userEmail });
       setUndoing("done");
-    } catch (e) { setUndoError((e as Error).message); setUndoing("idle"); }
+    } catch (e) { setUndoError(sayError(e)); setUndoing("idle"); }
   };
   // What a merge would do — matched the way the import matches: by the
   // file's task ids, or for files keyed by name, by name.
@@ -199,7 +200,7 @@ export default function ScheduleImportModal({
       setParseResult({
         format: "unknown",
         rows: [],
-        warnings: [`Couldn't read the file: ${(e as Error).message}`],
+        warnings: [`Couldn't read the file: ${sayError(e)}`],
       });
     } finally { setParsing(false); }
   }, [tz]);
@@ -299,7 +300,7 @@ export default function ScheduleImportModal({
       // Stays open on the result, with Undo, until the person closes it.
     } catch (e) {
       // Stopped partway: put the schedule back as it was, then say so.
-      const message = (e as Error)?.message || "The import stopped.";
+      const message = sayError(e, "The import stopped.");
       if (!before) { setFailed({ message, back: null }); throw e; }
       const snap = before, wasCleared = cleared;
       let back = false;
@@ -309,7 +310,7 @@ export default function ScheduleImportModal({
           back = true;
           setFailed({ message, back: true });
         } catch (e2) {
-          setFailed({ message, back: false, backError: (e2 as Error)?.message, retry: putBack });
+          setFailed({ message, back: false, backError: sayError(e2), retry: putBack });
         }
       };
       await putBack();
@@ -352,7 +353,7 @@ export default function ScheduleImportModal({
                 <span>Importing into</span>
                 <span className="font-bold text-[var(--color-text)] truncate max-w-[200px]">{projectName ?? `Project ${projectId.slice(0,8)}`}</span>
                 {projectStatus && projectStatus !== "active" && (
-                  <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[13px] font-semibold bg-rose-100 dark:bg-rose-900/40 text-rose-800 dark:text-rose-300 border border-rose-200 dark:border-rose-800">
+                  <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[13px] font-semibold bg-transparent text-[var(--state-overdue-text)] border border-[var(--color-border)]">
                     <AlertTriangle className="w-2.5 h-2.5" /> {projectStatus}
                   </span>
                 )}
@@ -449,7 +450,7 @@ export default function ScheduleImportModal({
               {/* Warnings — for everything except the refused-format case,
                   which the guide above covers. */}
               {parseResult.format !== "msproject-mpp" && parseResult.format !== "msproject-mpx" && parseResult.warnings.length > 0 && (
-                <div className="border-l-2 border-amber-500 pl-3 text-xs text-amber-800 dark:text-amber-300">
+                <div className="border-l-2 border-[var(--state-held)] pl-3 text-xs text-[var(--state-held-text)]">
                   <div className="font-bold mb-1">
                     {parseResult.warnings.length} note{parseResult.warnings.length === 1 ? "" : "s"} from reading the file
                   </div>
@@ -568,11 +569,11 @@ export default function ScheduleImportModal({
 
               {/* Import result */}
               {importResult && (
-                <div className={`pl-3 py-1 border-l-2 ${importResult.errors.length > 0 ? "border-rose-500" : "border-emerald-500"}`}>
+                <div className={`pl-3 py-1 border-l-2 ${importResult.errors.length > 0 ? "border-[var(--state-overdue)]" : "border-[var(--state-released)]"}`}>
                   <div className="flex items-center gap-2 font-bold text-sm">
                     {importResult.errors.length > 0
-                      ? <><AlertTriangle className="w-4 h-4 text-rose-600 dark:text-rose-400" /> Imported with errors</>
-                      : <><CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400" /> Imported successfully</>
+                      ? <><AlertTriangle className="w-4 h-4 text-[var(--state-overdue-text)]" /> Imported with errors</>
+                      : <><CheckCircle2 className="w-4 h-4 text-[var(--state-released-text)]" /> Imported successfully</>
                     }
                   </div>
                   <div className="mt-1 text-xs space-y-0.5">
@@ -580,7 +581,7 @@ export default function ScheduleImportModal({
                     <div>Updated: <b>{importResult.updated}</b></div>
                     {importResult.skipped > 0 && <div>Skipped: <b>{importResult.skipped}</b></div>}
                     {importResult.errors.length > 0 && (
-                      <div className="text-rose-700 dark:text-rose-300">
+                      <div className="text-[var(--state-overdue-text)]">
                         {importResult.errors.length} error{importResult.errors.length === 1 ? "" : "s"}:
                         <ul className="ml-5 list-disc">{importResult.errors.slice(0, 5).map((e, i) => <li key={i}>{e}</li>)}</ul>
                       </div>
@@ -588,14 +589,14 @@ export default function ScheduleImportModal({
                     {snapshot && (
                       <div className="pt-1.5 flex items-center gap-2 flex-wrap">
                         {undoing === "done" ? (
-                          <span className="font-bold text-emerald-700 dark:text-emerald-300">Import undone. The schedule is back as it was.</span>
+                          <span className="font-bold text-[var(--state-released-text)]">Import undone. The schedule is back as it was.</span>
                         ) : (
                           <button onClick={() => void undo()} disabled={undoing === "busy"}
                             className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md border border-[var(--color-border-strong)] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">
                             {undoing === "busy" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null} Undo this import
                           </button>
                         )}
-                        {undoError && <span className="text-rose-700 dark:text-rose-300">{undoError}</span>}
+                        {undoError && <span className="text-[var(--state-overdue-text)]">{undoError}</span>}
                       </div>
                     )}
                   </div>
@@ -612,11 +613,11 @@ export default function ScheduleImportModal({
             </div>
           )}
           {!phased && (existingCount ?? 0) > 0 && parseResult && parseResult.rows.length > 0 && !importResult && (
-            <label className="flex items-start gap-2 border-l-2 border-rose-500 pl-3 py-1 text-[12px] text-[var(--color-text)]">
+            <label className="flex items-start gap-2 border-l-2 border-[var(--state-overdue)] pl-3 py-1 text-[12px] text-[var(--color-text)]">
               <input type="checkbox" checked={replaceExisting} onChange={(e) => setReplaceExisting(e.target.checked)} className="mt-0.5" />
               <span>
-                <b className="text-rose-700 dark:text-rose-300">Replace the current schedule:</b> delete the {existingCount} task{existingCount === 1 ? "" : "s"} already on this project first, then import the file from scratch. Cancelled jobs stay cancelled, with their notes.
-                {replaceWarning && <b className="block my-1 text-rose-700 dark:text-rose-300">{replaceWarning}</b>}
+                <b className="text-[var(--state-overdue-text)]">Replace the current schedule:</b> delete the {existingCount} task{existingCount === 1 ? "" : "s"} already on this project first, then import the file from scratch. Cancelled jobs stay cancelled, with their notes.
+                {replaceWarning && <b className="block my-1 text-[var(--state-overdue-text)]">{replaceWarning}</b>}
                 The file becomes the plan of record (baseline). Untick to merge instead (see above): the baseline stays and nothing recorded here is lost.
                 Deleting is audited and can&apos;t be undone.
               </span>
@@ -631,7 +632,7 @@ export default function ScheduleImportModal({
 
         {failed && (
           <div role="alert" className="px-5 py-3 border-t border-[var(--color-border)] text-[13px] text-[var(--color-text)]">
-            <b className="text-rose-700 dark:text-rose-300">The import stopped:</b> {failed.message}{" "}
+            <b className="text-[var(--state-overdue-text)]">The import stopped:</b> {failed.message}{" "}
             {failed.back === true ? "The schedule is back the way it was before you pressed Import. Your file is still here: press Try again."
               : failed.back === false ? <>Putting the schedule back also failed ({failed.backError}). The copy from before is kept in this window: keep it open and press <button type="button" onClick={() => void failed.retry?.()} className="underline cursor-pointer">Put the schedule back</button>.</>
               : "Nothing was changed. Your file is still here: press Try again."}
@@ -700,13 +701,13 @@ function XmlExportGuide({ filename, format }: { filename: string; format: "mspro
         <div>
           <ol className="space-y-1.5 text-xs text-[var(--color-text)]">
             <Step n={1}>
-              Open <code className="font-mono bg-[var(--color-surface)] px-1.5 py-0.5 rounded border border-emerald-200 dark:border-emerald-800 text-[11px]">{filename || "your schedule"}</code> in Microsoft Project.
+              Open <code className="font-mono bg-[var(--color-surface)] px-1.5 py-0.5 rounded border border-[var(--color-border)] text-[11px]">{filename || "your schedule"}</code> in Microsoft Project.
             </Step>
             <Step n={2}>
-              <b>File → Save As</b> (or <kbd className="font-display tabular-nums bg-[var(--color-surface)] px-1.5 py-0.5 rounded border border-emerald-200 dark:border-emerald-800">F12</kbd>) → choose <b>XML Format (*.xml)</b> and save.
+              <b>File → Save As</b> (or <kbd className="font-display tabular-nums bg-[var(--color-surface)] px-1.5 py-0.5 rounded border border-[var(--color-border)]">F12</kbd>) → choose <b>XML Format (*.xml)</b> and save.
             </Step>
             <Step n={3}>
-              Drag that new <code className="font-mono bg-[var(--color-surface)] px-1.5 py-0.5 rounded border border-emerald-200 dark:border-emerald-800 text-[11px]">.xml</code> file right here. It imports with all dependencies, resources, and exact dates.
+              Drag that new <code className="font-mono bg-[var(--color-surface)] px-1.5 py-0.5 rounded border border-[var(--color-border)] text-[11px]">.xml</code> file right here. It imports with all dependencies, resources, and exact dates.
             </Step>
           </ol>
         </div>
@@ -741,13 +742,13 @@ function ParseQualityStats({ result }: { result: ParseResult }) {
   const noDurations = withStart === 0;
 
   return (
-    <div className={`border-l-2 pl-3 py-1 space-y-2 ${noHierarchy ? "border-rose-500" : "border-emerald-500"}`}>
+    <div className={`border-l-2 pl-3 py-1 space-y-2 ${noHierarchy ? "border-[var(--state-overdue)]" : "border-[var(--state-released)]"}`}>
       <div className="flex items-center gap-2">
         {noHierarchy
-          ? <AlertTriangle className="w-4 h-4 text-rose-600 dark:text-rose-400 shrink-0" />
-          : <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+          ? <AlertTriangle className="w-4 h-4 text-[var(--state-overdue-text)] shrink-0" />
+          : <CheckCircle2 className="w-4 h-4 text-[var(--state-released-text)] shrink-0" />
         }
-        <div className={`text-sm font-bold ${noHierarchy ? "text-rose-700 dark:text-rose-300" : "text-[var(--color-text)]"}`}>
+        <div className={`text-sm font-bold ${noHierarchy ? "text-[var(--state-overdue-text)]" : "text-[var(--color-text)]"}`}>
           {noHierarchy
             ? "No phases or sub-tasks found in the file"
             : `Found ${summaries} phase or group row${summaries === 1 ? "" : "s"} and ${withParent} sub-task${withParent === 1 ? "" : "s"}`}
@@ -770,7 +771,7 @@ function ParseQualityStats({ result }: { result: ParseResult }) {
         </div>
       )}
       {!noHierarchy && noDurations && (
-        <div className="text-[12px] text-amber-800 dark:text-amber-300 mt-1">
+        <div className="text-[12px] text-[var(--state-held-text)] mt-1">
           Most rows have only a finish date, no start. Tasks will render as single-day on their finish date. Use the per-task <b>Set duration</b> action on the Work tab to expand the ones that take multiple days.
         </div>
       )}
@@ -780,8 +781,8 @@ function ParseQualityStats({ result }: { result: ParseResult }) {
 
 function StatCell({ label, value, tone }: { label: string; value: string; tone: "ok" | "warn" | "muted" }) {
   const cls =
-    tone === "ok"    ? "bg-[var(--color-surface)] border-emerald-200 dark:border-emerald-800 text-emerald-900 dark:text-emerald-200" :
-    tone === "warn"  ? "bg-[var(--color-surface)] border-rose-200 dark:border-rose-800 text-rose-900 dark:text-rose-200" :
+    tone === "ok"    ? "bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--state-released-text)]" :
+    tone === "warn"  ? "bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--state-overdue-text)]" :
                        "bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text)]";
   return (
     <div className={`rounded-md border px-2 py-1 ${cls}`}>

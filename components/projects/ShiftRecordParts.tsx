@@ -26,6 +26,7 @@ import { TimeChip } from "@/components/projects/DateTimePicker";
 import { useRole } from "@/components/providers/RoleContext";
 import { appConfirm } from "@/components/providers/DialogProvider";
 import { useDraft } from "@/hooks/useDraft";
+import { sayError } from "@/components/projects/sayError";
 
 type RecordWriter = (shiftKey: string, change: (r: ShiftRecord) => ShiftRecord) => Promise<void>;
 
@@ -96,7 +97,7 @@ export function DayPick({ value, onChange, tz, disabled, className = "" }: { val
   const [max] = useState(() => dayKey(Date.now(), tz));
   return (
     <input type="date" value={value ?? ""} max={max} disabled={disabled} onChange={(e) => onChange(e.target.value || null)} aria-label="The day it happened"
-      className={`h-8 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1.5 text-[12.5px] text-[var(--color-text)] ${className}`} />
+      className={`h-8 pointer-coarse:h-11 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1.5 text-[12px] text-[var(--color-text)] ${className}`} />
   );
 }
 
@@ -113,9 +114,9 @@ const clockIfNow = (shift: ShiftWindow, tz: string) => { const t = Date.now(); r
 
 /** A quiet Add/Save beside a line being typed: the report's one orange
  *  button is its Email / Print. */
-const addBtn = "h-7 px-2.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] text-[11px] font-bold";
+const addBtn = "inline-flex items-center justify-center gap-1 h-8 pointer-coarse:h-11 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] text-[13px] font-semibold disabled:opacity-50";
 
-const inputCls = "h-7 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1.5 text-[12px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none focus:border-[var(--color-accent-ring)]";
+const inputCls = "h-8 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-control)] bg-[var(--color-surface)] px-2.5 text-[13px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] ";
 
 /** "Safety incidents this shift: None / Report one" — in place of the old
  *  tick-box, with each one reported listed under it. */
@@ -155,7 +156,7 @@ export function IncidentsLine({ incidents, edit, print, shift, tz, T, onNone, on
     if (editingId) {
       const id = editingId;
       if (onEdit) saving = onEdit(id, x);
-      else if (write) saving = write(key, (rec) => editIncident(rec, id, x, by)).then(() => true, (e) => { setMsg((e as Error).message); return false; });
+      else if (write) saving = write(key, (rec) => editIncident(rec, id, x, by)).then(() => true, (e) => { setMsg(sayError(e)); return false; });
       else { onRemove(id); saving = onAdd(x); }
     } else saving = onAdd(x);
     if (saving) void saving.then(after); else reset();
@@ -175,16 +176,16 @@ export function IncidentsLine({ incidents, edit, print, shift, tz, T, onNone, on
     if (!x) return;
     // Back exactly as it was when this page can write the record; else re-added.
     if (onRestore) onRestore(x);
-    else if (write) void write(key, (rec) => restoreIncident(rec, x)).catch((e) => setMsg((e as Error).message));
+    else if (write) void write(key, (rec) => restoreIncident(rec, x)).catch((e) => setMsg(sayError(e)));
     else onAdd({ at: x.at, kind: x.kind, text: x.text });
   };
-  const btn = (on: boolean) => `px-2 py-0.5 text-[11px] font-semibold ${on ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30" : "bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`;
+  const btn = (on: boolean) => `inline-flex items-center gap-1 h-8 pointer-coarse:h-11 px-3 text-[13px] font-semibold bg-[var(--color-surface)] ${on ? "text-[var(--color-text)] shadow-[inset_0_-2px_0_var(--color-current)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`;
   return (
-    <div className="text-[11.5px] min-w-0">
+    <div className="text-[12px] min-w-0">
       <div className="flex flex-wrap items-center gap-1.5">
         <b className="text-[var(--color-text)]">Safety incidents this shift:</b>
         {print || !edit ? (
-          <span className={items.length ? "font-bold text-rose-700 dark:text-rose-400" : none ? "font-bold text-emerald-700 dark:text-emerald-400" : "text-[var(--color-text-muted)]"}>
+          <span className={items.length ? "font-bold text-[var(--state-overdue-text)]" : none ? "font-bold text-[var(--state-released-text)]" : "text-[var(--color-text-muted)]"}>
             {items.length ? `${items.length} reported` : none ? "None" : "not recorded"}
           </span>
         ) : (
@@ -199,12 +200,12 @@ export function IncidentsLine({ incidents, edit, print, shift, tz, T, onNone, on
           {[...items].sort((a, b) => a.at - b.at).map((x) => (
             <li key={x.id} className={`flex items-baseline gap-1.5 ${editingId === x.id ? "rounded bg-[var(--color-surface-2)]" : ""}`}>
               <span className="shrink-0 font-display tabular-nums text-[11px] text-[var(--color-text-muted)]">{T(x.at)}</span>
-              <b className="shrink-0 whitespace-nowrap text-rose-700 dark:text-rose-400">{x.kind}</b>
+              <b className="shrink-0 whitespace-nowrap text-[var(--state-overdue-text)]">{x.kind}</b>
               <span className="min-w-0 break-words">{x.text}</span>
               {edit && !print && (
                 <span className="ml-auto flex gap-1 shrink-0">
                   <button type="button" onClick={() => startEdit(x)} className={`${smallBtn} text-[var(--color-text-muted)] hover:text-[var(--color-text)]`}>Edit</button>
-                  <button type="button" onClick={() => void remove(x)} className={`${smallBtn} text-[var(--color-text-muted)] hover:text-rose-700`}>Remove</button>
+                  <button type="button" onClick={() => void remove(x)} className={`${smallBtn} text-[var(--color-text-muted)] hover:text-[var(--state-overdue-text)]`}>Remove</button>
                 </span>
               )}
             </li>
@@ -217,17 +218,17 @@ export function IncidentsLine({ incidents, edit, print, shift, tz, T, onNone, on
       {open && edit && !print && (
         <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
           <TimeChip value={clock} onChange={(v) => { setClock(v); setMsg(null); }} tz={tz} label="Time it happened" />
-          <button type="button" onClick={() => setClock(nowClock(tz))} className="h-7 px-2 rounded-md border border-[var(--color-border-strong)] text-[11px] font-semibold">Now</button>
+          <button type="button" onClick={() => setClock(nowClock(tz))} className="h-8 pointer-coarse:h-11 px-2.5 rounded-lg border border-[var(--color-border-strong)] text-[13px] font-semibold">Now</button>
           <select value={kind} onChange={(e) => setKind(e.target.value as IncidentKind)} aria-label="Kind" className={`${inputCls} pr-6`}>
             {INCIDENT_KINDS.map((k) => <option key={k}>{k}</option>)}
           </select>
           <input value={text} onChange={(e) => { setText(e.target.value); setMsg(null); }} onKeyDown={(e) => { if (e.key === "Enter") add(); }} placeholder="What happened, who, what was done" aria-label="What happened" className={`${inputCls} flex-1 min-w-[180px]`} />
           <button type="button" onClick={add} className={addBtn}>{editingId ? "Save" : "Add"}</button>
           {editingId && <button type="button" onClick={reset} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>}
-          {msg && <span className="basis-full text-rose-700 dark:text-rose-400 font-semibold">{msg}</span>}
+          {msg && <span className="basis-full text-[var(--state-overdue-text)] font-semibold">{msg}</span>}
         </div>
       )}
-      {!open && msg && <div className="mt-1 text-rose-700 dark:text-rose-400 font-semibold">{msg}</div>}
+      {!open && msg && <div className="mt-1 text-[var(--state-overdue-text)] font-semibold">{msg}</div>}
     </div>
   );
 }
@@ -261,7 +262,7 @@ export function ShiftNotesBox({ notes, edit, print, shift, tz, T, D, onAdd, onCl
   const [cleared, setCleared] = useState<(ShiftNote & { shiftKey: string; from?: string }) | null>(null);
   const { write, by } = useRecordWriter();
   const reset = () => { setClock(clockIfNow(shift, tz)); setText(""); setFollow(false); setMsg(null); setEditing(null); };
-  const fail = (e: unknown) => setMsg((e as Error).message);
+  const fail = (e: unknown) => setMsg(sayError(e));
   const add = () => {
     const r = clockOnShift(shift, clock, tz);
     if ("error" in r) { setMsg(r.error); return; }
@@ -317,15 +318,15 @@ export function ShiftNotesBox({ notes, edit, print, shift, tz, T, D, onAdd, onCl
               <span className="font-display tabular-nums text-[11px] text-[var(--color-text-muted)] whitespace-nowrap">{n.from ? `${D(n.at)} ${T(n.at)}` : T(n.at)}</span>
               <span className="min-w-0 break-words">
                 {n.text}
-                {n.followUp && !n.cleared && <span className="ml-1.5 text-[11px] font-bold text-amber-800 dark:text-amber-300">{n.from ? `follow-up, open since ${n.from}` : "follow-up"}</span>}
-                {n.followUp && n.cleared && <span className="ml-1.5 text-[11px] font-bold text-emerald-700 dark:text-emerald-400">follow-up, cleared{n.cleared.by ? ` by ${n.cleared.by}` : ""}</span>}
+                {n.followUp && !n.cleared && <span className="ml-1.5 text-[11px] font-bold text-[var(--state-held-text)]">{n.from ? `follow-up, open since ${n.from}` : "follow-up"}</span>}
+                {n.followUp && n.cleared && <span className="ml-1.5 text-[11px] font-bold text-[var(--state-released-text)]">follow-up, cleared{n.cleared.by ? ` by ${n.cleared.by}` : ""}</span>}
               </span>
               {edit && !print && (
                 <span className="ml-auto flex gap-1 shrink-0">
                   {n.followUp && !n.cleared && <button type="button" onClick={() => clear(n)} className={`${smallBtn} text-[var(--color-text)]`}>Clear</button>}
                   {n.followUp && n.cleared && canUnclear(n) && <button type="button" onClick={() => unclear(n)} className={`${smallBtn} text-[var(--color-text-muted)] hover:text-[var(--color-text)]`}>Undo clear</button>}
                   {!n.from && <button type="button" onClick={() => startEdit(n)} className={`${smallBtn} text-[var(--color-text-muted)] hover:text-[var(--color-text)]`}>Edit</button>}
-                  {!n.from && <button type="button" onClick={() => void remove(n)} className={`${smallBtn} text-[var(--color-text-muted)] hover:text-rose-700`}>Remove</button>}
+                  {!n.from && <button type="button" onClick={() => void remove(n)} className={`${smallBtn} text-[var(--color-text-muted)] hover:text-[var(--state-overdue-text)]`}>Remove</button>}
                 </span>
               )}
             </li>
@@ -342,12 +343,12 @@ export function ShiftNotesBox({ notes, edit, print, shift, tz, T, D, onAdd, onCl
       {edit && !print && (
         <div className="flex flex-wrap items-center gap-1.5 pt-1">
           <TimeChip value={clock} onChange={(v) => { setClock(v); setMsg(null); }} tz={tz} />
-          <button type="button" onClick={() => setClock(nowClock(tz))} className="h-7 px-2 rounded-md border border-[var(--color-border-strong)] text-[11px] font-semibold">Now</button>
+          <button type="button" onClick={() => setClock(nowClock(tz))} className="h-8 pointer-coarse:h-11 px-2.5 rounded-lg border border-[var(--color-border-strong)] text-[13px] font-semibold">Now</button>
           <input value={text} onChange={(e) => { setText(e.target.value); setMsg(null); }} onKeyDown={(e) => { if (e.key === "Enter") add(); }} placeholder="What happened, or what needs doing" aria-label="Note" className={`${inputCls} flex-1 min-w-[160px]`} />
           <label className="inline-flex items-center gap-1 text-[11px]"><input type="checkbox" checked={follow} onChange={(e) => setFollow(e.target.checked)} /> Follow-up</label>
           <button type="button" onClick={add} className={addBtn}>{editing ? "Save" : "Add"}</button>
           {editing && <button type="button" onClick={reset} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>}
-          {msg && <span className="basis-full text-[11px] text-rose-700 dark:text-rose-400 font-semibold">{msg}</span>}
+          {msg && <span className="basis-full text-[11px] text-[var(--state-overdue-text)] font-semibold">{msg}</span>}
         </div>
       )}
     </div>

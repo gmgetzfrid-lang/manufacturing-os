@@ -18,6 +18,7 @@ import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
 import { dayKey, fmtInTz, fromDateTimeInput, toDateTimeInput, tzAbbrev } from "@/lib/scheduleTz";
 import { CalendarClock, X, ArrowRight, Loader2, AlertTriangle, CheckCircle2 } from "lucide-react";
 import { rebaseSchedule, type RebaseResult } from "@/lib/milestones";
+import { sayError } from "@/components/projects/sayError";
 
 interface Props {
   orgId: string;
@@ -96,7 +97,7 @@ export default function RebaseScheduleModal({
         // Brief success beat, then close + reload upstream.
         setTimeout(() => onDone(), 1200);
       }
-    } catch (e) { setErr(`Couldn't move the schedule: ${(e as Error).message}`); }
+    } catch (e) { setErr(`Couldn't move the schedule: ${sayError(e)}`); }
     finally { setBusy(false); }
   };
 
@@ -132,7 +133,7 @@ export default function RebaseScheduleModal({
                 type="date"
                 value={target}
                 onChange={(e) => setTarget(e.target.value)}
-                className="mt-1 w-full px-3 py-2 text-sm border border-[var(--color-border-strong)] rounded-lg outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]/40"
+                className="mt-1 w-full px-3 py-2 text-sm border border-[var(--color-border-strong)] rounded-lg"
               />
             </div>
             <div>
@@ -141,7 +142,7 @@ export default function RebaseScheduleModal({
                 type="time"
                 value={targetTime}
                 onChange={(e) => setTargetTime(e.target.value)}
-                className="mt-1 w-full px-3 py-2 text-sm border border-[var(--color-border-strong)] rounded-lg outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]/40"
+                className="mt-1 w-full px-3 py-2 text-sm border border-[var(--color-border-strong)] rounded-lg"
               />
             </div>
           </div>
@@ -165,7 +166,7 @@ export default function RebaseScheduleModal({
               </div>
               {previewDelta && (
                 <div className={`mt-1 text-[11px] font-bold ${
-                  previewDelta.days > 0 ? "text-amber-700 dark:text-amber-400" : previewDelta.days < 0 ? "text-emerald-700 dark:text-emerald-400" : "text-[var(--color-text-muted)]"
+                  previewDelta.days > 0 ? "text-[var(--state-held-text)]" : previewDelta.days < 0 ? "text-[var(--state-released-text)]" : "text-[var(--color-text-muted)]"
                 }`}>
                   Shift: {previewDelta.days > 0 ? "+" : ""}{previewDelta.days} day{Math.abs(previewDelta.days) === 1 ? "" : "s"}
                   {" · "}
@@ -174,22 +175,22 @@ export default function RebaseScheduleModal({
               )}
             </div>
           ) : (
-            <div className="border-l-2 border-amber-500 pl-3 text-xs text-amber-800 dark:text-amber-300">
+            <div className="border-l-2 border-[var(--state-held)] pl-3 text-xs text-[var(--state-held-text)]">
               No task has a planned date yet, so there&apos;s nothing to move from. Give at least one task a date first.
             </div>
           )}
 
           {result && (
-            <div className={`pl-3 py-1 border-l-2 ${result.errors.length > 0 ? "border-rose-500" : "border-emerald-500"}`}>
+            <div className={`pl-3 py-1 border-l-2 ${result.errors.length > 0 ? "border-[var(--state-overdue)]" : "border-[var(--state-released)]"}`}>
               <div className="flex items-center gap-2 font-bold text-sm">
                 {result.errors.length > 0
-                  ? <><AlertTriangle className="w-4 h-4 text-rose-600 dark:text-rose-400" /> Rebased with errors</>
-                  : <><CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400" /> Schedule rebased</>}
+                  ? <><AlertTriangle className="w-4 h-4 text-[var(--state-overdue-text)]" /> Rebased with errors</>
+                  : <><CheckCircle2 className="w-4 h-4 text-[var(--state-released-text)]" /> Schedule rebased</>}
               </div>
               <div className="mt-1 text-xs space-y-0.5">
                 <div>Shifted: <b>{result.shiftedCount}</b> tasks ({result.shiftDays >= 0 ? "+" : ""}{result.shiftDays} days)</div>
                 {result.errors.length > 0 && (
-                  <div className="text-rose-700 dark:text-rose-300 mt-1">
+                  <div className="text-[var(--state-overdue-text)] mt-1">
                     {result.errors.length} error{result.errors.length === 1 ? "" : "s"}:
                     <ul className="ml-5 list-disc max-h-24 overflow-y-auto">
                       {result.errors.slice(0, 6).map((e, i) => <li key={i}>{e}</li>)}
@@ -199,7 +200,7 @@ export default function RebaseScheduleModal({
               </div>
             </div>
           )}
-          {err && <div role="alert" className="text-xs text-rose-700 dark:text-rose-300">{err}</div>}
+          {err && <div role="alert" className="text-xs text-[var(--state-overdue-text)]">{err}</div>}
         </div>
 
         <div className="px-5 py-3 border-t border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center justify-end gap-2">
