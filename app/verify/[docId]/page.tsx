@@ -49,7 +49,7 @@ export default function VerifyPage() {
       }
       setResult((await res.json()) as VerifyResult);
     } catch (e) {
-      setError((e as Error).message);
+      setError(friendlyError(e));
       setResult(null);
     } finally {
       setLoading(false);
@@ -75,7 +75,7 @@ export default function VerifyPage() {
           <div className="text-white/90">
             <ShieldQuestion className="w-16 h-16 mx-auto mb-4 opacity-80" />
             <h1 className="text-[34px] leading-[1.05] tracking-[-0.02em] font-bold mb-3">Can&apos;t verify this code</h1>
-            <p className="text-[15px] opacity-90">{friendlyError(error)}</p>
+            <p className="text-[15px] opacity-90">{error}</p>
             <p className="text-[13px] opacity-70 mt-4">
               If this QR came from a printed drawing, contact Document Control before using the print.
             </p>

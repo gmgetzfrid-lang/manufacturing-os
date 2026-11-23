@@ -30,6 +30,7 @@ import { useStagedDocs, hasMarkups, sheetOfRecord, type StagedDoc } from "@/lib/
 import { draftingSheet, issuedFileUrl, markedUpPdf, prepareDraftingRequest } from "@/lib/sendToDrafting";
 import type { DocumentRecord } from "@/types/schema";
 
+import { friendlyError } from "@/lib/friendlyError";
 // The viewer (react-pdf + fabric) loads in the browser only.
 const MultiDocViewer = dynamic(() => import("@/components/viewers/MultiDocViewer"), {
   ssr: false,
@@ -99,7 +100,7 @@ export default function StagedPage() {
         setLibNames((prev) => new Map([...prev, ...names]));
         setLoadError(null);
       } catch (e) {
-        if (live) setLoadError((e as Error).message || "unknown error");
+        if (live) setLoadError(friendlyError(e));
       }
     })();
     return () => { live = false; };
@@ -189,7 +190,7 @@ export default function StagedPage() {
       }
       router.push(href);
     } catch (e) {
-      setDraftError(`The sheets could not be prepared: ${(e as Error).message || "unknown error"}`);
+      setDraftError(`The sheets could not be prepared: ${friendlyError(e)}`);
       setDrafting(false);
     }
   };

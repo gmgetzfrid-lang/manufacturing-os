@@ -18,6 +18,7 @@ import { createFolder, createLibrary, listLibraryFoldersOnce, type PickerFolder 
 import { appPrompt, appAlert } from "@/components/providers/DialogProvider";
 import { useEscapeClose } from "@/components/documents/useEscapeClose";
 
+import { friendlyError } from "@/lib/friendlyError";
 export default function DocumentLinkPicker({ orgId, userId, canManage = false, excludeIds = [], onPick, onClose }: {
   orgId: string;
   userId?: string;
@@ -83,7 +84,7 @@ export default function DocumentLinkPicker({ orgId, userId, canManage = false, e
       const lib = await createLibrary({ orgId, name: name.trim(), createdBy: userId });
       setLibraries((p) => [...p, { id: lib.id, name: lib.name }].sort((a, b) => a.name.localeCompare(b.name)));
       setUpLibraryId(lib.id);
-    } catch (e) { await appAlert({ message: (e as Error).message, tone: "danger" }); }
+    } catch (e) { await appAlert({ message: friendlyError(e), tone: "danger" }); }
   };
   const addFolder = async () => {
     if (!userId || !upLibraryId) return;
@@ -120,7 +121,7 @@ export default function DocumentLinkPicker({ orgId, userId, canManage = false, e
         file, actorUserId: userId,
       }), { onRetried: (r) => { void onPick(r.documentId); } });
       await onPick(documentId);
-    } catch (e) { setUpError(`It didn't upload: ${(e as Error).message}`); } finally { setCreating(false); }
+    } catch (e) { setUpError(`It didn't upload: ${friendlyError(e)}`); } finally { setCreating(false); }
   };
 
   const fieldCls = "text-[13px] rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] px-2.5 py-1.5 outline-none focus:border-[var(--color-border-strong)]";

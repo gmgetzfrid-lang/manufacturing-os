@@ -10,6 +10,7 @@ import { useRouter } from "next/navigation";
 import { X, Loader2, Network, ArrowRight, Waypoints } from "lucide-react";
 import { findRelatedDocuments, type RelatedDocument, type RelatedReason, type DocumentRow } from "@/lib/search";
 
+import { friendlyError } from "@/lib/friendlyError";
 const REASON_META: Record<RelatedReason, { label: string; hex: string }> = {
   supersedes:    { label: "Supersedes (older)", hex: "#94a3b8" },
   superseded_by: { label: "Superseded by (newer)", hex: "#7c3aed" },
@@ -61,7 +62,7 @@ export default function RelationshipGraph({
         setCenter((data as DocumentRow) ?? null);
         setRelated(rel);
       } catch (e) {
-        if (alive) setError((e as Error).message);
+        if (alive) setError(friendlyError(e));
       }
     })();
     return () => { alive = false; };

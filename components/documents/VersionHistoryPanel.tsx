@@ -24,6 +24,7 @@ import CompareRevisionsModal from "@/components/documents/CompareRevisionsModal"
 import BackfillVersionModal from "@/components/documents/BackfillVersionModal";
 import HelpTooltip from "@/components/ui/HelpTooltip";
 
+import { friendlyError } from "@/lib/friendlyError";
 interface VersionHistoryPanelProps {
   doc: DocumentRecord;
   currentUserId?: string;
@@ -72,7 +73,7 @@ export default function VersionHistoryPanel({
       const list = await listVersions(doc.id);
       setVersions(list);
     } catch (e) {
-      setError((e as Error).message || "Could not load history");
+      setError(friendlyError(e));
     } finally {
       setLoading(false);
     }
@@ -117,7 +118,7 @@ export default function VersionHistoryPanel({
       setCorrectTarget(null);
       void refresh();
     } catch (e) {
-      setLabelError((e as Error).message);
+      setLabelError(friendlyError(e));
     } finally {
       setSavingLabel(false);
     }
@@ -160,7 +161,7 @@ export default function VersionHistoryPanel({
       });
     } catch (e) {
       console.error(e);
-      setError((e as Error).message || "Download failed");
+      setError(friendlyError(e));
     } finally {
       setDownloadingId(null);
     }
@@ -468,7 +469,7 @@ export default function VersionHistoryPanel({
                 value={labelDraft}
                 onChange={(e) => setLabelDraft(e.target.value)}
                 placeholder="e.g. 38"
-                className="mt-1 w-full rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 py-2 text-sm font-display tabular-nums focus:outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]"
+                className="mt-1 w-full rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 py-2 text-sm font-display tabular-nums"
               />
             </label>
             <label className="block mt-2 text-[13px] font-bold text-[var(--color-text-muted)]">
@@ -477,7 +478,7 @@ export default function VersionHistoryPanel({
                 value={reasonDraft}
                 onChange={(e) => setReasonDraft(e.target.value)}
                 placeholder="e.g. mislabeled at upload, title block reads 38"
-                className="mt-1 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]"
+                className="mt-1 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm"
               />
             </label>
             {labelError && (

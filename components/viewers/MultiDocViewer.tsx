@@ -51,6 +51,7 @@ import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/ui/Moda
 import { Button } from "@/components/ui/Button";
 import { vDim, vPanel, vKicker, vTitle, vIcon, vTool, vQuiet, vGroup, vPrimary, vClose, vNote } from "@/components/viewers/viewerChrome";
 
+import { friendlyError } from "@/lib/friendlyError";
 // Same self-hosted worker the single viewer uses (copied to /public on prebuild).
 pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
 
@@ -813,7 +814,7 @@ export default function MultiDocViewer({ docs, onClose, embedded = false, action
       else await printDocumentPdf(ctx);
       setDownloadConfirm(null);
     } catch (e) {
-      setActionError((e as Error).message || "Action failed");
+      setActionError(friendlyError(e));
     } finally {
       if (bakedUrl) URL.revokeObjectURL(bakedUrl);
       setDocBusy(false);
@@ -902,7 +903,7 @@ export default function MultiDocViewer({ docs, onClose, embedded = false, action
       URL.revokeObjectURL(url);
       setDownloadConfirm(null);
     } catch (e) {
-      setActionError((e as Error).message || "Book download failed");
+      setActionError(friendlyError(e));
     } finally {
       setBookBusy(false);
     }
@@ -929,7 +930,7 @@ export default function MultiDocViewer({ docs, onClose, embedded = false, action
       w.addEventListener("load", () => setTimeout(() => w.print(), 250));
       setDownloadConfirm(null);
     } catch (e) {
-      setActionError((e as Error).message || "Book print failed");
+      setActionError(friendlyError(e));
     } finally {
       setBookBusy(false);
     }
@@ -970,7 +971,7 @@ export default function MultiDocViewer({ docs, onClose, embedded = false, action
     } catch (e) {
       console.error("Send markups to drafting failed", e);
       setSendingDraft(false);
-      await appAlert(`Couldn't prepare markups: ${(e as Error).message || "unknown error"}`);
+      await appAlert(`Couldn't prepare markups: ${friendlyError(e)}`);
     }
   };
 

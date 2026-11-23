@@ -16,6 +16,7 @@ import { listTeams, type Team } from "@/lib/teams";
 import { ALL_ROLES, type ReviewControl, type ReviewControlMode, type Role } from "@/types/schema";
 import { useEscapeClose } from "@/components/documents/useEscapeClose";
 
+import { friendlyError } from "@/lib/friendlyError";
 const MODES: { value: ReviewControlMode; label: string; hint: string }[] = [
   { value: "none", label: "No gate", hint: "Publish directly (drawings whose review is handled by the drafting workflow, or simple libraries)." },
   { value: "publisher_choice", label: "Publisher decides", hint: "The rev-up form asks 'route through review?' each time." },
@@ -175,7 +176,7 @@ export default function ReviewControlModal({ level, id, orgId, name, uid, userNa
         try {
           await saveDocClass({ level, id, docClass: docClass === "inherit" ? null : docClass });
         } catch (e) {
-          void appAlert({ title: "Review policy saved: document class was not", message: (e as Error).message });
+          void appAlert({ title: "Review policy saved: document class was not", message: friendlyError(e) });
         }
       }
       onSaved?.(); onClose();

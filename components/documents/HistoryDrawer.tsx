@@ -14,6 +14,7 @@ import { useRole } from "@/components/providers/RoleContext";
 import { getDocumentTimeline, type TimelineEvent } from "@/lib/timeline";
 import { escapeStackBusy } from "@/components/documents/useEscapeClose";
 
+import { friendlyError } from "@/lib/friendlyError";
 interface HistoryDrawerProps {
   isOpen: boolean;
   onClose: () => void;
@@ -94,7 +95,7 @@ export default function HistoryDrawer({ isOpen, onClose, docRecord }: HistoryDra
     } catch (e) {
       console.error("Data load failed", e);
       if (isStillValid()) {
-        setLoadErr((e as Error)?.message || "try again");
+        setLoadErr(friendlyError(e));
         setVersions([]);
         setSessions([]);
         setAuditLogs([]);
@@ -129,7 +130,7 @@ export default function HistoryDrawer({ isOpen, onClose, docRecord }: HistoryDra
     setTimelineErr(null);
     getDocumentTimeline({ documentId: docRecord.id, limit: 100 })
       .then((evts) => { if (alive) setTimelineEvents(evts); })
-      .catch((e: unknown) => { if (alive) { setTimelineEvents([]); setTimelineErr((e as Error)?.message || "try again"); } })
+      .catch((e: unknown) => { if (alive) { setTimelineEvents([]); setTimelineErr(friendlyError(e)); } })
       .finally(() => { if (alive) setTimelineLoading(false); });
     return () => { alive = false; };
   }, [isOpen, docRecord?.id]);
@@ -494,7 +495,7 @@ export default function HistoryDrawer({ isOpen, onClose, docRecord }: HistoryDra
               setTimelineLoading(true);
               getDocumentTimeline({ documentId: docRecord.id, limit: 100 })
                 .then((evts) => { setTimelineEvents(evts); setTimelineErr(null); })
-                .catch((e: unknown) => setTimelineErr((e as Error)?.message || "try again"))
+                .catch((e: unknown) => setTimelineErr(friendlyError(e)))
                 .finally(() => setTimelineLoading(false));
             }
           }}

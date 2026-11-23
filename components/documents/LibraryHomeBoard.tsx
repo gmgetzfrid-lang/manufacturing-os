@@ -17,6 +17,7 @@ import type {
 } from "@/types/schema";
 import { NodeIcon } from "@/lib/nodeIcons";
 
+import { friendlyError } from "@/lib/friendlyError";
 const PART_META: Record<WebPartType, { label: string; icon: React.ComponentType<{ className?: string }>; defaultTitle: string; defaultWidth: WebPart["width"] }> = {
   about:        { label: "About",            icon: Info,      defaultTitle: "About this library", defaultWidth: "full" },
   quickFolders: { label: "Quick folders",    icon: FolderOpen, defaultTitle: "Folders",            defaultWidth: "half" },
@@ -92,14 +93,14 @@ export default function LibraryHomeBoard({
   const save = async () => {
     setSaving(true); setSaveErr(null);
     try { await onSave({ ...draft, enabled: true }); setEditing(false); }
-    catch (e) { setSaveErr(`It didn't save: ${(e as Error)?.message || "try again"}.`); }
+    catch (e) { setSaveErr(`It didn't save: ${friendlyError(e)}.`); }
     finally { setSaving(false); }
   };
 
   const disableHome = async () => {
     setSaving(true); setSaveErr(null);
     try { await onSave({ enabled: false, parts: draft.parts }); setEditing(false); }
-    catch (e) { setSaveErr(`It didn't save: ${(e as Error)?.message || "try again"}.`); }
+    catch (e) { setSaveErr(`It didn't save: ${friendlyError(e)}.`); }
     finally { setSaving(false); }
   };
 

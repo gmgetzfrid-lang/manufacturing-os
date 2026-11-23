@@ -44,6 +44,7 @@ import { vIcon, vTool, vGroup } from "@/components/viewers/viewerChrome";
 import "react-pdf/dist/Page/AnnotationLayer.css";
 import "react-pdf/dist/Page/TextLayer.css";
 
+import { friendlyError } from "@/lib/friendlyError";
 // Match the worker config FullScreenViewer uses (idempotent).
 pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
 
@@ -468,7 +469,7 @@ export default function PdfRevisionDiff({
         requestAnimationFrame(() => fitToScreen(m.W, m.H));
       }
     } catch (e) {
-      setError((e as Error).message || "Diff failed");
+      setError(friendlyError(e));
     } finally {
       setLoading(false);
     }

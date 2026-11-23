@@ -30,6 +30,7 @@ import {
   type RegisterRow, type RegisterKpis, type RegisterFilter,
 } from "@/lib/docControlRegister";
 
+import { friendlyError } from "@/lib/friendlyError";
 const FILTERS: RegisterFilter[] = ["all", "unowned", "review_overdue", "review_due", "acks_outstanding", "in_review", "effective_pending", "legal_hold", "disposition_eligible", "external"];
 // Short labels for the header's ruled cells (they sit four across on a phone).
 const SHORT: Partial<Record<RegisterFilter, string>> = {
@@ -82,7 +83,7 @@ export default function RegisterPage() {
     try {
       const { rows, kpis, capped } = await loadDocControlRegister(activeOrgId);
       setRows(rows); setKpis(kpis); setCapped(capped);
-    } catch (e) { setError((e as Error).message); }
+    } catch (e) { setError(friendlyError(e)); }
     finally { setLoading(false); }
   }, [activeOrgId]);
 

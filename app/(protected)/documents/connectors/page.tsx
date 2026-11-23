@@ -107,12 +107,17 @@ export default function ConnectorChecksPage() {
   ];
   const cur = TABS.find((t) => t.id === view)!;
   const open = rows.missing.length + rows.tag.length + rows.oneway.length;
+  // Only claim "every connector checks out" when every one was checked.
+  const unchecked = checks ? checks.unchecked.noTarget + checks.unchecked.noSheetRecorded + checks.unchecked.targetNotRead : 0;
   const answer = error ? "The connectors couldn't be read."
     : !checks ? "Connector checks"
     : checks.connectors === 0 ? "No connectors read yet."
+    : open === 0 && unchecked > 0 ? "Nothing wrong found."
     : open === 0 ? "Every connector checks out."
     : `${open.toLocaleString()} connector${open === 1 ? "" : "s"} to look at${drawing ? ` on ${drawing}` : ""}.`;
-  const answerSub = !checks || checks.connectors === 0 ? "Every off-page connector read from the drawings, checked against the sheet it points at." : undefined;
+  const answerSub = !checks || checks.connectors === 0 ? "Every off-page connector read from the drawings, checked against the sheet it points at."
+    : open === 0 && unchecked > 0 ? `${unchecked.toLocaleString()} couldn't be checked yet. The note under the list says why.`
+    : undefined;
   // The count to act on leads; when nothing is open every fact is small.
   const answerFacts = checks ? [
     ...(open > 0 ? [{ label: "To look at", value: open.toLocaleString(), tone: "warn" as const, hero: true }] : []),

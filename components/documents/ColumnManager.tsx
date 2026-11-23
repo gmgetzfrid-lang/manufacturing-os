@@ -4,6 +4,7 @@ import React, { useMemo, useState } from "react";
 import { ChevronDown, ChevronUp, Eye, EyeOff, X, Trash2, Pencil, Check, Loader2, KeyRound, GripVertical, Columns } from "lucide-react";
 import { appConfirm } from "@/components/providers/DialogProvider";
 
+import { friendlyError } from "@/lib/friendlyError";
 export type ColumnOption = {
   key: string;
   label: string;
@@ -132,7 +133,7 @@ export default function ColumnManager(props: {
       }
       onClose();
     } catch (e) {
-      setApplyError((e as Error).message || "Couldn't save the columns.");
+      setApplyError(friendlyError(e));
     } finally {
       setApplying(false);
     }
@@ -142,7 +143,7 @@ export default function ColumnManager(props: {
     if (!onUseLibrary || applying) return;
     setApplying(true);
     try { await onUseLibrary(); onClose(); }
-    catch (e) { setApplyError((e as Error).message || "Couldn't switch to the library's columns."); }
+    catch (e) { setApplyError(friendlyError(e)); }
     finally { setApplying(false); }
   };
 

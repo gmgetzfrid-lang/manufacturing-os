@@ -29,6 +29,7 @@ import type { DocumentRecord, DocumentVersion } from "@/types/schema";
 import { useFileDrag } from "@/hooks/useFileDrag";
 import { useEscapeClose } from "@/components/documents/useEscapeClose";
 
+import { friendlyError } from "@/lib/friendlyError";
 interface BackfillVersionModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -151,7 +152,7 @@ export default function BackfillVersionModal({
       onSuccess(newVersion);
       onClose();
     } catch (e) {
-      setError(`It didn't save: ${(e as Error).message || "try again"}.`);
+      setError(`It didn't save: ${friendlyError(e)}.`);
     } finally {
       setBusy(false);
     }

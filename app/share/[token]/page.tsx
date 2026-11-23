@@ -26,6 +26,7 @@ import CopyId from "@/components/ui/CopyId";
 import { SkeletonRows } from "@/components/ui/Skeleton";
 import type { ResolvedShare, ResolvedShareItem } from "@/lib/documentShares";
 
+import { friendlyError } from "@/lib/friendlyError";
 const SharedPdfViewer = dynamic(() => import("@/components/viewers/SharedPdfViewer"), { ssr: false });
 
 type State = "loading" | "code" | "ok" | "revoked" | "expired" | "locked" | "notfound" | "error";
@@ -153,7 +154,7 @@ export default function SharePage() {
       document.body.appendChild(a); a.click(); document.body.removeChild(a);
       setTimeout(() => URL.revokeObjectURL(url), 30_000);
     } catch (e) {
-      setDownloadError((e as Error).message);
+      setDownloadError(friendlyError(e));
     } finally {
       setDownloading(null);
     }

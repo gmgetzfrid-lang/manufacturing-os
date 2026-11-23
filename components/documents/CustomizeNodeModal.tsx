@@ -15,6 +15,7 @@ import { uploadToPath } from "@/lib/storage";
 import { tryUpload } from "@/lib/uploadRetry";
 import { useEscapeClose } from "@/components/documents/useEscapeClose";
 
+import { friendlyError } from "@/lib/friendlyError";
 const COLOR_SWATCHES = ["#4f46e5", "#2563eb", "#0ea5e9", "#0d9488", "#059669", "#65a30d", "#ea580c", "#dc2626", "#e11d48", "#db2777", "#7c3aed", "#475569"];
 
 export interface CustomizeValue {
@@ -99,7 +100,7 @@ export default function CustomizeNodeModal({
   const handleSave = async () => {
     setSaving(true); setSaveErr(null);
     try { await onSave(v); onClose(); }
-    catch (e) { setSaveErr(`It didn't save: ${(e as Error)?.message || "try again"}.`); }
+    catch (e) { setSaveErr(`It didn't save: ${friendlyError(e)}.`); }
     finally { setSaving(false); }
   };
 

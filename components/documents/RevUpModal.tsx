@@ -47,6 +47,7 @@ import { tryUpload } from "@/lib/uploadRetry";
 import { appAlert } from "@/components/providers/DialogProvider";
 import { useEscapeClose } from "@/components/documents/useEscapeClose";
 
+import { friendlyError } from "@/lib/friendlyError";
 interface RevUpModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -88,7 +89,7 @@ const CHANGE_TYPES: { value: NonNullable<DocumentVersion["changeType"]>; label: 
 ];
 
 const inputClass =
-  "w-full px-2.5 py-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] text-[var(--color-text)] focus:ring-2 focus:ring-[var(--color-accent-ring)] focus:outline-none";
+  "w-full px-2.5 py-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] text-[var(--color-text)]";
 
 export default function RevUpModal({
   isOpen, onClose, doc, libraryId, folderPath,
@@ -367,7 +368,7 @@ export default function RevUpModal({
         setRevisionLabel(suggestNextRevisionLabel(doc.rev));
       } else {
         console.error("Rev up failed", e);
-        setError(`It didn't publish: ${(e as Error).message || "try again"}.`);
+        setError(`It didn't publish: ${friendlyError(e)}.`);
       }
     } finally {
       setSubmitting(false);
@@ -388,7 +389,7 @@ export default function RevUpModal({
       });
       setMsgSent(true);
     } catch (e) {
-      setError(`Couldn't send the message: ${(e as Error).message || "try again"}.`);
+      setError(`Couldn't send the message: ${friendlyError(e)}.`);
     }
   };
 

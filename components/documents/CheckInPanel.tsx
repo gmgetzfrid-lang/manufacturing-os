@@ -53,6 +53,7 @@ import { openHold } from "@/lib/holds";
 import { postHandoff } from "@/lib/activityThread";
 import type { CheckoutSession, DocumentRecord, DocumentVersion } from "@/types/schema";
 
+import { friendlyError } from "@/lib/friendlyError";
 interface CheckInPanelProps {
   document: DocumentRecord;
   currentUser: { uid: string; email: string | null; role: string | null };
@@ -418,7 +419,7 @@ export default function CheckInPanel({
                 openedByEmail: currentUser.email ?? undefined, openedByRole: currentUser.role ?? undefined,
               });
             } catch (e) {
-              showToast({ type: "warning", title: "Hold not placed", message: (e as Error).message });
+              showToast({ type: "warning", title: "Hold not placed", message: friendlyError(e) });
             }
           }
           // A stale number typed under a different MOC state must never sit
@@ -483,7 +484,7 @@ export default function CheckInPanel({
       onDone();
     } catch (e) {
       console.error(e);
-      showToast({ type: "error", title: "It didn't check in", message: (e as Error).message });
+      showToast({ type: "error", title: "It didn't check in", message: friendlyError(e) });
       setBusy(false);
     }
   };
@@ -518,7 +519,7 @@ export default function CheckInPanel({
       onDone();
     } catch (e) {
       console.error(e);
-      showToast({ type: "error", title: "Published, but it didn't check in", message: (e as Error).message });
+      showToast({ type: "error", title: "Published, but it didn't check in", message: friendlyError(e) });
       setBusy(false);
     }
   };

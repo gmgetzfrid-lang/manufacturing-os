@@ -75,7 +75,7 @@ export default function PackagesPage() {
       setPackages(await listWorkPackages(activeOrgId));
       setLoadErr(null);
     } catch (e) {
-      setLoadErr((e as Error).message || "try again");
+      setLoadErr(friendlyError(e));
       setPackages((prev) => prev ?? []);
     }
   }, [activeOrgId]);

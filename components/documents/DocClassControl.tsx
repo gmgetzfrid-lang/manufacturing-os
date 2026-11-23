@@ -18,6 +18,7 @@ import {
 } from "@/lib/docClass";
 import { useToast } from "@/components/providers/ToastProvider";
 
+import { friendlyError } from "@/lib/friendlyError";
 interface DocClassControlProps {
   documentId: string;
   collectionId?: string | null;
@@ -64,7 +65,7 @@ export default function DocClassControl({ documentId, collectionId, libraryId, f
       setEffective(eff);
     } catch (e) {
       setDeclared(prev);
-      showToast({ type: "error", title: "Document class not saved", message: (e as Error).message });
+      showToast({ type: "error", title: "Document class not saved", message: friendlyError(e) });
     } finally {
       setBusy(false);
     }

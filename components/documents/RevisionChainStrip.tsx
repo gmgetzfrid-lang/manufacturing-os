@@ -14,6 +14,7 @@ import React, { useEffect, useState } from "react";
 import { GitBranch, Rewind, CheckCircle2, ChevronRight, Loader2 } from "lucide-react";
 import { getRevisionChain, type RevisionChainNode } from "@/lib/timeline";
 
+import { friendlyError } from "@/lib/friendlyError";
 interface RevisionChainStripProps {
   documentId: string;
   /** Bump to force a refetch from outside. */
@@ -36,7 +37,7 @@ export default function RevisionChainStrip({ documentId, refreshKey }: RevisionC
       })
       .catch((e) => {
         if (!alive) return;
-        setError((e as Error).message); setLoading(false);
+        setError(friendlyError(e)); setLoading(false);
       });
     return () => { alive = false; };
   }, [documentId, refreshKey]);

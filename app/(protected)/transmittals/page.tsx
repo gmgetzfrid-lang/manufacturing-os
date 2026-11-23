@@ -107,7 +107,7 @@ export default function TransmittalsPage() {
         setStaleIds(new Set());
       }
     } catch (e) {
-      setError((e as Error).message);
+      setError(friendlyError(e));
     } finally {
       setLoading(false);
     }

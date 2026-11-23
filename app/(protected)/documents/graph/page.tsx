@@ -68,6 +68,7 @@ import { EntityStrip, EquipmentCards, RelationChips, PageHits, ActivityPanel, Co
 import { useEscapeClose, escapeStackBusy } from "@/components/documents/useEscapeClose";
 import { badgeText } from "@/lib/badge";
 
+import { friendlyError } from "@/lib/friendlyError";
 const VERDICT_STYLE: Record<RankedHit["verdict"], string> = {
   strong: "bg-[color-mix(in_srgb,var(--state-released)_10%,transparent)] text-[var(--state-released)] border-[color-mix(in_srgb,var(--state-released)_35%,transparent)]",
   possible: "bg-[color-mix(in_srgb,var(--state-held)_12%,transparent)] text-[var(--state-held)] border-[color-mix(in_srgb,var(--state-held)_40%,transparent)]",
@@ -161,7 +162,7 @@ function GraphPageInner() {
       const r = await estatePost<{ folders: number; documents: number; applied: number; pending: number; unchanged: number; notes: string[] }>("/api/estate/resolve", { orgId: activeOrgId, all: true });
       setResolveNote(`${r.folders} folders and ${r.documents} documents looked at - ${r.applied} new links applied, ${r.pending} new waiting in Review, ${r.unchanged} links already in place. See the Links tab.${r.notes.length ? " " + r.notes.join(" ") : ""}`);
       await refresh();
-    } catch (e) { setResolveNote((e as Error).message); }
+    } catch (e) { setResolveNote(friendlyError(e)); }
     finally { setResolving(false); }
   };
   const [panel, setPanel] = useState<"search" | "drives" | "aliases" | "links">("search");
@@ -614,7 +615,7 @@ function GraphPageInner() {
     try {
       setViewer(await p);
     } catch (err) {
-      setViewerError((err as Error).message);
+      setViewerError(friendlyError(err));
     } finally {
       setViewerLoading(null);
     }
@@ -688,7 +689,7 @@ function GraphPageInner() {
 
   return (
     <div className="flex flex-col lg:h-[calc(100vh_-_56px_-_var(--staged-tray-h,0px))] px-3 sm:px-4 lg:px-6 pt-4 pb-4">
-      <PageHero size="md" overlap={false} className="!mb-4 !pb-6" kicker="Document control" title={mapAnswer} sub={mapSub} facts={mapFacts} factsHero="none"
+      <PageHero size="md" overlap={false} kicker="Document control" title={mapAnswer} sub={mapSub} facts={mapFacts} factsHero="none"
         back={cameBack ? { onClick: () => router.back(), label: `Back to ${homeLabel}` } : undefined}>
         <DocViewTabs hrefs={tableHref ? { "/documents": tableHref } : undefined} />
         {error && (
@@ -1431,7 +1432,7 @@ function DrivesPanel({ orgId, controller, listings, uid, userEmail, systemHashes
     try {
       const l = await saveFinderListing({ orgId, name: name || "Pasted listing", format: preview.format, files: preview.files, folders: preview.folders, userId: uid, userName: userEmail });
       onChange([...listings, l]); setName(""); setText("");
-    } catch (e) { setErr((e as Error).message); }
+    } catch (e) { setErr(friendlyError(e)); }
     finally { setBusy(false); }
   };
   const remove = async (l: FinderListing) => {
@@ -1506,7 +1507,7 @@ function AliasesPanel({ orgId, controller, aliases, uid, userEmail, units, onCha
     try {
       const a = await addFinderAlias({ orgId, term, means, kind, userId: uid, userName: userEmail });
       onChange([...aliases, a]); setTerm(""); setMeans("");
-    } catch (e) { setErr((e as Error).message); }
+    } catch (e) { setErr(friendlyError(e)); }
     finally { setBusy(false); }
   };
   const remove = async (a: FinderAlias) => {

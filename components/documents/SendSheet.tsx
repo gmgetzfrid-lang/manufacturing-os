@@ -33,6 +33,7 @@ import {
 } from "@/lib/documentShares";
 import { uploadToPath } from "@/lib/storage";
 
+import { friendlyError } from "@/lib/friendlyError";
 export interface SendDoc { id: string; documentNumber: string | null; title: string | null; rev: string | null; libraryId: string }
 export interface SendSheetProps {
   orgId: string;
@@ -182,7 +183,7 @@ export default function SendSheet({ orgId, docs, markedUp, markedUpIds, onClose 
   const loadLinks = useCallback(async () => {
     setLinksError(null);
     try { setLinks(await listSentLinks(orgId, docIdsKey ? docIdsKey.split(",") : [])); }
-    catch (e) { setLinks([]); setLinksError((e as Error).message); }
+    catch (e) { setLinks([]); setLinksError(friendlyError(e)); }
   }, [orgId, docIdsKey]);
   useEffect(() => { void loadLinks(); }, [loadLinks]);
 
@@ -230,7 +231,7 @@ export default function SendSheet({ orgId, docs, markedUp, markedUpIds, onClose 
       setStep("made");
       void loadLinks();
     } catch (e) {
-      setError((e as Error).message || "The link couldn't be made.");
+      setError(friendlyError(e));
     } finally {
       setBusy(null);
     }
@@ -249,7 +250,7 @@ export default function SendSheet({ orgId, docs, markedUp, markedUpIds, onClose 
     try {
       const at = await turnOffSentLink(orgId, l.id);
       setLinks((prev) => (prev ?? []).map((x) => (x.id === l.id ? { ...x, revokedAt: at } : x)));
-    } catch (e) { setLinksError((e as Error).message); }
+    } catch (e) { setLinksError(friendlyError(e)); }
     finally { setTurningOff(null); }
   };
 

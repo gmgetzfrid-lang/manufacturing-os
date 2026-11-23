@@ -48,6 +48,7 @@ import { collectTagGroups } from "@/lib/documentTags";
 import type { DocumentRecord, DocumentVersion, LibraryCustomColumn } from "@/types/schema";
 import { AuditEntry } from "@/lib/audit";
 
+import { friendlyError } from "@/lib/friendlyError";
 interface InspectorPanelProps {
   selectedDoc: DocumentRecord | null;
   selectedVersion: DocumentVersion | null;
@@ -279,7 +280,7 @@ export default function InspectorPanel({
         version: selectedVersion.revisionLabel,
       });
     } catch (e) {
-      await appAlert({ message: `Could not fetch the CAD source: ${(e as Error).message}`, tone: "danger" });
+      await appAlert({ message: `Could not fetch the CAD source: ${friendlyError(e)}`, tone: "danger" });
     } finally {
       setSourceBusy(false);
     }
@@ -955,7 +956,7 @@ export default function InspectorPanel({
             <button
               onClick={async () => {
                 try { await openEvidencePack(selectedDoc.id!, selectedDoc.orgId); }
-                catch (e) { await appAlert({ message: (e as Error).message, tone: "danger" }); }
+                catch (e) { await appAlert({ message: friendlyError(e), tone: "danger" }); }
               }}
               title="Put the chain of custody (revisions, holds, audit trail) into a report you can print to PDF"
               className="inline-flex items-center justify-center gap-1.5 h-10 pointer-coarse:h-11 px-3.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
@@ -987,7 +988,7 @@ export default function InspectorPanel({
                     libraryId: selectedDoc.libraryId, requesterId: uid, requesterName: userEmail, reason: reason.trim(),
                   });
                   await appAlert({ message: "Sent. Admin or Doc Control will review it." });
-                } catch (e) { await appAlert({ message: (e as Error).message, tone: "danger" }); }
+                } catch (e) { await appAlert({ message: friendlyError(e), tone: "danger" }); }
               }}
               className="inline-flex items-center justify-center gap-1.5 h-10 pointer-coarse:h-11 px-3.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors !text-[var(--state-overdue-text)]"
             >

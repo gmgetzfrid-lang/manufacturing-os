@@ -217,6 +217,7 @@ import {
   CircleAlert,
 } from "lucide-react";
 
+import { friendlyError } from "@/lib/friendlyError";
 // The selection bars float over the list: above a phone's Upload bar, and
 // above the staged tray when it shows (--staged-tray-h).
 const SELECTION_BAR_BOTTOM = "bottom-[calc(5rem_+_var(--staged-tray-h,0px))] sm:bottom-[calc(2.5rem_+_var(--staged-tray-h,0px))]";
@@ -366,7 +367,7 @@ export default function LibraryExplorerPage() {
       await declareEdge({ orgId: activeOrgId, a: isFolder ? nid.folder(sug.targetId) : nid.doc(sug.targetId), b: nid.folder(sug.home.id), type: "filed_under",
         summary: `Also filed under ${[sug.home.libraryName, ...sug.home.chain].join(" / ")} - ${sug.reason}`, evidence: { unit: sug.unitCode, docType: sug.docType }, actor: { userId: uid, name: userEmail } });
       setWatchdog((prev) => prev.filter((p) => p.targetId !== sug.targetId));
-    } catch (e) { setError((e as Error).message); }
+    } catch (e) { setError(friendlyError(e)); }
     finally { setWatchdogBusy(null); }
   };
   const watchdogDismiss = async (sug: HomeSuggestion) => {
@@ -375,7 +376,7 @@ export default function LibraryExplorerPage() {
     try {
       const isFolder = !documents.some((d) => d.id === sug.targetId) && !!folderMapRef.current?.get(sug.targetId);
       await dismissEdge({ orgId: activeOrgId, a: isFolder ? nid.folder(sug.targetId) : nid.doc(sug.targetId), b: nid.folder(sug.home.id), type: "filed_under", summary: sug.reason, actor: { userId: uid, name: userEmail } })
-        .catch((e: unknown) => setError(`Couldn't remember "Leave it", so it may ask again: ${(e as Error)?.message ?? "try again"}.`));
+        .catch((e: unknown) => setError(`Couldn't remember "Leave it", so it may ask again: ${friendlyError(e)}.`));
       setWatchdog((prev) => prev.filter((p) => p.targetId !== sug.targetId));
     } finally { setWatchdogBusy(null); }
   };
@@ -1423,7 +1424,7 @@ export default function LibraryExplorerPage() {
       });
     } catch (e) {
       console.error("Force unlock failed", e);
-      setError(`Couldn't release the lock: ${(e as Error)?.message ?? "try again"}.`);
+      setError(`Couldn't release the lock: ${friendlyError(e)}.`);
     }
   };
 
@@ -2008,7 +2009,7 @@ export default function LibraryExplorerPage() {
           folderDocsCache.current.set(cacheKey, all);
           setDocuments(all);
         }
-      } catch (e: unknown) { if (alive) setError((e as Error).message); }
+      } catch (e: unknown) { if (alive) setError(friendlyError(e)); }
       finally {
         if (alive) { setLoadingDocs(false); setDocStreamProgress(null); setDocsDoneKey(cacheKey); }
       }
@@ -2611,7 +2612,7 @@ export default function LibraryExplorerPage() {
     } catch (e) {
       // Put the columns back: the screen must match what was saved.
       setActiveColumns(before);
-      setError(`Couldn't save the columns: ${(e as Error).message}`);
+      setError(`Couldn't save the columns: ${friendlyError(e)}`);
       return;
     }
     setColLevels((prev) => scope === "user" ? { ...prev, user: true }
@@ -2656,7 +2657,7 @@ export default function LibraryExplorerPage() {
       void refreshViewDefaults();
     } catch (e) {
       setActiveColumns(before);
-      setError(`Couldn't save the columns for the library: ${(e as Error).message}`);
+      setError(`Couldn't save the columns for the library: ${friendlyError(e)}`);
     }
   };
   // This folder drops its own columns and follows the library default.
@@ -2673,7 +2674,7 @@ export default function LibraryExplorerPage() {
       void refreshViewDefaults();
     } catch (e) {
       setActiveColumns(before);
-      setError(`Couldn't switch this folder to the library's columns: ${(e as Error).message}`);
+      setError(`Couldn't switch this folder to the library's columns: ${friendlyError(e)}`);
     }
   };
 
@@ -3464,7 +3465,7 @@ export default function LibraryExplorerPage() {
       setEditingDocNumId(null);
       setEditingDocNumValue("");
     } catch (e) {
-      setEditingDocNumError((e as Error).message);
+      setEditingDocNumError(friendlyError(e));
     } finally {
       setSavingDocNum(false);
     }
@@ -3763,7 +3764,7 @@ export default function LibraryExplorerPage() {
       setFolderDefaultSort({ key: sortKey, dir: sortDir });
       setViewDefaults((prev) => scope === "user" ? { ...prev, hasUserRow: true } : { ...prev, hasOrgRow: true });
     } catch (e) {
-      await appAlert(`Couldn't save the default view: ${(e as Error).message}`);
+      await appAlert(`Couldn't save the default view: ${friendlyError(e)}`);
     } finally {
       setSavingSortDefault(false);
     }
@@ -3790,7 +3791,7 @@ export default function LibraryExplorerPage() {
       setDocLayout(res.view?.layout ?? "details");
       if (res.view?.density) setDensity(res.view.density);
     } catch (e) {
-      await appAlert(`Couldn't clear your default view: ${(e as Error).message}`);
+      await appAlert(`Couldn't clear your default view: ${friendlyError(e)}`);
     }
   };
 
@@ -5149,7 +5150,7 @@ export default function LibraryExplorerPage() {
                                               }}
                                               onBlur={() => { if (!savingTitle) void saveInlineTitle(docRecord.id!, editingTitleValue); }}
                                               disabled={savingTitle}
-                                              className="w-full text-sm px-1.5 py-0.5 rounded border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] focus:outline-none focus:ring-1 focus:ring-[var(--color-accent-ring)]"
+                                              className="w-full text-sm px-1.5 py-0.5 rounded border border-[var(--color-border-strong)] bg-[var(--color-surface-2)]"
                                             />
                                             {savingTitle && <Loader2 className="w-3 h-3 animate-spin text-[var(--color-text-muted)] shrink-0" />}
                                           </div>
@@ -5203,7 +5204,7 @@ export default function LibraryExplorerPage() {
                                               onBlur={() => { if (!savingDocNum) void saveInlineDocNumber(docRecord.id!, editingDocNumValue); }}
                                               disabled={savingDocNum}
                                               aria-label="Document number"
-                                              className={`w-full font-display text-[15px] font-semibold tabular-nums px-1.5 py-0.5 rounded border ${editingDocNumError ? "border-[var(--state-overdue)]" : "border-[var(--color-border-strong)]"} bg-[var(--color-surface)] focus:outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]/40`}
+                                              className={`w-full font-display text-[15px] font-semibold tabular-nums px-1.5 py-0.5 rounded border ${editingDocNumError ? "border-[var(--state-overdue)]" : "border-[var(--color-border-strong)]"} bg-[var(--color-surface)]`}
                                             />
                                             {savingDocNum && <Loader2 className="w-3 h-3 animate-spin text-[var(--color-text-muted)] shrink-0" />}
                                           </div>
@@ -5987,7 +5988,7 @@ function LibraryNumberingModal({ orgId, libraryId, onClose }: {
     void import("@/lib/libraryNumbering").then((m) =>
       m.getLibraryNumbering(libraryId).then((c) =>
         setCfg(c ?? { enabled: false, prefix: "", pad: 4, next_number: 1 })))
-      .catch((e: unknown) => setLoadErr(`Couldn't load the numbering settings: ${(e as Error)?.message ?? "try again"}.`));
+      .catch((e: unknown) => setLoadErr(`Couldn't load the numbering settings: ${friendlyError(e)}.`));
   }, [libraryId]);
 
   const save = async () => {
@@ -5997,7 +5998,7 @@ function LibraryNumberingModal({ orgId, libraryId, onClose }: {
       const m = await import("@/lib/libraryNumbering");
       await m.saveLibraryNumbering(orgId, libraryId, cfg);
       onClose();
-    } catch (e) { setErr((e as Error).message); }
+    } catch (e) { setErr(friendlyError(e)); }
     finally { setBusy(false); }
   };
 

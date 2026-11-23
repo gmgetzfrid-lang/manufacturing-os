@@ -13,6 +13,7 @@ import { CheckCircle2, Circle, AlertCircle, Loader2, RefreshCw } from "lucide-re
 import { estatePost } from "@/lib/estate/client";
 import type { EstateReadiness as Readiness } from "@/lib/estate/readinessServer";
 
+import { friendlyError } from "@/lib/friendlyError";
 type State = "done" | "partial" | "missing";
 interface Step { title: string; state: State; count: string; fix: React.ReactNode; why: string }
 
@@ -85,7 +86,7 @@ export default function EstateReadiness({ orgId, onConnect, connecting }: { orgI
     let alive = true;
     estatePost<Readiness>("/api/estate/readiness", { orgId })
       .then((x) => { if (alive) { setR(x); setErr(null); } })
-      .catch((e) => { if (alive) setErr((e as Error).message); });
+      .catch((e) => { if (alive) setErr(friendlyError(e)); });
     return () => { alive = false; };
   }, [orgId, tick]);
   if (err) return <div className="text-[13px] text-[var(--state-overdue)]">{err}</div>;

@@ -11,6 +11,7 @@ import React, { useState } from "react";
 import { Loader2, Sparkles, Cpu, Gauge, ArrowRightLeft, CheckCircle2, XCircle } from "lucide-react";
 import { readDrawing, newRunId, undoRun, addEquipment, type CensusRun } from "@/lib/drawingCensusClient";
 
+import { friendlyError } from "@/lib/friendlyError";
 export default function ReadDrawingPanel({ orgId, documentId, onDone }: { orgId: string; documentId: string; onDone?: () => void }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [run, setRun] = useState<{ id: string; r: CensusRun; runId: string } | null>(null);
@@ -24,7 +25,7 @@ export default function ReadDrawingPanel({ orgId, documentId, onDone }: { orgId:
       const r = await readDrawing(orgId, { documentId }, (p, n) => setBusy(n > 1 ? `Reading page ${p} of ${n}…` : "Reading the sheet with your AI model…"), { runId, runLabel: "Read one drawing with AI" });
       setRun({ id: documentId, r, runId });
       onDone?.();
-    } catch (e) { setError({ id: documentId, msg: (e as Error).message }); }
+    } catch (e) { setError({ id: documentId, msg: friendlyError(e) }); }
     finally { setBusy(null); }
   };
   const r = run?.id === documentId ? run.r : null;
@@ -102,7 +103,7 @@ function AddMissing({ orgId, documentId, onDone }: { orgId: string; documentId: 
       setState({ busy: false, note: `${r.tag} is on this drawing${made}. Later AI reads keep it.`, error: null, runId: r.journaled ? runId : null });
       setTag(""); setName("");
       onDone?.();
-    } catch (e) { setState({ busy: false, note: null, error: (e as Error).message, runId: null }); }
+    } catch (e) { setState({ busy: false, note: null, error: friendlyError(e), runId: null }); }
   };
   return (
     <div className="rounded-md border border-[var(--color-border)] p-1.5 space-y-1">
@@ -121,7 +122,7 @@ function AddMissing({ orgId, documentId, onDone }: { orgId: string; documentId: 
             const id = state.runId!;
             setState((s) => ({ ...s, busy: true }));
             void undoRun(orgId, id).then(() => { setState({ busy: false, note: "Taken back off.", error: null, runId: null }); onDone?.(); })
-              .catch((e) => setState((s) => ({ ...s, busy: false, error: (e as Error).message })));
+              .catch((e) => setState((s) => ({ ...s, busy: false, error: friendlyError(e) })));
           }} className="rounded-full border border-[color-mix(in_srgb,var(--state-overdue)_35%,transparent)] bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] text-[var(--state-overdue)] px-2 py-0.5 text-[13px] font-semibold">Undo</button>}
         </div>
       )}

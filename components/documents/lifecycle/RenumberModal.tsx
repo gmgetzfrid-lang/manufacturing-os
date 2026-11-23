@@ -10,6 +10,7 @@ import type { DocumentRecord } from "@/types/schema";
 import { useEscapeClose } from "@/components/documents/useEscapeClose";
 import { useDraft } from "@/hooks/useDraft";
 
+import { friendlyError } from "@/lib/friendlyError";
 interface RenumberModalProps {
   doc: DocumentRecord;
   orgId: string;
@@ -48,7 +49,7 @@ export default function RenumberModal(props: RenumberModalProps) {
       setReason("");
       onSuccess();
     } catch (e) {
-      setError((e as Error).message);
+      setError(friendlyError(e));
     } finally {
       setBusy(false);
     }

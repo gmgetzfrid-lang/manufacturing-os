@@ -10,6 +10,7 @@ import { Loader2 } from "lucide-react";
 import { estatePost } from "@/lib/estate/client";
 import { StatusTag } from "@/components/documents/StatusTag";
 
+import { friendlyError } from "@/lib/friendlyError";
 export default function LibraryAiSwitch({ orgId, libraryId, libraryName, excluded, canChange, onChanged, compact = false }: {
   orgId: string; libraryId: string; libraryName: string; excluded: boolean; canChange: boolean;
   onChanged?: (excluded: boolean) => void;
@@ -29,7 +30,7 @@ export default function LibraryAiSwitch({ orgId, libraryId, libraryName, exclude
       const r = await estatePost<{ excluded: boolean; purged: number }>("/api/documents/library-ai", { orgId, libraryId, excluded: next });
       setNote(r.excluded ? { text: r.purged ? `${r.purged} AI cop${r.purged === 1 ? "y" : "ies"} deleted.` : "Nothing had been sent.", bad: false } : null);
       onChanged?.(r.excluded);
-    } catch (e) { setNote({ text: (e as Error).message, bad: true }); }
+    } catch (e) { setNote({ text: friendlyError(e), bad: true }); }
     finally { setBusy(false); }
   };
   const label = "AI may read";
@@ -44,7 +45,7 @@ export default function LibraryAiSwitch({ orgId, libraryId, libraryName, exclude
           onClick={() => void flip()}
           disabled={!canChange || busy}
           title={canChange ? (on ? "Turn off: never send this library to AI" : "Turn on: allow AI to read this library") : "Only Admin and Doc Control can change this"}
-          className="group inline-flex items-center gap-2 rounded-md text-[14px] text-[var(--color-text)] disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent-ring)]"
+          className="group inline-flex items-center gap-2 rounded-md text-[14px] text-[var(--color-text)] disabled:cursor-not-allowed"
         >
           <span className={`relative inline-flex shrink-0 w-9 h-5 rounded-full transition-colors group-disabled:opacity-50 ${on ? "bg-[var(--color-main)]" : "bg-[var(--color-border-strong)]"}`}>
             <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-[var(--color-surface)] shadow grid place-items-center transition-transform ${on ? "translate-x-4" : ""}`}>

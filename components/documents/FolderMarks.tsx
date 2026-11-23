@@ -13,6 +13,7 @@ import { estatePost } from "@/lib/estate/client";
 import type { FolderMarkState, LevelMeaning, MarkKind, PlanRow } from "@/lib/estate/folderMarks";
 import { useEscapeClose } from "@/components/documents/useEscapeClose";
 
+import { friendlyError } from "@/lib/friendlyError";
 type Info = { own: FolderMarkState; inherited: FolderMarkState; units: Array<{ code: string; label: string }>; types: string[]; suggestion: { kind: MarkKind; value: string; ref?: string } | null };
 
 const chip = "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[13px] font-semibold";
@@ -30,7 +31,7 @@ export function FolderMarkBar({ orgId, folderId, onChanged }: { orgId: string; f
     let live = true;
     estatePost<Info>("/api/estate/folder-mark", { orgId, action: "info", folderId })
       .then((d) => { if (live) { setInfo({ id: folderId, data: d }); setError(null); } })
-      .catch((e) => { if (live) setError((e as Error).message); });
+      .catch((e) => { if (live) setError(friendlyError(e)); });
     return () => { live = false; };
   }, [orgId, folderId]);
 
@@ -42,7 +43,7 @@ export function FolderMarkBar({ orgId, folderId, onChanged }: { orgId: string; f
       setInfo((cur) => (cur && cur.id === folderId ? { id: folderId, data: { ...cur.data, own: { ...r.state, area: r.state.area ? { code: r.state.area.code, label: cur.data.units.find((u) => u.code === r.state.area!.code)?.label ?? r.state.area.code } : undefined } } } : cur));
       setEditing(null); setText(""); setName("");
       onChanged?.();
-    } catch (e) { setError((e as Error).message); }
+    } catch (e) { setError(friendlyError(e)); }
     finally { setBusy(false); }
   };
 
@@ -105,7 +106,7 @@ export function LibrarySetup({ orgId, libraryId, libraryName, onDone, onClose }:
   const preview = async () => {
     setBusy("Looking at the folders…"); setError(null); setResult(null);
     try { setRows((await estatePost<{ rows: PlanRow[] }>("/api/estate/folder-mark", { orgId, action: "plan", libraryId, levels })).rows); }
-    catch (e) { setError((e as Error).message); } finally { setBusy(null); }
+    catch (e) { setError(friendlyError(e)); } finally { setBusy(null); }
   };
   const apply = async () => {
     setError(null);
@@ -119,7 +120,7 @@ export function LibrarySetup({ orgId, libraryId, libraryName, onDone, onClose }:
       }
       setResult(`${tot.marked} folders marked · ${tot.created} new in the registry · ${tot.skipped} left as they were. Documents underneath now sit under their area and equipment on the map.`);
       onDone?.();
-    } catch (e) { setError((e as Error).message); } finally { setBusy(null); }
+    } catch (e) { setError(friendlyError(e)); } finally { setBusy(null); }
   };
   const counts = rows ? { area: rows.filter((r) => r.kind === "area" && r.status !== "unmatched").length, type: rows.filter((r) => r.kind === "type").length, eq: rows.filter((r) => r.kind === "equipment" && r.status !== "unmatched").length, made: rows.filter((r) => r.status === "new").length, no: rows.filter((r) => r.status === "unmatched").length } : null;
   return (

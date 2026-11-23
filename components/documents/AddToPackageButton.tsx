@@ -10,6 +10,7 @@ import { listWorkPackages, addDocumentToPackage, createWorkPackage } from "@/lib
 import { appAlert, appPrompt } from "@/components/providers/DialogProvider";
 import type { DocumentRecord } from "@/types/schema";
 
+import { friendlyError } from "@/lib/friendlyError";
 export default function AddToPackageButton({ doc, orgId, userId, userName, openSignal = 0, hideTrigger = false }: {
   doc: DocumentRecord; orgId: string; userId: string; userName?: string | null;
   /** Bump to open the list from elsewhere (a More menu); hideTrigger drops the button. */
@@ -54,7 +55,7 @@ export default function AddToPackageButton({ doc, orgId, userId, userName, openS
       setAddedTo(name);
       setTimeout(() => { setAddedTo(null); setOpen(false); }, 1400);
     } catch (e) {
-      await appAlert({ message: `Couldn't add to the package: ${(e as Error).message}`, tone: "danger" });
+      await appAlert({ message: `Couldn't add to the package: ${friendlyError(e)}`, tone: "danger" });
     }
   };
 
@@ -76,7 +77,7 @@ export default function AddToPackageButton({ doc, orgId, userId, userName, openS
       setAddedTo(name.trim());
       setTimeout(() => { setAddedTo(null); setOpen(false); }, 1400);
     } catch (e) {
-      await appAlert({ message: `Couldn't create the package: ${(e as Error).message}`, tone: "danger" });
+      await appAlert({ message: `Couldn't create the package: ${friendlyError(e)}`, tone: "danger" });
     }
   };
 

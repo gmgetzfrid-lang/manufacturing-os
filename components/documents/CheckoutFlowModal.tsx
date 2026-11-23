@@ -39,6 +39,7 @@ import { useEscapeClose } from "@/components/documents/useEscapeClose";
 import { useDraft } from "@/hooks/useDraft";
 import LoadingBlock from "@/components/ui/LoadingBlock";
 
+import { friendlyError } from "@/lib/friendlyError";
 // ISO-style document control: every checkout must say WHY. The category is the
 // machine-readable purpose (filterable, reportable); the reason is the
 // human-readable note everyone sees on the lock badge, the checkouts register,
@@ -170,7 +171,7 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
       onClose();
     } catch (e) {
       console.error(e);
-      showToast({ type: "error", title: "Force-unlock failed", message: (e as Error).message });
+      showToast({ type: "error", title: "Force-unlock failed", message: friendlyError(e) });
       setProcessing(false);
     }
   };
@@ -554,7 +555,7 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
       onClose();
     } catch (e: unknown) {
       console.error(e);
-      showToast({ type: "error", title: "It didn't check out", message: (e as Error).message });
+      showToast({ type: "error", title: "It didn't check out", message: friendlyError(e) });
       setProcessing(false);
     }
   };
@@ -595,7 +596,7 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
       onClose();
     } catch (e) {
       console.error(e);
-      showToast({ type: "error", title: "The quick hold didn't go through", message: (e as Error).message });
+      showToast({ type: "error", title: "The quick hold didn't go through", message: friendlyError(e) });
       setQuickBusy(false);
     }
   };

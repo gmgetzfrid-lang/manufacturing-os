@@ -17,6 +17,7 @@ import type { DocumentRecord } from "@/types/schema";
 import dynamic from "next/dynamic";
 import { vDim, vPanel, vKicker, vTitle, vIcon, vClose } from "@/components/viewers/viewerChrome";
 import { humanDate } from "@/components/documents/StatusTag";
+import { friendlyError } from "@/lib/friendlyError";
 // react-pdf is heavy; load the diff engine only when a compare opens.
 const PdfRevisionDiff = dynamic(() => import("@/components/viewers/PdfRevisionDiff"), { ssr: false });
 
@@ -84,7 +85,7 @@ export default function CompareRevisionsModal({
         setCompareId(cmp);
         setBaseId(base);
       } catch (e) {
-        if (alive) setError((e as Error).message);
+        if (alive) setError(friendlyError(e));
       } finally {
         if (alive) setLoading(false);
       }
@@ -111,7 +112,7 @@ export default function CompareRevisionsModal({
         setError(null);
         setUrls({ base: b, compare: c });
       } catch (e) {
-        if (alive) setError((e as Error).message);
+        if (alive) setError(friendlyError(e));
       }
     })();
     return () => { alive = false; };

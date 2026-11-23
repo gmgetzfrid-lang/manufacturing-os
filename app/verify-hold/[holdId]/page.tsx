@@ -38,7 +38,7 @@ export default function VerifyHoldPage() {
       }
       setResult((await res.json()) as HoldStatus);
     } catch (e) {
-      setError((e as Error).message);
+      setError(friendlyError(e));
       setResult(null);
     } finally {
       setLoading(false);
@@ -64,7 +64,7 @@ export default function VerifyHoldPage() {
           <div className="text-white/90">
             <ShieldQuestion className="w-16 h-16 mx-auto mb-4 opacity-80" />
             <h1 className="text-[34px] leading-[1.05] tracking-[-0.02em] font-bold mb-3">Can&apos;t verify this tag</h1>
-            <p className="text-[15px] opacity-90">{friendlyError(error)}</p>
+            <p className="text-[15px] opacity-90">{error}</p>
             <p className="text-[13px] opacity-70 mt-4">
               Treat the hold as active until Document Control confirms otherwise.
             </p>

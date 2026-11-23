@@ -121,7 +121,7 @@ export default function CheckoutsPage() {
         setOverlaps([]);
       }
     } catch (e) {
-      setError((e as Error).message || "Failed to load checkouts");
+      setError(friendlyError(e));
     } finally {
       setLoading(false);
     }

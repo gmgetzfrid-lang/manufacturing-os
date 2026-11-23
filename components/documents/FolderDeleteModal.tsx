@@ -15,6 +15,7 @@ import React, { useEffect, useState } from "react";
 import { AlertTriangle, FolderX, FolderOutput, Loader2, Trash2, X } from "lucide-react";
 import { previewFolderDelete, deleteFolder, type FolderDeletePreview } from "@/lib/libraryCollections";
 
+import { friendlyError } from "@/lib/friendlyError";
 export interface FolderDeleteResult {
   mode: "all" | "lift";
   /** Every folder id that is gone (whole branches in "all" mode). */
@@ -42,7 +43,7 @@ export default function FolderDeleteModal({
     let live = true;
     Promise.all(folders.map((f) => previewFolderDelete(f.id, orgId))).then(
       (p) => { if (live) setPreviews(p); },
-      (e) => { if (live) setLoadError((e as Error).message); },
+      (e) => { if (live) setLoadError(friendlyError(e)); },
     );
     return () => { live = false; };
   }, [folders, orgId]);
@@ -87,7 +88,7 @@ export default function FolderDeleteModal({
       }
       onDone({ mode, removedFolderIds: removed, rootIds: folders.map((f) => f.id) });
     } catch (e) {
-      setError((e as Error).message);
+      setError(friendlyError(e));
       setRunning(null);
       if (removed.length) onDone({ mode, removedFolderIds: removed, rootIds: folders.map((f) => f.id) });
     }
@@ -149,7 +150,7 @@ export default function FolderDeleteModal({
                   Type <span className="font-semibold text-[var(--state-overdue)]">DELETE</span> to permanently delete {docs.toLocaleString()} documents
                 </label>
                 <input value={typed} onChange={(e) => setTyped(e.target.value)} autoFocus disabled={!!running}
-                  className="w-full h-9 px-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-sm focus:outline-none focus:border-[var(--state-overdue)]" />
+                  className="w-full h-9 px-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-sm" />
               </div>
             )}
           </div>

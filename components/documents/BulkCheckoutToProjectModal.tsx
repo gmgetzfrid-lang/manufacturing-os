@@ -24,6 +24,7 @@ import IsoGuidance from "@/components/ui/IsoGuidance";
 import { useEscapeClose } from "@/components/documents/useEscapeClose";
 import { useDraft } from "@/hooks/useDraft";
 
+import { friendlyError } from "@/lib/friendlyError";
 interface BulkCheckoutToProjectModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -141,7 +142,7 @@ export default function BulkCheckoutToProjectModal({
       setDescription("");
       onClose();
     } catch (e) {
-      setError((e as Error).message);
+      setError(friendlyError(e));
     } finally {
       setBusy(false);
     }

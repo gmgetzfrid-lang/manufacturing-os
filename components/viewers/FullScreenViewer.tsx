@@ -71,6 +71,7 @@ import { useViewerPanZoom } from "@/lib/useViewerPanZoom";
 import "react-pdf/dist/Page/AnnotationLayer.css";
 import "react-pdf/dist/Page/TextLayer.css";
 
+import { friendlyError } from "@/lib/friendlyError";
 // Serve the pdfjs worker from our own /public so the viewer doesn't depend
 // on a CDN at all. The file is copied from node_modules during build via
 // `scripts/copy-pdfjs-worker.mjs` (wired into `prebuild`/`predev`). CDN
@@ -250,7 +251,7 @@ export default function FullScreenViewer({
         if (!cancelled && shed) {
           setArchivedInfo(shed);
         } else if (!cancelled && (e as Error).name !== "AbortError") {
-          setFetchError((e as Error).message || "Failed to load PDF");
+          setFetchError(friendlyError(e));
         }
       }
     })();
@@ -884,7 +885,7 @@ export default function FullScreenViewer({
       else await printDocumentPdf(ctx);
       setPending(null);
     } catch (e) {
-      setActionError((e as Error).message || "Action failed");
+      setActionError(friendlyError(e));
     } finally { setActionBusy(false); }
   };
   const requestDownload = () => {
@@ -1097,7 +1098,7 @@ export default function FullScreenViewer({
       setPending(null);
     } catch (e) {
       console.error("Markup download failed", e);
-      setMarkupError((e as Error).message || "Failed to export markup");
+      setMarkupError(friendlyError(e));
     } finally { setMarkupBusy(false); }
   };
 

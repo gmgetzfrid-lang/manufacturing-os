@@ -11,6 +11,7 @@ import { recordSignature, type SignatureIntent } from "@/lib/eSignatures";
 import { useRole } from "@/components/providers/RoleContext";
 import { useToast } from "@/components/providers/ToastProvider";
 
+import { friendlyError } from "@/lib/friendlyError";
 export interface RequestSignatureDetail {
   resourceType: string;
   resourceId: string;
@@ -68,7 +69,7 @@ export default function SignatureCaptureHost() {
       showToast({ type: "success", title: "Signed", message: `${intent}. Recorded with your name and the time.` });
       setReq(null);
     } catch (e) {
-      showToast({ type: "error", title: "Couldn't record signature", message: (e as Error).message });
+      showToast({ type: "error", title: "Couldn't record signature", message: friendlyError(e) });
     } finally { setBusy(false); }
   };
 

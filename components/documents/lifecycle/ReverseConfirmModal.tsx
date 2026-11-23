@@ -17,6 +17,7 @@ import type { TimelineEvent } from "@/lib/timeline";
 import { useEscapeClose } from "@/components/documents/useEscapeClose";
 import { useDraft } from "@/hooks/useDraft";
 
+import { friendlyError } from "@/lib/friendlyError";
 interface ReverseConfirmModalProps {
   event: TimelineEvent;
   orgId: string;
@@ -77,7 +78,7 @@ export default function ReverseConfirmModal({
         onSuccess();
       }
     } catch (e) {
-      setError((e as Error).message);
+      setError(friendlyError(e));
     } finally {
       setBusy(false);
     }

@@ -20,6 +20,7 @@ import {
 } from "@/lib/collections";
 import CollectionModal from "./CollectionModal";
 
+import { friendlyError } from "@/lib/friendlyError";
 interface CollectionsStripProps {
   orgId: string;
   libraryId: string;
@@ -75,7 +76,7 @@ export default function CollectionsStrip({
       setCollections(list);
       setItemsMap(await listItemsForCollections(list.map((c) => c.id)));
     } catch (e) {
-      setError((e as Error).message);
+      setError(friendlyError(e));
     } finally { setLoading(false); }
   }, [orgId, libraryId, userId, folderId]);
 

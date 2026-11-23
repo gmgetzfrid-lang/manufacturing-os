@@ -27,6 +27,7 @@ import plainError from "@/components/documents/plainError";
 import { computeUniquenessKey } from "@/lib/uniqueness";
 import { hashFile, findExistingCopies, type ExistingCopy } from "@/lib/duplicateFiles";
 
+import { friendlyError } from "@/lib/friendlyError";
 export interface CustomColumnDef {
   key: string;
   label: string;
@@ -549,7 +550,7 @@ export default function MetadataStagingModal({
           : (res.failed ?? []));
       }
     } catch (e) {
-      setError(ctl.signal.aborted ? "Upload stopped." : ((e as Error).message || "Upload failed."));
+      setError(ctl.signal.aborted ? "Upload stopped." : (friendlyError(e)));
     } finally {
       // ALWAYS. The parent closes the modal on a clean run, but it keeps the
       // modal open when some files failed — and it resolves either way. Left

@@ -18,6 +18,7 @@ import { pendingDrawings, readDrawing, newRunId } from "@/lib/drawingCensusClien
 import type { BridgeConfig } from "@/lib/equipmentBridgeServer";
 import { useEscapeClose } from "@/components/documents/useEscapeClose";
 
+import { friendlyError } from "@/lib/friendlyError";
 interface DocInfo { number: string | null; title: string | null; rev: string | null; sheet: string | null; sheetTotal: number | null }
 interface SuggestionRow {
   document_id: string;
@@ -112,7 +113,7 @@ export default function EquipmentSweepModal({ orgId, libraryId, libraryName, fol
         .then((p) => setUnread(p.pending.filter((d) => here.has(d.knowledgeDocumentId))))
         .catch(() => setUnread([]));
       return list;
-    } catch (e) { setError((e as Error).message); return null; }
+    } catch (e) { setError(friendlyError(e)); return null; }
     finally { setLoading(false); }
   }, [orgId, libraryId, folderId, authed]);
 
@@ -124,7 +125,7 @@ export default function EquipmentSweepModal({ orgId, libraryId, libraryName, fol
       if (!res.ok) throw new Error((await res.json()).error ?? `HTTP ${res.status}`);
       if (!keepChoices) setChoice({});
       await refresh();
-    } catch (e) { setError((e as Error).message); }
+    } catch (e) { setError(friendlyError(e)); }
     finally { setSweeping(false); }
   }, [authed, orgId, libraryId, folderId, refresh]);
 
@@ -167,7 +168,7 @@ export default function EquipmentSweepModal({ orgId, libraryId, libraryName, fol
       if (!res.ok) throw new Error((await res.json()).error ?? `HTTP ${res.status}`);
       setFolderUnit(unitCode);
       await sweep();
-    } catch (e) { setError((e as Error).message); }
+    } catch (e) { setError(friendlyError(e)); }
   };
   // A wrong link off a sheet (a title-block number, another unit's equipment).
   const unlink = async (documentId: string, tag: string) => {
@@ -178,7 +179,7 @@ export default function EquipmentSweepModal({ orgId, libraryId, libraryName, fol
       if (!res.ok) throw new Error((await res.json()).error ?? `HTTP ${res.status}`);
       await refresh();
       onApplied();
-    } catch (e) { setError((e as Error).message); }
+    } catch (e) { setError(friendlyError(e)); }
     finally { setUnlinking(null); }
   };
 
@@ -202,7 +203,7 @@ export default function EquipmentSweepModal({ orgId, libraryId, libraryName, fol
       const res = await fetch("/api/equipment-bridge", { method: "POST", headers, body: JSON.stringify({ action: "settings", orgId, libraryId, ...next }) });
       if (!res.ok) throw new Error((await res.json()).error ?? `HTTP ${res.status}`);
       if (thenRead) await sweep();
-    } catch (e) { setError((e as Error).message); }
+    } catch (e) { setError(friendlyError(e)); }
   };
 
   const unitName = useCallback((code: string | null | undefined) => {
@@ -292,7 +293,7 @@ export default function EquipmentSweepModal({ orgId, libraryId, libraryName, fol
       setChoice({});
       await refresh();
       onApplied();
-    } catch (e) { setError((e as Error).message); }
+    } catch (e) { setError(friendlyError(e)); }
     finally { setApplying(false); }
   };
 
