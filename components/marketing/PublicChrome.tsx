@@ -10,7 +10,7 @@ const wrap = "max-w-[1200px] mx-auto px-4 sm:px-6";
 export function Logo() {
   return (
     <span className="flex items-center gap-2.5">
-      <span className="w-8 h-8 rounded-md grid place-items-center bg-[var(--color-text)] text-[var(--color-band)]">
+      <span className="w-8 h-8 rounded-md grid place-items-center bg-[var(--color-text)] text-[var(--color-canvas)]">
         <Layout className="w-4 h-4" />
       </span>
       <span className="whitespace-nowrap font-display text-[18px] font-semibold text-[var(--color-text)]">Manufacturing OS</span>
