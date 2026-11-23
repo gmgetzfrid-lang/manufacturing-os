@@ -5,26 +5,16 @@ import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import { useRole } from '@/components/providers/RoleContext';
 import { OrgDraftingSettings, FormFieldConfig, SelectOption, CustomCategoryConfig, CustomFieldDef, CustomFieldType } from '@/types/schema';
-import {
-  Loader2,
-  Plus,
-  Trash2,
-  Save,
-  GripVertical,
-  ArrowUp,
-  ArrowDown,
-  ClipboardList,
-  Factory,
-  Flag,
-  BellRing,
-  LayoutList,
-} from 'lucide-react';
+import { Plus, Trash2, ArrowUp, ArrowDown } from 'lucide-react';
 import { PageShell } from '@/components/ui/PageShell';
-import { PageHero, PageBody, heroPrimary } from '@/components/ui/PageHero';
-import { sheet, field, fieldBox, btnIcon, btnRow, btnQuiet, FormRow, Section, Problem } from '@/components/admin/kit';
+import { PageHero, PageBody } from '@/components/ui/PageHero';
+import { sheet, field, fieldBox, btnIcon, btnRow, btnQuiet, FormRow, Section } from '@/components/admin/kit';
+import { said } from '@/components/admin/said';
+import { Button, useActionFeedback } from '@/components/ui/Button';
+import { SkeletonRows } from '@/components/ui/Skeleton';
+import { ErrorNote } from '@/components/ui/ErrorNote';
 import HelpTooltip from '@/components/ui/HelpTooltip';
 
-import LoadingBlock from '@/components/ui/LoadingBlock';
 import { appAlert, appConfirm } from '@/components/providers/DialogProvider';
 
 const DEFAULT_SETTINGS: OrgDraftingSettings = {
@@ -65,8 +55,10 @@ export default function DraftingConfigPage() {
   const { activeRole, activeOrgId } = useRole();
   const [settings, setSettings] = useState<OrgDraftingSettings | null>(null);
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const saveFx = useActionFeedback();
+  // What's saved, so Save stays quiet until something changes.
+  const [savedJson, setSavedJson] = useState<string>("");
+  const [loadError, setLoadError] = useState<unknown>(null);
   const [reloadTick, setReloadTick] = useState(0);
 
   // --- ACCESS GUARD ---
@@ -92,10 +84,12 @@ export default function DraftingConfigPage() {
           .eq('key', 'drafting')
           .maybeSingle();
         if (error) throw error;
-        setSettings(data ? (data.data as OrgDraftingSettings) : DEFAULT_SETTINGS);
+        const loaded = data ? (data.data as OrgDraftingSettings) : DEFAULT_SETTINGS;
+        setSettings(loaded);
+        setSavedJson(JSON.stringify(loaded));
       } catch (e) {
         console.error("Failed to load settings:", e);
-        setLoadError(e instanceof Error ? e.message : String((e as { message?: string })?.message ?? "Couldn't load the form settings."));
+        setLoadError(e);
       } finally {
         setLoading(false);
       }
@@ -105,18 +99,17 @@ export default function DraftingConfigPage() {
 
   const handleSave = async () => {
     if (!activeOrgId || !settings) return;
-    setSaving(true);
     try {
-      const { error } = await supabase
-        .from('org_configurations')
-        .upsert({ org_id: activeOrgId, key: 'drafting', data: settings }, { onConflict: 'org_id,key' });
-      if (error) throw error;
-      await appAlert("Configuration saved successfully.");
+      await saveFx.run(async () => {
+        const { error } = await supabase
+          .from('org_configurations')
+          .upsert({ org_id: activeOrgId, key: 'drafting', data: settings }, { onConflict: 'org_id,key' });
+        if (error) throw error;
+      });
+      setSavedJson(JSON.stringify(settings));
     } catch (e) {
       console.error("Save failed:", e);
-      await appAlert({ title: "Couldn't save the form settings", message: e instanceof Error ? e.message : String((e as { message?: string })?.message ?? "Try again."), tone: "danger" });
-    } finally {
-      setSaving(false);
+      await appAlert({ title: "Couldn't save the request form", message: said(e), tone: "danger" });
     }
   };
 
@@ -149,7 +142,7 @@ export default function DraftingConfigPage() {
 
   const addOption = (sectionKey: FormSectionKey) => {
     if (!settings) return;
-    const newOptions = [...settings[sectionKey].options, { label: "New Option", value: "" }];
+    const newOptions = [...settings[sectionKey].options, { label: "New option", value: "" }];
     updateSection(sectionKey, { options: newOptions });
   };
 
@@ -160,20 +153,21 @@ export default function DraftingConfigPage() {
   };
 
   if (loading) {
-    return <PageShell width="work"><PageHero kicker="Admin · Request forms" title="Request forms" overlap={false} /><LoadingBlock what="the request form settings" /></PageShell>;
+    return <PageShell width="work"><PageHero kicker="Admin · Request forms" title="Request forms" /><PageBody><SkeletonRows rows={5} cols={1} what="the request form" /></PageBody></PageShell>;
   }
 
   if (!settings) {
     return (
       <PageShell width="work">
-        <PageHero kicker="Admin · Request forms" title="Couldn't load the form settings." overlap={false} />
-        <Problem className="mt-6" retry={() => setReloadTick((n) => n + 1)}>Couldn&apos;t load the request form settings{loadError ? `: ${loadError}` : "."}</Problem>
+        <PageHero kicker="Admin · Request forms" title="Couldn't load the request form." />
+        <PageBody><ErrorNote error={loadError} title="Couldn't load the request form." onRetry={() => setReloadTick((n) => n + 1)} /></PageBody>
       </PageShell>
     );
   }
 
   const extra = (settings.customCategories ?? []).length;
-  const answer = "What a request asks for.";
+  const dirty = JSON.stringify(settings) !== savedJson;
+  const answer = dirty ? "Not saved yet." : "What a request asks for.";
 
   return (
     <PageShell width="work">
@@ -181,16 +175,17 @@ export default function DraftingConfigPage() {
           kicker="Admin · Request forms"
           title={answer}
           sub={`The drafting request form${extra > 0 ? `, with ${extra} custom section${extra === 1 ? "" : "s"}` : ""}. Changes apply to new requests once saved.`}
+          factsHero="none"
           facts={[
             { label: "Request types", value: settings.requestTypes.options.length },
             { label: "Units", value: settings.units.options.length },
             { label: "Priorities", value: settings.priorities.options.length },
           ]}
           primary={
-            <button type="button" onClick={handleSave} disabled={saving} className={heroPrimary}>
-              {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+            <Button {...saveFx.state} doneLabel="Saved" onClick={() => void handleSave()} disabled={!dirty && !saveFx.done}
+              title={!dirty ? "Nothing changed yet" : undefined}>
               Save changes
-            </button>
+            </Button>
           }
         />
 
@@ -200,8 +195,7 @@ export default function DraftingConfigPage() {
           {/* SECTION: REQUEST TYPES */}
           <ConfigSection 
             title="Request types"
-            icon={ClipboardList}
-            desc="Define the categories of work available (e.g. ISO, RFI)."
+            desc="The kinds of work people can ask for, like ISO or RFI."
             config={settings.requestTypes}
             onLabelChange={(val) => updateSection('requestTypes', { label: val })}
             onAddOption={() => addOption('requestTypes')}
@@ -211,14 +205,14 @@ export default function DraftingConfigPage() {
                 <input 
                   value={opt.label}
                   onChange={(e) => updateOption('requestTypes', i, 'label', e.target.value)}
-                  className={`${fieldBox} h-10 text-[15px] flex-1 min-w-0`}
+                  className={`${fieldBox} h-10 pointer-coarse:h-11 text-[15px] max-sm:text-[16px] flex-1 min-w-0`}
                   placeholder="Display label"
                   aria-label="Display label"
                 />
                 <input 
                   value={opt.value}
                   onChange={(e) => updateOption('requestTypes', i, 'value', e.target.value)}
-                  className={`${fieldBox} h-10 text-[15px] w-24 sm:w-36 shrink-0 tabular-nums`}
+                  className={`${fieldBox} h-10 pointer-coarse:h-11 text-[15px] max-sm:text-[16px] w-24 sm:w-36 shrink-0 tabular-nums`}
                   placeholder="Value (ID)"
                   aria-label="Value (ID)"
                 />
@@ -229,8 +223,7 @@ export default function DraftingConfigPage() {
           {/* SECTION: UNITS */}
           <ConfigSection 
             title="Units and areas"
-            icon={Factory}
-            desc="Define the list of selectable plant areas or departments."
+            desc="The plant areas or departments a request can be for."
             config={settings.units}
             onLabelChange={(val) => updateSection('units', { label: val })}
             onAddOption={() => addOption('units')}
@@ -240,14 +233,14 @@ export default function DraftingConfigPage() {
                 <input 
                   value={opt.label}
                   onChange={(e) => updateOption('units', i, 'label', e.target.value)}
-                  className={`${fieldBox} h-10 text-[15px] flex-1 min-w-0`}
+                  className={`${fieldBox} h-10 pointer-coarse:h-11 text-[15px] max-sm:text-[16px] flex-1 min-w-0`}
                   placeholder="Unit name"
                   aria-label="Unit name"
                 />
                 <input 
                   value={opt.value}
                   onChange={(e) => updateOption('units', i, 'value', e.target.value)}
-                  className={`${fieldBox} h-10 text-[15px] w-24 sm:w-36 shrink-0 tabular-nums`}
+                  className={`${fieldBox} h-10 pointer-coarse:h-11 text-[15px] max-sm:text-[16px] w-24 sm:w-36 shrink-0 tabular-nums`}
                   placeholder="Code"
                   aria-label="Code"
                 />
@@ -259,8 +252,7 @@ export default function DraftingConfigPage() {
           {/* SECTION: PRIORITIES */}
           <ConfigSection
             title="Priority levels"
-            icon={Flag}
-            desc="Define urgency levels. Value must be numeric (1 = Highest)."
+            desc="How urgent a request is. The number is stored; 1 is the most urgent."
             config={settings.priorities}
             onLabelChange={(val) => updateSection('priorities', { label: val })}
             onAddOption={() => addOption('priorities')}
@@ -270,7 +262,7 @@ export default function DraftingConfigPage() {
                 <input 
                   value={opt.label}
                   onChange={(e) => updateOption('priorities', i, 'label', e.target.value)}
-                  className={`${fieldBox} h-10 text-[15px] flex-1 min-w-0`}
+                  className={`${fieldBox} h-10 pointer-coarse:h-11 text-[15px] max-sm:text-[16px] flex-1 min-w-0`}
                   placeholder="Level description"
                   aria-label="Level description"
                 />
@@ -278,7 +270,7 @@ export default function DraftingConfigPage() {
                   type="number"
                   value={opt.value}
                   onChange={(e) => updateOption('priorities', i, 'value', Number(e.target.value))}
-                  className={`${fieldBox} h-10 text-[15px] w-24 shrink-0 tabular-nums`}
+                  className={`${fieldBox} h-10 pointer-coarse:h-11 text-[15px] max-sm:text-[16px] w-24 shrink-0 tabular-nums`}
                   placeholder="Level number"
                   aria-label="Level number"
                 />
@@ -287,7 +279,7 @@ export default function DraftingConfigPage() {
           />
 
           {/* SECTION: REQUEST ROUTING */}
-          <Section label="Request routing" icon={BellRing}>
+          <Section label="Who hears about new requests">
             <div className={sheet}>
               <label className="flex items-start gap-3 cursor-pointer px-4 sm:px-5 py-4">
                 <input
@@ -299,11 +291,11 @@ export default function DraftingConfigPage() {
                       routing: { ...settings.routing, adminsAlsoReceiveWhenSupervisorSet: e.target.checked },
                     })
                   }
-                  className="mt-1 w-4 h-4 accent-[var(--color-main)]"
+                  className="mt-1 w-4 h-4"
                 />
                 <span>
-                  <span className="block text-[15px] font-semibold text-[var(--color-text)]">Keep Admins notified when a Drafting Supervisor is set</span>
-                  <span className="block text-[14px] text-[var(--color-text-muted)] mt-0.5">Otherwise new-request notices go only to the Drafting Supervisor. With no supervisor, Admins always get them.</span>
+                  <span className="block text-[15px] font-semibold text-[var(--color-text)]">Keep admins notified when there is a drafting supervisor</span>
+                  <span className="block text-[14px] text-[var(--color-text-muted)] mt-0.5">Otherwise new-request notices go only to the drafting supervisor. With no supervisor, admins always get them.</span>
                 </span>
               </label>
             </div>
@@ -322,8 +314,7 @@ export default function DraftingConfigPage() {
 }
 
 function ConfigSection({
-  title, 
-  icon,
+  title,
   desc, 
   config, 
   onLabelChange, 
@@ -332,7 +323,6 @@ function ConfigSection({
   renderOption
 }: {
   title: string;
-  icon: React.ComponentType<{ className?: string }>;
   desc: string;
   config: FormFieldConfig;
   onLabelChange: (val: string) => void;
@@ -341,14 +331,13 @@ function ConfigSection({
   renderOption: (opt: SelectOption, idx: number) => React.ReactNode;
 }) {
   return (
-    <Section label={title} icon={icon} count={config.options.length} action={<span className="text-[13px] text-[var(--color-text-muted)] max-sm:hidden">{desc}</span>}>
+    <Section label={<>{title} <HelpTooltip>{desc}</HelpTooltip></>} count={config.options.length}>
       <div className={sheet}>
         <FormRow label="Form label" htmlFor={`label-${title}`}>
           <input id={`label-${title}`} value={config.label} onChange={(e) => onLabelChange(e.target.value)} className={`${field} font-semibold`} />
         </FormRow>
         <div className="border-t border-[var(--color-border)] px-4 sm:px-5 pt-3 pb-4">
           <div className="flex items-center gap-2 pb-1.5 text-[13px] font-semibold text-[var(--color-text-muted)]">
-            <span className="w-4 shrink-0 max-sm:hidden" />
             <span className="flex-1">Shown as</span>
             <span className="w-24 sm:w-36 shrink-0">Stored as</span>
             <span className="w-8 shrink-0" />
@@ -356,7 +345,6 @@ function ConfigSection({
           <div className="space-y-2">
             {config.options.map((opt, i) => (
               <div key={i} className="flex items-center gap-2 group">
-                <GripVertical className="w-4 h-4 text-[var(--color-text-faint)] cursor-move shrink-0 max-sm:hidden" />
                 {renderOption(opt, i)}
                 <button type="button" aria-label={`Remove option ${i + 1}`} onClick={() => onRemoveOption(i)} className={`${btnIcon} hover:text-[var(--state-overdue)]`}>
                   <Trash2 className="w-4 h-4" />
@@ -393,7 +381,7 @@ function CustomCategoriesSection({
     onChange(categories.map((c, i) => (i === idx ? { ...c, ...patch } : c)));
   };
   const removeCategory = async (idx: number) => {
-    if (!(await appConfirm({ message: `Remove "${categories[idx].label}" and all its fields? Tickets created before today keep their stored values.`, tone: "danger" }))) return;
+    if (!(await appConfirm({ message: `Remove "${categories[idx].label}" and all its fields? Requests made before keep what was filled in. It's gone from the form once you save.`, tone: "danger", confirmLabel: "Remove" }))) return;
     onChange(categories.filter((_, i) => i !== idx));
   };
   const moveCategory = (idx: number, dir: -1 | 1) => {
@@ -405,11 +393,11 @@ function CustomCategoriesSection({
   };
 
   return (
-    <Section icon={LayoutList} count={categories.length} label={<span className="inline-flex items-center gap-2">Custom sections <HelpTooltip>Sections with your own fields (for example Inspection type, Equipment tag, MOC phase). Each one becomes its own section on the request form.</HelpTooltip></span>}
+    <Section count={categories.length} label={<span className="inline-flex items-center gap-2">Custom sections <HelpTooltip>Sections with your own fields (for example Inspection type, Equipment tag, MOC phase). Each one becomes its own section on the request form.</HelpTooltip></span>}
       action={<button type="button" onClick={addCategory} className={btnQuiet}><Plus className="w-3.5 h-3.5" /> Add section</button>}>
       <div className="space-y-4">
         {categories.length === 0 && (
-          <div className={`${sheet} px-4 py-6 text-center text-[15px] text-[var(--color-text-muted)]`}>No custom sections yet.</div>
+          <div className={`${sheet} px-4 py-6 text-center text-[15px] text-[var(--color-text-muted)]`}>The form has only the standard sections.</div>
         )}
         {categories.map((cat, idx) => (
           <CategoryCard
@@ -457,16 +445,16 @@ function CategoryCard({
           value={cat.label}
           onChange={(e) => onChange({ label: e.target.value })}
           aria-label="Section name"
-          className={`${fieldBox} h-10 text-[15px] flex-1 min-w-[160px] font-semibold`}
+          className={`${fieldBox} h-10 pointer-coarse:h-11 text-[15px] max-sm:text-[16px] flex-1 min-w-[160px] font-semibold`}
           placeholder="Section name"
         />
         <label className="inline-flex items-center gap-1.5 text-[14px] text-[var(--color-text)] px-1">
-          <input type="checkbox" checked={cat.enabled} onChange={(e) => onChange({ enabled: e.target.checked })} className="w-4 h-4 accent-[var(--color-main)]" />
+          <input type="checkbox" checked={cat.enabled} onChange={(e) => onChange({ enabled: e.target.checked })} className="w-4 h-4" />
           Shown on the form
         </label>
         <button type="button" onClick={onMoveUp} disabled={!canMoveUp} aria-label="Move up" className={btnIcon}><ArrowUp className="w-4 h-4" /></button>
         <button type="button" onClick={onMoveDown} disabled={!canMoveDown} aria-label="Move down" className={btnIcon}><ArrowDown className="w-4 h-4" /></button>
-        <button type="button" onClick={onRemove} aria-label={`Remove ${cat.label}`} className={`${btnIcon} hover:text-[var(--state-overdue)]`}>
+        <button type="button" onClick={onRemove} aria-label={`Remove ${cat.label}`} title="Remove the section" className={`${btnIcon} hover:text-[var(--state-overdue)]`}>
           <Trash2 className="w-4 h-4" />
         </button>
       </div>
@@ -518,18 +506,18 @@ function FieldEditor({
           onChange={(e) => onChange({ label: e.target.value })}
           placeholder="Field label"
           aria-label="Field label"
-          className={`${fieldBox} h-10 text-[15px] flex-1 min-w-[140px] font-semibold`}
+          className={`${fieldBox} h-10 pointer-coarse:h-11 text-[15px] max-sm:text-[16px] flex-1 min-w-[140px] font-semibold`}
         />
         <select
           aria-label="Field type"
           value={field.type}
           onChange={(e) => onChange({ type: e.target.value as CustomFieldType, options: e.target.value === "select" || e.target.value === "multiselect" ? (field.options || []) : undefined })}
-          className={`${fieldBox} h-10 text-[15px]`}
+          className={`${fieldBox} h-10 pointer-coarse:h-11 text-[15px] max-sm:text-[16px]`}
         >
           {FIELD_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
         </select>
         <label className="inline-flex items-center gap-1.5 text-[14px] text-[var(--color-text)] px-1">
-          <input type="checkbox" checked={!!field.required} onChange={(e) => onChange({ required: e.target.checked })} className="w-4 h-4 accent-[var(--color-main)]" />
+          <input type="checkbox" checked={!!field.required} onChange={(e) => onChange({ required: e.target.checked })} className="w-4 h-4" />
           Required
         </label>
         <button type="button" onClick={onRemove} aria-label={`Remove ${field.label}`} className={`${btnIcon} hover:text-[var(--state-overdue)]`}>
@@ -542,7 +530,7 @@ function FieldEditor({
           onChange={(e) => onChange({ placeholder: e.target.value })}
           placeholder="Placeholder (optional)"
           aria-label="Placeholder"
-          className={`${fieldBox} w-full mt-2 h-9 text-[14px]`}
+          className={`${fieldBox} w-full mt-2 h-10 pointer-coarse:h-11 text-[15px] max-sm:text-[16px]`}
         />
       )}
       <input
@@ -550,7 +538,7 @@ function FieldEditor({
         onChange={(e) => onChange({ description: e.target.value })}
         placeholder="Help text (optional)"
         aria-label="Help text"
-        className={`${fieldBox} w-full mt-2 h-9 text-[14px]`}
+        className={`${fieldBox} w-full mt-2 h-10 pointer-coarse:h-11 text-[15px] max-sm:text-[16px]`}
       />
       {isChoice && (
         <div className="mt-2 space-y-1">
@@ -566,7 +554,7 @@ function FieldEditor({
                 }}
                 placeholder="Shown as"
                 aria-label="Shown as"
-                className={`${fieldBox} flex-1 h-9 text-[14px]`}
+                className={`${fieldBox} flex-1 h-10 pointer-coarse:h-11 text-[15px] max-sm:text-[16px]`}
               />
               <input
                 value={String(opt.value)}
@@ -577,7 +565,7 @@ function FieldEditor({
                 }}
                 placeholder="Stored as"
                 aria-label="Stored as"
-                className={`${fieldBox} w-24 sm:w-36 h-9 text-[14px]`}
+                className={`${fieldBox} w-24 sm:w-36 h-10 pointer-coarse:h-11 text-[15px] max-sm:text-[16px]`}
               />
               <button
                 type="button"

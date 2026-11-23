@@ -1,8 +1,9 @@
 "use client";
 
-// Admin → Branding. White-label the workspace: upload a logo and set an
-// org-enforced color palette. Saved to org_configurations and applied to
-// every member (light/dark mode stays personal). Admin only.
+// Admin → Branding. White-label the workspace: upload a logo and set the
+// workspace's colors. Saved to org_configurations and applied to every
+// member (light or dark stays personal). The slide template saves on its
+// own. Admin only.
 
 import React, { useEffect, useRef, useState } from "react";
 import { useRole } from "@/components/providers/RoleContext";
@@ -12,13 +13,17 @@ import { extractLogoColors } from "@/lib/logoTheme";
 import { logoTriplets } from "@/lib/brandColors";
 import PalettePicker, { paletteFromTriplet } from "@/components/branding/PalettePicker";
 import { uploadToPath, getSignedUrlForPath } from "@/lib/storage";
-import { Upload, Check, Loader2, ShieldAlert, Trash2 } from "lucide-react";
+import { Upload, Loader2 } from "lucide-react";
 import { appAlert } from "@/components/providers/DialogProvider";
 import { useFileDrag } from "@/hooks/useFileDrag";
 import FileThumb from "@/components/ui/FileThumb";
 import { tryUpload } from "@/lib/uploadRetry";
 import { PageShell } from "@/components/ui/PageShell";
-import { PageHero, PageBody, Card, heroPrimary } from "@/components/ui/PageHero";
+import { PageHero, PageBody, Card } from "@/components/ui/PageHero";
+import { Button, useActionFeedback } from "@/components/ui/Button";
+import { btnQuiet, btnLink } from "@/components/admin/kit";
+import { bandSeg, bandSegItem } from "@/components/admin/band";
+import { said } from "@/components/admin/said";
 import { formatBytes } from "@/lib/formatBytes";
 import SlideTemplateSetup from "@/components/branding/SlideTemplateSetup";
 
@@ -69,14 +74,14 @@ export default function AdminBrandingPage() {
     setLogoPreview(logoUrl);
   }, [branding, logoUrl, logoTouched]);
   const [uploading, setUploading] = useState(false);
-  const [saving, setSaving] = useState(false);
+  const saving = useActionFeedback();
   const [savedAt, setSavedAt] = useState<number | null>(null);
   const [picked, setPicked] = useState<File | null>(null);
   const [logoError, setLogoError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const drag = useFileDrag((files) => {
     const f = files.find((x) => x.type.startsWith("image/"));
-    if (f) void handleLogo(f); else setLogoError("Pick an image file for the logo.");
+    if (f) void handleLogo(f); else setLogoError("Pick an image file for the logo (PNG, SVG or JPG).");
   }, uploading);
 
   const isAdmin = activeRole === "Admin";
@@ -84,8 +89,7 @@ export default function AdminBrandingPage() {
   if (!isAdmin) {
     return (
       <PageShell width="work">
-        <PageHero kicker="Admin · Branding" title="Admins only." overlap={false}
-          sub={<span className="inline-flex items-center gap-2"><ShieldAlert className="w-4 h-4" /> Only Admins can manage workspace branding.</span>} />
+        <PageHero kicker="Admin · Branding" title="Admins only." sub="Only an admin can change the workspace's logo and colors." />
       </PageShell>
     );
   }
@@ -105,7 +109,7 @@ export default function AdminBrandingPage() {
         const colors = (await extractLogoColors(file)).map((c) => c.hex);
         setLogoColors(colors);
         const best = logoTriplets(colors)[0];
-        if (best) { setPalette(paletteFromTriplet(best, sideOf(palette))); setLogoNote("Colors set from your logo. Try another in Colors."); }
+        if (best) { setPalette(paletteFromTriplet(best, sideOf(palette))); setLogoNote("Colors set from your logo. Try another under Colors."); }
         else setLogoNote("The logo has no strong color (only black, white or grey), so the colors stay as they are.");
       } catch { /* keep current palette */ }
       // Upload to durable storage.
@@ -120,103 +124,104 @@ export default function AdminBrandingPage() {
       setPicked(null);
       try { setLogoPreview(await getSignedUrlForPath(path, 604800)); } catch { /* keep object url */ }
     } catch (e) {
-      setLogoError(`The logo didn't upload: ${e instanceof Error ? e.message : "unknown"}`);
+      setLogoError(said(e, "The logo didn't upload."));
     } finally { setUploading(false); }
   }
 
   const handleSave = async () => {
-    setSaving(true);
     try {
-      await save({ ...(branding ?? {}), palette, logoPath, logoShape });
+      await saving.run(() => save({ ...(branding ?? {}), palette, logoPath, logoShape }));
       savedPalette.current = palette;
       setTouched(false);
+      setLogoTouched(false);
       setSavedAt(Date.now());
     } catch (e) {
-      await appAlert({ message: `Save failed: ${e instanceof Error ? e.message : "unknown"}`, tone: "danger" });
-    } finally { setSaving(false); }
+      await appAlert({ message: said(e, "Couldn't save the branding."), tone: "danger" });
+    }
   };
+
+  const dirty = touched || logoTouched;
+  const justSaved = !!savedAt && !dirty;
 
   return (
     <PageShell width="work">
       <PageHero
         kicker="Admin · Branding"
-        title={savedAt && !touched ? "Saved for everyone." : logoPreview ? "Your logo is set." : "No logo yet."}
-        sub={savedAt && !touched ? "Everyone in the workspace sees it now." : "Your logo and brand color go to everyone in this workspace. Light or dark stays each person's choice."}
+        title={justSaved ? "Saved for everyone." : dirty ? "Not saved yet." : logoPreview ? "Your logo is set." : "No logo yet."}
+        sub={justSaved ? "Everyone in the workspace sees it now." : dirty ? "Only you see these colors until you save." : "The logo and colors everyone in this workspace sees. Light or dark stays each person's choice."}
         primary={
-          <button type="button" onClick={handleSave} disabled={saving || uploading} className={heroPrimary}>
-            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} Save branding
-          </button>
+          <Button {...saving.state} doneLabel="Saved" onClick={() => void handleSave()} disabled={uploading || (!dirty && !saving.done)}
+            title={!dirty ? "Nothing changed yet" : undefined}>
+            Save for everyone
+          </Button>
         }
       />
 
       <PageBody>
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,38fr)_minmax(0,62fr)] gap-x-6 gap-y-8 items-start">
         {/* LOGO */}
         <Card label="Logo">
           <div {...drag.bind} className={`rounded-xl border border-dashed border-[var(--color-border-strong)] bg-[var(--color-surface-2)] h-28 flex items-center justify-center mb-3 overflow-hidden ${drag.ring}`}>
             {drag.over ? (
-              <span className="text-sm font-bold text-[var(--color-text)]">{drag.say}</span>
+              <span className="text-[14px] font-semibold text-[var(--color-text)]">{drag.say}</span>
             ) : logoPreview ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img src={logoPreview} alt="Logo preview" className="max-h-20 max-w-[80%] object-contain" />
             ) : (
-              <span className="text-sm text-[var(--color-text-muted)]">No logo yet. Drop one here.</span>
+              <span className="text-[14px] text-[var(--color-text-muted)]">No logo yet. Drop one here.</span>
             )}
           </div>
           {picked && (
             <div className="mb-3 flex items-center gap-2.5">
               <FileThumb file={picked} size={32} />
               <span className="min-w-0 flex-1">
-                <span className="block text-xs font-bold text-[var(--color-text)] truncate">{picked.name}</span>
-                <span className="block text-[11px] text-[var(--color-text-muted)]">
-                  {formatBytes(picked.size)}{uploading && <span className="inline-flex items-center gap-1 ml-2"><Loader2 className="w-3 h-3 animate-spin" /> Uploading…</span>}
+                <span className="block text-[14px] font-semibold text-[var(--color-text)] truncate">{picked.name}</span>
+                <span className="block text-[13px] text-[var(--color-text-muted)]">
+                  {formatBytes(picked.size)}{uploading && <span className="inline-flex items-center gap-1 ml-2"><Loader2 aria-hidden className="w-3 h-3 animate-spin" /> Uploading</span>}
                 </span>
               </span>
               {!uploading && logoError && (
-                <button type="button" onClick={() => void handleLogo(picked)} className="shrink-0 px-2 py-1 rounded-md border border-[var(--color-border-strong)] text-[11px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">Try again</button>
+                <Button size="sm" variant="secondary" onClick={() => void handleLogo(picked)}>Try again</Button>
               )}
             </div>
           )}
-          {logoError && <p role="alert" className="mb-3 text-[11px] text-red-700 dark:text-red-400">{logoError}</p>}
-          <div className="flex items-center gap-2">
+          {logoError && <p role="alert" className="mb-3 text-[14px] font-semibold text-[var(--state-overdue-text)]">{logoError}</p>}
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
             <input ref={fileRef} type="file" accept="image/*" className="hidden"
               onChange={(e) => { const f = e.target.files?.[0]; if (f) void handleLogo(f); e.target.value = ""; }} />
-            <button type="button" onClick={() => fileRef.current?.click()} disabled={uploading}
-              className="inline-flex items-center gap-2 h-9 px-3 rounded-lg text-[13px] font-semibold border border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">
-              {uploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />} Upload logo
+            <button type="button" onClick={() => fileRef.current?.click()} disabled={uploading} className={btnQuiet}>
+              {uploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />} {logoPreview ? "Replace logo" : "Upload logo"}
             </button>
             {logoPreview && (
-              <button onClick={() => { setLogoTouched(true); setLogoPath(undefined); setLogoPreview(null); setPicked(null); setLogoError(null); setLogoColors([]); setLogoNote(null); }}
-                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]">
-                <Trash2 className="w-4 h-4" /> Remove
+              // Takes the logo off the page; nothing changes for anyone until Save.
+              <button type="button" onClick={() => { setLogoTouched(true); setLogoPath(undefined); setLogoPreview(null); setPicked(null); setLogoError(null); setLogoColors([]); setLogoNote(null); }}
+                className={`${btnLink} !text-[var(--color-text-muted)] hover:!text-[var(--state-overdue-text)]`}>
+                Remove
               </button>
             )}
           </div>
-          <div className="mt-4">
-            <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5">Logo shape</div>
-            <div className="flex gap-1.5">
+          <div className="mt-5">
+            <div className="text-[14px] font-semibold text-[var(--color-text)] mb-1.5">Logo shape</div>
+            <div role="radiogroup" aria-label="Logo shape" className={bandSeg}>
               {(["full", "mark"] as const).map((s) => (
-                <button key={s} onClick={() => { setLogoTouched(true); setLogoShape(s); }}
-                  aria-pressed={logoShape === s}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-bold border ${logoShape === s ? "border-transparent bg-[var(--color-text)] text-[var(--color-surface)]" : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
+                <button key={s} type="button" role="radio" aria-checked={logoShape === s} onClick={() => { setLogoTouched(true); setLogoShape(s); }}
+                  className={bandSegItem(logoShape === s)}>
                   {s === "full" ? "Wide wordmark" : "Square mark"}
                 </button>
               ))}
             </div>
           </div>
-          <p className="text-[12px] text-[var(--color-text-muted)] mt-3">{logoNote ?? "Uploading a logo also sets the colors from it."}</p>
+          <p className="text-[13px] text-[var(--color-text-muted)] mt-3">{logoNote ?? "Uploading a logo also sets the colors from it."}</p>
         </Card>
 
         {/* COLORS */}
         <Card label="Colors">
           <PalettePicker value={palette} onChange={setPalette} logoButton={false} logoColors={logoColors} />
-          <p className="text-[12px] text-[var(--color-text-muted)] mt-3">The app shows them as you pick. Save to give them to everyone.</p>
         </Card>
 
         {/* SLIDES: the company's PowerPoint template; saves on its own */}
         <div id="slides" className="scroll-mt-20 lg:col-span-2"><SlideTemplateSetup /></div>
       </div>
-      {savedAt && !touched && <p role="status" className="px-1 text-[14px] text-emerald-700 dark:text-emerald-400 font-semibold">Saved. Everyone in the workspace sees it now.</p>}
       </PageBody>
     </PageShell>
   );

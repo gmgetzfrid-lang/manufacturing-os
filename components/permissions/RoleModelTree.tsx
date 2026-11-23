@@ -1,6 +1,6 @@
 "use client";
 
-// RoleModelTree — the accurate "who can do what" org tree.
+// RoleModelTree: the accurate "who can do what" org tree.
 //
 // Built from a code audit of every enforcement point (UI guards, API route
 // guards, the workflow engine, RLS policies, and the publish-guard trigger).
@@ -11,7 +11,8 @@
 // database so the tree shows real people, not just theory.
 
 import React, { useEffect, useState } from "react";
-import { ChevronRight, Users, KeyRound, GitBranch, AlertTriangle, ShieldCheck } from "lucide-react";
+import { ChevronRight, AlertTriangle } from "lucide-react";
+import { onTreeKeyDown } from "@/components/admin/treeKeys";
 import { supabase } from "@/lib/supabase";
 
 interface Member { uid: string; name: string; role: string; roles: string[]; status: string }
@@ -119,15 +120,17 @@ const GAPS: string[] = [
   "Manager can administer users but the Admin sidebar section is shown only to Admin/DocCtrl; reachable by URL.",
 ];
 
-function Fold({ label, count, children, tone }: { label: React.ReactNode; count?: number; children: React.ReactNode; tone?: "warn" }) {
+/** One level of the tree: a rotating chevron, the label, a plain count,
+ *  and its children 16 px in, along a guide line. */
+function Fold({ label, count, children }: { label: React.ReactNode; count?: number; children: React.ReactNode }) {
   return (
     <details className="group/rm">
-      <summary className={`cursor-pointer list-none flex items-center gap-2 px-1 py-1.5 text-sm font-bold select-none ${tone === "warn" ? "text-amber-700 dark:text-amber-300" : "text-[var(--color-text)]"} hover:underline`}>
-        <ChevronRight className="w-4 h-4 transition-transform group-open/rm:rotate-90 shrink-0" />
-        {label}
+      <summary className="cursor-pointer list-none [&::-webkit-details-marker]:hidden flex items-center gap-2 px-1 min-h-9 pointer-coarse:min-h-11 rounded-md text-[14px] font-semibold select-none text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+        <ChevronRight aria-hidden className="ui-chevron w-4 h-4 shrink-0 text-[var(--color-text-muted)] group-open/rm:rotate-90" />
+        <span className="min-w-0">{label}</span>
         {typeof count === "number" && <span className="ui-count">{count}</span>}
       </summary>
-      <div className="ml-5 pl-2 border-l border-[var(--color-border)] space-y-1.5 pb-2">{children}</div>
+      <div className="ml-3 pl-3 border-l border-[var(--color-border)] space-y-1 pb-2">{children}</div>
     </details>
   );
 }
@@ -177,36 +180,32 @@ export default function RoleModelTree({ orgId }: { orgId: string }) {
   const teamName = (id: string | null) => teams.find((t) => t.id === id) ?? null;
 
   return (
-    <section className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5 mt-3">
-      <div className="flex items-center gap-2 mb-1">
-        <span aria-hidden className="ui-icon-tile is-sm"><GitBranch className="w-4 h-4" /></span>
-        <h2 className="text-[13px] font-semibold text-[var(--color-text-muted)]">Role model: who can do what</h2>
-      </div>
-      <p className="text-xs text-[var(--color-text-muted)] mb-3">
-        Generated from a code audit of every enforcement point. Two kinds of authority exist: <b>base roles</b> (set in Users) and <b>situational authority</b> (ownership, per-library grants, review rosters) that applies regardless of role.
+    <div onKeyDown={onTreeKeyDown}>
+      <p className="text-[14px] text-[var(--color-text-muted)] mb-3 max-w-[80ch]">
+        From an audit of every place the app checks access. Two kinds of authority: base roles (set in Users) and situational authority (ownership, per-library grants, review rosters) that applies whatever the role.
       </p>
 
-      <Fold label={<span className="inline-flex items-center gap-1.5"><span aria-hidden className="ui-icon-tile is-sm"><Users className="w-4 h-4" /></span> Base roles</span>} count={members.length}>
+      <Fold label="Base roles" count={members.length}>
         {TIERS.map((tier) => (
           <Fold key={tier.tier} label={tier.tier}>
-            <p className="text-[11px] text-[var(--color-text-muted)] px-1">{tier.blurb}</p>
+            <p className="text-[13px] text-[var(--color-text-muted)] px-1">{tier.blurb}</p>
             {tier.roles.map((r) => {
               const holders = holdersOf(r.role);
               return (
-                <Fold key={r.role} label={<span>{r.role} <span className="font-normal text-[var(--color-text-muted)]">- {r.summary}</span></span>} count={holders.length}>
+                <Fold key={r.role} label={<span>{r.role} <span className="font-normal text-[var(--color-text-muted)]">{r.summary}</span></span>} count={holders.length}>
                   <div className="flex flex-wrap gap-1 px-1">
-                    {holders.length === 0 && <span className="text-[11px] italic text-[var(--color-text-faint)]">nobody holds this role</span>}
+                    {holders.length === 0 && <span className="text-[13px] text-[var(--color-text-muted)]">Nobody holds this role.</span>}
                     {holders.map((h) => (
-                      <span key={h.uid} className="px-2 py-0.5 rounded-full bg-[var(--color-surface-2)] border border-[var(--color-border)] text-[11px] font-bold text-[var(--color-text)]">
-                        {h.name}{h.roles.length > 1 ? <span className="text-[var(--color-text-faint)] font-normal"> +{h.roles.length - 1} role{h.roles.length > 2 ? "s" : ""}</span> : null}
+                      <span key={h.uid} className="ui-tag">
+                        {h.name}{h.roles.length > 1 ? <span className="text-[var(--color-text-muted)] font-normal"> and {h.roles.length - 1} more role{h.roles.length > 2 ? "s" : ""}</span> : null}
                       </span>
                     ))}
                   </div>
                   {r.perms.map(([group, items]) => (
-                    <Fold key={group} label={<span className="text-xs font-bold text-[var(--color-text-muted)]">{group}</span>}>
-                      <ul className="space-y-0.5 px-1">
+                    <Fold key={group} label={<span className="text-[var(--color-text-muted)]">{group}</span>}>
+                      <ul className="space-y-1 px-1 list-disc ml-4">
                         {items.map((it, i) => (
-                          <li key={i} className="text-[11px] text-[var(--color-text)] flex gap-1.5"><span className="text-[var(--color-text-faint)]">▸</span> {it}</li>
+                          <li key={i} className="text-[13px] text-[var(--color-text)]">{it}</li>
                         ))}
                       </ul>
                     </Fold>
@@ -218,34 +217,34 @@ export default function RoleModelTree({ orgId }: { orgId: string }) {
         ))}
       </Fold>
 
-      <Fold label={<span className="inline-flex items-center gap-1.5"><span aria-hidden className="ui-icon-tile is-sm"><KeyRound className="w-4 h-4" /></span> Situational authority (beyond the role field)</span>}>
+      <Fold label="Authority beyond the role">
         {SITUATIONAL.map((s) => (
-          <Fold key={s.title} label={<span className="text-sm">{s.title}</span>}>
-            {s.body.map((b, i) => <p key={i} className="text-[11px] text-[var(--color-text)] px-1">{b}</p>)}
+          <Fold key={s.title} label={s.title}>
+            {s.body.map((b, i) => <p key={i} className="text-[13px] text-[var(--color-text)] px-1">{b}</p>)}
           </Fold>
         ))}
-        <Fold label={<span className="text-sm">Live: library owners &amp; publish grants</span>} count={libs.length}>
+        <Fold label="Library owners and publish grants today" count={libs.length}>
           {libs.map((l) => {
             const team = teamName(l.ownerTeamId);
             return (
-              <div key={l.id} className="text-[11px] text-[var(--color-text)] px-1">
-                <b>{l.name}</b> · owner: {l.ownerName || (team ? `team ${team.name}${team.supervisorName ? ` (supervisor ${team.supervisorName})` : ""}` : <span className="italic text-[var(--color-text-faint)]">none → falls to Admin/DocCtrl</span>)}
-                {l.publishGrants.length > 0 && <> · publish grants: {l.publishGrants.join(", ")}</>}
+              <div key={l.id} className="text-[13px] text-[var(--color-text)] px-1">
+                <b className="font-semibold">{l.name}</b>: owner {l.ownerName || (team ? `team ${team.name}${team.supervisorName ? ` (supervisor ${team.supervisorName})` : ""}` : <span className="text-[var(--color-text-muted)]">none, so it falls to Admin and Doc Control</span>)}
+                {l.publishGrants.length > 0 && <>; publish grants: {l.publishGrants.join(", ")}</>}
               </div>
             );
           })}
-          {libs.length === 0 && <span className="text-[11px] italic text-[var(--color-text-faint)] px-1">no libraries</span>}
+          {libs.length === 0 && <span className="text-[13px] text-[var(--color-text-muted)] px-1">No libraries yet.</span>}
         </Fold>
       </Fold>
 
-      <Fold tone="warn" label={<span className="inline-flex items-center gap-1.5"><AlertTriangle className="w-4 h-4" /> Known gaps &amp; inconsistencies</span>} count={GAPS.length}>
-        <ul className="space-y-1 px-1">
+      <Fold label={<span className="inline-flex items-center gap-1.5">Known gaps <AlertTriangle aria-hidden className="w-4 h-4 text-[var(--state-held)]" /></span>} count={GAPS.length}>
+        <ul className="space-y-1 px-1 list-disc ml-4">
           {GAPS.map((g, i) => (
-            <li key={i} className="text-[11px] text-[var(--color-text)] flex gap-1.5"><span className="text-amber-600 dark:text-amber-400">▸</span> {g}</li>
+            <li key={i} className="text-[13px] text-[var(--color-text)]">{g}</li>
           ))}
         </ul>
-        <p className="text-[11px] text-[var(--color-text-muted)] px-1 inline-flex items-center gap-1"><ShieldCheck className="w-3 h-3" /> Known gaps, listed here so the tree stays honest.</p>
+        <p className="text-[13px] text-[var(--color-text-muted)] px-1">Listed here so the tree stays honest.</p>
       </Fold>
-    </section>
+    </div>
   );
 }

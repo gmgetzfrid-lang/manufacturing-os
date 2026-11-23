@@ -1,6 +1,6 @@
 "use client";
 
-// /admin/scope — Operational scope tree manager.
+// /admin/scope: the operational scope tree.
 //
 // Renders the Plant → Unit → System hierarchy as an expandable tree.
 // Admin-class roles (Admin, Manager, Supervisor, DocCtrl) can add,
@@ -13,10 +13,7 @@
 // layouts force the eye to track three independent lists.
 
 import React, { useCallback, useEffect, useState } from "react";
-import {
-  Loader2, Plus, ChevronRight, ChevronDown, Archive, Pencil,
-  Factory, Layers, Cpu, Save, X,
-} from "lucide-react";
+import { Plus, ChevronRight, Archive, Pencil } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import {
   getScopeTree, createPlant, createUnit, createSystem,
@@ -26,14 +23,16 @@ import {
 } from "@/lib/operationalGraph";
 import type { Plant, Unit, PlantSystem } from "@/types/schema";
 import DuplicateAwareInput from "@/components/ui/DuplicateAwareInput";
-import { translatePostgresError } from "@/lib/inputValidation";
 import { PageShell } from "@/components/ui/PageShell";
-import { PageHero, PageBody, heroPrimary, heroQuiet } from "@/components/ui/PageHero";
-import { tbl, sheet, field, btnIcon, btnQuiet, Pill, Problem } from "@/components/admin/kit";
-import LoadingBlock from "@/components/ui/LoadingBlock";
+import { PageHero, PageBody, heroPrimary } from "@/components/ui/PageHero";
+import { tbl, sheet, label, link, btnIcon, btnLink, Problem } from "@/components/admin/kit";
+import { said } from "@/components/admin/said";
+import { SkeletonRows } from "@/components/ui/Skeleton";
+import MoreMenu from "@/components/ui/MoreMenu";
+import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/ui/Modal";
 import { plural } from "@/components/admin/band";
 import { Button } from "@/components/ui/Button";
-import { Input, Textarea } from "@/components/ui/Field";
+import { Field, Input, Textarea } from "@/components/ui/Field";
 import { appConfirm } from "@/components/providers/DialogProvider";
 
 const ADMIN_ROLES = new Set(["Admin", "Manager", "Supervisor", "DocCtrl"]);
@@ -66,8 +65,7 @@ export default function ScopePage() {
       const t = await getScopeTree(activeOrgId, { includeArchived: showArchived });
       setTree(t);
     } catch (e) {
-      const f = translatePostgresError(e, { entity: "scope row" });
-      setError(`Couldn't load the scope tree. ${f.heading}: ${f.message}`);
+      setError(said(e, "Couldn't load the scope tree."));
     }
     finally { setLoading(false); }
   }, [activeOrgId, showArchived]);
@@ -77,8 +75,7 @@ export default function ScopePage() {
     setError(null);
     try { await run(); return true; }
     catch (e) {
-      const f = translatePostgresError(e, { entity: "scope row" });
-      setError(`Couldn't ${what}. ${f.heading}: ${f.message}`);
+      setError(said(e, `Couldn't ${what}.`));
       return false;
     }
   };
@@ -121,7 +118,7 @@ export default function ScopePage() {
 
   const onArchive = async (kind: "plant" | "unit" | "system", id: string) => {
     if (!uid) return;
-    if (!(await appConfirm({ message: "Archive this scope node? Documents and equipment that reference it keep their data; the row is hidden from picker UIs.", tone: "danger" }))) return;
+    if (!(await appConfirm({ message: `Archive this ${kind}? Documents and equipment that point at it keep their data; it stops showing up in pickers. Show archived brings it back into view.`, tone: "danger", confirmLabel: "Archive" }))) return;
     const ok = await attempt("archive it", async () => {
       if (kind === "plant")  await archivePlant(id, uid);
       if (kind === "unit")   await archiveUnit(id, uid);
@@ -135,14 +132,15 @@ export default function ScopePage() {
   if (!activeOrgId) {
     return (
       <PageShell width="work">
-        <PageHero kicker="Admin · Operational scope" title="Operational scope" sub="No active organization." overlap={false} />
+        <PageHero kicker="Admin · Operational scope" title="Operational scope" sub="Pick a workspace first, from your profile." />
       </PageShell>
     );
   }
 
   const unitTotal = tree.reduce((n, p) => n + p.units.length, 0);
-  const answer = loading ? "Operational scope"
-    : tree.length === 0 ? "No scope defined yet."
+  const systemTotal = tree.reduce((n, t) => n + t.units.reduce((m, u) => m + u.systems.length, 0), 0);
+  const answer = loading && tree.length === 0 ? "Operational scope"
+    : tree.length === 0 ? "No plants yet."
     : `${plural(tree.length, "plant")} in scope.`;
 
   return (
@@ -150,19 +148,15 @@ export default function ScopePage() {
       <PageHero
         kicker="Admin · Operational scope"
         title={answer}
-        sub={canEdit ? "Plants, units and systems that documents and equipment can belong to." : "Read only: Admin, Manager, Supervisor or DocCtrl edit the scope."}
+        sub={canEdit ? "Plants, units and systems that documents and equipment can belong to." : "Read only. Admin, Manager, Supervisor and Doc Control change the scope."}
+        factsHero="none"
         facts={tree.length > 0 ? [
           { label: "Units", value: unitTotal },
-          { label: "Systems", value: tree.reduce((n, t) => n + t.units.reduce((m, u) => m + u.systems.length, 0), 0) },
+          { label: "Systems", value: systemTotal },
         ] : undefined}
         tools={
-          <label className={`${heroQuiet} cursor-pointer`}>
-            <input
-              type="checkbox"
-              checked={showArchived}
-              onChange={(e) => setShowArchived(e.target.checked)}
-              className="w-4 h-4 accent-[var(--color-main)]"
-            />
+          <label className="inline-flex items-center gap-2 h-10 pointer-coarse:h-11 px-1 text-[14px] text-[var(--color-text-muted)] cursor-pointer">
+            <input type="checkbox" checked={showArchived} onChange={(e) => setShowArchived(e.target.checked)} className="w-4 h-4" />
             Show archived
           </label>
         }
@@ -187,29 +181,26 @@ export default function ScopePage() {
         />
       )}
 
-      {/* Tree */}
-      {loading ? (
-        <LoadingBlock what="the scope tree" />
+      {/* The tree: plants, their units 16 px in, their systems 16 px more. */}
+      {loading && tree.length === 0 ? (
+        <SkeletonRows rows={4} cols={1} what="the scope tree" />
       ) : tree.length === 0 ? (
-        <div className={`${sheet} py-10 px-5 text-center`}>
-          <span aria-hidden className="ui-icon-tile mx-auto mb-3 !grid !w-12 !h-12"><Factory className="w-6 h-6" /></span>
-          <div className="font-display text-[19px] font-semibold text-[var(--color-heading)]">Start with one plant</div>
-          <p className="mt-1 text-[15px] text-[var(--color-text-muted)] max-w-lg mx-auto">
-            Plants hold units (crude, FCC), units hold systems (overhead). Then a search like &ldquo;all P&amp;IDs in the FCC&rdquo; just works.
-          </p>
-        </div>
+        addingChildOf?.kind !== "root" && (
+          <div className={`${sheet} py-8 px-5 text-center`}>
+            <p className="text-[15px] text-[var(--color-text)]">Plants hold units (crude, FCC), units hold systems (overhead). Then a search like &ldquo;all P&amp;IDs in the FCC&rdquo; works.</p>
+            {canEdit && <button type="button" onClick={() => setAddingChildOf({ kind: "root" })} className={`${link} mt-1.5 font-semibold`}>Add the first plant</button>}
+          </div>
+        )
       ) : (
-        <div className={`${tbl.wrap} divide-y divide-[var(--color-border)]`}>
+        <div role="tree" aria-label="Plants, units and systems" onKeyDown={onScopeKeys} className={`${tbl.wrap} divide-y divide-[var(--color-border)]`}>
           <div className="max-sm:hidden flex items-center gap-2 px-3 h-10 bg-[var(--color-surface-2)] text-[13px] font-semibold text-[var(--color-text-muted)]">
-            <span className="flex-1 pl-14">Name</span><span className="w-24 text-right">Holds</span>{canEdit && <span className="w-[120px]" />}
+            <span className="flex-1 pl-9">Name</span><span className="w-28 text-right">Contains</span>{canEdit && <span className="w-12" />}
           </div>
           {tree.map(({ plant, units }) => {
             const plantOpen = expandedPlants.has(plant.id!);
             return (
               <div key={plant.id}>
-                {/* Plant row */}
                 <ScopeRow
-                  icon={<span aria-hidden className="ui-icon-tile is-sm is-solid"><Factory className="w-4 h-4" /></span>}
                   open={plantOpen}
                   onToggle={() => setExpandedPlants((s) => {
                     const next = new Set(s);
@@ -218,16 +209,15 @@ export default function ScopePage() {
                   })}
                   name={plant.name}
                   code={plant.code}
-                  badge={{ n: units.length, word: units.length === 1 ? "unit" : "units" }}
+                  badge={{ n: units.length, one: "unit", many: "units" }}
                   archived={!!plant.archived}
                   canEdit={canEdit}
                   onAdd={() => setAddingChildOf({ kind: "plant", parentId: plant.id })}
-                  addLabel="Add unit"
+                  addLabel="Add a unit"
                   onEdit={() => setEditing({ kind: "plant", row: plant })}
                   onArchive={() => onArchive("plant", plant.id!)}
                 />
 
-                {/* Add-unit inline form */}
                 {addingChildOf?.kind === "plant" && addingChildOf.parentId === plant.id && (
                   <div className="px-4 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)]">
                     <NewScopeRowForm
@@ -240,19 +230,17 @@ export default function ScopePage() {
                   </div>
                 )}
 
-                {/* Units */}
                 {plantOpen && (
-                  <div className="border-t border-[var(--color-border)]">
+                  <div role="group" className="ml-4 border-l border-[var(--color-border)]">
                     {units.length === 0 ? (
-                      <div className="text-[14px] text-[var(--color-text-muted)] pl-16 py-3">No units in this plant.</div>
+                      <div className="text-[14px] text-[var(--color-text-muted)] pl-4 py-2.5 border-t border-[var(--color-border)]">No units in this plant yet.</div>
                     ) : (
                       units.map(({ unit, systems }) => {
                         const unitOpen = expandedUnits.has(unit.id!);
                         return (
-                          <div key={unit.id} className="border-t border-[var(--color-border)] first:border-t-0">
+                          <div key={unit.id} className="border-t border-[var(--color-border)]">
                             <ScopeRow
-                              indent={1}
-                              icon={<span aria-hidden className="ui-icon-tile is-sm"><Layers className="w-4 h-4" /></span>}
+                              level={1}
                               open={unitOpen}
                               onToggle={() => setExpandedUnits((s) => {
                                 const next = new Set(s);
@@ -261,17 +249,17 @@ export default function ScopePage() {
                               })}
                               name={unit.name}
                               code={unit.code}
-                              badge={{ n: systems.length, word: systems.length === 1 ? "system" : "systems" }}
+                              badge={{ n: systems.length, one: "system", many: "systems" }}
                               archived={!!unit.archived}
                               canEdit={canEdit}
                               onAdd={() => setAddingChildOf({ kind: "unit", parentId: unit.id })}
-                              addLabel="Add system"
+                              addLabel="Add a system"
                               onEdit={() => setEditing({ kind: "unit", row: unit })}
                               onArchive={() => onArchive("unit", unit.id!)}
                             />
 
                             {addingChildOf?.kind === "unit" && addingChildOf.parentId === unit.id && (
-                              <div className="px-4 py-3 ml-6 bg-[var(--color-surface-2)] border-t border-[var(--color-border)]">
+                              <div className="px-4 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)]">
                                 <NewScopeRowForm
                                   title={`New system in ${unit.name}`}
                                   fields={["name", "code", "description"]}
@@ -282,20 +270,21 @@ export default function ScopePage() {
                               </div>
                             )}
 
-                            {unitOpen && systems.length > 0 && (
-                              <div>
+                            {unitOpen && (
+                              <div role="group" className="ml-4 border-l border-[var(--color-border)]">
+                                {systems.length === 0 && <div className="text-[14px] text-[var(--color-text-muted)] pl-4 py-2.5 border-t border-[var(--color-border)]">No systems in this unit yet.</div>}
                                 {systems.map((sys) => (
-                                  <ScopeRow
-                                    key={sys.id}
-                                    indent={2}
-                                    icon={<span aria-hidden className="ui-icon-tile is-sm !w-6 !h-6"><Cpu className="w-3.5 h-3.5" /></span>}
-                                    name={sys.name}
-                                    code={sys.code}
-                                    archived={!!sys.archived}
-                                    canEdit={canEdit}
-                                    onEdit={() => setEditing({ kind: "system", row: sys })}
-                                    onArchive={() => onArchive("system", sys.id!)}
-                                  />
+                                  <div key={sys.id} className="border-t border-[var(--color-border)]">
+                                    <ScopeRow
+                                      level={2}
+                                      name={sys.name}
+                                      code={sys.code}
+                                      archived={!!sys.archived}
+                                      canEdit={canEdit}
+                                      onEdit={() => setEditing({ kind: "system", row: sys })}
+                                      onArchive={() => onArchive("system", sys.id!)}
+                                    />
+                                  </div>
                                 ))}
                               </div>
                             )}
@@ -312,7 +301,6 @@ export default function ScopePage() {
       )}
       </PageBody>
 
-      {/* Edit modal */}
       {editing && (
         <EditScopeRowModal
           target={editing}
@@ -324,67 +312,66 @@ export default function ScopePage() {
   );
 }
 
-// ─── Row component ──────────────────────────────────────────────
+// Arrow keys through the tree: Up/Down move between rows, Right opens a
+// row (or steps in), Left closes it.
+function onScopeKeys(e: React.KeyboardEvent<HTMLElement>) {
+  if (!["ArrowDown", "ArrowUp", "ArrowRight", "ArrowLeft"].includes(e.key)) return;
+  const t = e.target as HTMLElement;
+  if (t.closest("input, textarea, select, form")) return;
+  const row = t.closest<HTMLElement>("[data-tree-row]");
+  if (!row) return;
+  const rows = Array.from(e.currentTarget.querySelectorAll<HTMLElement>("[data-tree-row]"));
+  const i = rows.indexOf(row);
+  const toggle = row.querySelector<HTMLButtonElement>("button[aria-expanded]");
+  const focusRow = (r?: HTMLElement) => { if (r) { e.preventDefault(); r.focus(); } };
+  if (e.key === "ArrowDown") focusRow(rows[i + 1]);
+  else if (e.key === "ArrowUp") focusRow(rows[i - 1]);
+  else if (e.key === "ArrowRight" && toggle) { e.preventDefault(); if (toggle.getAttribute("aria-expanded") === "false") toggle.click(); else focusRow(rows[i + 1]); }
+  else if (e.key === "ArrowLeft" && toggle && toggle.getAttribute("aria-expanded") === "true") { e.preventDefault(); toggle.click(); }
+}
+
+// ─── One row ────────────────────────────────────────────────────
 
 function ScopeRow({
-  icon, name, code, badge, archived, indent = 0,
+  name, code, badge, archived, level = 0,
   open, onToggle, canEdit, onAdd, addLabel, onEdit, onArchive,
 }: {
-  icon: React.ReactNode; name: string; code: string | null | undefined;
-  badge?: { n: number; word: string }; archived?: boolean; indent?: number;
+  name: string; code: string | null | undefined;
+  badge?: { n: number; one: string; many: string }; archived?: boolean; level?: number;
   open?: boolean; onToggle?: () => void;
   canEdit?: boolean;
   onAdd?: () => void; addLabel?: string;
   onEdit?: () => void; onArchive?: () => void;
 }) {
   return (
-    <div
-      className={`flex items-center gap-2 px-3 py-2 hover:bg-[var(--color-surface-2)] transition-colors ${archived ? "opacity-60" : ""}`}
-      style={{ paddingLeft: 12 + indent * 28 }}
-    >
+    <div role="treeitem" aria-selected={false} aria-level={level + 1} aria-expanded={onToggle ? !!open : undefined} tabIndex={level === 0 ? 0 : -1} data-tree-row
+      className={`flex items-center gap-2 pl-2 pr-3 min-h-11 hover:bg-[var(--color-surface-2)] focus:bg-[var(--color-surface-2)] transition-colors ${archived ? "opacity-60" : ""}`}>
       {onToggle ? (
-        <button type="button" onClick={onToggle} aria-expanded={open} aria-label={open ? `Collapse ${name}` : `Expand ${name}`} className={btnIcon}>
-          {open ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+        <button type="button" tabIndex={-1} onClick={onToggle} aria-expanded={open} aria-label={open ? `Close ${name}` : `Open ${name}`}
+          className="w-7 h-7 pointer-coarse:w-9 pointer-coarse:h-9 grid place-items-center rounded-md shrink-0 text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface)]">
+          <ChevronRight aria-hidden className={`ui-chevron w-4 h-4 ${open ? "rotate-90" : ""}`} />
         </button>
-      ) : <div className="w-8" />}
-      <div className="shrink-0">{icon}</div>
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2">
+      ) : <span className="w-7 shrink-0" />}
+      <div className="flex-1 min-w-0 py-1.5">
+        <div className="flex items-center gap-2 min-w-0">
           {code && <span className="ui-tag shrink-0">{code}</span>}
-          <span className={`${indent === 0 ? "font-semibold" : ""} text-[15px] text-[var(--color-text)] truncate`}>{name}</span>
-          {archived && <Pill>Archived</Pill>}
+          <span className={`${level === 0 ? "font-semibold" : ""} text-[15px] text-[var(--color-text)] sm:truncate break-words min-w-0`}>{name}</span>
+          {archived && <span className="text-[13px] text-[var(--color-text-muted)] shrink-0">Archived</span>}
         </div>
+        {badge && <div className="sm:hidden text-[13px] text-[var(--color-text-muted)] tabular-nums">{plural(badge.n, badge.one, badge.many)}</div>}
       </div>
-      {/* What it holds: the count opens it. */}
       {badge && (
-        <span className="w-24 flex justify-end shrink-0">
-          {onToggle ? (
-            <button type="button" onClick={onToggle} aria-expanded={open} title={open ? "Hide" : `Show the ${badge.word}`}
-              className="inline-flex items-center gap-1 text-[14px] text-[var(--color-text-muted)] hover:text-[var(--color-accent-text)]">
-              <span className={`ui-count ${badge.n === 0 ? "!bg-[var(--color-surface-2)] !text-[var(--color-text-muted)]" : open ? "is-solid" : ""}`}>{badge.n}</span> {badge.word}
-            </button>
-          ) : (
-            <span className="inline-flex items-center gap-1 text-[14px] text-[var(--color-text-muted)]"><span className="ui-count">{badge.n}</span> {badge.word}</span>
-          )}
+        <span className={`max-sm:hidden w-28 text-right shrink-0 text-[14px] tabular-nums ${badge.n === 0 ? "text-[var(--color-text-faint)]" : "text-[var(--color-text-muted)]"}`}>
+          {plural(badge.n, badge.one, badge.many)}
         </span>
       )}
       {canEdit && (
-        <div className="flex items-center justify-end gap-1 shrink-0 w-[120px]">
-          {onAdd && addLabel && (
-            <button type="button" onClick={onAdd} title={addLabel} aria-label={`${addLabel} to ${name}`} className={btnIcon}>
-              <Plus className="w-4 h-4" />
-            </button>
-          )}
-          {onEdit && (
-            <button type="button" onClick={onEdit} title="Edit" aria-label={`Edit ${name}`} className={btnIcon}>
-              <Pencil className="w-4 h-4" />
-            </button>
-          )}
-          {onArchive && !archived && (
-            <button type="button" onClick={onArchive} title="Archive" aria-label={`Archive ${name}`} className={`${btnIcon} hover:text-[var(--state-overdue)]`}>
-              <Archive className="w-4 h-4" />
-            </button>
-          )}
+        <div className="w-12 flex justify-end shrink-0">
+          <MoreMenu iconOnly label={`More for ${name}`} triggerClass={btnIcon} items={[
+            ...(onAdd && addLabel ? [{ icon: <Plus className="w-4 h-4" />, label: addLabel, onClick: onAdd }] : []),
+            ...(onEdit ? [{ icon: <Pencil className="w-4 h-4" />, label: "Rename or edit", onClick: onEdit }] : []),
+            ...(onArchive && !archived ? [{ icon: <Archive className="w-4 h-4" />, label: "Archive", tone: "bad" as const, line: true, onClick: onArchive }] : []),
+          ]} />
         </div>
       )}
     </div>
@@ -400,14 +387,14 @@ function NewScopeRowForm({
   fields: Array<"name" | "code" | "description" | "location">;
   onCancel: () => void;
   onSave: (values: Record<string, string>) => void | Promise<void>;
-  /** When present, the `code` field becomes a DuplicateAwareInput
-   *  scoped to the given table + scope. Code uniqueness is partial-
-   *  unique in the DB; pre-flighting prevents the 23505 conflict. */
+  /** When present, the `code` field checks for a duplicate as it's typed
+   *  (code uniqueness is partial-unique in the database). */
   codeCheck?: { table: "plants" | "units" | "systems"; scope: Record<string, string> };
 }) {
   const [values, setValues] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
   const [codeConflict, setCodeConflict] = useState(false);
+  const WORD: Record<string, string> = { name: "Name", code: "Code", description: "Description", location: "Location" };
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -421,45 +408,36 @@ function NewScopeRowForm({
 
   return (
     <form onSubmit={onSubmit} className={`${sheet} p-4 space-y-3`}>
-      <div className="font-display text-[17px] font-semibold text-[var(--color-text)]">{title}</div>
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-        {fields.map((f) => {
-          if (f === "code" && codeCheck) {
-            return (
+      <div className="text-[16px] font-semibold text-[var(--color-text)]">{title}</div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        {fields.map((f) => (
+          <label key={f} className="block">
+            <span className={label}>{WORD[f]}{f === "name" ? "" : <span className="font-normal text-[var(--color-text-muted)]"> (optional)</span>}</span>
+            {f === "code" && codeCheck ? (
               <DuplicateAwareInput
-                key={f}
                 value={values[f] ?? ""}
                 onChange={(v) => setValues((vs) => ({ ...vs, [f]: v }))}
                 onDuplicateChange={(isDup) => setCodeConflict(isDup)}
                 check={{ table: codeCheck.table, column: "code", scope: codeCheck.scope }}
                 fieldLabel="code"
-                placeholder="Code (optional)"
+                placeholder="FCC"
               />
-            );
-          }
-          return (
-            <input
-              key={f}
-              placeholder={f === "name" ? "Name (required)" : f[0].toUpperCase() + f.slice(1)}
-              value={values[f] ?? ""}
-              onChange={(e) => setValues((v) => ({ ...v, [f]: e.target.value }))}
-              aria-label={f === "name" ? "Name" : f[0].toUpperCase() + f.slice(1)}
-              className={field}
-            />
-          );
-        })}
+            ) : (
+              <Input value={values[f] ?? ""} onChange={(e) => setValues((v) => ({ ...v, [f]: e.target.value }))}
+                placeholder={f === "name" ? "Bakersfield refinery" : f === "location" ? "Bakersfield, CA" : ""} autoFocus={f === "name"} />
+            )}
+          </label>
+        ))}
       </div>
-      <div className="flex items-center justify-end gap-2 pt-1">
-        <button type="button" onClick={onCancel} className={btnQuiet}>Cancel</button>
-        <button type="submit" className={btnQuiet} disabled={!values.name?.trim() || submitting || codeConflict}>
-          {submitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />} Save
-        </button>
+      <div className="flex items-center justify-end gap-3 pt-1">
+        <button type="button" onClick={onCancel} className={btnLink}>Cancel</button>
+        <Button type="submit" variant="secondary" loading={submitting} disabled={!values.name?.trim() || codeConflict}>Save</Button>
       </div>
     </form>
   );
 }
 
-// ─── Edit modal ─────────────────────────────────────────────────
+// ─── Edit dialog ────────────────────────────────────────────────
 
 function EditScopeRowModal({
   target, onCancel, onSave,
@@ -483,43 +461,23 @@ function EditScopeRowModal({
     finally { setSubmitting(false); }
   };
 
-  React.useEffect(() => {
-    if (submitting) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onCancel(); };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [submitting, onCancel]);
-
-  const kindLabel = target.kind === "plant" ? "Plant" : target.kind === "unit" ? "Unit" : "System";
+  const kindLabel = target.kind === "plant" ? "plant" : target.kind === "unit" ? "unit" : "system";
 
   return (
-    <div role="dialog" aria-modal="true" aria-label={`Edit ${kindLabel.toLowerCase()}`} className="fixed inset-0 z-[200] bg-[var(--color-ink)]/60 animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
-      <form onSubmit={onSubmit} className="bg-[var(--color-surface)] rounded-lg border border-[var(--color-border)] shadow-2xl w-full max-w-md p-5 space-y-3 animate-in fade-in zoom-in-95">
-        <div className="flex items-center justify-between">
-          <h2 className="font-display text-[19px] font-semibold text-[var(--color-text)]">Edit {kindLabel.toLowerCase()}</h2>
-          <button type="button" onClick={onCancel} aria-label="Close" className={btnIcon}><X className="w-4 h-4" /></button>
-        </div>
-        <div className="space-y-2">
-          <Field label="Name (required)"><Input value={name} onChange={(e) => setName(e.target.value)} /></Field>
+    <Modal onClose={onCancel} size="sm" dismissable={!submitting}>
+      <ModalHeader title={`Edit the ${kindLabel}`} subtitle={row.name} onClose={submitting ? undefined : onCancel} />
+      <form onSubmit={onSubmit}>
+        <ModalBody className="space-y-3">
+          <Field label="Name"><Input value={name} onChange={(e) => setName(e.target.value)} autoFocus /></Field>
           <Field label="Code"><Input value={code} onChange={(e) => setCode(e.target.value)} /></Field>
           <Field label="Description"><Textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={2} /></Field>
-        </div>
-        <div className="flex items-center justify-end gap-2 pt-2">
-          <button type="button" onClick={onCancel} className={btnQuiet}>Cancel</button>
-          <Button type="submit" disabled={!name.trim() || submitting}>
-            {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Save
-          </Button>
-        </div>
+        </ModalBody>
+        <ModalFooter>
+          {!name.trim() && <span className="mr-auto text-[13px] text-[var(--color-text-muted)]">Give it a name.</span>}
+          <Button type="button" variant="secondary" onClick={onCancel} disabled={submitting}>Cancel</Button>
+          <Button type="submit" loading={submitting} disabled={!name.trim()}>Save</Button>
+        </ModalFooter>
       </form>
-    </div>
-  );
-}
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <label className="block">
-      <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">{label}</span>
-      <div className="mt-1">{children}</div>
-    </label>
+    </Modal>
   );
 }

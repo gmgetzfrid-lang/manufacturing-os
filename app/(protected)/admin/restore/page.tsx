@@ -1,6 +1,6 @@
 "use client";
 
-// /admin/restore — bring a workspace back from a backup, end to end.
+// /admin/restore: bring a workspace back from a backup, end to end.
 //
 //   1. Drop a backup — the Full ZIP (records + binaries) or the JSON export.
 //      Parsed IN THE BROWSER; the plan below is computed locally, zero writes.
@@ -14,17 +14,18 @@
 
 import React, { useCallback, useRef, useState } from "react";
 import Link from "next/link";
-import {
-  UploadCloud, Loader2, AlertTriangle, Users,
-  Building2, Database, ShieldAlert, FolderArchive,
-} from "lucide-react";
+import { UploadCloud, Loader2, Check } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
 import { appConfirm } from "@/components/providers/DialogProvider";
 import { useFileDrag } from "@/hooks/useFileDrag";
 import FileThumb from "@/components/ui/FileThumb";
 import { PageShell } from "@/components/ui/PageShell";
-import { btnPrimary, btnQuiet, link, Pill } from "@/components/admin/kit";
+import { btnQuiet, link, sheet, Section, StatusTag, Problem } from "@/components/admin/kit";
+import { plural } from "@/components/admin/band";
+import { said, responseError } from "@/components/admin/said";
+import { Button } from "@/components/ui/Button";
+import HelpTooltip from "@/components/ui/HelpTooltip";
 import { PageHero, PageBody, StepLine, heroQuiet } from "@/components/ui/PageHero";
 import { tryUpload } from "@/lib/uploadRetry";
 import {
@@ -108,7 +109,7 @@ export default function RestorePage() {
     const isZip = /\.zip$/i.test(file.name);
     const isJson = /\.json$/i.test(file.name);
     if (!isZip && !isJson) {
-      setError("Drop the Full ZIP backup or the JSON export.");
+      setError("Pick the full backup ZIP or the JSON export (a .zip or .json file).");
       return;
     }
     setBusy(true);
@@ -119,7 +120,7 @@ export default function RestorePage() {
         const zip = await JSZip.loadAsync(file) as unknown as ZipLike;
         const entryNames = Object.keys(zip.files);
         const manifestPath = entryNames.find((p) => /(^|\/)manifest\.json$/i.test(p));
-        if (!manifestPath) throw new Error("No manifest.json. This doesn't look like a Manufacturing OS backup ZIP.");
+        if (!manifestPath) throw new Error("This ZIP isn't a Manufacturing OS backup: it has no manifest file.");
         const manifest = JSON.parse(await zip.file(manifestPath)!.async("string"));
         const tables: Record<string, unknown[]> = {};
         const tablePaths = entryNames.filter((p) => /(^|\/)tables\/[^/]+\.json$/i.test(p) && !zip.files[p].dir);
@@ -136,7 +137,7 @@ export default function RestorePage() {
         envelope = JSON.parse(text) as RestoreEnvelopeLike;
       }
       if (!envelope?.manifest?.orgId || !envelope?.tables) {
-        throw new Error("Not a recognizable backup: missing manifest/tables.");
+        throw new Error("This file isn't a Manufacturing OS backup: it has no manifest or tables.");
       }
 
       // Current workspace context for the local plan.
@@ -144,7 +145,7 @@ export default function RestorePage() {
         supabase.from("orgs").select("name").eq("id", activeOrgId).maybeSingle(),
         supabase.from("org_members").select("uid, email").eq("org_id", activeOrgId).eq("status", "active"),
       ]);
-      if (orgErr || memErr) throw new Error(`Couldn't read this workspace's members: ${(orgErr ?? memErr)?.message}`);
+      if (orgErr || memErr) throw orgErr ?? memErr;
       const members = ((memberRows ?? []) as Array<{ uid: string; email: string | null }>)
         .filter((m) => m.email).map((m) => ({ uid: m.uid, email: m.email as string }));
       const p = planRestore(envelope, {
@@ -156,7 +157,7 @@ export default function RestorePage() {
       setPlan(p);
       setKeepName("current");
     } catch (e) {
-      setError((e as Error).message);
+      setError(e instanceof SyntaxError ? `${file.name} isn't a backup the app can read. Pick the full backup ZIP or the JSON export.` : said(e, `Couldn't read ${file.name}.`));
     } finally {
       setBusy(false);
     }
@@ -190,7 +191,7 @@ export default function RestorePage() {
         }),
       });
       const beginBody = await beginRes.json().catch(() => null);
-      if (!beginRes.ok) throw new Error(beginBody?.error || `HTTP ${beginRes.status}`);
+      if (!beginRes.ok) throw Object.assign(new Error(beginBody?.error || "It didn't go through."), beginBody?.error ? {} : { status: beginRes.status });
       const idRemap = beginBody.idRemap as RestorePlan["idRemap"];
       idRemapRef.current = idRemap;
 
@@ -225,7 +226,7 @@ export default function RestorePage() {
       });
     } catch (e) {
       setApplyProgress((p) => ({ ...p, phase: "error" }));
-      setError((e as Error).message);
+      setError(said(e, "The restore stopped."));
     }
   };
 
@@ -248,9 +249,9 @@ export default function RestorePage() {
       body: JSON.stringify({ path: key, contentType: contentTypeFor(key) }),
     });
     const upBody = await up.json().catch(() => null);
-    if (!up.ok || !upBody?.url) throw new Error(upBody?.error || `HTTP ${up.status}`);
+    if (!up.ok || !upBody?.url) throw Object.assign(new Error(upBody?.error || "Storage didn't give an upload address."), upBody?.error ? {} : { status: up.status });
     const put = await fetch(upBody.url as string, { method: "PUT", body: blob, headers: { "Content-Type": contentTypeFor(key) } });
-    if (!put.ok) throw new Error(`Storage said ${put.status}`);
+    if (!put.ok) throw await responseError(put, "Storage didn't take the file.");
     return "uploaded";
   }, []);
 
@@ -277,7 +278,7 @@ export default function RestorePage() {
         counters[await sendFile(zip, entryPath, key, token)]++;
       } catch (e) {
         counters.failed++;
-        failures.push({ entry: entryPath, key, error: (e as Error).message || "It didn't go through." });
+        failures.push({ entry: entryPath, key, error: said(e) });
       } finally {
         counters.done++;
         bump();
@@ -312,7 +313,7 @@ export default function RestorePage() {
       await tryUpload(name, () => sendFile(zip, entry, key, token), { onRetried: drop });
       drop();
     } catch (e) {
-      setFailedFiles((prev) => prev.map((f) => f.entry === entry ? { ...f, retrying: false, error: (e as Error).message || f.error } : f));
+      setFailedFiles((prev) => prev.map((f) => f.entry === entry ? { ...f, retrying: false, error: said(e) } : f));
     }
   };
 
@@ -322,8 +323,8 @@ export default function RestorePage() {
     return (
       <PageShell width="work">
         <PageHero kicker="Admin · Storage · Restore" back={{ href: "/admin/storage", label: "Back to Storage" }}
-          title="Admins only." size="md" overlap={false}
-          sub={<span className="inline-flex items-center gap-2"><ShieldAlert className="w-4 h-4 shrink-0" /> Restore is for Admins only, since it can change the whole workspace.</span>} />
+          title="Admins only." size="md"
+          sub="Restore is for admins only, since it can change the whole workspace." />
       </PageShell>
     );
   }
@@ -337,9 +338,10 @@ export default function RestorePage() {
     : ["Pick the backup", "Check the plan", "Restore records"];
   const filesDone = !filesProgress.running && filesProgress.done > 0 && filesProgress.done === filesProgress.total && failedFiles.length === 0;
   const step = !plan ? 0 : !applyResult ? (applying ? 2 : 1) : hasFiles ? (filesDone ? 4 : 3) : 3;
+  const finished = step >= steps.length;
 
   // The answer: where the restore stands.
-  const answer = step === 0 ? (busy ? "Reading the backup…" : "Pick a backup to restore.")
+  const answer = step === 0 ? (busy ? "Reading the backup." : "Pick a backup to restore.")
     : step === 1 ? (plan && plan.counts.totalRows > 0 ? `${fmtNum(plan.counts.totalRows)} records ready to restore.` : "Nothing in this backup to restore.")
     : step === 2 ? `Restoring, ${pct}% done.`
     : hasFiles && !filesDone ? `Records restored. ${fmtNum(fileEntryCount)} files to put back.`
@@ -348,14 +350,15 @@ export default function RestorePage() {
   return (
     <PageShell width="work">
       <PageHero
-        kicker="Admin · Storage · Restore from backup"
+        kicker={<>Admin · Storage · Restore{!finished && <span className="text-[var(--color-text-faint)]"> · Step {Math.min(step + 1, steps.length)} of {steps.length}</span>}</>}
         back={{ href: "/admin/storage", label: "Back to Storage" }}
         title={answer}
-        sub="The Full ZIP (records and files) or the JSON export. Nothing is written until you approve."
+        sub="The full backup ZIP (records and files) or the JSON export. Nothing is written until you approve."
+        factsHero="none"
         facts={plan ? [
           { label: "Records", value: fmtNum(plan.counts.totalRows) },
           { label: "People re-linked", value: fmtNum(plan.counts.matchedUsers) },
-          { label: fileEntryCount ? "Files in ZIP" : "Files", value: fmtNum(fileEntryCount || plan.counts.files) },
+          { label: fileEntryCount ? "Files in the ZIP" : "Files", value: fmtNum(fileEntryCount || plan.counts.files) },
         ] : undefined}
         tools={step === 1 ? (
           <button type="button" className={heroQuiet} onClick={() => { setPlan(null); setPicked(null); setError(null); }}>
@@ -363,9 +366,10 @@ export default function RestorePage() {
           </button>
         ) : undefined}
       >
-        <div className="overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-          <div className="min-w-[420px]">
-            <StepLine onDark steps={steps.map((label, i) => ({
+        {/* On a phone the kicker says "Step 1 of 3"; the path shows from sm up. */}
+        <div className="max-sm:hidden">
+          <div>
+            <StepLine steps={steps.map((label, i) => ({
               label,
               state: (i < step ? "done" : i === step ? "now" : "next") as "done" | "now" | "next",
             }))} />
@@ -374,59 +378,54 @@ export default function RestorePage() {
       </PageHero>
 
       <PageBody>
-      {/* Dropzone */}
+      {/* Step 1: the backup. The box answers while a file is dragged over it. */}
+      <input ref={inputRef} type="file" accept=".json,.zip,application/json,application/zip" className="hidden"
+        onChange={(e) => { const f = e.target.files?.[0]; if (f) void handleFile(f); e.target.value = ""; }} />
       {picked && !drag.over ? (
-        <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4 flex items-center gap-3" {...drag.bind}>
+        <div className={`${sheet} p-4 flex items-center gap-3`} {...drag.bind}>
           <FileThumb file={picked} />
           <div className="min-w-0 flex-1">
-            <div className="text-[14px] font-semibold text-[var(--color-text)] truncate">{picked.name}</div>
-            <div className="text-[12px] text-[var(--color-text-muted)]">
+            <div className="text-[15px] font-semibold text-[var(--color-text)] truncate">{picked.name}</div>
+            <div className="text-[13px] text-[var(--color-text-muted)]">
               {formatBytes(picked.size)}
-              {busy && <span className="inline-flex items-center gap-1 ml-2"><Loader2 className="w-3 h-3 animate-spin" /> Reading the backup and planning…</span>}
+              {busy && <span className="inline-flex items-center gap-1 ml-2"><Loader2 aria-hidden className="w-3 h-3 animate-spin" /> Reading the backup and making the plan</span>}
+              {plan && !busy && <>, {plural(plan.counts.tables.filter((t) => t.rows > 0).length, "table")}</>}
             </div>
           </div>
           {!busy && !applying && !applyResult && (
-            <button type="button" onClick={() => inputRef.current?.click()}
-              className={`shrink-0 ${btnQuiet}`}>
+            <button type="button" onClick={() => inputRef.current?.click()} className={`shrink-0 ${btnQuiet}`}>
               Pick another
             </button>
           )}
-          <input ref={inputRef} type="file" accept=".json,.zip,application/json,application/zip" className="hidden"
-            onChange={(e) => { const f = e.target.files?.[0]; if (f) void handleFile(f); e.target.value = ""; }} />
         </div>
       ) : (
-        <div
+        <button
+          type="button"
           {...drag.bind}
           onClick={() => inputRef.current?.click()}
-          className={`rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-10 text-center cursor-pointer transition-colors hover:bg-[var(--color-surface-2)] ${drag.ring}`}
+          className={`w-full rounded-xl border-2 border-dashed border-[var(--color-border-strong)] bg-[var(--color-surface)] px-6 py-10 text-center transition-colors hover:bg-[var(--color-surface-2)] ${drag.ring}`}
         >
-          <input ref={inputRef} type="file" accept=".json,.zip,application/json,application/zip" className="hidden"
-            onChange={(e) => { const f = e.target.files?.[0]; if (f) void handleFile(f); e.target.value = ""; }} />
           {drag.over ? (
-            <div className="text-sm font-semibold text-[var(--color-text)]">{drag.say}</div>
+            <span className="block text-[15px] font-semibold text-[var(--color-text)]">{drag.say}</span>
           ) : (
             <>
-              <span aria-hidden className="ui-icon-tile mx-auto mb-2.5 !grid !w-12 !h-12"><UploadCloud className="w-6 h-6" /></span>
-              <div className="text-[14px] font-semibold text-[var(--color-text)]">Drop a backup .zip or .json here, or tap to choose</div>
-              <div className="text-[13px] text-[var(--color-text-muted)] mt-1">Read in your browser. The Full ZIP can also put the files back.</div>
+              <UploadCloud aria-hidden className="w-6 h-6 mx-auto mb-2.5 text-[var(--color-text-faint)]" />
+              <span className="block text-[15px] font-semibold text-[var(--color-text)]">Drop a backup .zip or .json here, or choose one</span>
+              <span className="block text-[13px] text-[var(--color-text-muted)] mt-1">Read in your browser. The full backup ZIP can also put the files back.</span>
             </>
           )}
-        </div>
+        </button>
       )}
 
-      {error && (
-        <p role="alert" className="text-[14px] font-semibold text-[var(--state-overdue)] flex items-start gap-2">
-          <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> {error}
-        </p>
-      )}
+      {error && <Problem>{error}</Problem>}
 
       {plan && (
         <>
-          {/* Warnings */}
+          {/* Step 2: the plan, to check before anything is written. */}
           {plan.warnings.length > 0 && (
-            <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4 sm:p-5">
-              <div className="mb-1"><Pill tone="warn">Check before restoring</Pill></div>
-              <ul className="space-y-1 list-disc ml-4">
+            <div className={`${sheet} p-4 sm:p-5`}>
+              <StatusTag tone="warn">Check before restoring</StatusTag>
+              <ul className="mt-2 space-y-1 list-disc ml-5">
                 {plan.warnings.map((w, i) => (
                   <li key={i} className="text-[14px] text-[var(--color-text)]">{w}</li>
                 ))}
@@ -434,168 +433,148 @@ export default function RestorePage() {
             </div>
           )}
 
-          {/* Org-name collision */}
           {plan.orgNameCollision && (
-            <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4 sm:p-5">
-              <div className="text-[14px] font-semibold text-[var(--color-text)] flex items-center gap-2 mb-1"><Building2 className="w-4 h-4 text-[var(--color-text-muted)]" /> Which organization name should win?</div>
-              <p className="text-[13px] text-[var(--color-text-muted)] mb-3">The backup and this workspace have different names. Pick the one to keep.</p>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                {([["current", plan.orgNameCollision.currentName, "Keep this workspace’s name"], ["backup", plan.orgNameCollision.backupName, "Use the backup’s name"]] as const).map(([val, name, hint]) => (
-                  <button key={val} type="button" aria-pressed={keepName === val} onClick={() => setKeepName(val)}
-                    className={`text-left rounded-lg border p-3 transition-colors ${keepName === val ? "border-[var(--color-border-strong)] bg-[var(--color-surface-2)]" : "border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"}`}>
-                    <div className="flex items-center gap-2">
-                      <span className={`w-3.5 h-3.5 rounded-full border-2 ${keepName === val ? "border-[var(--color-text)] bg-[var(--color-text)]" : "border-[var(--color-border-strong)]"}`} />
-                      <span className="text-sm font-semibold text-[var(--color-text)] truncate">{name}</span>
-                    </div>
-                    <div className="text-[13px] text-[var(--color-text-muted)] mt-0.5 pl-[22px]">{hint}</div>
+            <Section label="Which name should the workspace keep?">
+              <div role="radiogroup" aria-label="Workspace name" className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {([["current", plan.orgNameCollision.currentName, "This workspace's name"], ["backup", plan.orgNameCollision.backupName, "The backup's name"]] as const).map(([val, name, hint]) => (
+                  <button key={val} type="button" role="radio" aria-checked={keepName === val} onClick={() => setKeepName(val)}
+                    className={`text-left rounded-xl border p-3.5 transition-colors bg-[var(--color-surface)] ${keepName === val ? "border-[var(--color-text)]" : "border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"}`}>
+                    <span className="flex items-center gap-2.5">
+                      <span aria-hidden className={`w-4 h-4 rounded-full border-2 grid place-items-center shrink-0 ${keepName === val ? "border-[var(--color-text)]" : "border-[var(--color-border-control)]"}`}>
+                        {keepName === val && <span className="w-2 h-2 rounded-full bg-[var(--color-text)]" />}
+                      </span>
+                      <span className="text-[15px] font-semibold text-[var(--color-text)] truncate">{name}</span>
+                    </span>
+                    <span className="block text-[13px] text-[var(--color-text-muted)] mt-0.5 pl-[26px]">{hint}</span>
                   </button>
                 ))}
               </div>
-            </div>
+            </Section>
           )}
 
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
-          {/* Users */}
-          {plan.users.length > 0 && (
-            <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
-              <div className="px-4 h-10 flex items-center border-b border-[var(--color-border)] bg-[var(--color-surface-2)] text-[13px] font-semibold text-[var(--color-text-muted)] gap-1.5"><Users className="w-3.5 h-3.5" /> People, matched by email: {fmtNum(plan.counts.matchedUsers)} re-linked, {fmtNum(plan.counts.newUsers)} new placeholders</div>
-              <div className="divide-y divide-[var(--color-border)] max-h-72 overflow-y-auto">
-                {plan.users.map((u) => (
-                  <div key={u.email} className="px-4 py-2 flex items-center gap-3">
-                    <div className="flex-1 min-w-0">
-                      <div className="text-[13px] font-semibold text-[var(--color-text)] truncate">{u.displayName || u.email}</div>
-                      <div className="text-[13px] text-[var(--color-text-muted)] truncate">{u.email}{u.role ? ` · ${u.role}` : ""}</div>
-                    </div>
-                    {u.disposition === "linked" ? (
-                      <Pill tone="good">Re-link</Pill>
-                    ) : (
-                      <Pill>Restore, then re-invite</Pill>
-                    )}
-                  </div>
-                ))}
+          <div className={`grid grid-cols-1 gap-x-6 gap-y-8 items-start ${plan.users.length > 0 ? "lg:grid-cols-[minmax(0,62fr)_minmax(0,38fr)]" : ""}`}>
+            {plan.users.length > 0 && (
+              <Section label={<>People <HelpTooltip>Matched by email. Someone already in this workspace is re-linked to their records. Anyone else comes back as an inactive placeholder with no seat; re-invite them in Users to give access.</HelpTooltip></>}
+                action={<span className="text-[13px] text-[var(--color-text-muted)] tabular-nums">{fmtNum(plan.counts.matchedUsers)} re-linked, {fmtNum(plan.counts.newUsers)} placeholders</span>}>
+                <ul className={`${sheet} divide-y divide-[var(--color-border)] max-h-80 overflow-y-auto`}>
+                  {plan.users.map((u) => (
+                    <li key={u.email} className="px-4 py-2.5 flex items-center gap-3">
+                      <div className="flex-1 min-w-0">
+                        <div className="text-[14px] font-semibold text-[var(--color-text)] truncate">{u.displayName || u.email}</div>
+                        <div className="text-[13px] text-[var(--color-text-muted)] truncate">{u.email}{u.role ? `, ${u.role}` : ""}</div>
+                      </div>
+                      <span className="text-[13px] text-[var(--color-text-muted)] shrink-0">{u.disposition === "linked" ? "Re-linked" : "Placeholder"}</span>
+                    </li>
+                  ))}
+                </ul>
+              </Section>
+            )}
+
+            <Section label="What would import">
+              <div className={`${sheet} max-h-80 overflow-y-auto`}>
+                <table className="w-full text-[14px] tabular-nums">
+                  <thead className="sr-only"><tr><th>Table</th><th>Rows</th><th>Imports</th></tr></thead>
+                  <tbody className="divide-y divide-[var(--color-border)]">
+                    {plan.counts.tables.filter((t) => t.rows > 0).map((t) => (
+                      <tr key={t.name} title={t.reason}>
+                        <td className="px-4 py-2 font-mono text-[13px] text-[var(--color-text)] max-w-0 w-full truncate">{t.name}</td>
+                        <td className="px-2 py-2 text-right text-[var(--color-text-muted)] whitespace-nowrap">{fmtNum(t.rows)}</td>
+                        <td className="px-4 py-2 text-right whitespace-nowrap text-[13px]">{t.willImport ? <span className="text-[var(--color-text)]">Imports</span> : <span className="text-[var(--color-text-faint)]">Skipped</span>}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
-            </div>
-          )}
-
-          {/* Tables */}
-          <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
-            <div className="px-4 h-10 flex items-center border-b border-[var(--color-border)] bg-[var(--color-surface-2)] text-[13px] font-semibold text-[var(--color-text-muted)] gap-1.5"><Database className="w-3.5 h-3.5" /> What would import</div>
-            <div className="divide-y divide-[var(--color-border)] max-h-72 overflow-y-auto">
-              {plan.counts.tables.filter((t) => t.rows > 0).map((t) => (
-                <div key={t.name} className="px-4 py-1.5 flex items-center gap-3" title={t.reason}>
-                  <span className="font-mono text-[13px] text-[var(--color-text)] flex-1 truncate">{t.name}</span>
-                  <span className="text-[13px] text-[var(--color-text-muted)]">{fmtNum(t.rows)} rows</span>
-                  {t.willImport
-                    ? <Pill tone="good">Imports</Pill>
-                    : <span className="text-[13px] text-[var(--color-text-muted)] shrink-0">Skipped</span>}
-                </div>
-              ))}
-            </div>
-          </div>
+            </Section>
           </div>
 
-          {/* Apply progress */}
+          {/* Step 3: write the records, with honest progress. */}
           {applying && (
-            <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4 sm:p-5">
-              <div className="flex items-center gap-2 text-[14px] font-semibold text-[var(--color-text)] mb-2">
-                <Loader2 className="w-4 h-4 animate-spin text-[var(--color-text-muted)]" />
-                {applyProgress.phase === "begin" ? "Matching users…" : <>Restoring <span className="font-mono">{applyProgress.currentTable}</span>: table {Math.min(applyProgress.tablesDone + 1, applyProgress.tablesTotal)} of {applyProgress.tablesTotal}</>}
+            <div className={`${sheet} p-4 sm:p-5`} aria-live="polite">
+              <div className="flex items-center gap-2 text-[15px] font-semibold text-[var(--color-text)] mb-2">
+                <Loader2 aria-hidden className="w-4 h-4 animate-spin text-[var(--color-text-muted)]" />
+                {applyProgress.phase === "begin" ? "Matching people" : <>Restoring <span className="font-mono text-[14px]">{applyProgress.currentTable}</span>, table {Math.min(applyProgress.tablesDone + 1, applyProgress.tablesTotal)} of {applyProgress.tablesTotal}</>}
               </div>
-              <div className="h-2 rounded-full bg-[var(--color-surface-2)] overflow-hidden">
-                <div className="h-full bg-[var(--color-text)] transition-all" style={{ width: `${pct}%` }} />
+              <div className="h-2 rounded-full bg-[var(--color-surface-2)] overflow-hidden" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct} aria-label="Records restored">
+                <div className="h-full rounded-full bg-[var(--color-text)] transition-[width] motion-reduce:transition-none" style={{ width: `${pct}%` }} />
               </div>
-              <div className="text-[13px] text-[var(--color-text-muted)] mt-1">{fmtNum(applyProgress.rowsDone)} / {fmtNum(applyProgress.rowsTotal)} records ({pct}%)</div>
+              <div className="text-[13px] text-[var(--color-text-muted)] mt-1 tabular-nums">{fmtNum(applyProgress.rowsDone)} of {fmtNum(applyProgress.rowsTotal)} records ({pct}%)</div>
             </div>
           )}
 
-          {/* Apply / result */}
           {applyResult ? (
-            <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4 sm:p-5">
-              <div className="mb-1"><Pill tone="good">Records restored</Pill></div>
-              <div className="text-[13px] text-[var(--color-text)] leading-relaxed">
-                Imported <b>{fmtNum(applyResult.totalInserted)}</b> record(s) · re-linked <b>{applyResult.linkedUsers}</b> user(s) · created <b>{applyResult.createdUsers}</b> restored placeholder(s).
-                {" "}Restored users are inactive. <Link href="/admin/users" className={link}>Re-invite them in Users</Link> to give access.
-              </div>
+            <div className={`${sheet} p-4 sm:p-5`}>
+              <p className="flex items-center gap-2 text-[16px] font-semibold text-[var(--color-text)]"><Check aria-hidden className="w-4 h-4 text-[var(--state-released)]" /> Records restored</p>
+              <p className="mt-1 text-[14px] text-[var(--color-text)]">
+                Imported {plural(applyResult.totalInserted, "record")}, re-linked {plural(applyResult.linkedUsers, "person", "people")}, and made {plural(applyResult.createdUsers, "placeholder")}.
+                {" "}Placeholders are inactive. <Link href="/admin/users" className={link}>Re-invite them in Users</Link> to give access.
+              </p>
               {applyResult.failedTables.length > 0 && (
-                <p role="alert" className="mt-2 text-[13px] text-[var(--state-overdue)]">
+                <p role="alert" className="mt-2 text-[14px] text-[var(--state-overdue-text)]">
                   These tables didn&apos;t fully import: <span className="font-mono">{applyResult.failedTables.join(", ")}</span>. Run the restore again (it only adds, so it&apos;s safe) or check the audit log.
                 </p>
               )}
             </div>
           ) : !applying && (
-            <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4 sm:p-5">
-              <div className="flex items-start gap-3">
-                <ShieldAlert className="w-4 h-4 text-[var(--state-held)] mt-0.5 shrink-0" />
-                <div className="flex-1 text-[13px] text-[var(--color-text-muted)] leading-relaxed">
-                  <b className="text-[var(--color-text)]">This writes to the live workspace.</b> It only adds (existing data is kept), can be run again, and does exactly the plan above. Restored users are inactive (no seat).{zipRef.current ? " After the records, the next step can put the ZIP's files back." : " A JSON backup has no files. Use the Full ZIP to restore files too."}
-                </div>
-              </div>
-              <div className="mt-3 flex items-center justify-end">
-                <button type="button" onClick={() => void applyRestore()} disabled={plan.counts.totalRows === 0}
-                  className={btnPrimary}>
-                  <Database className="w-4 h-4" /> Restore {fmtNum(plan.counts.totalRows)} records
-                </button>
+            <div className={`${sheet} p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center gap-4`}>
+              <p className="flex-1 text-[14px] text-[var(--color-text-muted)]">
+                <b className="font-semibold text-[var(--color-text)]">This writes to the live workspace.</b> It only adds (existing data is kept), can be run again, and does exactly the plan above.{zipRef.current ? " After the records, the next step puts the ZIP's files back." : " A JSON backup has no files; use the full backup ZIP to restore files too."}
+              </p>
+              <div className="shrink-0 flex flex-col items-start sm:items-end gap-1">
+                <Button onClick={() => void applyRestore()} disabled={plan.counts.totalRows === 0}>
+                  Restore {plural(plan.counts.totalRows, "record")}
+                </Button>
+                {plan.counts.totalRows === 0 && <span className="text-[13px] text-[var(--color-text-muted)]">This backup has no records to add.</span>}
               </div>
             </div>
           )}
 
-          {/* Put files back (ZIP only, after records) */}
+          {/* Step 4: put files back (ZIP only, after records). */}
           {applyResult && fileEntryCount > 0 && (
-            <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4 sm:p-5">
-              <div className="flex items-center gap-2 text-[13px] font-semibold text-[var(--color-text-muted)] mb-1">
-                <FolderArchive className="w-4 h-4" /> Put the files back
-              </div>
-              <p className="text-[13px] text-[var(--color-text-muted)] mb-3 max-w-2xl">
-                Uploads this ZIP&apos;s <b>{fmtNum(fileEntryCount)}</b> file(s) back to storage under their original names, so drawings open normally. Files already there are skipped. Files in offline space archives stay offline.
-              </p>
-              {filesProgress.total > 0 && (
-                <div className="mb-3">
-                  <div className="h-2 rounded-full bg-[var(--color-surface-2)] overflow-hidden">
-                    <div className="h-full bg-[var(--color-text-muted)] transition-all" style={{ width: `${filePct}%` }} />
+            <Section label={<>Put the files back <HelpTooltip>Uploads the ZIP&apos;s files to storage under their original names, so drawings open normally. Files already there are skipped. Files in offline space archives stay offline.</HelpTooltip></>}>
+              <div className={`${sheet} p-4 sm:p-5`}>
+                {filesProgress.total > 0 ? (
+                  <div className="mb-3" aria-live="polite">
+                    <div className="h-2 rounded-full bg-[var(--color-surface-2)] overflow-hidden" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={filePct} aria-label="Files put back">
+                      <div className="h-full rounded-full bg-[var(--color-text-muted)] transition-[width] motion-reduce:transition-none" style={{ width: `${filePct}%` }} />
+                    </div>
+                    <div className="text-[13px] text-[var(--color-text-muted)] mt-1 tabular-nums">
+                      {fmtNum(filesProgress.done)} of {fmtNum(filesProgress.total)}: {fmtNum(filesProgress.uploaded)} uploaded, {fmtNum(filesProgress.skipped)} already there
+                      {filesProgress.offline > 0 && <>, {fmtNum(filesProgress.offline)} left in space archives</>}
+                      {filesProgress.failed > 0 && <span className="text-[var(--state-overdue-text)] font-semibold">, {fmtNum(filesProgress.failed)} didn&apos;t upload</span>}
+                    </div>
                   </div>
-                  <div className="text-[13px] text-[var(--color-text-muted)] mt-1">
-                    {fmtNum(filesProgress.done)} / {fmtNum(filesProgress.total)} · {fmtNum(filesProgress.uploaded)} uploaded · {fmtNum(filesProgress.skipped)} already present
-                    {filesProgress.offline > 0 && <> · {fmtNum(filesProgress.offline)} left to space archives</>}
-                    {filesProgress.failed > 0 && <span className="text-[var(--state-overdue)] font-semibold"> · {fmtNum(filesProgress.failed)} didn&apos;t upload</span>}
-                  </div>
+                ) : (
+                  <p className="mb-3 text-[14px] text-[var(--color-text-muted)]">{plural(fileEntryCount, "file")} in this ZIP.</p>
+                )}
+                {failedFiles.length > 0 && !filesProgress.running && (
+                  <ul className="mb-3 rounded-lg border border-[var(--color-border)] divide-y divide-[var(--color-border)] max-h-64 overflow-y-auto">
+                    {failedFiles.slice(0, 50).map((f) => (
+                      <li key={f.entry} className="px-3 py-2 flex items-center gap-2">
+                        <span className="min-w-0 flex-1">
+                          <span className="block text-[13px] font-mono font-semibold text-[var(--color-text)] truncate" title={f.key}>{f.key.split("/").pop()}</span>
+                          <span className="block text-[13px] text-[var(--state-overdue-text)] truncate">{said(f.error)}</span>
+                        </span>
+                        <Button size="sm" variant="secondary" loading={!!f.retrying} onClick={() => void retryFile(f.entry, f.key)}>Try again</Button>
+                      </li>
+                    ))}
+                    {failedFiles.length > 50 && <li className="px-3 py-2 text-[13px] text-[var(--color-text-muted)]">And {fmtNum(failedFiles.length - 50)} more</li>}
+                  </ul>
+                )}
+                <div className="flex items-center justify-end gap-4 flex-wrap">
+                  {filesDone && <Link href="/documents" className={`text-[15px] ${link}`}>Open Documents</Link>}
+                  {failedFiles.length > 0 && !filesProgress.running ? (
+                    <Button onClick={() => void putFilesBack(failedFiles.map((f) => f.entry))}>
+                      Try again for {plural(failedFiles.length, "file")}
+                    </Button>
+                  ) : !filesDone && (
+                    <Button loading={filesProgress.running} onClick={() => void putFilesBack()}>
+                      {filesProgress.running ? "Uploading" : `Put ${plural(fileEntryCount, "file")} back`}
+                    </Button>
+                  )}
                 </div>
-              )}
-              {failedFiles.length > 0 && !filesProgress.running && (
-                <ul className="mb-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] divide-y divide-[var(--color-border)] max-h-64 overflow-y-auto">
-                  {failedFiles.slice(0, 50).map((f) => (
-                    <li key={f.entry} className="px-3 py-2 flex items-center gap-2">
-                      <AlertTriangle className="w-3.5 h-3.5 text-[var(--state-overdue)] shrink-0" />
-                      <span className="min-w-0 flex-1">
-                        <span className="block text-[13px] font-mono font-semibold text-[var(--color-text)] truncate" title={f.key}>{f.key.split("/").pop()}</span>
-                        <span className="block text-[13px] text-[var(--state-overdue)] truncate" title={f.error}>{f.error}</span>
-                      </span>
-                      <button type="button" onClick={() => void retryFile(f.entry, f.key)} disabled={!!f.retrying}
-                        className="shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded-md border border-[var(--color-border-strong)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">
-                        {f.retrying ? <Loader2 className="w-3 h-3 animate-spin" /> : null} Try again
-                      </button>
-                    </li>
-                  ))}
-                  {failedFiles.length > 50 && <li className="px-3 py-2 text-[13px] text-[var(--color-text-muted)]">and {fmtNum(failedFiles.length - 50)} more</li>}
-                </ul>
-              )}
-              <div className="flex items-center justify-end gap-3">
-                {filesDone && (
-                  <Link href="/documents" className={`text-[15px] ${link}`}>Open Documents</Link>
-                )}
-                {failedFiles.length > 0 && !filesProgress.running ? (
-                  <button type="button" onClick={() => void putFilesBack(failedFiles.map((f) => f.entry))}
-                    className={btnPrimary}>
-                    <UploadCloud className="w-4 h-4" /> Try again for {fmtNum(failedFiles.length)}
-                  </button>
-                ) : !filesDone && (
-                  <button type="button" onClick={() => void putFilesBack()} disabled={filesProgress.running}
-                    className={btnPrimary}>
-                    {filesProgress.running ? <Loader2 className="w-4 h-4 animate-spin" /> : <UploadCloud className="w-4 h-4" />}
-                    {filesProgress.running ? "Uploading…" : `Put ${fmtNum(fileEntryCount)} files back`}
-                  </button>
-                )}
               </div>
-            </div>
+            </Section>
           )}
         </>
       )}
@@ -603,4 +582,3 @@ export default function RestorePage() {
     </PageShell>
   );
 }
-

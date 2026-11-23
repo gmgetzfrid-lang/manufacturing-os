@@ -6,7 +6,7 @@
 // again: closing this is the last look.
 
 import React, { useState } from "react";
-import { KeyRound, Copy, Check } from "lucide-react";
+import { Copy, Check } from "lucide-react";
 import { Modal, ModalHeader, ModalBody } from "@/components/ui/Modal";
 import { Button } from "@/components/ui/Button";
 
@@ -23,20 +23,20 @@ export function TempPasswordNotice({ email, password, expiresAt, onClose }: {
   };
   return (
     <Modal onClose={onClose} size="sm">
-      <ModalHeader icon={KeyRound} title="One-time password" subtitle={email} onClose={onClose} />
+      <ModalHeader title="One-time password" subtitle={email} onClose={onClose} />
       <ModalBody>
         <div className="space-y-4">
           <div className="flex items-center gap-2">
-            <code className="flex-1 select-all rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] px-3 py-2.5 font-display text-[22px] tracking-wide text-[var(--color-heading)] tabular-nums">{password}</code>
+            <code className="flex-1 min-w-0 break-all select-all rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] px-3 py-2.5 font-display text-[22px] tracking-wide text-[var(--color-heading)] tabular-nums">{password}</code>
             <Button variant="secondary" onClick={() => void copy()} aria-label="Copy the password">
               {copied ? <><Check className="w-4 h-4" /> Copied</> : <><Copy className="w-4 h-4" /> Copy</>}
             </Button>
           </div>
-          <ul className="space-y-2 text-[14px] text-[var(--color-text)]">
-            <li className="flex gap-2"><span className="ui-count is-solid shrink-0">1</span> Give it to them in person or by phone, not in the same email as their address.</li>
-            <li className="flex gap-2"><span className="ui-count is-solid shrink-0">2</span> They sign in with it and must set their own password right away.</li>
-            <li className="flex gap-2"><span className="ui-count is-warn shrink-0">!</span> If they don&apos;t by <b className="font-semibold">{until}</b>, the account is suspended until you reset it.</li>
-          </ul>
+          <ol className="space-y-1.5 text-[14px] text-[var(--color-text)] list-decimal ml-5">
+            <li>Give it to them in person or by phone, not in the same email as their address.</li>
+            <li>They sign in with it and must set their own password right away.</li>
+          </ol>
+          <p className="text-[14px] text-[var(--state-held-text)] font-semibold">If they don&apos;t by {until}, the account is suspended until you reset it.</p>
           <p className="text-[13px] text-[var(--color-text-muted)]">This is the only time it&apos;s shown.</p>
           <Button className="w-full" onClick={onClose}>Done</Button>
         </div>

@@ -1,6 +1,6 @@
 "use client";
 
-// /admin/proposed-links — review what the system found.
+// /admin/proposed-links: review what the system found.
 //
 // The engine reads what extraction already stored — off-page connector
 // continuity, shared equipment tags, aliases — and files each discovered
@@ -15,10 +15,7 @@
 
 import React, { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import {
-  Loader2, Check, X, RefreshCw,
-  ShieldCheck, Info, ScanSearch, GitPullRequest, ArrowLeftRight,
-} from "lucide-react";
+import { Loader2, Check, X, RefreshCw, Info, ArrowLeftRight } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
 import {
@@ -27,13 +24,17 @@ import {
   type LinkProposal, type ProposalTier,
 } from "@/lib/linkProposals";
 import { PageShell } from "@/components/ui/PageShell";
-import { PageHero, PageBody, heroPrimary } from "@/components/ui/PageHero";
-import { tbl, sheet, btnRow, Pill, Section, Problem, type Tone } from "@/components/admin/kit";
+import { PageHero, PageBody } from "@/components/ui/PageHero";
+import { tbl, sheet, btnRow, link, StatusTag, Section, Problem, type Tone } from "@/components/admin/kit";
+import { said, responseError } from "@/components/admin/said";
+import { Button } from "@/components/ui/Button";
+import { SkeletonRows } from "@/components/ui/Skeleton";
+import { ErrorNote } from "@/components/ui/ErrorNote";
+import HelpTooltip from "@/components/ui/HelpTooltip";
 import { plural } from "@/components/admin/band";
 import ViewTabs, { INTELLIGENCE_VIEWS } from "@/components/navigation/ViewTabs";
 import ConnectionSkillsPanel from "@/components/intelligence/ConnectionSkillsPanel";
 import EstateReviewPanel from "@/components/intelligence/EstateReviewPanel";
-import LoadingBlock from "@/components/ui/LoadingBlock";
 
 const TIER_TONE: Record<ProposalTier, Tone> = {
   provable: "good",
@@ -94,12 +95,12 @@ export default function ProposedLinksPage() {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
   const [lastRun, setLastRun] = useState<RunResult | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<unknown>(null);
 
   const refresh = useCallback(async () => {
     if (!activeOrgId) return;
     try { setRows(await listProposals(activeOrgId)); setLoadError(null); }
-    catch (e) { setLoadError((e as Error).message || "Couldn't load the proposals."); }
+    catch (e) { setLoadError(e); }
   }, [activeOrgId]);
   useEffect(() => { void refresh(); }, [refresh]);
 
@@ -120,8 +121,8 @@ export default function ProposedLinksPage() {
           },
           body: JSON.stringify({ orgId: activeOrgId }),
         });
+        if (!res.ok) throw await responseError(res, "The scan stopped.");
         const json = await res.json();
-        if (!res.ok) throw new Error(json.error ?? "Run failed");
         last = {
           scanned: json.scanned ?? 0,
           proposed: (last?.proposed ?? 0) + (json.proposed ?? 0),
@@ -135,7 +136,7 @@ export default function ProposedLinksPage() {
       }
       setLastRun(last);
       await refresh();
-    } catch (e) { setError((e as Error).message); }
+    } catch (e) { setError(said(e, "Couldn't finish the scan.")); }
     finally { setRunning(false); }
   };
 
@@ -147,7 +148,7 @@ export default function ProposedLinksPage() {
       if (approve) await approveProposal(p, actor);
       else await dismissProposal(p.id, actor);
       setRows((prev) => (prev ?? []).filter((r) => r.id !== p.id));
-    } catch (e) { setError((e as Error).message); }
+    } catch (e) { setError(said(e, approve ? "Couldn't link them." : "Couldn't mark them not related.")); }
     finally { setBusyId(null); }
   };
 
@@ -156,7 +157,7 @@ export default function ProposedLinksPage() {
   const docLabel = (d: LinkProposal["doc"]) =>
     d?.document_number || d?.title || "Document";
 
-  const answer = rows === null ? (loadError ? "Couldn't load the proposals." : "Proposed connections")
+  const answer = rows === null ? (loadError != null ? "Couldn't load the proposals." : "Proposed connections")
     : rows.length === 0 ? "Nothing waiting on you."
     : `${plural(rows.length, "connection")} to review.`;
 
@@ -169,10 +170,10 @@ export default function ProposedLinksPage() {
           ? "Each one says why it was found. Link the pair or mark it not related."
           : "Connections found in your documents, each with the reason it was found."}
         primary={canRun ? (
-          <button type="button" onClick={() => void runProposers()} disabled={running} className={heroPrimary}>
-            {running ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
-            {running ? "Scanning…" : "Find connections"}
-          </button>
+          <Button onClick={() => void runProposers()} loading={running}>
+            {!running && <RefreshCw className="w-4 h-4" />}
+            {running ? "Scanning" : "Find connections"}
+          </Button>
         ) : undefined}
       >
         <div className="[&>div]:mb-0">
@@ -183,26 +184,25 @@ export default function ProposedLinksPage() {
       <PageBody>
       {error && <Problem>{error}</Problem>}
       {lastRun && (
-        <Section label="Last scan" icon={ScanSearch}>
+        <Section label="Last scan">
           <div className={sheet}>
-            <dl className="grid grid-cols-3 divide-x divide-[var(--color-border)]">
+            <dl className="flex flex-wrap gap-x-8 gap-y-3 px-4 py-3">
               {[["Documents scanned", lastRun.scanned], ["Linked for you", lastRun.autoApplied], ["Waiting for review", lastRun.proposed]].map(([l, v]) => (
-                <div key={String(l)} className="px-4 py-3">
+                <div key={String(l)}>
                   <dt className="text-[13px] text-[var(--color-text-muted)]">{l}</dt>
-                  <dd className={`font-display text-[24px] leading-tight font-semibold tabular-nums ${l === "Waiting for review" && Number(v) > 0 ? "text-[var(--state-held)]" : l === "Linked for you" && Number(v) > 0 ? "text-[var(--state-released)]" : "text-[var(--color-heading)]"}`}>{v}</dd>
+                  <dd className={`text-[20px] leading-tight font-semibold tabular-nums ${Number(v) === 0 ? "text-[var(--color-text-faint)]" : l === "Waiting for review" ? "text-[var(--state-held-text)]" : "text-[var(--color-text)]"}`}>{Number(v).toLocaleString()}</dd>
                 </div>
               ))}
             </dl>
             {(lastRun.evidenceLost > 0 || lastRun.notes.length > 0 || (lastRun.proposed === 0 && lastRun.autoApplied === 0 && lastRun.inputs)) && (
               <div className="border-t border-[var(--color-border)] px-4 py-3 space-y-1 text-[14px]">
                 {lastRun.evidenceLost > 0 && (
-                  <div className="flex items-start gap-2 text-[var(--color-text)]">
-                    <span className="ui-count is-warn shrink-0">{lastRun.evidenceLost}</span>
-                    <span>existing system link{lastRun.evidenceLost === 1 ? " no longer matches" : "s no longer match"} its reason. Marked, not removed.</span>
-                  </div>
+                  <p className="text-[var(--color-text)]">
+                    <b className="font-semibold text-[var(--state-held-text)] tabular-nums">{lastRun.evidenceLost}</b> system link{lastRun.evidenceLost === 1 ? " no longer matches" : "s no longer match"} the reason it was made. Marked, not removed.
+                  </p>
                 )}
                 {lastRun.notes.map((n) => (
-                  <div key={n} className="text-[var(--color-text-muted)] flex items-center gap-1.5"><Info className="w-3.5 h-3.5 shrink-0" /> {n}</div>
+                  <div key={n} className="text-[var(--color-text-muted)] flex items-center gap-1.5"><Info aria-hidden className="w-3.5 h-3.5 shrink-0" /> {n}</div>
                 ))}
                 {/* Zero findings explain themselves: which input was empty and
                     what feeds it. Silence here reads as "broken"; this is the
@@ -222,22 +222,21 @@ export default function ProposedLinksPage() {
         </Section>
       )}
 
-      {rows === null && loadError ? (
-        <Problem retry={() => void refresh()}>Couldn&apos;t load the proposals: {loadError}</Problem>
+      {rows === null && loadError != null ? (
+        <ErrorNote error={loadError} title="Couldn't load the proposals." onRetry={() => void refresh()} />
       ) : rows === null ? (
-        <LoadingBlock what="proposed connections" />
+        <SkeletonRows rows={3} cols={2} what="proposed connections" />
       ) : rows.length === 0 ? (
         <div className={`${sheet} px-5 py-8 text-center`}>
-          <span aria-hidden className="ui-icon-tile mx-auto mb-3 !grid !w-12 !h-12"><Check className="w-6 h-6" /></span>
-          <Pill tone="good">All decided</Pill>
-          <p className="mt-1 text-[15px] text-[var(--color-text-muted)] max-w-xl mx-auto">
+          <p className="text-[15px] text-[var(--color-text)] max-w-xl mx-auto">
             {canRun
               ? "Find connections reads off-page connectors, equipment tags and aliases. Sure links are made for you; the rest wait here."
               : "Connections that need a person's decision show up here."}
           </p>
+          {canRun && !running && <button type="button" onClick={() => void runProposers()} className={`${link} mt-1.5 font-semibold`}>Find connections now</button>}
         </div>
       ) : (
-        <Section label="Waiting for a decision" icon={GitPullRequest} count={rows.length} action={<span className="text-[13px] text-[var(--color-text-muted)] inline-flex items-center gap-1.5"><ShieldCheck className="w-3.5 h-3.5" /> &ldquo;Not related&rdquo; sticks until a new revision gives a new reason</span>}>
+        <Section label={<>Waiting for a decision <HelpTooltip>&ldquo;Not related&rdquo; sticks until a new revision gives a new reason.</HelpTooltip></>} count={rows.length}>
           <div className={tbl.wrap}>
             <table className={tbl.table}>
               <thead className={`${tbl.thead} max-md:hidden`}>
@@ -254,7 +253,7 @@ export default function ProposedLinksPage() {
                     <td className={`${tbl.td} max-md:py-1 align-top`}>
                       <div className="flex items-center gap-2 flex-wrap">
                         <Link href={docLink(p.doc)} className="ui-id text-[16px]">{docLabel(p.doc)}</Link>
-                        <span aria-label="and" className="ui-icon-tile is-sm !w-6 !h-6"><ArrowLeftRight className="w-3.5 h-3.5" /></span>
+                        <ArrowLeftRight aria-label="and" className="w-4 h-4 text-[var(--color-text-faint)]" />
                         <Link href={docLink(p.target)} className="ui-id text-[16px]">{docLabel(p.target)}</Link>
                       </div>
                     </td>
@@ -263,7 +262,7 @@ export default function ProposedLinksPage() {
                       {p.evidence?.detail && <div className="text-[14px] text-[var(--color-text-muted)]">{p.evidence.detail}</div>}
                     </td>
                     <td className={`${tbl.td} max-md:py-1 align-top max-lg:hidden`}>
-                      <Pill tone={TIER_TONE[p.tier] === "none" ? "brand" : TIER_TONE[p.tier]}>{TIER_LABELS[p.tier]}</Pill>
+                      <StatusTag tone={TIER_TONE[p.tier]} colored={false}>{TIER_LABELS[p.tier]}</StatusTag>
                       <div className="mt-1 text-[13px] text-[var(--color-text-muted)]">{proposerLabel(p.proposer, p.evidence)}{p.source_rev ? `, from rev ${p.source_rev}` : ""}</div>
                     </td>
                     {canDecide && (

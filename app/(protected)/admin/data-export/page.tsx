@@ -1,30 +1,31 @@
 "use client";
 
-// /admin/data-export — the complete data-portability admin surface.
+// /admin/data-export: take your data out, any time.
 //
-// Three sections:
-//   1. Quick actions  — direct JSON download + direct full-ZIP download
-//   2. Destinations   — configure scheduled push to customer-owned S3 / R2 / webhook
-//   3. Run history    — chronological audit of every export, manual or scheduled
+//   1. Download now: the records as JSON, or the full backup (records and
+//      every file) built in the browser, in parts.
+//   2. Scheduled destinations: a fresh export pushed to the customer's own
+//      S3 / R2 bucket or a webhook, on a schedule.
+//   3. Export history: every export, manual or scheduled.
 
 import React, { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import {
-  Download, FileJson, FileArchive, Loader2, AlertTriangle,
-  Plus, Trash2, TestTube, RefreshCw,
-  Lock, ExternalLink, Cpu,
-  Webhook, HardDrive, Archive as ArchiveIcon, Edit3, X, Send, History,
-} from "lucide-react";
+import { Download, Loader2, Plus, Trash2, TestTube, RefreshCw, Lock, ExternalLink, Edit3, Play } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
 import { startGlobalBackup, subscribeBackup, cancelBackup, backupIsRunning, type BackupProgress } from "@/lib/clientBackup";
 import { PageShell } from "@/components/ui/PageShell";
 import { PageHero, PageBody } from "@/components/ui/PageHero";
-import { bandSeg, bandSegItem } from "@/components/admin/band";
-import { tbl, sheet, link, btnPrimary, btnQuiet, btnRow, btnIcon, FormRow, Section, StatusTag, Pill, RowEdge, Problem, shortDateTime } from "@/components/admin/kit";
+import { bandSeg, bandSegItem, plural } from "@/components/admin/band";
+import { tbl, sheet, link, btnQuiet, btnRow, btnIcon, FormRow, Section, StatusTag, RowEdge, Problem, shortDateTime, type Tone } from "@/components/admin/kit";
+import { said, responseError } from "@/components/admin/said";
+import { errorKind } from "@/lib/friendlyError";
 import HelpTooltip from "@/components/ui/HelpTooltip";
-import { Input, Select } from "@/components/ui/Field";
-import { Spinner } from "@/components/ui/Spinner";
+import { Field, Input, Select } from "@/components/ui/Field";
+import { Button } from "@/components/ui/Button";
+import { SkeletonRows } from "@/components/ui/Skeleton";
+import MoreMenu from "@/components/ui/MoreMenu";
+import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/ui/Modal";
 import { appConfirm } from "@/components/providers/DialogProvider";
 
 type Destination = {
@@ -73,6 +74,15 @@ type Run = {
   duration_ms?: number | null;
 };
 
+const TYPE_WORD: Record<Destination["destination_type"], string> = { s3: "S3", r2: "R2", webhook: "Webhook" };
+
+/** A push that failed, in plain words. A refused or unreachable address is
+ *  the destination's side, not this person's connection. */
+function pushError(e: unknown, lead?: string): string {
+  if (errorKind(e) === "network") return `${lead ? `${lead} ` : ""}The destination didn't answer. Check its address and that it's online.`;
+  return said(e, lead);
+}
+
 export default function DataExportPage() {
   const { activeOrgId, activeRole } = useRole();
   const isAuthorized = ["Admin", "Manager", "DocCtrl"].includes(activeRole);
@@ -101,18 +111,19 @@ export default function DataExportPage() {
         fetch(`/api/data-export/destinations?orgId=${activeOrgId}`, { headers: { Authorization: `Bearer ${token}` } }),
         fetch(`/api/data-export/runs?orgId=${activeOrgId}&limit=50`, { headers: { Authorization: `Bearer ${token}` } }),
       ]);
-      if (!destRes.ok) throw new Error(`Couldn't load destinations: ${(await destRes.text().catch(() => "")) || `HTTP ${destRes.status}`}`);
-      if (!runRes.ok) throw new Error(`Couldn't load export history: ${(await runRes.text().catch(() => "")) || `HTTP ${runRes.status}`}`);
+      if (!destRes.ok) throw await responseError(destRes);
+      if (!runRes.ok) throw await responseError(runRes);
       setDestinations((await destRes.json()).destinations || []);
       setRuns((await runRes.json()).runs || []);
+      setError(null);
     } catch (e) {
-      setError((e as Error).message);
+      setError(said(e, "Couldn't load the destinations and export history."));
     } finally { setLoading(false); }
   }, [activeOrgId, isAuthorized]);
 
   useEffect(() => { void refresh(); }, [refresh]);
 
-  // ─── Inline JSON download ────────────────────────────────────────────
+  // ─── Records as JSON, straight down ──────────────────────────────────
   const downloadJson = async () => {
     if (!activeOrgId) return;
     setBusyJson(true); setError(null);
@@ -122,23 +133,21 @@ export default function DataExportPage() {
       const res = await fetch(`/api/data-export/structured?orgId=${activeOrgId}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
-      if (!res.ok) throw new Error(await res.text());
+      if (!res.ok) throw await responseError(res);
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url; a.download = `manufacturing-os-export-${Date.now()}.json`;
       document.body.appendChild(a); a.click(); document.body.removeChild(a);
       URL.revokeObjectURL(url);
-    } catch (e) { setError((e as Error).message); }
+    } catch (e) { setError(said(e, "The JSON download didn't finish.")); }
     finally { setBusyJson(false); }
   };
 
   // ─── Full backup, built in the browser ───────────────────────────────
-  // One serverless function can neither hold nor finish a multi-GB zip —
-  // the old server-built path hung forever and delivered nothing. Files now
-  // stream browser→storage directly and pack into ~300MB zip parts with
-  // live progress; a failed file lands in the report instead of killing
-  // the run.
+  // One server function can neither hold nor finish a multi-GB zip, so
+  // files stream browser→storage and pack into ~300 MB parts with live
+  // progress; a failed file lands in the report instead of ending the run.
   const downloadZip = async () => {
     if (!activeOrgId || backupIsRunning()) return;
     setBusyZip(true); setError(null);
@@ -146,7 +155,7 @@ export default function DataExportPage() {
       await startGlobalBackup(activeOrgId);
       void refresh();
     } catch (e) {
-      setError(`The backup didn't finish: ${(e as Error).message}`);
+      setError(said(e, "The backup didn't finish."));
     } finally { setBusyZip(false); }
   };
 
@@ -162,37 +171,37 @@ export default function DataExportPage() {
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({ orgId: activeOrgId, destinationId: id }),
       });
-      if (!res.ok) throw new Error(await res.text());
+      if (!res.ok) throw await responseError(res);
       void refresh();
-    } catch (e) { setError((e as Error).message); }
+    } catch (e) { setError(said(e, "Couldn't start the export.")); }
     finally { setBusyDestId(null); }
   };
 
   // ─── Test connection ─────────────────────────────────────────────────
   const testConnection = async (id: string): Promise<{ ok: boolean; error?: string }> => {
-    if (!activeOrgId) return { ok: false, error: "no org" };
+    if (!activeOrgId) return { ok: false, error: "Pick a workspace first." };
     const { data: { session } } = await supabase.auth.getSession();
     const token = session?.access_token;
     const res = await fetch(`/api/data-export/destinations/${id}/test?orgId=${activeOrgId}`, {
       method: "POST", headers: { Authorization: `Bearer ${token}` },
     });
-    if (!res.ok) return { ok: false, error: await res.text() };
+    if (!res.ok) return { ok: false, error: (await responseError(res)).message };
     return await res.json();
   };
 
-  const deleteDestination = async (id: string) => {
+  const deleteDestination = async (d: Destination) => {
     if (!activeOrgId) return;
-    if (!(await appConfirm({ message: "Delete this destination? Scheduled exports for it will stop. This cannot be undone.", tone: "danger" }))) return;
+    if (!(await appConfirm({ message: `Delete ${d.name}? Scheduled exports to it stop. Files already sent stay where they are. This can't be undone.`, tone: "danger", confirmLabel: "Delete" }))) return;
     setError(null);
     try {
       const { data: { session } } = await supabase.auth.getSession();
       const token = session?.access_token;
-      const res = await fetch(`/api/data-export/destinations/${id}?orgId=${activeOrgId}`, {
+      const res = await fetch(`/api/data-export/destinations/${d.id}?orgId=${activeOrgId}`, {
         method: "DELETE", headers: { Authorization: `Bearer ${token}` },
       });
-      if (!res.ok) throw new Error((await res.text().catch(() => "")) || `HTTP ${res.status}`);
+      if (!res.ok) throw await responseError(res);
     } catch (e) {
-      setError(`Couldn't delete the destination: ${(e as Error).message}`);
+      setError(said(e, "Couldn't delete the destination."));
       return;
     }
     void refresh();
@@ -200,76 +209,78 @@ export default function DataExportPage() {
 
   // The answer: when the data last left the building.
   const lastRun = runs[0];
-  const lastAt = lastRun ? new Date(lastRun.completed_at || lastRun.started_at) : null;
+  const lastAt = lastRun ? (lastRun.completed_at || lastRun.started_at) : null;
   const answer = !isAuthorized ? "Admin, Manager and Doc Control only."
-    : loading ? "Data export"
-    : lastAt ? `Last export ${lastAt.toLocaleDateString(undefined, { month: "short", day: "numeric" })}, ${lastAt.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}.`
+    : loading && runs.length === 0 ? "Data export"
+    : lastAt ? `Last export ${shortDateTime(lastAt)}.`
     : "No exports yet.";
 
   const failedRuns = runs.filter((r) => r.status === "failed").length;
+  const progressPct = backupProgress && backupProgress.filesTotal > 0 ? Math.round((backupProgress.filesDone / backupProgress.filesTotal) * 100) : null;
 
   return (
     <PageShell width="work">
         <PageHero
-          kicker="Admin · Data export and backup"
+          kicker="Admin · Data export"
           title={answer}
-          sub="Your data, yours to take any time. Every export is in the audit log."
-          facts={isAuthorized && !loading ? [
+          sub={isAuthorized ? "Your data, yours to take any time. Every export is written to the audit log." : "Ask an admin to export the workspace's data."}
+          factsHero={failedRuns > 0 ? "auto" : "none"}
+          facts={isAuthorized && !(loading && runs.length === 0) ? [
+            ...(failedRuns > 0 ? [{ label: "Failed exports", value: failedRuns, tone: "bad" as const, hero: true }] : []),
             { label: "Destinations", value: destinations.length },
             { label: "Exports", value: runs.length },
-            { label: "Failed", value: failedRuns, tone: failedRuns > 0 ? "bad" : undefined },
           ] : undefined}
-          tools={<Link href="/data-portability" target="_blank" className={`text-[14px] inline-flex items-center gap-1 ${link}`}>Our data promise <ExternalLink className="w-3.5 h-3.5" /></Link>}
+          tools={<Link href="/data-portability" target="_blank" className={`text-[14px] inline-flex items-center gap-1 ${link}`}>Our data promise <ExternalLink aria-hidden className="w-3.5 h-3.5" /></Link>}
         />
 
         <PageBody>
         {!isAuthorized && (
           <p className="text-[15px] text-[var(--color-text-muted)] flex items-start gap-2">
-            <Lock className="w-4 h-4 mt-0.5 shrink-0" /> Only Admin, Manager or DocCtrl roles manage data exports.
+            <Lock aria-hidden className="w-4 h-4 mt-0.5 shrink-0" /> Only Admin, Manager and Doc Control manage data exports.
           </p>
         )}
 
         {error && <Problem retry={() => void refresh()}>{error}</Problem>}
 
-        {/* ──── DIRECT DOWNLOAD ──── */}
+        {/* ──── DOWNLOAD NOW ──── */}
         {isAuthorized && (
-          <Section label="Download now" icon={Download}>
+          <Section label="Download now">
             <div className={`${sheet} divide-y divide-[var(--color-border)]`}>
-              <FormRow label={<span className="inline-flex items-center gap-2"><span aria-hidden className="ui-icon-tile is-sm"><FileJson className="w-4 h-4" /></span> JSON only</span>} hint="Records, plus a list of files with links that work for 24 hours.">
-                <button type="button" onClick={downloadJson} disabled={busyJson || !activeOrgId} className={btnQuiet}>
-                  {busyJson ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />} Download JSON
-                </button>
-              </FormRow>
-              <FormRow label={<span className="inline-flex items-center gap-2"><span aria-hidden className="ui-icon-tile is-sm"><FileArchive className="w-4 h-4" /></span> Full ZIP with files</span>} hint="Records and every PDF and DWG, in parts of about 300 MB. Allow several downloads when the browser asks.">
-                <button type="button" onClick={downloadZip} disabled={busyZip || !activeOrgId} className={btnPrimary}>
-                  {busyZip ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
-                  {busyZip ? "Building backup…" : "Download full ZIP"}
-                </button>
+              <FormRow label="Full backup" hint="Records and every PDF and DWG, in parts of about 300 MB. Allow several downloads when the browser asks.">
+                <div className="flex flex-wrap items-center gap-3">
+                  <Button loading={busyZip} disabled={!activeOrgId} onClick={() => void downloadZip()}>
+                    {!busyZip && <Download className="w-4 h-4" />}
+                    {busyZip ? "Building backup" : "Download full backup"}
+                  </Button>
+                  {busyZip && backupProgress && <button type="button" onClick={cancelBackup} className={btnRow}>Stop</button>}
+                </div>
                 {backupProgress && busyZip && (
-                  <div className="mt-3 space-y-1.5 max-w-xl">
-                    <div className="h-2 rounded-sm bg-[var(--color-surface-2)] overflow-hidden">
-                      <div className="h-full bg-[var(--color-text)] transition-all duration-300"
-                        style={{ width: `${backupProgress.filesTotal > 0 ? Math.round((backupProgress.filesDone / backupProgress.filesTotal) * 100) : 5}%` }} />
+                  <div className="mt-3 space-y-1.5 max-w-xl" aria-live="polite">
+                    <div className="h-2 rounded-full bg-[var(--color-surface-2)] overflow-hidden" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progressPct ?? undefined} aria-label="Backup progress">
+                      <div className="h-full rounded-full bg-[var(--color-text)] transition-[width] duration-300 motion-reduce:transition-none"
+                        style={{ width: `${progressPct ?? 5}%` }} />
                     </div>
-                    <div className="flex items-center justify-between gap-3 text-[13px] text-[var(--color-text-muted)]">
-                      <span className="truncate">
-                        {backupProgress.phase === "envelope" && "Reading every table…"}
-                        {backupProgress.phase === "files" &&
-                          `File ${backupProgress.filesDone + 1} of ${backupProgress.filesTotal}, ${(backupProgress.bytesDone / 1048576).toFixed(0)} MB, part ${backupProgress.part}` +
-                          (backupProgress.currentPath ? `: ${backupProgress.currentPath.split("/").pop()}` : "")}
-                        {backupProgress.phase === "finalizing" && `Packing part ${backupProgress.part}…`}
-                      </span>
-                      <button type="button" onClick={cancelBackup} className={btnRow}>Cancel</button>
-                    </div>
-                    <div className="text-[13px] text-[var(--color-text-muted)]">You can keep working; the corner card follows it. Don&apos;t close the tab.</div>
+                    <p className="text-[13px] text-[var(--color-text-muted)] tabular-nums truncate">
+                      {backupProgress.phase === "envelope" && "Step 1 of 3: reading every table"}
+                      {backupProgress.phase === "files" &&
+                        `Step 2 of 3: file ${(backupProgress.filesDone + 1).toLocaleString()} of ${backupProgress.filesTotal.toLocaleString()}, ${(backupProgress.bytesDone / 1048576).toFixed(0)} MB, part ${backupProgress.part}` +
+                        (backupProgress.currentPath ? `: ${backupProgress.currentPath.split("/").pop()}` : "")}
+                      {backupProgress.phase === "finalizing" && `Step 3 of 3: packing part ${backupProgress.part}`}
+                    </p>
+                    <p className="text-[13px] text-[var(--color-text-muted)]">You can keep working; the corner card follows it. Keep this tab open.</p>
                     {backupProgress.errors.length > 0 && (
-                      <StatusTag tone="warn">{backupProgress.errors.length} file(s) didn&apos;t make it so far. They&apos;re listed in backup-report.json.</StatusTag>
+                      <StatusTag tone="warn">{plural(backupProgress.errors.length, "file")} didn&apos;t make it so far. They&apos;re listed in backup-report.json.</StatusTag>
                     )}
                   </div>
                 )}
                 {backupProgress?.phase === "done" && !busyZip && (
-                  <p role="status" className="mt-2"><StatusTag tone="good">Backup complete: {backupProgress.part} part(s), every file checked (SHA-256).</StatusTag></p>
+                  <p role="status" className="mt-2 text-[14px] text-[var(--color-text)]">Backup complete: {plural(backupProgress.part, "part")}, every file checked (SHA-256).</p>
                 )}
+              </FormRow>
+              <FormRow label="Records only" hint="Every record as JSON, with a list of files whose links work for 24 hours.">
+                <button type="button" onClick={() => void downloadJson()} disabled={busyJson || !activeOrgId} className={btnQuiet}>
+                  {busyJson ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />} Download JSON
+                </button>
               </FormRow>
             </div>
           </Section>
@@ -277,12 +288,16 @@ export default function DataExportPage() {
 
         {/* ──── DESTINATIONS ──── */}
         {isAuthorized && (
-          <Section icon={Send} label={<span className="inline-flex items-center gap-2">Scheduled destinations <HelpTooltip>Your own S3 or R2 bucket, or a webhook. A fresh export goes there on your schedule. Keys are stored encrypted (AES-256-GCM) and only opened at push time.</HelpTooltip></span>}
-            action={<button type="button" onClick={() => setCreating(true)} className={btnQuiet}><Plus className="w-3.5 h-3.5" /> New destination</button>}>
-            {loading ? (
-              <div className={`${sheet} px-4 py-3 flex items-center gap-2 text-[15px] text-[var(--color-text-muted)]`}><Spinner size="sm" /> Loading destinations…</div>
+          <Section label={<>Scheduled destinations <HelpTooltip>Your own S3 or R2 bucket, or a webhook. A fresh export goes there on your schedule. Keys are stored encrypted (AES-256-GCM) and only opened at push time.</HelpTooltip></>}
+            count={destinations.length}
+            action={<button type="button" onClick={() => setCreating(true)} className={btnQuiet}><Plus className="w-4 h-4" /> New destination</button>}>
+            {loading && destinations.length === 0 ? (
+              <SkeletonRows rows={2} cols={3} what="destinations" />
             ) : destinations.length === 0 ? (
-              <div className={`${sheet} px-4 py-6 text-center text-[15px] text-[var(--color-text-muted)]`}>No destinations yet.</div>
+              <div className={`${sheet} px-4 py-6 text-center`}>
+                <p className="text-[15px] text-[var(--color-text)]">Nothing is pushed out on a schedule yet.</p>
+                <button type="button" onClick={() => setCreating(true)} className={`${link} mt-1.5 font-semibold`}>Add a destination</button>
+              </div>
             ) : (
               <div className={tbl.wrap}>
                 <table className={tbl.table}>
@@ -304,7 +319,7 @@ export default function DataExportPage() {
                         onRun={() => runDestinationNow(d.id)}
                         onTest={() => testConnection(d.id)}
                         onEdit={() => setEditing(d)}
-                        onDelete={() => deleteDestination(d.id)}
+                        onDelete={() => deleteDestination(d)}
                       />
                     ))}
                   </tbody>
@@ -316,14 +331,16 @@ export default function DataExportPage() {
 
         {/* ──── RUN HISTORY ──── */}
         {isAuthorized && (
-          <Section label="Export history" icon={History}
+          <Section label="Export history"
             action={
-              <button type="button" onClick={() => void refresh()} className={btnQuiet}>
-                <RefreshCw className="w-3.5 h-3.5" /> Refresh
+              <button type="button" onClick={() => void refresh()} disabled={loading} className={btnIcon} aria-label="Check again" title="Check again">
+                <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
               </button>
             }>
-            {runs.length === 0 ? (
-              <div className={`${sheet} px-4 py-6 text-center text-[15px] text-[var(--color-text-muted)]`}>No exports run yet.</div>
+            {loading && runs.length === 0 ? (
+              <SkeletonRows rows={3} cols={3} what="export history" />
+            ) : runs.length === 0 ? (
+              <div className={`${sheet} px-4 py-6 text-center text-[15px] text-[var(--color-text-muted)]`}>Every export, by hand or on a schedule, shows here.</div>
             ) : (
               <div className={tbl.wrap}>
                 <table className={tbl.table}>
@@ -361,6 +378,12 @@ export default function DataExportPage() {
 
 // ─── Destination row ──────────────────────────────────────────────────────
 
+function scheduleWords(d: Destination): string {
+  if (d.schedule_kind === "manual") return "By hand";
+  const kind = `${d.schedule_kind[0].toUpperCase()}${d.schedule_kind.slice(1)}`;
+  return d.schedule_hour_utc != null ? `${kind}, from ${String(d.schedule_hour_utc).padStart(2, "0")}:00 UTC` : kind;
+}
+
 function DestinationRow({
   dest, busy, onRun, onTest, onEdit, onDelete,
 }: {
@@ -378,58 +401,56 @@ function DestinationRow({
     setTesting(true);
     setTestResult(null);
     try { setTestResult(await onTest()); }
-    catch (e) { setTestResult({ ok: false, error: (e as Error).message }); }
+    catch (e) { setTestResult({ ok: false, error: said(e) }); }
     finally { setTesting(false); }
   };
 
-  const Ico = dest.destination_type === "webhook" ? Webhook : dest.destination_type === "r2" ? HardDrive : ArchiveIcon;
-  const icon = <span aria-hidden className={`ui-icon-tile is-sm ${dest.enabled ? "" : "!bg-[var(--color-surface-2)] !text-[var(--color-text-muted)]"}`}><Ico className="w-4 h-4" /></span>;
   const target = dest.destination_type === "webhook"
     ? dest.webhook_url
     : `${dest.endpoint || dest.region || ""} ${dest.bucket || ""}${dest.prefix ? "/" + dest.prefix : ""}`.trim();
-  const sched = dest.schedule_kind === "manual" ? "By hand"
-    : `${dest.schedule_kind[0].toUpperCase()}${dest.schedule_kind.slice(1)}${dest.schedule_hour_utc != null ? `, ${String(dest.schedule_hour_utc).padStart(2, "0")}:00 UTC` : ""}`;
+  const failed = dest.last_run_status === "failed";
 
   return (
-    <tr className={`${tbl.tr} max-md:flex max-md:flex-col max-md:py-1`}>
+    <tr className={`${tbl.tr} max-md:grid max-md:grid-cols-[minmax(0,1fr)_auto] max-md:py-1.5`}>
       <td className={`${tbl.td} relative align-top max-md:py-1`}>
-        {dest.last_run_status === "failed" && <RowEdge tone="bad" />}
-        <div className="flex items-center gap-2 flex-wrap">
-          {icon}
+        {failed && <RowEdge tone="bad" />}
+        <div className="flex items-baseline gap-x-2 gap-y-0.5 flex-wrap">
           <span className="font-semibold text-[var(--color-text)]">{dest.name}</span>
-          <span className="ui-tag">{dest.destination_type === "webhook" ? "Webhook" : dest.destination_type.toUpperCase()}</span>
-          {!dest.enabled && <Pill>Turned off</Pill>}
-          {!dest.include_files && <Pill tone="brand">Records only</Pill>}
+          <span className="text-[13px] text-[var(--color-text-muted)]">{TYPE_WORD[dest.destination_type]}{dest.include_files ? "" : ", records only"}</span>
+          {!dest.enabled && <StatusTag tone="none">Turned off</StatusTag>}
         </div>
         <div className="mt-0.5 text-[13px] text-[var(--color-text-muted)] truncate max-w-[52ch]" title={target ?? undefined}>{target}{dest.retention_days ? `, kept ${dest.retention_days} days` : ""}</div>
-        {dest.last_run_error && <p className="mt-1 text-[13px] font-semibold text-[var(--state-overdue)]">{dest.last_run_error}</p>}
+        {dest.last_run_error && <p className="mt-1 text-[13px] font-semibold text-[var(--state-overdue-text)]">{pushError(dest.last_run_error, "The last push failed.")}</p>}
         {testResult && (
-          <p role="status" className="mt-1">
-            {testResult.ok ? <Pill tone="good">Connection works</Pill> : <StatusTag tone="bad" colored>Test failed: {testResult.error}</StatusTag>}
+          <p role="status" className="mt-1 text-[13px]">
+            {testResult.ok ? <StatusTag tone="good" colored={false}>Connection works</StatusTag> : <span className="font-semibold text-[var(--state-overdue-text)]">{pushError(testResult.error, "The test failed.")}</span>}
           </p>
         )}
       </td>
-      <td className={`${tbl.td} align-top max-md:py-1 whitespace-nowrap text-[14px] text-[var(--color-text)]`}>{sched}</td>
+      <td className={`${tbl.td} align-top max-md:col-span-2 max-md:row-start-2 max-md:py-0.5 whitespace-nowrap text-[14px] text-[var(--color-text)]`}>
+        {scheduleWords(dest)}
+        <div className="lg:hidden text-[13px] text-[var(--color-text-muted)]">
+          {dest.last_run_at ? `Last ${shortDateTime(dest.last_run_at)}${failed ? ", failed" : ""}` : "Not run yet"}
+        </div>
+      </td>
       <td className={`${tbl.td} align-top max-lg:hidden whitespace-nowrap`}>
         {dest.last_run_at
-          ? <Pill tone={dest.last_run_status === "failed" ? "bad" : "good"}>{shortDateTime(dest.last_run_at)}</Pill>
+          ? <StatusTag tone={failed ? "bad" : "none"} colored={failed}>{failed ? "Failed " : ""}{shortDateTime(dest.last_run_at)}</StatusTag>
           : <span className="text-[14px] text-[var(--color-text-muted)]">Not yet</span>}
       </td>
-      <td className={`${tbl.td} align-top max-lg:hidden whitespace-nowrap text-[14px] text-[var(--color-text-muted)]`}>{dest.next_run_at ? shortDateTime(dest.next_run_at) : ""}</td>
-      <td className={`${tbl.td} align-top max-md:py-1`}>
-        <div className="flex items-center md:justify-end gap-1">
+      <td className={`${tbl.td} align-top max-lg:hidden whitespace-nowrap text-[14px] text-[var(--color-text-muted)]`}>{dest.next_run_at ? shortDateTime(dest.next_run_at) : <span className="text-[var(--color-text-faint)]">By hand</span>}</td>
+      <td className={`${tbl.td} align-top max-md:col-start-2 max-md:row-start-1 max-md:py-1`}>
+        <div className="flex items-center justify-end gap-1">
           <button type="button" onClick={onRun} disabled={busy} className={btnRow}>
-            {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Cpu className="w-3.5 h-3.5" />} Run now
+            {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />} Run now
           </button>
-          <button type="button" onClick={() => void doTest()} disabled={testing} title="Test connection" aria-label="Test connection" className={btnIcon}>
-            {testing ? <Loader2 className="w-4 h-4 animate-spin" /> : <TestTube className="w-4 h-4" />}
-          </button>
-          <button type="button" onClick={onEdit} title="Edit" aria-label={`Edit ${dest.name}`} className={btnIcon}>
-            <Edit3 className="w-4 h-4" />
-          </button>
-          <button type="button" onClick={onDelete} title="Delete" aria-label={`Delete ${dest.name}`} className={`${btnIcon} hover:text-[var(--state-overdue)]`}>
-            <Trash2 className="w-4 h-4" />
-          </button>
+          {testing
+            ? <span className={btnIcon} role="status" aria-label="Testing the connection"><Loader2 className="w-4 h-4 animate-spin" /></span>
+            : <MoreMenu iconOnly label={`More for ${dest.name}`} triggerClass={btnIcon} items={[
+                { icon: <TestTube className="w-4 h-4" />, label: "Test the connection", onClick: () => doTest() },
+                { icon: <Edit3 className="w-4 h-4" />, label: "Edit", onClick: onEdit },
+                { icon: <Trash2 className="w-4 h-4" />, label: "Delete", tone: "bad", line: true, onClick: onDelete },
+              ]} />}
         </div>
       </td>
     </tr>
@@ -438,38 +459,53 @@ function DestinationRow({
 
 // ─── Run history row ──────────────────────────────────────────────────────
 
+function duration(ms: number): string {
+  const s = Math.round(ms / 1000);
+  if (s < 60) return `${s} s`;
+  const m = Math.round(s / 60);
+  return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${m % 60} min`;
+}
+
+const RUN_STATUS: Record<Run["status"], { tone: Tone; word: string }> = {
+  succeeded: { tone: "good", word: "Done" },
+  failed: { tone: "bad", word: "Failed" },
+  running: { tone: "none", word: "Running" },
+  pending: { tone: "none", word: "Waiting" },
+  cancelled: { tone: "none", word: "Stopped" },
+};
+const TRIGGER_WORD: Record<Run["trigger_type"], string> = { manual: "by hand", scheduled: "on schedule", api: "through the API" };
+
 function RunRow({ run }: { run: Run }) {
-  const ago = run.completed_at || run.started_at;
-  const dur = run.duration_ms ? `${(run.duration_ms / 1000).toFixed(1)}s` : null;
-  const status = run.status === "succeeded" ? <Pill tone="good">Done</Pill>
-    : run.status === "failed" ? <Pill tone="bad">Failed</Pill>
-    : run.status === "running" ? <Pill tone="warn"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Running</Pill>
-    : <Pill>{run.status.charAt(0).toUpperCase() + run.status.slice(1)}</Pill>;
+  const at = run.completed_at || run.started_at;
+  const st = RUN_STATUS[run.status] ?? { tone: "none" as Tone, word: run.status };
   return (
-    <tr className={`${tbl.tr} max-md:flex max-md:flex-col max-md:py-1`}>
+    <tr className={`${tbl.tr} max-md:grid max-md:grid-cols-[minmax(0,1fr)_auto] max-md:py-1.5`}>
       <td className={`${tbl.td} relative align-top max-md:py-0.5 whitespace-nowrap text-[14px] text-[var(--color-text)]`}>
         {run.status === "failed" && <RowEdge tone="bad" />}
-        {shortDateTime(ago)}{dur && <span className="text-[var(--color-text-muted)]">, {dur}</span>}
+        {shortDateTime(at)}
+        {run.duration_ms ? <div className="text-[13px] text-[var(--color-text-muted)]">Took {duration(run.duration_ms)}</div> : null}
       </td>
-      <td className={`${tbl.td} align-top max-md:py-0.5`}>
+      <td className={`${tbl.td} align-top max-md:col-span-2 max-md:row-start-2 max-md:py-0.5`}>
         <span className="font-semibold text-[var(--color-text)]">{run.destination_name || "Direct download"}</span>
-        {run.trigger_type && <span className="ml-2 ui-tag !h-6 !text-[12.5px]">{run.trigger_type}</span>}
+        {run.trigger_type && <span className="ml-1.5 text-[13px] text-[var(--color-text-muted)]">{TRIGGER_WORD[run.trigger_type] ?? run.trigger_type}</span>}
         {run.destination_path && <div className="text-[13px] text-[var(--color-text-muted)] truncate max-w-[48ch]" title={run.destination_path}>{run.destination_path}</div>}
-        {run.error_message && <p className="mt-0.5 text-[13px] font-semibold text-[var(--state-overdue)]">{run.error_message}</p>}
+        {run.error_message && <p className="mt-0.5 text-[13px] font-semibold text-[var(--state-overdue-text)]">{pushError(run.error_message)}</p>}
       </td>
-      <td className={`${tbl.td} align-top max-md:py-0.5`}>{status}</td>
-      <td className={`${tbl.td} align-top max-lg:hidden text-[14px] text-[var(--color-text-muted)]`}>{run.triggered_by_email ?? ""}</td>
-      <td className={`${tbl.td} align-top max-md:py-0.5 md:text-right text-[14px] text-[var(--color-text-muted)] whitespace-nowrap`}>
+      <td className={`${tbl.td} align-top max-md:col-start-2 max-md:row-start-1 max-md:py-0.5 whitespace-nowrap`}>
+        <StatusTag tone={st.tone} colored={st.tone === "bad"}>{run.status === "running" && <Loader2 aria-hidden className="w-3.5 h-3.5 animate-spin" />}{st.word}</StatusTag>
+      </td>
+      <td className={`${tbl.td} align-top max-lg:hidden text-[14px] text-[var(--color-text-muted)]`}>{run.triggered_by_email ?? (run.trigger_type === "scheduled" ? "Schedule" : "")}</td>
+      <td className={`${tbl.td} align-top max-md:col-span-2 max-md:row-start-3 max-md:py-0.5 md:text-right text-[14px] text-[var(--color-text-muted)] whitespace-nowrap`}>
         {run.total_bytes != null && <span className="text-[var(--color-text)] tabular-nums">{formatBytes(run.total_bytes)}</span>}
-        {(run.table_count != null || run.file_count != null) && (
-          <div className="tabular-nums">{run.total_rows != null ? `${run.total_rows.toLocaleString()} rows` : ""}{run.file_count != null ? `, ${run.file_count} files` : ""}</div>
+        {(run.total_rows != null || run.file_count != null) && (
+          <div className="tabular-nums text-[13px]">{[run.total_rows != null ? plural(run.total_rows, "row") : "", run.file_count != null ? plural(run.file_count, "file") : ""].filter(Boolean).join(", ")}</div>
         )}
       </td>
     </tr>
   );
 }
 
-// ─── Destination create/edit modal ────────────────────────────────────────
+// ─── Destination create/edit dialog ───────────────────────────────────────
 
 function DestinationModal({
   mode, existing, orgId, onClose, onSaved,
@@ -500,12 +536,14 @@ function DestinationModal({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (busy) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [busy, onClose]);
+  // What's still missing, said before Save (the server checks again).
+  const bucketType = type === "s3" || type === "r2";
+  const missing = !name.trim() ? "Give it a name."
+    : bucketType && !bucket.trim() ? "Enter the bucket."
+    : bucketType && mode === "create" && (!accessKeyId || !secretAccessKey) ? "Enter both keys."
+    : bucketType && mode === "edit" && ((!accessKeyId && !existing?.has_access_key) || (!secretAccessKey && !existing?.has_secret_key)) ? "Enter both keys."
+    : type === "webhook" && !/^https?:\/\/\S+/i.test(webhookUrl.trim()) ? "Enter the webhook address, starting with https://."
+    : null;
 
   const save = async () => {
     setBusy(true); setError(null);
@@ -540,146 +578,128 @@ function DestinationModal({
           body: JSON.stringify(body),
         }
       );
-      if (!res.ok) throw new Error(await res.text());
+      if (!res.ok) throw await responseError(res);
       onSaved();
-    } catch (e) { setError((e as Error).message); }
+    } catch (e) { setError(said(e, "Couldn't save the destination.")); }
     finally { setBusy(false); }
   };
 
+  const kept = "Already set; leave blank to keep it.";
   return (
-    <div role="dialog" aria-modal="true" aria-label={`${mode === "create" ? "New" : "Edit"} backup destination`} className="fixed inset-0 z-[200] bg-[var(--color-ink)]/60 animate-in fade-in flex items-center justify-center p-4 overflow-y-auto">
-      <div className="w-full max-w-xl bg-[var(--color-surface)] rounded-lg shadow-2xl border border-[var(--color-border)] overflow-hidden my-8 animate-in fade-in zoom-in-95">
-        <div className="px-6 py-4 border-b border-[var(--color-border)] flex items-center justify-between">
-          <div>
-            <div className="font-display text-[19px] font-semibold text-[var(--color-text)]">{mode === "create" ? "New" : "Edit"} backup destination</div>
-            <div className="text-[14px] text-[var(--color-text-muted)]">Keys are stored encrypted and only opened at push time.</div>
+    <Modal onClose={onClose} size="lg" dismissable={!busy}>
+      <ModalHeader title={mode === "create" ? "New backup destination" : `Edit ${existing?.name ?? "destination"}`}
+        subtitle="Keys are stored encrypted and only opened at push time." onClose={busy ? undefined : onClose} />
+      <ModalBody className="space-y-4">
+        <Field label="Name">
+          <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Kern cold storage" />
+        </Field>
+
+        <div>
+          <span className="block text-[14px] font-semibold text-[var(--color-text)] mb-1.5">Where to</span>
+          <div role="radiogroup" aria-label="Where to" className={bandSeg}>
+            {(["s3", "r2", "webhook"] as const).map((t) => (
+              <button key={t} type="button" role="radio" aria-checked={type === t} onClick={() => setType(t)} className={bandSegItem(type === t)}>
+                {TYPE_WORD[t]}
+              </button>
+            ))}
           </div>
-          <button onClick={onClose} disabled={busy} aria-label="Close" className="p-2 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-faint)] transition-colors"><X className="w-4 h-4" /></button>
         </div>
 
-        <div className="px-6 py-5 space-y-4 max-h-[70vh] overflow-y-auto">
-          <Field label="Name *">
-            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Acme Cold Storage" />
-          </Field>
-
-          <Field label="Destination type">
-            <div className={`${bandSeg} w-full`}>
-              {(["s3", "r2", "webhook"] as const).map((t) => (
-                <button key={t} onClick={() => setType(t)} className={`${bandSegItem(type === t)} flex-1 justify-center`}>
-                  {t.toUpperCase()}
-                </button>
-              ))}
-            </div>
-          </Field>
-
-          {(type === "s3" || type === "r2") && (
-            <>
-              <div className="grid grid-cols-2 gap-3">
-                <Field label="Endpoint" hint={type === "r2" ? "https://<account>.r2.cloudflarestorage.com" : "https://s3.<region>.amazonaws.com"}>
-                  <Input value={endpoint} onChange={(e) => setEndpoint(e.target.value)} placeholder="https://..." />
-                </Field>
-                <Field label="Region"><Input value={region} onChange={(e) => setRegion(e.target.value)} placeholder="us-east-1" /></Field>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <Field label="Bucket *"><Input value={bucket} onChange={(e) => setBucket(e.target.value)} placeholder="my-backups" /></Field>
-                <Field label="Prefix" hint="Optional folder inside the bucket"><Input value={prefix} onChange={(e) => setPrefix(e.target.value)} placeholder="manufacturing-os" /></Field>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <Field label="Access Key ID *" hint={mode === "edit" && existing?.has_access_key ? "Already set; leave blank to keep" : ""}>
-                  <Input type="password" value={accessKeyId} onChange={(e) => setAccessKeyId(e.target.value)} autoComplete="off" />
-                </Field>
-                <Field label="Secret Access Key *" hint={mode === "edit" && existing?.has_secret_key ? "Already set; leave blank to keep" : ""}>
-                  <Input type="password" value={secretAccessKey} onChange={(e) => setSecretAccessKey(e.target.value)} autoComplete="off" />
-                </Field>
-              </div>
-            </>
-          )}
-
-          {type === "webhook" && (
-            <>
-              <Field label="Webhook URL *">
-                <Input value={webhookUrl} onChange={(e) => setWebhookUrl(e.target.value)} placeholder="https://example.com/backups/incoming" />
+        {bucketType && (
+          <>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <Field label="Endpoint" hint={type === "r2" ? "https://<account>.r2.cloudflarestorage.com" : "https://s3.<region>.amazonaws.com"}>
+                <Input type="url" inputMode="url" value={endpoint} onChange={(e) => setEndpoint(e.target.value)} placeholder="https://" />
               </Field>
-              <Field label="Signing secret" hint="If set, requests carry X-MOS-Signature: sha256=<HMAC>">
-                <Input type="password" value={webhookSecret} onChange={(e) => setWebhookSecret(e.target.value)} autoComplete="off" />
-              </Field>
-            </>
-          )}
-
-          <Field label="Schedule">
-            <div className={`${bandSeg} w-full`}>
-              {(["manual", "daily", "weekly", "monthly"] as const).map((s) => (
-                <button key={s} onClick={() => setSchedule(s)} className={`${bandSegItem(schedule === s)} flex-1 justify-center`}>
-                  {s}
-                </button>
-              ))}
+              <Field label="Region"><Input value={region} onChange={(e) => setRegion(e.target.value)} placeholder="us-east-1" /></Field>
             </div>
-          </Field>
-
-          {schedule !== "manual" && (
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <Field label="Due from (UTC hour)">
-                <Input type="number" min={0} max={23} value={hourUtc} onChange={(e) => setHourUtc(Number(e.target.value))} />
-                <p className="mt-1 text-[13px] text-[var(--color-text-muted)]">It goes out at the daily run (about 5:00 AM UTC) once due.</p>
-              </Field>
-              {schedule === "weekly" && (
-                <Field label="Day of week">
-                  <Select value={dayOfWeek} onChange={(e) => setDayOfWeek(Number(e.target.value))}>
-                    {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d, i) => <option key={i} value={i}>{d}</option>)}
-                  </Select>
-                </Field>
-              )}
-              {schedule === "monthly" && (
-                <Field label="Day of month">
-                  <Input type="number" min={1} max={28} value={dayOfMonth} onChange={(e) => setDayOfMonth(Number(e.target.value))} />
-                </Field>
-              )}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <Field label="Bucket"><Input value={bucket} onChange={(e) => setBucket(e.target.value)} placeholder="kern-backups" /></Field>
+              <Field label="Folder in the bucket" hint="Optional"><Input value={prefix} onChange={(e) => setPrefix(e.target.value)} placeholder="manufacturing-os" /></Field>
             </div>
-          )}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <Field label="Access key ID" hint={mode === "edit" && existing?.has_access_key ? kept : undefined}>
+                <Input type="password" value={accessKeyId} onChange={(e) => setAccessKeyId(e.target.value)} autoComplete="off" />
+              </Field>
+              <Field label="Secret access key" hint={mode === "edit" && existing?.has_secret_key ? kept : undefined}>
+                <Input type="password" value={secretAccessKey} onChange={(e) => setSecretAccessKey(e.target.value)} autoComplete="off" />
+              </Field>
+            </div>
+          </>
+        )}
 
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="Include file binaries">
-              <label className="flex items-center gap-2 text-[14px]"><input type="checkbox" checked={includeFiles} onChange={(e) => setIncludeFiles(e.target.checked)} /> Include PDFs/DWGs inline</label>
+        {type === "webhook" && (
+          <>
+            <Field label="Webhook address">
+              <Input type="url" inputMode="url" value={webhookUrl} onChange={(e) => setWebhookUrl(e.target.value)} placeholder="https://example.com/backups/incoming" />
             </Field>
-            <Field label="Retention (days)" hint="Delete older exports in your bucket">
-              <Input type="number" min={1} value={retentionDays === "" ? "" : retentionDays} onChange={(e) => setRetentionDays(e.target.value === "" ? "" : Number(e.target.value))} placeholder="(unlimited)" />
+            <Field label="Signing secret" hint={mode === "edit" && existing?.has_webhook_secret ? kept : "Optional. When set, requests carry X-MOS-Signature: sha256=<HMAC>."}>
+              <Input type="password" value={webhookSecret} onChange={(e) => setWebhookSecret(e.target.value)} autoComplete="off" />
             </Field>
+          </>
+        )}
+
+        <div>
+          <span className="block text-[14px] font-semibold text-[var(--color-text)] mb-1.5">How often</span>
+          <div role="radiogroup" aria-label="How often" className={bandSeg}>
+            {(["manual", "daily", "weekly", "monthly"] as const).map((s) => (
+              <button key={s} type="button" role="radio" aria-checked={schedule === s} onClick={() => setSchedule(s)} className={bandSegItem(schedule === s)}>
+                {s === "manual" ? "By hand" : s[0].toUpperCase() + s.slice(1)}
+              </button>
+            ))}
           </div>
-
-          <label className="flex items-center gap-2 text-[14px]"><input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} /> Enabled</label>
-
-          {error && (
-            <p role="alert" className="text-[14px] font-semibold text-[var(--state-overdue)] flex items-start gap-2">
-              <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> {error}
-            </p>
-          )}
         </div>
 
-        <div className="px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-end gap-2">
-          <button type="button" onClick={onClose} disabled={busy} className={btnQuiet}>Cancel</button>
-          <button type="button" onClick={save} disabled={busy} className={btnPrimary}>
-            {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
-            {mode === "create" ? "Create Destination" : "Save Changes"}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
+        {schedule !== "manual" && (
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <Field label="Due from (UTC hour)" hint="It goes out at the daily run (about 5:00 AM UTC) once due.">
+              <Input type="number" inputMode="numeric" min={0} max={23} value={hourUtc} onChange={(e) => setHourUtc(Number(e.target.value))} />
+            </Field>
+            {schedule === "weekly" && (
+              <Field label="Day of the week">
+                <Select value={dayOfWeek} onChange={(e) => setDayOfWeek(Number(e.target.value))}>
+                  {["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"].map((d, i) => <option key={i} value={i}>{d}</option>)}
+                </Select>
+              </Field>
+            )}
+            {schedule === "monthly" && (
+              <Field label="Day of the month">
+                <Input type="number" inputMode="numeric" min={1} max={28} value={dayOfMonth} onChange={(e) => setDayOfMonth(Number(e.target.value))} />
+              </Field>
+            )}
+          </div>
+        )}
 
-function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
-  return (
-    <div>
-      <label className="text-[13px] font-semibold text-[var(--color-text-muted)]">{label}</label>
-      {hint && <div className="text-[13px] text-[var(--color-text-muted)] mt-0.5">{hint}</div>}
-      <div className="mt-1">{children}</div>
-    </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-start">
+          <label className="flex items-start gap-2.5 text-[15px] text-[var(--color-text)] min-h-11 pt-2">
+            <input type="checkbox" className="mt-1 w-4 h-4" checked={includeFiles} onChange={(e) => setIncludeFiles(e.target.checked)} />
+            <span>Include the files<span className="block text-[13px] text-[var(--color-text-muted)]">PDFs and DWGs, not only records</span></span>
+          </label>
+          <Field label="Keep exports for (days)" hint="Older exports in your bucket are deleted. Blank keeps them all.">
+            <Input type="number" inputMode="numeric" min={1} value={retentionDays === "" ? "" : retentionDays} onChange={(e) => setRetentionDays(e.target.value === "" ? "" : Number(e.target.value))} />
+          </Field>
+        </div>
+
+        <label className="flex items-center gap-2.5 text-[15px] text-[var(--color-text)]">
+          <input type="checkbox" className="w-4 h-4" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} /> Turned on
+        </label>
+
+        {error && <p role="alert" className="text-[14px] font-semibold text-[var(--state-overdue-text)]">{error}</p>}
+      </ModalBody>
+      <ModalFooter>
+        {missing && <span className="mr-auto text-[13px] text-[var(--color-text-muted)]">{missing}</span>}
+        <Button variant="secondary" onClick={onClose} disabled={busy}>Cancel</Button>
+        <Button onClick={() => void save()} loading={busy} disabled={!!missing}>
+          {mode === "create" ? "Add destination" : "Save changes"}
+        </Button>
+      </ModalFooter>
+    </Modal>
   );
 }
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(2)} MB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
   return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
 }

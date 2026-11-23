@@ -1,6 +1,6 @@
 "use client";
 
-// /admin/billing — wired up to Stripe Checkout + Customer Portal.
+// /admin/billing: Stripe Checkout and the Customer Portal.
 //
 // Subscribe buttons POST to /api/stripe/checkout and redirect to the
 // returned Stripe-hosted URL. After payment, Stripe redirects back to
@@ -12,18 +12,18 @@
 
 import React, { useState } from "react";
 import { useSearchParams } from "next/navigation";
-import {
-  CheckCircle2, Lock, Loader2,
-  ExternalLink, ArrowRight, CreditCard, Layers,
-} from "lucide-react";
+import { Check, Lock, ExternalLink, ArrowRight } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { useSubscription } from "@/components/providers/SubscriptionProvider";
 import { trialDaysRemaining, isTrialExpired } from "@/lib/subscription";
 import { supabase } from "@/lib/supabase";
 import { PageShell } from "@/components/ui/PageShell";
-import { PageHero, PageBody, heroPrimary, type HeroFact } from "@/components/ui/PageHero";
-import { sheet, link, btnPrimary, btnQuiet, FormRow, Section, Pill, Problem, shortDate } from "@/components/admin/kit";
-import { Spinner } from "@/components/ui/Spinner";
+import { PageHero, PageBody, type HeroFact } from "@/components/ui/PageHero";
+import { sheet, link, btnQuiet, Section, Problem, shortDate } from "@/components/admin/kit";
+import { said } from "@/components/admin/said";
+import { Button } from "@/components/ui/Button";
+import { SkeletonRows } from "@/components/ui/Skeleton";
+import { ErrorNote } from "@/components/ui/ErrorNote";
 
 export default function BillingPage() {
   const { activeRole, activeOrgId } = useRole();
@@ -52,11 +52,11 @@ export default function BillingPage() {
         body: JSON.stringify({ orgId: activeOrgId, plan }),
       });
       const result = await res.json();
-      if (!res.ok) throw new Error(result.error || `HTTP ${res.status}`);
-      if (!result.url) throw new Error("No checkout URL returned");
+      if (!res.ok) throw Object.assign(new Error(result.error || "It didn't go through."), result.error ? {} : { status: res.status });
+      if (!result.url) throw new Error("The payment page didn't open. Try again in a minute.");
       window.location.href = result.url;
     } catch (e) {
-      setError((e as Error).message);
+      setError(said(e, "Couldn't open the payment page."));
       setBusyPlan(null);
     }
   };
@@ -73,10 +73,10 @@ export default function BillingPage() {
         body: JSON.stringify({ orgId: activeOrgId }),
       });
       const result = await res.json();
-      if (!res.ok) throw new Error(result.error || `HTTP ${res.status}`);
+      if (!res.ok) throw Object.assign(new Error(result.error || "It didn't go through."), result.error ? {} : { status: res.status });
       window.location.href = result.url;
     } catch (e) {
-      setError((e as Error).message);
+      setError(said(e, "Couldn't open the subscription page."));
       setBusyPortal(false);
     }
   };
@@ -99,7 +99,6 @@ export default function BillingPage() {
     : expired ? "Pick a plan below to continue."
     : "Update your payment method to restore access.";
   const showPortal = !!info && (info.status === "active" || info.status === "past_due");
-  const bad = !!info && !(info.status === "active" || (info.status === "trialing" && !expired));
   const facts: HeroFact[] = [];
   if (info) {
     if (planName) facts.push({ label: "Plan", value: planName });
@@ -116,17 +115,17 @@ export default function BillingPage() {
         sub={sub}
         facts={facts.length ? facts : undefined}
         primary={showPortal ? (
-          <button type="button" onClick={openPortal} disabled={busyPortal} className={heroPrimary}>
-            {busyPortal ? <Loader2 className="w-4 h-4 animate-spin" /> : <ExternalLink className="w-4 h-4" />}
+          <Button onClick={() => void openPortal()} loading={busyPortal}>
+            {!busyPortal && <ExternalLink className="w-4 h-4" />}
             Manage subscription
-          </button>
+          </Button>
         ) : undefined}
       />
 
       <PageBody>
         {checkoutResult === "success" && (
           <p role="status" className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[15px]">
-            <Pill tone="good">Subscription started</Pill>
+            <span className="inline-flex items-center gap-1.5 font-semibold text-[var(--color-text)]"><Check aria-hidden className="w-4 h-4 text-[var(--state-released)]" /> Subscription started.</span>
             <span className="text-[var(--color-text-muted)]">Your status can take a few seconds to update.</span>
             <button type="button" onClick={() => void refresh()} className={link}>Refresh now</button>
           </p>
@@ -136,43 +135,17 @@ export default function BillingPage() {
         )}
         {error && <Problem>{error}</Problem>}
 
-        <Section label="Subscription" icon={CreditCard}>
-          {loading ? (
-            <div className={`${sheet} px-4 py-3 text-[15px] text-[var(--color-text-muted)] flex items-center gap-2`}><Spinner size="sm" /> Loading your subscription…</div>
-          ) : !info ? (
-            <Problem retry={() => void refresh()}>Couldn&apos;t load your subscription.</Problem>
-          ) : (
-            <div className={`${sheet} divide-y divide-[var(--color-border)]`}>
-              <FormRow label="Status">
-                <div className="@xl:pt-2">
-                  <Pill tone={bad ? "bad" : info.status === "past_due" ? "warn" : info.status === "active" || info.status === "trialing" ? "good" : "none"}>
-                    {info.status === "trialing" && !expired ? (days != null ? `Free trial, ${days} day${days === 1 ? "" : "s"} left` : "Free trial")
-                      : info.status === "active" ? "Active"
-                      : info.status === "past_due" ? "Payment past due"
-                      : info.status === "canceled" ? "Canceled"
-                      : info.status === "unpaid" ? "Payment failed"
-                      : info.status === "paused" ? "Paused"
-                      : expired ? "Trial ended" : "Action required"}
-                  </Pill>
-                </div>
-              </FormRow>
-              <FormRow label="Plan"><div className="@xl:pt-2 text-[15px] text-[var(--color-text)]">{planName ?? "None yet"}</div></FormRow>
-              {info.currentPeriodEnd && (info.status === "active" || info.status === "past_due") && (
-                <FormRow label="Renews"><div className="@xl:pt-2 text-[15px] text-[var(--color-text)]">{shortDate(info.currentPeriodEnd)}</div></FormRow>
-              )}
-              {info.trialEndsAt && info.status === "trialing" && (
-                <FormRow label="Trial ends"><div className="@xl:pt-2 text-[15px] text-[var(--color-text)]">{shortDate(info.trialEndsAt)}</div></FormRow>
-              )}
-              {!isAuthorized && (
-                <FormRow label="Who manages billing"><div className="@xl:pt-2 text-[15px] text-[var(--color-text-muted)] inline-flex items-center gap-2"><Lock className="w-4 h-4" /> Admin and Manager roles only.</div></FormRow>
-              )}
-            </div>
-          )}
-        </Section>
+        {loading ? (
+          <SkeletonRows rows={3} cols={1} what="your subscription" />
+        ) : !info ? (
+          <ErrorNote title="Couldn't load your subscription." onRetry={() => void refresh()} />
+        ) : !isAuthorized ? (
+          <p className="text-[15px] text-[var(--color-text-muted)] inline-flex items-center gap-2"><Lock aria-hidden className="w-4 h-4" /> Admin and Manager manage billing.</p>
+        ) : null}
 
         {/* Plans side by side on one sheet */}
         {isAuthorized && info?.status !== "active" && (
-          <Section label="Plans" icon={Layers}>
+          <Section label="Plans">
             <div className={`${sheet} grid grid-cols-1 md:grid-cols-3 md:divide-x max-md:divide-y divide-[var(--color-border)]`}>
               <Plan
                 name="Starter" planKey="starter" price="$299" tagline="For small teams"
@@ -206,15 +179,15 @@ function Plan({
   return (
     <div className="p-5 flex flex-col">
       <div className="flex items-baseline justify-between gap-2">
-        <h3 className="font-display text-[19px] font-semibold text-[var(--color-text)]">{name}</h3>
-        {featured && <span className="ui-pill is-solid">Most picked</span>}
+        <h3 className="font-display text-[20px] font-semibold text-[var(--color-text)]">{name}</h3>
+        {featured && <span className="text-[13px] text-[var(--color-text-muted)]">Most picked</span>}
       </div>
       <div className="text-[14px] text-[var(--color-text-muted)]">{tagline}</div>
       <div className="mt-3 font-display text-[28px] leading-none font-semibold tabular-nums text-[var(--color-text)]">{price}{price !== "Contact" && <span className="font-sans text-[14px] font-normal text-[var(--color-text-muted)]"> a month</span>}</div>
       <ul className="mt-4 space-y-1.5 text-[15px] flex-1 text-[var(--color-text)]">
         {features.map((f) => (
           <li key={f} className="flex items-start gap-2">
-            <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5 text-[var(--color-main)]" />
+            <Check aria-hidden className="w-4 h-4 shrink-0 mt-0.5 text-[var(--color-text-muted)]" />
             <span>{f}</span>
           </li>
         ))}
@@ -224,10 +197,9 @@ function Plan({
           Contact sales <ArrowRight className="w-3.5 h-3.5" />
         </a>
       ) : (
-        <button type="button" onClick={onSubscribe} disabled={busy} className={`${featured ? btnPrimary : `${btnQuiet} h-10`} mt-5 w-full`}>
-          {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
-          {busy ? "Opening checkout…" : "Subscribe"}
-        </button>
+        <Button variant={featured ? "primary" : "secondary"} onClick={onSubscribe} loading={busy} className="mt-5 w-full">
+          {busy ? "Opening checkout" : "Subscribe"}
+        </Button>
       )}
     </div>
   );

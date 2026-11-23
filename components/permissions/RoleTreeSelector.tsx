@@ -1,30 +1,20 @@
 "use client";
 
+// Pick several roles at once, grouped: a group's box picks or clears the
+// whole group (a dash when only some are picked). Real checkboxes, so the
+// keyboard and screen readers work; groups fold with a turning chevron and
+// their roles sit 16 px in, along a guide line.
+
 import React, { useState } from "react";
-import { ChevronRight, CheckSquare, Square, MinusSquare } from "lucide-react";
+import { ChevronRight } from "lucide-react";
 import { Role } from "@/types/schema";
 
 export const ROLE_HIERARCHY: { name: string; roles: Role[] }[] = [
-  { 
-    name: "Leadership", 
-    roles: ["Admin", "DocCtrl", "Manager", "Supervisor"] 
-  },
-  { 
-    name: "Engineering", 
-    roles: ["Engineer-1", "Engineer-2", "Engineer-3", "Engineer-4", "Drafter"] 
-  },
-  { 
-    name: "Operations", 
-    roles: ["Operations", "Maintenance", "Safety"] 
-  },
-  { 
-    name: "Business", 
-    roles: ["Accounting", "HR", "Auditor", "Requester"] 
-  },
-  { 
-    name: "External", 
-    roles: ["Contractor", "Viewer"] 
-  },
+  { name: "Leadership", roles: ["Admin", "DocCtrl", "Manager", "Supervisor"] },
+  { name: "Engineering", roles: ["Engineer-1", "Engineer-2", "Engineer-3", "Engineer-4", "Drafter"] },
+  { name: "Operations", roles: ["Operations", "Maintenance", "Safety"] },
+  { name: "Business", roles: ["Accounting", "HR", "Auditor", "Requester"] },
+  { name: "External", roles: ["Contractor", "Viewer"] },
 ];
 
 interface RoleTreeSelectorProps {
@@ -33,95 +23,61 @@ interface RoleTreeSelectorProps {
   disabled?: boolean;
 }
 
+function GroupBox({ all, some, disabled, label, onChange }: { all: boolean; some: boolean; disabled?: boolean; label: string; onChange: () => void }) {
+  const ref = React.useRef<HTMLInputElement>(null);
+  React.useEffect(() => { if (ref.current) ref.current.indeterminate = some; }, [some]);
+  return <input ref={ref} type="checkbox" className="w-4 h-4" checked={all} disabled={disabled} onChange={onChange} aria-label={`All of ${label}`} />;
+}
+
 export function RoleTreeSelector({ selected, onChange, disabled }: RoleTreeSelectorProps) {
-  const [expanded, setExpanded] = useState<string[]>(ROLE_HIERARCHY.map(g => g.name)); // Default expand all
+  const [expanded, setExpanded] = useState<string[]>(ROLE_HIERARCHY.map((g) => g.name)); // all open at first
 
   const toggleExpand = (groupName: string) => {
-    setExpanded(prev => 
-      prev.includes(groupName) ? prev.filter(n => n !== groupName) : [...prev, groupName]
-    );
+    setExpanded((prev) => (prev.includes(groupName) ? prev.filter((n) => n !== groupName) : [...prev, groupName]));
   };
 
-  const handleGroupClick = (groupRoles: Role[]) => {
+  const handleGroup = (groupRoles: Role[]) => {
     if (disabled) return;
-    
-    const allSelected = groupRoles.every(r => selected.includes(r));
-    let newSelected = [...selected];
-
-    if (allSelected) {
-      // Deselect all
-      newSelected = newSelected.filter(r => !groupRoles.includes(r));
-    } else {
-      // Select all (merge unique)
-      newSelected = Array.from(new Set([...newSelected, ...groupRoles]));
-    }
-    onChange(newSelected);
+    const allSelected = groupRoles.every((r) => selected.includes(r));
+    onChange(allSelected ? selected.filter((r) => !groupRoles.includes(r)) : Array.from(new Set([...selected, ...groupRoles])));
   };
 
-  const handleRoleClick = (role: Role) => {
+  const handleRole = (role: Role) => {
     if (disabled) return;
-    
-    if (selected.includes(role)) {
-      onChange(selected.filter(r => r !== role));
-    } else {
-      onChange([...selected, role]);
-    }
+    onChange(selected.includes(role) ? selected.filter((r) => r !== role) : [...selected, role]);
   };
 
   return (
-    <div className="border border-[var(--color-border)] rounded-lg overflow-hidden bg-[var(--color-surface)] select-none">
+    <div className="divide-y divide-[var(--color-border)] bg-[var(--color-surface)]">
       {ROLE_HIERARCHY.map((group) => {
         const isExpanded = expanded.includes(group.name);
-        
-        // Group State
-        const groupSelectedCount = group.roles.filter(r => selected.includes(r)).length;
-        const isAll = groupSelectedCount === group.roles.length;
-        const isSome = groupSelectedCount > 0 && !isAll;
-
+        const count = group.roles.filter((r) => selected.includes(r)).length;
+        const isAll = count === group.roles.length;
+        const isSome = count > 0 && !isAll;
         return (
-          <div key={group.name} className="border-b border-[var(--color-border)] last:border-0">
-            {/* Group Header */}
-            <div className="flex items-center bg-[var(--color-surface-2)] hover:bg-[var(--color-border)] transition-colors py-2 px-3 cursor-pointer">
-              <button 
-                onClick={(e) => { e.stopPropagation(); toggleExpand(group.name); }}
-                className="p-1 text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)] mr-1"
-              >
-                <ChevronRight className={`w-4 h-4 ui-chevron${(isExpanded) ? " rotate-90" : ""}`} />
+          <div key={group.name}>
+            <div className="flex items-center gap-2 px-2 min-h-10 pointer-coarse:min-h-11">
+              <button type="button" onClick={() => toggleExpand(group.name)} aria-expanded={isExpanded} aria-label={`${isExpanded ? "Close" : "Open"} ${group.name}`}
+                className="w-7 h-7 grid place-items-center rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] hover:text-[var(--color-text)]">
+                <ChevronRight aria-hidden className={`ui-chevron w-4 h-4 ${isExpanded ? "rotate-90" : ""}`} />
               </button>
-              
-              <div 
-                className="flex-1 flex items-center"
-                onClick={() => handleGroupClick(group.roles)}
-              >
-                 <div className={`mr-2 ${disabled ? 'opacity-50' : ''}`}>
-                    {isAll ? <CheckSquare className="w-4 h-4 text-[var(--color-main)]" /> : 
-                     isSome ? <MinusSquare className="w-4 h-4 text-[var(--color-main)]" /> : 
-                     <Square className="w-4 h-4 text-[var(--color-text-faint)]" />}
-                 </div>
-                 <span className="text-sm font-bold text-[var(--color-text)]">{group.name}</span>
-                 <span className="ml-auto text-xs text-[var(--color-text-faint)] font-medium">{groupSelectedCount} / {group.roles.length}</span>
-              </div>
+              <label className="flex-1 flex items-center gap-2 cursor-pointer text-[14px] font-semibold text-[var(--color-text)]">
+                <GroupBox all={isAll} some={isSome} disabled={disabled} label={group.name} onChange={() => handleGroup(group.roles)} />
+                {group.name}
+              </label>
+              <span className="text-[13px] text-[var(--color-text-muted)] tabular-nums">{count} of {group.roles.length}</span>
             </div>
-
-            {/* Roles List */}
             {isExpanded && (
-              <div className="bg-[var(--color-surface)] py-1">
-                {group.roles.map(role => {
-                  const isSelected = selected.includes(role);
-                  return (
-                    <div 
-                      key={role} 
-                      onClick={() => handleRoleClick(role)}
-                      className={`flex items-center pl-10 pr-4 py-1.5 cursor-pointer hover:bg-[var(--color-surface-2)] transition-colors ${disabled ? 'opacity-50 pointer-events-none' : ''}`}
-                    >
-                      <div className="mr-3">
-                        {isSelected ? <CheckSquare className="w-4 h-4 text-[var(--color-main)]" /> : <Square className="w-4 h-4 text-[var(--color-text-faint)]" />}
-                      </div>
-                      <span className={`text-sm ${isSelected ? 'font-semibold text-[var(--color-text)]' : 'text-[var(--color-text-muted)]'}`}>{role}</span>
-                    </div>
-                  );
-                })}
-              </div>
+              <ul className="ml-[22px] pl-4 border-l border-[var(--color-border)] pb-1.5">
+                {group.roles.map((role) => (
+                  <li key={role}>
+                    <label className={`flex items-center gap-2.5 px-2 min-h-9 pointer-coarse:min-h-11 rounded-md cursor-pointer hover:bg-[var(--color-surface-2)] text-[14px] ${selected.includes(role) ? "text-[var(--color-text)] font-semibold" : "text-[var(--color-text-muted)]"} ${disabled ? "opacity-50 pointer-events-none" : ""}`}>
+                      <input type="checkbox" className="w-4 h-4" checked={selected.includes(role)} disabled={disabled} onChange={() => handleRole(role)} />
+                      {role}
+                    </label>
+                  </li>
+                ))}
+              </ul>
             )}
           </div>
         );

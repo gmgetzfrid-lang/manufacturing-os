@@ -1,28 +1,28 @@
 "use client";
 
-import React, { useCallback, useEffect, useState } from 'react';
+// Admin · People: who is in the workspace, their roles, and whether they
+// can sign in. A table on a desk, a card per person on a phone. Adding
+// someone makes (or reuses) their sign-in by email, one email per
+// workspace; removing someone deletes their sign-in when this was their
+// last workspace (both on the server: /api/admin/create-user and
+// /api/admin/remove-member).
+
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useRole } from '@/components/providers/RoleContext';
 import type { Role } from '@/types/schema';
 import { addableRoles, capabilitiesAdded, primaryRole, CAPABILITY_LABELS } from '@/lib/roleCapabilities';
-import {
-  UserPlus,
-  Trash2,
-  KeyRound,
-  AlertCircle,
-  Loader2,
-  Building2,
-  Plus,
-  X,
-  ShieldCheck,
-} from 'lucide-react';
+import { UserPlus, KeyRound, UserMinus, Loader2, Plus, X, ShieldCheck, Search } from 'lucide-react';
 import { PageShell } from '@/components/ui/PageShell';
 import { PageHero, PageBody, heroPrimary } from '@/components/ui/PageHero';
-import { tbl, Pill, Problem, btnIcon, link, shortDate } from '@/components/admin/kit';
-import { plural } from '@/components/admin/band';
+import { tbl, btnIcon, link, shortDate, StatusTag, type Tone } from '@/components/admin/kit';
+import { bandInput, bandInputIcon, plural } from '@/components/admin/band';
+import { said, responseError } from '@/components/admin/said';
 import { Button } from '@/components/ui/Button';
-import { Input, Select } from '@/components/ui/Field';
-import LoadingBlock from '@/components/ui/LoadingBlock';
+import { Field, Input, Select } from '@/components/ui/Field';
+import { Skeleton, SkeletonRows } from '@/components/ui/Skeleton';
+import { ErrorNote } from '@/components/ui/ErrorNote';
+import MoreMenu from '@/components/ui/MoreMenu';
 import { Modal, ModalHeader, ModalBody } from '@/components/ui/Modal';
 import UserAvatar from '@/components/ui/UserAvatar';
 import { appAlert, appConfirm } from '@/components/providers/DialogProvider';
@@ -41,52 +41,61 @@ interface MemberRow {
   created_at?: string | null;
 }
 
-// The member's role collection, tolerating pre-migration rows that only have
-// the single `role`.
 // The role last picked when adding someone comes back as the default.
 const LAST_ROLE_KEY = 'admin:add-member-role';
 const lastRole = (): string => {
   try { return localStorage.getItem(LAST_ROLE_KEY) || 'Viewer'; } catch { return 'Viewer'; }
 };
 
+// The member's role collection, tolerating pre-migration rows that only have
+// the single `role`.
 const rolesOf = (m: MemberRow): Role[] =>
   (m.roles && m.roles.length > 0 ? m.roles : [m.role]) as Role[];
 
 // Single source of truth for the assignable roles, used by both the
-// "Add member" modal and the inline role editor so they never drift.
+// "Add a person" dialog and the inline role editor so they never drift.
 const ROLE_OPTIONS: { value: string; label: string }[] = [
-  { value: 'Viewer', label: 'Viewer (Read Only)' },
+  { value: 'Viewer', label: 'Viewer (read only)' },
   { value: 'Requester', label: 'Requester' },
   { value: 'Drafter', label: 'Drafter' },
-  { value: 'DraftingSupervisor', label: 'Drafting Supervisor (routes incoming requests)' },
-  { value: 'Engineer-1', label: 'Engineer · level 1' },
-  { value: 'Engineer-2', label: 'Engineer · level 2' },
-  { value: 'Engineer-3', label: 'Engineer · level 3' },
-  { value: 'Engineer-4', label: 'Engineer · level 4' },
+  { value: 'DraftingSupervisor', label: 'Drafting supervisor (routes incoming requests)' },
+  { value: 'Engineer-1', label: 'Engineer, level 1' },
+  { value: 'Engineer-2', label: 'Engineer, level 2' },
+  { value: 'Engineer-3', label: 'Engineer, level 3' },
+  { value: 'Engineer-4', label: 'Engineer, level 4' },
   { value: 'Supervisor', label: 'Supervisor' },
   { value: 'Manager', label: 'Manager' },
-  { value: 'DocCtrl', label: 'Doc Control' },
+  { value: 'DocCtrl', label: 'Doc control' },
   { value: 'Admin', label: 'Admin' },
-  // Request-only staff roles + limited-access roles: previously defined in
-  // the role model but unassignable here — the audit's "7 unreachable roles".
+  // Request-only staff roles and limited-access roles.
   { value: 'Operations', label: 'Operations (requests only)' },
   { value: 'Maintenance', label: 'Maintenance (requests only)' },
   { value: 'Safety', label: 'Safety (requests only)' },
   { value: 'HR', label: 'HR (requests only)' },
   { value: 'Accounting', label: 'Accounting (requests only)' },
-  { value: 'Contractor', label: 'Contractor (reduced navigation)' },
-  { value: 'Auditor', label: 'Auditor (read-only + audit log)' },
+  { value: 'Contractor', label: 'Contractor (fewer menus)' },
+  { value: 'Auditor', label: 'Auditor (read only, plus the audit log)' },
 ];
+
+/** A member's status as a dot and a word: only a suspended account needs
+ *  someone (an admin resets it), so only that one is colored. */
+function statusOf(m: MemberRow): { tone: Tone; word: string } {
+  if (m.status === 'active') return { tone: 'none', word: 'Active' };
+  if (m.status === 'suspended') return { tone: 'warn', word: 'Suspended' };
+  if (m.status === 'disabled' || m.status === 'removed') return { tone: 'bad', word: m.status === 'disabled' ? 'Disabled' : 'Removed' };
+  return { tone: 'none', word: m.status.charAt(0).toUpperCase() + m.status.slice(1) };
+}
 
 export default function AdminUsersPage() {
   const { activeRole, activeOrgId, uid } = useRole();
 
   const [members, setMembers] = useState<MemberRow[]>([]);
   const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<unknown>(null);
   const [orgName, setOrgName] = useState<string>('');
   const [savingRoleId, setSavingRoleId] = useState<string | null>(null);
   const [removingId, setRemovingId] = useState<string | null>(null);
+  const [query, setQuery] = useState('');
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [formData, setFormData] = useState({
@@ -111,7 +120,7 @@ export default function AdminUsersPage() {
     const fetchOrgName = async () => {
       try {
         const { data } = await supabase.from('orgs').select('name').eq('id', activeOrgId).single();
-        if (data) setOrgName(data.name || 'Unnamed Org');
+        if (data) setOrgName(data.name || 'Unnamed workspace');
       } catch (e) {
         console.error("Failed to fetch org name", e);
       }
@@ -133,7 +142,7 @@ export default function AdminUsersPage() {
       setLoadError(null);
     } catch (e) {
       console.error("Fetch members error:", e);
-      setLoadError(e instanceof Error ? e.message : "Couldn't load members.");
+      setLoadError(e);
     } finally {
       setLoading(false);
     }
@@ -149,7 +158,7 @@ export default function AdminUsersPage() {
   const persistRoles = async (member: MemberRow, nextRoles: Role[]) => {
     const cleaned = Array.from(new Set(nextRoles)) as Role[];
     if (cleaned.length === 0) {
-      await appAlert('A member needs at least one role.');
+      await appAlert('A person needs at least one role.');
       return;
     }
     const headline = primaryRole(cleaned);
@@ -168,14 +177,14 @@ export default function AdminUsersPage() {
         if (/roles/i.test(msg) && /(column|schema|find)/i.test(msg)) {
           const { error: e2 } = await supabase.from('org_members').update({ role: headline }).eq('id', member.id);
           if (e2) throw e2;
-          await appAlert('Saved the primary role. To stack multiple roles, apply migration 20260722_member_roles_collection.sql to your database.');
+          await appAlert('Saved the primary role. To give one person several roles, apply migration 20260722_member_roles_collection.sql to your database.');
         } else {
           throw error;
         }
       }
     } catch (err) {
       console.error('Role update failed:', err);
-      await appAlert({ message: `Couldn't update roles: ${err instanceof Error ? err.message : String(err)}`, tone: 'danger' });
+      await appAlert({ message: said(err, "Couldn't change the roles."), tone: 'danger' });
       setMembers(prevMembers); // revert
     } finally {
       setSavingRoleId(null);
@@ -190,23 +199,23 @@ export default function AdminUsersPage() {
   // also lifts a suspension from an expired one.
   const handleResetPassword = async (member: MemberRow) => {
     if (!activeOrgId || !member.uid) return;
-    const who = member.display_name || member.email || 'this member';
-    if (!(await appConfirm({ message: `Give ${who} a new one-time password? Their current password stops working, and they must set their own today.` }))) return;
+    const who = member.display_name || member.email || 'this person';
+    if (!(await appConfirm({ message: `Give ${who} a new one-time password? Their current password stops working, and they must set their own today.`, confirmLabel: 'Reset password' }))) return;
     setResettingId(member.id);
     try {
       const { data: { session } } = await supabase.auth.getSession();
-      if (!session?.access_token) throw new Error('Not signed in');
+      if (!session?.access_token) throw new Error('Your sign-in has expired. Sign in again, then try again.');
       const res = await fetch('/api/admin/reset-password', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
         body: JSON.stringify({ orgId: activeOrgId, uid: member.uid, expiresAt: endOfDay() }),
       });
+      if (!res.ok) throw await responseError(res);
       const body = await res.json();
-      if (!res.ok) throw new Error(body.error || 'Reset failed');
       setIssued({ email: member.email, password: body.tempPassword, expiresAt: body.expiresAt ?? null });
       fetchMembers();
     } catch (err) {
-      await appAlert({ message: `Couldn't reset the password: ${err instanceof Error ? err.message : String(err)}`, tone: 'danger' });
+      await appAlert({ message: said(err, "Couldn't reset the password."), tone: 'danger' });
     } finally {
       setResettingId(null);
     }
@@ -217,27 +226,26 @@ export default function AdminUsersPage() {
       await appAlert("You can't remove yourself from the workspace.");
       return;
     }
-    const who = member.display_name || member.email || 'this member';
+    const who = member.display_name || member.email || 'this person';
     // On the server: when this was their last workspace, their sign-in is
     // deleted too, so no account is left that belongs to no workspace.
-    if (!(await appConfirm({ message: `Remove ${who} from this workspace? They lose access now, and their sign-in is deleted unless they're in another workspace. To bring them back, add them again.`, tone: 'danger' }))) {
+    if (!(await appConfirm({ message: `Remove ${who} from this workspace? They lose access now, and their sign-in is deleted unless they're in another workspace. To bring them back, add them again.`, tone: 'danger', confirmLabel: 'Remove' }))) {
       return;
     }
     setRemovingId(member.id);
     try {
       const { data: { session } } = await supabase.auth.getSession();
-      if (!session?.access_token) throw new Error('Sign in again.');
+      if (!session?.access_token) throw new Error('Your sign-in has expired. Sign in again, then try again.');
       const res = await fetch('/api/admin/remove-member', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
         body: JSON.stringify({ orgId: activeOrgId, memberId: member.id }),
       });
-      const body = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(body.error || 'It didn\'t go through.');
+      if (!res.ok) throw await responseError(res);
       setMembers((prev) => prev.filter((m) => m.id !== member.id));
     } catch (err) {
       console.error('Remove member failed:', err);
-      await appAlert({ message: `Couldn't remove member: ${err instanceof Error ? err.message : String(err)}`, tone: 'danger' });
+      await appAlert({ message: said(err, `Couldn't remove ${who}.`), tone: 'danger' });
     } finally {
       setRemovingId(null);
     }
@@ -253,7 +261,7 @@ export default function AdminUsersPage() {
 
     try {
       const { data: { session } } = await supabase.auth.getSession();
-      if (!session?.access_token) throw new Error("Not authenticated");
+      if (!session?.access_token) throw new Error('Your sign-in has expired. Sign in again, then try again.');
 
       const res = await fetch('/api/admin/create-user', {
         method: 'POST',
@@ -270,8 +278,8 @@ export default function AdminUsersPage() {
         }),
       });
 
+      if (!res.ok) throw await responseError(res);
       const body = await res.json();
-      if (!res.ok) throw new Error(body.error || 'Failed to create user');
 
       try { localStorage.setItem(LAST_ROLE_KEY, formData.role); } catch { /* private mode */ }
       setFormData({ firstName: '', lastName: '', email: '', role: formData.role });
@@ -281,251 +289,325 @@ export default function AdminUsersPage() {
 
     } catch (err) {
       console.error("Create user failed:", err);
-      setError(err instanceof Error ? err.message : "Failed to create user.");
+      setError(said(err, "Couldn't add them."));
     } finally {
       setProcessing(false);
     }
   };
 
+  const q = query.trim().toLowerCase();
+  const matching = useMemo(() => q
+    ? members.filter((m) => `${m.display_name ?? ''} ${m.email} ${rolesOf(m).join(' ')}`.toLowerCase().includes(q))
+    : members, [members, q]);
+
   if (!['Admin', 'Manager'].includes(activeRole)) {
     return (
       <PageShell width="work">
-        <PageHero kicker="Admin · Users" title="Admins and managers only." sub="Only Admins and Managers manage members." overlap={false} />
+        <PageHero kicker="Admin · Users" title="Admins and managers only." sub="Ask an admin to change who is in the workspace." />
       </PageShell>
     );
   }
 
   const active = members.filter((m) => m.status === 'active').length;
-  const notActive = members.length - active;
+  const suspended = members.filter((m) => m.status === 'suspended').length;
+  const notActive = members.length - active - suspended;
   const admins = members.filter((m) => rolesOf(m).includes('Admin' as Role)).length;
-  const answer = loading && members.length === 0 ? 'Users'
-    : loadError ? "Couldn't load members."
-    : members.length === 0 ? 'No members yet.'
-    : `${plural(members.length, 'member')}.`;
-  const shownMembers = members.slice(0, memberLimit);
+  const firstLoad = loading && members.length === 0;
+  const answer = firstLoad ? 'People'
+    : loadError ? "Couldn't load the people in this workspace."
+    : members.length === 0 ? 'Nobody here yet.'
+    : `${plural(members.length, 'person', 'people')}.`;
+  const shown = matching.slice(0, memberLimit);
+  const openAdd = () => { setFormData((f) => ({ ...f, role: lastRole() })); setError(null); setIsModalOpen(true); };
+
+  // The rest of a row: reset a password (password sign-in only), remove.
+  const rowMenu = (m: MemberRow) => {
+    const isSelf = !!uid && m.uid === uid;
+    if (isSelf) return null;
+    if (removingId === m.id || resettingId === m.id) {
+      return <span className={btnIcon} role="status" aria-label={removingId === m.id ? 'Removing' : 'Resetting the password'}><Loader2 className="w-4 h-4 animate-spin" /></span>;
+    }
+    const canReset = !mustUseMicrosoft(m.email, policy) && policy.allowPasswords && (activeRole === 'Admin' || activeRole === 'DocCtrl');
+    const who = m.display_name || m.email;
+    return (
+      <MoreMenu iconOnly label={`More for ${who}`} triggerClass={btnIcon} items={[
+        ...(canReset ? [{ icon: <KeyRound className="w-4 h-4" />, label: m.status === 'suspended' ? 'Reset password and lift suspension' : 'Reset password', onClick: () => handleResetPassword(m) }] : []),
+        { icon: <UserMinus className="w-4 h-4" />, label: 'Remove from workspace', tone: 'bad' as const, line: canReset, onClick: () => handleRemoveMember(m) },
+      ]} />
+    );
+  };
 
   return (
     <PageShell width="work">
       <PageHero
         kicker="Admin · Users"
         title={answer}
-        sub={<span className="inline-flex items-center gap-2"><Building2 className="w-4 h-4" /> {orgName || 'Loading…'}</span>}
+        sub={orgName ? <>In {orgName}.</> : <Skeleton className="inline-block w-40 h-4 align-middle" />}
+        factsHero="none"
         facts={members.length > 0 ? [
           { label: 'Active', value: active },
-          { label: 'Not active', value: notActive, tone: notActive > 0 ? 'warn' : undefined },
+          ...(suspended > 0 ? [{ label: 'Suspended', value: suspended, tone: 'warn' as const }] : []),
+          { label: 'Invited or off', value: notActive },
           { label: 'Admins', value: admins },
         ] : undefined}
         primary={
-          <button type="button" className={heroPrimary} onClick={() => { setFormData((f) => ({ ...f, role: lastRole() })); setError(null); setIsModalOpen(true); }}>
+          <button type="button" className={heroPrimary} onClick={openAdd}>
             <UserPlus className="w-4 h-4" />
-            Add a member
+            Add a person
           </button>
         }
       />
 
       <PageBody>
-        {loading && members.length === 0 ? (
-          <LoadingBlock what="members" />
-        ) : loadError ? (
-          <Problem retry={() => void fetchMembers()}>Couldn&apos;t load members: {loadError}</Problem>
+        {firstLoad ? (
+          <SkeletonRows rows={5} cols={2} what="people" />
+        ) : loadError && members.length === 0 ? (
+          <ErrorNote error={loadError} title="Couldn't load the people in this workspace." onRetry={() => void fetchMembers()} />
+        ) : members.length === 0 ? (
+          <div className={`${tbl.wrap} px-4 py-8 text-center`}>
+            <p className="text-[15px] text-[var(--color-text)]">Nobody is in this workspace yet.</p>
+            <button type="button" onClick={openAdd} className={`${link} mt-2 font-semibold`}>Add the first person</button>
+          </div>
         ) : (
-          <div className={tbl.wrap}>
-            <table className={tbl.table}>
-              <thead className={`${tbl.thead} max-sm:hidden`}>
-                <tr>
-                  <th className={tbl.th}>Member</th>
-                  <th className={tbl.th}>Roles</th>
-                  <th className={tbl.th}>Status</th>
-                  <th className={`${tbl.th} max-md:hidden`}>Joined</th>
-                  <th className={`${tbl.th} w-14`}><span className="sr-only">Remove</span></th>
-                </tr>
-              </thead>
-              <tbody className={tbl.tbody}>
-                {shownMembers.map((m) => {
-                  const memberRoles = rolesOf(m);
-                  const headline = primaryRole(memberRoles);
-                  const isSelf = !!uid && m.uid === uid;
-                  const locked = isSelf || savingRoleId === m.id;
-                  const status = m.status === 'active'
-                    ? <span className="inline-flex items-center gap-1.5"><Pill tone="good">Active</Pill>{mustUseMicrosoft(m.email, policy) && <span className="ui-tag" title="Signs in with Microsoft">Microsoft</span>}</span>
-                    : <Pill tone={m.status === 'disabled' || m.status === 'removed' ? 'bad' : 'warn'}>{m.status.charAt(0).toUpperCase() + m.status.slice(1)}</Pill>;
-                  return (
-                    <tr key={m.id} className={`${tbl.tr} max-sm:grid max-sm:grid-cols-[1fr_auto] max-sm:py-1`}>
-                      <td className={`${tbl.td} max-sm:pb-1`}>
-                        <div className="flex items-center gap-3 min-w-0">
-                          <UserAvatar uid={m.uid} name={m.display_name} email={m.email} size={36} rounded="full" />
-                          <div className="min-w-0">
-                            <div className="font-semibold text-[var(--color-text)] truncate">{m.display_name || m.email}{isSelf && <span className="ml-1.5 text-[13px] font-normal text-[var(--color-text-muted)]">(you)</span>}</div>
-                            <div className="text-[13px] text-[var(--color-text-muted)] truncate">{m.display_name ? m.email : 'No name yet'}</div>
-                          </div>
-                        </div>
-                      </td>
-                      <td className={`${tbl.td} max-sm:col-span-2 max-sm:row-start-2 max-sm:pt-0 max-sm:pl-[64px]`}>
-                        <div className="flex flex-wrap items-center gap-1.5 max-w-md">
-                          {memberRoles.map((r) => {
-                            const canRemove = !locked && memberRoles.length > 1;
-                            return (
-                              // A role is a tag; the primary one (highest access)
-                              // is solid. Its x takes the role off.
-                              <span
-                                key={r}
-                                title={r === headline ? 'Primary role (highest access)' : undefined}
-                                className={`ui-tag !h-7 ${canRemove ? '!pr-0.5' : ''} ${r === headline ? '!bg-[var(--color-main)] !text-white !border-[var(--color-main)]' : ''}`}
-                              >
-                                {r === headline && <ShieldCheck className="w-3.5 h-3.5" aria-hidden />}
-                                {r}
-                                {canRemove && (
-                                  <button
-                                    type="button"
-                                    onClick={() => removeRole(m, r)}
-                                    title={`Remove ${r}`}
-                                    aria-label={`Remove ${r}`}
-                                    className={`w-6 h-6 grid place-items-center rounded transition-colors ${r === headline ? 'hover:bg-white/20' : 'hover:bg-[var(--color-main)] hover:text-white'}`}
-                                  >
-                                    <X className="w-3.5 h-3.5" />
-                                  </button>
-                                )}
-                              </span>
-                            );
-                          })}
-                          {!isSelf && (
-                            <RoleAddPicker current={memberRoles} disabled={locked} onAdd={(r) => addRole(m, r)} />
-                          )}
-                          {savingRoleId === m.id && <Loader2 className="w-3.5 h-3.5 animate-spin text-[var(--color-text-faint)]" />}
-                          <span className="sm:hidden ml-1">{status}</span>
-                        </div>
-                      </td>
-                      <td className={`${tbl.td} max-sm:hidden whitespace-nowrap`}>{status}</td>
-                      <td className={`${tbl.td} max-md:hidden whitespace-nowrap text-[var(--color-text-muted)]`}>
-                        {shortDate(m.created_at) || '-'}
-                      </td>
-                      <td className={`${tbl.td} max-sm:col-start-2 max-sm:row-start-1 text-right whitespace-nowrap`}>
-                        {!mustUseMicrosoft(m.email, policy) && policy.allowPasswords && !isSelf && (activeRole === 'Admin' || activeRole === 'DocCtrl') && (
-                          <button
-                            type="button"
-                            onClick={() => void handleResetPassword(m)}
-                            disabled={resettingId === m.id}
-                            title={m.status === 'suspended' ? 'Reset the password and lift the suspension' : 'Give them a new one-time password'}
-                            aria-label={`Reset ${m.display_name || m.email}'s password`}
-                            className={`${btnIcon} hover:text-[var(--color-accent-text)]`}
-                          >
-                            {resettingId === m.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <KeyRound className="w-4 h-4" />}
-                          </button>
-                        )}
-                        <button
-                          type="button"
-                          onClick={() => handleRemoveMember(m)}
-                          disabled={removingId === m.id || isSelf}
-                          title={isSelf ? "You can't remove yourself" : 'Remove from workspace'}
-                          aria-label={`Remove ${m.display_name || m.email} from workspace`}
-                          className={`${btnIcon} hover:text-[var(--state-overdue)]`}
-                        >
-                          {removingId === m.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                })}
-                {members.length === 0 && (
-                  <tr><td colSpan={5} className="px-4 py-10 text-center text-[var(--color-text-muted)]">No members yet. Add the first one.</td></tr>
-                )}
-              </tbody>
-            </table>
-            {members.length > memberLimit && (
-              <div className={tbl.foot}>
-                <span className="text-[var(--color-text-muted)]">{memberLimit} of {members.length} shown</span>
-                <button type="button" onClick={() => setMemberLimit((n) => n + 100)} className={link}>
-                  Show {Math.min(100, members.length - memberLimit)} more
-                </button>
+          <div className="space-y-3">
+            {members.length > 8 && (
+              <div className="relative max-w-md">
+                <Search className={bandInputIcon} />
+                <input type="search" value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Find a person"
+                  placeholder="Find by name, email or role" className={bandInput} />
               </div>
             )}
+            {loadError != null && <ErrorNote compact error={loadError} title="Couldn't refresh the list." onRetry={() => void fetchMembers()} />}
+
+            {/* Desk: a table with real columns. */}
+            <div className={`${tbl.wrap} max-sm:hidden`}>
+              <table className={tbl.table}>
+                <thead className={tbl.thead}>
+                  <tr>
+                    <th className={tbl.th}>Person</th>
+                    <th className={tbl.th}>Roles</th>
+                    <th className={tbl.th}>Status</th>
+                    <th className={`${tbl.th} max-md:hidden`}>Added</th>
+                    <th className={`${tbl.th} w-14`}><span className="sr-only">More</span></th>
+                  </tr>
+                </thead>
+                <tbody className={tbl.tbody}>
+                  {shown.map((m) => {
+                    const isSelf = !!uid && m.uid === uid;
+                    const st = statusOf(m);
+                    return (
+                      <tr key={m.id} className={tbl.tr}>
+                        <td className={tbl.td}>
+                          <Person m={m} isSelf={isSelf} />
+                        </td>
+                        <td className={tbl.td}>
+                          <RoleChips m={m} isSelf={isSelf} saving={savingRoleId === m.id} onAdd={(r) => addRole(m, r)} onRemove={(r) => removeRole(m, r)} />
+                        </td>
+                        <td className={`${tbl.td} whitespace-nowrap`}>
+                          <StatusTag tone={st.tone}>{st.word}</StatusTag>
+                          {mustUseMicrosoft(m.email, policy) && <div className="text-[13px] text-[var(--color-text-muted)] mt-0.5">Signs in with Microsoft</div>}
+                        </td>
+                        <td className={`${tbl.td} max-md:hidden whitespace-nowrap text-[var(--color-text-muted)]`}>
+                          {shortDate(m.created_at) || <span className="text-[var(--color-text-faint)]">Not recorded</span>}
+                        </td>
+                        <td className={`${tbl.td} text-right`}>{rowMenu(m)}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+              {matching.length === 0 && (
+                <p className="px-4 py-6 text-center text-[var(--color-text-muted)]">Nobody matches &ldquo;{query}&rdquo;. <button type="button" className={link} onClick={() => setQuery('')}>Clear</button></p>
+              )}
+              {matching.length > memberLimit && (
+                <div className={tbl.foot}>
+                  <span className="text-[var(--color-text-muted)]">{memberLimit} of {matching.length} shown</span>
+                  <button type="button" onClick={() => setMemberLimit((n) => n + 100)} className={link}>
+                    Show {Math.min(100, matching.length - memberLimit)} more
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Phone: a card per person, the same facts. */}
+            <ul className="sm:hidden space-y-2" aria-label="People">
+              {shown.map((m) => {
+                const isSelf = !!uid && m.uid === uid;
+                const st = statusOf(m);
+                return (
+                  <li key={m.id} className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
+                    <div className="flex items-start gap-2">
+                      <div className="min-w-0 flex-1"><Person m={m} isSelf={isSelf} /></div>
+                      <div className="-mr-2 -mt-2">{rowMenu(m)}</div>
+                    </div>
+                    <div className="mt-3">
+                      <RoleChips m={m} isSelf={isSelf} saving={savingRoleId === m.id} onAdd={(r) => addRole(m, r)} onRemove={(r) => removeRole(m, r)} />
+                    </div>
+                    <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px] text-[var(--color-text-muted)]">
+                      <StatusTag tone={st.tone}>{st.word}</StatusTag>
+                      {mustUseMicrosoft(m.email, policy) && <span>Signs in with Microsoft</span>}
+                      {m.created_at && <span>Added {shortDate(m.created_at)}</span>}
+                    </div>
+                  </li>
+                );
+              })}
+              {matching.length === 0 && (
+                <li className="px-4 py-6 text-center text-[var(--color-text-muted)]">Nobody matches &ldquo;{query}&rdquo;.</li>
+              )}
+              {matching.length > memberLimit && (
+                <li className="text-center">
+                  <button type="button" onClick={() => setMemberLimit((n) => n + 100)} className={link}>
+                    Show {Math.min(100, matching.length - memberLimit)} more
+                  </button>
+                </li>
+              )}
+            </ul>
           </div>
         )}
       </PageBody>
 
-      {/* Add User Modal */}
       {issued && <TempPasswordNotice email={issued.email} password={issued.password} expiresAt={issued.expiresAt} onClose={() => setIssued(null)} />}
       {isModalOpen && (
-        <Modal onClose={() => { if (!processing) setIsModalOpen(false); }} size="sm" dismissable={!processing}>
-          <ModalHeader icon={UserPlus} title="Add a member" onClose={processing ? undefined : () => setIsModalOpen(false)} />
-          <ModalBody>
-            <form onSubmit={handleCreateMember} className="space-y-4">
-              {error && (
-                <p role="alert" className="text-[var(--state-overdue)] text-[14px] font-semibold flex items-center">
-                  <AlertCircle className="w-4 h-4 mr-2 shrink-0" />
-                  {error}
-                </p>
-              )}
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-[13px] font-semibold text-[var(--color-text-muted)] mb-1">First name</label>
-                  <Input
-                    required type="text" value={formData.firstName}
-                    onChange={e => setFormData({...formData, firstName: e.target.value})}
-                    placeholder="Jane"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[13px] font-semibold text-[var(--color-text-muted)] mb-1">Last name</label>
-                  <Input
-                    required type="text" value={formData.lastName}
-                    onChange={e => setFormData({...formData, lastName: e.target.value})}
-                    placeholder="Doe"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-[13px] font-semibold text-[var(--color-text-muted)] mb-1">Work email</label>
-                <Input
-                  required type="email" value={formData.email}
-                  onChange={e => setFormData({...formData, email: e.target.value})}
-                  placeholder="jane.doe@company.com"
-                />
-              </div>
-
-              {formData.email.includes('@') && (
-                mustUseMicrosoft(formData.email, policy) ? (
-                  <p className="flex items-start gap-2 text-[14px] text-[var(--color-text)]"><span className="ui-pill is-solid shrink-0">Microsoft</span> Signs in with their company Microsoft account. No password is made.</p>
-                ) : policy.allowPasswords ? (
-                  <p className="flex items-start gap-2 text-[14px] text-[var(--color-text)]"><span className="ui-pill is-warn shrink-0">Password</span> Gets a one-time password to set their own today. If they don&apos;t, the account is suspended until you reset it.</p>
-                ) : (
-                  <p className="flex items-start gap-2 text-[14px] text-[var(--state-overdue)]"><span className="ui-pill is-bad shrink-0">Not allowed</span> This workspace only lets people in with Microsoft.</p>
-                )
-              )}
-
-              <div>
-                <label className="block text-[13px] font-semibold text-[var(--color-text-muted)] mb-1">Role</label>
-                <Select
-                  value={formData.role}
-                  onChange={e => setFormData({...formData, role: e.target.value})}
-                >
-                  {ROLE_OPTIONS.map((r) => (
-                    <option key={r.value} value={r.value}>{r.label}</option>
-                  ))}
-                </Select>
-              </div>
-
-              <div className="pt-2">
-                <Button type="submit" loading={processing} className="w-full">
-                  Create account
-                </Button>
-                <p className="text-[13px] text-center text-[var(--color-text-muted)] mt-2.5">
-                  {mustUseMicrosoft(formData.email, policy) ? "They sign in with Microsoft using this email." : "You'll get a one-time password to give them."}
-                </p>
-              </div>
-            </form>
-          </ModalBody>
-        </Modal>
+        <AddPersonDialog
+          formData={formData}
+          setFormData={setFormData}
+          policy={policy}
+          members={members}
+          processing={processing}
+          error={error}
+          onSubmit={handleCreateMember}
+          onClose={() => { if (!processing) setIsModalOpen(false); }}
+        />
       )}
     </PageShell>
   );
 }
 
-// Smart "add role" picker. Only offers roles that would grant a capability the
-// member doesn't already have — so you can never add a role that does nothing.
-// Each option shows exactly what it adds.
+/** Avatar, name and email. */
+function Person({ m, isSelf }: { m: MemberRow; isSelf: boolean }) {
+  return (
+    <div className="flex items-center gap-3 min-w-0">
+      <UserAvatar uid={m.uid} name={m.display_name} email={m.email} size={36} rounded="full" />
+      <div className="min-w-0">
+        <div className="font-semibold text-[var(--color-text)] truncate">
+          {m.display_name || m.email}
+          {isSelf && <span className="ml-1.5 text-[13px] font-normal text-[var(--color-text-muted)]">(you)</span>}
+        </div>
+        <div className="text-[13px] text-[var(--color-text-muted)] truncate">{m.display_name ? m.email : 'No name yet'}</div>
+      </div>
+    </div>
+  );
+}
+
+/** A person's roles as neutral chips. The primary one (the highest access)
+ *  carries a small shield; a chip's x takes that role off; Add role offers
+ *  only roles that would give new access. Your own roles are read-only. */
+function RoleChips({ m, isSelf, saving, onAdd, onRemove }: {
+  m: MemberRow; isSelf: boolean; saving: boolean;
+  onAdd: (r: Role) => void; onRemove: (r: Role) => void;
+}) {
+  const memberRoles = rolesOf(m);
+  const headline = primaryRole(memberRoles);
+  const locked = isSelf || saving;
+  return (
+    <div className="flex flex-wrap items-center gap-1.5 max-w-md">
+      {memberRoles.map((r) => {
+        const canRemove = !locked && memberRoles.length > 1;
+        return (
+          <span key={r} title={r === headline ? 'Primary role (the highest access)' : undefined}
+            className={`ui-tag !h-7 ${canRemove ? '!pr-0.5' : ''}`}>
+            {r === headline && <ShieldCheck aria-hidden className="w-3.5 h-3.5 text-[var(--color-text-faint)]" />}
+            {r}
+            {r === headline && memberRoles.length > 1 && <span className="sr-only"> (primary)</span>}
+            {canRemove && (
+              <button type="button" onClick={() => onRemove(r)} title={`Remove ${r}`} aria-label={`Remove the ${r} role`}
+                className="w-6 h-6 pointer-coarse:w-8 pointer-coarse:h-8 grid place-items-center rounded text-[var(--color-text-muted)] hover:bg-[var(--color-surface)] hover:text-[var(--state-overdue-text)] transition-colors">
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </span>
+        );
+      })}
+      {!isSelf && <RoleAddPicker current={memberRoles} disabled={locked} onAdd={onAdd} />}
+      {saving && <Loader2 role="status" aria-label="Saving roles" className="w-3.5 h-3.5 animate-spin text-[var(--color-text-faint)]" />}
+    </div>
+  );
+}
+
+/** Add a person: their name, sign-in email and first role. */
+function AddPersonDialog({ formData, setFormData, policy, members, processing, error, onSubmit, onClose }: {
+  formData: { firstName: string; lastName: string; email: string; role: string };
+  setFormData: React.Dispatch<React.SetStateAction<{ firstName: string; lastName: string; email: string; role: string }>>;
+  policy: SigninPolicy;
+  members: MemberRow[];
+  processing: boolean;
+  error: string | null;
+  onSubmit: (e: React.FormEvent) => void;
+  onClose: () => void;
+}) {
+  const email = formData.email.trim();
+  const looksLikeEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+  const viaMicrosoft = looksLikeEmail && mustUseMicrosoft(email, policy);
+  // One email per workspace: adding someone already here re-activates them
+  // with the role picked here (the server does this; say so first).
+  const already = looksLikeEmail ? members.find((m) => m.email.toLowerCase() === email.toLowerCase()) : undefined;
+  const emailNote = !looksLikeEmail ? 'The address they sign in with.'
+    : already ? `Already here as ${rolesOf(already).join(', ')}. Adding them again sets their role to the one below and makes them active.`
+    : viaMicrosoft ? 'Signs in with their company Microsoft account. No password is made.'
+    : policy.allowPasswords ? 'Gets a one-time password to set their own today. If they don’t, the account is suspended until you reset it.'
+    : undefined;
+  const blocked = looksLikeEmail && !viaMicrosoft && !policy.allowPasswords;
+  return (
+    <Modal onClose={onClose} size="sm" dismissable={!processing}>
+      <ModalHeader title="Add a person" onClose={processing ? undefined : onClose} />
+      <ModalBody>
+        <form onSubmit={onSubmit} className="space-y-4">
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="First name">
+              <Input required type="text" autoComplete="off" value={formData.firstName}
+                onChange={(e) => setFormData((f) => ({ ...f, firstName: e.target.value }))} placeholder="Jane" />
+            </Field>
+            <Field label="Last name">
+              <Input required type="text" autoComplete="off" value={formData.lastName}
+                onChange={(e) => setFormData((f) => ({ ...f, lastName: e.target.value }))} placeholder="Doe" />
+            </Field>
+          </div>
+
+          <Field label="Work email" hint={blocked ? undefined : emailNote}
+            error={blocked ? 'This workspace only lets people in with Microsoft. Use an address on one of its Microsoft domains.' : undefined}>
+            <Input required type="email" inputMode="email" autoComplete="off" spellCheck={false} value={formData.email}
+              onChange={(e) => setFormData((f) => ({ ...f, email: e.target.value }))} placeholder="jane.doe@company.com" />
+          </Field>
+
+          <Field label="Role" hint="You can add more roles from the list later.">
+            <Select value={formData.role} onChange={(e) => setFormData((f) => ({ ...f, role: e.target.value }))}>
+              {ROLE_OPTIONS.map((r) => (
+                <option key={r.value} value={r.value}>{r.label}</option>
+              ))}
+            </Select>
+          </Field>
+
+          {error && <p role="alert" className="text-[14px] font-semibold text-[var(--state-overdue-text)]">{error}</p>}
+
+          <div className="pt-1">
+            <Button type="submit" loading={processing} disabled={blocked} className="w-full">
+              {already ? 'Add them again' : 'Add to workspace'}
+            </Button>
+            <p className="text-[13px] text-center text-[var(--color-text-muted)] mt-2.5">
+              {already ? 'Their sign-in stays as it is.'
+                : viaMicrosoft ? 'They sign in with Microsoft using this email.'
+                : "If they have no sign-in yet, you'll get a one-time password to give them."}
+            </p>
+          </div>
+        </form>
+      </ModalBody>
+    </Modal>
+  );
+}
+
+// "Add role" offers only roles that would give a capability the person
+// doesn't already have, so a role that does nothing can't be added. Each
+// option says what it adds.
 function RoleAddPicker({
   current,
   disabled,
@@ -538,9 +620,9 @@ function RoleAddPicker({
   const [open, setOpen] = useState(false);
   const options = addableRoles(current);
 
-  // Nothing left that would grant new access — the guardrail in action.
+  // Nothing left that would grant new access.
   if (options.length === 0) {
-    return <span className="ui-pill is-good">Full access</span>;
+    return <span className="text-[13px] text-[var(--color-text-muted)]">Full access</span>;
   }
 
   return (
@@ -551,14 +633,14 @@ function RoleAddPicker({
         onClick={() => setOpen((o) => !o)}
         aria-haspopup="menu"
         aria-expanded={open}
-        className="ui-tag is-more !h-7 hover:!bg-[var(--color-accent-soft)] hover:!text-[var(--color-accent-text)] hover:!border-[var(--color-main)] disabled:opacity-40 disabled:cursor-not-allowed"
+        className="ui-tag is-more !h-7 pointer-coarse:!h-9 disabled:opacity-40 disabled:cursor-not-allowed"
       >
         <Plus className="w-3.5 h-3.5" /> Add role
       </button>
       {open && !disabled && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div role="menu" className="absolute left-0 z-50 mt-1 w-72 bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border-strong)] rounded-lg shadow-lg py-1 max-h-72 overflow-auto">
+          <div role="menu" className="on-sheet ui-float ui-float-in absolute left-0 z-50 mt-1 w-72 max-w-[calc(100vw-3rem)] bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] rounded-xl py-1 max-h-72 overflow-auto">
             <div className="px-3 py-1.5 text-[13px] text-[var(--color-text-muted)] border-b border-[var(--color-border)]">
               Roles that add new access
             </div>

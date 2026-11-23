@@ -1,24 +1,19 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
-import {
-  X,
-  Shield,
-  ShieldAlert,
-  Eye,
-  EyeOff,
-  Plus,
-  Trash2,
-  Save,
-  Loader2,
-  Users
-} from "lucide-react";
+import { X, Plus, Trash2, Check } from "lucide-react";
+import { Button } from "@/components/ui/Button";
+import { Field, Input, Select } from "@/components/ui/Field";
+import HelpTooltip from "@/components/ui/HelpTooltip";
+import { btnIcon, btnLink } from "@/components/admin/kit";
+import { bandSeg, bandSegItem, plural } from "@/components/admin/band";
+import { said } from "@/components/admin/said";
 import { supabase } from "@/lib/supabase";
 import { buildAclIndexFromChain } from "@/lib/acl";
 import { useRole } from "@/components/providers/RoleContext";
 import { appAlert } from "@/components/providers/DialogProvider";
 import { listTeams, type Team } from "@/lib/teams";
-import { RoleTreeSelector } from "./RoleTreeSelector"; // Import the selector
+import { RoleTreeSelector } from "./RoleTreeSelector";
 import type {
   AccessControl,
   AccessRule,
@@ -33,16 +28,16 @@ import type {
 export type NodeType = "library" | "collection" | "document" | "set";
 
 const ACTIONS: Array<{ key: PermissionAction; label: string; hint: string }> = [
-  { key: "discover", label: "Discover", hint: "Can see that it exists (name/presence)" },
-  { key: "read", label: "Read", hint: "Can open/view" },
-  { key: "download", label: "Download", hint: "Can download (watermarked later)" },
-  { key: "upload", label: "Upload", hint: "Can upload into this container" },
-  { key: "createFolder", label: "Create Folder", hint: "Can create subfolders here" },
-  { key: "editMetadata", label: "Edit Metadata", hint: "Can edit metadata fields" },
-  { key: "write", label: "Write", hint: "Can modify/replace content" },
-  { key: "publish", label: "Publish Revisions", hint: "Can rev-up / revert here, incl. publishing over another user's checkout (grant at the library level)" },
-  { key: "managePermissions", label: "Manage Permissions", hint: "Can edit ACL on this node" },
-  { key: "admin", label: "Admin", hint: "Full control (implies everything in UI)" },
+  { key: "discover", label: "Find", hint: "Can see that it exists (its name)" },
+  { key: "read", label: "Read", hint: "Can open and view it" },
+  { key: "download", label: "Download", hint: "Can download it" },
+  { key: "upload", label: "Upload", hint: "Can upload into it" },
+  { key: "createFolder", label: "Make folders", hint: "Can make folders inside it" },
+  { key: "editMetadata", label: "Edit fields", hint: "Can edit the document fields" },
+  { key: "write", label: "Change files", hint: "Can change or replace the files" },
+  { key: "publish", label: "Publish revisions", hint: "Can rev up or revert here, including over someone else's checkout (grant it on the library)" },
+  { key: "managePermissions", label: "Change permissions", hint: "Can change these rules" },
+  { key: "admin", label: "Admin", hint: "Full control" },
 ];
 
 const SUBJECT_TYPES: Array<{ key: PermissionSubjectType; label: string; placeholder: string }> = [
@@ -217,8 +212,8 @@ export default function PermissionsDrawer(props: {
 
   const nodeLabel = useMemo(() => {
     if (props.title) return props.title;
-    const t = nodeType[0].toUpperCase() + nodeType.slice(1);
-    return `${t} Permissions`;
+    const t = nodeType === "collection" ? "Folder" : nodeType[0].toUpperCase() + nodeType.slice(1);
+    return `${t} permissions`;
   }, [nodeType, props.title]);
 
   const addRule = () => {
@@ -291,7 +286,7 @@ export default function PermissionsDrawer(props: {
       if (nodeType !== "library") payload.visibility = visibility;
 
       const { error } = await supabase.from(table).update(payload).eq("id", nodeId);
-      if (error) throw new Error(error.message);
+      if (error) throw error;
 
       // Full before/after audit — a permission change must always be
       // reconstructable. Best-effort: the save above already committed.
@@ -310,13 +305,13 @@ export default function PermissionsDrawer(props: {
           },
         });
         if (auditError) {
-          await appAlert({ title: "Saved, but not logged", message: `The permission change saved, but its audit record didn't: ${auditError.message}`, tone: "danger" });
+          await appAlert({ title: "Saved, but not logged", message: said(auditError, "The change saved, but its audit record didn't."), tone: "danger" });
         }
       }
       close();
     } catch (e) {
       console.error(e);
-      await appAlert({ title: "Couldn't save permissions", message: (e as Error)?.message || "Check the rules and your connection, then try again.", tone: "danger" });
+      await appAlert({ title: "Couldn't save the permissions", message: said(e), tone: "danger" });
     } finally {
       setSaving(false);
     }
@@ -324,390 +319,182 @@ export default function PermissionsDrawer(props: {
 
   if (!isOpen) return null;
 
+  const subjectWord: Record<PermissionSubjectType, string> = { user: "Person", team: "Team", role: "Role", org: "Everyone in the workspace" };
+  const actionWord = (a: string) => ACTIONS.find((x) => x.key === a)?.label ?? a;
+  const dirty = JSON.stringify({ i: inherit, v: visibility, r: rules }) !== JSON.stringify({ i: initial.inherit ?? true, v: initial.visibility ?? "normal", r: initial.rules ?? [] });
+  const canAdd = showBulkSelector ? bulkRoles.length > 0 : subjectType === "role" ? true : !!subjectId.trim();
+  const h3 = "text-[16px] font-semibold text-[var(--color-text)]";
+
   return (
-    <div role="dialog" aria-modal="true" aria-label={`Permissions for ${nodeLabel}`} className="fixed inset-0 z-[90] flex justify-end bg-[var(--color-ink)]/60 animate-in fade-in">
-      <div className="h-full w-full max-w-[560px] bg-[var(--color-surface)] text-[var(--color-text)] shadow-2xl sm:rounded-l-[20px] animate-in slide-in-from-right duration-300 ease-fluid flex flex-col">
+    <div role="dialog" aria-modal="true" aria-label={`Permissions for ${nodeLabel}`} className="fixed inset-0 z-[400] flex justify-end">
+      <div className="absolute inset-0 bg-[var(--color-ink)]/55 animate-in fade-in motion-reduce:animate-none" onClick={() => { if (!saving) close(); }} />
+      <div className="relative h-full w-full max-w-[560px] bg-[var(--color-surface)] text-[var(--color-text)] ui-float sm:rounded-l-xl animate-in slide-in-from-right duration-300 motion-reduce:animate-none flex flex-col">
         <div className="flex items-start justify-between gap-3 px-5 sm:px-6 pt-5 pb-4 border-b border-[var(--color-border)] shrink-0">
           <div className="min-w-0">
-            <div className="flex items-center gap-1.5 text-[13px] font-semibold text-[var(--color-text-muted)]">
-              <Shield className="h-3.5 w-3.5" /> Permissions · {nodeType === "collection" ? "folder" : nodeType}
+            <div className="text-[13px] text-[var(--color-text-muted)]">
+              Permissions · {nodeType === "collection" ? "folder" : nodeType}{!canEdit && <span className="text-[var(--color-text)]"> · read only</span>}
             </div>
-            <h2 className="mt-2 font-display text-[28px] sm:text-[32px] leading-none font-semibold break-words">{nodeLabel}</h2>
-            <div className="mt-2 text-[12px] text-[var(--color-text-muted)] truncate" title={nodeId}>ID {nodeId}</div>
+            <h2 className="mt-1 font-display text-[24px] leading-tight font-semibold break-words">{nodeLabel}</h2>
           </div>
-
-          <button
-            onClick={close}
-            className="w-9 h-9 shrink-0 grid place-items-center rounded-[10px] bg-[var(--color-surface-2)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
-            title="Close"
-            aria-label="Close"
-          >
+          <button type="button" onClick={close} disabled={saving} className={`-mr-2 ${btnIcon}`} title="Close" aria-label="Close">
             <X className="h-5 w-5" />
           </button>
         </div>
 
-        <div className="flex-1 min-h-0 overflow-y-auto px-5 sm:px-6 py-5 space-y-6">
-          {/* ... (Visibility Section) */}
-          <div className="border-t border-[var(--color-border)] pt-5 first:border-t-0 first:pt-0">
-            <div className="flex items-center justify-between">
-              <div className="text-sm font-semibold flex items-center gap-2">
-                {visibility === "hidden" || visibility === "private" ? (
-                  <EyeOff className="h-4 w-4 text-amber-600 dark:text-amber-400" />
-                ) : (
-                  <Eye className="h-4 w-4 text-[var(--color-text-muted)]" />
-                )}
-                Visibility and Inheritance
+        <div className="flex-1 min-h-0 overflow-y-auto px-5 sm:px-6 py-5 space-y-7">
+          {/* Who can find it, and whether the parent's rules apply. */}
+          <section className="space-y-4">
+            <div>
+              <div className="text-[14px] font-semibold text-[var(--color-text)] mb-1.5 inline-flex items-center gap-1.5">
+                Visibility <HelpTooltip>Hidden: nobody finds it unless a rule below allows them.</HelpTooltip>
               </div>
-              {!canEdit && (
-                <div className="text-xs text-amber-700 dark:text-amber-300 flex items-center gap-1">
-                  <ShieldAlert className="h-4 w-4" />
-                  Read-only
-                </div>
-              )}
-            </div>
-
-            <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3">
-                <div className="text-xs text-[var(--color-text-muted)] mb-2">Visibility</div>
-                <div className="flex gap-2">
-                  <button
-                    disabled={!canEdit}
-                    onClick={() => setVisibility("normal")}
-                    aria-pressed={visibility === "normal"}
-                    className={`flex-1 rounded-lg px-3 py-2 text-sm border ${
-                      visibility === "normal"
-                        ? "border-transparent bg-[var(--color-text)] text-[var(--color-surface)]"
-                        : "border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
-                    } ${!canEdit ? "opacity-50 cursor-not-allowed" : ""}`}
-                  >
-                    Normal
+              <div role="radiogroup" aria-label="Visibility" className={bandSeg}>
+                {(["normal", "hidden"] as const).map((v) => (
+                  <button key={v} type="button" role="radio" aria-checked={visibility === v} disabled={!canEdit} onClick={() => setVisibility(v)} className={bandSegItem(visibility === v)}>
+                    {v === "normal" ? "Normal" : "Hidden"}
                   </button>
-                  <button
-                    disabled={!canEdit}
-                    onClick={() => setVisibility("hidden")}
-                    aria-pressed={visibility === "hidden"}
-                    className={`flex-1 rounded-lg px-3 py-2 text-sm border ${
-                      visibility === "hidden"
-                        ? "border-transparent bg-[var(--color-text)] text-[var(--color-surface)]"
-                        : "border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
-                    } ${!canEdit ? "opacity-50 cursor-not-allowed" : ""}`}
-                  >
-                    Hidden
-                  </button>
-                </div>
-                <div className="mt-2 text-xs text-[var(--color-text-faint)]">
-                  Hidden = not discoverable unless explicitly allowed.
-                </div>
+                ))}
               </div>
-
-              <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3">
-                <div className="text-xs text-[var(--color-text-muted)] mb-2">Inherit from parent</div>
-                <label className="flex items-center gap-2 text-sm">
-                  <input
-                    type="checkbox"
-                    disabled={!canEdit}
-                    checked={inherit}
-                    onChange={(e) => setInherit(e.target.checked)}
-                    className="h-4 w-4 accent-[var(--color-main)]"
-                  />
-                  Inherit ACL rules
-                </label>
-                <div className="mt-2 text-xs text-[var(--color-text-faint)]">
-                  If enabled, parent rules apply unless overridden here.
-                </div>
-              </div>
+              {visibility === "private" && <p className="mt-1.5 text-[13px] text-[var(--color-text-muted)]">Private now. Pick Normal or Hidden to change it.</p>}
             </div>
-          </div>
+            <label className="flex items-start gap-2.5 text-[15px] text-[var(--color-text)]">
+              <input type="checkbox" disabled={!canEdit} checked={inherit} onChange={(e) => setInherit(e.target.checked)} className="mt-1 h-4 w-4" />
+              <span>Follow the parent&apos;s rules<span className="block text-[13px] text-[var(--color-text-muted)]">The rules above this apply here, unless a rule below says otherwise.</span></span>
+            </label>
+          </section>
 
-          {/* ... (Rules List Section) */}
-          <div className="border-t border-[var(--color-border)] pt-5 first:border-t-0 first:pt-0">
-            <div className="text-sm font-semibold">Rules</div>
-            <div className="text-xs text-[var(--color-text-faint)] mt-1">
-              Deny rules win, and inheritance can be cut at any node.
-            </div>
-
-            <div className="mt-4 space-y-3">
-              {rules.length === 0 ? (
-                <div className="text-sm text-[var(--color-text-muted)]">No rules yet.</div>
-              ) : (
-                rules.map((r, idx) => (
-                  <div
-                    key={idx}
-                    className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3"
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span
-                            className={`text-xs px-2 py-1 rounded-lg border ${
-                              r.effect === "allow"
-                                ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
-                                : "border-rose-500/40 bg-rose-500/10 text-rose-700 dark:text-rose-300"
-                            }`}
-                          >
-                            {r.effect.toUpperCase()}
-                          </span>
-
-                          <span className="text-xs px-2 py-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)]">
-                            {r.subject.type}: {subjectLabel(r.subject.type, r.subject.id)}
-                          </span>
-
-                          {r.expiresAt && (
-                            <span className="text-[11px] px-2 py-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text-muted)]">
-                              expires {toDateInput(r.expiresAt).replace("T", " ")}
-                            </span>
-                          )}
-                        </div>
-
-                        <div className="mt-2 flex flex-wrap gap-2">
-                          {(r.actions || []).map((a) => (
-                            <span
-                              key={a}
-                              className="text-[11px] px-2 py-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)]"
-                            >
-                              {a}
-                            </span>
-                          ))}
-                        </div>
+          {/* The rules on this one. */}
+          <section>
+            <h3 className={`${h3} inline-flex items-center gap-1.5`}>Rules <span className="ui-count">{rules.length || ""}</span> <HelpTooltip>A deny rule always wins over an allow rule.</HelpTooltip></h3>
+            {rules.length === 0 ? (
+              <p className="mt-2 text-[14px] text-[var(--color-text-muted)]">None here{inherit ? "; the parent's rules apply" : ""}.</p>
+            ) : (
+              <ul className="mt-2 rounded-xl border border-[var(--color-border)] divide-y divide-[var(--color-border)]">
+                {rules.map((r, idx) => (
+                  <li key={idx} className="flex items-start gap-3 px-3 py-2.5">
+                    <div className="min-w-0 flex-1">
+                      <div className="text-[14px]">
+                        <span className={`font-semibold ${r.effect === "deny" ? "text-[var(--state-overdue-text)]" : "text-[var(--color-text)]"}`}>{r.effect === "deny" ? "Deny" : "Allow"}</span>{" "}
+                        <span className="text-[var(--color-text)]">{r.subject.type === "org" ? subjectWord.org : `${subjectWord[r.subject.type]}: ${subjectLabel(r.subject.type, r.subject.id)}`}</span>
                       </div>
-
-                      <button
-                        disabled={!canEdit}
-                        onClick={() => removeRule(idx)}
-                        className={`p-2 rounded-lg border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] ${
-                          !canEdit ? "opacity-50 cursor-not-allowed" : ""
-                        }`}
-                        title="Remove rule"
-                        aria-label="Remove rule"
-                      >
+                      <div className="text-[13px] text-[var(--color-text-muted)]">
+                        {(r.actions || []).map(actionWord).join(", ")}
+                        {r.expiresAt && <>. Until {toDateInput(r.expiresAt).replace("T", " ")}</>}
+                      </div>
+                    </div>
+                    {canEdit && (
+                      <button type="button" onClick={() => removeRule(idx)} className={`${btnIcon} hover:!text-[var(--state-overdue-text)]`} title="Remove the rule" aria-label={`Remove the rule for ${subjectLabel(r.subject.type, r.subject.id)}`}>
                         <Trash2 className="h-4 w-4" />
                       </button>
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
 
-          <div className="border-t border-[var(--color-border)] pt-5 first:border-t-0 first:pt-0">
-            <div className="flex items-center justify-between mb-4">
-              <div className="text-sm font-semibold flex items-center gap-2">
-                <Plus className="h-4 w-4" />
-                Add rule
-              </div>
-              <button
-                onClick={() => setShowBulkSelector(!showBulkSelector)}
-                className="text-xs flex items-center border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-2 py-1 rounded-lg hover:bg-[var(--color-surface-2)] transition-colors"
-              >
-                <Users className="w-3 h-3 mr-1" />
-                {showBulkSelector ? "Manual Entry" : "Use Directory Tree"}
-              </button>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <div className="text-xs text-[var(--color-text-muted)] mb-1">Effect</div>
-                <select
-                  disabled={!canEdit}
-                  value={effect}
-                  onChange={(e) => setEffect(e.target.value as PermissionEffect)}
-                  className={`w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm ${
-                    !canEdit ? "opacity-50 cursor-not-allowed" : ""
-                  }`}
-                >
-                  <option value="allow">allow</option>
-                  <option value="deny">deny</option>
-                </select>
-              </div>
-
-              {showBulkSelector ? (
-                <div className="sm:col-span-2">
-                  <div className="text-xs text-[var(--color-text-muted)] mb-1">Select Roles (Multi)</div>
-                  <div className="max-h-64 overflow-y-auto custom-scrollbar border border-[var(--color-border)] rounded-lg">
-                    <RoleTreeSelector 
-                      selected={bulkRoles} 
-                      onChange={setBulkRoles} 
-                      disabled={!canEdit}
-                    />
-                  </div>
-                </div>
-              ) : (
-                <>
-                  <div>
-                    <div className="text-xs text-[var(--color-text-muted)] mb-1">Subject type</div>
-                    <select
-                      disabled={!canEdit}
-                      value={subjectType}
-                      onChange={(e) => setSubjectType(e.target.value as PermissionSubjectType)}
-                      className={`w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm ${
-                        !canEdit ? "opacity-50 cursor-not-allowed" : ""
-                      }`}
-                    >
-                      {SUBJECT_TYPES.map((s) => (
-                        <option key={s.key} value={s.key}>
-                          {s.label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  {subjectType === "role" ? (
-                    <div className="sm:col-span-2">
-                      <div className="text-xs text-[var(--color-text-muted)] mb-1">Role</div>
-                      <select
-                        disabled={!canEdit}
-                        value={rolePick}
-                        onChange={(e) => setRolePick(e.target.value as Role)}
-                        className={`w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm ${
-                          !canEdit ? "opacity-50 cursor-not-allowed" : ""
-                        }`}
-                      >
-                        {ROLES.map((r) => (
-                          <option key={r} value={r}>
-                            {r}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  ) : subjectType === "user" ? (
-                    <div className="sm:col-span-2">
-                      <div className="text-xs text-[var(--color-text-muted)] mb-1">Person</div>
-                      <select
-                        disabled={!canEdit}
-                        value={subjectId}
-                        onChange={(e) => setSubjectId(e.target.value)}
-                        className={`w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm ${!canEdit ? "opacity-50 cursor-not-allowed" : ""}`}
-                      >
-                        <option value="">Select a person…</option>
-                        {orgMembers.map((u) => (
-                          <option key={u.uid} value={u.uid}>{u.name}{u.email ? ` (${u.email})` : ""}</option>
-                        ))}
-                      </select>
-                    </div>
-                  ) : subjectType === "team" ? (
-                    <div className="sm:col-span-2">
-                      <div className="text-xs text-[var(--color-text-muted)] mb-1">Team</div>
-                      <select
-                        disabled={!canEdit}
-                        value={subjectId}
-                        onChange={(e) => setSubjectId(e.target.value)}
-                        className={`w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm ${!canEdit ? "opacity-50 cursor-not-allowed" : ""}`}
-                      >
-                        <option value="">Select a team…</option>
-                        {teams.map((t) => (
-                          <option key={t.id} value={t.id}>{t.name} · {t.memberCount ?? 0} member{(t.memberCount ?? 0) === 1 ? "" : "s"}</option>
-                        ))}
-                      </select>
-                      {teams.length === 0 && <div className="text-[11px] text-[var(--color-text-faint)] mt-1">No teams yet. Create them in Admin, Teams.</div>}
-                    </div>
-                  ) : (
-                    <div className="sm:col-span-2">
-                      <div className="text-xs text-[var(--color-text-muted)] mb-1">Subject id</div>
-                      <input
-                        disabled={!canEdit}
-                        value={subjectId}
-                        onChange={(e) => setSubjectId(e.target.value)}
-                        placeholder={SUBJECT_TYPES.find((x) => x.key === subjectType)?.placeholder ?? "id"}
-                        className={`w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm ${!canEdit ? "opacity-50 cursor-not-allowed" : ""}`}
-                      />
-                    </div>
-                  )}
-                </>
-              )}
-
-              <div className="sm:col-span-2">
-                <div className="text-xs text-[var(--color-text-muted)] mb-2">Actions</div>
-                <div className="flex flex-wrap gap-2">
-                  {ACTIONS.map((a) => {
-                    const on = actions.includes(a.key);
-                    return (
-                      <button
-                        key={a.key}
-                        disabled={!canEdit}
-                        onClick={() => toggleAction(a.key)}
-                        className={`text-xs px-3 py-2 rounded-xl border ${
-                          on
-                            ? "border-transparent bg-[var(--color-text)] text-[var(--color-surface)]"
-                            : "border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)]"
-                        } ${!canEdit ? "opacity-50 cursor-not-allowed" : ""}`}
-                        title={a.hint}
-                        aria-pressed={on}
-                        type="button"
-                      >
-                        {a.label}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              <div className="sm:col-span-2">
-                <div className="text-xs text-[var(--color-text-muted)] mb-1">Expires (optional)</div>
-                <input
-                  disabled={!canEdit}
-                  type="datetime-local"
-                  value={expiresAt}
-                  onChange={(e) => setExpiresAt(e.target.value)}
-                  className={`w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm ${
-                    !canEdit ? "opacity-50 cursor-not-allowed" : ""
-                  }`}
-                />
-              </div>
-
-              <div className="sm:col-span-2 flex gap-2">
-                <button
-                  disabled={!canEdit}
-                  onClick={showBulkSelector ? addBulkRules : addRule}
-                  type="button"
-                  className={`flex-1 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm hover:bg-[var(--color-surface-2)] flex items-center justify-center gap-2 ${
-                    !canEdit ? "opacity-50 cursor-not-allowed" : ""
-                  }`}
-                >
-                  <Plus className="h-4 w-4" />
-                  {showBulkSelector ? `Add ${bulkRoles.length} Rules` : "Add rule"}
+          {/* Add a rule. */}
+          {canEdit && (
+            <section className="space-y-4">
+              <div className="flex items-center justify-between gap-3">
+                <h3 className={h3}>Add a rule</h3>
+                <button type="button" onClick={() => setShowBulkSelector(!showBulkSelector)} className={btnLink}>
+                  {showBulkSelector ? "One person, team or role" : "Several roles at once"}
                 </button>
-
-                {!showBulkSelector && (
-                  <button
-                    disabled={!canEdit}
-                    onClick={() => {
-                      setVisibility("hidden");
-                      setEffect("allow");
-                      setActions(["discover", "read"]);
-                      setSubjectType("user");
-                    }}
-                    type="button"
-                    className={`rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm hover:bg-[var(--color-surface-2)] ${
-                      !canEdit ? "opacity-50 cursor-not-allowed" : ""
-                    }`}
-                    title="Preset for blind drilling"
-                  >
-                    Blind-drill preset
-                  </button>
-                )}
               </div>
-            </div>
-          </div>
 
-          <div className="pb-8 flex gap-3">
-            <button
-              onClick={close}
-              className="flex-1 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm hover:bg-[var(--color-surface-2)]"
-            >
-              Cancel
-            </button>
-            <button
-              disabled={!canEdit || saving}
-              onClick={save}
-              className={`flex-1 rounded-xl bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] font-bold px-3 py-2 text-sm flex items-center justify-center gap-2 disabled:opacity-60 ${
-                !canEdit ? "opacity-50 cursor-not-allowed" : ""
-              }`}
-            >
-              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-              Save
-            </button>
-          </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <Field label="Allow or deny">
+                  <Select value={effect} onChange={(e) => setEffect(e.target.value as PermissionEffect)}>
+                    <option value="allow">Allow</option>
+                    <option value="deny">Deny</option>
+                  </Select>
+                </Field>
+                {!showBulkSelector && (
+                  <Field label="Who">
+                    <Select value={subjectType} onChange={(e) => { setSubjectType(e.target.value as PermissionSubjectType); setSubjectId(""); }}>
+                      {SUBJECT_TYPES.map((s) => <option key={s.key} value={s.key}>{subjectWord[s.key]}</option>)}
+                    </Select>
+                  </Field>
+                )}
+                {showBulkSelector ? (
+                  <div className="sm:col-span-2">
+                    <div className="text-[14px] font-semibold text-[var(--color-text)] mb-1.5">Roles</div>
+                    <div className="max-h-72 overflow-y-auto rounded-xl border border-[var(--color-border)]">
+                      <RoleTreeSelector selected={bulkRoles} onChange={setBulkRoles} />
+                    </div>
+                  </div>
+                ) : subjectType === "role" ? (
+                  <Field label="Role" className="sm:col-span-2">
+                    <Select value={rolePick} onChange={(e) => setRolePick(e.target.value as Role)}>
+                      {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
+                    </Select>
+                  </Field>
+                ) : subjectType === "user" ? (
+                  <Field label="Person" className="sm:col-span-2">
+                    <Select value={subjectId} onChange={(e) => setSubjectId(e.target.value)}>
+                      <option value="">Pick a person</option>
+                      {orgMembers.map((u) => <option key={u.uid} value={u.uid}>{u.name}{u.email && u.email !== u.name ? ` (${u.email})` : ""}</option>)}
+                    </Select>
+                  </Field>
+                ) : subjectType === "team" ? (
+                  <Field label="Team" className="sm:col-span-2" hint={teams.length === 0 ? "No teams yet. Make them in Admin, Teams." : undefined}>
+                    <Select value={subjectId} onChange={(e) => setSubjectId(e.target.value)}>
+                      <option value="">Pick a team</option>
+                      {teams.map((t) => <option key={t.id} value={t.id}>{t.name}, {t.memberCount ?? 0} {(t.memberCount ?? 0) === 1 ? "person" : "people"}</option>)}
+                    </Select>
+                  </Field>
+                ) : (
+                  <Field label="Workspace ID" className="sm:col-span-2" hint={activeOrgId ? `This workspace is ${activeOrgId}.` : undefined}>
+                    <Input value={subjectId} onChange={(e) => setSubjectId(e.target.value)} placeholder={activeOrgId ?? ""} spellCheck={false} />
+                  </Field>
+                )}
 
+                <div className="sm:col-span-2">
+                  <div className="text-[14px] font-semibold text-[var(--color-text)] mb-1.5">What they can do</div>
+                  <div className="flex flex-wrap gap-1.5" role="group" aria-label="What they can do">
+                    {ACTIONS.map((a) => {
+                      const on = actions.includes(a.key);
+                      return (
+                        <button key={a.key} type="button" role="checkbox" aria-checked={on} onClick={() => toggleAction(a.key)} title={a.hint}
+                          className={`inline-flex items-center gap-1 h-8 pointer-coarse:h-10 px-2.5 rounded-md text-[13px] font-semibold border transition-colors ${on ? "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-text)]" : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border-strong)] hover:text-[var(--color-text)]"}`}>
+                          {on && <Check aria-hidden className="w-3.5 h-3.5" />}{a.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <Field label="Until" hint="Optional. Blank: until someone removes it." className="sm:col-span-2">
+                  <Input type="datetime-local" value={expiresAt} onChange={(e) => setExpiresAt(e.target.value)} className="[color-scheme:light] dark:[color-scheme:dark]" />
+                </Field>
+
+                <div className="sm:col-span-2 flex flex-wrap items-center gap-x-4 gap-y-2">
+                  <Button type="button" variant="secondary" disabled={!canAdd} onClick={showBulkSelector ? addBulkRules : addRule}>
+                    <Plus className="h-4 w-4" />
+                    {showBulkSelector ? (bulkRoles.length ? `Add ${plural(bulkRoles.length, "rule")}` : "Pick roles to add") : "Add the rule"}
+                  </Button>
+                  {!showBulkSelector && (
+                    <span className="inline-flex items-center gap-1">
+                      <button type="button" className={btnLink}
+                        onClick={() => { setVisibility("hidden"); setEffect("allow"); setActions(["discover", "read"]); setSubjectType("user"); }}>
+                        Blind-drill setup
+                      </button>
+                      <HelpTooltip>Hides this from everyone, then lets you allow one person at a time to find and read it.</HelpTooltip>
+                    </span>
+                  )}
+                </div>
+              </div>
+            </section>
+          )}
+        </div>
+
+        <div className="shrink-0 px-5 sm:px-6 py-3.5 pb-[calc(14px+env(safe-area-inset-bottom))] border-t border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center justify-end gap-2 sm:rounded-bl-xl">
+          {canEdit && dirty && <span className="mr-auto text-[13px] text-[var(--color-text-muted)]">Not saved yet</span>}
+          <Button variant="secondary" onClick={close} disabled={saving}>{canEdit ? "Cancel" : "Close"}</Button>
+          {canEdit && (
+            <Button onClick={() => void save()} loading={saving} disabled={!dirty} title={!dirty ? "Nothing changed yet" : undefined}>Save</Button>
+          )}
         </div>
       </div>
     </div>

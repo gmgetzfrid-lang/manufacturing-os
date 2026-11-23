@@ -1,12 +1,18 @@
 "use client";
 
-// ViewAsSimulator — "what does this person actually see and do?"
+// ViewAsSimulator: "what does this person actually see and do?"
 // Pick any member; their EFFECTIVE access is computed with the same
 // evaluators the app enforces with (capability policy for actions,
 // ACL chain for content) — not a re-implementation that could drift.
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { UserSearch, Check, Minus, Eye, EyeOff, UploadCloud, KeyRound, Loader2, X } from "lucide-react";
+import { Check, Minus, Eye, EyeOff, UploadCloud } from "lucide-react";
+import { Section, sheet, btnLink, shortDate } from "@/components/admin/kit";
+import { said } from "@/components/admin/said";
+import { Button } from "@/components/ui/Button";
+import { Field, Input, Select } from "@/components/ui/Field";
+import HelpTooltip from "@/components/ui/HelpTooltip";
+import { appConfirm } from "@/components/providers/DialogProvider";
 import { supabase } from "@/lib/supabase";
 import { useRole } from "@/components/providers/RoleContext";
 import {
@@ -78,6 +84,8 @@ export default function ViewAsSimulator({ canEdit = false }: { canEdit?: boolean
     setPolicy(await loadCapabilityPolicy(activeOrgId));
   }, [activeOrgId]);
 
+  const capLabel = (c: CapabilityId) => CAPABILITY_DEFS.find((d) => d.id === c)?.label ?? c;
+
   const doGrant = async () => {
     if (!activeOrgId || !actorUid || !who) return;
     setGrantBusy(true); setGrantErr(null);
@@ -90,22 +98,22 @@ export default function ViewAsSimulator({ canEdit = false }: { canEdit?: boolean
       });
       setGrantUntil(""); setGrantNote("");
       await refreshPolicy();
-    } catch (e) { setGrantErr((e as Error).message); }
+    } catch (e) { setGrantErr(said(e, "Couldn't delegate it.")); }
     finally { setGrantBusy(false); }
   };
 
   const doRevoke = async (cap: CapabilityId) => {
     if (!activeOrgId || !actorUid || !who) return;
+    if (!(await appConfirm({ message: `Take back "${capLabel(cap)}" from ${who.name}? They lose it now, unless their role gives it.`, tone: "danger", confirmLabel: "Take back" }))) return;
     setGrantBusy(true); setGrantErr(null);
     try {
       await revokeUserGrant({ orgId: activeOrgId, uid: who.uid, cap, actorUserId: actorUid, actorEmail });
       await refreshPolicy();
-    } catch (e) { setGrantErr((e as Error).message); }
+    } catch (e) { setGrantErr(said(e, "Couldn't take it back.")); }
     finally { setGrantBusy(false); }
   };
 
   const personalGrants = who ? grantsForUser(policy, who.uid) : [];
-  const capLabel = (c: CapabilityId) => CAPABILITY_DEFS.find((d) => d.id === c)?.label ?? c;
 
   // Explicit content rules naming this person (library-level scan).
   const contentRules = useMemo(() => {
@@ -129,121 +137,126 @@ export default function ViewAsSimulator({ canEdit = false }: { canEdit?: boolean
     }));
   }, [who, policy]);
 
+  const sub = "text-[14px] font-semibold text-[var(--color-text)] mb-2";
+  const note = "mt-2 text-[13px] text-[var(--color-text-muted)]";
   return (
-    <section className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] overflow-hidden">
-      <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap">
-        <span aria-hidden className="ui-icon-tile is-sm"><UserSearch className="w-4 h-4" /></span>
-        <h2 className="font-display text-[17px] font-semibold text-[var(--color-heading)]">View as</h2>
-        <span className="text-[13px] text-[var(--color-text-muted)]">See what any member can do, using the same checks the app enforces.</span>
-        <select value={pick} aria-label="Member to view as" onChange={(e) => setPick(e.target.value)} className="ml-auto h-9 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs min-w-[180px]">
-          <option value="">Pick a member…</option>
-          {members.map((m) => <option key={m.uid} value={m.uid}>{m.name} · {m.role}</option>)}
-        </select>
-      </div>
-      {who && (
-        <div className="p-4 grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <div>
-            <div className="flex items-center gap-1.5 text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5">Actions {who.name} can take <span className="ui-count is-solid !h-5 !text-[12px]">{caps.filter((c) => c.ok).length}</span> of {caps.length}</div>
-            <ul className="space-y-0.5">
-              {caps.map(({ def, ok }) => (
-                <li key={def.id} className={`text-[11px] flex items-center gap-1.5 ${ok ? "text-[var(--color-text)]" : "text-[var(--color-text-faint)]"}`}>
-                  {ok ? <Check className="w-3 h-3 text-[var(--state-released)] shrink-0" /> : <Minus className="w-3 h-3 shrink-0" />}
-                  {def.label} <span className="text-[var(--color-text-faint)]">· {def.area}</span>
-                </li>
-              ))}
-            </ul>
-            <div className="mt-2 text-[11px] text-[var(--color-text-faint)]">Plus identity rights on their own tickets (requester / assigned drafter / assigned engineer).</div>
-          </div>
-          <div>
-            <div className="text-xs font-bold text-[var(--color-text-muted)] mb-1.5">Content access by library</div>
-            <ul className="space-y-1">
-              {libs.map((l) => {
-                const principal = { uid: who.uid, role: who.role as Role, orgId: activeOrgId ?? undefined, teamIds, isActiveMember: true };
-                const sees = canDiscover({ principal, aclChain: [l.acl ?? undefined], visibility: l.visibility });
-                const viaIdx = canPublishViaIndex(l.aclIndex, principal);
-                const publishes = isControllerRole(principal.role) || (viaIdx !== null ? viaIdx : canPublishOnLibrary({ principal, libraryAcl: l.acl ?? undefined }));
-                return (
-                  <li key={l.id} className="text-[11px] flex items-center gap-2">
-                    <span className="font-bold text-[var(--color-text)]">{l.name}</span>
-                    {sees
-                      ? <span className="ui-pill is-good !h-5 !px-2 !text-[12px]"><Eye className="w-3 h-3" /> Visible</span>
-                      : <span className="ui-pill is-bad !h-5 !px-2 !text-[12px]"><EyeOff className="w-3 h-3" /> Hidden</span>}
-                    {publishes && <span className="ui-pill !h-5 !px-2 !text-[12px]"><UploadCloud className="w-3 h-3" /> Can publish</span>}
-                    <span className="text-[var(--color-text-faint)]">{l.visibility !== "normal" ? l.visibility : ""}</span>
-                  </li>
-                );
-              })}
-              {libs.length === 0 && <li className="text-[11px] italic text-[var(--color-text-faint)]">No libraries.</li>}
-            </ul>
-            <div className="mt-2 text-[11px] text-[var(--color-text-faint)]">Folder and document rules narrow it within each library. Open one&apos;s permissions to check. Ownership grants (owner of a doc/folder/library) add publish authority on those items.</div>
-          </div>
-        </div>
-      )}
-
-      {/* ── This person's SPECIFIC permissions: delegations + content rules ── */}
-      {who && (
-        <div className="px-4 pb-4 border-t border-[var(--color-border)] pt-3">
-          <div className="flex items-center gap-2 mb-2">
-            <span aria-hidden className="ui-icon-tile is-sm"><KeyRound className="w-4 h-4" /></span>
-            <span className="text-sm font-bold text-[var(--color-text)]">Personal permissions for {who.name}</span>
-          </div>
-
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+    <Section
+      label={<>View as <HelpTooltip>See what any member can see and do, using the same checks the app enforces. Delegate a single action to one person here, too.</HelpTooltip></>}
+      action={
+        <Select value={pick} aria-label="Person to view as" onChange={(e) => setPick(e.target.value)} className="w-full sm:w-72">
+          <option value="">Pick a person</option>
+          {members.map((m) => <option key={m.uid} value={m.uid}>{m.name}, {m.role}</option>)}
+        </Select>
+      }
+    >
+      {!who ? (
+        <div className={`${sheet} px-4 py-6 text-center text-[15px] text-[var(--color-text-muted)]`}>Pick a person to see what they can see and do.</div>
+      ) : (
+        <div className={`${sheet} divide-y divide-[var(--color-border)]`}>
+          <div className="p-4 sm:p-5 grid grid-cols-1 lg:grid-cols-[minmax(0,62fr)_minmax(0,38fr)] gap-x-8 gap-y-6">
             <div>
-              <div className="text-xs font-bold text-[var(--color-text-muted)] mb-1.5">Delegated actions (beyond their role)</div>
-              {personalGrants.length === 0 && <div className="text-[11px] italic text-[var(--color-text-faint)]">None. Everything they can do comes from their role{contentRules.length ? " and the content rules on the right" : ""}.</div>}
-              <ul className="space-y-1">
-                {personalGrants.map((g) => (
-                  <li key={g.cap} className="text-[11px] flex items-center gap-2">
-                    <span className={`font-bold ${grantActive(g) ? "text-[var(--color-text)]" : "text-[var(--color-text-faint)] line-through"}`}>{capLabel(g.cap)}</span>
-                    <span className="text-[var(--color-text-faint)]">
-                      {g.expiresAt ? `until ${new Date(g.expiresAt).toLocaleDateString()}${grantActive(g) ? "" : " (expired)"}` : "until revoked"}
-                      {g.note ? ` · “${g.note}”` : ""}
-                    </span>
-                    {canEdit && (
-                      <button onClick={() => void doRevoke(g.cap)} disabled={grantBusy} className="ml-auto p-0.5 rounded text-[var(--color-text-faint)] hover:text-rose-600" title="Revoke">
-                        <X className="w-3.5 h-3.5" />
-                      </button>
-                    )}
+              <h3 className={sub}>Actions {who.name} can take <span className="font-normal text-[var(--color-text-muted)] tabular-nums">{caps.filter((c) => c.ok).length} of {caps.length}</span></h3>
+              <ul className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1">
+                {caps.map(({ def, ok }) => (
+                  <li key={def.id} className={`text-[14px] flex items-start gap-2 ${ok ? "text-[var(--color-text)]" : "text-[var(--color-text-faint)]"}`}>
+                    {ok ? <Check aria-label="Can" className="w-4 h-4 mt-0.5 text-[var(--state-released)] shrink-0" /> : <Minus aria-label="Can't" className="w-4 h-4 mt-0.5 shrink-0" />}
+                    <span>{def.label} <span className="text-[13px] text-[var(--color-text-faint)]">{def.area}</span></span>
                   </li>
                 ))}
               </ul>
+              <p className={note}>Plus their own requests: as requester, assigned drafter or assigned engineer.</p>
+            </div>
+            <div>
+              <h3 className={sub}>Libraries</h3>
+              <ul className="divide-y divide-[var(--color-border)]">
+                {libs.map((l) => {
+                  const principal = { uid: who.uid, role: who.role as Role, orgId: activeOrgId ?? undefined, teamIds, isActiveMember: true };
+                  const sees = canDiscover({ principal, aclChain: [l.acl ?? undefined], visibility: l.visibility });
+                  const viaIdx = canPublishViaIndex(l.aclIndex, principal);
+                  const publishes = isControllerRole(principal.role) || (viaIdx !== null ? viaIdx : canPublishOnLibrary({ principal, libraryAcl: l.acl ?? undefined }));
+                  return (
+                    <li key={l.id} className="py-1.5 flex items-center gap-2 text-[14px]">
+                      <span className="font-semibold text-[var(--color-text)] truncate flex-1 min-w-0">{l.name}</span>
+                      {sees
+                        ? <span className="inline-flex items-center gap-1 text-[var(--color-text)]"><Eye aria-hidden className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> Sees</span>
+                        : <span className="inline-flex items-center gap-1 text-[var(--color-text-muted)]"><EyeOff aria-hidden className="w-3.5 h-3.5" /> Hidden</span>}
+                      {publishes && <span className="inline-flex items-center gap-1 text-[var(--color-text-muted)]"><UploadCloud aria-hidden className="w-3.5 h-3.5" /> Publishes</span>}
+                    </li>
+                  );
+                })}
+                {libs.length === 0 && <li className="py-1.5 text-[14px] text-[var(--color-text-muted)]">No libraries yet.</li>}
+              </ul>
+              <p className={note}>Folder and document rules narrow this inside each library; open one&apos;s permissions to check. Owning a document, folder or library also lets them publish there.</p>
+            </div>
+          </div>
+
+          {/* This person's own permissions: delegations and content rules. */}
+          <div className="p-4 sm:p-5 grid grid-cols-1 lg:grid-cols-[minmax(0,62fr)_minmax(0,38fr)] gap-x-8 gap-y-6">
+            <div>
+              <h3 className={sub}>Actions delegated to {who.name}</h3>
+              {personalGrants.length === 0 ? (
+                <p className="text-[14px] text-[var(--color-text-muted)]">None. Everything they can do comes from their role{contentRules.length ? " and the content rules beside this" : ""}.</p>
+              ) : (
+                <ul className="divide-y divide-[var(--color-border)] rounded-lg border border-[var(--color-border)]">
+                  {personalGrants.map((g) => (
+                    <li key={g.cap} className="px-3 py-2 flex items-center gap-3 text-[14px]">
+                      <span className="min-w-0 flex-1">
+                        <span className={`font-semibold ${grantActive(g) ? "text-[var(--color-text)]" : "text-[var(--color-text-faint)] line-through"}`}>{capLabel(g.cap)}</span>
+                        <span className="block text-[13px] text-[var(--color-text-muted)]">
+                          {g.expiresAt ? `Until ${shortDate(g.expiresAt)}${grantActive(g) ? "" : ", ended"}` : "Until taken back"}
+                          {g.note ? `. ${g.note}` : ""}
+                        </span>
+                      </span>
+                      {canEdit && (
+                        <button type="button" onClick={() => void doRevoke(g.cap)} disabled={grantBusy} className={`${btnLink} !text-[var(--color-text-muted)] hover:!text-[var(--state-overdue-text)]`}>
+                          Take back
+                        </button>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
               {canEdit && (
-                <div className="mt-2.5 rounded-xl border border-[var(--color-border-strong)] bg-[var(--color-surface-2)]/40 p-2.5 space-y-1.5">
-                  <div className="text-[11px] font-bold text-[var(--color-text-muted)]">Delegate an action. Leave the date empty for a standing grant.</div>
-                  <div className="flex items-center gap-1.5 flex-wrap">
-                    <select value={grantCap} onChange={(e) => setGrantCap(e.target.value as CapabilityId)} className="h-7 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1.5 text-[11px]">
+                <form className="mt-4 grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_160px] gap-3" onSubmit={(e) => { e.preventDefault(); void doGrant(); }}>
+                  <Field label="Delegate an action" className="sm:col-span-2">
+                    <Select value={grantCap} onChange={(e) => setGrantCap(e.target.value as CapabilityId)}>
                       {CAPABILITY_DEFS.map((d) => <option key={d.id} value={d.id}>{d.area}: {d.label}</option>)}
-                    </select>
-                    <input type="date" value={grantUntil} onChange={(e) => setGrantUntil(e.target.value)} min={new Date().toISOString().slice(0, 10)} className="h-7 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1.5 text-[11px] [color-scheme:light] dark:[color-scheme:dark]" title="Expires (optional)" />
-                    <input value={grantNote} onChange={(e) => setGrantNote(e.target.value)} placeholder="why (goes on the audit)…" className="flex-1 min-w-[120px] h-7 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1.5 text-[11px]" />
-                    <button onClick={() => void doGrant()} disabled={grantBusy} className="h-8 inline-flex items-center gap-1 px-3 rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)] text-[13px] font-semibold disabled:opacity-50">
-                      {grantBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />} Grant
-                    </button>
+                    </Select>
+                  </Field>
+                  <Field label="Why" hint="Goes in the audit log.">
+                    <Input value={grantNote} onChange={(e) => setGrantNote(e.target.value)} placeholder="Covering for J. Ortiz this week" />
+                  </Field>
+                  <Field label="Until" hint="Blank: until taken back.">
+                    <Input type="date" value={grantUntil} onChange={(e) => setGrantUntil(e.target.value)} min={new Date().toISOString().slice(0, 10)} className="[color-scheme:light] dark:[color-scheme:dark]" />
+                  </Field>
+                  <div className="sm:col-span-2 flex flex-wrap items-center gap-3">
+                    <Button type="submit" variant="secondary" loading={grantBusy}>Delegate</Button>
+                    <span className="text-[13px] text-[var(--color-text-muted)]">Only adds to what {who.name} can do; nobody else loses anything.</span>
                   </div>
-                  {grantErr && <div className="text-[11px] text-rose-600 dark:text-rose-400 font-bold">{grantErr}</div>}
-                  <div className="text-[11px] text-[var(--color-text-faint)]">A delegation only adds to this person&apos;s authority, never takes from anyone else&apos;s. It&apos;s logged, and the &ldquo;View as&rdquo; list above updates right away.</div>
-                </div>
+                  {grantErr && <p role="alert" className="sm:col-span-2 text-[14px] font-semibold text-[var(--state-overdue-text)]">{grantErr}</p>}
+                </form>
               )}
             </div>
 
             <div>
-              <div className="text-xs font-bold text-[var(--color-text-muted)] mb-1.5">Content rules naming them (library level)</div>
-              {contentRules.length === 0 && <div className="text-[11px] italic text-[var(--color-text-faint)]">No library rule names this person. Access comes from role defaults, visibility, or team/role rules. Use Content permissions above to add a per-person rule on any library, folder, or document (with an expiry if temporary).</div>}
-              <ul className="space-y-1">
-                {contentRules.map((r, i) => (
-                  <li key={i} className="text-[11px] flex items-center gap-2">
-                    <span className="font-bold text-[var(--color-text)]">{r.node}</span>
-                    <span className={r.effect === "deny" ? "text-rose-700 dark:text-rose-300 font-bold" : "text-emerald-700 dark:text-emerald-300 font-bold"}>{r.effect}</span>
-                    <span className="text-[var(--color-text-muted)]">{r.actions}</span>
-                    {r.expiresAt && <span className="text-[var(--color-text-faint)]">until {new Date(r.expiresAt).toLocaleDateString()}</span>}
-                  </li>
-                ))}
-              </ul>
+              <h3 className={sub}>Library rules that name them</h3>
+              {contentRules.length === 0 ? (
+                <p className="text-[14px] text-[var(--color-text-muted)]">None. Their access comes from role defaults, visibility, or team and role rules. To add a rule for one person, open a library, folder or document under Content permissions.</p>
+              ) : (
+                <ul className="divide-y divide-[var(--color-border)]">
+                  {contentRules.map((r, i) => (
+                    <li key={i} className="py-1.5 text-[14px]">
+                      <span className="font-semibold text-[var(--color-text)]">{r.node}</span>{" "}
+                      <span className={r.effect === "deny" ? "font-semibold text-[var(--state-overdue-text)]" : "text-[var(--color-text)]"}>{r.effect === "deny" ? "Denied" : "Allowed"}</span>
+                      <span className="block text-[13px] text-[var(--color-text-muted)]">{r.actions}{r.expiresAt ? `, until ${shortDate(r.expiresAt)}` : ""}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </div>
           </div>
         </div>
       )}
-    </section>
+    </Section>
   );
 }

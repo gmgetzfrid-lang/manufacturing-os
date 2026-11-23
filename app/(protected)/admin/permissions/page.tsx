@@ -1,6 +1,6 @@
 "use client";
 
-// /admin/permissions — the org's single permissions console.
+// /admin/permissions: the workspace's one permissions console.
 //
 //   1. App-wide capability × role matrix (PermissionsExplorer) — the IT view.
 //   2. CONTENT PERMISSIONS — the real, enforced editor: browse every library,
@@ -16,17 +16,20 @@
 // Confirmed safe to remove: no org data depended on it.
 
 import React, { useCallback, useEffect, useState } from "react";
-import {
-  RefreshCw, ChevronRight, FolderOpen, FileText,
-  EyeOff, Lock, Loader2, Library, ShieldCheck,
-} from "lucide-react";
+import { RefreshCw, ChevronRight, FolderOpen, FileText, EyeOff, Lock } from "lucide-react";
+import Link from "next/link";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
 import type { AccessControl } from "@/types/schema";
 import { PageShell } from "@/components/ui/PageShell";
 import { PageHero, PageBody, heroQuiet } from "@/components/ui/PageHero";
-import { tbl, btnRow, btnQuiet, Section, Problem, Pill } from "@/components/admin/kit";
-import LoadingBlock from "@/components/ui/LoadingBlock";
+import { tbl, btnRow, link, Section } from "@/components/admin/kit";
+import { plural } from "@/components/admin/band";
+import Disclosure from "@/components/admin/Disclosure";
+import { onTreeKeyDown } from "@/components/admin/treeKeys";
+import { SkeletonRows } from "@/components/ui/Skeleton";
+import { ErrorNote } from "@/components/ui/ErrorNote";
+import HelpTooltip from "@/components/ui/HelpTooltip";
 import RoleModelTree from "@/components/permissions/RoleModelTree";
 import PermissionsExplorer from "@/components/permissions/PermissionsExplorer";
 import PermissionsDrawer, { type NodeType } from "@/components/permissions/PermissionDrawer";
@@ -48,14 +51,15 @@ function ruleCount(acl: AccessControl | null): number {
   return acl?.rules?.length ?? 0;
 }
 
-function VisBadge({ v }: { v: string }) {
-  if (v === "private") return <Pill tone="bad"><Lock className="w-3.5 h-3.5" /> Private</Pill>;
-  if (v === "hidden") return <Pill tone="warn"><EyeOff className="w-3.5 h-3.5" /> Hidden</Pill>;
+/** Hidden or private: a muted icon and a word (it isn't an alarm). */
+function Vis({ v }: { v: string }) {
+  if (v === "private") return <span className="inline-flex items-center gap-1 text-[13px] text-[var(--color-text-muted)] shrink-0"><Lock aria-hidden className="w-3.5 h-3.5" /> Private</span>;
+  if (v === "hidden") return <span className="inline-flex items-center gap-1 text-[13px] text-[var(--color-text-muted)] shrink-0"><EyeOff aria-hidden className="w-3.5 h-3.5" /> Hidden</span>;
   return null;
 }
 
 function Rules({ n }: { n: number }) {
-  return n > 0 ? <span className="inline-flex items-center gap-1 text-[13px] text-[var(--color-text-muted)]"><span className="ui-count">{n}</span> rule{n === 1 ? "" : "s"}</span> : null;
+  return n > 0 ? <span className="text-[13px] text-[var(--color-text-muted)] whitespace-nowrap tabular-nums">{plural(n, "rule")}</span> : null;
 }
 
 export default function PermissionsConsolePage() {
@@ -67,7 +71,7 @@ export default function PermissionsConsolePage() {
   const [docsByFolder, setDocsByFolder] = useState<Map<string, DocRow[]>>(new Map());
   const [loadingDocsFor, setLoadingDocsFor] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<unknown>(null);
   const [docsFailed, setDocsFailed] = useState<Set<string>>(new Set());
 
   const [drawer, setDrawer] = useState<{
@@ -84,7 +88,7 @@ export default function PermissionsConsolePage() {
         supabase.from("libraries").select("id, name, acl, visibility").eq("org_id", activeOrgId).order("name"),
         supabase.from("collections").select("id, name, library_id, acl, visibility").eq("org_id", activeOrgId).order("name"),
       ]);
-      if (l.error || c.error) throw new Error((l.error ?? c.error)?.message);
+      if (l.error || c.error) throw l.error ?? c.error;
       setLoadError(null);
       setLibs((((l.data ?? []) as Array<Record<string, unknown>>)).map((r) => ({
         id: String(r.id), name: String(r.name),
@@ -99,7 +103,7 @@ export default function PermissionsConsolePage() {
       setDocsByFolder(new Map());
       setDocsFailed(new Set());
     } catch (e) {
-      setLoadError((e as Error).message || "Couldn't load libraries and folders.");
+      setLoadError(e);
     } finally { setLoading(false); }
   }, [activeOrgId]);
   useEffect(() => { void refresh(); }, [refresh]);
@@ -129,22 +133,20 @@ export default function PermissionsConsolePage() {
   const openDrawer = (nodeType: NodeType, node: NodeRow, title: string, chain: (AccessControl | undefined)[]) =>
     setDrawer({ nodeType, nodeId: node.id, title, acl: node.acl, visibility: node.visibility, aclChain: chain });
 
-  const nodeRow = (node: NodeRow, nodeType: NodeType, chain: (AccessControl | undefined)[], icon: React.ReactNode, indent: string) => (
-    <div key={node.id} className={`flex items-center gap-2.5 ${indent} pl-1 pr-4 py-1.5 border-t border-[var(--color-border)] hover:bg-[var(--color-surface-2)]`}>
-      {icon}
-      <span className="ui-id text-[15px] truncate">{node.name}</span>
-      <VisBadge v={node.visibility} />
-      <Rules n={ruleCount(node.acl)} />
-      <button type="button" onClick={() => openDrawer(nodeType, node, node.name, chain)} className={`ml-auto shrink-0 ${btnRow}`}>
-        {canEdit ? "Edit" : "View"}
-      </button>
-    </div>
+  // Edit (or View) on a row: always on the library rows; on folder and
+  // document rows it shows on hover or focus (always on touch screens), so a
+  // long tree isn't a column of identical buttons.
+  const editBtn = (onClick: () => void, quietUntilHover: boolean, label: string) => (
+    <button type="button" onClick={(e) => { e.preventDefault(); e.stopPropagation(); onClick(); }} aria-label={label}
+      className={`ml-auto shrink-0 ${btnRow} ${quietUntilHover ? "opacity-0 group-hover/row:opacity-100 focus-visible:opacity-100 group-focus-within/row:opacity-100 pointer-coarse:opacity-100" : ""}`}>
+      {canEdit ? "Edit" : "View"}
+    </button>
   );
 
   // The answer: how many places carry their own rules (or are hidden).
   const ruled = [...libs, ...folders].filter((n) => ruleCount(n.acl) > 0 || n.visibility !== "normal").length;
   const answer = loading && libs.length === 0 ? "Permissions"
-    : loadError ? "Couldn't load permissions."
+    : loadError != null ? "Couldn't load permissions."
     : libs.length === 0 ? "No libraries yet."
     : ruled === 0 ? "No special rules."
     : `${ruled} place${ruled === 1 ? " has" : "s have"} their own rules.`;
@@ -155,95 +157,105 @@ export default function PermissionsConsolePage() {
         kicker="Admin · Permissions"
         title={answer}
         sub="Who can see and change each library, folder and document. Deny beats allow."
+        factsHero="none"
         facts={libs.length > 0 ? [
           { label: "Libraries", value: libs.length },
           { label: "Folders", value: folders.length },
-          { label: "Own rules", value: ruled },
+          { label: "With their own rules", value: ruled },
         ] : undefined}
         tools={
-          <button type="button" className={heroQuiet} onClick={() => void refresh()} disabled={loading}>
-            <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} /> Refresh
+          <button type="button" className={heroQuiet} onClick={() => void refresh()} disabled={loading} aria-label="Check again" title="Check again">
+            <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
           </button>
         }
       />
 
       <PageBody>
-      {/* ── Content permissions: the real editor ── */}
-      <Section label="Content permissions" icon={ShieldCheck} action={<span className="text-[13px] text-[var(--color-text-muted)]">Library, then folder, then document</span>}>
+      {/* ── Content permissions: the real editor, as a tree ── */}
+      <Section label={<>Content permissions <HelpTooltip>A library&apos;s rules apply to its folders and documents unless a folder or document sets its own. Open a library or folder to see what&apos;s inside; arrow keys move through the tree.</HelpTooltip></>}>
         {loading && libs.length === 0 ? (
-          <LoadingBlock what="libraries and folders" />
-        ) : loadError ? (
-          <Problem retry={() => void refresh()}>Couldn&apos;t load libraries and folders: {loadError}</Problem>
+          <SkeletonRows rows={4} cols={2} what="libraries and folders" />
+        ) : loadError != null ? (
+          <ErrorNote error={loadError} title="Couldn't load libraries and folders." onRetry={() => void refresh()} />
         ) : libs.length === 0 ? (
-          <div className={`${tbl.wrap} p-8 text-center text-[var(--color-text-muted)]`}>No libraries yet. Make one in Libraries, then set who sees it here.</div>
+          <div className={`${tbl.wrap} px-4 py-8 text-center`}>
+            <p className="text-[15px] text-[var(--color-text)]">Permissions are set per library. Make a library first.</p>
+            <Link href="/admin/libraries" className={`${link} mt-1.5 inline-block font-semibold`}>Go to Libraries</Link>
+          </div>
         ) : (
-          <div className={`${tbl.wrap} divide-y divide-[var(--color-border)]`}>
-            {libs.map((lib) => (
-              <details key={lib.id} className="group/lib" open={libs.length <= 3}>
-                <summary className="cursor-pointer list-none flex items-center gap-2.5 px-4 h-12 select-none hover:bg-[var(--color-surface-2)]">
-                  <ChevronRight className="w-4 h-4 text-[var(--color-text-muted)] transition-transform group-open/lib:rotate-90" />
-                  <span aria-hidden className="ui-icon-tile is-sm"><Library className="w-4 h-4" /></span>
-                  <span className="font-semibold text-[var(--color-text)]">{lib.name}</span>
-                  <span className="inline-flex items-center gap-1 text-[13px] text-[var(--color-text-muted)] max-sm:hidden"><span className="ui-count">{folders.filter((f) => f.libraryId === lib.id).length.toLocaleString()}</span> {folders.filter((f) => f.libraryId === lib.id).length === 1 ? "folder" : "folders"}</span>
-                  <VisBadge v={lib.visibility} />
-                  <Rules n={ruleCount(lib.acl)} />
-                  <button type="button" onClick={(e) => { e.preventDefault(); openDrawer("library", lib, lib.name, []); }} className={`ml-auto shrink-0 ${btnRow}`}>
-                    <span className="max-sm:hidden">{canEdit ? "Edit permissions" : "View permissions"}</span><span className="sm:hidden">{canEdit ? "Edit" : "View"}</span>
-                  </button>
-                </summary>
-                <div className="ml-9 border-l border-[var(--color-border)] pb-1">
-                  {folders.filter((f) => f.libraryId === lib.id).map((f) => (
-                    <details key={f.id} className="group/fold" onToggle={(e) => { if ((e.target as HTMLDetailsElement).open) void loadDocs(f.id, lib.id); }}>
-                      <summary className="cursor-pointer list-none flex items-center gap-2.5 pl-2 pr-4 py-1.5 select-none border-t border-[var(--color-border)] hover:bg-[var(--color-surface-2)]">
-                        <ChevronRight className="w-3.5 h-3.5 text-[var(--color-text-muted)] transition-transform group-open/fold:rotate-90" />
-                        <span aria-hidden className="ui-icon-tile is-sm !w-6 !h-6"><FolderOpen className="w-3.5 h-3.5" /></span>
-                        <span className="text-[15px] text-[var(--color-text)]">{f.name}</span>
-                        <VisBadge v={f.visibility} />
-                        <Rules n={ruleCount(f.acl)} />
-                        <button type="button" onClick={(e) => { e.preventDefault(); openDrawer("collection", f, f.name, [lib.acl ?? undefined]); }} className={`ml-auto shrink-0 ${btnRow}`}>
-                          {canEdit ? "Edit" : "View"}
-                        </button>
-                      </summary>
-                      <div className="ml-6">
-                        {loadingDocsFor === f.id && <div className="py-2 text-[13px] text-[var(--color-text-muted)]"><Loader2 className="w-3.5 h-3.5 animate-spin inline mr-1.5" />Loading documents…</div>}
-                        {(docsByFolder.get(f.id) ?? []).map((d) =>
-                          nodeRow(d, "document", [lib.acl ?? undefined, f.acl ?? undefined],
-                            <span aria-hidden className="ui-icon-tile is-sm !w-6 !h-6"><FileText className="w-3.5 h-3.5" /></span>, ""),
-                        )}
-                        {docsFailed.has(f.id) && (
-                          <Problem className="py-1.5">Couldn&apos;t load this folder&apos;s documents. Close and open it again.</Problem>
-                        )}
-                        {docsByFolder.has(f.id) && (docsByFolder.get(f.id) ?? []).length === 0 && (
-                          <div className="py-1.5 text-[13px] text-[var(--color-text-muted)]">No documents directly in this folder.</div>
-                        )}
-                      </div>
-                    </details>
-                  ))}
-                  {folders.filter((f) => f.libraryId === lib.id).length === 0 && (
-                    <div className="pl-3 py-1.5 text-[13px] text-[var(--color-text-muted)]">No folders.</div>
-                  )}
-                </div>
-              </details>
-            ))}
+          <div role="tree" aria-label="Libraries, folders and documents" onKeyDown={onTreeKeyDown} className={`${tbl.wrap} divide-y divide-[var(--color-border)]`}>
+            {libs.map((lib) => {
+              const libFolders = folders.filter((f) => f.libraryId === lib.id);
+              return (
+                <details key={lib.id} className="group/lib" open={libs.length <= 3}>
+                  <summary role="treeitem" aria-selected={false} className="group/row cursor-pointer list-none [&::-webkit-details-marker]:hidden flex items-center gap-2.5 px-4 min-h-12 select-none hover:bg-[var(--color-surface-2)]">
+                    <ChevronRight aria-hidden className="ui-chevron w-4 h-4 shrink-0 text-[var(--color-text-muted)] group-open/lib:rotate-90" />
+                    <span className="font-semibold text-[var(--color-text)] truncate">{lib.name}</span>
+                    <span className="text-[13px] text-[var(--color-text-muted)] max-sm:hidden whitespace-nowrap">{plural(libFolders.length, "folder")}</span>
+                    <Vis v={lib.visibility} />
+                    <Rules n={ruleCount(lib.acl)} />
+                    {editBtn(() => openDrawer("library", lib, lib.name, []), false, `${canEdit ? "Edit" : "View"} permissions for ${lib.name}`)}
+                  </summary>
+                  {/* One level in: 16 px, along a guide line. */}
+                  <div role="group" className="ml-4 border-l border-[var(--color-border)] pb-1">
+                    {libFolders.map((f) => (
+                      <details key={f.id} className="group/fold" onToggle={(e) => { if ((e.currentTarget as HTMLDetailsElement).open) void loadDocs(f.id, lib.id); }}>
+                        <summary role="treeitem" aria-selected={false} className="group/row cursor-pointer list-none [&::-webkit-details-marker]:hidden flex items-center gap-2 pl-4 pr-4 min-h-10 pointer-coarse:min-h-11 select-none border-t border-[var(--color-border)] hover:bg-[var(--color-surface-2)]">
+                          <ChevronRight aria-hidden className="ui-chevron w-3.5 h-3.5 shrink-0 text-[var(--color-text-muted)] group-open/fold:rotate-90" />
+                          <FolderOpen aria-hidden className="w-4 h-4 shrink-0 text-[var(--color-text-faint)]" />
+                          <span className="text-[14px] text-[var(--color-text)] truncate">{f.name}</span>
+                          <Vis v={f.visibility} />
+                          <Rules n={ruleCount(f.acl)} />
+                          {editBtn(() => openDrawer("collection", f, f.name, [lib.acl ?? undefined]), true, `${canEdit ? "Edit" : "View"} permissions for ${f.name}`)}
+                        </summary>
+                        <div role="group" className="ml-4 border-l border-[var(--color-border)]">
+                          {loadingDocsFor === f.id && <SkeletonRows rows={2} cols={1} sheet={false} what="documents" className="[&>div]:h-10" />}
+                          {(docsByFolder.get(f.id) ?? []).map((d) => (
+                            <div key={d.id} role="treeitem" aria-selected={false} tabIndex={-1} data-tree-row className="group/row flex items-center gap-2 pl-4 pr-4 min-h-10 pointer-coarse:min-h-11 border-t border-[var(--color-border)] hover:bg-[var(--color-surface-2)] focus:bg-[var(--color-surface-2)]">
+                              <FileText aria-hidden className="w-4 h-4 shrink-0 text-[var(--color-text-faint)]" />
+                              <span className="ui-id text-[14px] truncate">{d.name}</span>
+                              <Vis v={d.visibility} />
+                              <Rules n={ruleCount(d.acl)} />
+                              {editBtn(() => openDrawer("document", d, d.name, [lib.acl ?? undefined, f.acl ?? undefined]), true, `${canEdit ? "Edit" : "View"} permissions for ${d.name}`)}
+                            </div>
+                          ))}
+                          {docsFailed.has(f.id) && (
+                            <p role="alert" className="pl-4 py-2 border-t border-[var(--color-border)] text-[14px] text-[var(--state-overdue-text)]">Couldn&apos;t load this folder&apos;s documents. Close it and open it again.</p>
+                          )}
+                          {docsByFolder.has(f.id) && (docsByFolder.get(f.id) ?? []).length === 0 && (
+                            <p className="pl-4 py-2 border-t border-[var(--color-border)] text-[13px] text-[var(--color-text-muted)]">No documents directly in this folder.</p>
+                          )}
+                        </div>
+                      </details>
+                    ))}
+                    {libFolders.length === 0 && (
+                      <p className="pl-4 py-2 border-t border-[var(--color-border)] text-[13px] text-[var(--color-text-muted)]">No folders.</p>
+                    )}
+                  </div>
+                </details>
+              );
+            })}
           </div>
         )}
       </Section>
 
-      {/* ── Action permissions: configurable workflow authority ── */}
+      {/* ── Action permissions: who may do each workflow action ── */}
       <CapabilityPolicyEditor canEdit={canEdit} />
 
-      {/* ── "View as" + per-person delegations ── */}
+      {/* ── "View as" and per-person delegations ── */}
       <ViewAsSimulator canEdit={canEdit} />
 
-      <PermissionsExplorer />
-
-      {/* Deep detail: audit-derived tree with live holders & known gaps. */}
-      <details className="group/tree">
-        <summary className={`${btnQuiet} cursor-pointer list-none select-none`}>
-          <ChevronRight className="w-4 h-4 transition-transform group-open/tree:rotate-90" /> Detailed role tree
-        </summary>
-        {activeOrgId && <RoleModelTree orgId={activeOrgId} />}
-      </details>
+      {/* Reference, rarely needed: folded away. */}
+      <Section label="Reference">
+        <div className="space-y-2">
+          <Disclosure title="Every permission in the app, by role" meta="Every role, side by side">
+            <PermissionsExplorer />
+          </Disclosure>
+          <Disclosure title="Role model: who can do what, and why" meta="With the people who hold each role">
+            {activeOrgId && <RoleModelTree orgId={activeOrgId} />}
+          </Disclosure>
+        </div>
+      </Section>
       </PageBody>
 
       {drawer && (

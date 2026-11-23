@@ -30,8 +30,8 @@ export default function ArchiveViewPage() {
     return (
       <PageShell width="work">
         <PageHero kicker="Admin · Storage · View from a backup" back={{ href: "/admin/storage", label: "Back to Storage" }}
-          title="Admin and Doc Control only." size="md" overlap={false}
-          sub="The backup viewer is for Admin and Document Control. An Admin can change this in Admin, Permissions, Action permissions." />
+          title="Admin and Doc Control only." size="md"
+          sub="The backup viewer is for Admin and Doc Control. An admin can change this under Admin, Permissions, Action permissions." />
       </PageShell>
     );
   }

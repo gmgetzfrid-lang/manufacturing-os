@@ -1,6 +1,6 @@
 "use client";
 
-// /admin/audit — org-wide audit log viewer.
+// /admin/audit: the workspace's audit log.
 //
 // Reads the audit_logs table and renders it as a chronological feed
 // with filters (action, resource type, user, date range, library).
@@ -19,9 +19,10 @@ import IsoGuidance from "@/components/ui/IsoGuidance";
 import ViewTabs, { ACTIVITY_VIEWS } from "@/components/navigation/ViewTabs";
 import { PageShell } from "@/components/ui/PageShell";
 import { PageHero, PageBody, heroPrimary, heroQuiet } from "@/components/ui/PageHero";
-import { tbl, btnRow, link, RowEdge, Problem, shortDateTime, type Tone } from "@/components/admin/kit";
+import { tbl, btnRow, link, RowEdge, shortDateTime, type Tone } from "@/components/admin/kit";
 import { bandInput, bandInputIcon, bandSelect, plural } from "@/components/admin/band";
-import LoadingBlock from "@/components/ui/LoadingBlock";
+import { SkeletonRows } from "@/components/ui/Skeleton";
+import { ErrorNote } from "@/components/ui/ErrorNote";
 
 // Auditor included: the role exists FOR audit review — it was defined with an
 // "audit" capability yet locked out of the one page that shows the trail.
@@ -96,7 +97,7 @@ export default function AuditLogPage() {
 
   const [rows, setRows] = useState<AuditRow[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
   const [libraries, setLibraries] = useState<LibraryLite[]>([]);
   const [docMeta, setDocMeta] = useState<Map<string, { documentNumber: string | null; title: string | null; libraryId: string }>>(new Map());
 
@@ -161,7 +162,7 @@ export default function AuditLogPage() {
       } else {
         setDocMeta(new Map());
       }
-    } catch (e) { setError((e as Error).message); }
+    } catch (e) { setError(e); }
     finally { setLoading(false); }
   };
 
@@ -199,8 +200,8 @@ export default function AuditLogPage() {
   if (!canRead) {
     return (
       <PageShell width="work">
-        <PageHero kicker="History · Audit log" title="Admin-class roles only." overlap={false}
-          sub={<>Ask your workspace admin if you need access. Signed in as {userEmail || "-"} ({activeRole || "-"}).</>} />
+        <PageHero kicker="History · Audit log" title="Admins, managers, supervisors, doc control and auditors only."
+          sub={<>Ask your workspace admin if you need access. You&apos;re signed in as {userEmail || "an unknown address"}{activeRole ? ` (${activeRole})` : ""}.</>} />
       </PageShell>
     );
   }
@@ -208,7 +209,7 @@ export default function AuditLogPage() {
   // The answer: how much happened, and how much of it undid something.
   const when = range === "24h" ? " in the last 24 hours" : range === "7d" ? " in the last 7 days" : range === "30d" ? " in the last 30 days" : "";
   const answer = loading && rows.length === 0 ? "Audit log"
-    : error && rows.length === 0 ? "Couldn't load the audit log."
+    : error != null && rows.length === 0 ? "Couldn't load the audit log."
     : kpis.total === 0 ? `No events${when}.`
     : `${plural(kpis.total, "event")}${when}.`;
 
@@ -219,18 +220,18 @@ export default function AuditLogPage() {
           title={answer}
           sub={
             <>
-              {kpis.topUser ? <>Most active: {kpis.topUser[0]} ({kpis.topUser[1]}). </> : "Who did what, and when. "}
+              {kpis.topUser ? <>Most active: {kpis.topUser[0]}, {plural(kpis.topUser[1], "event")}. </> : "Who did what, and when. "}
               <IsoGuidance topic="audit_log" size="md" />
             </>
           }
           facts={kpis.total > 0 ? [
-            { label: "Deletes and undos", value: kpis.deletes, tone: kpis.deletes > 0 ? "bad" : undefined },
+            { label: "Deletes and undos", value: kpis.deletes, tone: kpis.deletes > 0 ? "bad" : undefined, hero: kpis.deletes > 0 },
             { label: "People", value: kpis.people },
             { label: "Items touched", value: kpis.items },
           ] : undefined}
           tools={
-            <button type="button" className={heroQuiet} onClick={fetchRows} disabled={loading} aria-label="Refresh">
-              <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} /> <span className="max-sm:hidden">Refresh</span>
+            <button type="button" className={heroQuiet} onClick={fetchRows} disabled={loading} aria-label="Check for new events" title="Check for new events">
+              <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
             </button>
           }
           primary={
@@ -285,15 +286,23 @@ export default function AuditLogPage() {
         </PageHero>
 
         <PageBody>
-          {error && rows.length > 0 && (
-            <Problem retry={() => void fetchRows()}>Couldn&apos;t load the audit log: {error}</Problem>
+          {error != null && rows.length > 0 && (
+            <ErrorNote compact error={error} title="Couldn't refresh the audit log." onRetry={() => void fetchRows()} />
           )}
           {loading && rows.length === 0 ? (
-            <LoadingBlock what="the audit log" />
-          ) : error && rows.length === 0 ? (
-            <Problem retry={() => void fetchRows()}>The audit log didn&apos;t load: {error}</Problem>
+            <SkeletonRows rows={6} cols={3} what="the audit log" />
+          ) : error != null && rows.length === 0 ? (
+            <ErrorNote error={error} title="The audit log didn't load." onRetry={() => void fetchRows()} />
           ) : filtered.length === 0 ? (
-            <div className={`${tbl.wrap} py-10 text-center text-[var(--color-text-muted)]`}>No matching events. Widen the dates or clear a filter.</div>
+            <div className={`${tbl.wrap} px-4 py-8 text-center`}>
+              <p className="text-[15px] text-[var(--color-text)]">No events match{range !== "all" ? " in this window" : ""}.</p>
+              {(range !== "all" || actionFilter !== "ALL" || resourceFilter !== "ALL" || libraryFilter !== "ALL" || userQuery) && (
+                <button type="button" className={`${link} mt-1.5 font-semibold`}
+                  onClick={() => { setRange("all"); setActionFilter("ALL"); setResourceFilter("ALL"); setLibraryFilter("ALL"); setUserQuery(""); }}>
+                  Show every event
+                </button>
+              )}
+            </div>
           ) : (
             <div className={tbl.wrap}>
               <table className={tbl.table}>
@@ -318,7 +327,7 @@ export default function AuditLogPage() {
               </table>
               {/* The log keeps going: say how much is shown and fetch more. */}
               <div className={tbl.foot}>
-                <span className="text-[var(--color-text-muted)]">{filtered.length} of {rows.length} loaded shown</span>
+                <span className="text-[var(--color-text-muted)] tabular-nums">{filtered.length.toLocaleString()} of {rows.length.toLocaleString()} loaded</span>
                 {rows.length >= limit && (
                   <button type="button" onClick={() => setLimit((n) => n + 200)} className={link}>
                     Show 200 more
@@ -357,7 +366,6 @@ interface AuditRowItemProps {
   onFilterResource?: (type: string) => void;
   onFilterUser?: (email: string) => void;
 }
-const PILL_TONE: Record<Tone, string> = { bad: "is-bad", warn: "is-warn", good: "is-good", none: "" };
 function AuditRowItem({ row, docMeta, open, onToggle, onFilterAction, onFilterResource, onFilterUser }: AuditRowItemProps) {
   const style = ACTION_STYLE[row.action] ?? { icon: ScrollText, tone: "none" as Tone };
   const ResIcon = RESOURCE_ICON[row.resourceType] ?? FileText;
@@ -374,15 +382,12 @@ function AuditRowItem({ row, docMeta, open, onToggle, onFilterAction, onFilterRe
   const itemLabel = docMeta
     ? <><span className="ui-id text-[16px]">{docMeta.documentNumber ?? ""}</span>{docMeta.title && docMeta.title !== docMeta.documentNumber && <span className="text-[var(--color-text-muted)]"> {docMeta.title}</span>}</>
     : <span className="text-[var(--color-text-muted)] capitalize">{row.resourceType}</span>;
-  const actionPill = (
-    <>
-      <Icon className="w-3.5 h-3.5" /> {prettyAction(row.action)}
-    </>
-  );
+  void Icon; // the action reads as words; color only for deletes and holds
+  const actionCls = `text-[14px] font-semibold ${style.tone === "bad" ? "text-[var(--state-overdue-text)]" : style.tone === "warn" ? "text-[var(--state-held-text)]" : "text-[var(--color-text)]"}`;
 
   return (
     <>
-      <tr className={`${tbl.tr} max-md:grid max-md:grid-cols-[1fr_auto] max-md:py-1.5`}>
+      <tr className={`${tbl.tr} max-md:grid max-md:grid-cols-[minmax(0,1fr)_auto] max-md:py-1.5`}>
         <td className={`${tbl.td} relative max-md:hidden whitespace-nowrap text-[14px] text-[var(--color-text-muted)]`}>
           {style.tone === "bad" && <RowEdge tone="bad" />}
           <time dateTime={row.timestamp} title={shortDateTime(row.timestamp)}>{formatTime(row.timestamp)}</time>
@@ -392,18 +397,18 @@ function AuditRowItem({ row, docMeta, open, onToggle, onFilterAction, onFilterRe
           {/* The action as a pill in its state color; tap it to see only that action. */}
           {onFilterAction ? (
             <button type="button" onClick={() => onFilterAction(row.action)} title={`Show only "${prettyAction(row.action)}"`}
-              className={`ui-pill ${PILL_TONE[style.tone]} !h-7 !text-[14px] hover:ring-2 hover:ring-[color-mix(in_srgb,var(--color-main)_30%,transparent)] transition-shadow`}>
-              {actionPill}
+              className={`${actionCls} hover:underline underline-offset-2`}>
+              {prettyAction(row.action)}
             </button>
-          ) : <span className={`ui-pill ${PILL_TONE[style.tone]} !h-7 !text-[14px]`}>{actionPill}</span>}
+          ) : <span className={actionCls}>{prettyAction(row.action)}</span>}
           <span className="md:hidden ml-2 text-[13px] text-[var(--color-text-muted)]">{formatTime(row.timestamp)}</span>
         </td>
         <td className={`${tbl.td} max-md:col-span-2 max-md:row-start-2 max-md:py-0.5 min-w-0`}>
           <span className="inline-flex items-center gap-2 min-w-0 max-w-[48ch]">
             {onFilterResource ? (
               <button type="button" onClick={() => onFilterResource(row.resourceType)} title={`Show only ${row.resourceType} events`} aria-label={`Show only ${row.resourceType} events`}
-                className="ui-icon-tile is-sm !w-6 !h-6 hover:!bg-[var(--color-main)] hover:!text-white transition-colors"><ResIcon className="w-3.5 h-3.5" /></button>
-            ) : <span aria-hidden className="ui-icon-tile is-sm !w-6 !h-6"><ResIcon className="w-3.5 h-3.5" /></span>}
+                className="shrink-0 w-6 h-6 pointer-coarse:w-9 pointer-coarse:h-9 -ml-1 grid place-items-center rounded-md text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors"><ResIcon className="w-4 h-4" /></button>
+            ) : <span aria-hidden className="shrink-0 text-[var(--color-text-faint)]"><ResIcon className="w-4 h-4" /></span>}
             {resourceHref
               ? <Link href={resourceHref} className="truncate hover:text-[var(--color-accent-text)] hover:underline underline-offset-2">{itemLabel}</Link>
               : <span className="truncate">{itemLabel}</span>}
@@ -414,13 +419,13 @@ function AuditRowItem({ row, docMeta, open, onToggle, onFilterAction, onFilterRe
             {row.userEmail && onFilterUser
               ? <button type="button" onClick={() => onFilterUser(row.userEmail!)} title={`Show only ${row.userEmail}`} className="text-[var(--color-text)] hover:text-[var(--color-accent-text)] hover:underline underline-offset-2">{row.userEmail}</button>
               : <span className="text-[var(--color-text)]">{row.userEmail || row.userId}</span>}
-            {row.userRole ? <span className="ui-tag !h-6 !text-[12.5px]">{row.userRole}</span> : null}
+            {row.userRole ? <span className="text-[13px] text-[var(--color-text-muted)]">{row.userRole}</span> : null}
           </span>
         </td>
         <td className={`${tbl.td} max-md:col-start-2 max-md:row-start-1 max-md:py-1 text-right`}>
           {hasDetails && (
             <button type="button" onClick={onToggle} aria-expanded={open} className={btnRow}>
-              Details <ChevronDown className={`w-3.5 h-3.5 transition-transform ${open ? "rotate-180" : ""}`} />
+              Details <ChevronDown aria-hidden className={`ui-chevron w-3.5 h-3.5 ${open ? "rotate-180" : ""}`} />
             </button>
           )}
         </td>
@@ -453,7 +458,7 @@ function exportAuditCsv(
     const s = String(v);
     return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
   };
-  const header = ["Timestamp", "Action", "Resource Type", "Resource ID", "Resource Label", "User Email", "User Role", "Details JSON"];
+  const header = ["Timestamp", "Action", "Resource type", "Resource ID", "Resource label", "User email", "User role", "Details JSON"];
   const lines: string[] = [header.map(csvField).join(",")];
   for (const r of rows) {
     const dm = r.resourceType === "document" ? docMeta.get(r.resourceId) : undefined;

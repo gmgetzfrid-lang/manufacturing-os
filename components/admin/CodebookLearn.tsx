@@ -8,7 +8,9 @@
 // editable in the tabs below.
 
 import React, { useEffect, useState } from "react";
-import { Check, Lightbulb, Loader2 } from "lucide-react";
+import { Button } from "@/components/ui/Button";
+import { SkeletonText } from "@/components/ui/Skeleton";
+import { said } from "@/components/admin/said";
 import { supabase } from "@/lib/supabase";
 import { fetchAllRows } from "@/lib/fetchAllRows";
 import { saveConfig, upsertEntry, type Codebook } from "@/lib/codebook";
@@ -55,9 +57,10 @@ export default function CodebookLearn({ orgId, uid, book, canWrite, onChanged, o
 
   if (!found) {
     return (
-      <p className="mb-4 text-[13px] text-[var(--color-text-muted)] inline-flex items-center gap-1.5">
-        <Loader2 className="w-3 h-3 animate-spin" /> Reading your drawing numbers and tags…
-      </p>
+      <div className="mb-4 max-w-xl">
+        <span className="sr-only">Reading your drawing numbers and tags</span>
+        <SkeletonText lines={2} />
+      </div>
     );
   }
   if (readFailed) {
@@ -76,7 +79,7 @@ export default function CodebookLearn({ orgId, uid, book, canWrite, onChanged, o
       await saveConfig(orgId, { drawingNumber: { segments: best.learned.segments } }, uid);
       for (const [i, t] of newTypes.entries()) await upsertEntry(orgId, { kind: "drawing_type", code: t.code, label: t.label!, meta: {}, sort: book.drawingTypes.length + i, origin: "manual" }, uid);
       onChanged();
-    } catch (e) { onError((e as Error).message); }
+    } catch (e) { onError(said(e, "Couldn't save the numbering.")); }
     finally { setBusy(null); }
   };
   const acceptLetters = async () => {
@@ -89,21 +92,19 @@ export default function CodebookLearn({ orgId, uid, book, canWrite, onChanged, o
         await upsertEntry(orgId, { ...entry, meta: { ...entry.meta, tagPrefixes: prefixes } }, uid);
       }
       onChanged();
-    } catch (e) { onError((e as Error).message); }
+    } catch (e) { onError(said(e, "Couldn't save the tag letters.")); }
     finally { setBusy(null); }
   };
 
   // Suggestions, not warnings: plain cards with a quiet button each.
-  const card = "rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4 sm:p-5";
-  const btn = "inline-flex items-center gap-1.5 h-9 px-3.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] text-[14px] font-semibold disabled:opacity-50 shrink-0";
+  const card = "rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 sm:p-5";
   return (
     <div className="space-y-4 empty:hidden" data-codebook-learn>
       {numberingNew && best && (
         <div className={card}>
           <div className="flex items-start gap-2 flex-wrap">
-            <span aria-hidden className="ui-icon-tile is-sm"><Lightbulb className="w-4 h-4" /></span>
             <div className="min-w-0 flex-1 basis-64 text-[15px] text-[var(--color-text)]">
-              <div className="font-display text-[17px] font-semibold">Your drawing numbers already follow a pattern</div>
+              <div className="text-[16px] font-semibold">Your drawing numbers already follow a pattern</div>
               <p className="mt-1 text-[var(--color-text-muted)]">
                 <b className="text-[var(--color-text)]">{best.learned.fit} of {best.learned.total}</b> numbers in {best.library} read as: unit ({best.learned.segments[0].digits} digits), drawing type (2 digits), a size letter, then the drawing&rsquo;s number.
               </p>
@@ -125,24 +126,23 @@ export default function CodebookLearn({ orgId, uid, book, canWrite, onChanged, o
               {best.learned.misses.length > 0 && <p className="mt-2 text-[var(--color-text-muted)]">Did not fit: <span className="font-display break-all">{best.learned.misses.join(", ")}</span></p>}
               <p className="mt-2 text-[var(--color-text-muted)]">With this saved, a drawing links to its unit by its number, and its type is known.</p>
             </div>
-            {canWrite && <button type="button" onClick={() => void acceptNumbering()} disabled={busy !== null} className={btn}>{busy === "numbering" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} Use this</button>}
+            {canWrite && <Button variant="secondary" className="shrink-0" onClick={() => void acceptNumbering()} loading={busy === "numbering"} disabled={busy !== null}>Use this</Button>}
           </div>
         </div>
       )}
       {found.letters.length > 0 && (
         <div className={card}>
           <div className="flex items-start gap-2 flex-wrap">
-            <span aria-hidden className="ui-icon-tile is-sm"><Lightbulb className="w-4 h-4" /></span>
             <div className="min-w-0 flex-1 basis-64 text-[15px] text-[var(--color-text)]">
-              <div className="font-display text-[17px] font-semibold">Tag letters, from your equipment list</div>
+              <div className="text-[16px] font-semibold">Tag letters, from your equipment list</div>
               <p className="mt-1 text-[var(--color-text-muted)]">Each ID says the type (5530.29 is type 30) and each tag says the letter (E-22). A letter is listed only when it belongs to one type.</p>
               <ul className="mt-2 space-y-0.5">
                 {found.letters.map((r) => (
-                  <li key={r.typeCode}><b>{r.typeLabel}</b> ({r.typeCode}): {r.letters.map((l) => `${l.letter} (${l.count})`).join(", ")}{r.have.length ? ` · has ${r.have.join(", ")}` : ""}</li>
+                  <li key={r.typeCode}><b>{r.typeLabel}</b> ({r.typeCode}): {r.letters.map((l) => `${l.letter} (${l.count})`).join(", ")}{r.have.length ? `; already has ${r.have.join(", ")}` : ""}</li>
                 ))}
               </ul>
             </div>
-            {canWrite && <button type="button" onClick={() => void acceptLetters()} disabled={busy !== null} className={btn}>{busy === "letters" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} Use these</button>}
+            {canWrite && <Button variant="secondary" className="shrink-0" onClick={() => void acceptLetters()} loading={busy === "letters"} disabled={busy !== null}>Use these</Button>}
           </div>
         </div>
       )}

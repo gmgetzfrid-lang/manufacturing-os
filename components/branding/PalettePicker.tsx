@@ -14,6 +14,7 @@ import { PALETTE_PRESETS, sideOf, deepOf, type Palette } from "@/components/prov
 import { signalScale, isColorful, deepFor, accentFor, accentUsesOwn, logoTriplets, tripletGap, paintTriplet, type Triplet } from "@/lib/brandColors";
 import { extractLogoColors } from "@/lib/logoTheme";
 import { btnQuiet } from "@/components/admin/kit";
+import { bandSeg, bandSegItem } from "@/components/admin/band";
 
 type Role = keyof Triplet;
 const ROLES: { role: Role; label: string }[] = [
@@ -140,7 +141,7 @@ export default function PalettePicker({ value, onChange, disabled = false, logoB
     return (
       <button key={role} type="button" disabled={disabled || off} onClick={() => tap(role)} aria-pressed={on}
         aria-label={off ? `${label}: not used with the light menu` : `${label}, ${hex}`}
-        className="group flex flex-col min-w-0 text-left rounded-lg disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent-ring)] focus-visible:ring-offset-2">
+        className="group flex flex-col min-w-0 text-left rounded-lg disabled:cursor-not-allowed">
         <span className={`relative h-16 w-full rounded-lg grid place-items-center transition-shadow ${on ? "ring-[3px] ring-[var(--color-text)] ring-offset-2 ring-offset-[var(--color-surface)]" : off ? "ring-1 ring-black/10 opacity-30" : "ring-1 ring-black/10 group-hover:ring-2 group-hover:ring-[var(--color-text-faint)]"}`}
           style={{ background: hex, color: role === "accent" ? acc.fg : "#ffffff" }}>
           {on && <span className="absolute top-1.5 right-1.5 w-6 h-6 rounded-full grid place-items-center shadow-sm" style={{ background: "#ffffff", color: "#1f2733" }}><Check className="w-4 h-4" strokeWidth={3} /></span>}
@@ -177,7 +178,7 @@ export default function PalettePicker({ value, onChange, disabled = false, logoB
       {lockedNote ? <p className="text-[13px] text-[var(--color-text-muted)]">{lockedNote}</p> : (
         <>
           <div onKeyDown={(e) => { if (e.key === "Escape" && sel) { e.stopPropagation(); setSel(null); } }}>
-            <h3 className="font-display text-[15px] font-semibold mb-2">{onLogo ? "From your logo" : "Your colors"}</h3>
+            <h3 className="text-[14px] font-semibold text-[var(--color-text)] mb-2">{onLogo ? "From your logo" : "Your colors"}</h3>
             <div className="grid grid-cols-3 gap-2.5">
               {ROLES.map(swatch)}
             </div>
@@ -217,27 +218,27 @@ export default function PalettePicker({ value, onChange, disabled = false, logoB
             )}
           </div>
           <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-            <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Side menu</span>
-            <div role="radiogroup" aria-label="Side menu" className="inline-flex h-10 rounded-md border border-[var(--color-border-strong)] overflow-hidden">
+            <span className="text-[14px] font-semibold text-[var(--color-text)]">Side menu</span>
+            <div role="radiogroup" aria-label="Side menu" className={bandSeg}>
               {(["deep", "light"] as const).map((k) => (
                 <button key={k} type="button" role="radio" aria-checked={side === k} disabled={disabled}
                   onClick={() => { setSel(null); onChange({ ...value, side: k }); }}
-                  className={`px-4 text-[14px] font-semibold ${side === k ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
+                  className={bandSegItem(side === k)}>
                   {k === "deep" ? "Deep" : "Light"}
                 </button>
               ))}
             </div>
           </div>
-          <div>
-            <h3 className="font-display text-[15px] font-semibold mb-2">Ready-made pairs</h3>
-            <div className="grid grid-cols-1 @md:grid-cols-2 gap-1.5 @container">
+          <div className="@container">
+            <h3 className="text-[14px] font-semibold text-[var(--color-text)] mb-2">Ready-made pairs</h3>
+            <div className="grid grid-cols-1 @md:grid-cols-2 gap-1.5">
               {PALETTE_PRESETS.map(pairSwatch)}
             </div>
           </div>
           {logoButton && (
             <div>
               <button type="button" disabled={disabled || reading} onClick={() => fileRef.current?.click()} className={`${btnQuiet} h-10`}>
-                {reading ? <><Loader2 className="w-4 h-4 animate-spin" /> Reading the logo…</> : <><Upload className="w-4 h-4" /> Use colors from a logo</>}
+                {reading ? <><Loader2 className="w-4 h-4 animate-spin" /> Reading the logo</> : <><Upload className="w-4 h-4" /> Use colors from a logo</>}
               </button>
               <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/svg+xml,image/webp" className="hidden"
                 onChange={(e) => { const f = e.target.files?.[0]; if (f) void readLogo(f); e.currentTarget.value = ""; }} />
