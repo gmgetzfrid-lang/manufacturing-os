@@ -28,6 +28,7 @@ import { SlowNotice, useElapsed, startOver } from "@/components/system/SlowNotic
 import { useKeepScroll } from "@/hooks/useKeepScroll";
 import { flushHistory } from "@/lib/historyQueue";
 import { checkSignin } from "@/lib/signinCheck";
+import { btnQuiet } from "@/components/admin/kit";
 import { useRouter } from "next/navigation";
 
 const ProtectedContent = ({ children }: { children: React.ReactNode }) => {
@@ -64,6 +65,7 @@ const ProtectedContent = ({ children }: { children: React.ReactNode }) => {
       const { data: { session } } = await supabase.auth.getSession();
       const v = await checkSignin(session?.access_token ?? null);
       if (!alive) return;
+      if (v.action === "not_added") { await supabase.auth.signOut(); router.replace("/?signin=not_added"); return; }
       if (v.action === "use_microsoft" || v.action === "expired") { await supabase.auth.signOut(); router.replace("/"); return; }
       if (v.action === "set_password") { router.replace("/set-password"); return; }
       if (v.action === "ok") { try { sessionStorage.setItem(key, "1"); } catch { /* fine */ } }
@@ -83,8 +85,8 @@ const ProtectedContent = ({ children }: { children: React.ReactNode }) => {
 
   // A signed-in account with no workspace membership gets a HARD STOP, not a
   // fake empty Viewer app. There are exactly two doors into a workspace —
-  // an admin adds you, or you start a trial with a brand-new workspace — and
-  // this screen says so. Likewise, a failed membership lookup gets a retry,
+  // an admin adds you, or a new workspace is paid for — and this screen
+  // says so. Likewise, a failed membership lookup gets a retry,
   // never a silent downgrade to Viewer.
   if (uid && membershipState === "none") return <NotAMemberScreen email={userEmail} />;
   if (uid && membershipState === "error") return <MembershipErrorScreen />;
@@ -127,35 +129,21 @@ const ProtectedContent = ({ children }: { children: React.ReactNode }) => {
 };
 
 function NotAMemberScreen({ email }: { email: string | null }) {
+  // Reached only when the server says this account has no ACTIVE membership
+  // (a failed lookup is the retry screen, never this one). An account in no
+  // workspace at all is signed out and deleted at sign-in, so what's left is
+  // access an admin suspended.
   return (
     <div className="h-dvh w-full flex items-center justify-center bg-[var(--color-canvas)] p-6">
-      <div className="max-w-md w-full bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl shadow-xl p-8 text-center">
-        <div className="w-14 h-14 rounded-2xl bg-amber-100 border border-amber-200 flex items-center justify-center mx-auto mb-4">
-          <span className="text-2xl" aria-hidden>🔒</span>
-        </div>
-        <h1 className="text-lg font-black text-[var(--color-text)]">This account isn&apos;t a member of any workspace</h1>
-        <p className="text-sm text-[var(--color-text-muted)] mt-2 leading-relaxed">
-          You&apos;re signed in as <b className="text-[var(--color-text)]">{email ?? "an unrecognized account"}</b>,
-          but no workspace has admitted this account. Workspaces are invite-only: an
-          administrator adds you, or you start a free trial with a brand-new workspace.
+      <div className="max-w-md w-full bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl shadow-xl p-8">
+        <h1 className="text-[20px] font-semibold text-[var(--color-heading)]">Your access is off.</h1>
+        <p className="text-[15px] text-[var(--color-text)] mt-2 leading-relaxed">
+          You&apos;re signed in as <b>{email ?? "this account"}</b>. Your access to the workspace is suspended. Ask your admin to turn it back on, then sign in again.
         </p>
-        <p className="text-xs text-[var(--color-text-faint)] mt-2">
-          Expecting to see your workspace? You may be signed in with a different
-          account than usual (a personal vs. work Microsoft account, for example).
-          Sign out and sign back in with the account your admin added.
-        </p>
-        <div className="mt-5 flex items-center justify-center gap-2 flex-wrap">
-          <button
-            onClick={() => { void supabase.auth.signOut(); }}
-            className="px-4 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-sm font-black shadow"
-          >
-            Sign out & switch account
+        <div className="mt-5">
+          <button type="button" onClick={() => { void supabase.auth.signOut(); }} className={btnQuiet}>
+            Sign out
           </button>
-          <a href="/signup"
-            className="px-4 py-2.5 rounded-xl bg-[var(--color-surface)] border border-[var(--color-border)] text-sm font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
-          >
-            Start a free trial
-          </a>
         </div>
       </div>
     </div>

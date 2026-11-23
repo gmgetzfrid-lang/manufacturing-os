@@ -255,7 +255,7 @@ export default function StagedPage() {
           <section aria-label="Staged documents" data-staged-list>
             {notFound > 0 && (
               <p className="mb-2.5 text-[14px] text-[var(--color-text)]">
-                {notFound === 1 ? "1 staged document could not be found." : `${notFound} staged documents could not be found.`} It may have been deleted, or you may no longer have access. Remove it from the list.
+                {notFound === 1 ? "1 staged document could not be found. It may have been deleted, or you may no longer have access. Remove it from the list." : `${notFound} staged documents could not be found. They may have been deleted, or you may no longer have access. Remove them from the list.`}
               </p>
             )}
 

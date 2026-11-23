@@ -31,6 +31,7 @@ export default function SetPasswordPage() {
       const v = await checkSignin(session.access_token);
       if (!alive) return;
       if (v.action === "ok") { router.replace("/dashboard"); return; }
+      if (v.action === "not_added") { await supabase.auth.signOut(); router.replace("/?signin=not_added"); return; }
       if (v.action === "expired" || v.action === "use_microsoft") { await supabase.auth.signOut(); router.replace("/"); return; }
       setEmail(session.user.email ?? null);
       if (v.expiresAt) setUntil(new Date(v.expiresAt).toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }));

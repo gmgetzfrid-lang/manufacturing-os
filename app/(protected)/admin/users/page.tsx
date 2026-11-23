@@ -186,9 +186,6 @@ export default function AdminUsersPage() {
   const removeRole = (member: MemberRow, role: Role) =>
     persistRoles(member, rolesOf(member).filter((r) => r !== role));
 
-  // Remove a member from this workspace. Deletes the org_members row (revokes
-  // access immediately) — it does NOT delete their login account, so they can
-  // be re-added later. Guards against removing yourself.
   // A new one-time password for someone who signs in with a password; it
   // also lifts a suspension from an expired one.
   const handleResetPassword = async (member: MemberRow) => {
@@ -221,13 +218,22 @@ export default function AdminUsersPage() {
       return;
     }
     const who = member.display_name || member.email || 'this member';
-    if (!(await appConfirm({ message: `Remove ${who} from this workspace? They lose access immediately. This does not delete their login account, and you can re-add them later.`, tone: 'danger' }))) {
+    // On the server: when this was their last workspace, their sign-in is
+    // deleted too, so no account is left that belongs to no workspace.
+    if (!(await appConfirm({ message: `Remove ${who} from this workspace? They lose access now, and their sign-in is deleted unless they're in another workspace. To bring them back, add them again.`, tone: 'danger' }))) {
       return;
     }
     setRemovingId(member.id);
     try {
-      const { error } = await supabase.from('org_members').delete().eq('id', member.id);
-      if (error) throw error;
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) throw new Error('Sign in again.');
+      const res = await fetch('/api/admin/remove-member', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({ orgId: activeOrgId, memberId: member.id }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || 'It didn\'t go through.');
       setMembers((prev) => prev.filter((m) => m.id !== member.id));
     } catch (err) {
       console.error('Remove member failed:', err);

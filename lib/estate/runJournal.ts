@@ -142,6 +142,6 @@ export async function undoRun(admin: SupabaseClient, orgId: string, runId: strin
   }
   if (rows.length) await admin.from("estate_run_changes").update({ undone_at: new Date().toISOString(), undone_by: actor.userId }).in("id", rows.map((r) => r.id));
   out.drawings = docs.size;
-  await admin.from("audit_logs").insert({ action: "ESTATE_RUN_UNDONE", resource_type: "estate_run", resource_id: null, org_id: orgId, user_id: actor.userId, details: { runId, ...out } }).then(() => undefined, () => undefined);
+  await admin.from("audit_logs").insert({ action: "ESTATE_RUN_UNDONE", resource_type: "estate_run", resource_id: runId, org_id: orgId, user_id: actor.userId, details: { runId, ...out } }).then(() => undefined, () => undefined);
   return out;
 }

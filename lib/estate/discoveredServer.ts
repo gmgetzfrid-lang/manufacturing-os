@@ -120,7 +120,7 @@ export async function removeSuspects(admin: SupabaseClient, orgId: string, wante
     if (!error) removed += ((data as unknown[] | null) ?? []).length;
   }
   await admin.from("audit_logs").insert({
-    action: "DISCOVERED_EQUIPMENT_REMOVED", resource_type: "asset", resource_id: null, org_id: orgId, user_id: actor.userId,
+    action: "DISCOVERED_EQUIPMENT_REMOVED", resource_type: "asset", resource_id: orgId, org_id: orgId, user_id: actor.userId,
     details: { tags: go.map((id) => ok.get(id)!.tag), removed, columnsCleaned, by: actor.name },
   }).then(() => undefined, () => undefined);
   return { removed, columnsCleaned };

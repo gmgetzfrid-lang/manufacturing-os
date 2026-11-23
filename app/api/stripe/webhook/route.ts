@@ -3,6 +3,7 @@
 // Stripe POSTs event payloads here. We verify the signature against
 // STRIPE_WEBHOOK_SECRET, then update the org row based on the event:
 //
+//   checkout.session.completed       -> a paid new workspace: make it
 //   customer.subscription.created    -> set status, plan, current_period_end
 //   customer.subscription.updated    -> refresh status, plan, current_period_end
 //   customer.subscription.deleted    -> status='canceled'
@@ -16,6 +17,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { getStripe, isStripeConfigured } from "@/lib/stripe";
 import type Stripe from "stripe";
+import { KIND, provisionWorkspace } from "@/lib/workspaceSignupServer";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || "";
 const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
@@ -46,6 +48,15 @@ export async function POST(req: NextRequest) {
 
   try {
     switch (event.type) {
+      // A paid new workspace: made now (or found, when the finish page made
+      // it first). The only way a workspace starts.
+      case "checkout.session.completed": {
+        const session = event.data.object as Stripe.Checkout.Session;
+        if (session.metadata?.kind !== KIND) break;
+        await provisionWorkspace(session);
+        break;
+      }
+
       case "customer.subscription.created":
       case "customer.subscription.updated": {
         const sub = event.data.object as Stripe.Subscription;
@@ -70,7 +81,7 @@ export async function POST(req: NextRequest) {
           resource_id: orgId,
           resource_type: "org",
           org_id: orgId,
-          user_id: "stripe",
+          user_id: null,
           user_email: "stripe-webhook",
           details: { stripe_status: sub.status, mapped_status: status, plan, period_end: periodEnd },
         });
@@ -88,7 +99,7 @@ export async function POST(req: NextRequest) {
         await supabase.from("audit_logs").insert({
           action: "STRIPE_CUSTOMER_SUBSCRIPTION_DELETED",
           resource_id: orgId, resource_type: "org", org_id: orgId,
-          user_id: "stripe", user_email: "stripe-webhook",
+          user_id: null, user_email: "stripe-webhook",
           details: { subscription_id: sub.id },
         });
         break;
@@ -116,7 +127,7 @@ export async function POST(req: NextRequest) {
         await supabase.from("audit_logs").insert({
           action: "STRIPE_INVOICE_PAYMENT_FAILED",
           resource_id: orgId, resource_type: "org", org_id: orgId,
-          user_id: "stripe", user_email: "stripe-webhook",
+          user_id: null, user_email: "stripe-webhook",
           details: { invoice_id: inv.id, attempt: inv.attempt_count },
         });
         break;

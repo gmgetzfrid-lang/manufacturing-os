@@ -3,7 +3,7 @@
 
 import { endOfDay } from "@/lib/signinPolicy";
 
-export type SigninVerdict = { action: "ok" | "use_microsoft" | "expired" | "set_password" | "error"; expiresAt?: string | null };
+export type SigninVerdict = { action: "ok" | "use_microsoft" | "expired" | "set_password" | "not_added" | "error"; expiresAt?: string | null };
 
 export async function checkSignin(accessToken: string | null): Promise<SigninVerdict> {
   if (!accessToken) return { action: "ok" };

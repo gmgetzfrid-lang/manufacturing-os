@@ -254,11 +254,11 @@ export async function saveDashboardConfig(uid: string, config: DashboardConfig):
   // can't land (e.g. the column hasn't been migrated yet).
   writeLocal(uid, config);
   try {
-    const { error } = await supabase.from("users").upsert({
-      id: uid,
+    // Changes the person's own profile; never makes one.
+    const { error } = await supabase.from("users").update({
       dashboard_config: config,
       updated_at: new Date().toISOString(),
-    });
+    }).eq("id", uid);
     return error ? error.message : null;
   } catch (e) {
     return (e as Error)?.message || "It didn't save.";

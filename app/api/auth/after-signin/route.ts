@@ -8,14 +8,19 @@
 //   set_password   a one-time password still in its day (or a password
 //                  from before this rule, which an admin typed): the person
 //                  must set their own before going on
+//   not_added      the account is in no workspace: nobody added it (a
+//                  Microsoft sign-in made it), or it was removed from its
+//                  last one. It is deleted, with its profile; accounts are
+//                  only made on purpose (lib/accountsServer)
 //   ok             nothing to do
-// The client signs out on the first two. The suspension stands on its own:
+// The client signs out on the first three. The suspension stands on its own:
 // every table's access rule requires an active membership.
 
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { mustUseMicrosoft, tempState, type TempPasswordMeta } from "@/lib/signinPolicy";
 import { policiesForUser, sanitizeExpiry, signInMethod, suspendMemberships, tempMeta } from "@/lib/signinPolicyServer";
+import { deleteAccount, isStray, membershipsOf } from "@/lib/accountsServer";
 
 export const runtime = "nodejs";
 
@@ -25,6 +30,18 @@ export async function POST(req: NextRequest) {
   const token = auth.slice(7);
   const { data: { user }, error } = await supabaseAdmin.auth.getUser(token);
   if (error || !user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  // In a workspace at all? Asked first, so an account nobody added is never
+  // asked to set a password. A failed read is a failed check, never "no".
+  let inAny: boolean;
+  try { inAny = (await membershipsOf(user.id)).length > 0; }
+  catch { return NextResponse.json({ error: "Couldn't check the account." }, { status: 503 }); }
+  if (!inAny) {
+    try {
+      if (await isStray(user.id)) await deleteAccount(user.id, "Signed in, but no workspace has this account.", { userId: null, email: user.email ?? null, orgId: null }, user.email ?? null);
+    } catch { /* refused all the same; the next sign-in tries again */ }
+    return NextResponse.json({ action: "not_added" });
+  }
 
   const method = signInMethod(token);
   const policies = await policiesForUser(user.id);

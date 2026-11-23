@@ -91,8 +91,9 @@ export default function ProfilePage() {
     if (!uid) return;
     setSaving(true); setError(null); setSaved(false);
     try {
+      // The person's own profile, which their admin's add made: changed, never made here.
       const { error: upsertErr } = await supabase.from("users")
-        .upsert({ id: uid, display_name: displayName.trim() || null, updated_at: new Date().toISOString() }, { onConflict: "id" });
+        .update({ display_name: displayName.trim() || null, updated_at: new Date().toISOString() }).eq("id", uid);
       if (upsertErr) throw upsertErr;
       setSaved(true);
       setTimeout(() => setSaved(false), 2500);

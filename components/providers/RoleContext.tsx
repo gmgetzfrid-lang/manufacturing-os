@@ -5,6 +5,7 @@ import { supabase } from "@/lib/supabase";
 import type { Role } from "@/types/schema";
 import { normalizeRoles, primaryRole } from "@/lib/roleCapabilities";
 import { readMember, writeMember, storedUid, memberToOpen, type CachedMember } from "@/lib/memberCache";
+import { fetchMemberships, pickMembership, SignedOut } from "@/lib/membershipClient";
 
 type OrgMember = {
   orgId: string;
@@ -124,11 +125,11 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
     } catch {}
 
     try {
-      await supabase.from("users").upsert({
-        id: nextUid,
+      // Only ever changes the person's own existing profile; never makes one.
+      await supabase.from("users").update({
         default_org_id: nextOrgId ?? null,
         updated_at: new Date().toISOString(),
-      });
+      }).eq("id", nextUid);
     } catch {}
   }, []);
 
@@ -150,48 +151,18 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
   const resolveOrgAndRole = async (userId: string, email: string | null, quiet = false) => {
     if (!quiet) setMembershipState("resolving");
 
-    // Every query THROWS on error so the retry loop below can tell "the
-    // lookup failed" apart from "this account truly has no membership". The
-    // old code swallowed errors and answered Viewer for both — on a flaky
-    // phone connection that dressed an Admin up as a locked-out stranger.
+    // The server answers (lib/membershipClient): a failed lookup throws, so
+    // the retry loop below tells "the lookup failed" apart from "this
+    // account truly has no membership". Read in the browser through the
+    // access rules, a sign-in that wasn't ready yet answered "no rows",
+    // which put members on the no-workspace screen or opened them as Viewer.
     const attempt = async (): Promise<{ orgId: string | null; mem: Record<string, unknown> | null }> => {
-      // 1) Candidate org: this device's last workspace → profile default.
-      let orgId: string | null = null;
-      try {
-        if (typeof window !== "undefined") orgId = localStorage.getItem(LS_ORG_KEY);
-      } catch {}
-      if (!orgId) {
-        const { data: profile, error } = await supabase
-          .from("users").select("default_org_id").eq("id", userId).maybeSingle();
-        if (error) throw new Error(error.message);
-        if (profile?.default_org_id) orgId = profile.default_org_id as string;
-      }
-
-      // 2) Membership in the candidate org.
-      let mem: Record<string, unknown> | null = null;
-      if (orgId) {
-        const { data, error } = await supabase
-          .from("org_members").select("*")
-          .eq("org_id", orgId).eq("uid", userId).maybeSingle();
-        if (error) throw new Error(error.message);
-        mem = data as Record<string, unknown> | null;
-      }
-
-      // 3) Self-heal: no ACTIVE membership in the candidate (stale device
-      //    workspace, revoked access, fresh phone) → their first active
-      //    membership anywhere wins instead of a dead end.
-      if (!mem || mem.status !== "active") {
-        const { data, error } = await supabase
-          .from("org_members").select("*")
-          .eq("uid", userId).eq("status", "active")
-          .limit(1).maybeSingle();
-        if (error) throw new Error(error.message);
-        if (data) {
-          mem = data as Record<string, unknown>;
-          orgId = mem.org_id as string;
-        }
-      }
-      return { orgId, mem };
+      let lastOrg: string | null = null;
+      try { if (typeof window !== "undefined") lastOrg = localStorage.getItem(LS_ORG_KEY); } catch {}
+      const answer = await fetchMemberships();
+      const pick = pickMembership(answer, lastOrg);
+      if (!pick) return { orgId: null, mem: null };
+      return { orgId: pick.orgId, mem: { org_id: pick.orgId, role: pick.role, roles: pick.roles, status: pick.status, email: pick.email } };
     };
 
     let resolved: { orgId: string | null; mem: Record<string, unknown> | null } | null = null;
@@ -205,6 +176,8 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
         ]);
       } catch (e) {
         lastErr = e;
+        // The sign-in itself is gone: signing out takes them to sign in again.
+        if (e instanceof SignedOut) { void supabase.auth.signOut(); return; }
         await new Promise((r) => setTimeout(r, 600 * (i + 1)));
       }
     }
@@ -256,14 +229,8 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
       setMembershipState("none");
     }
 
-    // Upsert user profile — pure bookkeeping, so it must never hold the
-    // boot: awaiting this write kept every hard page load on the
-    // "Authenticating…" spinner for an extra database round trip.
-    void supabase.from("users").upsert({
-      id: userId,
-      email: email ?? null,
-      updated_at: new Date().toISOString(),
-    }).then(() => undefined, () => undefined);
+    // No profile is made here: profiles are made only on purpose, on the
+    // server (an admin adding someone, a paid workspace's first admin).
   };
 
   useEffect(() => {

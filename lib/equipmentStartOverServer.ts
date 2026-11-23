@@ -281,7 +281,7 @@ export async function runStartOver(admin: Admin, orgId: string, input: { planKey
   out.suggestions = (cleared ?? []).length;
 
   await admin.from("audit_logs").insert({
-    action: "EQUIPMENT_START_OVER", resource_type: "asset", resource_id: null, org_id: orgId, user_id: input.actor.userId,
+    action: "EQUIPMENT_START_OVER", resource_type: "asset", resource_id: orgId, org_id: orgId, user_id: input.actor.userId,
     details: {
       by: input.actor.name, removed: out.removed, merged: out.merged, moved: out.moved, entries: out.entries, drawings: out.drawings, links: out.links, suggestions: out.suggestions,
       removedTags: p.plan.remove.map((a) => `${a.tag}${a.code ? ` (${a.code})` : ""}${a.unitCode ? ` u${a.unitCode}` : ""}`).slice(0, 2000),
@@ -318,7 +318,7 @@ export async function rereadDrawings(admin: Admin, orgId: string, input: { runId
     } catch { /* the links catch up on the next Connect */ }
   }
   await admin.from("audit_logs").insert({
-    action: "EQUIPMENT_REREAD", resource_type: "asset", resource_id: null, org_id: orgId, user_id: input.actor.userId,
+    action: "EQUIPMENT_REREAD", resource_type: "asset", resource_id: input.runId, org_id: orgId, user_id: input.actor.userId,
     details: { runId: input.runId, ...out, by: input.actor.name },
   }).then(() => undefined, () => undefined);
   return out;

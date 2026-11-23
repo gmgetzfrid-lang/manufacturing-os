@@ -22,8 +22,10 @@
 -- not saved.
 --
 -- Members can still READ their workspace's links (the Send sheet lists them
--- through the server), but no longer the code hash: a 6-digit code is too
--- short to keep from someone holding its hash.
+-- through the server), but not the code hash (a 6-digit code is too short
+-- to keep from someone holding its hash) and not the link itself (token):
+-- a member who can't open a document must not get it through a colleague's
+-- link. The server shows a link's address only to the person who made it.
 --
 -- Until this runs, links already sent keep working as before; making a new
 -- link says to run this file. Safe to run more than once.
@@ -63,12 +65,12 @@ create policy document_shares_member_read on public.document_shares
     )
   );
 
--- Every column but the code hash. A column added to this table later needs
--- adding here too, or members won't see it.
+-- Every column but the token and the code hash. A column added to this
+-- table later needs adding here too, or members won't see it.
 revoke insert, update, delete on public.document_shares from anon, authenticated;
 revoke select on public.document_shares from anon, authenticated;
 grant select (
-  id, token, org_id, document_id, created_by, created_by_name, created_at,
+  id, org_id, document_id, created_by, created_by_name, created_at,
   expires_at, revoked_at, revoked_by, note, access_count, access_last_at, access_last_ip,
   items, document_ids, recipient, allow_download, code_failures
 ) on public.document_shares to authenticated;

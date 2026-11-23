@@ -166,7 +166,7 @@ export async function saveMyAvatar(uid: string, file: File | null): Promise<void
   }
   const { error } = await supabase
     .from("users")
-    .upsert({ id: uid, avatar_path: path, updated_at: new Date().toISOString() }, { onConflict: "id" });
+    .update({ avatar_path: path, updated_at: new Date().toISOString() }).eq("id", uid);
   if (error) throw new Error(error.message);
   const existing = profileCache.get(uid);
   profileCache.set(uid, {

@@ -1,8 +1,9 @@
 "use client";
 
 import { AuthCard } from "@/components/marketing/AuthCard";
-import { checkSignin } from "@/lib/signinCheck";
-import React, { useCallback, useEffect, useState } from 'react';
+import { checkSignin, type SigninVerdict } from "@/lib/signinCheck";
+import { fetchMemberships, pickMembership, SignedOut } from "@/lib/membershipClient";
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import type { User } from '@supabase/supabase-js';
 import { supabase, setRememberSession, setPreferMicrosoft, prefersMicrosoft } from '@/lib/supabase';
 import { useRouter } from 'next/navigation';
@@ -30,6 +31,15 @@ const SILENT_TRIED_KEY = "manufacturingos.silentSSOAttempted";
 // Microsoft "you need to actually interact" responses — expected when a silent
 // (prompt=none) attempt can't complete without UI. We swallow these and just
 // show the normal login screen instead of an error.
+/** Why a sign-in can't go on, in the person's words (null: it can). */
+function refusal(v: SigninVerdict): string | null {
+  if (v.action === "not_added") return "This email isn't in a workspace here. Accounts are made by your workspace admin: ask them to add you with this email.";
+  if (v.action === "use_microsoft") return "Your company account signs in with Microsoft. Use Sign in with Microsoft below.";
+  if (v.action === "expired") return "Your one-time password expired at the end of the day it was issued, so the account is suspended. Ask your admin to reset it.";
+  return null;
+}
+const NOT_ADDED = "not_added";
+
 const SILENT_FALLBACK_ERRORS = new Set([
   "login_required",
   "interaction_required",
@@ -47,15 +57,17 @@ export default function LoginPage() {
   const [error, setError] = useState<string | null>(null);
   const [view, setView] = useState<View>("checking");
   const [authedEmail, setAuthedEmail] = useState<string | null>(null);
+  // A password sign-in in progress decides its own next step (handleLogin).
+  const loginInFlight = useRef(false);
   const slowSecs = useElapsed(view === "checking" || loading);
 
-  // Decide where an authenticated user belongs: into the app if they hold an
-  // active membership, otherwise the "no workspace" screen. Also ensures a
-  // profile row exists so an admin can later attach them to an org by email.
+  // Decide where a signed-in account belongs. The workspace's sign-in rules
+  // first (an account nobody added is signed out here, and deleted on the
+  // server), then the server's answer on its workspaces. No profile is ever
+  // made here: accounts and profiles are made only by an admin adding
+  // someone, or by a paid new workspace.
   const routeAuthedUser = useCallback(async (user: User) => {
-    const uid = user.id;
-    const userEmail = user.email ?? null;
-
+    if (loginInFlight.current) return;
     // If they signed in via Microsoft, remember it on this device so we can try
     // a silent sign-in next time. Email/password users are never flagged, so
     // they never get auto-redirected to Microsoft.
@@ -65,31 +77,35 @@ export default function LoginPage() {
       setPreferMicrosoft(true);
     }
 
-    try {
-      await supabase.from("users").upsert({
-        id: uid,
-        email: userEmail ?? null,
-        updated_at: new Date().toISOString(),
-      });
-    } catch {
-      /* non-fatal */
+    const { data: { session } } = await supabase.auth.getSession();
+    const verdict = await checkSignin(session?.access_token ?? null);
+    const why = refusal(verdict);
+    if (why) {
+      if (verdict.action === NOT_ADDED) setPreferMicrosoft(false);
+      await supabase.auth.signOut();
+      setError(why);
+      setView("login");
+      return;
     }
+    if (verdict.action === "set_password") { router.replace("/set-password"); return; }
+    await openWorkspace(user.email ?? null);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [router]);
 
-    const { data: membership } = await supabase
-      .from("org_members")
-      .select("org_id")
-      .eq("uid", uid)
-      .eq("status", "active")
-      .limit(1)
-      .maybeSingle();
-
-    if (membership?.org_id) {
-      router.replace("/dashboard");
-    } else {
+  /** Into the app when the server says the account is active in a
+   *  workspace; else the paused-access screen. */
+  const openWorkspace = async (userEmail: string | null) => {
+    try {
+      const answer = await fetchMemberships();
+      if (pickMembership(answer, null)) { router.replace("/dashboard"); return; }
       setAuthedEmail(userEmail);
       setView("no-workspace");
+    } catch (e) {
+      if (!(e instanceof SignedOut)) setError("Couldn't reach the server to open your workspace. Check your connection and try again.");
+      setView("login");
+      setLoading(false);
     }
-  }, [router]);
+  };
 
   // Kick off the Microsoft OAuth redirect. `silent` adds prompt=none so an
   // already-signed-in M365 user is returned without any UI; on failure the
@@ -129,6 +145,11 @@ export default function LoginPage() {
     const errorCode = sp.get("error");
     const errorDesc = sp.get("error_description") || sp.get("error");
     const hasOAuthResponse = params.includes("code=") || hash.includes("access_token");
+    if (sp.get("signin") === NOT_ADDED) {
+      // Don't try Microsoft again on its own: it's the account that was refused.
+      setPreferMicrosoft(false);
+      setError(refusal({ action: NOT_ADDED }));
+    }
 
     const cleanUrl = () => {
       try { window.history.replaceState({}, "", "/"); } catch { /* ignore */ }
@@ -205,34 +226,32 @@ export default function LoginPage() {
     setError(null);
     setRememberSession(keepSignedIn);
 
-    const { data: signedIn, error: authError } = await supabase.auth.signInWithPassword({ email, password });
-    if (authError) {
-      let msg = "Failed to sign in. Please try again.";
-      if (authError.message.includes("Invalid login credentials")) msg = "Invalid email or password.";
-      else if (authError.message.includes("Email not confirmed")) msg = "Please confirm your email before signing in.";
-      else if (authError.message.includes("Too many requests")) msg = "Too many failed attempts. Try again later.";
-      setError(msg);
-      setLoading(false);
-      return;
-    }
-    // The workspace's sign-in rules decide what happens next.
-    const verdict = await checkSignin(signedIn.session?.access_token ?? null);
-    if (verdict.action === "use_microsoft") {
-      await supabase.auth.signOut();
-      setError("Your company account signs in with Microsoft. Use Sign in with Microsoft below.");
-      setLoading(false);
-    } else if (verdict.action === "expired") {
-      await supabase.auth.signOut();
-      setError("Your one-time password expired at the end of the day it was issued, so the account is suspended. Ask your admin to reset it.");
-      setLoading(false);
-    } else if (verdict.action === "set_password") {
-      router.push('/set-password');
-    } else if (verdict.action === "error") {
-      await supabase.auth.signOut();
-      setError("Couldn't finish signing you in. Check your connection and try again.");
-      setLoading(false);
-    } else {
-      router.push('/dashboard');
+    loginInFlight.current = true;
+    try {
+      const { data: signedIn, error: authError } = await supabase.auth.signInWithPassword({ email, password });
+      if (authError) {
+        let msg = "Failed to sign in. Please try again.";
+        if (authError.message.includes("Invalid login credentials")) msg = "Invalid email or password.";
+        else if (authError.message.includes("Email not confirmed")) msg = "Please confirm your email before signing in.";
+        else if (authError.message.includes("Too many requests")) msg = "Too many failed attempts. Try again later.";
+        setError(msg);
+        setLoading(false);
+        return;
+      }
+      // The workspace's sign-in rules decide what happens next.
+      const verdict = await checkSignin(signedIn.session?.access_token ?? null);
+      const why = refusal(verdict) ?? (verdict.action === "error" ? "Couldn't finish signing you in. Check your connection and try again." : null);
+      if (why) {
+        await supabase.auth.signOut();
+        setError(why);
+        setLoading(false);
+      } else if (verdict.action === "set_password") {
+        router.push('/set-password');
+      } else {
+        await openWorkspace(signedIn.user?.email ?? email);
+      }
+    } finally {
+      loginInFlight.current = false;
     }
   };
 
@@ -273,15 +292,14 @@ export default function LoginPage() {
   // ─── Authenticated, but not attached to any workspace ───────────
   if (view === "no-workspace") {
     return (
-      <AuthCard title="No workspace yet." sub={authedEmail ?? undefined}>
+      <AuthCard title="Your access is off." sub={authedEmail ?? undefined}>
         <div className="flex items-start gap-3">
           <span className="ui-icon-tile is-sm"><Building2 className="w-4 h-4" /></span>
           <p className="text-[15px] text-[var(--color-text)] leading-snug">
-            Ask your admin to add you with this email, then sign in again.
+            Your account is in a workspace, but your access there is suspended. Ask your admin to turn it back on, then sign in again.
           </p>
         </div>
         <div className="mt-5 space-y-2.5">
-          <a href="/signup" className={primaryBtn}>Ask for access or create a workspace</a>
           <button type="button" onClick={handleSignOut} className={quietBtn}>
             <LogOut className="w-4 h-4" /> Sign out
           </button>
@@ -298,12 +316,12 @@ export default function LoginPage() {
       footer={<>
         <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 text-[14px]">
           <p className="text-[var(--color-text-muted)]">
-            No workspace yet?{" "}
-            <Link href="/signup" className={link}>Create one</Link>
+            New company?{" "}
+            <Link href="/signup" className={link}>Start a workspace</Link>
           </p>
           <Link href="/about" className={link}>About Manufacturing OS</Link>
         </div>
-        <p className="text-[13px] text-[var(--color-text-muted)]">Forgot your password? Ask your workspace admin to reset it. Company accounts reset through Microsoft.</p>
+        <p className="text-[13px] text-[var(--color-text-muted)]">Your workspace admin adds your account. Forgot your password? Ask them to reset it. Company accounts reset through Microsoft.</p>
         <p className="text-[13px] text-[var(--color-text-muted)]">Version 2.1.0. Authorized use only.</p>
       </>}
     >

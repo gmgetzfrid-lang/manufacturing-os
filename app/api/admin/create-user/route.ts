@@ -3,22 +3,7 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { ALL_ROLES } from "@/types/schema";
 import { mustUseMicrosoft, domainOf } from "@/lib/signinPolicy";
 import { generateTempPassword, getSigninPolicy, sanitizeExpiry, tempMeta } from "@/lib/signinPolicyServer";
-
-// Bounded lookup of an auth user by email. Only used in the rare path where the
-// auth account already exists (e.g. they signed in with Microsoft first) but
-// has no profile row to read the id from.
-async function findAuthUserIdByEmail(email: string): Promise<string | null> {
-  const target = email.toLowerCase();
-  const perPage = 200;
-  for (let page = 1; page <= 25; page++) {
-    const { data, error } = await supabaseAdmin.auth.admin.listUsers({ page, perPage });
-    if (error || !data?.users?.length) return null;
-    const match = data.users.find((u) => (u.email || "").toLowerCase() === target);
-    if (match) return match.id;
-    if (data.users.length < perPage) return null;
-  }
-  return null;
-}
+import { accountByEmail, looksLikeEmail, normEmail } from "@/lib/accountsServer";
 
 export async function POST(req: NextRequest) {
   const authHeader = req.headers.get("authorization");
@@ -35,7 +20,7 @@ export async function POST(req: NextRequest) {
   // No password comes from the admin: company emails sign in with
   // Microsoft, and everyone else gets a one-time password issued here that
   // they must replace the same day (see lib/signinPolicy).
-  const { email, orgId, role, displayName, expiresAt } = await req.json() as {
+  const { email: rawEmail, orgId, role, displayName, expiresAt } = await req.json() as {
     email: string;
     orgId: string;
     role: string;
@@ -44,8 +29,13 @@ export async function POST(req: NextRequest) {
     expiresAt?: string;
   };
 
-  if (!email?.trim()) {
+  // One email is one person: kept trimmed and lower case everywhere.
+  const email = normEmail(rawEmail);
+  if (!email) {
     return NextResponse.json({ error: "Email is required" }, { status: 400 });
+  }
+  if (!looksLikeEmail(email)) {
+    return NextResponse.json({ error: "That doesn't look like an email address." }, { status: 400 });
   }
 
   // Only real roles may be granted. Without this, `role` is a free string
@@ -91,13 +81,20 @@ export async function POST(req: NextRequest) {
   let userId: string | null = null;
   let createdNewUser = false;
 
-  const { data: existingProfile } = await supabaseAdmin
-    .from("users")
-    .select("id")
-    .eq("email", email)
-    .maybeSingle();
-  if (existingProfile?.id) {
-    userId = existingProfile.id as string;
+  // Found by their SIGN-IN email (only they and the server can change it),
+  // never by the profile's email field.
+  try {
+    userId = (await accountByEmail(email))?.id ?? null;
+  } catch (e) {
+    return NextResponse.json({ error: (e as Error).message }, { status: 503 });
+  }
+
+  // Nobody else in this workspace may already have this email.
+  const { data: sameEmail, error: sameErr } = await supabaseAdmin
+    .from("org_members").select("uid").eq("org_id", orgId).ilike("email", email).limit(5);
+  if (sameErr) return NextResponse.json({ error: sameErr.message }, { status: 503 });
+  if (((sameEmail ?? []) as Array<{ uid: string }>).some((m) => m.uid !== userId)) {
+    return NextResponse.json({ error: `${email} is already in this workspace under another account. Remove that one first.` }, { status: 409 });
   }
 
   if (!userId) {
@@ -110,10 +107,10 @@ export async function POST(req: NextRequest) {
       userId = data.user.id;
       createdNewUser = true;
     } else {
-      // Email may already exist in auth without a readable profile row.
-      const recovered = await findAuthUserIdByEmail(email);
+      // Made a moment ago by someone else: it's the same person.
+      const recovered = await accountByEmail(email).catch(() => null);
       if (recovered) {
-        userId = recovered;
+        userId = recovered.id;
       } else {
         return NextResponse.json({ error: error?.message ?? "Failed to create user" }, { status: 400 });
       }
@@ -141,7 +138,7 @@ export async function POST(req: NextRequest) {
   if (existingMember) {
     const { error: updateError } = await supabaseAdmin
       .from("org_members")
-      .update({ role, roles: [role], status: "active", display_name: displayName ?? null })
+      .update({ role, roles: [role], status: "active", email, display_name: displayName ?? null })
       .eq("org_id", orgId)
       .eq("uid", userId);
     if (updateError) {

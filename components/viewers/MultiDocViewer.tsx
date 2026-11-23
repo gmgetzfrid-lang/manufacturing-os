@@ -1020,9 +1020,9 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
               <h2 className={vTitle} title={activeEntry?.doc.title || activeName}>{activeName}</h2>
             </div>
             {markedUpIds.length > 0 && (
-              <button type="button" onClick={() => void sendMarkupsToDrafting()} disabled={sendingDraft} title="Send all marked-up sheets (with your markups in them) to one new drafting request" className={vPrimary} aria-label={`Send markups (${markedUpIds.length})`}>
+              <button type="button" onClick={() => void sendMarkupsToDrafting()} disabled={sendingDraft} title="Send all marked-up sheets (with your markups in them) to one new drafting request" className={vPrimary} aria-label={`Send to drafting (${markedUpIds.length} marked up)`}>
                 {sendingDraft ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-                <span className="max-sm:hidden">Send markups</span> ({markedUpIds.length})
+                <span className="max-sm:hidden">Send to drafting</span> ({markedUpIds.length})
               </button>
             )}
             <button type="button" aria-label="Close" onClick={onClose} className={vClose} title="Close (Esc)">
