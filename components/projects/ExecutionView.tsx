@@ -25,12 +25,12 @@
 // WBS — all write through to the same audited mutations.
 
 import React, { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
-import { bandSeg, bandSegItem } from "@/components/admin/band";
+import { SubTabs } from "@/components/projects/SubTabs";
 import {
   ChevronDown, ChevronRight as ChevronRightIcon, ChevronLeft,
   CalendarDays, CircleCheck, Loader2,
   FolderPlus, CalendarRange, X as XIcon, CheckSquare, Square,
-  ZoomIn, ZoomOut, ListTree, Crosshair, Info, Zap, Eye, ListOrdered, Link2, Replace,
+  ZoomIn, ZoomOut, ListTree, Crosshair, Info, Zap, Check, Eye, ListOrdered, Link2, Replace,
   Trash2,
   HelpCircle, PanelLeftClose, PanelLeftOpen,
 } from "lucide-react";
@@ -1309,20 +1309,9 @@ export default function ExecutionView({
           search, and the view itself under a hairline. */}
       {mode === "work" ? (
       <Card pad={false}>
-      <div className="px-3 sm:px-4 pt-3 pb-2.5 flex items-center gap-2 flex-wrap">
-        <div className={bandSeg} role="tablist" aria-label="View">
-          {([["timeline", "Timeline"], ["calendar", "Calendar"], ["wo", "Work orders"]] as const).map(([id, label]) => (
-            <button
-              key={id}
-              role="tab"
-              aria-selected={layout === id}
-              onClick={() => setLayout(id)}
-              className={bandSegItem(layout === id)}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
+      <div className="px-3 sm:px-4 pt-2 pb-2 flex items-center gap-x-3 gap-y-2 flex-wrap">
+        <SubTabs label="View" value={workLayout} size="sm" onChange={(id) => setLayout(id)}
+          items={[{ id: "timeline" as const, label: "Timeline" }, { id: "calendar" as const, label: "Calendar" }, { id: "wo" as const, label: "Work orders" }]} />
         {/* On a phone the less-used tools go under More, so the toolbar is
             two rows: which view and More, then the critical path and
             Update by note. */}
@@ -1338,9 +1327,9 @@ export default function ExecutionView({
             onClick={() => setShowCritical((v) => !v)}
             aria-pressed={showCritical}
             title="Show the critical path, and mark tasks on or off it"
-            className={`inline-flex items-center gap-1.5 h-9 px-3 rounded-md border text-[14px] font-semibold text-[var(--color-text)] transition-colors ${showCritical ? "border-[var(--color-text)] bg-[var(--color-surface-2)] shadow-[inset_0_1px_2px_rgb(31_39_51/0.15)]" : "border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)]"}`}
+            className={`inline-flex items-center gap-1.5 h-9 pointer-coarse:h-11 px-3 rounded-lg border text-[14px] font-semibold text-[var(--color-text)] transition-colors ${showCritical ? "border-[var(--color-current)] bg-[var(--color-surface)]" : "border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)]"}`}
           >
-            <Zap className="w-3.5 h-3.5 text-[var(--state-overdue)]" /> Critical path <span className="tabular-nums text-[var(--color-text-muted)]">{critical.ids.size}</span>
+            {showCritical ? <Check className="w-4 h-4 text-[var(--color-current)]" /> : <Zap className="w-4 h-4 text-[var(--color-text-muted)]" />} Critical path <span className="tabular-nums font-normal text-[var(--color-text-muted)]">{critical.ids.size}</span>
           </button>
         )}
         <span className="ml-auto" />
@@ -1361,7 +1350,7 @@ export default function ExecutionView({
             From
             <select value={critical.mode} disabled={!canEdit} onChange={(e) => void setCriticalSource(e.target.value as CriticalMode)}
               title={CRITICAL_MODES.find((x) => x.value === critical.mode)?.hint}
-              className="h-8 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[13px] font-semibold text-[var(--color-text)]">
+              className="h-8 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-control)] bg-[var(--color-surface)] px-2 text-[13px] max-sm:text-[16px] text-[var(--color-text)]">
               {CRITICAL_MODES.map((x) => <option key={x.value} value={x.value}>{x.label}</option>)}
             </select>
           </label>
@@ -1397,7 +1386,7 @@ export default function ExecutionView({
             <ScheduleProgress bare milestones={items} metrics={metrics} projectId={projectId}
               onShowOverdue={() => { setLayout("timeline"); setFilter((f) => ({ ...EMPTY_FILTER, overdueOnly: true, query: f.query })); }}
               onShowBlocked={() => { setLayout("timeline"); setFilter((f) => ({ ...EMPTY_FILTER, blockedOnly: true, query: f.query })); }} />
-            <button onClick={() => setShowCards(false)} className="mt-2 text-[14px] text-[var(--color-accent-text)] hover:underline">Fold the summary</button>
+            <button onClick={() => setShowCards(false)} className="mt-2 text-[14px] font-semibold text-[var(--color-accent-text)] hover:underline underline-offset-2">Fold the summary</button>
           </div>
         )}
         {notice}
@@ -1837,11 +1826,11 @@ function Toolbar({
       ) : (
         <>
           <button onClick={onToday} className="inline-flex items-center gap-1.5 h-8 px-2.5 rounded-md text-[13px] font-semibold text-[var(--color-text)] border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)]">
-            <Crosshair className="w-3.5 h-3.5 text-[var(--state-overdue-text)]" /> Today
+            <Crosshair className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> Today
           </button>
           <div className="w-px h-5 bg-[var(--color-border)]" />
-          <button onClick={onExpandAll} className="h-8 px-2.5 rounded-md text-[13px] font-semibold text-[var(--color-text)] border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)]">Expand all</button>
-          <button onClick={onCollapseAll} className="h-8 px-2.5 rounded-md text-[13px] font-semibold text-[var(--color-text)] border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)]">Collapse all</button>
+          <button onClick={onExpandAll} className="h-8 pointer-coarse:h-11 px-2 rounded-lg text-[13px] font-semibold text-[var(--color-accent-text)] hover:bg-[var(--color-surface-2)]">Expand all</button>
+          <button onClick={onCollapseAll} className="h-8 pointer-coarse:h-11 px-2 rounded-lg text-[13px] font-semibold text-[var(--color-accent-text)] hover:bg-[var(--color-surface-2)]">Collapse all</button>
           <div className="ml-auto inline-flex items-center gap-1">
             <button
               onClick={onZoomOut}
@@ -1854,7 +1843,7 @@ function Toolbar({
             <button
               onClick={onFit}
               aria-pressed={isAutoFit}
-              className={`h-8 text-[13px] font-semibold px-2.5 rounded-md border transition-colors ${isAutoFit ? "border-[var(--color-text)] bg-[var(--color-surface-2)] text-[var(--color-text)] shadow-[inset_0_1px_2px_rgb(31_39_51/0.15)]" : "border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"}`}
+              className={`h-8 text-[13px] font-semibold px-2.5 rounded-md border transition-colors ${isAutoFit ? "border-[var(--color-current)] bg-[var(--color-surface)] text-[var(--color-text)]" : "border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"}`}
               title="Fit the whole schedule to the screen width"
             >
               Fit

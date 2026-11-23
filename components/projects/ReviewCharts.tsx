@@ -16,10 +16,13 @@
 //     held up after it.
 //   - IdleBars: ready work with nobody on it, by party and step.
 //
-// Plain SVG and HTML, no chart library: thin marks, hairline grid, text in
-// text colors, a legend for every chart with two or more series, a hover
-// read-out on every mark. Charts draw at their measured width so text stays
-// the same size on a phone and a desktop.
+// Plain SVG and HTML, no chart library: every chart starts at zero; one
+// series in the accent (the one the review is about), the rest in grays;
+// lines named where they end instead of in a legend (a legend only for
+// shaded areas, and on a phone where there's no room at the ends); the
+// highest point said on the chart; a hover read-out on every mark. Charts
+// draw at their measured width so text stays the same size on a phone and
+// a desktop. Waiting is the app's waiting color (amber), as everywhere.
 
 import React, { useEffect, useRef, useState } from "react";
 import type { LateBar } from "@/lib/postEventReview";
@@ -27,9 +30,9 @@ import type { LoadJob, PartyLoad, HeldJob } from "@/lib/partyLoad";
 import { fmtInTz, startOfDay, addDays } from "@/lib/scheduleTz";
 import { neutralStep } from "@/components/dashboard/viz";
 
-const WAIT = "var(--viz-cat-2)";
-const OPEN = "var(--viz-cat-1)";
-const WORK = "var(--color-text)";
+const WAIT = "var(--state-held)";
+const OPEN = "var(--color-main)";
+const WORK = "var(--color-text-muted)";
 const NOBODY = "color-mix(in srgb, var(--color-text) 22%, var(--color-surface))";
 const LATER = "color-mix(in srgb, var(--color-text) 9%, var(--color-surface))";
 const H = 3_600_000;
@@ -63,7 +66,13 @@ export function LateHours({ bars, late, onPick }: { bars: LateBar[]; late: numbe
   // order it first appears (the app draws parts of a whole in steps of
   // graphite; the legend carries the names). Not explained: the track.
   const keys = [...new Set(bars.flatMap((b) => b.segs.map((x) => x.key)).filter((k): k is string => !!k))];
-  const color = (k: string | null) => (k == null ? "var(--viz-track)" : neutralStep(Math.min(keys.indexOf(k), 5)));
+  // The finding that explains the most hours is the one accent; the others
+  // are graphite steps; what the records don't explain is the track.
+  const totals = new Map<string, number>();
+  for (const b of bars) for (const x of b.segs) if (x.key) totals.set(x.key, (totals.get(x.key) ?? 0) + x.hours);
+  const lead = [...totals.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
+  const rest = keys.filter((k) => k !== lead);
+  const color = (k: string | null) => (k == null ? "var(--viz-track)" : k === lead ? "var(--color-main)" : neutralStep(Math.min(rest.indexOf(k) + 1, 5)));
   const max = Math.max(1, ...bars.map((b) => b.hours));
   const legend = new Map<string, { key: string | null; title: string; hours: number }>();
   for (const b of bars) for (const x of b.segs) { const k = x.key ?? (b.kind === "work" ? "~none" : `~${b.label}`); const e = legend.get(k) ?? { key: x.key, title: x.title, hours: 0 }; e.hours = Math.round((e.hours + x.hours) * 10) / 10; legend.set(k, e); }
@@ -100,9 +109,12 @@ export function LateHours({ bars, late, onPick }: { bars: LateBar[]; late: numbe
 
 // ─── One party over the event ──────────────────────────────────────
 
-const PAD_L = 28, PAD_R = 10;
+const PAD_L = 28;
+/** Room on the right for the lines' names where they end (wide charts only). */
+const padR = (w: number) => (w >= 480 ? 104 : 10);
 /** The x scale both the chart and the strip under it share. */
 function scaleOf(L: PartyLoad, w: number) {
+  const PAD_R = padR(w);
   const from = L.from, to = Math.max(L.to, from + H);
   const span = to - from, plot = Math.max(40, w - PAD_L - PAD_R);
   return { from, to, x: (t: number) => PAD_L + ((Math.min(to, Math.max(from, t)) - from) / span) * plot, pct: (t: number) => ((Math.min(to, Math.max(from, t)) - from) / span) * 100 };
@@ -119,6 +131,8 @@ export function LoadChart({ load: L, tz }: { load: PartyLoad; tz: string }) {
   const [hover, setHover] = useState<number | null>(null);
   const Hh = 200, PT = 10, PB = 26;
   const sc = scaleOf(L, w);
+  const PAD_R = padR(w);
+  const ends = w >= 480;
   const top = Math.max(L.planned.n, ...L.series.map((p) => p.open)) + 1;
   const y = (n: number) => PT + (1 - n / top) * (Hh - PT - PB);
   const pts = L.series;
@@ -148,6 +162,18 @@ export function LoadChart({ load: L, tz }: { load: PartyLoad; tz: string }) {
     setHover(sc.from + ((px - PAD_L) / Math.max(1, w - PAD_L - PAD_R)) * (sc.to - sc.from));
   };
   const P = L.party, n = L.planned.n;
+  // Each line named at its end, in its color, nudged apart so none overlap.
+  const last = pts[pts.length - 1];
+  const endLabels = (() => {
+    if (!ends || !last) return [];
+    const xs = [
+      { key: "open", y: y(last.open), text: `Ready ${last.open}`, color: OPEN, bold: true },
+      { key: "work", y: y(last.working), text: `Worked ${last.working}`, color: WORK, bold: false },
+      { key: "plan", y: y(n), text: `Planned ${n}`, color: "var(--color-text-muted)", bold: false },
+    ].sort((a, b) => a.y - b.y);
+    for (let i = 1; i < xs.length; i++) if (xs[i].y - xs[i - 1].y < 13) xs[i].y = xs[i - 1].y + 13;
+    return xs;
+  })();
   return (
     <div ref={ref} className="relative" data-load-chart={P}>
       {w > 0 && (
@@ -164,6 +190,13 @@ export function LoadChart({ load: L, tz }: { load: PartyLoad; tz: string }) {
           <path d={step((p) => p.open)} fill="none" stroke={OPEN} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
           <path d={step((p) => p.working)} fill="none" stroke={WORK} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
           <circle cx={sc.x(L.peak.at)} cy={y(L.peak.open)} r={4.5} fill={OPEN} stroke="var(--color-surface)" strokeWidth={2} />
+          {/* The highest point, said where it is. */}
+          {(() => {
+            const px = sc.x(L.peak.at), py = y(L.peak.open);
+            const right = px < w - PAD_R - 110;
+            return <text x={right ? px + 8 : px - 8} y={Math.max(PT + 9, py - 7)} fontSize={11} fontWeight={600} textAnchor={right ? "start" : "end"} fill={OPEN}>Most ready: {L.peak.open}</text>;
+          })()}
+          {endLabels.map((l) => <text key={l.key} x={w - PAD_R + 6} y={l.y + 4} fontSize={11} fontWeight={l.bold ? 600 : 400} fill={l.color}>{l.text}</text>)}
           {cur && hover != null && <line x1={sc.x(hover)} x2={sc.x(hover)} y1={PT} y2={Hh - PB} stroke="var(--color-text-muted)" strokeWidth={1} />}
           <rect x={PAD_L} y={PT} width={Math.max(1, w - PAD_L - PAD_R)} height={Hh - PT - PB} fill="transparent" onPointerMove={onMove} onPointerDown={onMove} onPointerLeave={() => setHover(null)} />
         </svg>
@@ -179,9 +212,12 @@ export function LoadChart({ load: L, tz }: { load: PartyLoad; tz: string }) {
         </div>
       )}
       <ul className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-[12px] text-[var(--color-text-muted)]">
-        <li className="inline-flex items-center gap-1.5"><span aria-hidden className="w-4 h-0.5 rounded-full" style={{ background: OPEN }} />Ready (open)</li>
-        <li className="inline-flex items-center gap-1.5"><span aria-hidden className="w-4 h-0.5 rounded-full" style={{ background: WORK }} />Being worked</li>
-        <li className="inline-flex items-center gap-1.5"><span aria-hidden className="w-4 border-t-[1.5px] border-dashed border-[var(--color-text-muted)]" />Planned at once ({n})</li>
+        {/* The lines are named at their ends on a wide chart; on a narrow one, here. */}
+        {!ends && <>
+          <li className="inline-flex items-center gap-1.5"><span aria-hidden className="w-4 h-0.5 rounded-full" style={{ background: OPEN }} />Ready (open)</li>
+          <li className="inline-flex items-center gap-1.5"><span aria-hidden className="w-4 h-0.5 rounded-full" style={{ background: WORK }} />Being worked</li>
+          <li className="inline-flex items-center gap-1.5"><span aria-hidden className="w-4 border-t-[1.5px] border-dashed border-[var(--color-text-muted)]" />Planned at once ({n})</li>
+        </>}
         <li className="inline-flex items-center gap-1.5"><span aria-hidden className="w-3 h-3 rounded-[2px]" style={{ background: WAIT, opacity: 0.35 }} />Jobs waiting for {P}</li>
         <li className="inline-flex items-center gap-1.5"><span aria-hidden className="w-3 h-3 rounded-[2px]" style={{ background: NOBODY }} />Ready, nobody on it</li>
       </ul>
@@ -193,6 +229,7 @@ export function LoadChart({ load: L, tz }: { load: PartyLoad; tz: string }) {
 export function LoadStrip({ load: L, jobs, held, tz }: { load: PartyLoad; jobs: LoadJob[]; held: HeldJob[]; tz: string }) {
   const [ref, w] = useWidth<HTMLDivElement>();
   const sc = scaleOf(L, w || 600);
+  const PAD_R = padR(w || 600);
   const left = (t: number) => `${sc.pct(t)}%`;
   const width = (a: number, b: number) => `${Math.max(0.6, sc.pct(b) - sc.pct(a))}%`;
   const P = L.party;

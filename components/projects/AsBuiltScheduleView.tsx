@@ -36,11 +36,14 @@ import { fmtInTz } from "@/lib/scheduleTz";
 import { supabase } from "@/lib/supabase";
 import { useDraft } from "@/hooks/useDraft";
 import { sayError } from "@/components/projects/sayError";
+import { SubTabs } from "@/components/projects/SubTabs";
+import { SkeletonRows } from "@/components/ui/Skeleton";
+import { ErrorNote } from "@/components/ui/ErrorNote";
 
 /** Width of one shift on the chart: fitted to the space it has (see the
  *  view), between 14 and 56 px. */
 const PxCtx = React.createContext(34);
-const PALETTE = ["#2563eb", "#059669", "#7c3aed", "#64748b", "#0891b2", "#db2777", "#b45309", "#475569", "#0d9488", "#9333ea"];
+const PALETTE = ["var(--color-main)", "color-mix(in srgb, var(--color-text) 72%, var(--color-surface))", "color-mix(in srgb, var(--color-text) 60%, var(--color-surface))"];
 const r1 = (n: number) => Math.round(n * 10) / 10;
 
 interface Props {
@@ -131,7 +134,7 @@ export default function AsBuiltScheduleView(p: Props) {
     const names = [...new Set([...(work?.crews.map((c) => c.crew) ?? []), ...Object.keys(plan?.load ?? {})])];
     return new Map(names.map((n, i) => [n, PALETTE[i % PALETTE.length]]));
   }, [work, plan]);
-  const colorOf = (c: string) => crews.get(c) ?? "#94a3b8";
+  const colorOf = (c: string) => crews.get(c) ?? "var(--viz-neutral)";
 
   const saveChanges = useCallback(async (next: PlanChange[]) => {
     if (!data) return;
@@ -161,26 +164,22 @@ export default function AsBuiltScheduleView(p: Props) {
   const left = boxW >= 640 ? 290 : 170;
   const px = nShifts && boxW ? Math.max(14, Math.min(56, Math.floor((boxW - left - (cols ? 350 : 0) - 6) / nShifts))) : 34;
 
-  if (err) return <div role="alert" className="border-l-2 border-[var(--state-overdue)] pl-3 py-1 text-[13px] text-[var(--state-overdue-text)]">Couldn&apos;t read the job: {err}</div>;
-  if (!data || !work || !plan || !check) return <div className="py-10 text-center text-[13px] text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin inline mr-1" /> Reading the job shift by shift…</div>;
-  if (!built.orders.length) return <div className="py-8 text-center text-[13px] text-[var(--color-text-muted)]">No schedule here yet.</div>;
+  if (err) return <ErrorNote title="Couldn't read the job." next={err} />;
+  if (!data || !work || !plan || !check) return <SkeletonRows rows={8} cols={3} what="the job, shift by shift" sheet={false} />;
+  if (!built.orders.length) return <p className="py-6 text-[15px] text-[var(--color-text-muted)]">No schedule here yet. Import it on Plan.</p>;
 
   return (
     <PxCtx.Provider value={px}>
     <div ref={setBox} className={full ? "fixed inset-0 z-[300] overflow-auto bg-[var(--color-canvas)] p-3 sm:p-5 space-y-3" : "space-y-3 min-w-0"}>
       <div className="flex flex-wrap items-center gap-2">
-        <div role="tablist" aria-label="Schedule" className="inline-flex rounded-lg border border-slate-400 overflow-hidden">
-          {([["built", "As-built"], ["next", "Suggested for next time"]] as const).map(([k, label]) => (
-            <button key={k} role="tab" aria-selected={view === k} type="button" onClick={() => setView(k)}
-              className={`px-3 py-1.5 text-[13px] font-bold cursor-pointer ${view === k ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30" : "bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>{label}</button>
-          ))}
-        </div>
+        <SubTabs label="Schedule" value={view} onChange={(k) => setView(k)} className="mr-2"
+          items={[{ id: "built" as const, label: "As-built" }, { id: "next" as const, label: "Suggested for next time" }]} />
         <button type="button" onClick={() => setFull(!full)} className={btnQuiet}>{full ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />} {full ? "Close full screen" : "Full screen"}</button>
         <button type="button" aria-pressed={cols} onClick={() => setCols(!cols)} className={btnQuiet}><CalendarDays className="w-4 h-4" /> {cols ? "Hide dates" : "Show dates"}</button>
         {p.onExcel && view === "built" && <button type="button" onClick={p.onExcel} className={btnQuiet}><Download className="w-4 h-4" /> Excel</button>}
         <button type="button" onClick={() => void toProject()} className={btnQuiet} title="A file Microsoft Project opens: File, Open, XML Format"><Download className="w-4 h-4" /> Microsoft Project</button>
         {p.onPrint && <button type="button" onClick={p.onPrint} className={btnQuiet}><Printer className="w-4 h-4" /> Print</button>}
-        {msg && <span role="status" className="text-[12px] font-semibold text-[var(--state-overdue-text)]">{msg}</span>}
+        {msg && <ErrorNote compact title={msg} next="" />}
       </div>
       {view === "built"
         ? <BuiltView {...p} cols={cols} built={built} work={work} colorOf={colorOf} changes={changes} onAdd={(c) => void saveChanges([...changes, c])} />
@@ -191,8 +190,21 @@ export default function AsBuiltScheduleView(p: Props) {
   );
 }
 
-const btnQuiet = "inline-flex items-center gap-1.5 rounded-lg border border-slate-400 bg-[var(--color-surface)] px-3 py-1.5 text-[13px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] cursor-pointer disabled:opacity-50";
-const btnPri = "inline-flex items-center gap-1.5 rounded-lg bg-[var(--color-accent)] px-3 py-1.5 text-[13px] font-bold text-[var(--color-accent-fg)] hover:opacity-90 cursor-pointer disabled:opacity-50";
+const btnQuiet = "inline-flex items-center gap-1.5 h-9 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] cursor-pointer disabled:opacity-50 whitespace-nowrap";
+const btnPri = "inline-flex items-center gap-1.5 h-9 pointer-coarse:h-11 rounded-lg bg-[var(--color-accent)] px-3 text-[14px] font-semibold text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)] cursor-pointer disabled:opacity-50 whitespace-nowrap";
+/** Two choices, as plain radio buttons (not a filled toggle). */
+function Choice<T extends string>({ value, onChange, options, label }: { value: T; onChange: (v: T) => void; options: ReadonlyArray<readonly [T, string]>; label: string }) {
+  const name = React.useId();
+  return (
+    <div role="radiogroup" aria-label={label} className="flex flex-wrap gap-x-4 gap-y-1">
+      {options.map(([k, l]) => (
+        <label key={k} className={`inline-flex items-center gap-1.5 min-h-8 pointer-coarse:min-h-11 text-[13px] cursor-pointer ${value === k ? "font-semibold text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>
+          <input type="radio" name={name} checked={value === k} onChange={() => onChange(k)} className="w-4 h-4 accent-[var(--color-current)]" />{l}
+        </label>
+      ))}
+    </div>
+  );
+}
 
 // ── Shared timeline bits ─────────────────────────────────────────────────
 
@@ -235,11 +247,11 @@ function Grid({ shifts }: { shifts: Array<{ kind: string }> }) {
 
 const when = (t: number | null, tz: string) => (t == null ? "-" : `${fmtInTz(t, tz, { weekday: "short", month: "numeric", day: "numeric" })} ${fmtInTz(t, tz, { hour: "numeric", minute: "2-digit", hour12: true })}`);
 const hatch = (a: string, b: string) => ({ background: `repeating-linear-gradient(135deg, ${a} 0 4px, ${b} 4px 8px)` });
-const WAIT = { ...hatch("#fde68a", "#fff7d6"), border: "1px solid #f59e0b" };
-const READY = { ...hatch("#bfdbfe", "#eff6ff"), border: "1px solid #60a5fa" };
+const WAIT = { ...hatch("color-mix(in srgb, var(--state-held) 38%, var(--color-surface))", "color-mix(in srgb, var(--state-held) 10%, var(--color-surface))"), border: "1px solid var(--state-held)" };
+const READY = { ...hatch("color-mix(in srgb, var(--color-text) 16%, var(--color-surface))", "var(--color-surface)"), border: "1px solid var(--viz-neutral)" };
 /** On a work order's own line: a shift between its first and last work with
  *  nothing logged on any of its activities (its "shifts waited"). */
-const ORDER_WAIT = hatch("#94a3b8", "#f1f5f9");
+const ORDER_WAIT = hatch("var(--viz-neutral)", "var(--color-surface-2)");
 
 function Legend({ items }: { items: Array<[React.CSSProperties, string]> }) {
   return (
@@ -326,7 +338,7 @@ function BuiltView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: As
         <Chip>Sat in progress: <b>{t.waitedSteps}</b> activities, <b>{t.waitedShifts}</b> shifts</Chip>
         <Chip>Ready but not started: <b>{t.readySteps}</b> activities, <b>{t.readyShifts}</b> shifts</Chip>
       </div>
-      <Legend items={[[{ background: "#2563eb" }, "A step, start to finish (on a step's own line: each shift it was worked)"], [ORDER_WAIT, "Work order open, nothing logged that shift"], [WAIT, "Activity in progress, nothing logged"], [READY, "Ready, not started"], [{ background: "#cbd5e1", height: 4 }, "Plan"], [{ borderLeft: "2px solid #dc2626", width: 2 }, "Planned finish"]]} />
+      <Legend items={[[{ background: "var(--color-main)" }, "A step, start to finish (on a step's own line: each shift it was worked)"], [ORDER_WAIT, "Work order open, nothing logged that shift"], [WAIT, "Activity in progress, nothing logged"], [READY, "Ready, not started"], [{ background: "var(--viz-neutral)", height: 4 }, "Plan"], [{ borderLeft: "2px solid var(--state-overdue)", width: 2 }, "Planned finish"]]} />
       <div className="text-[12px] text-[var(--color-text-muted)]">Night shifts count as waiting only for work that ran on nights (its crew worked that work order on two or more nights). Day work sitting overnight is not waiting.</div>
       <FoldAll open={open.size} total={orders.length} onAll={(all) => setOpen(all ? new Set(orders.map((o) => o.key)) : new Set())} />
       <div className="overflow-auto max-h-[75vh] rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
@@ -489,9 +501,7 @@ function PlanFor({ run, stepName, crews, doneBefore, onSave, onCancel }: { run: 
   };
   return (
     <div className="mt-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] p-2 space-y-1.5 text-[var(--color-text)] whitespace-normal">
-      <div className="flex flex-wrap gap-1">
-        {([["pre", "Before the shutdown"], ["split", "As a step in the job"]] as const).map(([k, l]) => <button key={k} type="button" onClick={() => setWhere(k)} className={`rounded-full border px-2 py-0.5 text-[12px] font-bold cursor-pointer ${where === k ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30 border-transparent" : "border-slate-400"}`}>{l}</button>)}
-      </div>
+      <Choice label="Where it goes" value={where} onChange={setWhere} options={[["pre", "Before the shutdown"], ["split", "As a step in the job"]] as const} />
       <input value={name} onChange={(e) => setName(e.target.value)} aria-label="What it is" className={`${field} w-full`} />
       {where === "split" && (
         <div className="flex flex-wrap gap-1.5 items-center text-[12px]">
@@ -622,7 +632,7 @@ function NextView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsB
         <Chip><b>{plan.acts.length + plan.pre.length}</b> activities{Object.entries(kinds).filter(([k]) => k !== "same").map(([k, n]) => ` · ${n} ${(KIND[k]?.[0] ?? k).toLowerCase()}`).join("")}{plan.pre.length ? ` · ${plan.pre.length} before the shutdown` : ""}</Chip>
         <Chip><CalendarClock className="w-3.5 h-3.5 inline mr-1" />Sets the finish: {drivingOrders.slice(0, 3).join(", ")}</Chip>
       </div>
-      <Legend items={[[{ background: "#2563eb" }, "Crew's work: each piece of a work order's bar is one activity"], [{ background: "#fff", boxShadow: "0 0 0 1.5px #ea580c" }, "Not in this year's plan"], [{ background: "#fee2e2", boxShadow: "0 0 0 1.5px #dc2626" }, "Sets the finish"], [{ borderLeft: "2px solid #dc2626", width: 2 }, "This year's planned finish"], [{ borderLeft: "2px dashed #2563eb", width: 2 }, "Suggested finish"]]} />
+      <Legend items={[[{ background: "var(--color-main)" }, "Crew's work: each piece of a work order's bar is one activity"], [{ background: "var(--color-surface)", boxShadow: "0 0 0 1.5px var(--state-held)" }, "Not in this year's plan"], [{ background: "color-mix(in srgb, var(--state-overdue) 12%, var(--color-surface))", boxShadow: "0 0 0 1.5px var(--state-overdue)" }, "Sets the finish"], [{ borderLeft: "2px solid var(--state-overdue)", width: 2 }, "This year's planned finish"], [{ borderLeft: "2px dashed var(--color-main)", width: 2 }, "Suggested finish"]]} />
 
       <FoldAll open={open.size} total={orders.length} onAll={(all) => setOpen(all ? new Set(orders.map(([k]) => k)) : new Set())} />
       <div className="overflow-auto max-h-[75vh] rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
@@ -646,7 +656,7 @@ function NextView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsB
               const isOpen = open.has(key);
               const bar = pieces(acts.filter((a) => a.finish > a.start).flatMap((a) => shiftParts(a, plan.shifts).map(([s0, s1], i, all) => ({
                 key: `${a.id}:${i}`, from: s0, to: s1, color: p.colorOf(a.crew), label: all.length === 1 || (s1 - s0) === Math.max(...all.map(([q0, q1]) => q1 - q0)) ? `${r1(a.hours)} h` : undefined,
-                ring: driving.has(a.id) ? "0 0 0 1.5px #dc2626" : a.kind === "new" || a.kind === "found" ? "0 0 0 1.5px #ea580c" : undefined,
+                ring: driving.has(a.id) ? "0 0 0 1.5px var(--state-overdue)" : a.kind === "new" || a.kind === "found" ? "0 0 0 1.5px var(--state-held)" : undefined,
                 title: `${a.name} · ${a.crew} · ${at(a.start)} to ${at(a.finish)} · ${r1(a.hours)} h, ${a.cal === "both" ? "days and nights" : a.cal === "night" ? "nights" : "days"}${driving.has(a.id) ? " · sets the finish" : ""}`,
               }))), x, 8);
               const bo = built.orders.find((o) => o.key === key);
@@ -667,7 +677,7 @@ function NextView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsB
                     const k = KIND[a.kind];
                     const isCrit = driving.has(a.id);
                     return (
-                      <tr key={a.id} className={isCrit ? "[&>td:first-child]:shadow-[inset_3px_0_0_#dc2626]" : ""}>
+                      <tr key={a.id} className={isCrit ? "[&>td:first-child]:shadow-[inset_3px_0_0_var(--state-overdue)]" : ""}>
                         <td className={`${cellAct} ${isCrit ? "!bg-transparent dark:!bg-[var(--state-overdue)]" : ""}`}>
                           <div className="font-bold">{a.name}{k && <span className={`ml-1 rounded px-1 text-[11px] font-semibold ${k[1]}`}>{k[0]}</span>}{a.heldForCrew && <span className="ml-1 rounded bg-transparent px-1 text-[11px] font-semibold text-[var(--state-held-text)]">Waits for its crew</span>}</div>
                           <div className="text-[11px] text-[var(--color-text-muted)]"><b className="inline-block w-2 h-2 rounded-full mr-1 align-middle" style={{ background: p.colorOf(a.crew) }} />{a.crew} · {r1(a.hours)} h · {a.cal === "both" ? "days and nights" : a.cal === "night" ? "nights" : "days"}</div>
@@ -676,7 +686,7 @@ function NextView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsB
                         </td>
                         <td className={cellN}>{r1(a.hours)}</td><td className={cellDt}>{at(a.start)}</td><td className={cellDt}>{at(a.finish)}</td>
                         <td className="p-0"><div className="relative h-11" style={{ width }}><Grid shifts={plan.shifts} />
-                          {shiftParts(a, plan.shifts).map(([s0, s1], i) => <i key={i} title={`${a.name}: ${r1(a.hours)} h, ${a.cal === "both" ? "days and nights" : a.cal === "night" ? "nights" : "days"}`} className="absolute top-3 h-4 rounded-sm" style={{ left: x(s0) + 1, width: Math.max(3, x(s1) - x(s0) - 2), background: p.colorOf(a.crew), boxShadow: a.kind === "new" || a.kind === "found" ? "0 0 0 2px #fff, 0 0 0 3.5px #ea580c" : undefined }} />)}{lines}</div></td>
+                          {shiftParts(a, plan.shifts).map(([s0, s1], i) => <i key={i} title={`${a.name}: ${r1(a.hours)} h, ${a.cal === "both" ? "days and nights" : a.cal === "night" ? "nights" : "days"}`} className="absolute top-3 h-4 rounded-sm" style={{ left: x(s0) + 1, width: Math.max(3, x(s1) - x(s0) - 2), background: p.colorOf(a.crew), boxShadow: a.kind === "new" || a.kind === "found" ? "0 0 0 2px var(--color-surface), 0 0 0 3.5px var(--state-held)" : undefined }} />)}{lines}</div></td>
                       </tr>
                     );
                   })}
@@ -932,9 +942,7 @@ function CrewSizeEdit({ crew, size, pace, mine, onSave, onClear }: { crew: strin
   return (
     <div className="mt-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] p-2 space-y-1.5 whitespace-normal text-[12px] text-[var(--color-text)]">
       {pace != null && (
-        <div className="flex flex-wrap gap-1">
-          {([["hands", "Hands on the tools"], ["jobs", "Jobs at a time"]] as const).map(([k, l]) => <button key={k} type="button" aria-pressed={mode === k} onClick={() => setMode(k)} className={`rounded-full border px-2 py-0.5 text-[12px] font-bold cursor-pointer ${mode === k ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30 border-transparent" : "border-slate-400"}`}>{l}</button>)}
-        </div>
+        <Choice label="Set it by" value={mode} onChange={setMode} options={[["hands", "Hands on the tools"], ["jobs", "Jobs at a time"]] as const} />
       )}
       {mode === "jobs"
         ? <label className="flex items-center gap-1.5"><input value={jobs} onChange={(e) => setJobs(e.target.value.replace(/[^0-9]/g, ""))} inputMode="numeric" aria-label={`${crew}: jobs at a time`} className={field} /> jobs at a time</label>

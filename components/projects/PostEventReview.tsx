@@ -71,6 +71,7 @@ import LoadingBlock from "@/components/ui/LoadingBlock";
 import MoreMenu from "@/components/ui/MoreMenu";
 import { useDraft, clearDraft } from "@/hooks/useDraft";
 import { sayError } from "@/components/projects/sayError";
+import { SubTabs } from "@/components/projects/SubTabs";
 
 const btn = "inline-flex items-center justify-center gap-1.5 h-10 sm:h-9 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] whitespace-nowrap disabled:opacity-50 transition-colors";
 const pri = "inline-flex items-center justify-center gap-1.5 h-10 sm:h-9 px-3.5 rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[14px] font-semibold hover:bg-[var(--color-accent-hover)] whitespace-nowrap disabled:opacity-50 transition-colors";
@@ -460,14 +461,11 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
           </div>
         </div>
         {phases.length > 0 && (
-          <div className="mt-2.5 flex items-center gap-2 flex-wrap">
-            {phases.map((p) => (
-              <button key={p.id} type="button" onClick={() => { setPhaseId(p.id); setAdding(false); }} aria-pressed={p.id === phaseId}
-                className={`h-9 px-3.5 rounded-full border text-[13px] font-semibold ${p.id === phaseId ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30 border-transparent" : "bg-[var(--color-surface)] text-[var(--color-text)] border-[var(--color-border)]"}`}>{p.name}</button>
-            ))}
-          </div>
+          <SubTabs className="mt-1.5 border-b border-[var(--color-border)]" label="Phase" value={phaseId ?? phases[0].id}
+            onChange={(id) => { setPhaseId(id); setAdding(false); }}
+            items={phases.map((p) => ({ id: p.id, label: p.name }))} />
         )}
-        {(busy === "slides" || busy === "word") && <p role="status" className="mt-2 text-[13px] text-[var(--color-text-muted)]"><Loader2 className="w-3.5 h-3.5 animate-spin inline mr-1.5" />Making the {busy === "word" ? "Word report" : "PowerPoint"}…</p>}
+        {(busy === "slides" || busy === "word") && <p role="status" className="mt-2 text-[13px] text-[var(--color-text-muted)]"><Loader2 className="w-3.5 h-3.5 animate-spin inline mr-1.5" />Making the {busy === "word" ? "Word report" : "PowerPoint"}</p>}
         {err && <div role="alert" className="mt-2 text-[13px] font-semibold text-[var(--state-overdue)]">{err}</div>}
         {msg && <div role="status" className="mt-2 text-[13px] font-semibold text-[var(--state-held)]">{msg}</div>}
         {held && !viewing && <div role="status" className="mt-2 flex items-center gap-2 flex-wrap text-[13px] font-semibold text-[var(--color-text)]" data-file-ready><span className="min-w-0 flex-1 basis-40">The file is ready.</span><button type="button" onClick={() => void saveHeld()} className={btn}><Download className="w-4 h-4" /> Save file</button></div>}
@@ -583,8 +581,8 @@ function FindingCard({ f, tz, lateH, canManage, busy, action, questions, answers
       <div className="flex items-center gap-2 flex-wrap text-[12px]">
         <span className={label}>{areaOf(f.category).name}</span>
         {lateH != null && (f.finishH > 0
-          ? <span className="font-semibold px-1.5 py-0.5 rounded bg-[color-mix(in_srgb,var(--state-overdue)_12%,transparent)] text-[var(--state-overdue)]" data-finish-hours>{f.finishH} h of the {lateH} h late finish</span>
-          : f.moved === 0 ? <span className="font-semibold px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text-muted)]">Did not move the finish</span> : null)}
+          ? <span className="inline-flex items-center gap-1.5 font-semibold text-[var(--state-overdue-text)] tabular-nums" data-finish-hours><span aria-hidden className="w-[7px] h-[7px] rounded-full bg-[var(--state-overdue)]" />{f.finishH} h of the {lateH} h late finish</span>
+          : f.moved === 0 ? <span className="inline-flex items-center gap-1.5 text-[var(--color-text-muted)]"><span aria-hidden className="w-[7px] h-[7px] rounded-full bg-[var(--color-text-faint)]" />Did not move the finish</span> : null)}
         {f.source === "person" && <span className="font-semibold px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text-muted)]">Written in the review{f.by ? ` by ${f.by}` : ""}</span>}
         {f.source === "job" && <span className="font-semibold px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text-muted)]">{f.where}</span>}
       </div>
@@ -619,11 +617,11 @@ function FindingCard({ f, tz, lateH, canManage, busy, action, questions, answers
           <div role="group" aria-label="Is this finding right?" className="inline-flex rounded-md border border-[var(--color-border-strong)] overflow-hidden">
             <button type="button" disabled={!!busy} onClick={() => { setWhy(null); if (f.auto) onKeep(); }} aria-pressed={why == null}
               title={f.auto ? "It is in the review. Keep also puts it in the lessons register." : "Kept, and in the lessons register."}
-              className={`inline-flex items-center gap-1.5 h-10 sm:h-9 px-3 text-[14px] font-semibold ${why == null ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)]" : "bg-[var(--color-surface)] text-[var(--color-text)]"}`}>
+              className={`inline-flex items-center gap-1.5 h-10 sm:h-9 px-3 text-[14px] font-semibold bg-[var(--color-surface)] ${why == null ? "text-[var(--color-text)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
               {busy === `keep:${f.key}` ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} {f.auto ? "Keep" : "Kept"}
             </button>
             <button type="button" disabled={!!busy} onClick={() => setWhy("")} aria-pressed={why != null}
-              className={`inline-flex items-center gap-1.5 h-10 sm:h-9 px-3 text-[14px] font-semibold border-l border-[var(--color-border-strong)] ${why != null ? "bg-[var(--color-surface-2)] text-[var(--color-text)]" : "bg-[var(--color-surface)] text-[var(--color-text)]"}`}>
+              className={`inline-flex items-center gap-1.5 h-10 sm:h-9 px-3 text-[14px] font-semibold border-l border-[var(--color-border-strong)] bg-[var(--color-surface)] ${why != null ? "text-[var(--color-text)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
               <X className="w-4 h-4" /> Not right
             </button>
           </div>

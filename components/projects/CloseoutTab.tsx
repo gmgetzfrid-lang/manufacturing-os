@@ -49,7 +49,10 @@ import { companyOf, handsAt, manpowerSummary, shiftCounts, type ManpowerSettings
 import PostEventReview from "@/components/projects/PostEventReview";
 import LoadingBlock from "@/components/ui/LoadingBlock";
 import { Card, heroPrimary, heroQuiet } from "@/components/ui/PageHero";
-import { bandSeg, bandSegItem } from "@/components/admin/band";
+import { bandSelect } from "@/components/admin/band";
+import { SubTabs } from "@/components/projects/SubTabs";
+import { SkeletonRows } from "@/components/ui/Skeleton";
+import { ErrorNote } from "@/components/ui/ErrorNote";
 import HelpTooltip from "@/components/ui/HelpTooltip";
 import FileThumb from "@/components/ui/FileThumb";
 import { useFileDrag } from "@/hooks/useFileDrag";
@@ -385,19 +388,15 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
       : pssrs !== undefined && !pssrOk && (phases.length ? !!firstPssrMissing : !pssrNotNeeded && pssr === null) ? "pssr"
         : allWorkDone && left === 0 ? "complete" : null;
 
-  if (!ms || !work) return <Card><LoadingBlock what="close-out" className="border-0 p-0" /></Card>;
+  if (!ms || !work) return <SkeletonRows rows={6} what="close-out" />;
 
-  // The close-out's two pages, and its two reports: the first card.
+  // The close-out's two pages as underline tabs, and its two reports.
   const nav = (
-    <div className="flex items-center gap-2 flex-wrap">
-      <div className={bandSeg} role="tablist" aria-label="Close-out">
-        {([["steps", "Steps to close"], ["review", "Post-event review"]] as const).map(([id, name]) => (
-          <button key={id} type="button" role="tab" aria-selected={view === id} onClick={() => setView(id)} data-closeout-view={id}
-            className={bandSegItem(view === id)}>{name}</button>
-        ))}
-      </div>
+    <div className="flex items-end gap-x-4 gap-y-2 flex-wrap border-b border-[var(--color-border)]">
+      <SubTabs label="Close-out" value={view} onChange={(id) => setView(id)}
+        items={[{ id: "steps" as const, label: "Steps to close", count: left || undefined }, { id: "review" as const, label: "Post-event review" }]} />
       <div className="flex-1" />
-      <div className="flex gap-2 flex-wrap">
+      <div className="flex gap-2 flex-wrap pb-2">
         <button type="button" onClick={() => onTab("reports:asbuilt")} className={btn}><FileText className="w-4 h-4 text-[var(--color-text-muted)]" /> As-built schedule</button>
         <button type="button" onClick={() => onTab("reports:closeout")} className={btn}><FileText className="w-4 h-4 text-[var(--color-text-muted)]" /> Close-out report</button>
       </div>
@@ -567,22 +566,21 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
       {/* To close this project: every step as one path. */}
       <Card label="To close the project" action={<span className="text-[14px] font-semibold text-[var(--color-text-muted)]">{left === 0 ? "All clear" : `${left} left`}</span>}>
         {readFailed.length > 0 && (
-          <div role="alert" className="mb-3 text-[14px] font-semibold text-[var(--state-overdue)] flex flex-wrap items-center gap-x-3">
-            <span>Couldn&apos;t load {readFailed.join(", ")}. What&apos;s shown may be missing items.</span>
-            <button type="button" onClick={reload} className="font-normal text-[var(--color-accent-text)] hover:underline">Try again</button>
-          </div>
+          <ErrorNote compact className="mb-3" title={`Couldn't load ${readFailed.join(", ")}.`} next="What's shown may be missing items." onRetry={reload} />
         )}
-        {err && <div role="alert" className="mb-3 text-[14px] font-semibold text-[var(--state-overdue)] whitespace-pre-line">{err}</div>}
+        {err && <ErrorNote compact className="mb-3 whitespace-pre-line" title={err} next="" />}
         <PathSteps rows={steps} />
       </Card>
 
       {/* How the job did: its numbers as a ruled table, then each phase. */}
       <Card label="How the job did" action={phases.length > 0 ? (
-        <span className={bandSeg} role="group" aria-label="Phase">
-          {[{ id: null as string | null, name: "All" }, ...phases.map((p) => ({ id: p.id as string | null, name: p.name }))].map((p) => (
-            <button key={p.id ?? "all"} type="button" aria-pressed={phasePick === p.id} onClick={() => setPhasePick(p.id)} className={bandSegItem(phasePick === p.id)}>{p.name}</button>
-          ))}
-        </span>
+        <label className="inline-flex items-center gap-2 text-[13px] text-[var(--color-text-muted)]">
+          Phase
+          <select value={phasePick ?? ""} onChange={(e) => setPhasePick(e.target.value || null)} className={bandSelect}>
+            <option value="">All phases</option>
+            {phases.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </select>
+        </label>
       ) : undefined}>
         {stats ? (
           <div className="space-y-5">
