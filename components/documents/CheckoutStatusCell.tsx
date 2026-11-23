@@ -365,9 +365,10 @@ export default function CheckoutStatusCell({
   currentUserEmail?: string;
   userRole?: string | null;
   onCheckout: (doc: DocumentRecord) => void;
-  /** In a table row: the buttons are quiet secondary buttons, always
-   *  there (a touchscreen has no hover); the row's hover only firms them
-   *  up, so the column still reads as who has what. */
+  /** In a table row: the column reads as who has what. A free document
+   *  says "Available"; pointing at the row (or tabbing into the cell)
+   *  turns that into Check out and Quick hold. A touchscreen, with no
+   *  hover, always shows the buttons. */
   quiet?: boolean;
 }) {
   const [showInfo, setShowInfo] = useState(false);
@@ -410,9 +411,35 @@ export default function CheckoutStatusCell({
     }
   };
 
-  const small = quiet
-    ? "inline-flex items-center gap-1 h-7 px-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text-muted)] group-hover:border-[var(--color-border-strong)] group-hover:text-[var(--color-text)] hover:!border-[var(--color-text-faint)] hover:bg-[var(--color-surface-2)] focus-visible:border-[var(--color-border-strong)] focus-visible:text-[var(--color-text)] disabled:opacity-50 transition-colors whitespace-nowrap"
-    : "inline-flex items-center gap-1 h-7 px-2 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors whitespace-nowrap";
+  const small = "inline-flex items-center gap-1 h-8 pointer-coarse:h-10 px-2.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-border-control)] disabled:opacity-50 transition-colors whitespace-nowrap";
+  if (!isCheckedOut && quiet) {
+    return (
+      <div className="relative flex items-center gap-1 min-h-8 group/cell">
+        <span className="text-[13px] text-[var(--color-text-faint)] group-hover:invisible group-focus-within/cell:invisible [@media(hover:none)]:hidden">Available</span>
+        <div className="absolute inset-y-0 left-0 flex items-center gap-1 invisible group-hover:visible group-focus-within/cell:visible [@media(hover:none)]:visible [@media(hover:none)]:static">
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onCheckout(docRecord); }}
+            className={small}
+          >
+            Check out
+          </button>
+          {currentUserId && docRecord.orgId && (
+            <button
+              type="button"
+              onClick={handleQuickHold}
+              disabled={quickBusy}
+              title="Quick hold: one click, no form. Marks you as working on this until end of day, then releases it. Upgrade to a full checkout any time."
+              aria-label="Quick hold until end of day"
+              className={`${small} !w-8 !px-0 justify-center`}
+            >
+              {quickBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Zap className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />}
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  }
   if (!isCheckedOut) {
     return (
       <div className="flex items-center gap-1">

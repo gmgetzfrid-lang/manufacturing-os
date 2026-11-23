@@ -167,11 +167,11 @@ export default function FindMap({ orgId, unit: unitProp, assetId, docs, candidat
     <div className={`@container relative overflow-hidden rounded-xl bg-[var(--color-surface-2)] ${className}`} data-find-map={folderMap ? "folder" : libsMap ? "libraries" : unit ? "unit" : "site"}>
       {options.length > 1 && !assetId && (
         <div role="radiogroup" aria-label="What the map shows"
-          className="absolute top-2 right-2 z-20 inline-flex items-center gap-0.5 p-0.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] shadow-sm">
+          className="absolute top-2 right-2 z-20 inline-flex items-center gap-0.5 p-0.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface-2)]">
           {options.map((o) => (
             <button key={o} type="button" role="radio" aria-checked={scope === o} onClick={() => pick(o)}
               title={o === "here" ? (folderProp ? `What is in ${folderProp.name}` : "Every library and its top folders") : o === "unit" ? `Everything in unit ${unitProp}` : "Every unit on the site"}
-              className={`h-8 px-2.5 rounded text-[13px] font-semibold whitespace-nowrap transition-colors ${scope === o ? "bg-[var(--color-main)] text-white" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
+              className={`h-8 pointer-coarse:h-10 px-2.5 rounded-md text-[13px] font-semibold whitespace-nowrap transition-colors ${scope === o ? "bg-[var(--color-surface)] text-[var(--color-text)] ring-1 ring-[var(--color-border-strong)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
               {o === "here" ? (folderProp ? "This folder" : "Libraries") : o === "unit" ? `Unit ${unitProp}` : "Whole site"}
             </button>
           ))}
@@ -181,14 +181,14 @@ export default function FindMap({ orgId, unit: unitProp, assetId, docs, candidat
       {folderMap ? (
         folderMap.tree.length <= 1 ? (
           <div className="absolute inset-0 grid place-items-center p-4 text-center text-[13px] text-[var(--color-text-muted)]">
-            {folder!.loading ? <Loader2 className="w-4 h-4 animate-spin" aria-label="Loading" /> : `Nothing is filed in ${folder!.name} yet.`}
+            {folder!.loading ? <span role="status" className="inline-flex items-center gap-2"><Loader2 aria-hidden className="w-4 h-4 animate-spin" />Loading the files</span> : `Nothing is filed in ${folder!.name} yet.`}
           </div>
         ) : (
           <>
             <EstateMap nodes={folderMap.nodes} edges={[]} tree={folderMap.tree} fileNames={folderMap.fileNames} rootUp={rootUp} query="" selectedId={selected?.id ?? null}
               highlightIds={NONE} flyTo={null} compact crumbsClassName={crumbsCls} onSelect={(n) => { setSelected(n); if (n) act(n); }} onOpen={act} />
             {folder!.loading && (
-              <div className="absolute bottom-2 left-2 z-20 inline-flex items-center gap-1.5 rounded-md bg-[var(--color-surface)] px-2 py-1 text-[13px] text-[var(--color-text-muted)] shadow-sm">
+              <div role="status" className="absolute bottom-2 left-2 z-20 inline-flex items-center gap-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1 text-[13px] text-[var(--color-text-muted)]">
                 <Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading the files
               </div>
             )}
@@ -202,7 +202,7 @@ export default function FindMap({ orgId, unit: unitProp, assetId, docs, candidat
             highlightIds={NONE} flyTo={null} compact crumbsClassName={crumbsCls} onSelect={(n) => { setSelected(n); if (n) act(n); }} onOpen={act} />
         )
       ) : !graph ? (
-        <div className="absolute inset-0 grid place-items-center text-[11px] text-[var(--color-text-faint)]"><Loader2 className="w-4 h-4 animate-spin" /></div>
+        <div role="status" className="absolute inset-0 grid place-items-center text-[13px] text-[var(--color-text-muted)]"><span className="inline-flex items-center gap-2"><Loader2 aria-hidden className="w-4 h-4 animate-spin" />Loading the site map</span></div>
       ) : graph.nodes.length === 0 ? (
         <div className="absolute inset-0 grid place-items-center p-4 text-center text-[13px] text-[var(--color-text-muted)]">No equipment in the registry yet, so there is nothing to map.</div>
       ) : (

@@ -22,7 +22,7 @@ import {
 import SignedImg from "@/components/assets/SignedImg";
 import { listAssetPhotos, type AssetPhoto } from "@/lib/assets";
 import { useRole } from "@/components/providers/RoleContext";
-import ViewTabs, { DOCUMENT_VIEWS } from "@/components/navigation/ViewTabs";
+import DocViewTabs from "@/components/documents/DocViewTabs";
 import { PageHero } from "@/components/ui/PageHero";
 import HelpTooltip from "@/components/ui/HelpTooltip";
 import FileGraph, { type FileGraphNode, type FileGraphLight, type FileGraphHandle, type FileGraphSatellite } from "@/components/documents/FileGraph";
@@ -689,7 +689,7 @@ function GraphPageInner() {
     <div className="flex flex-col lg:h-[calc(100vh_-_56px_-_var(--staged-tray-h,0px))] px-3 sm:px-4 lg:px-6 pt-4 pb-4">
       <PageHero size="md" overlap={false} className="!mb-4 !pb-6" kicker="Document control" title={mapAnswer} sub={mapSub} facts={mapFacts}
         back={cameBack ? { onClick: () => router.back(), label: `Back to ${homeLabel}` } : undefined}>
-        <ViewTabs tabs={DOCUMENT_VIEWS} hrefs={tableHref ? { "/documents": tableHref } : undefined} />
+        <DocViewTabs hrefs={tableHref ? { "/documents": tableHref } : undefined} />
         {error && (
           <div role="alert" className="mt-3 text-[14px] flex items-center gap-2 text-[var(--color-text)]">
             <AlertTriangle className={`w-4 h-4 shrink-0 ${data ? "text-[var(--state-held)]" : "text-[var(--state-overdue)]"}`} /> <span className="flex-1">{error}</span>

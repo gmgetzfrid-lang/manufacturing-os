@@ -8,13 +8,17 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { RefreshCw, Search, Download, AlertTriangle, ShieldCheck, User2 } from "lucide-react";
+import { RefreshCw, Search, Download } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { PageShell } from "@/components/ui/PageShell";
 import { PageHero, PageBody, Card, heroPrimary, heroQuiet } from "@/components/ui/PageHero";
 import { bandInput, bandInputIcon, bandSelect, bandSeg, bandSegItem } from "@/components/admin/band";
-import LoadingBlock from "@/components/ui/LoadingBlock";
-import ViewTabs, { DOCUMENT_VIEWS } from "@/components/navigation/ViewTabs";
+import { SkeletonRows } from "@/components/ui/Skeleton";
+import ErrorNote from "@/components/ui/ErrorNote";
+import { Button } from "@/components/ui/Button";
+import { useRouter } from "next/navigation";
+import { transitionPush } from "@/lib/viewTransition";
+import DocViewTabs from "@/components/documents/DocViewTabs";
 import ReviewPill from "@/components/documents/ReviewPill";
 import AckPill from "@/components/documents/AckPill";
 import EffectivePill from "@/components/documents/EffectivePill";
@@ -37,6 +41,7 @@ const asFilter = (v: string | null): RegisterFilter | null => (v && (FILTERS as 
 
 export default function RegisterPage() {
   const { activeOrgId } = useRole();
+  const router = useRouter();
   const [rows, setRows] = useState<RegisterRow[]>([]);
   const [kpis, setKpis] = useState<RegisterKpis | null>(null);
   const [capped, setCapped] = useState(false);
@@ -136,7 +141,7 @@ export default function RegisterPage() {
         sub={answerSub}
         facts={answerFacts}
         tools={
-          <button type="button" onClick={() => void refresh()} disabled={loading} className={heroQuiet} aria-label="Refresh" title="Refresh">
+          <button type="button" onClick={() => void refresh()} disabled={loading} className={heroQuiet} aria-label="Refresh" title="Refresh the register">
             <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
           </button>
         }
@@ -147,7 +152,7 @@ export default function RegisterPage() {
           </button>
         }
       >
-        <ViewTabs tabs={DOCUMENT_VIEWS} />
+        <DocViewTabs />
         {/* One compact row: each count is a filter. */}
         {kpis && (
           <div className={`${bandSeg} mt-4`} role="group" aria-label="Show">
@@ -176,22 +181,25 @@ export default function RegisterPage() {
 
       <PageBody>
       {error && (
-        <Card>
-          <div role="alert" className="text-[15px] font-semibold text-[var(--state-overdue)] flex items-center gap-2">
-            <AlertTriangle className="w-4 h-4 shrink-0" /> Couldn&apos;t load the register: {error}
-          </div>
-        </Card>
+        <ErrorNote error={error} title="The register didn't load." onRetry={() => void refresh()} />
       )}
 
       {loading ? (
-        <Card><LoadingBlock what="the register" rows={6} className="border-0 p-0" /></Card>
+        <SkeletonRows rows={8} cols={5} what="the register" />
       ) : error ? null : filtered.length === 0 ? (
-        <Card><p className="text-[15px] text-[var(--color-text-muted)]">No documents match.</p></Card>
+        <Card>
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-3">
+            <p className="flex-1 min-w-[14rem] text-[15px] text-[var(--color-text)]">No documents match.</p>
+            {(filter !== "all" || libraryId || search) && (
+              <Button variant="secondary" onClick={() => { setFilter("all"); setLibraryId(null); setSearch(""); }}>Show every document</Button>
+            )}
+          </div>
+        </Card>
       ) : (
-        <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
+        <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-[14px]">
-            <thead className="bg-[var(--color-surface-2)] max-sm:hidden">
+            <thead className="max-sm:hidden border-b border-[var(--color-border)]">
               <tr className="text-[13px] text-[var(--color-text-muted)] h-10">
                 <th className="text-left font-semibold px-3 max-sm:hidden">Document</th>
                 <th className="text-left font-semibold px-3 hidden md:table-cell">Library</th>
@@ -207,7 +215,10 @@ export default function RegisterPage() {
             </thead>
             <tbody>
               {filtered.map((r) => (
-                <tr key={r.id} className="border-t border-[var(--color-border)] hover:bg-[var(--color-surface-2)]">
+                <tr key={r.id}
+                  // The whole row opens the document; the library tag keeps its own click.
+                  onClick={(e) => { if (!(e.target as HTMLElement).closest("a,button")) transitionPush(router, `/documents/${r.libraryId}?doc=${r.id}`); }}
+                  className="cursor-pointer border-t border-[var(--color-border)] first:border-t-0 hover:bg-[var(--color-surface-2)]">
                   <td className="px-3 py-2.5">
                     <div className="flex items-center gap-1.5">
                       <Link href={`/documents/${r.libraryId}?doc=${r.id}`} className="ui-id text-[15px]">{r.number}</Link>
@@ -217,7 +228,7 @@ export default function RegisterPage() {
                     {/* Phone: the facts under the number. */}
                     <div className="sm:hidden mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px] text-[var(--color-text-muted)]">
                       <span>Rev <span className="ui-id">{r.rev || "-"}</span></span>
-                      <span className={r.owned ? "text-[var(--color-text)]" : ""}>{r.ownerName || "Admin/DocCtrl"}</span>
+                      <span className={r.owned ? "text-[var(--color-text)]" : ""}>{r.ownerName || "Doc Control"}</span>
                       {r.reviewStatus !== "none" && <ReviewPill nextReviewDate={r.nextReviewDate} compact />}
                       {r.review?.inReview && <StatusTag tone={r.review.ready ? "good" : "warn"}>In review</StatusTag>}
                       {(r.legalHold || r.dispositionEligible) && <RetentionPill retentionUntil={r.retentionUntil} dispositionState={r.dispositionEligible ? "eligible" : null} legalHold={r.legalHold} compact />}
@@ -226,15 +237,15 @@ export default function RegisterPage() {
                   <td className="px-3 py-2 hidden md:table-cell">
                     {r.libraryName
                       ? <button type="button" onClick={() => setLibraryId(libraryId === r.libraryId ? null : r.libraryId)}
-                          className={`ui-tag !font-sans ${libraryId === r.libraryId ? "!bg-[var(--color-main)] !text-white !border-[var(--color-main)]" : ""}`} aria-pressed={libraryId === r.libraryId}
+                          className={`ui-tag !font-sans ${libraryId === r.libraryId ? "!bg-[var(--color-surface)] !border-[var(--color-text-muted)]" : ""}`} aria-pressed={libraryId === r.libraryId}
                           title={libraryId === r.libraryId ? "Show every library" : `Show only ${r.libraryName}`}>
                           {r.libraryName}
                         </button>
                       : <span className="text-[var(--color-text-faint)]">-</span>}
                   </td>
                   <td className="px-3 py-2 max-sm:hidden">
-                    <span className={`inline-flex items-center gap-1 text-[13px] whitespace-nowrap ${r.owned ? "text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>
-                      <User2 className="w-3 h-3" /> {r.ownerName || "Admin/DocCtrl"}
+                    <span className={`text-[13px] whitespace-nowrap ${r.owned ? "text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>
+                      {r.ownerName || "Doc Control"}
                     </span>
                   </td>
                   <td className="px-3 py-2 max-sm:hidden font-display text-[15px] font-semibold tabular-nums">{r.rev || "-"}</td>
@@ -248,7 +259,7 @@ export default function RegisterPage() {
                   </td>
                   <td className="px-3 py-2 max-sm:hidden">
                     {r.review?.inReview
-                      ? <span className="inline-flex items-center gap-2 whitespace-nowrap text-[13px]"><StatusTag tone={r.review.ready ? "good" : "warn"}><ShieldCheck className="w-3.5 h-3.5" /> {r.review.revisionLabel || "In review"}</StatusTag><span className="tabular-nums text-[var(--color-text-muted)]">{r.review.signed} of {r.review.requiredPrimaries} signed</span></span>
+                      ? <span className="inline-flex items-center gap-2 whitespace-nowrap text-[13px]"><StatusTag tone={r.review.ready ? "good" : "warn"}>{r.review.revisionLabel || "In review"}</StatusTag><span className="tabular-nums text-[var(--color-text-muted)]">{r.review.signed} of {r.review.requiredPrimaries} signed</span></span>
                       : <span className="text-[var(--color-text-faint)]">-</span>}
                   </td>
                   <td className="px-3 py-2 max-sm:hidden">{(r.legalHold || r.dispositionEligible) ? <RetentionPill retentionUntil={r.retentionUntil} dispositionState={r.dispositionEligible ? "eligible" : null} legalHold={r.legalHold} compact /> : <span className="text-[var(--color-text-faint)]">-</span>}</td>

@@ -1,0 +1,26 @@
+/* Equipment tags inside document lists and panels, kept quiet: the type
+   icon in a muted gray (not the brand color), a hover that only tints the
+   text, and no "add photos" segment on every chip (pressing the tag itself
+   opens the photo uploader for people who add photos). A chip that has
+   photos keeps its camera and count. The chips themselves are shared
+   (components/assets/AssetTagChip); this only changes how they look here. */
+.quiet :global(.ui-tag) span[aria-hidden] {
+  color: var(--color-text-faint);
+}
+.quiet :global(.ui-tag) > button:hover,
+.quiet :global(.ui-tag) > button:focus-visible {
+  background: var(--color-surface);
+  color: var(--color-accent-text);
+}
+.quiet :global(.ui-tag) > button:hover span[aria-hidden] {
+  color: var(--color-accent-text);
+}
+.quiet :global(.ui-tag) > button + button {
+  border-left-color: var(--color-border);
+}
+.quiet :global(.ui-tag) > button[aria-label^="Add photos"] {
+  display: none;
+}
+.quiet :global(.ui-tag) > button:first-child:has(+ button[aria-label^="Add photos"]) {
+  padding-right: 0.5rem;
+}

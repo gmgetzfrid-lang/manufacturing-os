@@ -49,43 +49,47 @@ export default function ColumnHeaderMenu({ onAdd, isController }: ColumnHeaderMe
 
   return (
     <div className="relative inline-block text-left" ref={menuRef}>
-      <button 
+      <button
+        type="button"
         onClick={() => setIsOpen(!isOpen)}
-        className="flex items-center justify-center p-1.5 rounded-lg text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors"
-        title="Add Column"
+        aria-haspopup="menu"
+        aria-expanded={isOpen}
+        aria-label="Add a column"
+        className="w-8 h-8 grid place-items-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors"
+        title="Add a column"
       >
         <Plus className="w-4 h-4" />
-        <span className="ml-2 text-[13px] font-semibold hidden sm:inline">Add Column</span>
       </button>
 
       {isOpen && (
-        <div className="absolute right-0 top-full mt-2 w-56 origin-top-right rounded-xl bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] shadow-lg ring-1 ring-black/5 focus:outline-none z-50 overflow-hidden animate-in fade-in zoom-in-95 duration-150">
-          <div className="p-2">
-            <h4 className="px-3 py-2 text-[13px] font-semibold text-[var(--color-text-faint)] ">Select Type</h4>
-            <div className="space-y-1">
+        <div role="menu" aria-label="Add a column" className="ui-float ui-float-in absolute right-0 top-full mt-1.5 w-56 origin-top-right rounded-xl bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] z-50 overflow-hidden">
+          <div className="py-1">
+            <div className="px-3 pt-1.5 pb-1 text-[12px] font-normal text-[var(--color-text-muted)]">Add a column of</div>
+            <div>
               {FIELD_TYPES.map((t) => {
                 const Icon = t.icon;
                 return (
                   <button
                     key={t.type}
                     onClick={() => { onAdd(t.type); setIsOpen(false); }}
-                    className="w-full flex items-center px-3 py-2 text-sm text-[var(--color-text)] rounded-lg hover:bg-[var(--color-surface-2)] transition-colors group"
+                    role="menuitem"
+                    className="w-full flex items-center gap-2.5 px-3 min-h-10 text-[14px] font-normal text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors"
                   >
-                    <div className="mr-3 p-1.5 bg-[var(--color-surface-2)] rounded-md text-[var(--color-text-faint)] group-hover:text-[var(--color-text)] group-hover:bg-[var(--color-surface-2)]">
-                      <Icon className="w-4 h-4" />
-                    </div>
+                    <Icon aria-hidden className="w-4 h-4 text-[var(--color-text-faint)]" />
                     {t.label}
                   </button>
                 );
               })}
             </div>
           </div>
-          <div className="border-t border-[var(--color-border)] p-2 bg-[var(--color-surface-2)]">
-             <button 
-               className="w-full text-center text-[13px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-accent-hover)] py-1"
+          <div className="border-t border-[var(--color-border)] py-1">
+             <button
+               type="button"
+               role="menuitem"
+               className="w-full flex items-center px-3 min-h-10 text-[14px] font-normal text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
                onClick={() => { onAdd('text'); setIsOpen(false); }} // Should trigger full wizard step 1 ideally, but text is fine default
              >
-               More...
+               Other kinds…
              </button>
           </div>
         </div>

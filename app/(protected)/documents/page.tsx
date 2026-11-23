@@ -11,9 +11,6 @@ import {
   Search,
   Settings,
   RefreshCw,
-  AlertTriangle,
-  Eye,
-  Lock,
   Loader2,
   MoreVertical,
   Trash2,
@@ -21,19 +18,22 @@ import {
   Palette,
   ChevronRight,
   X,
-  Map as MapIcon,
 } from "lucide-react";
 import { useFind } from "@/components/find/useFind";
 import FindPanel, { findMapState } from "@/components/find/FindPanel";
 import FindMap from "@/components/find/FindMap";
 import { folderForUnit } from "@/lib/findEverywhere";
 import { withParams } from "@/lib/docsPlace";
-import RouteLoader from "@/components/ui/RouteLoader";
+import { SkeletonRows } from "@/components/ui/Skeleton";
+import ErrorNote from "@/components/ui/ErrorNote";
+import { friendlyError } from "@/lib/friendlyError";
+import { humanDate } from "@/components/documents/StatusTag";
+import { onTransitionClick, transitionNavigate } from "@/lib/viewTransition";
 import NodeCover from "@/components/documents/NodeCover";
 import CustomizeNodeModal, { type CustomizeValue } from "@/components/documents/CustomizeNodeModal";
-import ViewTabs, { DOCUMENT_VIEWS } from "@/components/navigation/ViewTabs";
+import DocViewTabs from "@/components/documents/DocViewTabs";
 import { PageShell } from "@/components/ui/PageShell";
-import { PageHero, PageBody, Card, heroPrimary, heroQuiet } from "@/components/ui/PageHero";
+import { PageHero, PageBody, Card, heroQuiet } from "@/components/ui/PageHero";
 import { bandInput, bandInputIcon } from "@/components/admin/band";
 import HelpTooltip from "@/components/ui/HelpTooltip";
 import { appAlert, appConfirm } from "@/components/providers/DialogProvider";
@@ -88,6 +88,43 @@ export default function DocumentsHomePage() {
         .eq("org_id", activeOrgId).eq("library_id", id).neq("status", "Archived");
       return [id, count ?? 0] as const;
     })).then((pairs) => { if (alive) setLibCounts(new Map(pairs)); }).catch(() => undefined);
+    return () => { alive = false; };
+  }, [activeOrgId, libIdsKey]);
+  // Two facts that say how the files stand today: how many are checked out
+  // right now, and how many changed in the last seven days.
+  const [orgFacts, setOrgFacts] = useState<{ out: number; week: number } | null>(null);
+  useEffect(() => {
+    if (!activeOrgId || !libIdsKey) return;
+    let alive = true;
+    const since = new Date(Date.now() - 7 * 86400e3).toISOString();
+    const base = () => supabase.from("documents").select("id", { count: "exact", head: true })
+      .eq("org_id", activeOrgId).neq("status", "Archived");
+    void Promise.all([
+      base().not("checked_out_by", "is", null),
+      base().gte("updated_at", since),
+    ]).then(([a, b]) => {
+      if (alive && !a.error && !b.error) setOrgFacts({ out: a.count ?? 0, week: b.count ?? 0 });
+    }).catch(() => undefined);
+    return () => { alive = false; };
+  }, [activeOrgId, libIdsKey]);
+  // What changed last in each library: the most recently updated document,
+  // its number and rev, and when (so a row says more than a count).
+  const [lastChange, setLastChange] = useState<Map<string, { number: string; rev: string | null; at: string }>>(new Map());
+  useEffect(() => {
+    if (!activeOrgId || !libIdsKey) return;
+    let alive = true;
+    void Promise.all(libIdsKey.split(",").map(async (id) => {
+      const { data } = await supabase.from("documents").select("document_number,title,name,rev,updated_at")
+        .eq("org_id", activeOrgId).eq("library_id", id).neq("status", "Archived")
+        .order("updated_at", { ascending: false }).limit(1);
+      const r = (data?.[0] ?? null) as { document_number?: string | null; title?: string | null; name?: string | null; rev?: string | null; updated_at?: string | null } | null;
+      return [id, r?.updated_at ? { number: r.document_number || r.title || r.name || "A document", rev: r.rev ?? null, at: r.updated_at } : null] as const;
+    })).then((pairs) => {
+      if (!alive) return;
+      const m = new Map<string, { number: string; rev: string | null; at: string }>();
+      for (const [id, v] of pairs) if (v) m.set(id, v);
+      setLastChange(m);
+    }).catch(() => undefined);
     return () => { alive = false; };
   }, [activeOrgId, libIdsKey]);
   // The map under the list: each library and its top folders, named as in
@@ -274,40 +311,33 @@ export default function DocumentsHomePage() {
   }
 
   const emptyState = (
-    <Card>
-      <div className="flex items-start gap-3">
-        <span className="ui-icon-tile" aria-hidden><Library className="h-5 w-5" /></span>
-        <div className="flex-1">
-          <h2 className="text-[15px] font-semibold text-[var(--color-text)]">No libraries you can open</h2>
-          <p className="text-[15px] text-[var(--color-text-muted)] mt-0.5">
-            {isController
-              ? "Create the first one in Library admin."
-              : "Only Doc Control or an Admin can give you access."}
-          </p>
-        </div>
-      </div>
-    </Card>
+    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-6 flex flex-wrap items-center gap-x-4 gap-y-3">
+      <p className="flex-1 min-w-[16rem] text-[15px] text-[var(--color-text)]">
+        {isController ? "No libraries yet. Libraries hold your drawings, procedures and standards." : "No libraries you can open yet. Doc Control or an Admin can give you access."}
+      </p>
+      {isController && <Link href="/admin/libraries" className={heroQuiet}>Set up a library</Link>}
+    </div>
   );
 
-  if (loading || (!loadedOnce && !error && !!userEmail)) {
-    return <RouteLoader label="Loading libraries…" />;
-  }
+  const listLoading = loading || (!loadedOnce && !error && !!userEmail);
 
   const openLib = (id: string) => {
     setPendingLibId(id);
     startTransition(() => { router.push(`/documents/${id}`); });
   };
 
-  // One row per library: what it is, how many documents, who can read it.
-  // The whole row opens it; the name is the real link.
+  // One row per library: what it is, how many documents, what changed last
+  // and who can read it. The whole row opens it; the name is the real link.
+  // Under 640 px each row is a card with the same facts.
   const libraryRows = (list: UiLibrary[]) => (
-    <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
-      <table className="w-full text-[15px]">
-        <thead className="bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text-muted)] text-left max-sm:hidden">
+    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
+      <table className="w-full text-[14px]">
+        <thead className="text-[13px] text-[var(--color-text-muted)] text-left max-sm:hidden border-b border-[var(--color-border)]">
           <tr>
             <th className="font-semibold px-4 h-10">Library</th>
-            <th className="font-semibold px-4 text-right w-32">Documents</th>
-            <th className="font-semibold px-4 w-48">Access</th>
+            <th className="font-semibold px-4 text-right w-28">Documents</th>
+            <th className="font-semibold px-4 w-64 max-lg:hidden">Last change</th>
+            <th className="font-semibold px-4 w-44">Access</th>
             <th className="w-14"><span className="sr-only">Actions</span></th>
           </tr>
         </thead>
@@ -316,41 +346,53 @@ export default function DocumentsHomePage() {
             const isPending = pendingLibId === lib._id;
             const menuOpen = menuOpenForLibId === lib._id;
             const n = libCounts.get(lib._id!);
+            const last = lastChange.get(lib._id!);
             const custom = !!(lib.color || lib.icon || lib.coverImageUrl);
             const access = !lib._canRead && !isController
-              ? <span className="ui-pill is-warn"><AlertTriangle className="w-3.5 h-3.5" /> No access</span>
-              : lib._isPublicRead ? <span className="ui-pill is-muted"><Eye className="w-3.5 h-3.5" /> Everyone can read</span>
-              : <span className="ui-pill"><Lock className="w-3.5 h-3.5" /> Controlled</span>;
+              ? <span className="ui-pill is-warn">No access</span>
+              : lib._isPublicRead ? <span className="ui-pill is-muted">Everyone can read</span>
+              : <span className="ui-pill is-muted !text-[var(--color-text)]">Controlled</span>;
+            const lastLine = last ? (
+              <span className="min-w-0 flex items-baseline gap-2">
+                <span className="truncate text-[var(--color-text)]">
+                  <span className="ui-id">{last.number}</span>
+                  {last.rev ? <span className="text-[var(--color-text-muted)]"> rev <span className="ui-id text-[var(--color-text)]">{last.rev}</span></span> : null}
+                </span>
+                <span className="shrink-0 text-[13px] text-[var(--color-text-muted)] tabular-nums">{humanDate(last.at)}</span>
+              </span>
+            ) : null;
             return (
               <tr key={lib._id} data-doc-lib={lib._id}
-                onClick={() => { if (!menuOpen) openLib(lib._id!); }}
+                onClick={() => { if (!menuOpen) transitionNavigate(() => openLib(lib._id!)); }}
                 className={`group cursor-pointer hover:bg-[var(--color-surface-2)] transition-colors ${isPending ? "opacity-60" : ""}`}>
                 <td className="px-4 py-3">
                   <span className="flex items-center gap-3 min-w-0">
                     {custom
                       ? <NodeCover appearance={{ color: lib.color, icon: lib.icon, coverImageUrl: lib.coverImageUrl, coverTint: lib.coverTint }}
-                          className="w-9 h-9 shrink-0" rounded="rounded-lg" iconSize="w-[18px] h-[18px]" />
-                      : <span className="ui-icon-tile" aria-hidden><Library className="w-[18px] h-[18px]" /></span>}
+                          className="w-8 h-8 shrink-0" rounded="rounded-lg" iconSize="w-4 h-4" />
+                      : <Library aria-hidden className="w-[18px] h-[18px] shrink-0 text-[var(--color-text-faint)]" />}
                     <span className="min-w-0">
                       <span className="flex items-center gap-1.5">
                         <Link href={`/documents/${lib._id}`}
-                          onClick={(e) => { e.preventDefault(); e.stopPropagation(); openLib(lib._id!); }}
+                          onClick={(e) => { e.stopPropagation(); onTransitionClick(e, () => openLib(lib._id!)); if (!e.defaultPrevented) setPendingLibId(lib._id!); }}
                           className="truncate text-[16px] font-semibold text-[var(--color-text)] group-hover:text-[var(--color-accent-text)] hover:underline underline-offset-2">
                           {lib.name}
                         </Link>
-                        {isPending && <Loader2 className="w-3.5 h-3.5 shrink-0 animate-spin text-[var(--color-text-faint)]" />}
+                        {isPending && <Loader2 aria-label="Opening" className="w-3.5 h-3.5 shrink-0 animate-spin text-[var(--color-text-faint)]" />}
                       </span>
                       {lib.description && <span className="block text-[13px] text-[var(--color-text-muted)] truncate">{lib.description}</span>}
                       {/* Phone: the facts under the name. */}
-                      <span className="sm:hidden flex items-center gap-3 mt-0.5 text-[13px] text-[var(--color-text-muted)]">
-                        {n != null && <span className="inline-flex items-center gap-1"><span className="ui-count">{n.toLocaleString()}</span> documents</span>}
+                      <span className="sm:hidden flex flex-wrap items-center gap-x-3 gap-y-0.5 mt-1 text-[13px] text-[var(--color-text-muted)]">
+                        {n != null && <span className="tabular-nums">{n.toLocaleString()} document{n === 1 ? "" : "s"}</span>}
                         {access}
                       </span>
+                      {last && <span className="sm:hidden flex mt-0.5 text-[13px] min-w-0">{lastLine}</span>}
                     </span>
                   </span>
                 </td>
-                <td className="px-4 py-3 text-right max-sm:hidden">{n != null ? <span className={`ui-count ${n > 0 ? "" : "!bg-[var(--color-surface-2)] !text-[var(--color-text-muted)]"}`}>{n.toLocaleString()}</span> : ""}</td>
-                <td className="px-4 py-3 text-[14px] text-[var(--color-text)] whitespace-nowrap max-sm:hidden">{access}</td>
+                <td className={`px-4 py-3 text-right tabular-nums max-sm:hidden ${n ? "text-[var(--color-text)]" : "text-[var(--color-text-faint)]"}`}>{n != null ? n.toLocaleString() : ""}</td>
+                <td className="px-4 py-3 max-lg:hidden">{lastLine ?? <span className="text-[var(--color-text-faint)]">Nothing filed yet</span>}</td>
+                <td className="px-4 py-3 whitespace-nowrap max-sm:hidden">{access}</td>
                 <td className="pr-3 py-3 text-right">
                   {isController ? (
                     <LibraryAdminMenu inline
@@ -365,7 +407,7 @@ export default function DocumentsHomePage() {
                         setDeletingLibId(lib._id!);
                         try {
                           const { error } = await supabase.from("libraries").delete().eq("id", lib._id!);
-                          if (error) { await appAlert({ message: `Delete failed: ${error.message}`, tone: "danger" }); return; }
+                          if (error) { await appAlert({ message: `Couldn't delete ${lib.name}. ${friendlyError(error)}`, tone: "danger" }); return; }
                           setLibraries((arr) => arr.filter((l) => l._id !== lib._id));
                         } finally {
                           setDeletingLibId(null);
@@ -373,7 +415,7 @@ export default function DocumentsHomePage() {
                         }
                       }}
                     />
-                  ) : <ChevronRight className="w-4 h-4 inline text-[var(--color-text-faint)] group-hover:text-[var(--color-text-muted)]" />}
+                  ) : <ChevronRight aria-hidden className="w-4 h-4 inline text-[var(--color-text-faint)] group-hover:text-[var(--color-text-muted)]" />}
                 </td>
               </tr>
             );
@@ -387,21 +429,22 @@ export default function DocumentsHomePage() {
   // The answer: how much is filed, and where. Counts arrive after the list.
   const countsIn = libraries.length > 0 && libraries.every((l) => libCounts.has(l._id));
   const nLibs = `${libraries.length} librar${libraries.length === 1 ? "y" : "ies"}`;
-  const answer = libraries.length === 0 ? (error ? "Libraries didn't load." : "No libraries yet.")
+  const answer = listLoading ? "Libraries" : libraries.length === 0 ? (error ? "Libraries didn't load." : "No libraries yet.")
     : countsIn && totalDocs > 0 ? `${totalDocs.toLocaleString()} document${totalDocs === 1 ? "" : "s"}.`
     : `${nLibs}.`;
-  const answerSub = libraries.length === 0
-    ? (error ? "Refresh to try again. If it keeps happening, ask an Admin to check your access to this workspace." : isController ? "Set one up in Library admin." : "You don't have access to a controlled library yet.")
+  const answerSub = listLoading ? undefined : libraries.length === 0
+    ? (error ? undefined : isController ? "Set one up in Library admin." : "You don't have access to a controlled library yet.")
     : countsIn && totalDocs === 0 ? `Nothing filed yet${orgName ? ` at ${orgName}` : ""}.`
     : orgName ?? undefined;
-  // The numbers behind it: libraries, documents, how many are controlled.
-  const controlled = libraries.filter((l) => !l._isPublicRead).length;
+  // The numbers behind it, small (the title carries the count): the other
+  // count, what is checked out now and what changed this week.
   const docsAnswer = countsIn && totalDocs > 0;
   const answerFacts = libraries.length === 0 ? undefined : [
-    ...(docsAnswer ? [{ label: "Libraries", value: libraries.length.toLocaleString() }] : []),
-    ...(countsIn && !docsAnswer ? [{ label: "Documents", value: totalDocs.toLocaleString() }] : []),
-    { label: "Controlled", value: controlled.toLocaleString() },
-    { label: "Open to all", value: (libraries.length - controlled).toLocaleString() },
+    docsAnswer ? { label: "Libraries", value: libraries.length.toLocaleString() } : { label: "Documents", value: countsIn ? totalDocs.toLocaleString() : "-" },
+    ...(orgFacts ? [
+      { label: "Checked out now", value: orgFacts.out.toLocaleString() },
+      { label: "Changed this week", value: orgFacts.week.toLocaleString() },
+    ] : []),
   ];
 
   return (
@@ -411,27 +454,30 @@ export default function DocumentsHomePage() {
         title={answer}
         sub={answerSub}
         facts={answerFacts}
-        tools={
+        factsHero="none"
+        tools={<>
           <button
             onClick={async () => {
               setRefreshing(true);
               await fetchLibraries({ silent: true });
               setRefreshing(false);
             }}
-            title="Refresh"
+            title="Refresh the libraries"
             aria-label="Refresh"
             className={heroQuiet}
           >
             <RefreshCw className={`w-4 h-4 ${refreshing ? "animate-spin" : ""}`} />
           </button>
-        }
-        primary={isController ? (
-          <Link href="/admin/libraries" className={heroPrimary}>
-            <Settings className="h-4 w-4" /> Library admin
-          </Link>
-        ) : undefined}
+          {/* Setting libraries up is Doc Control's, now and then: a quiet
+              tool, not the page's main action. */}
+          {isController && (
+            <Link href="/admin/libraries" className={heroQuiet} title="Create libraries, set their columns and who can read them">
+              <Settings className="h-4 w-4" /><span className="max-sm:hidden">Library admin</span>
+            </Link>
+          )}
+        </>}
       >
-        <ViewTabs tabs={DOCUMENT_VIEWS} />
+        <DocViewTabs />
         <form role="search" onSubmit={(e) => e.preventDefault()} className="relative mt-4">
           <Search className={bandInputIcon} />
           <input
@@ -459,9 +505,8 @@ export default function DocumentsHomePage() {
           <>
             {filtered.length > 0 && (
               <section>
-                <h2 className="flex items-center gap-2.5 font-display text-[19px] leading-tight font-semibold text-[var(--color-heading)] mb-2.5">
-                  <span className="ui-icon-tile is-sm is-solid" aria-hidden><Library className="w-4 h-4" /></span>
-                  Libraries <span className="ui-count is-solid font-sans">{filtered.length}</span>
+                <h2 className="flex items-baseline gap-2 font-display text-[20px] leading-tight font-semibold text-[var(--color-heading)] mb-3">
+                  Libraries <span className="font-sans text-[14px] font-normal tabular-nums text-[var(--color-text-muted)]">{filtered.length}</span>
                 </h2>
                 {libraryRows(filtered)}
               </section>
@@ -472,23 +517,23 @@ export default function DocumentsHomePage() {
                 onOpenHref={(href) => router.push(href)} />
             </Card>
           </>
+        ) : listLoading ? (
+          <section>
+            <h2 className="font-display text-[20px] leading-tight font-semibold text-[var(--color-heading)] mb-3">Libraries</h2>
+            <SkeletonRows rows={4} cols={3} what="libraries" />
+          </section>
         ) : libraries.length === 0 ? (error ? (
-          <Card>
-            <p role="alert" className="text-[15px] text-[var(--state-overdue)] flex items-center gap-2 font-semibold">
-              <AlertTriangle className="h-4 w-4" /> {error}
-            </p>
-          </Card>
+          <ErrorNote error={error} title="The libraries didn't load." onRetry={() => void fetchLibraries()} />
         ) : emptyState) : (
           <section>
-            <h2 className="flex items-center gap-2.5 font-display text-[19px] leading-tight font-semibold text-[var(--color-heading)] mb-2.5">
-              <span className="ui-icon-tile is-sm is-solid" aria-hidden><Library className="w-4 h-4" /></span>
-              Libraries <span className="ui-count is-solid font-sans">{libraries.length}</span>
+            <h2 className="flex items-baseline gap-2 font-display text-[20px] leading-tight font-semibold text-[var(--color-heading)] mb-3">
+              Libraries <span className="font-sans text-[14px] font-normal tabular-nums text-[var(--color-text-muted)]">{libraries.length}</span>
             </h2>
             {libraryRows(libraries)}
           </section>
         )}
 
-        <Card label={<span className="inline-flex items-center gap-2.5 text-[var(--color-heading)]"><span className="ui-icon-tile is-sm is-solid" aria-hidden><MapIcon className="w-4 h-4" /></span>Map <HelpTooltip>Tap a library or a folder to open it. Whole site shows the units and their equipment.</HelpTooltip></span>} className="min-w-0">
+        <Card label={<span className="inline-flex items-center gap-2 text-[var(--color-heading)]">Map <HelpTooltip>Tap a library or a folder to open it. Whole site shows the units and their equipment.</HelpTooltip></span>} className="min-w-0">
           <FindMap orgId={activeOrgId} unit={searching ? ms.unit : null}
             libraries={mapLibraries}
             onPlace={(lib, folder) => router.push(folder ? `/documents/${lib}?folderId=${folder}` : `/documents/${lib}`)}
@@ -560,43 +605,40 @@ function LibraryAdminMenu({
       {open && (
         <>
           <div className="fixed inset-0 z-[5]" onClick={(e) => { e.stopPropagation(); onClose(); }} />
-          <div className="absolute right-0 top-full mt-1 w-56 text-left bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] ring-1 ring-black/5 rounded-xl shadow-lg overflow-hidden z-[10] animate-in fade-in zoom-in-95 duration-150 origin-top-right">
-            <div className="px-3 py-2 border-b border-[var(--color-border)] bg-[var(--color-surface-2)]">
-              <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">Admin</div>
-              <div className="text-[14px] font-semibold text-[var(--color-text)] truncate">{libName}</div>
-            </div>
+          <div role="menu" className="ui-float ui-float-in absolute right-0 top-full mt-1 w-60 text-left bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] rounded-xl overflow-hidden z-[10] origin-top-right py-1">
+            <div className="px-3 pt-1.5 pb-1 text-[12px] text-[var(--color-text-muted)] truncate">{libName}</div>
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); onClose(); onCustomize(); }}
-              className="w-full text-left flex items-center gap-2 px-3 py-2 text-[14px] font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
+              role="menuitem" className="w-full text-left flex items-center gap-2.5 px-3 min-h-10 text-[14px] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
             >
-              <Palette className="w-3.5 h-3.5" /> Customize appearance
+              <Palette className="w-4 h-4 text-[var(--color-text-faint)]" /> Customize appearance
             </button>
             <Link
               href={`/admin/libraries?lib=${libId}`}
               onClick={(e) => { e.stopPropagation(); onClose(); }}
-              className="flex items-center gap-2 px-3 py-2 text-[14px] font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
+              role="menuitem" className="flex items-center gap-2.5 px-3 min-h-10 text-[14px] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
             >
-              <Settings className="w-3.5 h-3.5" /> Configure (name, columns)
+              <Settings className="w-4 h-4 text-[var(--color-text-faint)]" /> Name and columns
             </Link>
             <Link
               href={`/admin/permissions?lib=${libId}`}
               onClick={(e) => { e.stopPropagation(); onClose(); }}
-              className="flex items-center gap-2 px-3 py-2 text-[14px] font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
+              role="menuitem" className="flex items-center gap-2.5 px-3 min-h-10 text-[14px] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
             >
-              <KeyRound className="w-3.5 h-3.5" /> Permissions
+              <KeyRound className="w-4 h-4 text-[var(--color-text-faint)]" /> Who can open it
             </Link>
             <button
               type="button"
               onClick={async (e) => {
                 e.stopPropagation();
-                if (!(await appConfirm({ message: `Delete library "${libName}"? Documents inside it will be orphaned. This action is audited and irreversible.`, tone: "danger" }))) return;
+                if (!(await appConfirm({ title: `Delete the ${libName} library?`, message: "Its documents stay in the workspace but no longer belong to a library. The delete is recorded in the audit log and can't be undone.", confirmLabel: "Delete library", tone: "danger" }))) return;
                 onDelete();
               }}
               disabled={deleting}
-              className="w-full text-left flex items-center gap-2 px-3 py-2 text-[14px] font-medium text-[var(--state-overdue)] hover:bg-[var(--color-surface-2)] border-t border-[var(--color-border)] disabled:opacity-50"
+              role="menuitem" className="w-full text-left flex items-center gap-2.5 px-3 min-h-10 mt-1 text-[14px] text-[var(--state-overdue-text)] hover:bg-[var(--color-surface-2)] border-t border-[var(--color-border)] disabled:opacity-50"
             >
-              {deleting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+              {deleting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
               {deleting ? "Deleting…" : "Delete library"}
             </button>
           </div>

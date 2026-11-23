@@ -14,7 +14,7 @@ import { PageShell } from "@/components/ui/PageShell";
 import { PageHero, PageBody, Card, heroQuiet } from "@/components/ui/PageHero";
 import { bandSeg, bandSegItem, bandSelect } from "@/components/admin/band";
 import HelpTooltip from "@/components/ui/HelpTooltip";
-import ViewTabs, { DOCUMENT_VIEWS } from "@/components/navigation/ViewTabs";
+import DocViewTabs from "@/components/documents/DocViewTabs";
 import { supabase } from "@/lib/supabase";
 import { fetchAllRows } from "@/lib/fetchAllRows";
 import {
@@ -130,7 +130,7 @@ export default function ConnectorChecksPage() {
           </button>
         ) : undefined}
       >
-        <ViewTabs tabs={DOCUMENT_VIEWS} />
+        <DocViewTabs />
         {checks && (
           <div className="mt-4 flex flex-wrap items-center gap-2">
             <div className={bandSeg} role="tablist" aria-label="Checks">

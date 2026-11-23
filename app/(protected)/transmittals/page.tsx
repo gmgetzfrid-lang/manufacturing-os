@@ -12,8 +12,8 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  Send, Loader2, RefreshCw, AlertTriangle, Plus, Search, X, FileText,
-  Printer, CheckCircle2, Trash2, Ban, Pencil, Package, Building2, Mail, User,
+  Send, Loader2, RefreshCw, Plus, Search, X, FileText,
+  Printer, CheckCircle2, Trash2, Ban, Pencil, Building2, Mail, User,
   Link as LinkIcon,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
@@ -27,10 +27,14 @@ import { Button } from "@/components/ui/Button";
 import { Input, Select, Textarea } from "@/components/ui/Field";
 import { Spinner } from "@/components/ui/Spinner";
 import { appConfirm, appPrompt } from "@/components/providers/DialogProvider";
-import ViewTabs, { DOCUMENT_VIEWS } from "@/components/navigation/ViewTabs";
+import DocViewTabs from "@/components/documents/DocViewTabs";
 import DocThumb from "@/components/documents/DocThumb";
 import DocHoverPreview from "@/components/documents/DocHoverPreview";
-import LoadingBlock from "@/components/ui/LoadingBlock";
+import { SkeletonRows } from "@/components/ui/Skeleton";
+import ErrorNote from "@/components/ui/ErrorNote";
+import CopyId from "@/components/ui/CopyId";
+import { friendlyError } from "@/lib/friendlyError";
+import { copyText } from "@/lib/clipboard";
 import { useEscapeClose } from "@/components/documents/useEscapeClose";
 import { useDraft } from "@/hooks/useDraft";
 import {
@@ -154,7 +158,7 @@ export default function TransmittalsPage() {
       showToast({ type: "success", title: "Receipt recorded", message: `${t.number} marked acknowledged.` });
       await refresh();
     } catch (e) {
-      showToast({ type: "error", title: "Couldn't record receipt", message: (e as Error).message });
+      showToast({ type: "error", title: "Couldn't record receipt", message: friendlyError(e) });
     } finally { setBusyId(null); }
   };
 
@@ -170,7 +174,7 @@ export default function TransmittalsPage() {
       showToast({ type: "success", title: "Transmittal voided", message: `${t.number} marked voided.` });
       await refresh();
     } catch (e) {
-      showToast({ type: "error", title: "Couldn't void", message: (e as Error).message });
+      showToast({ type: "error", title: "Couldn't void", message: friendlyError(e) });
     } finally { setBusyId(null); }
   };
 
@@ -186,30 +190,28 @@ export default function TransmittalsPage() {
       showToast({ type: "success", title: "Draft deleted", message: `${t.number} removed.` });
       await refresh();
     } catch (e) {
-      showToast({ type: "error", title: "Couldn't delete", message: (e as Error).message });
+      showToast({ type: "error", title: "Couldn't delete", message: friendlyError(e) });
     } finally { setBusyId(null); }
   };
 
   const needsMigration = error?.toLowerCase().includes("aren't set up") || error?.toLowerCase().includes("migration");
 
-  if (loading && !list) {
-    return <div className="p-4 sm:p-6"><LoadingBlock what="the transmittals" rows={5} /></div>;
-  }
 
   // The answer: how many went out, and how many still owe a receipt.
   const all = list ?? [];
   const waiting = all.filter((t) => t.status === "issued").length;
   const drafts = all.filter((t) => t.status === "draft").length;
   const received = all.filter((t) => t.status === "acknowledged").length;
-  const answer = error && all.length === 0 ? "Transmittals didn't load."
+  const answer = loading && !list ? "Transmittals"
+    : error && all.length === 0 ? "Transmittals didn't load."
     : all.length === 0 ? "No transmittals yet."
     : waiting > 0 ? `${waiting.toLocaleString()} waiting on a receipt.`
     : `${all.length.toLocaleString()} transmittal${all.length === 1 ? "" : "s"}.`;
   const answerSub = "Documents issued to others, each with a number, a cover sheet and a receipt.";
   // The numbers behind it, in ruled cells.
   const answerFacts = all.length === 0 ? undefined : [
-    ...(waiting > 0 ? [{ label: "Total", value: all.length.toLocaleString() }] : []),
-    { label: "Old rev out", value: staleIds.size.toLocaleString(), tone: staleIds.size > 0 ? "bad" as const : undefined },
+    { label: "Old rev out", value: staleIds.size.toLocaleString(), tone: staleIds.size > 0 ? "bad" as const : undefined, hero: staleIds.size > 0 },
+    ...(waiting > 0 ? [{ label: "In all", value: all.length.toLocaleString() }] : []),
     { label: "Drafts", value: drafts.toLocaleString() },
     { label: "Received", value: received.toLocaleString() },
   ];
@@ -221,8 +223,9 @@ export default function TransmittalsPage() {
         title={answer}
         sub={answerSub}
         facts={answerFacts}
+        factsHero={staleIds.size > 0 ? "auto" : "none"}
         tools={
-          <button type="button" onClick={() => void refresh()} disabled={loading} className={heroQuiet} aria-label="Refresh" title="Refresh">
+          <button type="button" onClick={() => void refresh()} disabled={loading} className={heroQuiet} aria-label="Refresh" title="Refresh the register">
             <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
           </button>
         }
@@ -232,21 +235,16 @@ export default function TransmittalsPage() {
           </button>
         }
       >
-        <ViewTabs tabs={DOCUMENT_VIEWS} />
+        <DocViewTabs />
       </PageHero>
 
       <PageBody>
-        {error && (
-          <Card>
-            <div role="alert" className="text-[15px] flex items-start gap-2 text-[var(--color-text)]">
-              <AlertTriangle className={`w-4 h-4 mt-0.5 shrink-0 ${needsMigration ? "text-[var(--state-held)]" : "text-[var(--state-overdue)]"}`} />
-              <div>
-                <div className="font-semibold">{needsMigration ? "Transmittals aren't set up in this workspace yet" : "Couldn't load the transmittals"}</div>
-                <div className="mt-0.5 text-[14px] text-[var(--color-text-muted)]">{error}</div>
-              </div>
-            </div>
-          </Card>
-        )}
+        {loading && !list && <SkeletonRows rows={4} cols={4} what="transmittals" />}
+        {error && (needsMigration ? (
+          <ErrorNote title="Transmittals aren't set up in this workspace yet." next="An admin turns them on by running the database update for transmittals." />
+        ) : (
+          <ErrorNote error={error} title="The transmittals didn't load." onRetry={() => void refresh()} />
+        ))}
         {highlightId && list && !list.some((t) => t.id === highlightId) && !error && (
           <Card>
             <p className="text-[15px] text-[var(--color-text)]">
@@ -255,22 +253,20 @@ export default function TransmittalsPage() {
           </Card>
         )}
 
-        {!error && (list?.length ?? 0) === 0 ? (
+        {!error && list && list.length === 0 ? (
           <Card>
-            <p className="flex items-center gap-2.5 text-[15px] text-[var(--color-text-muted)]">
-              <span className="ui-icon-tile" aria-hidden><Send className="w-5 h-5" /></span>
-              Nothing on the register. Use New transmittal to send the first one.
+            <p className="text-[15px] text-[var(--color-text)]">
+              Nothing on the register yet. A transmittal sends documents at their current revision, with a cover sheet and a receipt.
             </p>
           </Card>
         ) : (list ?? []).length > 0 && (
           <section>
-            <h2 className="flex items-center gap-2.5 font-display text-[19px] leading-tight font-semibold text-[var(--color-heading)] mb-2.5">
-              <span className="ui-icon-tile is-sm is-solid" aria-hidden><Send className="w-4 h-4" /></span>
-              Register <span className="ui-count is-solid font-sans">{(list ?? []).length}</span>
+            <h2 className="flex items-baseline gap-2 font-display text-[20px] leading-tight font-semibold text-[var(--color-heading)] mb-3">
+              Register <span className="font-sans text-[14px] font-normal tabular-nums text-[var(--color-text-muted)]">{(list ?? []).length}</span>
             </h2>
-            <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
+            <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
               <table className="w-full text-[14px]">
-                <thead className="bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text-muted)] text-left max-md:hidden">
+                <thead className="text-[13px] text-[var(--color-text-muted)] text-left max-md:hidden border-b border-[var(--color-border)]">
                   <tr>
                     <th className="font-semibold px-4 h-10 w-36">Number</th>
                     <th className="font-semibold px-4">Subject</th>
@@ -293,18 +289,19 @@ export default function TransmittalsPage() {
                   if (t.portalToken && t.status !== "voided") more.push({
                     icon: <LinkIcon className="w-4 h-4" />, label: "Copy portal link",
                     onClick: () => {
-                      void navigator.clipboard.writeText(transmittalPortalUrl(t.portalToken!));
-                      showToast({ type: "success", title: "Portal link copied", message: `Send it to ${t.recipientName || t.recipientCompany || "the recipient"}. They can download the files and confirm receipt themselves.` });
+                      void copyText(transmittalPortalUrl(t.portalToken!)).then((ok) => showToast(ok
+                        ? { type: "success", title: "Portal link copied", message: `Send it to ${t.recipientName || t.recipientCompany || "the recipient"}. They can download the files and confirm receipt themselves.` }
+                        : { type: "error", title: "Couldn't copy the link", message: "Your browser blocked the clipboard. Open the cover sheet: the link is printed on it." }));
                     },
                   });
                   if (t.status === "draft") more.push({ icon: <Trash2 className="w-4 h-4" />, label: "Delete draft", tone: "bad", line: true, onClick: () => doDelete(t) });
                   if (t.status === "issued") more.push({ icon: <Ban className="w-4 h-4" />, label: "Void (issued in error)", tone: "bad", line: true, onClick: () => doVoid(t) });
-                  const small = "inline-flex items-center gap-1.5 h-8 px-2.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors";
+                  const small = "inline-flex items-center gap-1.5 h-8 pointer-coarse:h-10 px-2.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors";
                   return (
                     <tr key={t.id} data-transmittal-id={t.id} className={`scroll-mt-24 align-top md:align-middle max-md:block max-md:relative ${highlightId === t.id ? "bg-[var(--color-accent-soft)]" : "hover:bg-[var(--color-surface-2)]"}`}>
                       <td className="px-4 pt-3 md:py-3 relative max-md:block">
                         {(stale || highlightId === t.id) && <span aria-hidden className={`absolute left-0 inset-y-0 w-[3px] ${stale ? "bg-[var(--state-overdue)]" : "bg-[var(--color-main)]"}`} />}
-                        <span className="ui-id text-[16px] whitespace-nowrap">{t.number}</span>
+                        <span className="text-[16px] whitespace-nowrap"><CopyId value={t.number} label="transmittal number" /></span>
                         <span className="md:hidden ml-3"><StatusTag tone={statusTone} status={meta.label} /></span>
                       </td>
                       <td className="px-4 md:py-3 max-md:block max-md:pr-4 min-w-0">
@@ -322,14 +319,14 @@ export default function TransmittalsPage() {
                         </div>
                       </td>
                       <td className="px-4 py-3 text-[var(--color-text)] hidden lg:table-cell">{to || <span className="text-[var(--color-text-muted)]">-</span>}</td>
-                      <td className="px-4 py-3 text-right max-md:hidden"><span className="ui-count">{t.items.length}</span></td>
+                      <td className="px-4 py-3 text-right max-md:hidden tabular-nums text-[var(--color-text)]">{t.items.length}</td>
                       <td className="px-4 py-3 max-md:hidden"><StatusTag tone={statusTone} status={meta.label} /></td>
                       <td className="px-4 py-3 whitespace-nowrap max-md:hidden">{t.issuedAt ? humanDate(t.issuedAt) : <span className="text-[var(--color-text-muted)]">-</span>}</td>
                       <td className="px-3 pb-3 md:py-3 max-md:block">
                         <div className="flex items-center gap-1.5 md:justify-end">
                           {t.status === "draft" && (
                             <button type="button" onClick={() => openEdit(t)} className={small}>
-                              <Pencil className="w-3.5 h-3.5 text-[var(--color-main)]" /> Edit
+                              <Pencil className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> Edit
                             </button>
                           )}
                           {t.status === "issued" && (
@@ -337,7 +334,7 @@ export default function TransmittalsPage() {
                               {busyId === t.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5 text-[var(--state-released)]" />} Record receipt
                             </button>
                           )}
-                          <MoreMenu items={more} iconOnly label={`More for ${t.number}`} triggerClass="inline-grid place-items-center w-8 h-8 rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]" />
+                          <MoreMenu items={more} iconOnly label={`More for ${t.number}`} triggerClass="inline-grid place-items-center w-8 h-8 pointer-coarse:w-10 pointer-coarse:h-10 rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]" />
                         </div>
                       </td>
                     </tr>
@@ -499,7 +496,7 @@ function TransmittalComposer({ orgId, editing, preloadDoc, actor, onClose, onSav
         await onSaved(issue, created);
       }
     } catch (e) {
-      onError((e as Error).message);
+      onError(friendlyError(e));
     } finally {
       setSaving(null);
     }
@@ -507,12 +504,12 @@ function TransmittalComposer({ orgId, editing, preloadDoc, actor, onClose, onSav
 
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)] animate-in fade-in p-0 sm:p-4" onClick={onClose}>
-      <div className="bg-[var(--color-surface)] w-full sm:max-w-2xl sm:rounded-lg rounded-t-2xl shadow-2xl max-h-[92vh] flex flex-col animate-in fade-in zoom-in-95" onClick={(e) => e.stopPropagation()}>
+      <div role="dialog" aria-modal="true" aria-labelledby="tr-composer-h" className="ui-float ui-float-in bg-[var(--color-surface)] w-full sm:max-w-2xl sm:rounded-xl rounded-t-xl max-h-[92vh] flex flex-col pb-[env(safe-area-inset-bottom)]" onClick={(e) => e.stopPropagation()}>
         <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center justify-between">
-          <h2 className="font-display text-[19px] font-semibold text-[var(--color-heading)] flex items-center gap-2.5">
-            <span className="ui-icon-tile is-sm" aria-hidden><Send className="w-4 h-4" /></span> {editing ? `Edit ${editing.number}` : "New transmittal"}
+          <h2 id="tr-composer-h" className="font-display text-[20px] font-semibold text-[var(--color-heading)]">
+            {editing ? `Edit ${editing.number}` : "New transmittal"}
           </h2>
-          <button aria-label="Close" onClick={onClose} className="w-8 h-8 rounded-lg hover:bg-[var(--color-surface-2)] flex items-center justify-center text-[var(--color-text-faint)] transition-colors"><X className="w-4 h-4" /></button>
+          <button aria-label="Close" onClick={onClose} className="w-10 h-10 rounded-lg hover:bg-[var(--color-surface-2)] flex items-center justify-center text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors"><X className="w-5 h-5" /></button>
         </div>
 
         <div className="flex-1 overflow-y-auto p-5 space-y-5">
@@ -528,7 +525,7 @@ function TransmittalComposer({ orgId, editing, preloadDoc, actor, onClose, onSav
               </datalist>
             </Field>
             <Field label="Email (optional)" icon={Mail}>
-              <Input value={recipientEmail} onChange={(e) => setRecipientEmail(e.target.value)} placeholder="jane@buildco.com" />
+              <Input type="email" autoComplete="email" inputMode="email" value={recipientEmail} onChange={(e) => setRecipientEmail(e.target.value)} placeholder="jane@buildco.com" />
             </Field>
             <Field label="Purpose">
               <Select value={purpose} onChange={(e) => setPurpose(e.target.value)}>
@@ -542,37 +539,33 @@ function TransmittalComposer({ orgId, editing, preloadDoc, actor, onClose, onSav
           </Field>
 
           {projects.length > 0 && (
-            <Field label="Project (ties this transmittal to the project record + evidence pack)">
-              <select
-                value={projectId}
-                onChange={(e) => setProjectId(e.target.value)}
-                className="w-full h-9 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-sm"
-              >
+            <Field label="Project (optional: it goes on the project's record and evidence pack)">
+              <Select value={projectId} onChange={(e) => setProjectId(e.target.value)}>
                 <option value="">No project</option>
                 {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-              </select>
+              </Select>
             </Field>
           )}
 
           {/* Document picker */}
           <div>
-            <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5 flex items-center gap-1.5"><Package className="w-3.5 h-3.5" /> Documents ({items.length})</div>
+            <div className="text-[14px] font-semibold text-[var(--color-text)] mb-1.5">Documents <span className="font-normal text-[var(--color-text-muted)] tabular-nums">{items.length}</span></div>
             <div className="relative">
               <Search className="w-4 h-4 text-[var(--color-text-faint)] absolute left-3 top-1/2 -translate-y-1/2" />
               <Input value={pq} onChange={(e) => setPq(e.target.value)} placeholder="Search by number or title to add…" className="pl-9" />
               {searching && <Spinner size="sm" className="absolute right-3 top-1/2 -translate-y-1/2" />}
             </div>
             {hits.length > 0 && (
-              <div className="mt-1.5 border border-[var(--color-border)] rounded-xl divide-y divide-[var(--color-border)] overflow-hidden shadow-sm max-h-52 overflow-y-auto">
+              <div className="mt-1.5 border border-[var(--color-border)] rounded-xl divide-y divide-[var(--color-border)] overflow-hidden max-h-52 overflow-y-auto">
                 {hits.map((h) => {
                   const added = items.some((i) => i.documentId === h.id);
                   return (
-                    <button key={h.id} onClick={() => addDoc(h)} disabled={added} className="w-full text-left px-3 py-2 hover:bg-[var(--color-surface-2)] transition-colors flex items-center gap-2 disabled:opacity-50">
-                      <FileText className="w-3.5 h-3.5 text-[var(--color-main)] shrink-0" />
+                    <button key={h.id} onClick={() => addDoc(h)} disabled={added} className="w-full text-left px-3 min-h-11 hover:bg-[var(--color-surface-2)] transition-colors flex items-center gap-2 disabled:opacity-60">
+                      <FileText className="w-4 h-4 text-[var(--color-text-faint)] shrink-0" />
                       <span className="ui-id text-[15px]">{h.number}</span>
-                      {h.rev && <span className="ui-pill !h-5 !px-2 !text-[12px]">Rev {h.rev}</span>}
+                      {h.rev && <span className="text-[13px] text-[var(--color-text-muted)]">Rev <span className="ui-id text-[var(--color-text)]">{h.rev}</span></span>}
                       {h.title && h.title !== h.number && <span className="text-[13px] text-[var(--color-text-muted)] truncate">{h.title}</span>}
-                      <span className={`ml-auto shrink-0 ${added ? "ui-pill is-good" : "ui-tag !font-sans"}`}>{added ? "Added" : "+ Add"}</span>
+                      <span className={`ml-auto shrink-0 text-[13px] font-semibold ${added ? "text-[var(--color-text-muted)]" : "text-[var(--color-accent-text)]"}`}>{added ? "Added" : "Add"}</span>
                     </button>
                   );
                 })}
@@ -582,14 +575,14 @@ function TransmittalComposer({ orgId, editing, preloadDoc, actor, onClose, onSav
             {items.length > 0 && (
               <ul className="mt-2 space-y-1.5">
                 {items.map((it) => (
-                  <li key={it.documentId} className="flex items-center gap-2 bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-lg px-3 py-2">
+                  <li key={it.documentId} className="flex items-center gap-2 border border-[var(--color-border)] rounded-lg px-3 py-2">
                     <DocHoverPreview documentId={it.documentId}>
                       <DocThumb documentId={it.documentId} width={28} />
                     </DocHoverPreview>
                     <span className="ui-id text-[15px]">{it.number}</span>
-                    {it.rev && <span className="ui-pill !h-5 !px-2 !text-[12px]">Rev {it.rev}</span>}
+                    {it.rev && <span className="text-[13px] text-[var(--color-text-muted)]">Rev <span className="ui-id text-[var(--color-text)]">{it.rev}</span></span>}
                     {it.title && it.title !== it.number && <span className="text-[13px] text-[var(--color-text-muted)] truncate">{it.title}</span>}
-                    <button aria-label={`Remove ${it.number}`} onClick={() => removeItem(it.documentId)} className="ml-auto w-7 h-7 grid place-items-center rounded text-[var(--color-text-muted)] hover:text-[var(--state-overdue)] hover:bg-[var(--color-surface)] transition-colors"><X className="w-3.5 h-3.5" /></button>
+                    <button aria-label={`Remove ${it.number}`} onClick={() => removeItem(it.documentId)} className="ml-auto w-8 h-8 pointer-coarse:w-10 pointer-coarse:h-10 grid place-items-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--state-overdue-text)] hover:bg-[var(--color-surface-2)] transition-colors"><X className="w-4 h-4" /></button>
                   </li>
                 ))}
               </ul>
@@ -603,13 +596,13 @@ function TransmittalComposer({ orgId, editing, preloadDoc, actor, onClose, onSav
         </div>
 
         <div className="px-5 py-4 border-t border-[var(--color-border)] flex items-center justify-between gap-2">
-          <span className="text-[13px] text-[var(--color-text-muted)]">{issuable ? "Ready to issue" : "Add a document and a recipient to issue"}</span>
+          <span className="text-[14px] text-[var(--color-text-muted)]">{issuable ? "Ready to issue" : "Add a document and a recipient to issue"}</span>
           <div className="flex items-center gap-2">
-            <Button variant="secondary" size="sm" onClick={() => save(false)} disabled={!!saving} loading={saving === "draft"}>
+            <Button variant="secondary" onClick={() => save(false)} disabled={!!saving} loading={saving === "draft"}>
               Save draft
             </Button>
-            <Button size="sm" onClick={() => save(true)} disabled={!!saving || !issuable} loading={saving === "issue"}>
-              {saving !== "issue" && <Send className="w-3.5 h-3.5" />} Issue
+            <Button onClick={() => save(true)} disabled={!!saving || !issuable} loading={saving === "issue"}>
+              {saving !== "issue" && <Send className="w-4 h-4" />} Issue
             </Button>
           </div>
         </div>
@@ -618,10 +611,11 @@ function TransmittalComposer({ orgId, editing, preloadDoc, actor, onClose, onSav
   );
 }
 
-function Field({ label, icon: Icon, children }: { label: string; icon?: React.ComponentType<{ className?: string }>; children: React.ReactNode }) {
+// A label above its field (the label names it; no icon needed).
+function Field({ label, children }: { label: string; icon?: React.ComponentType<{ className?: string }>; children: React.ReactNode }) {
   return (
     <label className="block">
-      <span className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-1 flex items-center gap-1.5">{Icon && <Icon className="w-3.5 h-3.5" />}{label}</span>
+      <span className="block text-[14px] font-semibold text-[var(--color-text)] mb-1.5">{label}</span>
       {children}
     </label>
   );

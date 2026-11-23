@@ -33,23 +33,20 @@ export default function InspectorDrawer({ isOpen, onClose, children, title }: In
       {/* Dim what's behind: the library stays in view, quieter. */}
       <div
         onClick={onClose}
-        className={`fixed inset-0 z-[55] transition-opacity duration-300 ${
+        className={`fixed inset-0 z-[55] transition-opacity duration-200 ease-out motion-reduce:transition-none ${
           isOpen ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
         }`}
         style={{ background: "color-mix(in srgb, var(--color-ink) 58%, transparent)" }}
         aria-hidden="true"
       />
 
-      {/* The panel: white, raised over the dimmed page, from the right. */}
+      {/* The panel: white, raised over the dimmed page, from the right. It
+          starts under the top bar (the page frame keeps that bar on top). */}
       <aside
         ref={asideRef}
-        className={`fixed top-0 right-0 bottom-0 sm:top-3.5 sm:right-3.5 z-[60] w-full sm:w-[580px] lg:w-[640px] sm:max-w-[calc(100vw-28px)] bg-[var(--color-surface)] sm:rounded-t-xl flex flex-col overflow-hidden transition-transform duration-500 ${
-          isOpen ? "translate-x-0" : "translate-x-[calc(100%+6rem)] pointer-events-none"
+        className={`fixed top-14 right-0 bottom-0 sm:top-[64px] sm:right-3 sm:bottom-3 z-[60] w-full sm:w-[580px] lg:w-[640px] sm:max-w-[calc(100vw-24px)] bg-[var(--color-surface)] sm:rounded-xl sm:border sm:border-[var(--color-border)] flex flex-col overflow-hidden transition-transform duration-300 ease-out motion-reduce:transition-none ${
+          isOpen ? "translate-x-0 ui-float" : "translate-x-[calc(100%+6rem)] pointer-events-none"
         }`}
-        style={{
-          transitionTimingFunction: "cubic-bezier(0.22, 1, 0.36, 1)",
-          boxShadow: "-30px 0 60px -30px rgb(0 0 0 / 0.6)",
-        }}
         role="dialog"
         aria-modal={isOpen ? "true" : undefined}
         aria-hidden={!isOpen}
@@ -57,12 +54,12 @@ export default function InspectorDrawer({ isOpen, onClose, children, title }: In
       >
         {/* Where you are, and the way out */}
         <div className="shrink-0 px-5 sm:px-7 pt-5 pb-1 flex items-center gap-3">
-          <div className="flex-1 min-w-0 truncate text-[14px] font-medium text-[var(--color-text-muted)]" title={title}>
+          <div className="flex-1 min-w-0 truncate text-[14px] text-[var(--color-text-muted)]" title={title}>
             {title ?? "Document"}
           </div>
           <button
             onClick={onClose}
-            className="shrink-0 w-9 h-9 rounded-md grid place-items-center border border-[var(--color-border-strong)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors"
+            className="shrink-0 w-10 h-10 rounded-lg grid place-items-center text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors"
             title="Close (Esc)"
             aria-label="Close"
           >

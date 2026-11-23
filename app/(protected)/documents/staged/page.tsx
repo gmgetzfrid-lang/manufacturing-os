@@ -18,7 +18,7 @@ import { useRole } from "@/components/providers/RoleContext";
 import { appConfirm } from "@/components/providers/DialogProvider";
 import { PageHero, heroQuiet } from "@/components/ui/PageHero";
 import MoreMenu, { type MoreItem } from "@/components/ui/MoreMenu";
-import ViewTabs, { DOCUMENT_VIEWS } from "@/components/navigation/ViewTabs";
+import DocViewTabs from "@/components/documents/DocViewTabs";
 import { StatusTag } from "@/components/documents/StatusTag";
 import SendSheet, { type SendDoc } from "@/components/documents/SendSheet";
 import { btnIcon, btnQuiet, btnRow } from "@/components/admin/kit";
@@ -265,7 +265,7 @@ export default function StagedPage() {
       <div className="mx-auto w-full px-4 sm:px-6 lg:px-8 py-6 pb-20">
         <PageHero kicker="Document control" size="md" title="Nothing staged."
           sub="Tap Stage on any document, or select several and tap Stage.">
-          <ViewTabs tabs={DOCUMENT_VIEWS} />
+          <DocViewTabs />
         </PageHero>
         <div className="mt-2"><Link href="/documents" className={btnQuiet}>Go to Documents</Link></div>
       </div>
@@ -283,7 +283,7 @@ export default function StagedPage() {
           ]} />
         )}
       >
-        <ViewTabs tabs={DOCUMENT_VIEWS} />
+        <DocViewTabs />
       </PageHero>
 
       {messages.length > 0 && (

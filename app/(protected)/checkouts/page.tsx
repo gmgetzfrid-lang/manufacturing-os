@@ -9,14 +9,18 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
-  KeyRound, Search, AlertTriangle, Lock,
-  Layers, AlarmClock,
-  ExternalLink, Network, Tag, ChevronDown, FolderKanban,
+  Search, Lock,
+  ExternalLink, ChevronDown, ChevronRight,
 } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { SkeletonRows } from "@/components/ui/Skeleton";
+import ErrorNote from "@/components/ui/ErrorNote";
+import { friendlyError } from "@/lib/friendlyError";
+import { transitionPush } from "@/lib/viewTransition";
+import { Button } from "@/components/ui/Button";
 import { PageShell } from "@/components/ui/PageShell";
 import { PageHero, PageBody, Card } from "@/components/ui/PageHero";
 import { bandInput, bandInputIcon, bandSelect, bandSeg, bandSegItem } from "@/components/admin/band";
-import { Spinner } from "@/components/ui/Spinner";
 import { useRole } from "@/components/providers/RoleContext";
 import { listAllActiveCheckouts, autoReleaseExpiredAdHoc } from "@/lib/projects";
 import { findCheckoutOverlaps, type ConsolidationOverlap } from "@/lib/consolidation";
@@ -24,7 +28,7 @@ import { notifyMany } from "@/lib/inAppNotifications";
 import { useToast } from "@/components/providers/ToastProvider";
 import StaleCheckoutBanner from "@/components/projects/StaleCheckoutBanner";
 import EditOverlapBanner from "@/components/documents/EditOverlapBanner";
-import ViewTabs, { DOCUMENT_VIEWS } from "@/components/navigation/ViewTabs";
+import DocViewTabs from "@/components/documents/DocViewTabs";
 import HelpTooltip from "@/components/ui/HelpTooltip";
 import { supabase } from "@/lib/supabase";
 import { Send } from "lucide-react";
@@ -178,9 +182,9 @@ export default function CheckoutsPage() {
   const ready = !loading && !error && rows.length > 0;
   // The numbers that back it up, in ruled cells.
   const answerFacts = ready ? [
+    { label: "Past their release date", value: stale.toLocaleString(), tone: stale > 0 ? "bad" as const : undefined, hero: stale > 0 },
     { label: "By you", value: mine.toLocaleString() },
-    { label: "Overdue", value: stale.toLocaleString(), tone: stale > 0 ? "bad" as const : undefined },
-    { label: "Overlaps", value: overlaps.length.toLocaleString(), tone: overlaps.length > 0 ? "warn" as const : undefined },
+    { label: "Overlapping", value: overlaps.length.toLocaleString(), tone: overlaps.length > 0 ? "warn" as const : undefined },
   ] : undefined;
 
   return (
@@ -200,6 +204,7 @@ export default function CheckoutsPage() {
           </>
         }
         facts={answerFacts}
+        factsHero={stale > 0 ? "auto" : "none"}
         tools={
           <div className={bandSeg} role="group" aria-label="Group the list">
             <button type="button" onClick={() => setView("grouped")} aria-pressed={view === "grouped"} className={bandSegItem(view === "grouped")}>
@@ -211,7 +216,7 @@ export default function CheckoutsPage() {
           </div>
         }
       >
-        <ViewTabs tabs={DOCUMENT_VIEWS} />
+        <DocViewTabs />
         {/* Filters */}
         <div className="mt-4 grid grid-cols-2 md:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)] gap-2">
           <div className="relative col-span-2 md:col-span-1">
@@ -284,7 +289,7 @@ export default function CheckoutsPage() {
                   resourceType: "checkout",
                 });
               } catch (e) {
-                showToast({ type: "error", title: "The heads-up didn't send", message: (e as Error).message });
+                showToast({ type: "error", title: "The heads-up didn't send", message: friendlyError(e) });
                 throw e;
               }
               showToast({ type: "success", title: "Heads-up sent", message: `Told ${recipients.length} ${recipients.length === 1 ? "person" : "people"} about ${what}.` });
@@ -293,23 +298,19 @@ export default function CheckoutsPage() {
         )}
 
         {loading ? (
-          <Card>
-            <div className="flex items-center gap-2 text-[15px] text-[var(--color-text-muted)]">
-              <Spinner size="sm" /> Loading checkouts…
-            </div>
-          </Card>
+          <SkeletonRows rows={5} cols={4} what="checkouts" />
         ) : error ? (
-          <Card>
-            <div role="alert" className="text-[15px] font-semibold text-[var(--state-overdue)] flex items-start gap-2">
-              <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> Couldn&apos;t load the checkouts: {error}
-            </div>
-          </Card>
+          <ErrorNote error={error} title="The checkouts didn't load." onRetry={() => void refresh()} />
         ) : filtered.length === 0 ? (
           <Card>
-            <p className="flex items-center gap-2.5 text-[15px] text-[var(--color-text-muted)]">
-              <span className="ui-icon-tile" aria-hidden><KeyRound className="w-5 h-5" /></span>
-              {rows.length === 0 ? "No one has a document checked out." : "No checkouts match your filters."}
-            </p>
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-3">
+              <p className="flex-1 min-w-[14rem] text-[15px] text-[var(--color-text)]">
+                {rows.length === 0 ? "No one has a document checked out." : "No checkouts match these filters."}
+              </p>
+              {rows.length > 0 && (
+                <Button variant="secondary" onClick={() => { setSearch(""); setLibraryFilter(""); setUserFilter(""); }}>Clear the filters</Button>
+              )}
+            </div>
           </Card>
         ) : view === "grouped" ? (
           <>
@@ -327,8 +328,7 @@ function ProjectGroup({ project, items }: { project: Project | null; items: Chec
   return (
     <section className="min-w-0">
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 mb-2.5">
-        <h2 className="font-display text-[19px] leading-tight font-semibold text-[var(--color-heading)] min-w-0 inline-flex items-center gap-2.5 self-center">
-          <span className="ui-icon-tile is-sm is-solid" aria-hidden>{project ? <FolderKanban className="w-4 h-4" /> : <KeyRound className="w-4 h-4" />}</span>
+        <h2 className="font-display text-[20px] leading-tight font-semibold text-[var(--color-heading)] min-w-0 self-center">
           {project ? (
             <Link href={`/projects/${project.id}`} className="hover:text-[var(--color-accent-text)] hover:underline underline-offset-4">
               {project.name}
@@ -340,14 +340,14 @@ function ProjectGroup({ project, items }: { project: Project | null; items: Chec
             <>
               {project.ownerUserName && <span>{project.ownerUserName}</span>}
               {project.visibility === "private" && <Lock className="w-3 h-3" aria-label="Private" />}
-              {project.status && <span className="ui-pill is-muted capitalize">{String(project.status).replace(/_/g, " ")}</span>}
+              {project.status && <span className="ui-pill is-muted">{(() => { const t = String(project.status).replace(/_/g, " "); return t.charAt(0).toUpperCase() + t.slice(1); })()}</span>}
             </>
           ) : (
             <span>Release on their own after 24 hours</span>
           )}
         </span>
-        <span className="ml-auto self-center text-[14px] text-[var(--color-text-muted)] inline-flex items-center gap-1.5">
-          <span className="ui-count is-solid">{items.length}</span> file{items.length === 1 ? "" : "s"}
+        <span className="ml-auto self-center text-[14px] text-[var(--color-text-muted)] tabular-nums">
+          {items.length.toLocaleString()} file{items.length === 1 ? "" : "s"}
         </span>
       </div>
       <CheckoutsTable items={items} />
@@ -361,9 +361,9 @@ const MODE_LABEL: Record<string, string> = { view: "View", markup: "Markup", edi
  *  comes back. A checkout past its release date gets a red left edge. */
 function CheckoutsTable({ items, showProject }: { items: CheckoutWithContext[]; showProject?: boolean }) {
   return (
-    <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
+    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
       <table className="w-full text-[14px]">
-        <thead className="bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text-muted)] text-left max-sm:hidden">
+        <thead className="text-[13px] text-[var(--color-text-muted)] text-left max-sm:hidden border-b border-[var(--color-border)]">
           <tr>
             <th className="font-semibold px-4 h-10">Document</th>
             <th className="font-semibold px-4 hidden lg:table-cell">Library</th>
@@ -384,18 +384,24 @@ function CheckoutsTable({ items, showProject }: { items: CheckoutWithContext[]; 
 }
 
 function CheckoutRow({ row, showProject }: { row: CheckoutWithContext; showProject?: boolean }) {
+  const router = useRouter();
   const isStale = !!row.expectedReleaseAt && new Date(row.expectedReleaseAt as string) < new Date();
   const isAdhoc = !row.projectId;
   const href = `/documents/${row.libraryId}?doc=${row.documentId}`;
   const release = isStale
-    ? <span className="ui-pill is-bad"><AlarmClock className="w-3.5 h-3.5" /> Was due {formatRelative(row.expectedReleaseAt as Timestamp)}</span>
+    ? <span className="ui-pill is-bad">Was due {formatRelative(row.expectedReleaseAt as Timestamp)}</span>
     : row.expectedReleaseAt ? <span>Due {formatRelative(row.expectedReleaseAt as Timestamp)}</span>
     : isAdhoc && row.autoExpiresAt ? <span>Releases {formatRelative(row.autoExpiresAt)}</span>
     : <span className="text-[var(--color-text-muted)]">At check-in</span>;
   const why = row.purpose || row.note;
   const sub = row.docTitle && row.docTitle !== row.docNumber ? row.docTitle : why ? `“${why}”` : null;
+  // The whole row opens the document; links inside keep their own clicks.
+  const open = (e: React.MouseEvent) => {
+    if ((e.target as HTMLElement).closest("a,button")) return;
+    transitionPush(router, href);
+  };
   return (
-    <tr className="hover:bg-[var(--color-surface-2)] transition-colors max-sm:block max-sm:relative">
+    <tr onClick={open} className="cursor-pointer hover:bg-[var(--color-surface-2)] transition-colors max-sm:block max-sm:relative">
       <td className="px-4 py-3 relative max-sm:block max-sm:pr-14">
         {isStale && <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] bg-[var(--state-overdue)]" />}
         <Link href={href} className="ui-id text-[16px]">
@@ -418,7 +424,7 @@ function CheckoutRow({ row, showProject }: { row: CheckoutWithContext; showProje
           : <span className="text-[var(--color-text-muted)]">-</span>}
       </td>
       <td className="px-4 py-3 font-semibold text-[var(--color-text)] max-sm:hidden whitespace-nowrap">{row.userName}</td>
-      <td className="px-4 py-3 hidden md:table-cell"><span className={`ui-pill ${row.mode === "view" ? "is-muted" : ""}`}>{MODE_LABEL[row.mode] ?? row.mode}</span></td>
+      <td className="px-4 py-3 hidden md:table-cell text-[var(--color-text)]">{MODE_LABEL[row.mode] ?? row.mode}</td>
       <td className="px-4 py-3 whitespace-nowrap max-sm:hidden">{formatRelative(row.startedAt)}</td>
       <td className="px-4 py-3 whitespace-nowrap max-sm:hidden">{release}</td>
       {showProject && (
@@ -429,14 +435,7 @@ function CheckoutRow({ row, showProject }: { row: CheckoutWithContext; showProje
         </td>
       )}
       <td className="pr-3 py-3 text-right max-sm:absolute max-sm:right-1 max-sm:top-1.5">
-        <Link
-          href={href}
-          className="inline-grid w-9 h-9 place-items-center rounded-md text-[var(--color-main)] hover:bg-[var(--color-accent-soft)] transition-colors"
-          title="Open the document"
-          aria-label={`Open ${row.docNumber || "the document"}`}
-        >
-          <ExternalLink className="w-4 h-4" />
-        </Link>
+        <ChevronRight aria-hidden className="inline w-4 h-4 text-[var(--color-text-faint)]" />
       </td>
     </tr>
   );
@@ -451,11 +450,13 @@ function formatRelative(ts: Timestamp): string {
     const abs = Math.abs(diff);
     const min = Math.floor(abs / 60000);
     if (min < 1) return future ? "any moment" : "just now";
-    if (min < 60) return future ? `in ${min}m` : `${min}m ago`;
+    const say = (n: number, unit: string) => `${n} ${unit}${n === 1 ? "" : "s"}`;
+    if (min < 60) return future ? `in ${say(min, "min")}` : `${say(min, "min")} ago`;
     const hr = Math.floor(min / 60);
-    if (hr < 24) return future ? `in ${hr}h` : `${hr}h ago`;
+    if (hr < 24) return future ? `in ${say(hr, "hour")}` : `${say(hr, "hour")} ago`;
     const days = Math.floor(hr / 24);
-    return future ? `in ${days}d` : `${days}d ago`;
+    if (days > 13) return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+    return future ? `in ${say(days, "day")}` : `${say(days, "day")} ago`;
   } catch { return "-"; }
 }
 
@@ -482,8 +483,7 @@ function ConsolidationPanel({
   return (
     <section className="min-w-0">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mb-2.5 min-h-8">
-        <h2 className="font-display text-[19px] leading-tight font-semibold text-[var(--color-heading)] inline-flex items-center gap-2.5">
-          <span className="ui-icon-tile is-sm is-solid" aria-hidden><Network className="w-4 h-4" /></span>
+        <h2 className="font-display text-[20px] leading-tight font-semibold text-[var(--color-heading)]">
           Checkouts that overlap
         </h2>
         <span className="text-[14px] text-[var(--color-text-muted)] inline-flex items-center gap-3">
@@ -494,14 +494,14 @@ function ConsolidationPanel({
           type="button"
           onClick={onToggle}
           aria-expanded={isOpen}
-          className="ml-auto inline-flex items-center gap-1.5 h-9 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
+          className="ml-auto inline-flex items-center gap-1.5 h-10 pointer-coarse:h-11 px-3.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
         >
           {isOpen ? "Hide" : "Show"}
-          <ChevronDown className={`w-4 h-4 text-[var(--color-text-muted)] transition-transform ${isOpen ? "rotate-180" : ""}`} />
+          <ChevronDown className={`ui-chevron w-4 h-4 text-[var(--color-text-muted)] ${isOpen ? "rotate-180" : ""}`} />
         </button>
       </div>
       {isOpen && (
-        <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] divide-y divide-[var(--color-border)]">
+        <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] divide-y divide-[var(--color-border)]">
           {overlaps.map((o, i) => (
             <OverlapCard key={i} overlap={o} checkoutById={checkoutById} onNudge={onNudge} />
           ))}
@@ -534,8 +534,8 @@ function OverlapCard({
 
   const heading =
     overlap.kind === "asset"
-      ? <><span className="ui-icon-tile is-sm" aria-hidden><Tag className="w-4 h-4" /></span> Equipment <Link href={`/assets/${encodeURIComponent(overlap.assetTag)}`} className="ui-tag" title={`Open ${overlap.assetTag}`}>{overlap.assetTag}</Link></>
-      : <><span className="ui-icon-tile is-sm" aria-hidden><Layers className="w-4 h-4" /></span> {overlap.level === "system" ? "System" : "Unit"} <span className="ui-tag">{overlap.scopeName}</span></>;
+      ? <>Equipment <Link href={`/assets/${encodeURIComponent(overlap.assetTag)}`} className="ui-tag" title={`Open ${overlap.assetTag}`}>{overlap.assetTag}</Link></>
+      : <>{overlap.level === "system" ? "System" : "Unit"} <span className="ui-tag">{overlap.scopeName}</span></>;
 
   return (
     <div className="px-4 sm:px-5 py-3">
@@ -549,7 +549,7 @@ function OverlapCard({
             onClick={doNudge}
             disabled={nudging || nudged}
             title="Send everyone here an in-app heads-up to coordinate"
-            className={`shrink-0 inline-flex items-center gap-1.5 h-9 px-3 rounded-md text-[14px] font-semibold transition-colors ${
+            className={`shrink-0 inline-flex items-center gap-1.5 h-10 pointer-coarse:h-11 px-3.5 rounded-lg text-[14px] font-semibold transition-colors ${
               nudged ? "text-[var(--color-text)]"
                      : "border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-60"
             }`}

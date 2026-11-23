@@ -117,50 +117,50 @@ export default function FolderGrid({
     <div 
       ref={menuRef}
       onClick={(e) => e.stopPropagation()}
-      className="absolute z-50 bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] ring-1 ring-black/5 rounded-xl shadow-lg w-48 py-1 overflow-hidden animate-in fade-in zoom-in-95 duration-150 origin-top-right"
+      role="menu" className="ui-float ui-float-in absolute z-50 bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] rounded-xl w-56 py-1 overflow-hidden origin-top-right"
       style={contextMenu?.id === id ? { top: 0, left: 0, position: 'relative' } : { top: '100%', right: 0 }}
     >
-      <button onClick={() => { onOpen(id); setContextMenu(null); }} className="w-full text-left px-4 py-2.5 text-sm text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center font-medium">
+      <button onClick={() => { onOpen(id); setContextMenu(null); }} role="menuitem" className="w-full text-left px-3 min-h-10 text-[14px] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center">
         <FolderOpen className="w-4 h-4 mr-2 text-[var(--color-text-faint)]" /> Open
       </button>
       {isController && (
         <>
-          <div className="h-px bg-[var(--color-surface-2)] my-1" />
-          <button onClick={() => { onRename?.(id); setContextMenu(null); }} className="w-full text-left px-4 py-2.5 text-sm text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center font-medium">
+          <div className="h-px bg-[var(--color-border)] my-1" />
+          <button onClick={() => { onRename?.(id); setContextMenu(null); }} role="menuitem" className="w-full text-left px-3 min-h-10 text-[14px] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center">
             <Pencil className="w-4 h-4 mr-2 text-[var(--color-text-faint)]" /> Rename
           </button>
-          <button onClick={() => { onMove?.(id); setContextMenu(null); }} className="w-full text-left px-4 py-2.5 text-sm text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center font-medium">
+          <button onClick={() => { onMove?.(id); setContextMenu(null); }} role="menuitem" className="w-full text-left px-3 min-h-10 text-[14px] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center">
             <ArrowRight className="w-4 h-4 mr-2 text-[var(--color-text-faint)]" /> Move
           </button>
-          <button onClick={() => { onCustomize?.(id); setContextMenu(null); }} className="w-full text-left px-4 py-2.5 text-sm text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center font-medium">
+          <button onClick={() => { onCustomize?.(id); setContextMenu(null); }} role="menuitem" className="w-full text-left px-3 min-h-10 text-[14px] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center">
             <Palette className="w-4 h-4 mr-2 text-[var(--color-text-faint)]" /> Customize
           </button>
           {onReviewCycle && (
-            <button onClick={() => { onReviewCycle(id); setContextMenu(null); }} className="w-full text-left px-4 py-2.5 text-sm text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center font-medium">
+            <button onClick={() => { onReviewCycle(id); setContextMenu(null); }} role="menuitem" className="w-full text-left px-3 min-h-10 text-[14px] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center">
               <CalendarClock className="w-4 h-4 mr-2 text-[var(--color-text-faint)]" /> Review cycle
             </button>
           )}
           {onAckPolicy && (
-            <button onClick={() => { onAckPolicy(id); setContextMenu(null); }} className="w-full text-left px-4 py-2.5 text-sm text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center font-medium">
+            <button onClick={() => { onAckPolicy(id); setContextMenu(null); }} role="menuitem" className="w-full text-left px-3 min-h-10 text-[14px] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center">
               <ClipboardCheck className="w-4 h-4 mr-2 text-[var(--color-text-faint)]" /> Read &amp; understood
             </button>
           )}
           {onReviewControl && (
-            <button onClick={() => { onReviewControl(id); setContextMenu(null); }} className="w-full text-left px-4 py-2.5 text-sm text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center font-medium">
+            <button onClick={() => { onReviewControl(id); setContextMenu(null); }} role="menuitem" className="w-full text-left px-3 min-h-10 text-[14px] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center">
               <ShieldCheck className="w-4 h-4 mr-2 text-[var(--color-text-faint)]" /> Pre-publish review
             </button>
           )}
           {onRetention && (
-            <button onClick={() => { onRetention(id); setContextMenu(null); }} className="w-full text-left px-4 py-2.5 text-sm text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center font-medium">
+            <button onClick={() => { onRetention(id); setContextMenu(null); }} role="menuitem" className="w-full text-left px-3 min-h-10 text-[14px] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center">
               <Archive className="w-4 h-4 mr-2 text-[var(--color-text-faint)]" /> Retention
             </button>
           )}
-          <button onClick={() => { onPermissions?.(id); setContextMenu(null); }} className="w-full text-left px-4 py-2.5 text-sm text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center font-medium">
+          <button onClick={() => { onPermissions?.(id); setContextMenu(null); }} role="menuitem" className="w-full text-left px-3 min-h-10 text-[14px] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center">
             <Lock className="w-4 h-4 mr-2 text-[var(--color-text-faint)]" /> Permissions
           </button>
           {onDelete && (
             <>
-              <div className="h-px bg-[var(--color-surface-2)] my-1" />
+              <div className="h-px bg-[var(--color-border)] my-1" />
               <button onClick={() => { onDelete(id); setContextMenu(null); }} className="w-full text-left px-4 py-2.5 text-sm text-[var(--state-overdue)] hover:bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] flex items-center font-medium">
                 <Trash2 className="w-4 h-4 mr-2" /> Delete
               </button>
@@ -370,7 +370,7 @@ export default function FolderGrid({
                     iconSize="w-3.5 h-3.5"
                   />
                 ) : (
-                  <span className="ui-icon-tile is-sm" aria-hidden><Folder className="w-4 h-4" /></span>
+                  <Folder aria-hidden className="w-[18px] h-[18px] shrink-0 text-[var(--color-text-faint)]" />
                 )}
                 <span className="min-w-0">
                   <span className="block text-[15px] font-semibold text-[var(--color-text)] group-hover:text-[var(--color-accent-text)] truncate select-none">{folder.name}</span>
@@ -378,13 +378,12 @@ export default function FolderGrid({
                 </span>
               </button>
             </div>
-            <div role="cell" className="max-sm:hidden text-right">
-              {docTotals?.get(folder.id!) !== undefined && docTotals.get(folder.id!)! > 0
-                ? <span className="ui-count">{docTotals.get(folder.id!)!.toLocaleString()}</span>
-                : <span className="text-[14px] text-[var(--color-text-faint)]">-</span>}
+            {/* Counts as plain right-aligned figures; a zero is muted. */}
+            <div role="cell" className={`max-sm:hidden text-right text-[14px] tabular-nums ${(docTotals?.get(folder.id!) ?? 0) > 0 ? "text-[var(--color-text)]" : "text-[var(--color-text-faint)]"}`}>
+              {(docTotals?.get(folder.id!) ?? 0).toLocaleString()}
             </div>
-            <div role="cell" className="max-sm:hidden font-display text-[15px] font-semibold tabular-nums text-right text-[var(--color-text)]">
-              {kids ? kids.toLocaleString() : <span className="font-sans font-normal text-[14px] text-[var(--color-text-faint)]">-</span>}
+            <div role="cell" className={`max-sm:hidden text-right text-[14px] tabular-nums ${kids ? "text-[var(--color-text)]" : "text-[var(--color-text-faint)]"}`}>
+              {(kids ?? 0).toLocaleString()}
             </div>
             <div role="cell" className="flex justify-end">{menuButton}</div>
           </div>
@@ -484,8 +483,8 @@ export default function FolderGrid({
   );
   if (list) {
     return (
-      <div role="table" aria-label="Folders" className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
-        <div role="row" className={`max-sm:hidden grid ${LIST_COLS} items-center gap-x-3 px-4 h-10 bg-[var(--color-surface-2)] text-[13px] font-semibold text-[var(--color-text-muted)]`}>
+      <div role="table" aria-label="Folders" className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
+        <div role="row" className={`max-sm:hidden grid ${LIST_COLS} items-center gap-x-3 px-4 h-10 text-[13px] font-semibold text-[var(--color-text-muted)]`}>
           <span role="columnheader">Folder</span>
           <span role="columnheader" className="text-right">Files</span>
           <span role="columnheader" className="text-right">Subfolders</span>
