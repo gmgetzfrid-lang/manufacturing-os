@@ -22,7 +22,8 @@ import {
 import SignedImg from "@/components/assets/SignedImg";
 import { listAssetPhotos, type AssetPhoto } from "@/lib/assets";
 import { useRole } from "@/components/providers/RoleContext";
-import ViewTabs, { DOCUMENT_VIEWS } from "@/components/navigation/ViewTabs";
+import DocViewTabs from "@/components/documents/DocViewTabs";
+import plainError from "@/components/documents/plainError";
 import { PageHero } from "@/components/ui/PageHero";
 import HelpTooltip from "@/components/ui/HelpTooltip";
 import FileGraph, { type FileGraphNode, type FileGraphLight, type FileGraphHandle, type FileGraphSatellite } from "@/components/documents/FileGraph";
@@ -67,6 +68,7 @@ import { EntityStrip, EquipmentCards, RelationChips, PageHits, ActivityPanel, Co
 import { useEscapeClose, escapeStackBusy } from "@/components/documents/useEscapeClose";
 import { badgeText } from "@/lib/badge";
 
+import { friendlyError } from "@/lib/friendlyError";
 const VERDICT_STYLE: Record<RankedHit["verdict"], string> = {
   strong: "bg-[color-mix(in_srgb,var(--state-released)_10%,transparent)] text-[var(--state-released)] border-[color-mix(in_srgb,var(--state-released)_35%,transparent)]",
   possible: "bg-[color-mix(in_srgb,var(--state-held)_12%,transparent)] text-[var(--state-held)] border-[color-mix(in_srgb,var(--state-held)_40%,transparent)]",
@@ -160,7 +162,7 @@ function GraphPageInner() {
       const r = await estatePost<{ folders: number; documents: number; applied: number; pending: number; unchanged: number; notes: string[] }>("/api/estate/resolve", { orgId: activeOrgId, all: true });
       setResolveNote(`${r.folders} folders and ${r.documents} documents looked at - ${r.applied} new links applied, ${r.pending} new waiting in Review, ${r.unchanged} links already in place. See the Links tab.${r.notes.length ? " " + r.notes.join(" ") : ""}`);
       await refresh();
-    } catch (e) { setResolveNote((e as Error).message); }
+    } catch (e) { setResolveNote(friendlyError(e)); }
     finally { setResolving(false); }
   };
   const [panel, setPanel] = useState<"search" | "drives" | "aliases" | "links">("search");
@@ -184,7 +186,7 @@ function GraphPageInner() {
       const msg = (e as Error).message;
       // A dropped connection ("Failed to fetch") mid-refresh must not take a
       // working map away: keep what is on screen and say so quietly.
-      setError(dataRef.current ? `Couldn't refresh the map (${msg}). Showing the last good one - reload the page to try again.` : msg);
+      setError(dataRef.current ? `Couldn't refresh the map (${msg}). Showing the last good one: reload the page to try again.` : msg);
     }
     finally { setLoading(false); }
   }, [activeOrgId, activeRole, controller]);
@@ -546,14 +548,14 @@ function GraphPageInner() {
   const askToRead = async (f: FindCoverage["unreadFolders"][number]) => {
     if (!activeOrgId) return;
     const libs = await listKnowledgeLibraries(activeOrgId).catch(() => [] as KnowledgeLibrary[]);
-    setReadAsk({ folder: f, libs, pick: libs[0]?.id ?? "", busy: false, note: libs.length ? null : "No knowledge library yet - create one under Intelligence › Knowledge first." });
+    setReadAsk({ folder: f, libs, pick: libs[0]?.id ?? "", busy: false, note: libs.length ? null : "No knowledge library yet: create one under Intelligence › Knowledge first." });
   };
   const linkAndRead = async () => {
     if (!readAsk || !activeOrgId || !readAsk.pick) return;
     setReadAsk({ ...readAsk, busy: true, note: null });
     try {
       await estatePost("/api/knowledge/sources", { orgId: activeOrgId, libraryId: readAsk.pick, add: [{ type: readAsk.folder.folderId ? "folder" : "library", id: readAsk.folder.folderId ?? readAsk.folder.libraryId }] });
-      setReadAsk({ ...readAsk, busy: false, note: `Linked. Text pages read for free; pages with no text use vision on the cheap tier within your cap. Indexing runs in the background - or open the knowledge library to watch it.` });
+      setReadAsk({ ...readAsk, busy: false, note: `Linked. Text pages read for free; pages with no text use vision on the cheap tier within your cap. Indexing runs in the background. Open the knowledge library to watch it.` });
     } catch (e) { setReadAsk({ ...readAsk, busy: false, note: (e as Error).message }); }
   };
 
@@ -613,7 +615,7 @@ function GraphPageInner() {
     try {
       setViewer(await p);
     } catch (err) {
-      setViewerError((err as Error).message);
+      setViewerError(friendlyError(err));
     } finally {
       setViewerLoading(null);
     }
@@ -687,29 +689,29 @@ function GraphPageInner() {
 
   return (
     <div className="flex flex-col lg:h-[calc(100vh_-_56px_-_var(--staged-tray-h,0px))] px-3 sm:px-4 lg:px-6 pt-4 pb-4">
-      <PageHero size="md" overlap={false} className="!mb-4 !pb-6" kicker="Document control" title={mapAnswer} sub={mapSub} facts={mapFacts}
+      <PageHero size="md" overlap={false} kicker="Document control" title={mapAnswer} sub={mapSub} facts={mapFacts} factsHero="none"
         back={cameBack ? { onClick: () => router.back(), label: `Back to ${homeLabel}` } : undefined}>
-        <ViewTabs tabs={DOCUMENT_VIEWS} hrefs={tableHref ? { "/documents": tableHref } : undefined} />
+        <DocViewTabs hrefs={tableHref ? { "/documents": tableHref } : undefined} />
         {error && (
           <div role="alert" className="mt-3 text-[14px] flex items-center gap-2 text-[var(--color-text)]">
-            <AlertTriangle className={`w-4 h-4 shrink-0 ${data ? "text-[var(--state-held)]" : "text-[var(--state-overdue)]"}`} /> <span className="flex-1">{error}</span>
+            <AlertTriangle className={`w-4 h-4 shrink-0 ${data ? "text-[var(--state-held)]" : "text-[var(--state-overdue)]"}`} /> <span className="flex-1">{plainError(error)}</span>
             <button onClick={() => { setError(null); void refresh(); }} className="text-[var(--color-accent-text)] hover:underline">Retry</button>
             <button aria-label="Dismiss" onClick={() => setError(null)} className="w-8 h-8 grid place-items-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface)]"><X className="w-4 h-4" /></button>
           </div>
         )}
       </PageHero>
       {/* A phone stacks the three: find, the map, the details. */}
-      <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-[320px_1fr_380px] rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
+      <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-[320px_1fr_380px] rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
         {/* ── Left: search, drives, aliases ───────────────────────────── */}
         <aside className="border-b lg:border-b-0 lg:border-r border-[var(--color-border)] bg-[var(--color-surface)] flex flex-col min-h-0 min-w-0 h-[55vh] lg:h-auto">
-          <div className="flex border-b border-[var(--color-border)] text-[13px] font-bold">
-            {([["search", "Find", Search], ["links", "Links", Link2], ["drives", "Drives", HardDrive], ["aliases", "Aliases", Tag]] as const).map(([k, label, Icon]) => (
-              <button key={k} onClick={() => setPanel(k)}
-                className={`flex-1 px-2 py-2 inline-flex items-center justify-center gap-1 border-b-2 ${panel === k ? "border-[var(--color-text)] text-[var(--color-text)]" : "border-transparent text-[var(--color-text-muted)]"}`}>
-                <Icon className="w-3.5 h-3.5" /> {label}
-                {k === "drives" && listings.length > 0 && <span className="ml-1 px-1.5 rounded-full bg-[var(--color-surface-2)] text-[var(--color-text)]">{badgeText(listings.length)}</span>}
-                {k === "links" && (data?.edges.length ?? 0) > 0 && <span className="ml-1 px-1.5 rounded-full bg-[var(--color-surface-2)] text-[var(--color-text)]">{badgeText(data!.edges.length)}</span>}
-                {k === "aliases" && aliases.length > 0 && <span className="ml-1 px-1.5 rounded-full bg-[var(--color-surface-2)] text-[var(--color-text)]">{badgeText(aliases.length)}</span>}
+          <div role="tablist" aria-label="Find, links, drives and aliases" className="flex gap-4 px-3 border-b border-[var(--color-border)] text-[14px]">
+            {([["search", "Find"], ["links", "Links"], ["drives", "Drives"], ["aliases", "Aliases"]] as const).map(([k, label]) => (
+              <button key={k} type="button" role="tab" aria-selected={panel === k} onClick={() => setPanel(k)}
+                className={`-mb-px h-10 pointer-coarse:h-11 inline-flex items-center gap-1.5 border-b-2 whitespace-nowrap ${panel === k ? "border-[var(--color-current)] text-[var(--color-text)] font-semibold" : "border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
+                {label}
+                {k === "drives" && listings.length > 0 && <span className="text-[13px] font-normal tabular-nums text-[var(--color-text-muted)]">{badgeText(listings.length)}</span>}
+                {k === "links" && (data?.edges.length ?? 0) > 0 && <span className="text-[13px] font-normal tabular-nums text-[var(--color-text-muted)]">{badgeText(data!.edges.length)}</span>}
+                {k === "aliases" && aliases.length > 0 && <span className="text-[13px] font-normal tabular-nums text-[var(--color-text-muted)]">{badgeText(aliases.length)}</span>}
               </button>
             ))}
           </div>
@@ -717,15 +719,16 @@ function GraphPageInner() {
             {panel === "search" && (
               <>
                 <form onSubmit={(e) => { e.preventDefault(); runSearch(query); }} className="space-y-2">
-                  <label className="text-[13px] font-semibold text-[var(--color-text-muted)]">Say what you&apos;re after</label>
+                  <label htmlFor="graph-find" className="block text-[14px] font-semibold text-[var(--color-text)]">Say what you&apos;re after</label>
                   <textarea
+                    id="graph-find"
                     value={query} onChange={(e) => setQuery(e.target.value)}
                     onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); runSearch(query); } }}
                     rows={3} placeholder="U1-A for the born heater pilot valve in 2018"
-                    className="w-full text-sm rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]"
+                    className="w-full text-[16px] sm:text-[14px] rounded-lg border border-[var(--color-border-control)] bg-[var(--color-surface)] px-3 py-2"
                   />
                   <div className="flex gap-2">
-                    <button type="submit" disabled={loading} className="flex-1 inline-flex items-center justify-center gap-1.5 h-10 rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[15px] font-semibold px-3 hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
+                    <button type="submit" disabled={loading} className="flex-1 inline-flex items-center justify-center gap-1.5 h-10 pointer-coarse:h-11 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[15px] font-semibold px-3 hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
                       {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />} Find
                     </button>
                     {parsed && (
@@ -832,7 +835,7 @@ function GraphPageInner() {
                 <div className="basis-full"><FolderMarkBar orgId={activeOrgId} folderId={focusId.slice(7)} onChanged={() => void refresh()} /></div>
               )}
               {controller && activeOrgId && focusId?.startsWith("lib:") && !selectedEntry && (
-                <button onClick={() => setSetupLib(focusId.slice(4))} title="Say what each level of folders is - operating area, equipment type, equipment - and everything filed underneath inherits it"
+                <button onClick={() => setSetupLib(focusId.slice(4))} title="Say what each level of folders is (operating area, equipment type, equipment) and everything filed underneath inherits it"
                   className="ml-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] px-2 py-1 font-semibold inline-flex items-center gap-1 hover:bg-[var(--color-surface-2)]"><Factory className="w-3 h-3" /> Set up as equipment library</button>
               )}
               {selectedEntry && (
@@ -870,7 +873,7 @@ function GraphPageInner() {
               </button>
               {focusId && <button onClick={up} className="rounded-md bg-[var(--color-surface)]/90 border border-[var(--color-border)] px-2 py-1 inline-flex items-center gap-1"><Minus className="w-3 h-3" /> Up</button>}
               <button onClick={() => graphRef.current?.fit()} className="rounded-md bg-[var(--color-surface)]/90 border border-[var(--color-border)] px-2 py-1 inline-flex items-center gap-1"><Maximize2 className="w-3 h-3" /> Fit</button>
-              <Link href={globalGraphHref(selectedId ?? focusId ?? "")} title="The same node on the Intelligence graph - equipment, units, projects and documents in one web"
+              <Link href={globalGraphHref(selectedId ?? focusId ?? "")} title="The same node on the Intelligence graph: equipment, units, projects and documents in one web"
                 className={`rounded-md bg-[var(--color-surface)]/90 border border-[var(--color-border)] px-2 py-1 inline-flex items-center gap-1 ${selectedId || focusId ? "" : "opacity-50 pointer-events-none"}`}><Globe className="w-3 h-3" /> Global view</Link>
               {!focusId && !unitView && (
                 <span className="rounded-md bg-[var(--color-surface)]/90 border border-[var(--color-border)] px-2 py-1">
@@ -1429,7 +1432,7 @@ function DrivesPanel({ orgId, controller, listings, uid, userEmail, systemHashes
     try {
       const l = await saveFinderListing({ orgId, name: name || "Pasted listing", format: preview.format, files: preview.files, folders: preview.folders, userId: uid, userName: userEmail });
       onChange([...listings, l]); setName(""); setText("");
-    } catch (e) { setErr((e as Error).message); }
+    } catch (e) { setErr(friendlyError(e)); }
     finally { setBusy(false); }
   };
   const remove = async (l: FinderListing) => {
@@ -1504,7 +1507,7 @@ function AliasesPanel({ orgId, controller, aliases, uid, userEmail, units, onCha
     try {
       const a = await addFinderAlias({ orgId, term, means, kind, userId: uid, userName: userEmail });
       onChange([...aliases, a]); setTerm(""); setMeans("");
-    } catch (e) { setErr((e as Error).message); }
+    } catch (e) { setErr(friendlyError(e)); }
     finally { setBusy(false); }
   };
   const remove = async (a: FinderAlias) => {
@@ -1530,7 +1533,7 @@ function AliasesPanel({ orgId, controller, aliases, uid, userEmail, units, onCha
       {aliases.length === 0 && <div className="text-[13px] text-[var(--color-text-muted)]">No aliases taught yet.</div>}
       {controller ? (
         <div className="space-y-2 pt-2 border-t border-[var(--color-border)]">
-          <input value={term} onChange={(e) => setTerm(e.target.value)} placeholder="What people say - born"
+          <input value={term} onChange={(e) => setTerm(e.target.value)} placeholder="What people say: born"
             className="w-full text-sm rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] px-2 py-1.5" />
           <select value={kind} onChange={(e) => setKind(e.target.value as FinderAliasKind)} className="w-full text-sm rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] px-2 py-1.5">
             <option value="unit">…is a unit</option>
@@ -1543,7 +1546,7 @@ function AliasesPanel({ orgId, controller, aliases, uid, userEmail, units, onCha
               {units.map((u) => <option key={u.code} value={u.label}>{u.label} ({u.code})</option>)}
             </select>
           ) : (
-            <input value={means} onChange={(e) => setMeans(e.target.value)} placeholder={kind === "equipment" ? "The tag - F-101" : "What the files say - crude"}
+            <input value={means} onChange={(e) => setMeans(e.target.value)} placeholder={kind === "equipment" ? "The tag - F-101" : "What the files say: crude"}
               className="w-full text-sm rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] px-2 py-1.5" />
           )}
           {err && <div className="text-[13px] text-[var(--state-overdue)]">{err}</div>}

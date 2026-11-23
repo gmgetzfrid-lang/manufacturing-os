@@ -58,9 +58,12 @@ import { computeUniquenessKey } from "@/lib/uniqueness";
 import { forceReleaseDocument } from "@/lib/checkoutEpisodes";
 import { appAlert, appConfirm } from "@/components/providers/DialogProvider";
 import { tryUpload } from "@/lib/uploadRetry";
-import LoadingBlock from "@/components/ui/LoadingBlock";
+import { SkeletonRows } from "@/components/ui/Skeleton";
+import quietTags from "@/components/documents/quietTags.module.css";
 import { PageHero, PageBody, Card, heroPrimary, heroQuiet } from "@/components/ui/PageHero";
 import { bandInput, bandInputIcon, bandSeg, bandSegItem } from "@/components/admin/band";
+import { fieldError } from "@/components/admin/kit";
+import plainError from "@/components/documents/plainError";
 import { StatusTag, docStatusTone, humanDate } from "@/components/documents/StatusTag";
 import { isDocumentCheckedOut } from "@/lib/documentGuards";
 import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/ui/Modal";
@@ -147,7 +150,7 @@ import AlsoFiledHere from "@/components/documents/AlsoFiledHere";
 import { useFind } from "@/components/find/useFind";
 import FindPanel from "@/components/find/FindPanel";
 import FindMap, { type MapFolder } from "@/components/find/FindMap";
-import ViewTabs, { DOCUMENT_VIEWS } from "@/components/navigation/ViewTabs";
+import DocViewTabs from "@/components/documents/DocViewTabs";
 import { versionToShow, versionIfKnown, prefetchDoc, prefetchDocFile } from "@/lib/docOpen";
 import { withParams, readPlace, writePlace, steppedThroughHistory } from "@/lib/docsPlace";
 import { warmViewer } from "@/components/viewers/warmViewer";
@@ -188,7 +191,6 @@ import {
   FolderPlus,
   LayoutGrid,
   FolderKanban,
-  Folder as FolderIcon,
   Layers,
   Loader2,
   MoreHorizontal,
@@ -211,13 +213,16 @@ import {
   Map as MapIcon,
   Library as LibraryIcon,
   RotateCcw,
+  LogIn,
+  CircleAlert,
 } from "lucide-react";
 
+import { friendlyError } from "@/lib/friendlyError";
 // The selection bars float over the list: above a phone's Upload bar, and
 // above the staged tray when it shows (--staged-tray-h).
 const SELECTION_BAR_BOTTOM = "bottom-[calc(5rem_+_var(--staged-tray-h,0px))] sm:bottom-[calc(2.5rem_+_var(--staged-tray-h,0px))]";
 // A quiet button on the selection bar, tall enough to tap.
-const barBtn = "flex items-center gap-1.5 h-9 px-3 text-[13px] font-bold hover:text-white hover:bg-slate-700/60 rounded-lg transition-colors whitespace-nowrap";
+const barBtn = "flex items-center gap-1.5 h-9 pointer-coarse:h-11 px-3 text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] rounded-lg transition-colors whitespace-nowrap";
 
 const BUILTIN_COLUMNS = [
   { key: "title", label: "Title" },
@@ -331,7 +336,7 @@ export default function LibraryExplorerPage() {
   const [loadingUpload, setLoadingUpload] = useState(false);
   // Per-batch progress: a bulk upload that shows nothing for two minutes is
   // indistinguishable from one that has died.
-  const [uploadProgress, setUploadProgress] = useState<{ done: number; total: number; phase?: string } | null>(null);
+  const [uploadProgress, setUploadProgress] = useState<{ done: number; total: number; phase?: string; active?: File[]; landed?: File[] } | null>(null);
   const [error, setError] = useState<string | null>(null);
   // Good news, shown the same way errors now are (in a banner, on screen).
   const [notice, setNotice] = useState<string | null>(null);
@@ -362,7 +367,7 @@ export default function LibraryExplorerPage() {
       await declareEdge({ orgId: activeOrgId, a: isFolder ? nid.folder(sug.targetId) : nid.doc(sug.targetId), b: nid.folder(sug.home.id), type: "filed_under",
         summary: `Also filed under ${[sug.home.libraryName, ...sug.home.chain].join(" / ")} - ${sug.reason}`, evidence: { unit: sug.unitCode, docType: sug.docType }, actor: { userId: uid, name: userEmail } });
       setWatchdog((prev) => prev.filter((p) => p.targetId !== sug.targetId));
-    } catch (e) { setError((e as Error).message); }
+    } catch (e) { setError(friendlyError(e)); }
     finally { setWatchdogBusy(null); }
   };
   const watchdogDismiss = async (sug: HomeSuggestion) => {
@@ -371,7 +376,7 @@ export default function LibraryExplorerPage() {
     try {
       const isFolder = !documents.some((d) => d.id === sug.targetId) && !!folderMapRef.current?.get(sug.targetId);
       await dismissEdge({ orgId: activeOrgId, a: isFolder ? nid.folder(sug.targetId) : nid.doc(sug.targetId), b: nid.folder(sug.home.id), type: "filed_under", summary: sug.reason, actor: { userId: uid, name: userEmail } })
-        .catch((e: unknown) => setError(`Couldn't remember "Leave it", so it may ask again: ${(e as Error)?.message ?? "try again"}.`));
+        .catch((e: unknown) => setError(`Couldn't remember "Leave it", so it may ask again: ${friendlyError(e)}.`));
       setWatchdog((prev) => prev.filter((p) => p.targetId !== sug.targetId));
     } finally { setWatchdogBusy(null); }
   };
@@ -487,7 +492,7 @@ export default function LibraryExplorerPage() {
     } catch (e) {
       console.error("Failed to save uniqueness keys", e);
       const f = translatePostgresError(e, { entity: "library" });
-      setError(`${f.heading} - ${f.message}`);
+      setError(`${f.heading}. ${f.message}`);
     }
   };
 
@@ -515,7 +520,7 @@ export default function LibraryExplorerPage() {
     } catch (e) {
       console.error("Failed to add Sheet column + uniqueness", e);
       const f = translatePostgresError(e, { entity: "library" });
-      setError(`${f.heading} - ${f.message}`);
+      setError(`${f.heading}. ${f.message}`);
     }
   };
 
@@ -782,6 +787,14 @@ export default function LibraryExplorerPage() {
     e.preventDefault();
     applySelection(contextClickItem(currentSelection(), orderedDocIds(), docRecord.id!));
     setCtxMenu({ x: e.clientX, y: e.clientY, doc: docRecord });
+  };
+
+  // The row's "..." button: the same menu a right-click opens, under the button.
+  const openRowMenu = (docRecord: DocumentRecord, e: React.MouseEvent<HTMLElement>) => {
+    e.stopPropagation();
+    const r = e.currentTarget.getBoundingClientRect();
+    applySelection(contextClickItem(currentSelection(), orderedDocIds(), docRecord.id!));
+    setCtxMenu({ x: r.right - 240, y: r.bottom + 4, doc: docRecord });
   };
 
   const toggleSelectDoc = (id: string, e: React.MouseEvent) => {
@@ -1167,7 +1180,7 @@ export default function LibraryExplorerPage() {
       dropFromView(gone);
       setSelectedDocIds(new Set(r.held.map((h) => h.id)));
       if (selectedDoc?.id && gone.has(selectedDoc.id)) setSelectedDoc(null);
-      if (r.held.length) setError(`${r.deleted.length} deleted. ${r.held.length} kept - under a legal hold (e.g. ${r.held[0].label}).`);
+      if (r.held.length) setError(`${r.deleted.length} deleted. ${r.held.length} kept: under a legal hold (e.g. ${r.held[0].label}).`);
       nudgeKnowledgeSources(activeOrgId, libraryId);
     } catch (e) {
       // Loud: a banner at the top of a long list is easy to miss, and a
@@ -1411,7 +1424,7 @@ export default function LibraryExplorerPage() {
       });
     } catch (e) {
       console.error("Force unlock failed", e);
-      setError(`Couldn't release the lock: ${(e as Error)?.message ?? "try again"}.`);
+      setError(`Couldn't release the lock: ${friendlyError(e)}.`);
     }
   };
 
@@ -1856,7 +1869,7 @@ export default function LibraryExplorerPage() {
       (list) => { FOLDERS_SEEN.set(libraryId, list); setFolders(list); },
       { 
         orgId: activeOrgId, 
-        onError: (msg) => setError(`Folder Error: ${msg}`),
+        onError: (msg) => setError(`The folders didn't load: ${msg}`),
         hideHidden: !isControllerRole(activeRole)
       }
     );
@@ -1996,7 +2009,7 @@ export default function LibraryExplorerPage() {
           folderDocsCache.current.set(cacheKey, all);
           setDocuments(all);
         }
-      } catch (e: unknown) { if (alive) setError((e as Error).message); }
+      } catch (e: unknown) { if (alive) setError(friendlyError(e)); }
       finally {
         if (alive) { setLoadingDocs(false); setDocStreamProgress(null); setDocsDoneKey(cacheKey); }
       }
@@ -2599,7 +2612,7 @@ export default function LibraryExplorerPage() {
     } catch (e) {
       // Put the columns back: the screen must match what was saved.
       setActiveColumns(before);
-      setError(`Couldn't save the columns: ${(e as Error).message}`);
+      setError(`Couldn't save the columns: ${friendlyError(e)}`);
       return;
     }
     setColLevels((prev) => scope === "user" ? { ...prev, user: true }
@@ -2644,7 +2657,7 @@ export default function LibraryExplorerPage() {
       void refreshViewDefaults();
     } catch (e) {
       setActiveColumns(before);
-      setError(`Couldn't save the columns for the library: ${(e as Error).message}`);
+      setError(`Couldn't save the columns for the library: ${friendlyError(e)}`);
     }
   };
   // This folder drops its own columns and follows the library default.
@@ -2661,7 +2674,7 @@ export default function LibraryExplorerPage() {
       void refreshViewDefaults();
     } catch (e) {
       setActiveColumns(before);
-      setError(`Couldn't switch this folder to the library's columns: ${(e as Error).message}`);
+      setError(`Couldn't switch this folder to the library's columns: ${friendlyError(e)}`);
     }
   };
 
@@ -2928,7 +2941,7 @@ export default function LibraryExplorerPage() {
     if (fileInputRef.current) fileInputRef.current.value = "";
     if (files.length === 0) return;
     if (!activeOrgId || !uid || !library) {
-      setError("Still loading the library - pick the file again in a moment.");
+      setError("Still loading the library: pick the file again in a moment.");
       return;
     }
     uploadPathsRef.current = new Map(); // flat upload — no tree to recreate
@@ -3281,7 +3294,11 @@ export default function LibraryExplorerPage() {
       // turn into "click Upload again".
       let stopped = false;
       let finished = 0;
-      setUploadProgress({ done: 0, total: resolved.length });
+      // Which files are on their way right now, so the window shows each
+      // file's own state (waiting, uploading, uploaded) and not one spinner.
+      const inFlight = new Set<File>();
+      const report = () => setUploadProgress({ done: finished, total: resolved.length, active: [...inFlight], landed: [...landedFiles] });
+      setUploadProgress({ done: 0, total: resolved.length, active: [], landed: [...landedFiles] });
       // The last round goes through tryUpload, so a file that still fails
       // gets "Try again" on the corner card with the same file. Safe to
       // repeat: a failed file leaves no record behind (see uploadOne).
@@ -3295,8 +3312,10 @@ export default function LibraryExplorerPage() {
             if (signal?.aborted) { stopped = true; return; }
             const idx = nextIdx++;
             if (idx >= entries.length) return;
+            const entry = entries[idx];
+            inFlight.add(entry.item.file);
+            report();
             try {
-              const entry = entries[idx];
               if (offerRetry) {
                 // A later "Try again" runs after this window may be gone, so
                 // it doesn't listen to this window's Stop.
@@ -3307,8 +3326,11 @@ export default function LibraryExplorerPage() {
                 await uploadOne(entry);
               }
               finished++;
-              setUploadProgress({ done: finished, total: resolved.length });
+              inFlight.delete(entry.item.file);
+              report();
             } catch (err) {
+              inFlight.delete(entry.item.file);
+              report();
               failed.push({ entry: entries[idx], reason: (err as Error)?.message ?? "unknown error" });
             }
           }
@@ -3366,12 +3388,12 @@ export default function LibraryExplorerPage() {
         uploadFolderPlanRef.current = null;
         setFolderStaged(false);
         landedFilesRef.current = new WeakSet();
-        setNotice(`Upload complete - ${landed.toLocaleString()} file${landed === 1 ? "" : "s"} uploaded${alreadyHere.length ? `, ${alreadyHere.length.toLocaleString()} already there` : ""}, all now in ${currentFolder ? `"${currentFolder.name}"` : library.name}.${notes.length ? " " + notes.join(" ") : ""}`);
+        setNotice(`Uploaded ${landed.toLocaleString()} file${landed === 1 ? "" : "s"}${alreadyHere.length ? `, ${alreadyHere.length.toLocaleString()} already there` : ""}, all now in ${currentFolder ? `"${currentFolder.name}"` : library.name}.${notes.length ? " " + notes.join(" ") : ""}`);
       }
     } catch (e) {
       console.error(e);
       const f = translatePostgresError(e, { entity: "document", field: "document_number" });
-      setError(`${f.heading} - ${f.message}`);
+      setError(`${f.heading}. ${f.message}`);
       throw e;
     } finally {
       endUpload();
@@ -3443,7 +3465,7 @@ export default function LibraryExplorerPage() {
       setEditingDocNumId(null);
       setEditingDocNumValue("");
     } catch (e) {
-      setEditingDocNumError((e as Error).message);
+      setEditingDocNumError(friendlyError(e));
     } finally {
       setSavingDocNum(false);
     }
@@ -3742,7 +3764,7 @@ export default function LibraryExplorerPage() {
       setFolderDefaultSort({ key: sortKey, dir: sortDir });
       setViewDefaults((prev) => scope === "user" ? { ...prev, hasUserRow: true } : { ...prev, hasOrgRow: true });
     } catch (e) {
-      await appAlert(`Couldn't save the default view: ${(e as Error).message}`);
+      await appAlert(`Couldn't save the default view: ${friendlyError(e)}`);
     } finally {
       setSavingSortDefault(false);
     }
@@ -3769,7 +3791,7 @@ export default function LibraryExplorerPage() {
       setDocLayout(res.view?.layout ?? "details");
       if (res.view?.density) setDensity(res.view.density);
     } catch (e) {
-      await appAlert(`Couldn't clear your default view: ${(e as Error).message}`);
+      await appAlert(`Couldn't clear your default view: ${friendlyError(e)}`);
     }
   };
 
@@ -3782,7 +3804,7 @@ export default function LibraryExplorerPage() {
   const checkoutAfterKey: string | undefined = activeColumns.includes("status") ? "status" : activeColumns[activeColumns.length - 1];
   const checkoutTh = <th className={`px-3 ${headerPad}`} style={{ width: `${CHECKOUT_COL}px` }}>Checked out by</th>;
   const tableMinWidth = 36 + activeColumns.reduce((n, k) => n + (k === "title" && !colWidths.title ? 140 : colWidths[k] ?? getDefaultColWidth(k)), 0)
-    + CHECKOUT_COL + 36 + 44;
+    + CHECKOUT_COL + 44 + 44;
 
   // Right-click menu for a document row/card. Acts on the whole selection
   // when the clicked item is part of it (the gesture handler guarantees it
@@ -3797,6 +3819,14 @@ export default function LibraryExplorerPage() {
       entries.push({
         key: "open", label: "Open", icon: <Eye className="w-3.5 h-3.5" />,
         onSelect: () => handleRowDoubleClick(doc),
+      });
+      // Check out (or in): the daily one, right under Open.
+      const out = isDocumentCheckedOut(doc);
+      entries.push({
+        key: "checkout",
+        label: !out ? "Check out…" : doc.checkedOutBy === uid ? "Check in…" : `Checked out by ${doc.checkedOutByName || "someone"}…`,
+        icon: <LogIn className="w-3.5 h-3.5" />,
+        onSelect: () => openCheckout(doc),
       });
       entries.push({
         key: "meta", label: "Edit metadata", icon: <Pencil className="w-3.5 h-3.5" />,
@@ -3921,7 +3951,7 @@ export default function LibraryExplorerPage() {
     facts.push({ label: "Checked out", value: answerStats.out.toLocaleString(), tone: answerStats.out > 0 ? "warn" : undefined });
     return facts;
   })();
-  const libMenuItem = "w-full px-3 min-h-10 py-2 text-left text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center gap-2.5";
+  const libMenuItem = "w-full px-3 min-h-10 pointer-coarse:min-h-11 py-2 text-left text-[14px] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] focus-visible:bg-[var(--color-surface-2)] flex items-center gap-2.5";
   const upTo = currentFolder?.parentId ? folderMap.get(currentFolder.parentId)?.name ?? "parent folder" : library.name;
 
   // The one orange action. On a phone it rides in the bottom bar, so its
@@ -3943,13 +3973,13 @@ export default function LibraryExplorerPage() {
       {uploadMenuOpen && (
         <>
           <div className="fixed inset-0 z-30" onClick={() => setUploadMenuOpen(false)} />
-          <div role="menu" className="absolute right-0 top-full mt-2 max-sm:top-auto max-sm:bottom-full max-sm:mb-2 max-sm:left-0 sm:w-72 bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] rounded-xl shadow-xl z-40 overflow-hidden text-left">
+          <div role="menu" className="ui-float ui-float-in absolute right-0 top-full mt-2 max-sm:top-auto max-sm:bottom-full max-sm:mb-2 max-sm:left-0 sm:w-72 bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] rounded-xl z-40 overflow-hidden text-left">
                 <button role="menuitem"
                   onClick={() => { setUploadMenuOpen(false); fileInputRef.current?.click(); }}
                   className="w-full px-3 py-2.5 text-left hover:bg-[var(--color-surface-2)] flex items-start gap-2.5">
                   <UploadCloud className="w-4 h-4 mt-0.5 text-[var(--color-text-muted)] shrink-0" />
                   <span>
-                    <span className="block text-[13px] font-bold">Files…</span>
+                    <span className="block text-[14px] font-semibold">Files…</span>
                     <span className="block text-[13px] text-[var(--color-text-muted)]">Pick one or many files</span>
                   </span>
                 </button>
@@ -3958,7 +3988,7 @@ export default function LibraryExplorerPage() {
                   className="w-full px-3 py-2.5 text-left hover:bg-[var(--color-surface-2)] flex items-start gap-2.5 border-t border-[var(--color-border)]">
                   <FolderUp className="w-4 h-4 mt-0.5 text-[var(--color-text-muted)] shrink-0" />
                   <span>
-                    <span className="block text-[13px] font-bold">A whole folder…</span>
+                    <span className="block text-[14px] font-semibold">A whole folder…</span>
                     <span className="block text-[13px] text-[var(--color-text-muted)]">
                       {isController ? "Every subfolder and file keeps its place" : "Its files are added here (folders need Doc Control)"}
                     </span>
@@ -3970,6 +4000,45 @@ export default function LibraryExplorerPage() {
     </div>
   );
 
+  // The library's tools, by job. In sight: the daily ones (find, follow,
+  // new folder); the rest under one "Library" menu, grouped so the eye finds
+  // its group first (Files, Layout, Rules, Access).
+  type LibMenuItem = { key: string; icon: React.ReactNode; label: string; title?: string; onClick: () => void };
+  const libMenuGroups: Array<{ label: string; items: LibMenuItem[] }> = [
+    { label: "Files", items: [
+      ...(isController ? [
+        { key: "dupes", icon: <Copy />, label: "Clean up uploads…", title: "Duplicates and files that didn't arrive", onClick: () => setShowDuplicates(true) },
+        { key: "csv", icon: <FileText />, label: "Import from CSV…", title: "Create document records from a pasted CSV", onClick: () => setShowCsvImport(true) },
+        { key: "sweep", icon: <ScanSearch />, label: "Equipment sweep", title: "Pull equipment tags read from drawings into the equipment column and the registry", onClick: () => setShowEquipmentSweep(true) },
+        { key: "order", icon: <GripVertical />, label: "Reorder documents", onClick: () => setShowLibraryOrderModal(true) },
+        { key: "archived", icon: <Archive />, label: showArchivedDocs ? "Hide archived documents" : "Show archived documents", onClick: () => setShowArchivedDocs((v) => !v) },
+        { key: "trash", icon: <Trash2 />, label: "Recently deleted…", title: "Deleted folders are kept for 30 days and can be restored here", onClick: () => void openTrash() },
+      ] : []),
+      { key: "refresh", icon: <RefreshCw className={loadingDocs ? "animate-spin" : ""} />, label: "Refresh", onClick: () => window.location.reload() },
+    ] },
+    { label: "Layout", items: [
+      { key: "views", icon: <Eye />, label: "Saved views", onClick: () => setShowViewSelector((v) => !v) },
+      ...(isController ? [
+        { key: "columns", icon: <Columns />, label: "Manage columns", onClick: () => setShowColumnManager(true) },
+        { key: "home", icon: <LayoutGrid />, label: "Custom home", title: "An about panel, quick folders, recent documents and notices at the top of this library or folder", onClick: () => setHomeAsk((n) => n + 1) },
+      ] : []),
+      { key: "collection", icon: <FolderKanban />, label: "New collection", title: "Combine related documents into one named book you can read end to end", onClick: () => setNewCollection((n) => n + 1) },
+    ] },
+    ...(isController ? [
+      { label: "Rules", items: [
+        { key: "numbering", icon: <Hash />, label: "Auto-numbering…", onClick: () => setNumberingOpen(true) },
+        { key: "review", icon: <CalendarClock />, label: "Review cycle", title: "A periodic review for every document in this library", onClick: () => setReviewPolicyTarget({ level: "library", id: libraryId, name: library?.name }) },
+        { key: "ack", icon: <ClipboardCheck />, label: "Read and understood", title: "Ask people to confirm they read every document in this library", onClick: () => setAckPolicyTarget({ level: "library", id: libraryId, name: library?.name }) },
+        { key: "gate", icon: <ShieldCheck />, label: "Review before publishing", title: "A reviewer signs off before a revision publishes in this library", onClick: () => setReviewControlTarget({ level: "library", id: libraryId, name: library?.name }) },
+        { key: "retention", icon: <Archive />, label: "Retention", title: "How long records in this library are kept", onClick: () => setRetentionTarget({ level: "library", id: libraryId, name: library?.name }) },
+      ] },
+      { label: "Access", items: [
+        { key: "access", icon: <Shield />, label: "Library access", title: "Who can publish revisions and control documents here (e.g. a drafting supervisor on drawings only)", onClick: () => setShowLibraryPerms(true) },
+        { key: "recert", icon: <KeyRound />, label: "Check who has access", title: "Review and confirm who has access to this library", onClick: () => setRecertOpen(true) },
+      ] },
+    ] : []),
+  ];
+
   const libTools = (
     <>
       {/* Library quick-jump (folders + sheets in this library, plus
@@ -3979,11 +4048,11 @@ export default function LibraryExplorerPage() {
         <Search className="w-4 h-4" />
         <span className="max-md:hidden">Find in library</span>
       </button>
-      {/* Subscribe to this library: watchers get notified when documents
-          are added or revised here. */}
+      {/* Follow this library: get a notice when documents are added or
+          revised here. */}
       {activeOrgId && uid && (
-        <WatchButton orgId={activeOrgId} userId={uid} resourceType="library" resourceId={libraryId} size="sm"
-          className="!w-9 !h-9 !rounded-md border border-[var(--color-border-strong)] !bg-[var(--color-surface)] hover:!bg-[var(--color-surface-2)] !text-[var(--color-text-muted)]" />
+        <WatchButton orgId={activeOrgId} userId={uid} resourceType="library" resourceId={libraryId}
+          className="!h-10 pointer-coarse:!h-11 !px-3.5 !rounded-lg !border-[var(--color-border-strong)] !bg-[var(--color-surface)] hover:!bg-[var(--color-surface-2)] !text-[14px] !font-semibold !text-[var(--color-text)] [&_svg]:!w-4 [&_svg]:!h-4" />
       )}
       {/* New folder: creating structure is as basic as adding files.
           Creates inside whatever folder you're viewing. */}
@@ -3996,166 +4065,28 @@ export default function LibraryExplorerPage() {
       )}
       <div className="relative">
         <button type="button" onClick={() => setActionsMenuOpen((v) => !v)} className={heroQuiet}
-          aria-haspopup="menu" aria-expanded={actionsMenuOpen} aria-label="Library actions" title="Library actions">
+          aria-haspopup="menu" aria-expanded={actionsMenuOpen} aria-label="Library tools" title="Library tools">
           <span className="max-md:hidden">Library</span>
           <MoreHorizontal className="w-4 h-4" />
         </button>
         {actionsMenuOpen && (
           <>
             <div className="fixed inset-0 z-30" onClick={() => setActionsMenuOpen(false)} />
-            <div role="menu"
-              className="absolute right-0 top-full mt-2 w-72 max-w-[calc(100vw-2rem)] max-h-[70vh] overflow-y-auto py-1 bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] rounded-xl shadow-xl z-40 animate-in fade-in zoom-in-95 duration-150 origin-top-right"
+            <div role="menu" aria-label="Library tools"
+              className="ui-float ui-float-in absolute right-0 top-full mt-1.5 w-72 max-w-[calc(100vw-2rem)] max-h-[70vh] overflow-y-auto py-1 bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] rounded-xl z-40 origin-top-right"
             >
-                {isController && (
-                  <button
-                    onClick={() => { setActionsMenuOpen(false); setShowDuplicates(true); }}
-                    role="menuitem" className={libMenuItem}
-                  >
-                    <Copy className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> Clean up uploads (duplicates, missing files)…
-                  </button>
-                )}
-                {isController && (
-                  <button
-                    onClick={() => { setActionsMenuOpen(false); setNumberingOpen(true); }}
-                    role="menuitem" className={libMenuItem}
-                  >
-                    <Hash className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> Auto-numbering…
-                  </button>
-                )}
-                {isController && (
-                  <button
-                    onClick={() => { setActionsMenuOpen(false); setShowEquipmentSweep(true); }}
-                    role="menuitem" className={libMenuItem}
-                    title="Pull equipment tags the AI read from drawings into the equipment column and the registry"
-                  >
-                    <ScanSearch className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> Equipment sweep
-                  </button>
-                )}
-                <button
-                  onClick={() => { setActionsMenuOpen(false); setNewCollection((n) => n + 1); }}
-                  role="menuitem" className={libMenuItem}
-                  title="Combine related documents into one named book you can read end to end"
-                >
-                  <FolderKanban className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> New collection
-                </button>
-                {isController && (
-                  <button
-                    onClick={() => { setActionsMenuOpen(false); setHomeAsk((n) => n + 1); }}
-                    role="menuitem" className={libMenuItem}
-                    title="An about panel, quick folders, recent documents and notices at the top of this library or folder"
-                  >
-                    <LayoutGrid className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> Custom home
-                  </button>
-                )}
-                {isController && (
-                  <button
-                    onClick={() => { setActionsMenuOpen(false); setShowColumnManager(true); }}
-                    role="menuitem" className={libMenuItem}
-                  >
-                    <Columns className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> Manage columns
-                  </button>
-                )}
-                {isController && (
-                  <button
-                    onClick={() => { setActionsMenuOpen(false); setShowLibraryOrderModal(true); }}
-                    role="menuitem" className={libMenuItem}
-                  >
-                    <GripVertical className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> Reorder documents
-                  </button>
-                )}
-                {isController && (
-                  <button
-                    onClick={() => { setActionsMenuOpen(false); setReviewPolicyTarget({ level: "library", id: libraryId, name: library?.name }); }}
-                    role="menuitem" className={libMenuItem}
-                    title="Set a periodic-review cycle for every document in this library"
-                  >
-                    <CalendarClock className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> Review cycle
-                  </button>
-                )}
-                {isController && (
-                  <button
-                    onClick={() => { setActionsMenuOpen(false); setAckPolicyTarget({ level: "library", id: libraryId, name: library?.name }); }}
-                    role="menuitem" className={libMenuItem}
-                    title="Require read-&-understood acknowledgment for every document in this library"
-                  >
-                    <ClipboardCheck className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> Read &amp; understood
-                  </button>
-                )}
-                {isController && (
-                  <button
-                    onClick={() => { setActionsMenuOpen(false); setReviewControlTarget({ level: "library", id: libraryId, name: library?.name }); }}
-                    role="menuitem" className={libMenuItem}
-                    title="Require reviewer sign-off before a revision publishes in this library"
-                  >
-                    <ShieldCheck className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> Pre-publish review
-                  </button>
-                )}
-                {isController && (
-                  <button
-                    onClick={() => { setActionsMenuOpen(false); setRetentionTarget({ level: "library", id: libraryId, name: library?.name }); }}
-                    role="menuitem" className={libMenuItem}
-                    title="Set a retention period for records in this library"
-                  >
-                    <Archive className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> Retention
-                  </button>
-                )}
-                {isController && (
-                  <button
-                    onClick={() => { setActionsMenuOpen(false); void openTrash(); }}
-                    role="menuitem" className={libMenuItem}
-                    title="Deleted folders are held for 30 days and can be restored here"
-                  >
-                    <Trash2 className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> Recently deleted…
-                  </button>
-                )}
-                {isController && (
-                  <button
-                    onClick={() => { setActionsMenuOpen(false); setRecertOpen(true); }}
-                    role="menuitem" className={libMenuItem}
-                    title="Review and re-attest who has access to this library"
-                  >
-                    <KeyRound className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> Access recertification
-                  </button>
-                )}
-                {isController && (
-                  <button
-                    onClick={() => { setActionsMenuOpen(false); setShowCsvImport(true); }}
-                    role="menuitem" className={libMenuItem}
-                    title="Bulk-create document records from a pasted CSV"
-                  >
-                    <FileText className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> Import from CSV
-                  </button>
-                )}
-                {isController && (
-                  <button
-                    onClick={() => { setActionsMenuOpen(false); setShowLibraryPerms(true); }}
-                    role="menuitem" className={libMenuItem}
-                    title="Grant who can publish revisions / control documents in this library (e.g. a Drafting Supervisor on drawings only)"
-                  >
-                    <Shield className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> Library access
-                  </button>
-                )}
-                <button
-                  onClick={() => { setActionsMenuOpen(false); setShowViewSelector((v) => !v); }}
-                  role="menuitem" className={libMenuItem}
-                >
-                  <Eye className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> Views & save current
-                </button>
-                {isController && (
-                  <button
-                    onClick={() => { setActionsMenuOpen(false); setShowArchivedDocs((v) => !v); }}
-                    role="menuitem" className={libMenuItem}
-                  >
-                    <Archive className="w-3.5 h-3.5 text-[var(--color-text-faint)]" />
-                    {showArchivedDocs ? "Hide archived docs" : "Show archived docs"}
-                  </button>
-                )}
-                <button
-                  onClick={() => { setActionsMenuOpen(false); window.location.reload(); }}
-                  role="menuitem" className={libMenuItem}
-                >
-                  <RefreshCw className={`w-3.5 h-3.5 text-[var(--color-text-faint)] ${loadingDocs ? "animate-spin" : ""}`} /> Refresh
-                </button>
+              {libMenuGroups.filter((g) => g.items.length > 0).map((g, gi) => (
+                <div key={g.label} role="group" aria-label={g.label} className={gi > 0 ? "mt-1 pt-1 border-t border-[var(--color-border)]" : ""}>
+                  <div className="px-3 pt-1.5 pb-0.5 text-[12px] text-[var(--color-text-muted)]">{g.label}</div>
+                  {g.items.map((it) => (
+                    <button key={it.key} type="button" role="menuitem" title={it.title} className={libMenuItem}
+                      onClick={() => { setActionsMenuOpen(false); it.onClick(); }}>
+                      <span aria-hidden className="w-4 h-4 shrink-0 text-[var(--color-text-faint)] [&>svg]:w-4 [&>svg]:h-4">{it.icon}</span>
+                      {it.label}
+                    </button>
+                  ))}
+                </div>
+              ))}
             </div>
           </>
         )}
@@ -4340,6 +4271,7 @@ export default function LibraryExplorerPage() {
           isController={isController}
           onNavigate={setCurrentFolderId}
           onCreateFolder={openCreateFolder}
+          loading={!FOLDERS_SEEN.has(libraryId)}
           onDropItems={isController ? (targetId, payload) => {
             if (payload.folderIds?.length) void dropMoveFolders(payload.folderIds, targetId);
             else if (payload.folderId) void dropMoveFolder(payload.folderId, targetId);
@@ -4386,11 +4318,12 @@ export default function LibraryExplorerPage() {
               title={answer}
               sub={answerSub}
               facts={answerFacts}
+              factsHero="none"
               tools={libTools}
               primary={uploadPrimary}
             >
               {/* Table | Graph | ...: the Graph opens on this folder. */}
-              <ViewTabs tabs={DOCUMENT_VIEWS} hrefs={{
+              <DocViewTabs hrefs={{
                 "/documents": `${pathname}${searchParams.toString() ? `?${searchParams.toString()}` : ""}`,
                 "/documents/graph": `/documents/graph?focus=${encodeURIComponent(currentFolderId ? `folder:${currentFolderId}` : `lib:${libraryId}`)}&back=1`,
               }} />
@@ -4420,14 +4353,14 @@ export default function LibraryExplorerPage() {
               {(error || notice || staged.error) && (
                 <div className="mt-3 space-y-1.5">
                   {staged.error && (
-                    <div role="alert" className="text-[14px] font-semibold text-[var(--state-overdue)] flex items-start gap-2">
-                      <span className="flex-1 min-w-0">{staged.error}</span>
+                    <div role="alert" className="text-[14px] text-[var(--color-text)] flex items-start gap-2"><CircleAlert aria-hidden className="w-4 h-4 mt-0.5 shrink-0 text-[var(--state-overdue)]" />
+                      <span className="flex-1 min-w-0">{plainError(staged.error)}</span>
                       <button onClick={staged.dismissError} className="shrink-0 p-1 rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface)]" aria-label="Dismiss"><X className="w-3.5 h-3.5" /></button>
                     </div>
                   )}
                   {error && (
-                    <div role="alert" className="text-[14px] font-semibold text-[var(--state-overdue)] flex items-start gap-2">
-                      <span className="flex-1 min-w-0">{error}</span>
+                    <div role="alert" className="text-[14px] text-[var(--color-text)] flex items-start gap-2"><CircleAlert aria-hidden className="w-4 h-4 mt-0.5 shrink-0 text-[var(--state-overdue)]" />
+                      <span className="flex-1 min-w-0">{plainError(error)}</span>
                       <button onClick={() => setError(null)} className="shrink-0 p-1 rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface)]" aria-label="Dismiss"><X className="w-3.5 h-3.5" /></button>
                     </div>
                   )}
@@ -4448,7 +4381,7 @@ export default function LibraryExplorerPage() {
                 label={<>Search: “{find.trim()}”</>}
                 action={
                   <button type="button" onClick={() => setFind("")}
-                    className="shrink-0 h-8 px-3 rounded-lg border border-[var(--color-border-strong)] text-[13px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+                    className={heroQuiet}>
                     Back to {currentFolder?.name ?? library.name}
                   </button>
                 }
@@ -4488,10 +4421,9 @@ export default function LibraryExplorerPage() {
               {/* FOLDERS: a compact table, one row per folder with its counts. */}
               {filteredFolders.length > 0 && (
                 <nav aria-labelledby="lib-folders-h">
-                  <h2 id="lib-folders-h" className="flex items-center gap-2.5 font-display text-[19px] leading-tight font-semibold text-[var(--color-heading)] mb-2.5">
-                    <span className="ui-icon-tile is-sm is-solid" aria-hidden><FolderIcon className="w-4 h-4" /></span>
+                  <h2 id="lib-folders-h" className="flex items-baseline gap-2 font-display text-[20px] leading-tight font-semibold text-[var(--color-heading)] mb-3">
                     Folders
-                    <span className="ui-count is-solid font-sans">{filteredFolders.length.toLocaleString()}</span>
+                    <span className="font-sans text-[14px] font-normal tabular-nums text-[var(--color-text-muted)]">{filteredFolders.length.toLocaleString()}</span>
                   </h2>
                   <FolderGrid
                     layout="list"
@@ -4647,11 +4579,10 @@ export default function LibraryExplorerPage() {
                 white sheet. */}
             <section aria-labelledby="lib-docs-h" className="min-w-0">
               <div className="flex flex-wrap items-center gap-x-2 gap-y-2 mb-2.5 min-h-9">
-                <h2 id="lib-docs-h" className="flex items-center gap-2.5 min-w-0 mr-auto">
-                  <span className="ui-icon-tile is-sm is-solid" aria-hidden><FileText className="w-4 h-4" /></span>
-                  <span className="font-display text-[19px] leading-tight font-semibold text-[var(--color-heading)]">{noun.many === "documents" ? "Documents" : library.name}</span>
+                <h2 id="lib-docs-h" className="flex items-baseline gap-2 min-w-0 mr-auto">
+                  <span className="font-display text-[20px] leading-tight font-semibold text-[var(--color-heading)]">{noun.many === "documents" ? "Documents" : library.name}</span>
                   <span className="text-[14px] text-[var(--color-text-muted)] tabular-nums"
-                    title="Documents filed directly in this folder"><span className="ui-count is-solid">{filteredDocs.length.toLocaleString()}</span> here</span>
+                    title="Documents filed directly in this folder">{filteredDocs.length.toLocaleString()} here</span>
                   {folderCounts && (() => {
                     const below = currentFolderId ? folderCounts.totals.get(currentFolderId) ?? 0 : folderCounts.libraryTotal;
                     return below > (folderCounts.direct.get(currentFolderId ?? null) ?? 0) && below !== filteredDocs.length ? (
@@ -4683,7 +4614,7 @@ export default function LibraryExplorerPage() {
                     placeholder="Filter this folder"
                     aria-label="Filter this folder by number, title, sheet or any field"
                     title="Number, title, sheet or any field"
-                    className="w-full h-9 pl-9 pr-8 text-base sm:text-[14px] rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] outline-none focus:border-[var(--color-main)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40"
+                    className="w-full h-10 pointer-coarse:h-11 pl-9 pr-9 text-[16px] sm:text-[14px] rounded-lg border border-[var(--color-border-control)] bg-[var(--color-surface)] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)]"
                   />
                   {search && (
                     <button
@@ -4859,7 +4790,7 @@ export default function LibraryExplorerPage() {
             )}
 
             <div
-              className="bg-[var(--color-surface)] rounded-lg border border-[var(--color-border)] overflow-hidden flex flex-col min-h-[320px] relative focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-border-strong)]"
+              className={`${quietTags.quiet} bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] overflow-hidden flex flex-col min-h-[320px] relative`}
               tabIndex={0}
               onKeyDown={handleExplorerKeyDown}
               onMouseOver={onDocsPointerOver}
@@ -4892,13 +4823,11 @@ export default function LibraryExplorerPage() {
                 )}
                 {!loadingDocs && filteredDocs.length === 0 && filteredFolders.length === 0 ? (
                   /* INTERACTIVE EMPTY STATE */
-                  <div className="flex-1 flex flex-col items-center justify-center p-12">
-                    <UploadCloud className="w-8 h-8 text-[var(--color-text-faint)] mb-3" />
-                    <h3 className="text-[14px] font-bold text-[var(--color-text)] mb-1">Nothing here yet</h3>
-                    {/* Upload (top right) is the one home for adding files. */}
-                    <p className="text-sm text-[var(--color-text-muted)] text-center max-w-xs">
-                      Drop files or a folder here, or use Upload.
-                    </p>
+                  <div className="flex-1 flex flex-col items-center justify-center gap-3 p-12 text-center">
+                    <p className="text-[15px] text-[var(--color-text)]">Nothing filed here yet. Drop files or a folder on this page to add them.</p>
+                    <button type="button" onClick={() => fileInputRef.current?.click()} className={heroQuiet}>
+                      <UploadCloud className="w-4 h-4" /> Choose files
+                    </button>
                   </div>
                 ) : (
                   <>
@@ -4906,7 +4835,7 @@ export default function LibraryExplorerPage() {
                       its status, line 2 the title, rev and date. */}
                   <div className="md:hidden flex-1 divide-y divide-[var(--color-border)]">
                     {loadingDocs && sortedDocs.length === 0 ? (
-                      <LoadingBlock what="documents" />
+                      <SkeletonRows rows={6} cols={0} what="documents" sheet={false} />
                     ) : sortedDocs.length === 0 ? (
                       <div className="text-center text-[14px] text-[var(--color-text-muted)] py-8">No documents match.</div>
                     ) : sortedDocs.map((doc) => {
@@ -4951,9 +4880,9 @@ export default function LibraryExplorerPage() {
                                 aria-label={on ? `Unstage ${doc.documentNumber || "it"}` : `Stage ${doc.documentNumber || "it"}`}
                                 title={on ? "Staged. Tap to unstage" : "Stage: gather it with others to view, mark up and send"}
                                 className={`shrink-0 mt-2 mr-2 w-11 h-11 grid place-items-center rounded-lg transition-colors ${on
-                                  ? "text-white bg-[var(--color-main)]"
-                                  : "text-[var(--color-text-muted)] active:bg-[var(--color-surface-2)] hover:bg-[var(--color-surface-2)]"}`}>
-                                <Layers className="w-[18px] h-[18px]" />
+                                  ? "text-[var(--color-accent-text)] active:bg-[var(--color-surface-2)]"
+                                  : "text-[var(--color-text-faint)] active:bg-[var(--color-surface-2)] hover:bg-[var(--color-surface-2)]"}`}>
+                                <Layers className={`w-[18px] h-[18px] ${on ? "fill-current" : ""}`} />
                               </button>
                             );
                           })()}
@@ -5006,7 +4935,7 @@ export default function LibraryExplorerPage() {
                   ) : (
                   <div className="relative flex-1 hidden md:block min-w-0">
                   {tableMoreRight && (
-                    <div aria-hidden="true" className="pointer-events-none absolute inset-y-0 right-0 z-[5] w-16 bg-gradient-to-l from-[var(--color-surface)] to-transparent" />
+                    <div aria-hidden="true" className="pointer-events-none absolute inset-y-0 right-[88px] z-[5] w-12 bg-gradient-to-l from-[var(--color-surface)] to-transparent" />
                   )}
                   <div
                     ref={setTableScrollEl}
@@ -5016,7 +4945,7 @@ export default function LibraryExplorerPage() {
                     onMouseDown={handleMarqueeMouseDown}
                   >
                     <table className="w-full text-left text-[14px] table-fixed" style={{ minWidth: tableMinWidth }}>
-                      <thead className="bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text-muted)] font-semibold">
+                      <thead className="text-[13px] text-[var(--color-text-muted)] font-semibold border-b border-[var(--color-border)]">
                         <tr>
                           <th className={`px-3 ${headerPad}`} style={{ width: "36px" }}>
                             <input
@@ -5085,19 +5014,20 @@ export default function LibraryExplorerPage() {
                             );
                           })()}{colKey === checkoutAfterKey && checkoutTh}</React.Fragment>)}
                           {!checkoutAfterKey && checkoutTh}
-                          <th className={`px-2 ${headerPad} text-center`} style={{ width: "36px" }} title="Staged">
-                            <Layers className="w-3.5 h-3.5 inline text-[var(--color-text-faint)]" aria-label="Staged" />
+                          <th className={`px-2 ${headerPad} text-center sticky right-[44px] z-[3] bg-[var(--color-surface)] shadow-[-1px_0_0_var(--color-border)]`} style={{ width: "44px" }} title="Staged">
+                            <Layers className="w-3.5 h-3.5 inline text-[var(--color-text-faint)]" aria-hidden />
+                            <span className="sr-only">Staged</span>
                           </th>
-                          <th className={`px-2 ${headerPad} text-center print:hidden`} style={{ width: "44px" }}>
+                          <th className={`px-1 ${headerPad} text-center print:hidden sticky right-0 z-[3] bg-[var(--color-surface)]`} style={{ width: "44px" }}>
                             <ColumnHeaderMenu onAdd={handleAddColumnClick} isController={isController} />
                           </th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-[var(--color-border)]">
-                        {loadingDocs ? (
+                        {loadingDocs && sortedDocs.length === 0 ? (
                           <tr>
-                            <td colSpan={activeColumns.length + 5} className="px-6 py-12 text-center text-[var(--color-text-muted)]">
-                              <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2" />Loading documents…
+                            <td colSpan={activeColumns.length + 5} className="p-0">
+                              <SkeletonRows rows={8} cols={4} what="documents" sheet={false} />
                             </td>
                           </tr>
                         ) : sortedDocs.length === 0 ? (
@@ -5114,6 +5044,8 @@ export default function LibraryExplorerPage() {
                             // selecting) — must be VISIBLE or ctrl+space
                             // toggles a row the user can't identify.
                             const isKeyFocused = selFocusId === docRecord.id;
+                            // The pinned action cells carry the row's own background.
+                            const stickyBg = isRowSelected || isFocused ? "bg-[var(--color-accent-soft)]" : "bg-[var(--color-surface)] group-hover:bg-[var(--color-surface-2)]";
                             const checkoutTd = (
                               <td className={`px-3 ${rowPad}`}>
                                 <CheckoutStatusCell
@@ -5218,7 +5150,7 @@ export default function LibraryExplorerPage() {
                                               }}
                                               onBlur={() => { if (!savingTitle) void saveInlineTitle(docRecord.id!, editingTitleValue); }}
                                               disabled={savingTitle}
-                                              className="w-full text-sm px-1.5 py-0.5 rounded border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] focus:outline-none focus:ring-1 focus:ring-[var(--color-accent-ring)]"
+                                              className="w-full text-sm px-1.5 py-0.5 rounded border border-[var(--color-border-strong)] bg-[var(--color-surface-2)]"
                                             />
                                             {savingTitle && <Loader2 className="w-3 h-3 animate-spin text-[var(--color-text-muted)] shrink-0" />}
                                           </div>
@@ -5272,7 +5204,7 @@ export default function LibraryExplorerPage() {
                                               onBlur={() => { if (!savingDocNum) void saveInlineDocNumber(docRecord.id!, editingDocNumValue); }}
                                               disabled={savingDocNum}
                                               aria-label="Document number"
-                                              className={`w-full font-display text-[15px] font-semibold tabular-nums px-1.5 py-0.5 rounded border ${editingDocNumError ? "border-[var(--state-overdue)]" : "border-[var(--color-border-strong)]"} bg-[var(--color-surface)] focus:outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]/40`}
+                                              className={`w-full font-display text-[15px] font-semibold tabular-nums px-1.5 py-0.5 rounded border ${editingDocNumError ? "border-[var(--state-overdue)]" : "border-[var(--color-border-strong)]"} bg-[var(--color-surface)]`}
                                             />
                                             {savingDocNum && <Loader2 className="w-3 h-3 animate-spin text-[var(--color-text-muted)] shrink-0" />}
                                           </div>
@@ -5317,34 +5249,37 @@ export default function LibraryExplorerPage() {
                                   );
                                 })()}{colKey === checkoutAfterKey && checkoutTd}</React.Fragment>)}
                                 {!checkoutAfterKey && checkoutTd}
-                                <td className={`px-2 ${rowPad} text-center`}>
+                                <td className={`px-1.5 ${rowPad} text-center sticky right-[44px] z-[2] shadow-[-1px_0_0_var(--color-border)] ${stickyBg}`}>
                                   {(() => {
                                     const isStaged = staged.isStaged(docRecord.id);
                                     return (
                                       <button
                                         onClick={(e) => handleStageDoc(docRecord, e)}
-                                        className={`p-1 rounded-md transition-all ${
+                                        className={`w-8 h-8 grid place-items-center rounded-lg transition-colors ${
                                           isStaged
-                                            ? "text-white bg-[var(--color-main)] opacity-100"
-                                            : "text-[var(--color-text-faint)] group-hover:text-[var(--color-text-muted)] hover:!text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
+                                            ? "text-[var(--color-accent-text)] hover:bg-[var(--color-surface-2)]"
+                                            : "text-[var(--color-text-faint)] opacity-0 group-hover:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100 hover:!text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
                                         }`}
                                         title={isStaged ? "Staged. Tap to unstage" : "Stage: gather it with others to view, mark up and send"}
                                         aria-label={isStaged ? "Unstage" : "Stage"}
                                         aria-pressed={isStaged}
                                       >
-                                        <Layers className="w-3.5 h-3.5" />
+                                        <Layers className={`w-4 h-4 ${isStaged ? "fill-current" : ""}`} />
                                       </button>
                                     );
                                   })()}
                                 </td>
-                                <td className={`px-2 ${rowPad} text-center`}>
+                                <td className={`px-1 ${rowPad} text-center sticky right-0 z-[2] ${stickyBg}`}>
+                                  {/* Every other row action, in one menu (the same one a right-click opens). */}
                                   <button
-                                    onClick={(e) => { e.stopPropagation(); setSelectedDoc(docRecord); setShowMetadataEditor(true); }}
-                                    className="text-[var(--color-text-faint)] group-hover:text-[var(--color-text-muted)] hover:!text-[var(--color-text)] p-1 rounded-md hover:bg-[var(--color-surface-2)] transition-colors"
-                                    title="Edit metadata"
-                                    aria-label="Edit metadata"
+                                    type="button"
+                                    onClick={(e) => openRowMenu(docRecord, e)}
+                                    className="w-8 h-8 grid place-items-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors"
+                                    title="Actions"
+                                    aria-haspopup="menu"
+                                    aria-label={`Actions for ${docRecord.documentNumber || docRecord.title || "this document"}`}
                                   >
-                                    <FileText className="w-3.5 h-3.5" />
+                                    <MoreHorizontal className="w-4 h-4" />
                                   </button>
                                 </td>
                               </tr>
@@ -5374,9 +5309,9 @@ export default function LibraryExplorerPage() {
         isOpen={!!selectedDoc}
         onClose={() => setSelectedDoc(null)}
         title={(() => {
-          // Where the document lives: library · folders.
+          // Where the document lives: library / folders (a name said once).
           const f = selectedDoc?.collectionId ? folderMap.get(selectedDoc.collectionId) : null;
-          return [library.name, ...(f ? [...(f.pathNames ?? []), f.name] : [])].filter(Boolean).join(" · ");
+          return [library.name, ...(f ? [...(f.pathNames ?? []), f.name] : [])].filter((x, i, a) => !!x && x !== a[i - 1]).join(" / ");
         })()}
       >
         {selectedDoc && (
@@ -5412,7 +5347,7 @@ export default function LibraryExplorerPage() {
             folderPath={(() => {
               const f = selectedDoc.collectionId ? folderMap.get(selectedDoc.collectionId) : null;
               if (!f) return library.name;
-              const parts = [library.name, ...(f.pathNames ?? []), f.name].filter(Boolean);
+              const parts = [library.name, ...(f.pathNames ?? []), f.name].filter((x, i, a) => !!x && x !== a[i - 1]);
               return parts.join(" / ");
             })()}
           />
@@ -5446,19 +5381,17 @@ export default function LibraryExplorerPage() {
       {/* Folder selection bar — ctrl/shift-click tiles, then act on them all. */}
       {isController && selectedFolderIds.size > 0 && selectedDocIds.size === 0 && (
         <div className={`fixed left-1/2 -translate-x-1/2 z-40 ${SELECTION_BAR_BOTTOM}`}>
-          <div className="flex items-center gap-2 px-4 py-2.5 bg-slate-900/95 text-white rounded-lg shadow-2xl border border-slate-700/60"
-            style={{ backdropFilter: "blur(20px) saturate(200%)" }}>
-            <span className="text-[13px] font-bold">{selectedFolderIds.size} folder{selectedFolderIds.size === 1 ? "" : "s"} selected</span>
-            <div className="h-4 w-px bg-slate-700 mx-1" />
-            <button onClick={() => setSelectedFolderIds(new Set())}
-              className="px-2.5 py-1 text-[13px] font-bold text-[var(--color-text-faint)] hover:text-white hover:bg-slate-700/60 rounded-lg transition-colors">
-              Deselect
+          <div className="ui-float flex items-center gap-2 pl-4 pr-2 py-2 bg-[var(--color-surface)] text-[var(--color-text)] rounded-xl border border-[var(--color-border)]">
+            <span className="text-[14px] font-semibold tabular-nums">{selectedFolderIds.size} folder{selectedFolderIds.size === 1 ? "" : "s"} selected</span>
+            <div className="h-5 w-px bg-[var(--color-border)] mx-1" />
+            <button onClick={() => setSelectedFolderIds(new Set())} className={barBtn}>
+              Clear
             </button>
             <button
               onClick={() => setDeleteFolders([...selectedFolderIds].map((x) => ({ id: x, name: folderMap.get(x)?.name ?? "Folder" })))}
-              className="flex items-center gap-1.5 px-2.5 py-1 text-[13px] font-bold text-rose-300 hover:text-white hover:bg-[var(--state-overdue)]/80 rounded-lg transition-colors"
+              className={`${barBtn} !text-[var(--state-overdue-text)]`}
               title="Delete the selected folders (Delete key)">
-              <Trash2 className="w-3 h-3" /> Delete…
+              <Trash2 className="w-4 h-4" /> Delete…
             </button>
           </div>
         </div>
@@ -5474,49 +5407,48 @@ export default function LibraryExplorerPage() {
         style={{ transitionTimingFunction: "cubic-bezier(0.34, 1.56, 0.64, 1)" }}
       >
         <div
-          className="flex flex-wrap items-center justify-center gap-x-1.5 gap-y-1 px-3 py-2 bg-slate-900/95 text-white rounded-lg shadow-2xl border border-slate-700/60"
-          style={{ backdropFilter: "blur(20px) saturate(200%)" }}
+          className="ui-float flex flex-wrap items-center justify-center gap-x-1 gap-y-1 pl-4 pr-2 py-2 bg-[var(--color-surface)] text-[var(--color-text)] rounded-xl border border-[var(--color-border)]"
         >
-          <span className="px-1 text-[13px] font-bold whitespace-nowrap">{selectedDocIds.size} selected</span>
-          <div className="h-4 w-px bg-slate-700 mx-1 max-sm:hidden" />
+          <span className="pr-1 text-[14px] font-semibold whitespace-nowrap tabular-nums">{selectedDocIds.size} selected</span>
           <button
             onClick={() => setSelectedDocIds(new Set())}
-            className={`${barBtn} text-[var(--color-text-faint)]`}
+            className={`${barBtn} !text-[var(--color-text-muted)]`}
           >
-            Deselect
+            Clear
           </button>
+          <div className="h-5 w-px bg-[var(--color-border)] mx-1 max-sm:hidden" />
           {/* One orange (Move), the rest quiet, the rare ones under More. */}
           <button
             onClick={() => setShowBulkMoveModal(true)}
-            className="flex items-center gap-1.5 h-9 px-3 text-[13px] font-bold rounded-lg transition-all active:scale-95 bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] whitespace-nowrap"
+            className="flex items-center gap-1.5 h-9 pointer-coarse:h-11 px-3.5 text-[14px] font-semibold rounded-lg transition-colors bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] whitespace-nowrap"
             title="Move all selected documents to a folder"
           >
-            <ArrowRight className="w-3 h-3" /> Move to…
+            <ArrowRight className="w-4 h-4" /> Move to…
           </button>
           <button
             onClick={handleStageSelected}
-            className={`${barBtn} text-slate-200`}
+            className={barBtn}
             title="Stage them: gather them with others to view side by side, mark up and send, from Staged"
           >
-            <Layers className="w-3 h-3" /> Stage
+            <Layers className="w-4 h-4" /> Stage
           </button>
           <button
             onClick={() => openSend(sortedDocs.filter((d) => selectedDocIds.has(d.id!)))}
-            className={`${barBtn} text-slate-200`}
+            className={barBtn}
             title="Send the selected documents: a link, email, text or QR code"
           >
-            <Send className="w-3 h-3" /> Send
+            <Send className="w-4 h-4" /> Send
           </button>
           <button
             onClick={() => setShowBulkCheckout(true)}
-            className={`${barBtn} text-slate-200`}
+            className={barBtn}
             title="Check out the selected documents, on their own or to a project"
           >
-            <Briefcase className="w-3 h-3" /> Check out
+            <Briefcase className="w-4 h-4" /> Check out
           </button>
           {bulkDeleting && (
-            <span className="flex items-center gap-1.5 px-2 text-[13px] font-bold text-rose-300">
-              <Loader2 className="w-3 h-3 animate-spin" /> Deleting {bulkDeleting.done} of {bulkDeleting.total}…
+            <span role="status" className="flex items-center gap-1.5 px-2 text-[14px] font-semibold text-[var(--color-text-muted)] tabular-nums">
+              <Loader2 className="w-4 h-4 animate-spin" /> Deleting {bulkDeleting.done} of {bulkDeleting.total}…
             </span>
           )}
           {isController && !bulkDeleting && (
@@ -5524,27 +5456,27 @@ export default function LibraryExplorerPage() {
               <button
                 onClick={() => setBulkMoreOpen((v) => !v)}
                 aria-haspopup="menu" aria-expanded={bulkMoreOpen}
-                className={`${barBtn} text-slate-200`}
+                className={barBtn}
               >
-                <MoreHorizontal className="w-3.5 h-3.5" /> More
+                <MoreHorizontal className="w-4 h-4" /> More
               </button>
               {bulkMoreOpen && (
                 <>
                   <div className="fixed inset-0 z-40" onClick={() => setBulkMoreOpen(false)} />
                   {/* Opens upward: the bar sits at the bottom of the screen. */}
-                  <div role="menu" className="absolute right-0 bottom-full mb-2 z-50 w-48 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] shadow-xl py-1">
+                  <div role="menu" className="ui-float ui-float-in absolute right-0 bottom-full mb-2 z-50 w-52 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] py-1 origin-bottom-right">
                     <button role="menuitem" onClick={() => { setBulkMoreOpen(false); setShowBulkEdit(true); }}
-                      className="w-full flex items-center gap-2 px-3 py-2 text-left text-[13px] font-semibold hover:bg-[var(--color-surface-2)]">
-                      <Pencil className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> Edit fields on all
+                      className="w-full flex items-center gap-2.5 px-3 min-h-10 text-left text-[14px] hover:bg-[var(--color-surface-2)]">
+                      <Pencil className="w-4 h-4 text-[var(--color-text-faint)]" /> Edit fields on all
                     </button>
                     <button role="menuitem" onClick={() => { setBulkMoreOpen(false); void handleBulkArchive(); }}
-                      className="w-full flex items-center gap-2 px-3 py-2 text-left text-[13px] font-semibold hover:bg-[var(--color-surface-2)]">
-                      <Archive className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> Archive
+                      className="w-full flex items-center gap-2.5 px-3 min-h-10 text-left text-[14px] hover:bg-[var(--color-surface-2)]">
+                      <Archive className="w-4 h-4 text-[var(--color-text-faint)]" /> Archive
                     </button>
                     <div className="my-1 h-px bg-[var(--color-border)]" />
                     <button role="menuitem" onClick={() => { setBulkMoreOpen(false); void handleBulkDelete(); }}
-                      className="w-full flex items-center gap-2 px-3 py-2 text-left text-[13px] font-semibold text-[var(--state-overdue)] hover:bg-[var(--color-surface-2)]">
-                      <Trash2 className="w-3.5 h-3.5" /> Delete…
+                      className="w-full flex items-center gap-2.5 px-3 min-h-10 text-left text-[14px] text-[var(--state-overdue-text)] hover:bg-[var(--color-surface-2)]">
+                      <Trash2 className="w-4 h-4" /> Delete…
                     </button>
                   </div>
                 </>
@@ -5929,7 +5861,7 @@ export default function LibraryExplorerPage() {
           visibility={library.visibility as NodeVisibility}
           aclChain={[library.acl].filter(Boolean) as AccessControl[]}
           canEdit={isController}
-          title={`${library.name} - library access`}
+          title={`Who can work in ${library.name}`}
         />
       )}
 
@@ -5971,7 +5903,7 @@ export default function LibraryExplorerPage() {
                 className="w-full px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-sm"
                 autoFocus
               />
-              {folderErr && <p role="alert" className="mt-2 text-[13px] text-[var(--state-overdue)]">{folderErr}</p>}
+              {folderErr && <p role="alert" className={fieldError}>{plainError(folderErr)}</p>}
             </ModalBody>
             <ModalFooter>
               <Button type="button" variant="secondary" onClick={() => setCreatingFolder(false)}>Cancel</Button>
@@ -6027,7 +5959,7 @@ export default function LibraryExplorerPage() {
                 className="w-full px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-sm"
                 autoFocus
               />
-              {folderErr && <p role="alert" className="mt-2 text-[13px] text-[var(--state-overdue)]">{folderErr}</p>}
+              {folderErr && <p role="alert" className={fieldError}>{plainError(folderErr)}</p>}
             </ModalBody>
             <ModalFooter>
               <Button type="button" variant="secondary" onClick={() => setRenameFolderId(null)}>Cancel</Button>
@@ -6056,7 +5988,7 @@ function LibraryNumberingModal({ orgId, libraryId, onClose }: {
     void import("@/lib/libraryNumbering").then((m) =>
       m.getLibraryNumbering(libraryId).then((c) =>
         setCfg(c ?? { enabled: false, prefix: "", pad: 4, next_number: 1 })))
-      .catch((e: unknown) => setLoadErr(`Couldn't load the numbering settings: ${(e as Error)?.message ?? "try again"}.`));
+      .catch((e: unknown) => setLoadErr(`Couldn't load the numbering settings: ${friendlyError(e)}.`));
   }, [libraryId]);
 
   const save = async () => {
@@ -6066,7 +5998,7 @@ function LibraryNumberingModal({ orgId, libraryId, onClose }: {
       const m = await import("@/lib/libraryNumbering");
       await m.saveLibraryNumbering(orgId, libraryId, cfg);
       onClose();
-    } catch (e) { setErr((e as Error).message); }
+    } catch (e) { setErr(friendlyError(e)); }
     finally { setBusy(false); }
   };
 
@@ -6076,7 +6008,7 @@ function LibraryNumberingModal({ orgId, libraryId, onClose }: {
     <Modal onClose={onClose} size="sm" zIndex={95}>
         <ModalHeader icon={Hash} title="Auto-numbering" subtitle="Uploads with a blank number get the next one. A typed number always wins." onClose={onClose} />
         {loadErr ? (
-          <p role="alert" className="m-5 border-l-2 border-[var(--state-overdue)] pl-3 text-sm text-[var(--state-overdue)]">{loadErr}</p>
+          <p role="alert" className="m-5 border-l-2 border-[var(--state-overdue)] pl-3 text-[14px] text-[var(--state-overdue-text)]">{plainError(loadErr)}</p>
         ) : cfg === null ? (
           <div className="p-6 text-center text-sm text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin inline" /> Loading the numbering settings…</div>
         ) : (
@@ -6109,7 +6041,7 @@ function LibraryNumberingModal({ orgId, libraryId, onClose }: {
             <div className="text-[13px] text-[var(--color-text-muted)]">
               Next issued number: <span className="font-display font-semibold tabular-nums text-[var(--color-text)]">{preview}</span>
             </div>
-            {err && <p role="alert" className="text-[13px] text-[var(--state-overdue)]">{err}</p>}
+            {err && <p role="alert" className={fieldError}>{plainError(err)}</p>}
           </div>
         )}
         <ModalFooter>

@@ -23,6 +23,7 @@ import {
   resolveMessage,
 } from "@/lib/activityThread";
 
+import { friendlyError } from "@/lib/friendlyError";
 interface ActivityThreadProps {
   orgId: string;
   documentId: string;
@@ -105,7 +106,7 @@ export default function ActivityThread({
         });
       } catch (e) {
         console.error("[ActivityThread] fetch failed", e);
-        if (alive) { setLoadErr((e as Error)?.message || "try again"); setLoading(false); }
+        if (alive) { setLoadErr(friendlyError(e)); setLoading(false); }
       }
     };
 
@@ -178,7 +179,7 @@ export default function ActivityThread({
       appendLocal(msg);
     } catch (e) {
       console.error(e);
-      showToast({ type: "error", title: "It didn't send", message: (e as Error).message });
+      showToast({ type: "error", title: "It didn't send", message: friendlyError(e) });
     } finally {
       setBusy(false);
     }
@@ -194,7 +195,7 @@ export default function ActivityThread({
       }));
     } catch (e) {
       console.error(e);
-      showToast({ type: "error", title: "The question didn't send", message: (e as Error).message });
+      showToast({ type: "error", title: "The question didn't send", message: friendlyError(e) });
     } finally {
       setBusy(false);
     }
@@ -215,7 +216,7 @@ export default function ActivityThread({
       appendLocal(msg);
     } catch (e) {
       console.error(e);
-      showToast({ type: "error", title: "Couldn't post reply", message: (e as Error).message });
+      showToast({ type: "error", title: "Couldn't post reply", message: friendlyError(e) });
     } finally {
       setBusy(false);
     }
@@ -226,7 +227,7 @@ export default function ActivityThread({
       await resolveMessage(id, currentUserId);
     } catch (e) {
       console.error(e);
-      showToast({ type: "error", title: "Couldn't mark it resolved", message: (e as Error).message });
+      showToast({ type: "error", title: "Couldn't mark it resolved", message: friendlyError(e) });
     }
   };
 

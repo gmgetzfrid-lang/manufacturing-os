@@ -27,6 +27,7 @@ import { supabase } from "@/lib/supabase";
 import { appConfirm } from "@/components/providers/DialogProvider";
 import { useDraft } from "@/hooks/useDraft";
 
+import { friendlyError } from "@/lib/friendlyError";
 type Mode = "create" | "view" | "edit";
 
 interface LibraryDoc {
@@ -119,7 +120,7 @@ export default function CollectionModal({
       const its = await listItems(collectionId);
       setItems(its);
     } catch (e) {
-      setError((e as Error).message);
+      setError(friendlyError(e));
     } finally { setLoading(false); }
   }, [collectionId]);
 
@@ -171,7 +172,7 @@ export default function CollectionModal({
         void load();
       }
     } catch (e) {
-      setError((e as Error).message);
+      setError(friendlyError(e));
     } finally { setBusy(false); }
   };
 
@@ -184,7 +185,7 @@ export default function CollectionModal({
       onChanged();
       onClose();
     } catch (e) {
-      setError((e as Error).message);
+      setError(friendlyError(e));
       setBusy(false);
     }
   };
@@ -198,7 +199,7 @@ export default function CollectionModal({
       const its = await listItems(collection.id);
       setItems(its);
     } catch (e) {
-      setError((e as Error).message);
+      setError(friendlyError(e));
     } finally { setBusy(false); }
   };
 
@@ -209,7 +210,7 @@ export default function CollectionModal({
       await removeItem(collection.id, docId);
       setItems(items.filter((it) => it.document_id !== docId));
     } catch (e) {
-      setError((e as Error).message);
+      setError(friendlyError(e));
     } finally { setBusy(false); }
   };
 
@@ -230,7 +231,7 @@ export default function CollectionModal({
     try {
       await reorderItems(collection.id, next);
     } catch (e) {
-      setError((e as Error).message);
+      setError(friendlyError(e));
       void load();
     } finally { setBusy(false); }
   };
@@ -254,7 +255,7 @@ export default function CollectionModal({
     }));
     setBusy(true);
     try { await reorderItems(collection.id, order); }
-    catch (e) { setError((e as Error).message); void load(); }
+    catch (e) { setError(friendlyError(e)); void load(); }
     finally { setBusy(false); }
   };
 
@@ -311,7 +312,7 @@ export default function CollectionModal({
                 {mode === "create" ? "New Collection" : (collection?.name ?? "Collection")}
               </div>
               <div className="text-[13px] text-[var(--color-text-muted)] truncate">
-                {scope === "org" ? "Visible to everyone in your org" : "Personal - only you can see this"}
+                {scope === "org" ? "Visible to everyone in your org" : "Personal: only you can see this"}
               </div>
             </div>
           </div>

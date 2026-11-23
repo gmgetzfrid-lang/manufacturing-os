@@ -15,16 +15,19 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import {
-  X, Upload, CheckCircle2, Loader2, Wand2, Copy, Trash2, KeyRound, FolderTree, ChevronRight,
+  X, CheckCircle2, Loader2, Wand2, Copy, Trash2, KeyRound, FolderTree, ChevronRight,
 } from "lucide-react";
 import { parseFilename, detectBulkHints, withHints, type ParsedFilename } from "@/lib/filenameParser";
 import { readBatch, type NameRole } from "@/lib/filenameRoles";
 import NameReadingStrip from "@/components/documents/NameReadingStrip";
 import FileThumb from "@/components/ui/FileThumb";
 import StepPath from "@/components/ui/StepPath";
+import { Button } from "@/components/ui/Button";
+import plainError from "@/components/documents/plainError";
 import { computeUniquenessKey } from "@/lib/uniqueness";
 import { hashFile, findExistingCopies, type ExistingCopy } from "@/lib/duplicateFiles";
 
+import { friendlyError } from "@/lib/friendlyError";
 export interface CustomColumnDef {
   key: string;
   label: string;
@@ -92,8 +95,9 @@ interface MetadataStagingModalProps {
     destination: string;
     pathOf: (f: File) => string[] | undefined;
   };
-  /** Live transfer count while submitting. */
-  progress?: { done: number; total: number; phase?: string } | null;
+  /** Live transfer count while submitting, and which files are on their
+   *  way and which have landed (each row shows its own state). */
+  progress?: { done: number; total: number; phase?: string; active?: File[]; landed?: File[] } | null;
 }
 
 const DEFAULT_STATUS_OPTIONS = ["Draft", "In Review", "Issued", "IFC", "Superseded"];
@@ -169,6 +173,11 @@ export default function MetadataStagingModal({
   const [bulkStatus, setBulkStatus] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [stopping, setStopping] = useState(false);
+  // When the transfer started: with the files done so far it gives an
+  // honest time left (said only once a file has landed).
+  const [startedAt, setStartedAt] = useState<number | null>(null);
+  const activeSet = useMemo(() => new Set(progress?.active ?? []), [progress?.active]);
+  const landedSet = useMemo(() => new Set(progress?.landed ?? []), [progress?.landed]);
   const [error, setError] = useState<string | null>(null);
   // After a partial run: what happened, in the window (not behind it).
   const [outcome, setOutcome] = useState<string | null>(null);
@@ -506,21 +515,24 @@ export default function MetadataStagingModal({
   };
 
   // ── Submit ─────────────────────────────────────────────────────
-  const submit = async () => {
+  // `only` sends one file again (a row's own Retry); the rest stay listed.
+  const submit = async (only?: StagedItem[]) => {
     setError(null);
-    if (items.length === 0) {
+    const list = only ?? items;
+    if (list.length === 0) {
       setError("No files to upload.");
       return;
     }
     setSubmitting(true);
     setStopping(false);
+    setStartedAt(Date.now());
     const ctl = new AbortController();
     abortRef.current = ctl;
     try {
       // Strip canonical-mapped custom-field keys before handing off so
       // the parent doesn't save the same value into both the canonical
       // column AND the metadata JSONB.
-      const cleaned = items.map((it) => {
+      const cleaned = list.map((it) => {
         const fileHash = hashes.get(it.file);
         if (canonicalKeys.size === 0) return { ...it, fileHash };
         const customFields = { ...it.customFields };
@@ -532,10 +544,13 @@ export default function MetadataStagingModal({
         const landed = new Set(res.landed);
         setItems((prev) => prev.filter((it) => !landed.has(it.file)));
         setOutcome(res.message);
-        setFailedWhy(res.failed ?? []);
+        // A single-file retry keeps the other rows' reasons.
+        setFailedWhy((prev) => only
+          ? [...prev.filter((f) => !only.some((o) => o.file === f.file)), ...(res.failed ?? [])]
+          : (res.failed ?? []));
       }
     } catch (e) {
-      setError(ctl.signal.aborted ? "Upload stopped." : ((e as Error).message || "Upload failed."));
+      setError(ctl.signal.aborted ? "Upload stopped." : (friendlyError(e)));
     } finally {
       // ALWAYS. The parent closes the modal on a clean run, but it keeps the
       // modal open when some files failed — and it resolves either way. Left
@@ -596,14 +611,13 @@ export default function MetadataStagingModal({
 
   return (
     <div className="fixed inset-0 z-[300] bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)] animate-in fade-in flex items-end sm:items-center justify-center p-0 sm:p-4 overflow-y-auto">
-      <div className="w-full max-w-6xl bg-[var(--color-surface)] rounded-t-2xl sm:rounded-lg shadow-2xl border border-[var(--color-border)] overflow-hidden my-0 sm:my-8 flex flex-col max-h-[95dvh] sm:max-h-[90vh] animate-in fade-in zoom-in-95">
+      <div role="dialog" aria-modal="true" aria-labelledby="stage-upload-h" className="ui-float ui-float-in w-full max-w-6xl bg-[var(--color-surface)] rounded-t-xl sm:rounded-xl border border-[var(--color-border)] overflow-hidden my-0 sm:my-8 flex flex-col max-h-[95dvh] sm:max-h-[90vh]">
         {/* Header */}
         <div className="px-4 sm:px-6 py-4 border-b border-[var(--color-border)] flex items-center justify-between shrink-0">
           <div className="flex items-center gap-3">
-            <div className="p-2 bg-[var(--color-surface-2)] rounded-lg"><Upload className="w-5 h-5 text-[var(--color-text-muted)]" /></div>
             <div>
-              <div className="text-sm font-semibold text-[var(--color-text)]">{folderUpload ? "Upload this folder" : "Check the details, then upload"}</div>
-              <div className="text-[13px] text-[var(--color-text-muted)]">
+              <h2 id="stage-upload-h" className="text-[20px] leading-tight font-semibold text-[var(--color-heading)]">{folderUpload ? "Upload this folder" : "Check the details, then upload"}</h2>
+              <div className="mt-0.5 text-[14px] text-[var(--color-text-muted)]">
                 {folderUpload
                   ? `${items.length} file${items.length === 1 ? "" : "s"} in ${folderSummary?.folders ?? 0} folder${folderSummary?.folders === 1 ? "" : "s"}, kept in the same folders.`
                   : `${items.length} file${items.length === 1 ? "" : "s"} ready. Fix any row that's wrong, then upload.`}
@@ -615,9 +629,9 @@ export default function MetadataStagingModal({
           <button aria-label="Close"
             onClick={requestClose}
             title={submitting ? "Stop the upload and close" : "Close"}
-            className="p-2 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-faint)] hover:text-[var(--color-text)]"
+            className="w-10 h-10 grid place-items-center rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
           >
-            <X className="w-4 h-4" />
+            <X className="w-5 h-5" />
           </button>
         </div>
 
@@ -773,18 +787,18 @@ export default function MetadataStagingModal({
                 <option value="">Status...</option>
                 {statusOptions.map((s) => <option key={s} value={s}>{s}</option>)}
               </select>
-              <button onClick={applyBulkStatus} disabled={!bulkStatus} className="text-[13px] font-bold px-2 py-1 rounded-md bg-slate-200 hover:bg-slate-300 text-[var(--color-text)] disabled:opacity-40">Apply</button>
+              <button onClick={applyBulkStatus} disabled={!bulkStatus} className="text-[13px] font-semibold h-8 px-2.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] disabled:opacity-40">Apply</button>
             </div>
             {typeCol && (
               <div className="inline-flex items-center gap-1.5">
                 <input value={bulkType} onChange={(e) => setBulkType(e.target.value)} placeholder={typeCol.label} className="text-[13px] border border-[var(--color-border-strong)] rounded-md px-2 py-1 bg-[var(--color-surface)] w-32" />
-                <button onClick={applyBulkType} disabled={!bulkType} className="text-[13px] font-bold px-2 py-1 rounded-md bg-slate-200 hover:bg-slate-300 text-[var(--color-text)] disabled:opacity-40">Apply</button>
+                <button onClick={applyBulkType} disabled={!bulkType} className="text-[13px] font-semibold h-8 px-2.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] disabled:opacity-40">Apply</button>
               </div>
             )}
             {unitCol && (
               <div className="inline-flex items-center gap-1.5">
                 <input value={bulkUnit} onChange={(e) => setBulkUnit(e.target.value)} placeholder={unitCol.label} className="text-[13px] border border-[var(--color-border-strong)] rounded-md px-2 py-1 bg-[var(--color-surface)] w-24" />
-                <button onClick={applyBulkUnit} disabled={!bulkUnit} className="text-[13px] font-bold px-2 py-1 rounded-md bg-slate-200 hover:bg-slate-300 text-[var(--color-text)] disabled:opacity-40">Apply</button>
+                <button onClick={applyBulkUnit} disabled={!bulkUnit} className="text-[13px] font-semibold h-8 px-2.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] disabled:opacity-40">Apply</button>
               </div>
             )}
             {onAddColumn && (
@@ -843,12 +857,23 @@ export default function MetadataStagingModal({
                         </div>
                       )}
                       <div className="text-[13px] text-[var(--color-text-faint)]">{formatBytes(it.file.size)}</div>
-                      {/* This file's own state after a try: why it didn't go. */}
-                      {failedReason.get(it.file) && (
-                        <div className="text-[13px] text-[var(--state-overdue)] truncate" title={failedReason.get(it.file)}>
-                          Didn&apos;t upload: {failedReason.get(it.file)}
+                      {/* This file's own state: waiting, uploading, uploaded,
+                          or why it didn't go (with its own Retry). */}
+                      {submitting && landedSet.has(it.file) ? (
+                        <div className="text-[13px] text-[var(--color-text)] inline-flex items-center gap-1"><CheckCircle2 aria-hidden className="w-3.5 h-3.5 text-[var(--state-released)]" /> Uploaded</div>
+                      ) : submitting && activeSet.has(it.file) ? (
+                        <div className="text-[13px] text-[var(--color-text)] inline-flex items-center gap-1"><Loader2 aria-hidden className="w-3.5 h-3.5 animate-spin" /> Uploading</div>
+                      ) : submitting && progress && !progress.phase ? (
+                        <div className="text-[13px] text-[var(--color-text-faint)]">Waiting</div>
+                      ) : failedReason.get(it.file) ? (
+                        <div className="text-[13px] flex items-center gap-2 min-w-0">
+                          <span className="text-[var(--state-overdue-text)] truncate" title={failedReason.get(it.file)}>Didn&apos;t upload: {plainError(failedReason.get(it.file))}</span>
+                          {!submitting && (
+                            <button type="button" onClick={() => void submit([it])}
+                              className="shrink-0 font-semibold text-[var(--color-accent-text)] hover:underline underline-offset-2">Retry</button>
+                          )}
                         </div>
-                      )}
+                      ) : null}
                       {(copies.get(hashes.get(it.file) ?? "") ?? []).map((c) => (
                         <a key={c.href} href={c.href} target="_blank" rel="noreferrer" title={`Already here: ${c.where}`} className="block text-[13px] font-bold text-[var(--state-held)] hover:underline truncate">
                           Already in {c.where}
@@ -1016,51 +1041,60 @@ export default function MetadataStagingModal({
           </div>
         )}
         {error && (
-          <p role="alert" className="mx-4 sm:mx-6 my-2 border-l-2 border-[var(--state-overdue)] pl-3 text-[13px] text-[var(--state-overdue)] shrink-0">
-            {error}
+          <p role="alert" className="mx-4 sm:mx-6 my-2 border-l-2 border-[var(--state-overdue)] pl-3 text-[14px] text-[var(--color-text)] shrink-0">
+            {plainError(error)}
           </p>
         )}
-        <div className="px-4 sm:px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-between flex-wrap gap-2 shrink-0">
-          <div className="text-[13px] text-[var(--color-text-muted)] flex items-center gap-2 min-w-0">
+        <div className="px-4 sm:px-6 py-3 border-t border-[var(--color-border)] flex items-center justify-between flex-wrap gap-x-4 gap-y-2 shrink-0">
+          <div role="status" aria-live="polite" className="text-[14px] text-[var(--color-text-muted)] flex items-center gap-3 min-w-0 tabular-nums">
             {submitting && progress?.phase ? (
-              <span className="font-bold text-[var(--color-text)] inline-flex items-center gap-1.5">
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                {progress.phase}{progress.total > 0 ? ` - ${progress.done} of ${progress.total}` : "…"}
+              <span className="font-semibold text-[var(--color-text)] inline-flex items-center gap-1.5">
+                <Loader2 aria-hidden className="w-4 h-4 animate-spin" />
+                {progress.phase}{progress.total > 0 ? `: ${progress.done} of ${progress.total}` : "…"}
               </span>
             ) : submitting && !progress ? (
-              <span className="font-bold text-[var(--color-text)] inline-flex items-center gap-1.5">
-                <Loader2 className="w-3.5 h-3.5 animate-spin" /> Getting ready…
+              <span className="font-semibold text-[var(--color-text)] inline-flex items-center gap-1.5">
+                <Loader2 aria-hidden className="w-4 h-4 animate-spin" /> Getting ready…
               </span>
-            ) : submitting && progress ? (
-              <>
-                <span className="font-bold text-[var(--color-text)]">Uploading {progress.done} of {progress.total}…</span>
-                <span className="w-32 h-1.5 rounded-full bg-[var(--color-border)] overflow-hidden">
-                  <span className="block h-full bg-[var(--state-released)] transition-all" style={{ width: `${progress.total ? Math.round((progress.done / progress.total) * 100) : 0}%` }} />
-                </span>
-              </>
-            ) : (
-              <>{items.length} file{items.length === 1 ? "" : "s"} · {formatBytes(items.reduce((s, i) => s + i.file.size, 0))} total</>
+            ) : submitting && progress ? (() => {
+              // Honest progress: files done, the share done, and the time
+              // left at the pace so far (once a file has landed).
+              const pct = progress.total ? Math.round((progress.done / progress.total) * 100) : 0;
+              const elapsed = startedAt ? Date.now() - startedAt : 0;
+              const left = progress.done > 0 && progress.done < progress.total && elapsed > 0
+                ? (elapsed / progress.done) * (progress.total - progress.done) : null;
+              const leftText = left === null ? null : left < 45e3 ? "less than a minute left" : `about ${Math.max(1, Math.round(left / 60e3))} min left`;
+              return (
+                <>
+                  <span className="font-semibold text-[var(--color-text)]">Uploading {progress.done.toLocaleString()} of {progress.total.toLocaleString()}</span>
+                  <span className="w-32 h-1.5 rounded-full bg-[var(--color-border)] overflow-hidden" aria-hidden>
+                    <span className="block h-full bg-[var(--color-current)] transition-[width] duration-300" style={{ width: `${pct}%` }} />
+                  </span>
+                  <span>{pct}%</span>
+                  {leftText && <span className="max-sm:hidden">{leftText}</span>}
+                </>
+              );
+            })() : (
+              <>{items.length} file{items.length === 1 ? "" : "s"}, {formatBytes(items.reduce((s, i) => s + i.file.size, 0))} in all</>
             )}
           </div>
           <div className="flex items-center gap-2">
             {submitting ? (
-              <button
+              <Button variant="danger"
                 onClick={stopUpload}
                 disabled={stopping}
                 title="Stop the transfers and keep this list, so you can re-send what didn't land"
-                className="px-3 py-2 rounded-lg text-[13px] font-bold text-[var(--state-overdue)] bg-[var(--color-surface)] border border-[color-mix(in_srgb,var(--state-overdue)_35%,transparent)] hover:bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] disabled:opacity-50"
               >
                 {stopping ? "Stopping…" : "Stop upload"}
-              </button>
+              </Button>
             ) : (
-              <button onClick={onCancel} className="px-3 py-2 rounded-lg text-[13px] font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]">Cancel</button>
+              <Button variant="secondary" onClick={onCancel}>Cancel</Button>
             )}
-            <button onClick={submit} disabled={submitting || items.length === 0} className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-[13px] font-semibold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50 shadow">
-              {submitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
+            <Button onClick={() => void submit()} disabled={items.length === 0} loading={submitting}>
               {submitting ? "Uploading…"
                 : outcome ? `Try again (${items.length})`
                 : folderUpload ? `Upload folder (${items.length} files)` : items.length === 1 ? "Upload" : `Upload ${items.length} files`}
-            </button>
+            </Button>
           </div>
         </div>
       </div>

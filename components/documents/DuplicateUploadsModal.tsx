@@ -14,6 +14,7 @@ import { supabase } from "@/lib/supabase";
 import { deleteDocuments } from "@/lib/libraryCollections";
 import { useEscapeClose } from "@/components/documents/useEscapeClose";
 
+import { friendlyError } from "@/lib/friendlyError";
 interface Row { id: string; name: string | null; collection_id: string | null; created_at: string; size: string | null; document_number: string | null; current_version_id: string | null; original: string | null }
 interface Group { key: string; name: string; folderId: string | null; keep: Row; extras: Row[] }
 
@@ -71,7 +72,7 @@ export default function DuplicateUploadsModal({
       }
       out.sort((a, b) => b.extras.length - a.extras.length || a.name.localeCompare(b.name));
       if (live) { setGroups(out); setEmpty(empty); }
-    })().catch((e) => { if (live) setLoadError((e as Error).message); });
+    })().catch((e) => { if (live) setLoadError(friendlyError(e)); });
     return () => { live = false; };
   }, [orgId, libraryId]);
 
@@ -90,7 +91,7 @@ export default function DuplicateUploadsModal({
       setGroups([]);
       setEmpty([]);
     } catch (e) {
-      setLoadError((e as Error).message);
+      setLoadError(friendlyError(e));
     } finally {
       setRunning(null);
     }

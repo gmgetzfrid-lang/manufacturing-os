@@ -11,6 +11,7 @@ import type { DocumentRecord, DocumentVersion } from "@/types/schema";
 import { useEscapeClose } from "@/components/documents/useEscapeClose";
 import { useDraft } from "@/hooks/useDraft";
 
+import { friendlyError } from "@/lib/friendlyError";
 interface RevertConfirmModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -54,7 +55,7 @@ export default function RevertConfirmModal({
       setReason(""); setMocRef("");
       onClose();
     } catch (e) {
-      setError((e as Error).message || "Revert failed");
+      setError(friendlyError(e));
     } finally {
       setBusy(false);
     }
@@ -85,7 +86,7 @@ export default function RevertConfirmModal({
               The current revision will be marked superseded but remain in the history.
             </p>
             <p className="text-[13px] text-[var(--color-text-muted)]">
-              Reverts never overwrite history - the audit chain stays intact and the action is logged with your reason.
+              Reverts never overwrite history: the audit chain stays intact and the action is logged with your reason.
             </p>
           </div>
 
@@ -95,7 +96,7 @@ export default function RevertConfirmModal({
               value={reason}
               onChange={(e) => setReason(e.target.value)}
               rows={3}
-              className="mt-1 w-full px-2.5 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm focus:ring-2 focus:ring-[var(--color-accent-ring)] focus:outline-none resize-y"
+              className="mt-1 w-full px-2.5 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm resize-y"
               placeholder="e.g. Rev 4 introduced incorrect orifice plate sizing on FE-201. Rolling back to Rev 3 per ops request."
             />
           </div>
@@ -105,7 +106,7 @@ export default function RevertConfirmModal({
             <input
               value={mocRef}
               onChange={(e) => setMocRef(e.target.value)}
-              className="mt-1 w-full px-2.5 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm focus:ring-2 focus:ring-[var(--color-accent-ring)] focus:outline-none"
+              className="mt-1 w-full px-2.5 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm"
               placeholder="MOC-2026-0142 (optional)"
             />
           </div>

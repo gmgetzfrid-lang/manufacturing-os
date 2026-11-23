@@ -17,6 +17,7 @@ import { readDrawing, pendingDrawings, undoRun as undoRunCall, newRunId } from "
 import type { ConnectStatus } from "@/lib/estate/connectServer";
 import type { ConnectPlan } from "@/lib/estate/connectPlan";
 
+import { friendlyError } from "@/lib/friendlyError";
 const MAX_PASSES = 40;
 
 type Bulk = { done: number; total: number; equipment: number; removed: number; added: number; created: number; failed: number; current: string | null; finished: boolean; lastError: string | null };
@@ -45,7 +46,7 @@ export function useConnectEverything(orgId: string | null, onDone?: () => void) 
     if (!orgId) return;
     setPlanLoading(true); setError(null);
     try { setPlan(await estatePost<ConnectPlan>("/api/estate/connect", { orgId, action: "plan", libraryIds })); }
-    catch (e) { setError((e as Error).message); }
+    catch (e) { setError(friendlyError(e)); }
     finally { setPlanLoading(false); }
   };
   const closePreview = () => setPlan(null);
@@ -103,7 +104,7 @@ export function useConnectEverything(orgId: string | null, onDone?: () => void) 
           await Promise.all([worker(), worker(), worker()]);
         }
       }
-    } catch (e) { setError((e as Error).message); }
+    } catch (e) { setError(friendlyError(e)); }
     finally { setRunning(false); setReading(null); onDoneRef.current?.(); }
   };
 
@@ -113,12 +114,12 @@ export function useConnectEverything(orgId: string | null, onDone?: () => void) 
     if (!orgId) return;
     const libraryIds = opts.libraryIds ?? libsRef.current;
     let list: Awaited<ReturnType<typeof pendingDrawings>>;
-    try { list = await pendingDrawings(orgId, libraryIds); } catch (e) { setError((e as Error).message); return; }
+    try { list = await pendingDrawings(orgId, libraryIds); } catch (e) { setError(friendlyError(e)); return; }
     const todo = list.pending;
     if (!todo.length) { setBulk({ done: 0, total: 0, equipment: 0, removed: 0, added: 0, created: 0, failed: 0, current: null, finished: true, lastError: null }); return; }
     if (!opts.consented) {
       const pagesDue = list.pagesDue ?? todo.length;
-      const ok = window.confirm(`Read ${pagesDue} sheet${pagesDue === 1 ? "" : "s"} in ${todo.length} drawing${todo.length === 1 ? "" : "s"} with your AI model?\n\nOnly sheets not yet read in full are read - sheets already read are left as they are. Each sheet is read zoomed-in, region by region, and its equipment tags are corrected. Billed to your key under your monthly cap. You can stop at any time, and undo the run afterwards.`);
+      const ok = window.confirm(`Read ${pagesDue} sheet${pagesDue === 1 ? "" : "s"} in ${todo.length} drawing${todo.length === 1 ? "" : "s"} with your AI model?\n\nOnly sheets not yet read in full are read: sheets already read are left as they are. Each sheet is read zoomed-in, region by region, and its equipment tags are corrected. Billed to your key under your monthly cap. You can stop at any time, and undo the run afterwards.`);
       if (!ok) return;
     }
     const rid = opts.runId ?? newRunId();
@@ -168,7 +169,7 @@ export function useConnectEverything(orgId: string | null, onDone?: () => void) 
     try {
       const r = await estatePost<{ on: boolean; monthlyPages: number; used: number }>("/api/estate/connect", { orgId, action: "autoRead", libraryId: status.readLibraryId, on, monthlyPages });
       setStatus((s) => s ? { ...s, ai: { ...s.ai, autoRead: { ...s.ai.autoRead, on: r.on, monthlyPages: r.monthlyPages, used: r.used, mine: r.on ? true : s.ai.autoRead.mine } } } : s);
-    } catch (e) { setError((e as Error).message); }
+    } catch (e) { setError(friendlyError(e)); }
   };
 
   const cancel = () => { stop.current = true; };
@@ -290,7 +291,7 @@ function AutoReadSwitch({ auto, hasKey, onChange }: { auto: ConnectStatus["ai"][
       </div>
       <div>
         {auto.on
-          ? <>On {auto.mine ? "your" : `${auto.sponsorName ?? "a colleague"}'s`} AI key{auto.mine ? "" : " - switching it off and on moves it to yours"}. Past the cap, new sheets wait in “Read all drawings with AI”.</>
+          ? <>On {auto.mine ? "your" : `${auto.sponsorName ?? "a colleague"}'s`} AI key{auto.mine ? "" : ": switching it off and on moves it to yours"}. Past the cap, new sheets wait in “Read all drawings with AI”.</>
           : hasKey ? <>Off. New sheets are indexed from their text and wait for “Read all drawings with AI”.</> : <>Needs your AI key (Intelligence › Setup).</>}
       </div>
     </div>

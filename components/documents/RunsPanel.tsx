@@ -9,6 +9,7 @@ import { estatePost } from "@/lib/estate/client";
 import { undoRun } from "@/lib/drawingCensusClient";
 import type { RunSummary } from "@/lib/estate/runJournal";
 
+import { friendlyError } from "@/lib/friendlyError";
 export default function RunsPanel({ orgId, onUndone }: { orgId: string; onUndone?: () => void }) {
   const [state, setState] = useState<{ runs: RunSummary[]; available: boolean } | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -41,7 +42,7 @@ export default function RunsPanel({ orgId, onUndone }: { orgId: string; onUndone
                   setBusy(r.runId);
                   void undoRun(orgId, r.runId)
                     .then((u) => { setNote(`Undone: ${u.drawings} drawings put back, ${u.assetsRemoved} registry items removed${u.skipped.length ? `, ${u.skipped.length} left as a person changed them since` : ""}.`); setTick((t) => t + 1); onUndone?.(); })
-                    .catch((e) => setNote((e as Error).message))
+                    .catch((e) => setNote(friendlyError(e)))
                     .finally(() => setBusy(null));
                 }} className="shrink-0 rounded-full border border-[color-mix(in_srgb,var(--state-overdue)_35%,transparent)] bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] text-[var(--state-overdue)] px-2 py-0.5 text-[13px] font-semibold inline-flex items-center gap-1 disabled:opacity-50">
                   {busy === r.runId ? <Loader2 className="w-3 h-3 animate-spin" /> : <Undo2 className="w-3 h-3" />} Undo

@@ -83,7 +83,7 @@ function TagInput({
               if (e.key === "Tab" && input.trim()) { e.preventDefault(); addPill(); }
             }}
             placeholder={`Add ${label}…`}
-            className="flex-1 min-w-0 text-[13px] px-2 py-1 rounded-md border border-[var(--color-border)] focus:outline-none focus:ring-1 focus:ring-[var(--color-accent-ring)] bg-[var(--color-surface)]"
+            className="flex-1 min-w-0 text-[13px] px-2 py-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)]"
           />
           {input.trim() && (
             <button

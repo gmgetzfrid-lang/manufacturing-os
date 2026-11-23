@@ -12,6 +12,7 @@ import type { DocumentRecord } from "@/types/schema";
 import { useEscapeClose } from "@/components/documents/useEscapeClose";
 import { useDraft } from "@/hooks/useDraft";
 
+import { friendlyError } from "@/lib/friendlyError";
 interface MarkupRequestModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -64,7 +65,7 @@ export default function MarkupRequestModal({
       onSuccess?.();
       onClose();
     } catch (e) {
-      setError((e as Error).message);
+      setError(friendlyError(e));
     } finally { setBusy(false); }
   };
 
@@ -97,7 +98,7 @@ export default function MarkupRequestModal({
               value={message}
               onChange={(e) => setMessage(e.target.value)}
               rows={4}
-              className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm resize-y focus:ring-2 focus:ring-[var(--color-accent-ring)] focus:outline-none"
+              className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm resize-y"
               placeholder="e.g. Working on the discharge piping for the same project, could you share your markups on PSV-201 so we don't conflict?"
             />
           </div>

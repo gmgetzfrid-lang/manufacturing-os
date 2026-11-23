@@ -11,6 +11,7 @@ import type { DocumentRecord } from "@/types/schema";
 import { useEscapeClose } from "@/components/documents/useEscapeClose";
 import { useDraft } from "@/hooks/useDraft";
 
+import { friendlyError } from "@/lib/friendlyError";
 interface ArchiveConfirmModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -53,7 +54,7 @@ export default function ArchiveConfirmModal({
       setReason("");
       onClose();
     } catch (e) {
-      setError((e as Error).message || `Failed to ${mode}`);
+      setError(friendlyError(e) || `Failed to ${mode}`);
     } finally {
       setBusy(false);
     }
@@ -86,7 +87,7 @@ export default function ArchiveConfirmModal({
             {isArchive ? (
               <p>
                 The document and its entire revision history will be hidden from the default library view.
-                Nothing is deleted - admins can restore it any time. The action is logged.
+                Nothing is deleted: admins can restore it any time. The action is logged.
               </p>
             ) : (
               <p>
@@ -103,7 +104,7 @@ export default function ArchiveConfirmModal({
               value={reason}
               onChange={(e) => setReason(e.target.value)}
               rows={3}
-              className="mt-1 w-full px-2.5 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm focus:ring-2 focus:ring-[var(--color-accent-ring)] focus:outline-none resize-y"
+              className="mt-1 w-full px-2.5 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm resize-y"
               placeholder={isArchive
                 ? "e.g. Equipment removed during 2026 turnaround. Drawing no longer applicable."
                 : "Optional note for the audit log"}

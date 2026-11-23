@@ -21,6 +21,7 @@ import DocControlQueue from "@/components/documents/DocControlQueue";
 import ProtectionRecord from "@/components/documents/ProtectionRecord";
 import { badgeText } from "@/lib/badge";
 
+import { friendlyError } from "@/lib/friendlyError";
 // Aging-distribution colors (cool → hot) for the per-column trail.
 const AGE_BUCKET_COLORS = ["#34d399", "#fde047", "#fbbf24", "#fb7185"]; // new, 7d, 30d, 90d+
 
@@ -128,7 +129,7 @@ export default function LifecycleBoard() {
         checkedOutByName: (r.checked_out_by_name as string) ?? null,
       })));
     } catch (e) {
-      setError((e as Error).message);
+      setError(friendlyError(e));
     } finally {
       setLoading(false);
     }

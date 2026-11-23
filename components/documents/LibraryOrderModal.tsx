@@ -14,6 +14,7 @@ import { supabase } from "@/lib/supabase";
 import { appConfirm } from "@/components/providers/DialogProvider";
 import { useEscapeClose } from "@/components/documents/useEscapeClose";
 
+import { friendlyError } from "@/lib/friendlyError";
 interface DocItem {
   id: string;
   documentNumber: string;
@@ -67,7 +68,7 @@ export default function LibraryOrderModal({
           })));
         }
       } catch (e) {
-        if (alive) setError((e as Error).message);
+        if (alive) setError(friendlyError(e));
       } finally {
         if (alive) setLoading(false);
       }
@@ -122,7 +123,7 @@ export default function LibraryOrderModal({
       onSaved();
       onClose();
     } catch (e) {
-      setError((e as Error).message);
+      setError(friendlyError(e));
       setBusy(false);
     }
   };
@@ -140,7 +141,7 @@ export default function LibraryOrderModal({
       onSaved();
       onClose();
     } catch (e) {
-      setError((e as Error).message);
+      setError(friendlyError(e));
       setBusy(false);
     }
   };

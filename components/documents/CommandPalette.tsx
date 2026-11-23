@@ -237,7 +237,7 @@ export default function CommandPalette({
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={handleKey}
             placeholder="Search documents, folders, or actions…"
-            className="flex-1 bg-transparent text-[var(--color-text)] text-sm placeholder-[var(--color-text-faint)] focus:outline-none"
+            className="flex-1 bg-transparent text-[var(--color-text)] text-sm placeholder-[var(--color-text-faint)]"
           />
           <kbd className="text-[13px] font-mono text-[var(--color-text-muted)] bg-[var(--color-surface-2)] border border-[var(--color-border)] px-1.5 py-0.5 rounded">ESC</kbd>
         </div>

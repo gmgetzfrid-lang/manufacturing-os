@@ -15,6 +15,7 @@ import {
 import SignaturePad from "@/components/signatures/SignaturePad";
 import { heroPrimary as primaryBtn, heroQuiet as secondaryBtn } from "@/components/ui/PageHero";
 
+import { friendlyError } from "@/lib/friendlyError";
 const INTENTS: SignatureIntent[] = ["Approved", "Reviewed", "Acknowledged", "Witnessed", "Rejected"];
 
 export default function SignatureCeremony({
@@ -79,7 +80,7 @@ export default function SignatureCeremony({
       try {
         await verifySigningCredential(reauth.email, password);
       } catch (e) {
-        setReauthError((e as Error).message);
+        setReauthError(friendlyError(e));
         setVerifying(false);
         return;
       }

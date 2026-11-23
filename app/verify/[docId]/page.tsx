@@ -8,6 +8,7 @@
 // plant), zero login, one giant verdict, details second. Green means work,
 // red means stop and get the current revision.
 
+import { friendlyError } from "@/lib/friendlyError";
 import React, { useEffect, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import { CheckCircle2, XCircle, Loader2, ShieldQuestion, RefreshCw } from "lucide-react";
@@ -48,7 +49,7 @@ export default function VerifyPage() {
       }
       setResult((await res.json()) as VerifyResult);
     } catch (e) {
-      setError((e as Error).message);
+      setError(friendlyError(e));
       setResult(null);
     } finally {
       setLoading(false);
@@ -58,11 +59,11 @@ export default function VerifyPage() {
   useEffect(() => { void check(); }, [check]);
 
   const fmt = (iso: string | null) =>
-    iso ? new Date(iso).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }) : "-";
+    iso ? new Date(iso).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" }) : "-";
 
   return (
     <div className={`min-h-dvh flex flex-col items-center justify-center p-6 transition-colors duration-500 ${
-      loading || error ? "bg-[var(--color-ink)]" : result?.notYetEffective ? "bg-amber-500" : result?.isCurrent ? "bg-emerald-600" : "bg-red-600"
+      loading || error ? "bg-[var(--color-ink)]" : result?.notYetEffective ? "bg-[var(--state-held)]" : result?.isCurrent ? "bg-[var(--state-released)]" : "bg-[var(--state-overdue)]"
     }`}>
       <div className="w-full max-w-sm text-center">
         {loading ? (
@@ -73,14 +74,14 @@ export default function VerifyPage() {
         ) : error ? (
           <div className="text-white/90">
             <ShieldQuestion className="w-16 h-16 mx-auto mb-4 opacity-80" />
-            <h1 className="text-[34px] leading-[1.05] tracking-[-0.02em] font-black mb-3">Can&apos;t verify this code</h1>
-            <p className="text-[14px] opacity-80">{error}</p>
+            <h1 className="text-[34px] leading-[1.05] tracking-[-0.02em] font-bold mb-3">Can&apos;t verify this code</h1>
+            <p className="text-[15px] opacity-90">{error}</p>
             <p className="text-[13px] opacity-70 mt-4">
               If this QR came from a printed drawing, contact Document Control before using the print.
             </p>
             <button
               onClick={() => void check()}
-              className="mt-6 inline-flex items-center gap-2 px-4 py-2 rounded-full bg-white/15 hover:bg-white/25 text-sm font-bold"
+              className="mt-6 inline-flex items-center gap-2 h-11 px-4 rounded-lg bg-white/15 hover:bg-white/25 text-[15px] font-semibold"
             >
               <RefreshCw className="w-4 h-4" /> Try again
             </button>
@@ -95,37 +96,37 @@ export default function VerifyPage() {
             ) : (
               <XCircle className="w-24 h-24 mx-auto text-white mb-4 animate-in zoom-in duration-300" strokeWidth={2.5} />
             )}
-            <h1 className="text-[40px] font-black text-white leading-[1.03] tracking-[-0.03em] mb-3">
-              {result.notYetEffective ? "NOT YET IN EFFECT" : result.isCurrent ? "CURRENT" : "DO NOT USE"}
+            <h1 className="text-[40px] font-bold text-white leading-[1.03] tracking-[-0.03em] mb-3">
+              {result.notYetEffective ? "Not in effect yet" : result.isCurrent ? "Current" : "Do not use"}
             </h1>
             <p className="text-white/90 text-[15px] font-semibold mb-6">
               {result.notYetEffective
-                ? `This is the latest revision, but it comes into force ${result.effectiveDate ? new Date(result.effectiveDate).toLocaleDateString() : "later"} - until then, keep working to the prior in-force revision.`
+                ? `This is the latest revision, but it comes into force ${result.effectiveDate ? new Date(result.effectiveDate).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "later"}. Until then, keep working to the prior in-force revision.`
                 : result.isCurrent
                 ? "This print matches the current revision."
                 : result.docStatus === "Superseded" || result.docStatus === "Archived"
                   ? `This document has been ${result.docStatus?.toLowerCase()}.`
-                  : `This print is Rev ${result.printedRev ?? "?"} - the current revision is Rev ${result.currentRev ?? "?"}.`}
+                  : `This print is Rev ${result.printedRev ?? "?"}. The current revision is Rev ${result.currentRev ?? "?"}.`}
             </p>
 
             {/* The facts card */}
-            <div className="bg-[var(--color-surface)] rounded-2xl shadow-2xl p-5 text-left space-y-3">
+            <div className="bg-[var(--color-surface)] rounded-xl ui-float p-5 text-left space-y-3">
               <div>
                 <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">Document</div>
-                <div className="text-[15px] font-bold text-[var(--color-text)]">{result.docNumber ?? "-"}</div>
+                <div className="text-[15px] font-semibold text-[var(--color-text)]">{result.docNumber ?? "-"}</div>
                 {result.title && <div className="text-[13px] text-[var(--color-text-muted)] mt-0.5">{result.title}</div>}
               </div>
               <div className="grid grid-cols-2 gap-3 pt-2 border-t border-[var(--color-border)]">
                 <div>
                   <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">This print</div>
-                  <div className={`text-[15px] font-black ${result.isCurrent ? "text-emerald-600" : "text-red-600"}`}>
+                  <div className={`text-[15px] font-semibold ${result.isCurrent ? "text-[var(--state-released-text)]" : "text-[var(--state-overdue-text)]"}`}>
                     Rev {result.printedRev ?? "?"}
                   </div>
                   <div className="text-[12px] text-[var(--color-text-muted)]">issued {fmt(result.printedAt)}</div>
                 </div>
                 <div>
                   <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">Current</div>
-                  <div className="text-[15px] font-black text-[var(--color-text)]">Rev {result.currentRev ?? "?"}</div>
+                  <div className="text-[15px] font-semibold text-[var(--color-text)]">Rev {result.currentRev ?? "?"}</div>
                   <div className="text-[12px] text-[var(--color-text-muted)]">issued {fmt(result.currentIssuedAt)}</div>
                 </div>
               </div>
@@ -138,13 +139,13 @@ export default function VerifyPage() {
             </div>
 
             <div className="mt-5 text-[12px] text-white/70">
-              Checked {new Date(result.checkedAt).toLocaleString()} · Refinery OS document control
+              Checked {new Date(result.checkedAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })} by document control.
             </div>
             <button
               onClick={() => void check()}
-              className="mt-3 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/15 hover:bg-white/25 text-white text-xs font-bold"
+              className="mt-3 inline-flex items-center gap-1.5 h-11 px-4 rounded-lg bg-white/15 hover:bg-white/25 text-white text-[15px] font-semibold"
             >
-              <RefreshCw className="w-3 h-3" /> Re-check
+              <RefreshCw className="w-4 h-4" /> Check again
             </button>
           </>
         )}

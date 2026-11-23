@@ -238,7 +238,7 @@ export default function PillCell({
             if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); handleSave(); }
           }}
           placeholder={`Add ${label}…`}
-          className="flex-1 min-w-0 h-8 text-[14px] px-2 rounded-md border border-[var(--color-border-strong)] focus:outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)] bg-[var(--color-surface)] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)]"
+          className="flex-1 min-w-0 h-8 text-[14px] px-2 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)]"
         />
         {input.trim() && (
           <button

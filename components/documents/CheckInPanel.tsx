@@ -53,6 +53,7 @@ import { openHold } from "@/lib/holds";
 import { postHandoff } from "@/lib/activityThread";
 import type { CheckoutSession, DocumentRecord, DocumentVersion } from "@/types/schema";
 
+import { friendlyError } from "@/lib/friendlyError";
 interface CheckInPanelProps {
   document: DocumentRecord;
   currentUser: { uid: string; email: string | null; role: string | null };
@@ -418,7 +419,7 @@ export default function CheckInPanel({
                 openedByEmail: currentUser.email ?? undefined, openedByRole: currentUser.role ?? undefined,
               });
             } catch (e) {
-              showToast({ type: "warning", title: "Hold not placed", message: (e as Error).message });
+              showToast({ type: "warning", title: "Hold not placed", message: friendlyError(e) });
             }
           }
           // A stale number typed under a different MOC state must never sit
@@ -431,7 +432,7 @@ export default function CheckInPanel({
             recordNote,
             { ticketId: ticket.id, ticketNumber: ticket.number, ...(mocRef ? { moc: mocRef } : {}) },
             selected.outcome === "discrepancy"
-              ? `${userName} reported a field discrepancy - ticket ${ticket.number}${mocStatus === "none" ? " (no MOC on record - flagged)" : mocNumber ? ` (${mocNumber.trim()})` : ""}.`
+              ? `${userName} reported a field discrepancy: ticket ${ticket.number}${mocStatus === "none" ? " (no MOC on record - flagged)" : mocNumber ? ` (${mocNumber.trim()})` : ""}.`
               : `${userName} requested ${selected.ticketKind === "minor" ? "a minor correction" : "a revision"} - ticket ${ticket.number}.`,
           );
           router.push(`/requests/${ticket.id}`);
@@ -449,7 +450,7 @@ export default function CheckInPanel({
               await emit({
                 orgId: doc.orgId!, category: "assignment", kind: "review_requested",
                 title: `Change proposed to ${docLabel}`,
-                body: `${userName} checked in with a proposed change: "${note.trim()}" - review and release it if it's right.`,
+                body: `${userName} checked in with a proposed change: "${note.trim()}": review and release it if it's right.`,
                 resource: { type: "document", id: doc.id! },
                 // The owner must be able to CLICK to the document — a durable
                 // notification with no destination is a dead letter.
@@ -483,7 +484,7 @@ export default function CheckInPanel({
       onDone();
     } catch (e) {
       console.error(e);
-      showToast({ type: "error", title: "It didn't check in", message: (e as Error).message });
+      showToast({ type: "error", title: "It didn't check in", message: friendlyError(e) });
       setBusy(false);
     }
   };
@@ -518,7 +519,7 @@ export default function CheckInPanel({
       onDone();
     } catch (e) {
       console.error(e);
-      showToast({ type: "error", title: "Published, but it didn't check in", message: (e as Error).message });
+      showToast({ type: "error", title: "Published, but it didn't check in", message: friendlyError(e) });
       setBusy(false);
     }
   };

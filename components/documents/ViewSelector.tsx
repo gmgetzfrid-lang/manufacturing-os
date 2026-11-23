@@ -17,6 +17,7 @@ import {
 import { appConfirm } from "@/components/providers/DialogProvider";
 import { useEscapeClose } from "@/components/documents/useEscapeClose";
 
+import { friendlyError } from "@/lib/friendlyError";
 interface ViewSelectorProps {
   orgId: string;
   libraryId: string;
@@ -68,7 +69,7 @@ export default function ViewSelector({
 
   const remove = async (id: string) => {
     if (!(await appConfirm({ title: "Delete view", message: "Delete this view?", tone: "danger" }))) return;
-    try { await deleteView(id); void refresh(); } catch (e) { showToast({ type: "error", title: "Couldn't delete view", message: (e as Error).message }); }
+    try { await deleteView(id); void refresh(); } catch (e) { showToast({ type: "error", title: "Couldn't delete view", message: friendlyError(e) }); }
   };
 
   const activeView = views.find((v) => v.id === activeViewId);
@@ -205,7 +206,7 @@ function SaveViewModal({
         isDefault, createdBy: userId,
       });
       onSaved();
-    } catch (e) { setError((e as Error).message); setBusy(false); }
+    } catch (e) { setError(friendlyError(e)); setBusy(false); }
   };
 
   return (

@@ -9,6 +9,7 @@ import { AlertTriangle, Loader2, Trash2, CheckCircle2 } from "lucide-react";
 import { estatePost } from "@/lib/estate/client";
 import type { SuspectList } from "@/lib/estate/discoveredServer";
 
+import { friendlyError } from "@/lib/friendlyError";
 export default function SuspectEquipment({ orgId, refreshKey = "", onRemoved }: { orgId: string; refreshKey?: string; onRemoved?: () => void }) {
   const [state, setState] = useState<{ key: string; list: SuspectList | null; error: string | null }>({ key: "", list: null, error: null });
   const [picked, setPicked] = useState<Set<string> | null>(null);
@@ -19,7 +20,7 @@ export default function SuspectEquipment({ orgId, refreshKey = "", onRemoved }: 
     let alive = true;
     estatePost<SuspectList>("/api/estate/discovered", { orgId, action: "list" })
       .then((list) => { if (alive) { setState({ key, list, error: null }); setPicked(null); } })
-      .catch((e) => { if (alive) setState({ key, list: null, error: (e as Error).message }); });
+      .catch((e) => { if (alive) setState({ key, list: null, error: friendlyError(e) }); });
     return () => { alive = false; };
   }, [orgId, key]);
   const list = state.key === key ? state.list : null;
@@ -35,7 +36,7 @@ export default function SuspectEquipment({ orgId, refreshKey = "", onRemoved }: 
       const r = await estatePost<{ removed: number; columnsCleaned: number }>("/api/estate/discovered", { orgId, action: "remove", ids: [...sel] });
       setDone(`Removed ${r.removed} item${r.removed === 1 ? "" : "s"} from the registry${r.columnsCleaned ? `, and their tags from ${r.columnsCleaned} document${r.columnsCleaned === 1 ? "" : "s"}` : ""}.`);
       onRemoved?.();
-    } catch (e) { setState((s) => ({ ...s, error: (e as Error).message })); }
+    } catch (e) { setState((s) => ({ ...s, error: friendlyError(e) })); }
     finally { setBusy(false); }
   };
   return (

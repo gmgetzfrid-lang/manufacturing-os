@@ -19,7 +19,7 @@ export default function EffectivePill({ effectiveDate, compact = false, classNam
   const date = humanDate(effectiveDate);
   return (
     <span
-      title={`Issued - becomes effective ${date}`}
+      title={`Issued: becomes effective ${date}`}
       className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[13px] font-semibold whitespace-nowrap bg-[color-mix(in_srgb,var(--state-held)_12%,transparent)] text-[var(--state-held)] border-[color-mix(in_srgb,var(--state-held)_40%,transparent)] ${className}`}
     >
       <CalendarClock className="w-3 h-3 shrink-0" /> {compact ? (days != null ? `Eff ${days}d` : date) : `Effective ${date}`}

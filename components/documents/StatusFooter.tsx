@@ -29,20 +29,19 @@ export default function StatusFooter({
 }: StatusFooterProps) {
   return (
     <div
-      className="h-9 shrink-0 border-t border-[var(--color-border)] bg-[var(--color-surface)]/90 flex items-center gap-4 px-4 text-[13px] tabular-nums text-[var(--color-text-muted)] z-20 max-sm:hidden"
-      style={{ backdropFilter: "blur(12px)" }}
+      className="h-9 shrink-0 border-t border-[var(--color-border)] bg-[var(--color-surface)] flex items-center gap-4 px-4 text-[13px] tabular-nums text-[var(--color-text-muted)] z-20 max-sm:hidden"
     >
       {/* Words only while something is loading; no "live" light. */}
       {loading && (
-        <div className="flex items-center gap-1.5">
-          <Loader2 className="w-3 h-3 animate-spin" />
+        <div role="status" className="flex items-center gap-1.5">
+          <Loader2 aria-hidden className="w-3 h-3 animate-spin" />
           <span>Loading…</span>
         </div>
       )}
 
       <div className="flex items-center gap-1">
         <FileText className="w-3 h-3 text-[var(--color-text-faint)]" />
-        <span>{docCount} {docCount === 1 ? "doc" : "docs"}</span>
+        <span>{docCount.toLocaleString()} {docCount === 1 ? "document" : "documents"}</span>
       </div>
 
       <div className="flex items-center gap-1">

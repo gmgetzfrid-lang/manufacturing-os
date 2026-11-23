@@ -13,12 +13,13 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowDown, ArrowUp, Eraser, FolderOpen, Loader2, PenLine, PenTool, Send, Trash2, X } from "lucide-react";
+import { ArrowDown, ArrowUp, CircleAlert, Eraser, FolderOpen, Loader2, PenLine, PenTool, Send, Trash2, X } from "lucide-react";
+import plainError from "@/components/documents/plainError";
 import { useRole } from "@/components/providers/RoleContext";
 import { appConfirm } from "@/components/providers/DialogProvider";
 import { PageHero, heroQuiet } from "@/components/ui/PageHero";
 import MoreMenu, { type MoreItem } from "@/components/ui/MoreMenu";
-import ViewTabs, { DOCUMENT_VIEWS } from "@/components/navigation/ViewTabs";
+import DocViewTabs from "@/components/documents/DocViewTabs";
 import { StatusTag } from "@/components/documents/StatusTag";
 import SendSheet, { type SendDoc } from "@/components/documents/SendSheet";
 import { btnIcon, btnQuiet, btnRow } from "@/components/admin/kit";
@@ -29,6 +30,7 @@ import { useStagedDocs, hasMarkups, sheetOfRecord, type StagedDoc } from "@/lib/
 import { draftingSheet, issuedFileUrl, markedUpPdf, prepareDraftingRequest } from "@/lib/sendToDrafting";
 import type { DocumentRecord } from "@/types/schema";
 
+import { friendlyError } from "@/lib/friendlyError";
 // The viewer (react-pdf + fabric) loads in the browser only.
 const MultiDocViewer = dynamic(() => import("@/components/viewers/MultiDocViewer"), {
   ssr: false,
@@ -98,7 +100,7 @@ export default function StagedPage() {
         setLibNames((prev) => new Map([...prev, ...names]));
         setLoadError(null);
       } catch (e) {
-        if (live) setLoadError((e as Error).message || "unknown error");
+        if (live) setLoadError(friendlyError(e));
       }
     })();
     return () => { live = false; };
@@ -188,7 +190,7 @@ export default function StagedPage() {
       }
       router.push(href);
     } catch (e) {
-      setDraftError(`The sheets could not be prepared: ${(e as Error).message || "unknown error"}`);
+      setDraftError(`The sheets could not be prepared: ${friendlyError(e)}`);
       setDrafting(false);
     }
   };
@@ -255,7 +257,7 @@ export default function StagedPage() {
 
   const messages = [
     staged.error ? { text: staged.error, off: staged.dismissError } : null,
-    loadError ? { text: `The staged documents could not be read: ${loadError}`, off: () => setRetry((t) => t + 1), retry: true } : null,
+    loadError ? { text: `The staged documents didn't load: ${loadError}`, off: () => setRetry((t) => t + 1), retry: true } : null,
     draftError ? { text: draftError, off: () => setDraftError(null) } : null,
   ].filter((m): m is { text: string; off: () => void; retry?: boolean } => !!m);
 
@@ -265,7 +267,7 @@ export default function StagedPage() {
       <div className="mx-auto w-full px-4 sm:px-6 lg:px-8 py-6 pb-20">
         <PageHero kicker="Document control" size="md" title="Nothing staged."
           sub="Tap Stage on any document, or select several and tap Stage.">
-          <ViewTabs tabs={DOCUMENT_VIEWS} />
+          <DocViewTabs />
         </PageHero>
         <div className="mt-2"><Link href="/documents" className={btnQuiet}>Go to Documents</Link></div>
       </div>
@@ -283,14 +285,15 @@ export default function StagedPage() {
           ]} />
         )}
       >
-        <ViewTabs tabs={DOCUMENT_VIEWS} />
+        <DocViewTabs />
       </PageHero>
 
       {messages.length > 0 && (
         <div className="mb-3 space-y-1.5">
           {messages.map((m) => (
-            <div key={m.text} role="alert" className="flex items-start gap-2 text-[14px] font-semibold text-[var(--state-overdue)]">
-              <span className="flex-1 min-w-0">{m.text}</span>
+            <div key={m.text} role="alert" className="flex items-start gap-2 text-[14px] text-[var(--color-text)]">
+              <CircleAlert aria-hidden className="w-4 h-4 mt-0.5 shrink-0 text-[var(--state-overdue)]" />
+              <span className="flex-1 min-w-0">{plainError(m.text)}</span>
               {m.retry
                 ? <button type="button" onClick={m.off} className={btnRow}>Try again</button>
                 : <button type="button" onClick={m.off} className={btnIcon} aria-label="Dismiss"><X className="w-4 h-4" /></button>}
@@ -315,19 +318,20 @@ export default function StagedPage() {
                   {on && <span aria-hidden className="absolute left-0 inset-y-2 w-[3px] rounded-full bg-[var(--color-main)]" />}
                   <button type="button" onClick={() => show(r)} aria-current={on ? "true" : undefined}
                     title={r.rec === null ? "Not found. It may have been deleted, or you may no longer have access." : `Show ${nameOf(r)}`}
-                    className="min-w-0 flex-1 flex items-start gap-2.5 text-left pl-3 pr-1 py-2.5 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent-ring)]">
-                    <span className={`mt-0.5 w-6 h-6 shrink-0 rounded-full grid place-items-center text-[12px] font-bold tabular-nums ${on ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] ring-1 ring-[var(--color-border)]"}`}>{i + 1}</span>
+                    className="min-w-0 flex-1 flex items-start gap-2.5 text-left pl-3 pr-1 py-2.5 rounded-md">
+                    <span className={`mt-px w-5 shrink-0 text-right text-[13px] tabular-nums ${on ? "font-semibold text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>{i + 1}</span>
                     <span className="min-w-0 flex-1">
                       <span className={`block font-display text-[16px] leading-tight font-semibold tabular-nums truncate ${r.rec === null ? "text-[var(--color-text-muted)]" : "text-[var(--color-text)]"}`}>{r.number || "No number"}</span>
                       {r.title && r.title !== r.number && <span className="block text-[13px] leading-snug text-[var(--color-text)] truncate">{r.title}</span>}
                       {(r.sheet || r.rev) && (
-                        <span className="mt-0.5 block text-[13px] leading-snug text-[var(--color-text-muted)] tabular-nums truncate">
-                          {[r.sheet ? `Sheet ${r.sheet}` : null, r.rev ? `Rev ${r.rev}` : null].filter(Boolean).join(" · ")}
+                        <span className="mt-0.5 flex gap-x-3 text-[13px] leading-snug text-[var(--color-text-muted)] tabular-nums truncate">
+                          {r.sheet && <span>Sheet {r.sheet}</span>}
+                          {r.rev && <span>Rev {r.rev}</span>}
                         </span>
                       )}
                       <span className="mt-1.5 flex items-center gap-x-2 gap-y-1 flex-wrap">
                         {r.rec === null
-                          ? <span className="text-[13px] font-semibold text-[var(--state-overdue)]">Not found</span>
+                          ? <span className="ui-pill is-bad">Not found</span>
                           : r.status ? <StatusTag status={r.status} /> : null}
                         {r.library && <span className="min-w-0 truncate text-[13px] text-[var(--color-text-muted)]">{r.library}</span>}
                       </span>
@@ -353,18 +357,18 @@ export default function StagedPage() {
               const on = r.staged.id === shownId;
               return (
                 <li key={r.staged.id} data-staged-chip data-on={on ? "" : undefined}
-                  className={`shrink-0 flex items-center h-11 rounded-full border transition-colors ${on ? "bg-[var(--color-text)] border-[var(--color-text)] text-[var(--color-surface)]" : "bg-[var(--color-surface)] border-[var(--color-border-strong)] text-[var(--color-text)]"}`}>
+                  className={`shrink-0 flex items-center h-11 rounded-lg border transition-colors ${on ? "bg-[var(--color-surface-2)] border-[var(--color-text-muted)] text-[var(--color-text)]" : "bg-[var(--color-surface)] border-[var(--color-border-strong)] text-[var(--color-text)]"}`}>
                   <button type="button" onClick={() => show(r)} aria-current={on ? "true" : undefined}
-                    className={`h-full flex items-center gap-2 pl-3.5 ${on ? "pr-1" : "pr-3.5"} rounded-full text-[14px] whitespace-nowrap`}>
-                    <span className={`tabular-nums text-[13px] font-semibold ${on ? "opacity-70" : "text-[var(--color-text-muted)]"}`}>{i + 1}</span>
+                    className={`h-full flex items-center gap-2 pl-3.5 ${on ? "pr-1" : "pr-3.5"} rounded-lg text-[14px] whitespace-nowrap`}>
+                    <span className="tabular-nums text-[13px] text-[var(--color-text-muted)]">{i + 1}</span>
                     <span className="font-semibold tabular-nums">{r.number || "No number"}</span>
-                    {r.sheet && <span className={`text-[13px] ${on ? "opacity-80" : "text-[var(--color-text-muted)]"}`}>Sheet {r.sheet}</span>}
-                    {r.rec === null && <span className={`text-[13px] font-semibold ${on ? "" : "text-[var(--state-overdue)]"}`}>Not found</span>}
+                    {r.sheet && <span className="text-[13px] text-[var(--color-text-muted)]">Sheet {r.sheet}</span>}
+                    {r.rec === null && <span className="text-[13px] font-semibold text-[var(--state-overdue-text)]">Not found</span>}
                     {r.marked && <PenLine className="w-3.5 h-3.5" aria-label="Marked up" />}
                   </button>
                   {on && (
                     <MoreMenu iconOnly label={`More for ${nameOf(r)}`} items={menuFor(r, i)}
-                      triggerClass="w-10 h-10 mr-0.5 grid place-items-center rounded-full text-[var(--color-surface)] hover:bg-white/15" />
+                      triggerClass="w-10 h-10 mr-0.5 grid place-items-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface)]" />
                   )}
                 </li>
               );

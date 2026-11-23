@@ -21,6 +21,7 @@ import { supabase } from "@/lib/supabase";
 import { useDraft } from "@/hooks/useDraft";
 import { listOpenBranchesForOrg, resolveBranch, type RevisionBranch } from "@/lib/branches";
 
+import { friendlyError } from "@/lib/friendlyError";
 const STALE_DAYS = 14;
 
 interface UnverifiedRev {
@@ -187,7 +188,7 @@ export default function DocControlQueue({ orgId, currentUser }: DocControlQueueP
 
   const handleResolve = async (branch: RevisionBranch, resolution: "merged" | "withdrawn") => {
     if (resolveNote.trim().length < 5) {
-      setError("A resolution note is required (at least 5 characters) - it goes on the record.");
+      setError("A resolution note is required (at least 5 characters): it goes on the record.");
       return;
     }
     setBusyId(branch.id);
@@ -207,7 +208,7 @@ export default function DocControlQueue({ orgId, currentUser }: DocControlQueueP
       setResolveNote("");
       await load();
     } catch (e) {
-      setError((e as Error).message);
+      setError(friendlyError(e));
     } finally {
       setBusyId(null);
     }

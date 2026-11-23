@@ -49,8 +49,10 @@ import { badgeText } from "@/lib/badge";
 import { escapeStackBusy } from "@/components/documents/useEscapeClose";
 import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/ui/Modal";
 import { Button } from "@/components/ui/Button";
+import CopyId from "@/components/ui/CopyId";
 import { vDim, vPanel, vKicker, vTitle, vIcon, vTool, vQuiet, vGroup, vPrimary, vClose, vNote } from "@/components/viewers/viewerChrome";
 
+import { friendlyError } from "@/lib/friendlyError";
 // Same self-hosted worker the single viewer uses (copied to /public on prebuild).
 pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
 
@@ -813,7 +815,7 @@ export default function MultiDocViewer({ docs, onClose, embedded = false, action
       else await printDocumentPdf(ctx);
       setDownloadConfirm(null);
     } catch (e) {
-      setActionError((e as Error).message || "Action failed");
+      setActionError(friendlyError(e));
     } finally {
       if (bakedUrl) URL.revokeObjectURL(bakedUrl);
       setDocBusy(false);
@@ -842,7 +844,7 @@ export default function MultiDocViewer({ docs, onClose, embedded = false, action
           timestamp: now,
           expiresAt,
           watermarkText: `UNCONTROLLED - ${entry.doc.documentNumber || "DOC"} Rev ${entry.doc.rev || "-"}`,
-          footerNotice: `${entry.doc.documentNumber || entry.doc.title || "Document"} Rev ${entry.doc.rev ?? "?"} at time of issue - verify current revision before use.`,
+          footerNotice: `${entry.doc.documentNumber || entry.doc.title || "Document"} Rev ${entry.doc.rev ?? "?"} at time of issue: verify current revision before use.`,
           verifyUrl: entry.doc.id && entry.doc.currentVersionId && publicOrigin()
             ? `${publicOrigin()}/verify/${entry.doc.id}?v=${entry.doc.currentVersionId}`
             : undefined,
@@ -902,7 +904,7 @@ export default function MultiDocViewer({ docs, onClose, embedded = false, action
       URL.revokeObjectURL(url);
       setDownloadConfirm(null);
     } catch (e) {
-      setActionError((e as Error).message || "Book download failed");
+      setActionError(friendlyError(e));
     } finally {
       setBookBusy(false);
     }
@@ -929,7 +931,7 @@ export default function MultiDocViewer({ docs, onClose, embedded = false, action
       w.addEventListener("load", () => setTimeout(() => w.print(), 250));
       setDownloadConfirm(null);
     } catch (e) {
-      setActionError((e as Error).message || "Book print failed");
+      setActionError(friendlyError(e));
     } finally {
       setBookBusy(false);
     }
@@ -970,7 +972,7 @@ export default function MultiDocViewer({ docs, onClose, embedded = false, action
     } catch (e) {
       console.error("Send markups to drafting failed", e);
       setSendingDraft(false);
-      await appAlert(`Couldn't prepare markups: ${(e as Error).message || "unknown error"}`);
+      await appAlert(`Couldn't prepare markups: ${friendlyError(e)}`);
     }
   };
 
@@ -1078,7 +1080,9 @@ export default function MultiDocViewer({ docs, onClose, embedded = false, action
                   <> · <span className={STATUS_TONE[viewBadge.tone]} title="Status of the live version you're viewing. A copy you download or print is stamped separately.">{statusWord}</span></>
                 )}
               </div>
-              <h2 className={vTitle} title={activeEntry?.doc.title || activeName}>{activeName}</h2>
+              <h2 className={vTitle} title={activeEntry?.doc.title || activeName}>
+                {activeEntry?.doc.documentNumber ? <CopyId value={activeEntry.doc.documentNumber} label="document number" /> : activeName}
+              </h2>
             </div>
             {actions ? (
               <div className="max-sm:hidden flex items-center gap-2 shrink-0">{actions}</div>
@@ -1334,7 +1338,7 @@ export default function MultiDocViewer({ docs, onClose, embedded = false, action
                 {!embedded && <button
                   type="button"
                   onClick={() => togglePick(idx)}
-                  title={picked.has(entry.doc.id ?? "") ? "Remove from focus set" : "Add to focus set - review just the sheets you need"}
+                  title={picked.has(entry.doc.id ?? "") ? "Remove from focus set" : "Add to focus set: review just the sheets you need"}
                   className={`text-[13px] font-bold inline-flex items-center gap-1 h-7 px-2 rounded-md transition-colors ${picked.has(entry.doc.id ?? "") ? "bg-[var(--color-ink-fg)] text-[var(--color-ink)]" : "bg-[var(--color-ink-2)] text-[var(--color-text)] hover:bg-[var(--color-ink-line)]"}`}
                   aria-pressed={picked.has(entry.doc.id ?? "")}
                 >
@@ -1434,7 +1438,7 @@ export default function MultiDocViewer({ docs, onClose, embedded = false, action
             ["rect", "Rectangle", Square],
             ["arrow", "Arrow", ArrowUpRight],
             ["text", "Text", Type],
-            ["eraser", "Eraser - click an object to delete", Eraser],
+            ["eraser", "Eraser: click an object to delete", Eraser],
           ] as [MarkTool, string, typeof Pen][]).map(([t, label, Icon]) => (
             <button type="button" key={t} onClick={() => setMarkTool(t)} title={label} aria-label={label} aria-pressed={markTool === t} className={vTool(markTool === t, "w-9 h-9")}>
               <Icon className="w-4 h-4" />

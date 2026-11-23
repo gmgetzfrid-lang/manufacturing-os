@@ -13,6 +13,7 @@ import IsoGuidance from "@/components/ui/IsoGuidance";
 import { useEscapeClose } from "@/components/documents/useEscapeClose";
 import { useDraft } from "@/hooks/useDraft";
 
+import { friendlyError } from "@/lib/friendlyError";
 interface SupersedeModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -78,7 +79,7 @@ export default function SupersedeModal({
       setReason(""); setMocRef(""); setReplacements([]); setReplacementInput("");
       if (result.unresolvedDocNumbers.length === 0) onClose();
     } catch (e) {
-      setError((e as Error).message || "Supersede failed");
+      setError(friendlyError(e));
     } finally {
       setBusy(false);
     }
@@ -120,7 +121,7 @@ export default function SupersedeModal({
               value={reason}
               onChange={(e) => setReason(e.target.value)}
               rows={3}
-              className="mt-1 w-full px-2.5 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm focus:ring-2 focus:ring-[var(--color-accent-ring)] focus:outline-none resize-y"
+              className="mt-1 w-full px-2.5 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm resize-y"
               placeholder="e.g. P-101 has been split into north (P-101A) and south (P-101B) loops to reflect 2026 expansion. Original P-101 retired."
             />
           </div>
@@ -130,14 +131,14 @@ export default function SupersedeModal({
               Replacement Document Numbers
             </label>
             <div className="text-[13px] text-[var(--color-text-muted)] mt-0.5">
-              Optional. Add by document number - they must already exist in this library.
+              Optional. Add by document number: they must already exist in this library.
             </div>
             <div className="mt-1.5 flex gap-1.5">
               <input
                 value={replacementInput}
                 onChange={(e) => setReplacementInput(e.target.value)}
                 onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addReplacement(); } }}
-                className="flex-1 px-2.5 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm focus:ring-2 focus:ring-[var(--color-accent-ring)] focus:outline-none"
+                className="flex-1 px-2.5 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm"
                 placeholder="P-101A"
               />
               <button
@@ -177,7 +178,7 @@ export default function SupersedeModal({
             <input
               value={mocRef}
               onChange={(e) => setMocRef(e.target.value)}
-              className="mt-1 w-full px-2.5 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm focus:ring-2 focus:ring-[var(--color-accent-ring)] focus:outline-none"
+              className="mt-1 w-full px-2.5 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm"
               placeholder="MOC-2026-0142 (optional)"
             />
           </div>

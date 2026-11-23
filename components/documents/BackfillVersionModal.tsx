@@ -29,6 +29,7 @@ import type { DocumentRecord, DocumentVersion } from "@/types/schema";
 import { useFileDrag } from "@/hooks/useFileDrag";
 import { useEscapeClose } from "@/components/documents/useEscapeClose";
 
+import { friendlyError } from "@/lib/friendlyError";
 interface BackfillVersionModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -151,7 +152,7 @@ export default function BackfillVersionModal({
       onSuccess(newVersion);
       onClose();
     } catch (e) {
-      setError(`It didn't save: ${(e as Error).message || "try again"}.`);
+      setError(`It didn't save: ${friendlyError(e)}.`);
     } finally {
       setBusy(false);
     }
@@ -294,7 +295,7 @@ export default function BackfillVersionModal({
 
           {/* Supersedes picker — only shows if there are existing versions */}
           {existingVersions.length > 0 && (
-            <Field label="Supersedes (optional - slot into the chain)">
+            <Field label="Supersedes (optional: slot into the chain)">
               <select
                 value={supersedesVersionId}
                 onChange={(e) => setSupersedesVersionId(e.target.value)}

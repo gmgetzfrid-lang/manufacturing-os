@@ -160,13 +160,11 @@ const FileGraph = React.forwardRef<FileGraphHandle, Props>(function FileGraph(
     const b = layoutBounds(pos, 60);
     // Names are drawn centred under their dots: keep the widest ones on screen.
     const labelOf = new Map(visibleRef.current.map((n) => [n.id, n.label]));
-    // Names drawn at a fixed size on screen (labelAll) need room on screen,
-    // whatever the zoom: keep a margin for the longest instead.
+    // Names are drawn at a fixed size on screen, whatever the zoom: keep a
+    // screen margin for the longest instead of growing the graph's bounds.
     let screenHalf = 0;
-    for (const [id, p] of pos) {
-      const half = Math.min(110, (labelOf.get(id)?.length ?? 0) * 3.4) + 12;
-      if (labelAllRef.current) { screenHalf = Math.max(screenHalf, Math.min(28, labelOf.get(id)?.length ?? 0) * 3.4 + 6); continue; }
-      b.minX = Math.min(b.minX, p.x - half); b.maxX = Math.max(b.maxX, p.x + half);
+    for (const id of pos.keys()) {
+      screenHalf = Math.max(screenHalf, Math.min(28, labelOf.get(id)?.length ?? 0) * 3.4 + 6);
     }
     if (up) b.minY = Math.min(b.minY, up.y - 50);
     screenHalf = Math.min(screenHalf, canvas.clientWidth * 0.22);
@@ -312,9 +310,7 @@ const FileGraph = React.forwardRef<FileGraphHandle, Props>(function FileGraph(
         ctx.strokeStyle = "rgba(255,255,255,0.9)"; ctx.lineWidth = 1.5; ctx.stroke();
         const img = imagesRef.current.get(up.kind === "folder" || up.kind === "extfolder" ? "folderOpen" : up.type.key);
         if (img) ctx.drawImage(img, upP.x - r * 0.6, upP.y - r * 0.6, r * 1.2, r * 1.2);
-        ctx.font = "600 11px Barlow, system-ui, sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "top";
-        ctx.fillStyle = "#334155";
-        ctx.fillText(`↑ ${up.label.length > 24 ? up.label.slice(0, 22) + "…" : up.label}`, upP.x, upP.y + r + 4);
+        // (Its name goes on the screen with the others, after the nodes.)
         ctx.globalAlpha = 1;
       }
 
@@ -423,10 +419,15 @@ const FileGraph = React.forwardRef<FileGraphHandle, Props>(function FileGraph(
         ctx.lineWidth = hoverRef.current === `sat:${sat.id}` ? 3 : 1.5; ctx.strokeStyle = hoverRef.current === `sat:${sat.id}` ? focus : "rgba(255,255,255,0.95)"; ctx.stroke();
         const img = imagesRef.current.get(sat.iconKey);
         if (img) ctx.drawImage(img, cur.x - r * 0.6, cur.y - r * 0.6, r * 1.2, r * 1.2);
+        // Its name at a fixed size on the screen, under the marker.
+        ctx.save();
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
         ctx.font = "600 12px Barlow, system-ui, sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "top";
         const tw = ctx.measureText(sat.label).width;
-        ctx.fillStyle = "rgba(255,255,255,0.9)"; ctx.fillRect(cur.x - tw / 2 - 3, cur.y + r + 3, tw + 6, 16);
-        ctx.fillStyle = "#0f172a"; ctx.fillText(sat.label, cur.x, cur.y + r + 5);
+        const sx = w / 2 + cam.x + cur.x * s, sy = h / 2 + cam.y + (cur.y + r) * s;
+        ctx.fillStyle = "rgba(255,255,255,0.9)"; ctx.fillRect(sx - tw / 2 - 3, sy + 3, tw + 6, 16);
+        ctx.fillStyle = "#0f172a"; ctx.fillText(sat.label, sx, sy + 5);
+        ctx.restore();
         });
       });
       for (const sat of sats) if (!satsHere.includes(sat)) satPos.current.delete(sat.id);
@@ -516,40 +517,70 @@ const FileGraph = React.forwardRef<FileGraphHandle, Props>(function FileGraph(
         ctx.globalAlpha = 1;
       }
       labels.sort((a, b) => a.pri - b.pri);
+      // Names are drawn on the screen, not in the graph: about 12 px at any
+      // zoom, so they never shrink to an unreadable size when the map is
+      // zoomed out. Most important first; one that would overlap a name or
+      // a dot already placed is left out.
+      const ox = w / 2 + cam.x, oy = h / 2 + cam.y;
+      type Rect = [number, number, number, number];
+      const toScreen = (q: Rect): Rect => [ox + q[0] * s, oy + q[1] * s, q[2] * s, q[3] * s];
+      const hits = (a: Rect, b: Rect) => a[0] < b[0] + b[2] && b[0] < a[0] + a[2] && a[1] < b[1] + b[3] && b[1] < a[1] + a[3];
+      const placedOnScreen: Rect[] = [];
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.textAlign = "center"; ctx.textBaseline = "top";
       for (const { n, p, r, dim } of labels) {
         {
           const container = isContainer(n.kind);
-          // A small map read beside its list keeps its names readable however
-          // far it is zoomed out (one that would then overlap is left out).
-          const fontPx = labelAllRef.current ? Math.max(container ? 12 : 11, (container ? 13 : 12) / s) : container ? 12 : 11;
-          ctx.font = `${container ? 700 : 500} ${fontPx}px Barlow, system-ui, sans-serif`;
+          const fontPx = container ? 13 : 12;
+          ctx.font = `${container ? 600 : 400} ${fontPx}px Barlow, system-ui, sans-serif`;
           const label = n.label.length > 28 ? n.label.slice(0, 26) + "…" : n.label;
           const tw = ctx.measureText(label).width;
           const lh = fontPx + 4 + (n.badge ? 15 : 0);
-          // Under the icon if there is room, else over it, else not at all.
-          const own = (rect: [number, number, number, number]) => placed.filter((q) => !(q[0] === p.x - r - 2 && q[1] === p.y - r - 2)).some(([px, py, pw, ph]) => rect[0] < px + pw && px < rect[0] + rect[2] && rect[1] < py + ph && py < rect[1] + rect[3]);
-          const below: [number, number, number, number] = [p.x - tw / 2 - 3, p.y + r + 3, tw + 6, lh];
-          const above: [number, number, number, number] = [p.x - tw / 2 - 3, p.y - r - 3 - lh, tw + 6, lh];
-          const spot = n.id === sel || !own(below) ? below : !own(above) ? above : null;
+          const sx = ox + p.x * s, sy = oy + p.y * s, sr = r * s;
+          // Under the dot if there is room, else over it, else not at all.
+          const taken = (rect: Rect) =>
+            placed.some((q) => !(q[0] === p.x - r - 2 && q[1] === p.y - r - 2) && hits(rect, toScreen(q)))
+            || placedOnScreen.some((q) => hits(rect, q));
+          const below: Rect = [sx - tw / 2 - 3, sy + sr + 3, tw + 6, lh];
+          const above: Rect = [sx - tw / 2 - 3, sy - sr - 3 - lh, tw + 6, lh];
+          const spot = n.id === sel || !taken(below) ? below : !taken(above) ? above : null;
           if (!spot) continue;
-          placed.push(spot);
+          placedOnScreen.push(spot);
           const ly = spot[1];
           ctx.globalAlpha = dim ? 0.5 : 1;
           ctx.fillStyle = "rgba(255,255,255,0.85)";
           ctx.fillRect(spot[0], ly, tw + 6, fontPx + 4);
           ctx.fillStyle = dim ? "rgba(51,65,85,0.5)" : container ? "#0f172a" : "#334155";
-          ctx.fillText(label, p.x, ly + 2);
+          ctx.fillText(label, sx, ly + 2);
           if (n.badge) {
-            ctx.font = "700 9px Barlow, system-ui, sans-serif";
+            ctx.font = "600 10px Barlow, system-ui, sans-serif";
             const bw = ctx.measureText(n.badge).width + 8;
             const by = ly + 2 + fontPx + 5;
             ctx.fillStyle = dim ? "rgba(62,74,90,0.25)" : "#3e4a5a";
-            ctx.beginPath(); ctx.roundRect(p.x - bw / 2, by, bw, 12, 6); ctx.fill();
-            ctx.fillStyle = "#fff"; ctx.fillText(n.badge, p.x, by + 2);
+            ctx.beginPath(); ctx.roundRect(sx - bw / 2, by, bw, 12, 6); ctx.fill();
+            ctx.fillStyle = "#fff"; ctx.fillText(n.badge, sx, by + 1);
           }
         }
         ctx.globalAlpha = 1;
       }
+      // The way up's name, last: left out where it would cover the map.
+      if (up && upP && rootP) {
+        ctx.font = "600 12px Barlow, system-ui, sans-serif";
+        const t = `↑ ${up.label.length > 24 ? up.label.slice(0, 22) + "…" : up.label}`;
+        const tw = ctx.measureText(t).width;
+        const sx = ox + upP.x * s, sy = oy + (upP.y + RADIUS[up.kind] * 0.8) * s + 4;
+        const rect: Rect = [sx - tw / 2 - 3, sy, tw + 6, 16];
+        if (!placedOnScreen.some((q) => hits(rect, q)) && !placed.some((q) => hits(rect, toScreen(q)))) {
+          ctx.globalAlpha = hoverRef.current === "__up__" ? 1 : 0.8;
+          ctx.fillStyle = "#334155";
+          ctx.fillText(t, sx, sy);
+          ctx.globalAlpha = 1;
+        }
+      }
+      // Back to the graph for the satellites (their names go on the screen too).
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.translate(ox, oy);
+      ctx.scale(s, s);
       ctx.textAlign = "center"; ctx.textBaseline = "top";
       for (const d of satDraws) d();
       raf = requestAnimationFrame(draw);

@@ -123,7 +123,7 @@ export default function MergeWizard(props: MergeWizardProps) {
             revUp: extendRevUp ? {
               file: extendFile!,
               revisionLabel: extendRevLabel,
-              changeLog: extendChangeLog || `Merge target - absorbed ${otherSources.length + 1} sheets`,
+              changeLog: extendChangeLog || `Merge target: absorbed ${otherSources.length + 1} sheets`,
             } : undefined,
           };
 
@@ -546,7 +546,7 @@ function Step3TagsAndConfirm(props: {
           value={props.reason}
           onChange={(e) => props.setReason(e.target.value)}
           rows={2}
-          placeholder='e.g. "Consolidated overhead sheets 3 and 4 - equipment count after relief redesign no longer justifies two sheets."'
+          placeholder='e.g. "Consolidated overhead sheets 3 and 4: equipment count after relief redesign no longer justifies two sheets."'
           className="mt-1 w-full text-sm border border-[var(--color-border-strong)] rounded px-2.5 py-1.5"
         />
       </label>

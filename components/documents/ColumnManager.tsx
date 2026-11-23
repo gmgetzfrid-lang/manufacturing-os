@@ -4,6 +4,7 @@ import React, { useMemo, useState } from "react";
 import { ChevronDown, ChevronUp, Eye, EyeOff, X, Trash2, Pencil, Check, Loader2, KeyRound, GripVertical, Columns } from "lucide-react";
 import { appConfirm } from "@/components/providers/DialogProvider";
 
+import { friendlyError } from "@/lib/friendlyError";
 export type ColumnOption = {
   key: string;
   label: string;
@@ -132,7 +133,7 @@ export default function ColumnManager(props: {
       }
       onClose();
     } catch (e) {
-      setApplyError((e as Error).message || "Couldn't save the columns.");
+      setApplyError(friendlyError(e));
     } finally {
       setApplying(false);
     }
@@ -142,7 +143,7 @@ export default function ColumnManager(props: {
     if (!onUseLibrary || applying) return;
     setApplying(true);
     try { await onUseLibrary(); onClose(); }
-    catch (e) { setApplyError((e as Error).message || "Couldn't switch to the library's columns."); }
+    catch (e) { setApplyError(friendlyError(e)); }
     finally { setApplying(false); }
   };
 
@@ -320,7 +321,7 @@ export default function ColumnManager(props: {
                           <button
                             onClick={() => startRename(col.key, col.label)}
                             className="shrink-0 p-2 rounded-lg border-2 border-[var(--color-main)]/25 bg-[var(--color-surface-2)] text-[var(--color-accent-text)] hover:text-[var(--color-accent-hover)] hover:border-[var(--color-main)]/50 transition-colors"
-                            title={`Rename "${col.label}" - works for built-in columns too`}
+                            title={`Rename "${col.label}": works for built-in columns too`}
                           >
                             <Pencil className="h-3.5 w-3.5" />
                           </button>

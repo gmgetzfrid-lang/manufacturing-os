@@ -8,13 +8,15 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { Download, FileQuestion, Loader2, Split, Tag } from "lucide-react";
+import { Download, FileQuestion, Split, Tag } from "lucide-react";
+import { SkeletonRows } from "@/components/ui/Skeleton";
+import ErrorNote from "@/components/ui/ErrorNote";
 import { useRole } from "@/components/providers/RoleContext";
 import { PageShell } from "@/components/ui/PageShell";
 import { PageHero, PageBody, Card, heroQuiet } from "@/components/ui/PageHero";
 import { bandSeg, bandSegItem, bandSelect } from "@/components/admin/band";
 import HelpTooltip from "@/components/ui/HelpTooltip";
-import ViewTabs, { DOCUMENT_VIEWS } from "@/components/navigation/ViewTabs";
+import DocViewTabs from "@/components/documents/DocViewTabs";
 import { supabase } from "@/lib/supabase";
 import { fetchAllRows } from "@/lib/fetchAllRows";
 import {
@@ -105,16 +107,23 @@ export default function ConnectorChecksPage() {
   ];
   const cur = TABS.find((t) => t.id === view)!;
   const open = rows.missing.length + rows.tag.length + rows.oneway.length;
+  // Only claim "every connector checks out" when every one was checked.
+  const unchecked = checks ? checks.unchecked.noTarget + checks.unchecked.noSheetRecorded + checks.unchecked.targetNotRead : 0;
   const answer = error ? "The connectors couldn't be read."
     : !checks ? "Connector checks"
     : checks.connectors === 0 ? "No connectors read yet."
+    : open === 0 && unchecked > 0 ? "Nothing wrong found."
     : open === 0 ? "Every connector checks out."
     : `${open.toLocaleString()} connector${open === 1 ? "" : "s"} to look at${drawing ? ` on ${drawing}` : ""}.`;
-  const answerSub = !checks || checks.connectors === 0 ? "Every off-page connector read from the drawings, checked against the sheet it points at." : undefined;
+  const answerSub = !checks || checks.connectors === 0 ? "Every off-page connector read from the drawings, checked against the sheet it points at."
+    : open === 0 && unchecked > 0 ? `${unchecked.toLocaleString()} couldn't be checked yet. The note under the list says why.`
+    : undefined;
+  // The count to act on leads; when nothing is open every fact is small.
   const answerFacts = checks ? [
-    { label: "Sheets", value: checks.sheets.toLocaleString() },
+    ...(open > 0 ? [{ label: "To look at", value: open.toLocaleString(), tone: "warn" as const, hero: true }] : []),
+    { label: "Sheets read", value: checks.sheets.toLocaleString() },
     { label: "Connectors", value: checks.connectors.toLocaleString() },
-    ...(checks.connectors > 0 ? [{ label: "Check out", value: checks.holds.toLocaleString(), tone: "good" as const }] : []),
+    ...(checks.connectors > 0 ? [{ label: "Match", value: checks.holds.toLocaleString() }] : []),
   ] : undefined;
 
   return (
@@ -124,13 +133,14 @@ export default function ConnectorChecksPage() {
         title={answer}
         sub={answerSub}
         facts={answerFacts}
+        factsHero={open > 0 ? "auto" : "none"}
         tools={checks ? (
           <button type="button" onClick={download} className={heroQuiet} title="Download the list" aria-label="Download the list">
             <Download className="w-4 h-4" /><span className="max-sm:hidden">Download</span>
           </button>
         ) : undefined}
       >
-        <ViewTabs tabs={DOCUMENT_VIEWS} />
+        <DocViewTabs />
         {checks && (
           <div className="mt-4 flex flex-wrap items-center gap-2">
             <div className={bandSeg} role="tablist" aria-label="Checks">
@@ -151,17 +161,17 @@ export default function ConnectorChecksPage() {
       </PageHero>
 
       <PageBody>
-      {error && <Card><div role="alert" className="text-[15px] font-semibold text-[var(--state-overdue)]">The connectors could not be read: {error}</div></Card>}
-      {!checks && !error && <Card><div className="flex items-center gap-2 text-[15px] text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin" /> Reading the connectors…</div></Card>}
+      {error && <ErrorNote error={error} title="The connectors couldn't be read." onRetry={() => window.location.reload()} />}
+      {!checks && !error && <SkeletonRows rows={4} cols={1} what="the connector checks" />}
 
       {checks && (
         <div className="space-y-4" data-connector-checks>
           <section>
-          <h2 className="font-display text-[19px] leading-tight font-semibold text-[var(--color-text)] mb-2.5 inline-flex items-center gap-1.5">
+          <h2 className="font-display text-[20px] leading-tight font-semibold text-[var(--color-heading)] mb-3 inline-flex items-center gap-1.5">
             {cur.label} <HelpTooltip>{cur.what}</HelpTooltip>
           </h2>
-          <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
-            {cur.n === 0 ? <div className="px-4 py-4 text-[15px] text-[var(--color-text-muted)]">Nothing found{drawing ? ` on ${drawing}` : ""}.</div> : (
+          <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
+            {cur.n === 0 ? <div className="px-4 py-4 text-[15px] text-[var(--color-text)]">Nothing to look at here{drawing ? ` on ${drawing}` : ""}.</div> : (
               <ul className="divide-y divide-[var(--color-border)] text-[14px]">
                 {view === "missing" && rows.missing.map((m) => (
                   <li key={`${m.drawing}|${m.sheet}`} className="px-4 sm:px-5 py-3">

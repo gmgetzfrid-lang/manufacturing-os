@@ -11,17 +11,21 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import {
-  Package, Plus, X, Loader2, AlertTriangle,
+  Plus, X, Loader2,
   RefreshCw, Search, ChevronRight, Archive, Printer,
 } from "lucide-react";
 import { PageShell } from "@/components/ui/PageShell";
-import { PageHero, PageBody, Card, heroPrimary, heroQuiet } from "@/components/ui/PageHero";
+import { PageHero, PageBody, Card, heroPrimary } from "@/components/ui/PageHero";
 import { StatusTag, humanDate } from "@/components/documents/StatusTag";
 import MoreMenu from "@/components/ui/MoreMenu";
-import LoadingBlock from "@/components/ui/LoadingBlock";
+import { SkeletonRows } from "@/components/ui/Skeleton";
+import ErrorNote from "@/components/ui/ErrorNote";
+import { Button } from "@/components/ui/Button";
+import { field as kitField, label as kitLabel } from "@/components/admin/kit";
+import { friendlyError } from "@/lib/friendlyError";
 import { useEscapeClose } from "@/components/documents/useEscapeClose";
 import { useDraft } from "@/hooks/useDraft";
-import ViewTabs, { DOCUMENT_VIEWS } from "@/components/navigation/ViewTabs";
+import DocViewTabs from "@/components/documents/DocViewTabs";
 import { useRole } from "@/components/providers/RoleContext";
 import { appConfirm } from "@/components/providers/DialogProvider";
 import { useToast } from "@/components/providers/ToastProvider";
@@ -71,7 +75,7 @@ export default function PackagesPage() {
       setPackages(await listWorkPackages(activeOrgId));
       setLoadErr(null);
     } catch (e) {
-      setLoadErr((e as Error).message || "try again");
+      setLoadErr(friendlyError(e));
       setPackages((prev) => prev ?? []);
     }
   }, [activeOrgId]);
@@ -128,7 +132,7 @@ export default function PackagesPage() {
       setJustMade(newId);
       showToast({ type: "success", title: "Package made", message: "Revisions are pinned. You'll be told when any drawing moves on." });
     } catch (e) {
-      showToast({ type: "error", title: "Couldn't create package", message: (e as Error).message });
+      showToast({ type: "error", title: "Couldn't create package", message: friendlyError(e) });
     } finally {
       setCreating(false);
     }
@@ -139,7 +143,7 @@ export default function PackagesPage() {
     const ok = await appConfirm({
       title: "Refresh this pack's pins?",
       message: moving > 0
-        ? `${moving} drawing${moving === 1 ? "" : "s"} will move to the current revision. Review what changed first if you haven't - then re-print the pack so the paper matches.`
+        ? `${moving} drawing${moving === 1 ? "" : "s"} will move to the current revision. Review what changed first if you haven't. Then re-print the pack so the paper matches.`
         : "Every pin will be re-checked against the current revisions.",
       confirmLabel: "Refresh pins",
     });
@@ -150,7 +154,7 @@ export default function PackagesPage() {
       await load();
       showToast({ type: "success", title: "Package refreshed", message: "All pins moved to the current revisions. Re-print the pack." });
     } catch (e) {
-      showToast({ type: "error", title: "Refresh failed", message: (e as Error).message });
+      showToast({ type: "error", title: "Refresh failed", message: friendlyError(e) });
     } finally {
       setBusyId(null);
     }
@@ -169,7 +173,7 @@ export default function PackagesPage() {
       await load();
       showToast({ type: "success", title: "Package closed", message: `"${pkg.name}" is closed and no longer watching its drawings.` });
     } catch (e) {
-      showToast({ type: "error", title: "Close failed", message: (e as Error).message });
+      showToast({ type: "error", title: "Close failed", message: friendlyError(e) });
     } finally {
       setBusyId(null);
     }
@@ -212,7 +216,7 @@ export default function PackagesPage() {
           : `${result.included} included; skipped: ${result.skipped.map((s) => s.label).join(", ")}.`,
       });
     } catch (e) {
-      showToast({ type: "error", title: "Couldn't print the pack", message: (e as Error).message });
+      showToast({ type: "error", title: "Couldn't print the pack", message: friendlyError(e) });
     } finally {
       setPrinting(null);
     }
@@ -234,8 +238,8 @@ export default function PackagesPage() {
     : "A job's drawings, pinned at their revisions. You're told when one moves on.";
   const driftedDocs = (packages ?? []).reduce((n, p) => n + p.staleCount, 0);
   const answerFacts = nPk === 0 ? undefined : [
-    { label: "Open", value: nPk.toLocaleString() },
-    { label: "Moved on", value: driftedDocs.toLocaleString(), tone: driftedDocs > 0 ? "warn" as const : undefined },
+    { label: "Drawings that moved on", value: driftedDocs.toLocaleString(), tone: driftedDocs > 0 ? "warn" as const : undefined, hero: driftedDocs > 0 },
+    { label: "Open packages", value: nPk.toLocaleString() },
     { label: "Pinned", value: (packages ?? []).reduce((n, p) => n + p.docs.length, 0).toLocaleString() },
   ];
 
@@ -246,48 +250,45 @@ export default function PackagesPage() {
         title={answer}
         sub={answerSub}
         facts={answerFacts}
+        factsHero={driftedDocs > 0 ? "auto" : "none"}
         primary={
           <button type="button" onClick={() => setShowCreate(true)} className={heroPrimary}>
             <Plus className="w-4 h-4" /> New package
           </button>
         }
       >
-        <ViewTabs tabs={DOCUMENT_VIEWS} />
+        <DocViewTabs />
       </PageHero>
 
       <PageBody>
       {loadErr && (
-        <Card>
-          <p role="alert" className="text-[15px] font-semibold text-[var(--state-overdue)]">Couldn&apos;t load the packages: {loadErr}</p>
-        </Card>
+        <ErrorNote error={loadErr} title="The packages didn't load." onRetry={() => void load()} />
       )}
       {packages === null ? (
-        <Card><LoadingBlock what="the work packages" rows={4} /></Card>
+        loadErr ? null : <SkeletonRows rows={3} cols={3} what="work packages" />
       ) : packages.length === 0 ? (
         loadErr ? null : (
         <Card>
-          <p className="flex items-center gap-2.5 text-[15px] text-[var(--color-text-muted)]">
-            <span className="ui-icon-tile" aria-hidden><Package className="w-5 h-5" /></span>
-            No packages yet. Use New package to bundle the drawings for a job.
+          <p className="text-[15px] text-[var(--color-text)]">
+            No packages yet. A package pins a job&apos;s drawings at their revisions and tells you when one moves on.
           </p>
         </Card>
         )
       ) : (
         <section>
-          <h2 className="flex items-center gap-2.5 font-display text-[19px] leading-tight font-semibold text-[var(--color-heading)] mb-2.5">
-            <span className="ui-icon-tile is-sm is-solid" aria-hidden><Package className="w-4 h-4" /></span>
-            Open packages <span className="ui-count is-solid font-sans">{packages.length}</span>
+          <h2 className="flex items-baseline gap-2 font-display text-[20px] leading-tight font-semibold text-[var(--color-heading)] mb-3">
+            Open packages <span className="font-sans text-[14px] font-normal tabular-nums text-[var(--color-text-muted)]">{packages.length}</span>
           </h2>
-          <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
-            <table className="w-full text-[15px]">
-              <thead className="bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text-muted)] text-left max-md:hidden">
+          <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
+            <table className="w-full text-[14px]">
+              <thead className="text-[13px] text-[var(--color-text-muted)] text-left max-md:hidden border-b border-[var(--color-border)]">
                 <tr>
                   <th className="font-semibold px-4 h-10">Package</th>
                   <th className="font-semibold px-4 hidden lg:table-cell">Owner</th>
                   <th className="font-semibold px-4 w-28">Made</th>
                   <th className="font-semibold px-4 text-right w-28">Drawings</th>
                   <th className="font-semibold px-4 w-40">State</th>
-                  <th className="w-[17rem]"><span className="sr-only">Actions</span></th>
+                  <th className="w-48"><span className="sr-only">Actions</span></th>
                 </tr>
               </thead>
           {packages.map((pkg) => {
@@ -297,28 +298,28 @@ export default function PackagesPage() {
               if (open) { setOpenIds((s) => { const n = new Set(s); n.delete(pkg.id); return n; }); setClosedIds((s) => new Set(s).add(pkg.id)); }
               else { setOpenIds((s) => new Set(s).add(pkg.id)); setClosedIds((s) => { const n = new Set(s); n.delete(pkg.id); return n; }); }
             };
-            const small = "inline-flex items-center gap-1.5 h-8 px-2.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors";
+            const small = "inline-flex items-center gap-1.5 h-8 pointer-coarse:h-10 px-2.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors";
             return (
               <tbody key={pkg.id} data-package-id={pkg.id} className={`border-t border-[var(--color-border)] first-of-type:border-t-0 scroll-mt-24 ${highlightId === pkg.id ? "bg-[var(--color-accent-soft)]" : ""}`}>
                 <tr className="hover:bg-[var(--color-surface-2)] max-md:block max-md:relative">
                   <td className="px-4 pt-3 md:py-3 relative max-md:block max-md:pr-12">
                     {(stale || highlightId === pkg.id) && <span aria-hidden className={`absolute left-0 inset-y-0 w-[3px] ${stale ? "bg-[var(--state-held)]" : "bg-[var(--color-main)]"}`} />}
                     <button type="button" onClick={toggle} aria-expanded={open}
-                      className="inline-flex items-center gap-1.5 text-left font-semibold text-[var(--color-text)] hover:text-[var(--color-accent-text)]">
-                      <ChevronRight className={`w-4 h-4 shrink-0 text-[var(--color-main)] transition-transform ${open ? "rotate-90" : ""}`} />
+                      className="inline-flex items-center gap-1.5 text-left text-[15px] font-semibold text-[var(--color-text)] hover:text-[var(--color-accent-text)]">
+                      <ChevronRight aria-hidden className={`ui-chevron w-4 h-4 shrink-0 text-[var(--color-text-muted)] ${open ? "rotate-90" : ""}`} />
                       {pkg.name}
                     </button>
                     {pkg.description && <div className="pl-[22px] text-[13px] text-[var(--color-text-muted)] truncate max-w-[60ch]">{pkg.description}</div>}
                     {/* Phone: the facts under the name. */}
                     <div className="md:hidden pl-[22px] mt-0.5 flex flex-wrap gap-x-3 text-[13px] text-[var(--color-text-muted)]">
-                      <span className="inline-flex items-center gap-1"><span className="ui-count !h-5 !text-[12px]">{pkg.docs.length}</span> drawing{pkg.docs.length === 1 ? "" : "s"}</span>
+                      <span className="tabular-nums">{pkg.docs.length} drawing{pkg.docs.length === 1 ? "" : "s"}</span>
                       <span>{humanDate(pkg.createdAt)}</span>
                       <StatusTag tone={stale ? "warn" : "good"}>{stale ? `${pkg.staleCount} moved on` : "Current"}</StatusTag>
                     </div>
                   </td>
                   <td className="px-4 py-3 text-[14px] hidden lg:table-cell">{pkg.ownerName || "-"}</td>
                   <td className="px-4 py-3 text-[14px] whitespace-nowrap max-md:hidden">{humanDate(pkg.createdAt)}</td>
-                  <td className="px-4 py-3 text-right max-md:hidden"><span className="ui-count">{pkg.docs.length}</span></td>
+                  <td className="px-4 py-3 text-right max-md:hidden tabular-nums text-[var(--color-text)]">{pkg.docs.length}</td>
                   <td className="px-4 py-3 max-md:hidden">
                     <StatusTag tone={stale ? "warn" : "good"}>{stale ? `${pkg.staleCount} moved on` : "Current"}</StatusTag>
                   </td>
@@ -326,16 +327,18 @@ export default function PackagesPage() {
                     <div className="flex items-center gap-1.5 md:justify-end flex-wrap">
                       {/* Print pack: cover sheet + all current drawings, stamped;
                           pins auto-refresh to match the paper. */}
-                      <button
-                        type="button"
-                        onClick={() => void handlePrintPack(pkg)}
-                        disabled={printing === pkg.id}
-                        className={small}
-                        title="One PDF: a cover sheet with a scan code, then every drawing at its current revision, stamped. The pins move to match."
-                      >
-                        {printing === pkg.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Printer className="w-3.5 h-3.5 text-[var(--color-main)]" />}
-                        Print pack
-                      </button>
+                      {!stale && (
+                        <button
+                          type="button"
+                          onClick={() => void handlePrintPack(pkg)}
+                          disabled={printing === pkg.id}
+                          className={small}
+                          title="One PDF: a cover sheet with a scan code, then every drawing at its current revision, stamped. The pins move to match."
+                        >
+                          {printing === pkg.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Printer className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />}
+                          Print pack
+                        </button>
+                      )}
                       {stale && (
                         <button
                           type="button"
@@ -344,21 +347,24 @@ export default function PackagesPage() {
                           className={small}
                           title="Move every pin to the current revision. Check what changed first."
                         >
-                          {busyId === pkg.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5 text-[var(--color-main)]" />}
+                          {busyId === pkg.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />}
                           Refresh pins
                         </button>
                       )}
                       <MoreMenu
                         iconOnly
                         label={`More for ${pkg.name}`}
-                        triggerClass="inline-grid place-items-center w-8 h-8 rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
-                        items={[{ icon: <Archive className="w-4 h-4" />, label: busyId === pkg.id ? "Closing…" : "Close package (job done)", onClick: () => { if (busyId !== pkg.id) void handleClose(pkg); } }]}
+                        triggerClass="inline-grid place-items-center w-8 h-8 pointer-coarse:w-10 pointer-coarse:h-10 rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
+                        items={[
+                          ...(stale ? [{ icon: <Printer className="w-4 h-4" />, label: printing === pkg.id ? "Printing…" : "Print pack", onClick: () => { if (printing !== pkg.id) void handlePrintPack(pkg); } }] : []),
+                          { icon: <Archive className="w-4 h-4" />, label: busyId === pkg.id ? "Closing…" : "Close package (job done)", line: stale, onClick: () => { if (busyId !== pkg.id) void handleClose(pkg); } },
+                        ]}
                       />
                     </div>
                   </td>
                 </tr>
                 {open && pkg.docs.map((d) => (
-                  <tr key={d.id} className="bg-[var(--color-surface-2)]/50 hover:bg-[var(--color-surface-2)] max-md:block">
+                  <tr key={d.id} className="hover:bg-[var(--color-surface-2)] max-md:block">
                     <td colSpan={6} className="pl-[38px] pr-4 py-2 border-t border-[var(--color-border)] max-md:block">
                       <Link
                         href={d.libraryId ? `/documents/${d.libraryId}?doc=${d.documentId}` : "#"}
@@ -367,11 +373,10 @@ export default function PackagesPage() {
                         <span className="ui-id text-[15px] group-hover:underline underline-offset-2 truncate min-w-0">{d.docLabel}</span>
                         {d.drifted ? (
                           <span className="ui-pill is-warn shrink-0">
-                            <AlertTriangle className="w-3.5 h-3.5" />
-                            Pinned Rev {d.pinnedRevLabel ?? "?"}, now Rev {d.currentRev ?? "?"}
+                            Pinned rev {d.pinnedRevLabel ?? "?"}, now rev {d.currentRev ?? "?"}
                           </span>
                         ) : (
-                          <span className="ui-pill is-good shrink-0">Rev {d.pinnedRevLabel ?? "-"}</span>
+                          <span className="ui-pill is-muted shrink-0">Rev {d.pinnedRevLabel ?? "-"}, current</span>
                         )}
                       </Link>
                     </td>
@@ -389,38 +394,47 @@ export default function PackagesPage() {
       {/* CREATE MODAL */}
       {showCreate && (
         <div className="fixed inset-0 z-[150] bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)] flex items-center justify-center p-4 animate-in fade-in" role="dialog" aria-modal="true" aria-label="New work package">
-          <div className="w-full max-w-lg bg-[var(--color-surface)] rounded-lg shadow-2xl overflow-hidden animate-in fade-in zoom-in-95">
+          <div className="ui-float ui-float-in w-full max-w-lg bg-[var(--color-surface)] rounded-xl overflow-hidden">
             <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center gap-3">
               <div className="flex-1">
-                <h2 className="font-display text-[19px] font-semibold text-[var(--color-text)]">New work package</h2>
-                <div className="text-[13px] text-[var(--color-text-muted)]">Revisions are pinned as of right now.</div>
+                <h2 className="font-display text-[20px] font-semibold text-[var(--color-heading)]">New work package</h2>
+                <div className="text-[14px] text-[var(--color-text-muted)]">Revisions are pinned as of right now.</div>
               </div>
-              <button aria-label="Close" onClick={() => setShowCreate(false)} className="w-9 h-9 grid place-items-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
+              <button aria-label="Close" onClick={() => setShowCreate(false)} className="w-10 h-10 grid place-items-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><X className="w-5 h-5" /></button>
             </div>
 
             <div className="p-5 space-y-4">
-              <input
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder='Job name * (e.g. "E-204 bundle swap")'
-                autoFocus
-                className="w-full h-10 px-3 border border-[var(--color-border-strong)] rounded-md text-base sm:text-[15px] bg-[var(--color-surface)] text-[var(--color-text)] focus:border-[var(--color-main)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40 outline-none"
-              />
-              <input
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                placeholder="One-line scope (optional)"
-                className="w-full h-10 px-3 border border-[var(--color-border-strong)] rounded-md text-base sm:text-[15px] bg-[var(--color-surface)] text-[var(--color-text)] focus:border-[var(--color-main)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40 outline-none"
-              />
+              <label className="block">
+                <span className={kitLabel}>Job name</span>
+                <input
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="E-204 bundle swap"
+                  autoFocus
+                  required
+                  className={kitField}
+                />
+              </label>
+              <label className="block">
+                <span className={kitLabel}>Scope <span className="font-normal text-[var(--color-text-muted)]">(optional)</span></span>
+                <input
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  placeholder="Pull and replace the tube bundle"
+                  className={kitField}
+                />
+              </label>
 
               <div>
+                <label htmlFor="pkg-find" className={kitLabel}>Drawings</label>
                 <div className="relative">
-                  <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--color-text-faint)]" />
+                  <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-text-faint)] pointer-events-none" />
                   <input
+                    id="pkg-find"
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
-                    placeholder="Search drawings by number or title…"
-                    className="w-full h-10 pl-8 pr-3 border border-[var(--color-border-strong)] rounded-md text-base sm:text-[15px] bg-[var(--color-surface)] text-[var(--color-text)] focus:border-[var(--color-main)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40 outline-none"
+                    placeholder="Search by number or title"
+                    className={`${kitField} !pl-9`}
                   />
                 </div>
                 {results.length > 0 && (
@@ -429,11 +443,11 @@ export default function PackagesPage() {
                       <button
                         key={r.id}
                         onClick={() => { setPicked((prev) => [...prev, r]); setQuery(""); }}
-                        className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-[var(--color-surface-2)] text-[13px]"
+                        className="w-full flex items-center gap-2 px-3 min-h-11 text-left hover:bg-[var(--color-surface-2)] text-[13px]"
                       >
-                        <Plus className="w-3 h-3 text-[var(--color-main)]" />
+                        <Plus className="w-4 h-4 text-[var(--color-text-faint)]" />
                         <span className="ui-id text-[15px]">{r.label}</span>
-                        <span className="ml-auto ui-pill !h-5 !px-2 !text-[12px]">Rev {r.rev ?? "-"}</span>
+                        <span className="ml-auto text-[13px] text-[var(--color-text-muted)]">Rev <span className="ui-id text-[var(--color-text)]">{r.rev ?? "-"}</span></span>
                       </button>
                     ))}
                   </div>
@@ -441,11 +455,11 @@ export default function PackagesPage() {
                 {picked.length > 0 && (
                   <div className="mt-2 space-y-1">
                     {picked.map((p) => (
-                      <div key={p.id} className="flex items-center gap-2 px-3 py-2 rounded-lg bg-[var(--color-surface-2)] text-[13px]">
+                      <div key={p.id} className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-[var(--color-border)] text-[13px]">
                         <span className="ui-id text-[15px] flex-1 truncate">{p.label}</span>
-                        <span className="ui-pill !h-5 !px-2 !text-[12px]">Pins Rev {p.rev ?? "-"}</span>
-                        <button aria-label={`Remove ${p.label}`} onClick={() => setPicked((prev) => prev.filter((x) => x.id !== p.id))} className="w-7 h-7 grid place-items-center rounded text-[var(--color-text-muted)] hover:text-[var(--state-overdue)] hover:bg-[var(--color-surface)]">
-                          <X className="w-3.5 h-3.5" />
+                        <span className="text-[13px] text-[var(--color-text-muted)]">Pins rev <span className="ui-id text-[var(--color-text)]">{p.rev ?? "-"}</span></span>
+                        <button aria-label={`Remove ${p.label}`} onClick={() => setPicked((prev) => prev.filter((x) => x.id !== p.id))} className="w-8 h-8 pointer-coarse:w-10 pointer-coarse:h-10 grid place-items-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--state-overdue-text)] hover:bg-[var(--color-surface-2)]">
+                          <X className="w-4 h-4" />
                         </button>
                       </div>
                     ))}
@@ -454,16 +468,21 @@ export default function PackagesPage() {
               </div>
             </div>
 
-            <div className="px-5 py-3 border-t border-[var(--color-border)] flex justify-end gap-2">
-              <button onClick={() => setShowCreate(false)} className={`${heroQuiet} !h-10`}>Cancel</button>
-              <button
+            <div className="px-5 py-3 border-t border-[var(--color-border)] flex flex-wrap items-center justify-end gap-x-3 gap-y-2">
+              {/* Why the main button waits, said where it waits. */}
+              {(!name.trim() || picked.length === 0) && (
+                <span className="mr-auto text-[13px] text-[var(--color-text-muted)]">
+                  {!name.trim() ? "Name the job" : "Add at least one drawing"} to make the package.
+                </span>
+              )}
+              <Button variant="secondary" onClick={() => setShowCreate(false)}>Cancel</Button>
+              <Button
                 onClick={() => void handleCreate()}
-                disabled={creating || !name.trim() || picked.length === 0}
-                className={heroPrimary}
+                disabled={!name.trim() || picked.length === 0}
+                loading={creating}
               >
-                {creating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Package className="w-3.5 h-3.5" />}
                 Make the package
-              </button>
+              </Button>
             </div>
           </div>
         </div>

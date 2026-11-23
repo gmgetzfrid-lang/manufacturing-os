@@ -8,10 +8,23 @@
 // timestamped proof of delivery.
 
 import React, { useCallback, useEffect, useState } from "react";
-import {
-  FileText, Loader2, AlertTriangle, CheckCircle2, Download, PenLine,
-} from "lucide-react";
+import { FileText, CheckCircle2, Download } from "lucide-react";
 import { PageHero, PageBody, Card } from "@/components/ui/PageHero";
+import { Button } from "@/components/ui/Button";
+import CopyId from "@/components/ui/CopyId";
+import ErrorNote from "@/components/ui/ErrorNote";
+import { SkeletonRows } from "@/components/ui/Skeleton";
+import { field as kitField, label as kitLabel } from "@/components/admin/kit";
+import { friendlyError } from "@/lib/friendlyError";
+
+/** "Nov 14" this year, "Nov 14, 2025" before; with the time when asked. */
+function when(iso: string, time = false): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const sameYear = d.getFullYear() === new Date().getFullYear();
+  const day = d.toLocaleDateString("en-US", sameYear ? { month: "short", day: "numeric" } : { month: "short", day: "numeric", year: "numeric" });
+  return time ? `${day}, ${d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}` : day;
+}
 
 // The page frame: paper, a band with the answer, cards over its edge. Kept
 // outside the page component so typing in the receipt form doesn't remount
@@ -65,10 +78,10 @@ export default function TransmittalPortal({ params }: { params: Promise<{ token:
     try {
       const res = await fetch(`/api/transmittal?token=${encodeURIComponent(token)}&file=${encodeURIComponent(docId)}`);
       const body = (await res.json().catch(() => null)) as { url?: string; error?: string } | null;
-      if (!res.ok || !body?.url) throw new Error(body?.error || `HTTP ${res.status}`);
+      if (!res.ok || !body?.url) throw Object.assign(new Error(body?.error || ""), { status: res.status });
       window.open(body.url, "_blank", "noopener");
     } catch (e) {
-      setMsg({ tone: "err", text: (e as Error).message });
+      setMsg({ tone: "err", text: `That file didn't download. ${friendlyError(e)}` });
     } finally { setDownloading(null); }
   };
 
@@ -82,67 +95,69 @@ export default function TransmittalPortal({ params }: { params: Promise<{ token:
         body: JSON.stringify({ token, name: ackName.trim(), note: ackNote.trim() || undefined }),
       });
       const body = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
-      if (!res.ok || !body?.ok) throw new Error(body?.error || `HTTP ${res.status}`);
-      setMsg({ tone: "ok", text: "Receipt recorded - thank you. The issuer has been notified." });
+      if (!res.ok || !body?.ok) throw Object.assign(new Error(body?.error || ""), { status: res.status });
+      setMsg({ tone: "ok", text: "Receipt recorded. The issuer has been told." });
       await refresh();
     } catch (e) {
-      setMsg({ tone: "err", text: (e as Error).message });
+      setMsg({ tone: "err", text: `The receipt wasn't recorded. ${friendlyError(e)}` });
     } finally { setAckBusy(false); }
   };
 
-  if (state === "loading") return <Shell kicker="Transmittal" title="Opening the transmittal…"><Card><div className="py-6 text-center text-[14px] text-[var(--color-text-muted)]"><Loader2 className="w-5 h-5 animate-spin inline mr-2" />Opening transmittal…</div></Card></Shell>;
+  if (state === "loading") return <Shell kicker="Transmittal" title="Opening the transmittal…"><SkeletonRows rows={3} cols={1} what="the transmittal" /></Shell>;
   if (state !== "ok" || !data) {
-    const text = state === "voided" ? "This transmittal was voided by the issuer - it is no longer a valid record. Contact them for a replacement."
-      : state === "notfound" ? "This link doesn't exist - it may have been mistyped."
-      : "Something went wrong opening this transmittal. Try again shortly.";
-    const title = state === "voided" ? "This transmittal was voided." : state === "notfound" ? "No transmittal at this link." : "It didn't open.";
-    return <Shell kicker="Transmittal" title={title}><Card><div className="py-4 flex items-start gap-3"><AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" /><p className="text-[14px] text-[var(--color-text)]">{text}</p></div></Card></Shell>;
+    const title = state === "voided" ? "This transmittal was voided." : state === "notfound" ? "No transmittal at this link." : "The transmittal didn't open.";
+    const sub = state === "voided" ? "The issuer withdrew it, so it is no longer a valid record. Ask them for a replacement."
+      : state === "notfound" ? "The link may have been mistyped. Ask the issuer to send it again."
+      : undefined;
+    return (
+      <Shell kicker="Transmittal" title={title} sub={sub}>
+        {state === "error" && <ErrorNote title="It didn't load." next="Check your connection, then try again." onRetry={() => { setState("loading"); void refresh(); }} />}
+      </Shell>
+    );
   }
 
   const acknowledged = data.status === "acknowledged";
   const n = data.items.length;
   const from = `${data.orgName ?? "the issuer"}${data.fromName ? ` (${data.fromName})` : ""}`;
-  const to = [data.recipientName, data.recipientCompany].filter(Boolean).join(" · ");
+  const to = [data.recipientName, data.recipientCompany].filter(Boolean).join(", ");
 
   return (
     <Shell
-      kicker={<>Transmittal {data.number}{data.purpose ? ` · ${data.purpose}` : ""}</>}
+      kicker={<span className="inline-flex flex-wrap items-baseline gap-x-2">Transmittal <CopyId value={data.number} label="transmittal number" />{data.purpose ? <span>{data.purpose}</span> : null}</span>}
       title={acknowledged ? "Received. It's on the record." : `${n} document${n === 1 ? "" : "s"} for you.`}
       sub={<>
-        {data.subject || "Document Transmittal"}. From <b className="text-white">{from}</b>{data.issuedAt ? `, issued ${new Date(data.issuedAt).toLocaleDateString()}` : ""}.
+        {data.subject || "Document transmittal"}. From <b className="font-semibold text-[var(--color-text)]">{from}</b>{data.issuedAt ? `, issued ${when(data.issuedAt)}` : ""}.
         {to ? <> To {to}.</> : null}
       </>}
     >
-        {msg && (
-          <Card>
-            <p role={msg.tone === "ok" ? "status" : "alert"} className={`text-[14px] font-semibold ${msg.tone === "ok" ? "text-emerald-700 dark:text-emerald-300" : "text-rose-700 dark:text-rose-300"}`}>{msg.text}</p>
-          </Card>
-        )}
+        {msg && (msg.tone === "ok" ? (
+          <p role="status" className="flex items-center gap-2 text-[15px] text-[var(--color-text)]">
+            <CheckCircle2 aria-hidden className="w-5 h-5 text-[var(--state-released)]" /> {msg.text}
+          </p>
+        ) : (
+          <ErrorNote compact title={msg.text} next="" />
+        ))}
 
         {/* Document list with downloads */}
-        <Card label={`Documents transmitted (${n})`} pad={false} className="overflow-hidden">
-          <ul className="border-t border-[var(--color-border)] divide-y divide-[var(--color-border)]">
+        <Card label={<>Documents <span className="font-sans text-[14px] font-normal tabular-nums text-[var(--color-text-muted)]">{n}</span></>} pad={false} className="overflow-hidden">
+          <ul className="divide-y divide-[var(--color-border)]">
             {data.items.map((i) => (
               <li key={i.documentId} className="px-4 sm:px-5 py-3 flex items-center gap-3">
-                <FileText className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
+                <FileText aria-hidden className="w-4 h-4 text-[var(--color-text-faint)] shrink-0 max-sm:hidden" />
                 <div className="min-w-0 flex-1">
-                  <div className="text-[14px] font-bold text-[var(--color-text)] truncate">
-                    <span className="font-mono">{i.number}</span>
-                    {i.rev && <span className="ml-2 text-[12px] font-semibold text-[var(--color-text-muted)]">Rev {i.rev}</span>}
+                  <div className="text-[15px] flex items-baseline gap-2 min-w-0">
+                    <CopyId value={i.number} label="document number" />
+                    {i.rev && <span className="shrink-0 text-[13px] text-[var(--color-text-muted)]">Rev <span className="ui-id text-[var(--color-text)]">{i.rev}</span></span>}
                   </div>
                   {i.title && i.title !== i.number && <div className="text-[13px] text-[var(--color-text-muted)] truncate">{i.title}</div>}
                 </div>
-                <button
-                  onClick={() => void download(i.documentId)}
-                  disabled={downloading === i.documentId}
-                  className="shrink-0 inline-flex items-center gap-1.5 h-9 px-3 rounded-[10px] border border-[var(--color-border-strong)] text-[var(--color-text)] text-[13px] font-semibold hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors"
-                >
-                  {downloading === i.documentId ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />} Download
-                </button>
+                <Button variant="secondary" size="sm" onClick={() => void download(i.documentId)} loading={downloading === i.documentId} className="shrink-0">
+                  {downloading !== i.documentId && <Download className="w-4 h-4" />} Download
+                </Button>
               </li>
             ))}
           </ul>
-          <div className="px-4 sm:px-5 py-3 border-t border-[var(--color-border)] text-[12px] text-[var(--color-text-muted)]">Files download at the revision issued here. A newer revision is not part of this record.</div>
+          <div className="px-4 sm:px-5 py-3 border-t border-[var(--color-border)] text-[13px] text-[var(--color-text-muted)]">Files download at the revision issued here. A newer revision is not part of this record.</div>
         </Card>
 
         {data.notes && (
@@ -154,40 +169,40 @@ export default function TransmittalPortal({ params }: { params: Promise<{ token:
         {/* Acknowledgment */}
         {acknowledged ? (
           <Card>
-            <div className="flex items-center gap-2 text-[14px] font-bold text-emerald-700 dark:text-emerald-300">
-              <CheckCircle2 className="w-4 h-4" /> Receipt acknowledged
+            <div className="flex items-center gap-2 text-[15px] font-semibold text-[var(--color-text)]">
+              <CheckCircle2 aria-hidden className="w-5 h-5 text-[var(--state-released)]" /> Receipt recorded
             </div>
-            <div className="text-[13px] text-[var(--color-text-muted)] mt-1">
-              {data.acknowledgedByName ? <>By <b className="text-[var(--color-text)]">{data.acknowledgedByName}</b></> : "Recorded"}
-              {data.acknowledgedAt ? <> on {new Date(data.acknowledgedAt).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}</> : null}. It&apos;s kept on the record.
+            <div className="text-[14px] text-[var(--color-text-muted)] mt-1">
+              {data.acknowledgedByName ? <>By <b className="font-semibold text-[var(--color-text)]">{data.acknowledgedByName}</b></> : "Recorded"}
+              {data.acknowledgedAt ? <>, {when(data.acknowledgedAt, true)}</> : null}. It&apos;s kept on the record.
             </div>
           </Card>
         ) : (
-          <Card label={<span className="inline-flex items-center gap-1.5"><PenLine className="w-3.5 h-3.5" /> Acknowledge receipt</span>}>
-            <p className="text-[14px] text-[var(--color-text-muted)] mb-3">
+          <Card label="Confirm you received them">
+            <p className="text-[14px] text-[var(--color-text-muted)] mb-4">
               This tells {data.orgName ?? "the issuer"} you got these documents at the revisions above. Your name and the time are recorded.
             </p>
-            <div className="flex items-end gap-2 flex-wrap">
-              <label className="block flex-1 min-w-48">
-                <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Your name (required)</span>
-                <input value={ackName} onChange={(e) => setAckName(e.target.value)} placeholder="e.g. Dave Miller, Acme Fabricators"
-                  className="mt-1 w-full h-10 rounded-[10px] border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 text-base sm:text-[14px] text-[var(--color-text)]" />
+            <form onSubmit={(e) => { e.preventDefault(); void acknowledge(); }} className="grid gap-4 sm:grid-cols-2">
+              <label className="block">
+                <span className={kitLabel}>Your name</span>
+                <input value={ackName} onChange={(e) => setAckName(e.target.value)} placeholder="Dave Miller, Acme Fabricators"
+                  autoComplete="name" required className={kitField} />
               </label>
-              <label className="block flex-1 min-w-48">
-                <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Note (optional)</span>
-                <input value={ackNote} onChange={(e) => setAckNote(e.target.value)} placeholder="e.g. received, distributing to shop"
-                  className="mt-1 w-full h-10 rounded-[10px] border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 text-base sm:text-[14px] text-[var(--color-text)]" />
+              <label className="block">
+                <span className={kitLabel}>Note <span className="font-normal text-[var(--color-text-muted)]">(optional)</span></span>
+                <input value={ackNote} onChange={(e) => setAckNote(e.target.value)} placeholder="Received, going to the shop"
+                  className={kitField} />
               </label>
-              <button onClick={() => void acknowledge()} disabled={ackBusy}
-                className="h-10 inline-flex items-center gap-1.5 px-5 rounded-xl bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[14px] font-extrabold hover:bg-[var(--color-accent-hover)] shadow-[0_12px_24px_-12px_var(--color-accent)] disabled:opacity-50 transition-colors">
-                {ackBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />} Acknowledge
-              </button>
-            </div>
+              <div className="sm:col-span-2 flex flex-wrap items-center gap-3">
+                <Button type="submit" loading={ackBusy} disabled={!ackName.trim()}>Confirm receipt</Button>
+                {!ackName.trim() && <span className="text-[13px] text-[var(--color-text-muted)]">Enter your name to confirm.</span>}
+              </div>
+            </form>
           </Card>
         )}
 
-        <p className="px-1 text-[12px] text-[var(--color-text-muted)]">
-          Transmittal {data.number} · Downloads and the receipt are logged. Only people with this link can see it.
+        <p className="px-1 text-[13px] text-[var(--color-text-muted)]">
+          Downloads and the receipt are logged. Only people with this link can see it.
         </p>
     </Shell>
   );

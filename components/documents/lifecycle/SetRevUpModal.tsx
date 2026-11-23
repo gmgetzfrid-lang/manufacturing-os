@@ -17,6 +17,7 @@ import { useDraft } from "@/hooks/useDraft";
 import FileThumb from "@/components/ui/FileThumb";
 import PdfDrop, { formatSize } from "@/components/documents/lifecycle/PdfDrop";
 
+import { friendlyError } from "@/lib/friendlyError";
 interface SetRevUpModalProps {
   setId: string;
   libraryId: string;
@@ -84,7 +85,7 @@ export default function SetRevUpModal(props: SetRevUpModalProps) {
       const recs = ((data as Array<Record<string, unknown>>) ?? []).map(docRowToDocumentRecord);
       setSheets(recs.map((doc) => ({ doc, file: null, newRevLabel: suggestNextRevisionLabel(doc.rev) })));
     } catch (e) {
-      setError((e as Error).message);
+      setError(friendlyError(e));
     } finally { setLoading(false); }
   }, [setId, orgId]);
 
@@ -123,7 +124,7 @@ export default function SetRevUpModal(props: SetRevUpModalProps) {
         onSuccess();
       }
     } catch (e) {
-      setError((e as Error).message);
+      setError(friendlyError(e));
     } finally { setBusy(false); }
   };
 

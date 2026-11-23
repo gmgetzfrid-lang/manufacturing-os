@@ -51,6 +51,7 @@ import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/ui/Moda
 import { Button } from "@/components/ui/Button";
 import { useEscapeClose } from "@/hooks/useEscapeClose";
 import { useIsMobile } from "@/hooks/useIsMobile";
+import CopyId from "@/components/ui/CopyId";
 import { vDim, vPanel, vKicker, vTitle, vIcon, vTool, vQuiet, vGroup, vPrimary, vClose, vNote } from "@/components/viewers/viewerChrome";
 import type { DocumentRecord, DocumentVersion } from "@/types/schema";
 import { fileBlobIfStarted, fileLink } from "@/lib/docOpen";
@@ -71,6 +72,7 @@ import { useViewerPanZoom } from "@/lib/useViewerPanZoom";
 import "react-pdf/dist/Page/AnnotationLayer.css";
 import "react-pdf/dist/Page/TextLayer.css";
 
+import { friendlyError } from "@/lib/friendlyError";
 // Serve the pdfjs worker from our own /public so the viewer doesn't depend
 // on a CDN at all. The file is copied from node_modules during build via
 // `scripts/copy-pdfjs-worker.mjs` (wired into `prebuild`/`predev`). CDN
@@ -250,7 +252,7 @@ export default function FullScreenViewer({
         if (!cancelled && shed) {
           setArchivedInfo(shed);
         } else if (!cancelled && (e as Error).name !== "AbortError") {
-          setFetchError((e as Error).message || "Failed to load PDF");
+          setFetchError(friendlyError(e));
         }
       }
     })();
@@ -884,7 +886,7 @@ export default function FullScreenViewer({
       else await printDocumentPdf(ctx);
       setPending(null);
     } catch (e) {
-      setActionError((e as Error).message || "Action failed");
+      setActionError(friendlyError(e));
     } finally { setActionBusy(false); }
   };
   const requestDownload = () => {
@@ -1050,7 +1052,7 @@ export default function FullScreenViewer({
           timestamp: now,
           expiresAt,
           watermarkText: "UNCONTROLLED - FOR REVIEW ONLY",
-          footerNotice: `${docNumber || title || "Document"} Rev ${rev ?? "?"} WITH MARKUPS at time of export - markups are not part of the controlled revision.`,
+          footerNotice: `${docNumber || title || "Document"} Rev ${rev ?? "?"} WITH MARKUPS at time of export: markups are not part of the controlled revision.`,
           verifyUrl: docRecord?.id && docRecord.currentVersionId && publicOrigin()
             ? `${publicOrigin()}/verify/${docRecord.id}?v=${docRecord.currentVersionId}`
             : undefined,
@@ -1097,7 +1099,7 @@ export default function FullScreenViewer({
       setPending(null);
     } catch (e) {
       console.error("Markup download failed", e);
-      setMarkupError((e as Error).message || "Failed to export markup");
+      setMarkupError(friendlyError(e));
     } finally { setMarkupBusy(false); }
   };
 
@@ -1217,7 +1219,9 @@ export default function FullScreenViewer({
                 <> · <span className={statusTone[vb.tone]} title="Status of the live version you're viewing. A copy you download or print is stamped separately.">{statusWord}</span></>
               )}
             </div>
-            <h2 className={vTitle} title={title}>{title}</h2>
+            <h2 className={vTitle} title={title}>
+              {docNumber && docNumber === title ? <CopyId value={docNumber} label="document number" /> : title}
+            </h2>
           </div>
 
           <button ref={closeBtnRef} type="button" data-viewer-close onClick={() => void handleClose()} disabled={committing}

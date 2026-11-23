@@ -29,9 +29,10 @@ import type { DocumentHold } from "@/types/schema";
 import HelpTooltip from "@/components/ui/HelpTooltip";
 import IsoGuidance from "@/components/ui/IsoGuidance";
 
+import { friendlyError } from "@/lib/friendlyError";
 const REASON_HELP: Record<string, string> = {
   "Awaiting Engineering":      "Drafting can't advance until an engineer signs off on a design decision.",
-  "Field Verification Needed": "Drawing reflects assumed conditions - someone needs to walk down the unit and confirm.",
+  "Field Verification Needed": "Drawing reflects assumed conditions: someone needs to walk down the unit and confirm.",
   "Missing Vendor Data":       "Waiting on a datasheet, drawing, or spec from a vendor or contractor.",
   "Client Review":             "Drawing is in the client's hands; can't proceed until they return comments or approval.",
 };
@@ -72,7 +73,7 @@ export default function HoldStrip({
     try {
       const list = await listActiveHoldsForDocument(documentId);
       setHolds(list);
-    } catch (e) { setError((e as Error).message); }
+    } catch (e) { setError(friendlyError(e)); }
     finally { setLoading(false); }
   }, [documentId]);
 
@@ -94,7 +95,7 @@ export default function HoldStrip({
       setOtherDraft(null);
       await refresh();
       onChange?.();
-    } catch (e) { setError((e as Error).message); }
+    } catch (e) { setError(friendlyError(e)); }
     finally { setBusy(false); }
   };
 
@@ -114,7 +115,7 @@ export default function HoldStrip({
       setReleaseReasonDraft("");
       await refresh();
       onChange?.();
-    } catch (e) { setError((e as Error).message); }
+    } catch (e) { setError(friendlyError(e)); }
     finally { setBusy(false); }
   };
 
@@ -194,7 +195,7 @@ export default function HoldStrip({
                 value={otherDraft}
                 onChange={(e) => setOtherDraft(e.target.value)}
                 placeholder="Custom hold reason"
-                className="flex-1 text-[13px] border border-[var(--color-border-strong)] rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-[var(--state-held)]"
+                className="flex-1 text-[13px] border border-[var(--color-border-strong)] rounded px-2 py-1"
                 autoFocus
               />
               <button
@@ -318,7 +319,7 @@ function ActiveHoldRow({
             value={releaseReasonDraft}
             onChange={(e) => setReleaseReasonDraft(e.target.value)}
             placeholder="Resolution (optional)"
-            className="flex-1 text-[13px] border border-[var(--color-border-strong)] rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-[var(--state-released)]"
+            className="flex-1 text-[13px] border border-[var(--color-border-strong)] rounded px-2 py-1"
             autoFocus
           />
           <button

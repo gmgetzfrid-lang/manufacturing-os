@@ -34,6 +34,9 @@ import AddToPackageButton from "@/components/documents/AddToPackageButton";
 import MoreMenu, { type MoreItem } from "@/components/ui/MoreMenu";
 import { heroPrimary, heroQuiet } from "@/components/ui/PageHero";
 import { docStatusTone, humanDate } from "@/components/documents/StatusTag";
+import CopyId from "@/components/ui/CopyId";
+import { SkeletonText } from "@/components/ui/Skeleton";
+import quietTags from "@/components/documents/quietTags.module.css";
 import CheckoutHistoryPanel from "@/components/documents/CheckoutHistoryPanel";
 import CompareRevisionsModal from "@/components/documents/CompareRevisionsModal";
 import { effectiveOwnerForDocument, requestDeletion } from "@/lib/ownership";
@@ -45,6 +48,7 @@ import { collectTagGroups } from "@/lib/documentTags";
 import type { DocumentRecord, DocumentVersion, LibraryCustomColumn } from "@/types/schema";
 import { AuditEntry } from "@/lib/audit";
 
+import { friendlyError } from "@/lib/friendlyError";
 interface InspectorPanelProps {
   selectedDoc: DocumentRecord | null;
   selectedVersion: DocumentVersion | null;
@@ -91,6 +95,22 @@ function formatBytes(bytes?: number): string {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}
+
+/** "today at 1:37 PM", "yesterday at 9:05 AM", else "Nov 11". */
+function whenText(value: unknown): string {
+  if (!value) return "";
+  const v = value as { toDate?: () => Date; seconds?: number };
+  const d = value instanceof Date ? value
+    : typeof v.toDate === "function" ? v.toDate()
+    : typeof v.seconds === "number" ? new Date(v.seconds * 1000)
+    : new Date(value as string);
+  if (Number.isNaN(d.getTime())) return "";
+  const now = new Date();
+  const time = d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+  if (d.toDateString() === now.toDateString()) return `today at ${time}`;
+  if (d.toDateString() === new Date(now.getTime() - 86400e3).toDateString()) return `yesterday at ${time}`;
+  return humanDate(d);
 }
 
 function formatTs(value: unknown): string {
@@ -260,7 +280,7 @@ export default function InspectorPanel({
         version: selectedVersion.revisionLabel,
       });
     } catch (e) {
-      await appAlert({ message: `Could not fetch the CAD source: ${(e as Error).message}`, tone: "danger" });
+      await appAlert({ message: `Could not fetch the CAD source: ${friendlyError(e)}`, tone: "danger" });
     } finally {
       setSourceBusy(false);
     }
@@ -354,48 +374,67 @@ export default function InspectorPanel({
   return (
     <div className="space-y-5 animate-in fade-in slide-in-from-right-4 duration-300">
 
-      {/* HEADER: a title block. The drawing number big, then ruled cells
-          for its rev, status, who has it and when it last changed. ──── */}
+      {/* HEADER: the drawing number (click to copy), its title, then its
+          facts in one quiet row (rev, status, who has it, sheet) and what
+          changed last, so the panel answers "is this the one I want". ── */}
       <div>
-        <h2 className="font-display text-[34px] sm:text-[44px] leading-[1.02] font-bold tabular-nums tracking-[-0.01em] text-[var(--color-heading)] break-words">
-          {bigName}
+        <h2 className="font-display text-[26px] leading-[1.15] font-semibold tabular-nums text-[var(--color-heading)] break-words [&_button]:!text-[26px]">
+          {selectedDoc.documentNumber
+            ? <CopyId value={selectedDoc.documentNumber} label="document number" />
+            : bigName}
         </h2>
         {showTitle && (
-          <p className="mt-1.5 text-[15px] text-[var(--color-text)] break-words">{title}</p>
+          <p className="mt-1 text-[16px] text-[var(--color-text)] break-words">{title}</p>
         )}
-        <dl className="mt-4 grid grid-cols-2 sm:grid-cols-4 border-y border-[var(--color-border-strong)]">
-          {/* Rev: the cell that matters most, on the brand tint. */}
-          <div className="py-2.5 px-3 min-w-0 bg-[var(--color-accent-soft)] border-l-[3px] border-[var(--color-main)]">
-            <dt className="text-[13px] text-[var(--color-accent-text)]">Rev</dt>
-            <dd className="mt-0.5 font-display text-[26px] leading-[1.05] font-bold tabular-nums text-[var(--color-main)] truncate">{selectedDoc.rev || "-"}</dd>
+        <dl className="mt-4 flex flex-wrap items-start gap-x-8 gap-y-3">
+          <div className="min-w-0">
+            <dt className="text-[13px] text-[var(--color-text-muted)]">Rev</dt>
+            <dd className="mt-0.5 text-[20px] leading-tight">
+              {selectedDoc.rev ? <CopyId value={selectedDoc.rev} label="revision" /> : <span className="text-[var(--color-text-faint)]">-</span>}
+            </dd>
           </div>
-          <div className="py-2.5 px-3 border-l border-[var(--color-border-strong)] min-w-0">
+          <div className="min-w-0">
             <dt className="text-[13px] text-[var(--color-text-muted)]">Status</dt>
-            <dd className="mt-1 min-w-0">
-              <span className={`${statusPill} !h-7 !px-3 !text-[15px] max-w-full`}>
+            <dd className="mt-1.5 min-w-0">
+              <span className={`${statusPill} !text-[15px] max-w-full`}>
                 <span className="truncate">{selectedDoc.status || "None"}</span>
               </span>
             </dd>
           </div>
-          <div className="py-2.5 px-3 max-sm:border-t sm:border-l border-[var(--color-border-strong)] min-w-0">
+          <div className="min-w-0">
             <dt className="text-[13px] text-[var(--color-text-muted)]">Checked out</dt>
-            <dd className="mt-1 min-w-0"
+            <dd className="mt-1.5 min-w-0"
               title={isCheckedOut ? `Checked out by ${checkedOutByMe ? "you" : selectedDoc.checkedOutByName || "someone else"}` : undefined}>
               {isCheckedOut
-                ? <span className="ui-pill is-warn !h-7 !px-3 !text-[15px] max-w-full"><Lock className="w-3.5 h-3.5 shrink-0" /><span className="truncate">{checkedOutByMe ? "You" : selectedDoc.checkedOutByName || "Yes"}</span></span>
-                : <span className="font-display text-[19px] leading-7 font-semibold text-[var(--color-text)]">No</span>}
+                ? <span className="ui-pill is-warn !text-[15px] max-w-full"><span className="truncate">{checkedOutByMe ? "By you" : `By ${selectedDoc.checkedOutByName || "someone"}`}</span></span>
+                : <span className="ui-pill is-muted !text-[15px]">No</span>}
             </dd>
           </div>
-          <div className="py-2.5 pl-3 max-sm:border-t border-l border-[var(--color-border-strong)] min-w-0">
-            <dt className="text-[13px] text-[var(--color-text-muted)]">Updated</dt>
-            <dd className="mt-0.5 font-display text-[19px] leading-[1.16] font-semibold tabular-nums text-[var(--color-text)] truncate">{humanDate(selectedDoc.updatedAt)}</dd>
-          </div>
+          {sheet && (
+            <div className="min-w-0">
+              <dt className="text-[13px] text-[var(--color-text-muted)]">Sheet</dt>
+              <dd className="mt-0.5 ui-id text-[20px] leading-tight">{sheet}</dd>
+            </div>
+          )}
         </dl>
-        {(sheet || tags.length > 0 || selectedDoc.effectiveDate) && (
-          <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-2 text-[14px]">
-            {sheet && (
-              <span className="inline-flex items-center gap-1.5"><span className="text-[var(--color-text-muted)]">Sheet</span> <span className="ui-id text-[16px]">{sheet}</span></span>
-            )}
+        {/* What changed last, in words: who issued which rev, and when. */}
+        {(() => {
+          const by = (selectedVersion?.createdByName || "").split("@")[0];
+          const when = selectedVersion?.releasedAt ?? selectedVersion?.createdAt ?? selectedDoc.updatedAt;
+          const verb = selectedDoc.status === "Draft" ? "uploaded" : "issued";
+          const rev = selectedVersion?.revisionLabel ?? selectedDoc.rev;
+          return (
+            <p className="mt-3 text-[14px] text-[var(--color-text-muted)]">
+              {rev ? <>Rev <span className="ui-id text-[var(--color-text)]">{rev}</span> {verb}</> : "Updated"}
+              {by ? <> by <span className="text-[var(--color-text)]">{by}</span></> : null}
+              {when ? <>, {whenText(when)}</> : null}
+              {isCheckedOut && selectedDoc.checkedOutAt ? <>. Checked out {checkedOutByMe ? "by you" : `by ${selectedDoc.checkedOutByName || "someone"}`} {whenText(selectedDoc.checkedOutAt)}</> : null}
+              .
+            </p>
+          );
+        })()}
+        {(tags.length > 0 || selectedDoc.effectiveDate) && (
+          <div className={`${quietTags.quiet} mt-3 flex flex-wrap items-center gap-x-5 gap-y-2 text-[14px]`}>
             {tags.length > 0 && (
               <span className="min-w-0 inline-flex flex-wrap items-center gap-1">
                 <span className="text-[var(--color-text-muted)] mr-1">Equipment</span>
@@ -465,7 +504,7 @@ export default function InspectorPanel({
         const quiet = `${heroQuiet} !h-10 disabled:cursor-not-allowed`;
         const publish = (cls: string) => (
           <button onClick={onRevUp} disabled={pubLocked} className={cls}
-            title={isCheckedOut && !checkedOutByMe ? `Locked: ${selectedDoc.checkedOutByName || "another user"} has this checked out. Publishing over their work is blocked - coordinate or ask them to check in.` : "Publish a new revision"}>
+            title={isCheckedOut && !checkedOutByMe ? `Locked: ${selectedDoc.checkedOutByName || "another user"} has this checked out. Publishing over their work is blocked: coordinate or ask them to check in.` : "Publish a new revision"}>
             {isCheckedOut && !checkedOutByMe ? <><Lock className="w-3.5 h-3.5" /> Locked by {selectedDoc.checkedOutByName || "another user"}</> : <><ArrowUpFromLine className="w-3.5 h-3.5" /> Publish new revision</>}
           </button>
         );
@@ -652,14 +691,14 @@ export default function InspectorPanel({
             <button
               onClick={() => setShareOpen(true)}
               title="Send a link: to someone outside the company (no sign-in, controlled) or to someone in this workspace"
-              className="inline-flex items-center gap-1.5 h-9 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
+              className="inline-flex items-center gap-1.5 h-10 pointer-coarse:h-11 px-3.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
             >
               <ShareIcon className="w-3.5 h-3.5" /> Send
             </button>
             <NextLink
               href={`/transmittals?compose=1&doc=${selectedDoc.id}`}
               title="Issue this document on a transmittal: a cover sheet to someone, with a receipt"
-              className="inline-flex items-center gap-1.5 h-9 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
+              className="inline-flex items-center gap-1.5 h-10 pointer-coarse:h-11 px-3.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
             >
               <Send className="w-3 h-3" /> Transmit
             </NextLink>
@@ -707,14 +746,14 @@ export default function InspectorPanel({
             onClick={() => setCompareOpen(true)}
             disabled={!selectedDoc.id}
             title="Overlay any two revisions: grey unchanged, red removed, green added"
-            className="inline-flex items-center justify-center gap-1.5 h-9 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            className="inline-flex items-center justify-center gap-1.5 h-10 pointer-coarse:h-11 px-3.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
           >
             <GitCompare className="w-3.5 h-3.5" /> Compare revisions
           </button>
           <button
             onClick={onHistory}
             title="Open the full history drawer"
-            className="inline-flex items-center justify-center gap-1.5 h-9 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            className="inline-flex items-center justify-center gap-1.5 h-10 pointer-coarse:h-11 px-3.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
           >
             <History className="w-3.5 h-3.5" /> Full history
           </button>
@@ -734,7 +773,7 @@ export default function InspectorPanel({
       </div>
 
         {auditState === "loading" ? (
-          <div className="text-[13px] text-[var(--color-text-muted)]">Loading recent activity…</div>
+          <SkeletonText lines={3} />
         ) : auditState === "failed" ? (
           <div className="text-[13px] text-[var(--state-overdue)]">Couldn&apos;t load recent activity.</div>
         ) : recentAudits.length === 0 ? (
@@ -825,7 +864,7 @@ export default function InspectorPanel({
         {isController && isCheckedOut && onForceUnlock && (
           <button
             onClick={() => onForceUnlock(selectedDoc)}
-            className="mt-3 inline-flex items-center justify-center gap-1.5 h-9 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--state-overdue)] hover:bg-[var(--color-surface-2)] transition-colors"
+            className="mt-3 inline-flex items-center justify-center gap-1.5 h-10 pointer-coarse:h-11 px-3.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--state-overdue)] hover:bg-[var(--color-surface-2)] transition-colors"
           >
             <Shield className="w-3.5 h-3.5" />
             Force release the lock
@@ -866,16 +905,16 @@ export default function InspectorPanel({
               onClick={() => setModifyOpen(true)}
               disabled={selectedDoc.status === "Archived"}
               title="Structural changes beyond a rev-up: split into sheets, merge documents, renumber, correct a label"
-              className="inline-flex items-center justify-center gap-1.5 h-9 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors w-full"
+              className="inline-flex items-center justify-center gap-1.5 h-10 pointer-coarse:h-11 px-3.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors w-full"
             >
               <Wrench className="w-3.5 h-3.5" /> Split, merge or renumber…
             </button>
           )}
           <div className="grid grid-cols-2 gap-2">
-            <button onClick={onMove} className="inline-flex items-center justify-center gap-1.5 h-9 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+            <button onClick={onMove} className="inline-flex items-center justify-center gap-1.5 h-10 pointer-coarse:h-11 px-3.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
               <ArrowRight className="w-3.5 h-3.5" /> Move
             </button>
-            <button onClick={onPermissions} className="inline-flex items-center justify-center gap-1.5 h-9 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+            <button onClick={onPermissions} className="inline-flex items-center justify-center gap-1.5 h-10 pointer-coarse:h-11 px-3.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
               <Lock className="w-3.5 h-3.5" /> Permissions
             </button>
           </div>
@@ -896,7 +935,7 @@ export default function InspectorPanel({
               <button
                 onClick={onSupersede}
                 disabled={selectedDoc.status === "Archived" || selectedDoc.status === "Superseded"}
-                className="inline-flex items-center justify-center gap-1.5 h-9 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                className="inline-flex items-center justify-center gap-1.5 h-10 pointer-coarse:h-11 px-3.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
               >
                 <Layers className="w-3.5 h-3.5" /> Supersede
               </button>
@@ -904,7 +943,7 @@ export default function InspectorPanel({
             {onArchive && (
               <button
                 onClick={onArchive}
-                className="inline-flex items-center justify-center gap-1.5 h-9 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                className="inline-flex items-center justify-center gap-1.5 h-10 pointer-coarse:h-11 px-3.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
               >
                 {selectedDoc.status === "Archived"
                   ? <><ArchiveRestore className="w-3.5 h-3.5" /> Restore</>
@@ -917,10 +956,10 @@ export default function InspectorPanel({
             <button
               onClick={async () => {
                 try { await openEvidencePack(selectedDoc.id!, selectedDoc.orgId); }
-                catch (e) { await appAlert({ message: (e as Error).message, tone: "danger" }); }
+                catch (e) { await appAlert({ message: friendlyError(e), tone: "danger" }); }
               }}
               title="Put the chain of custody (revisions, holds, audit trail) into a report you can print to PDF"
-              className="inline-flex items-center justify-center gap-1.5 h-9 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              className="inline-flex items-center justify-center gap-1.5 h-10 pointer-coarse:h-11 px-3.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
             >
               <Shield className="w-3.5 h-3.5" /> Evidence pack
             </button>
@@ -930,7 +969,7 @@ export default function InspectorPanel({
           {isController && (
             <button
               onClick={onDelete}
-              className="inline-flex items-center justify-center gap-1.5 h-9 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors !text-[var(--state-overdue)]"
+              className="inline-flex items-center justify-center gap-1.5 h-10 pointer-coarse:h-11 px-3.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors !text-[var(--state-overdue-text)]"
             >
               <Trash2 className="w-3.5 h-3.5" /> Delete document
             </button>
@@ -949,9 +988,9 @@ export default function InspectorPanel({
                     libraryId: selectedDoc.libraryId, requesterId: uid, requesterName: userEmail, reason: reason.trim(),
                   });
                   await appAlert({ message: "Sent. Admin or Doc Control will review it." });
-                } catch (e) { await appAlert({ message: (e as Error).message, tone: "danger" }); }
+                } catch (e) { await appAlert({ message: friendlyError(e), tone: "danger" }); }
               }}
-              className="inline-flex items-center justify-center gap-1.5 h-9 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors !text-[var(--state-overdue)]"
+              className="inline-flex items-center justify-center gap-1.5 h-10 pointer-coarse:h-11 px-3.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors !text-[var(--state-overdue-text)]"
             >
               <Trash2 className="w-3.5 h-3.5" /> Request deletion
             </button>
@@ -1107,10 +1146,10 @@ function TransmittalTrail({ orgId, documentId, currentRev }: { orgId: string; do
 // ─── One line per section ────────────────────────────────────────────────
 // A plain row (name, what's in it, ›) that opens in place. Remembers whether
 // it was left open, per section, like the rest of the inspector did.
-function PanelSection({ id, title, icon, summary, defaultOpen = false, children }: {
+function PanelSection({ id, title, summary, defaultOpen = false, children }: {
   id: string;
   title: string;
-  /** The section's icon, set on a brand tile. */
+  /** Kept for callers; headings are text now, so it isn't drawn. */
   icon?: React.ReactNode;
   summary?: React.ReactNode;
   defaultOpen?: boolean;
@@ -1137,10 +1176,10 @@ function PanelSection({ id, title, icon, summary, defaultOpen = false, children 
     <section className="border-b border-[var(--color-border)] last:border-b-0">
       <button type="button" onClick={toggle} aria-expanded={open}
         className="w-full min-h-12 py-2 flex items-center gap-3 text-left group">
-        {icon && <span className={`ui-icon-tile is-sm ${open ? "is-solid" : ""}`} aria-hidden>{icon}</span>}
-        <span className="flex-1 min-w-0 font-display text-[17px] font-semibold text-[var(--color-heading)] group-hover:underline underline-offset-4 decoration-[var(--color-border-strong)]">{title}</span>
+        {/* Headings are text: the icon names the section for screen readers only. */}
+        <span className="flex-1 min-w-0 text-[16px] font-semibold text-[var(--color-heading)] group-hover:underline underline-offset-4 decoration-[var(--color-border-strong)]">{title}</span>
         {summary && <span className="flex items-center gap-1.5 flex-wrap justify-end min-w-0 text-[13px] text-[var(--color-text-muted)]">{summary}</span>}
-        <ChevronRight className={`w-4 h-4 shrink-0 text-[var(--color-main)] transition-transform ${open ? "rotate-90" : ""}`} />
+        <ChevronRight aria-hidden className={`ui-chevron w-4 h-4 shrink-0 text-[var(--color-text-muted)] ${open ? "rotate-90" : ""}`} />
       </button>
       {open && <div className="pb-5 space-y-3">{children}</div>}
     </section>
