@@ -577,7 +577,7 @@ function NextView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsB
           <div className="flex gap-2">
             <input value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void send(); }} placeholder='"V-7 is critical path, start it as soon as possible", "Ancon has 2 crews on nights", "PSV-021 needs 6 hours"'
               aria-label="Tell the schedule" className="flex-1 min-w-0 rounded-lg border border-slate-400 bg-[var(--color-surface)] px-3 py-2 text-[13px] text-[var(--color-text)]" />
-            <button type="button" onClick={() => void send()} disabled={busy || !text.trim() || !p.orgId} className={btnPri}>{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />} Send</button>
+            <button type="button" onClick={() => void send()} disabled={busy || !text.trim() || !p.orgId} className={btnQuiet}>{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />} Send</button>
           </div>
           {answer && (
             <div className="rounded-lg bg-[var(--color-surface-2)] px-3 py-2 text-[12.5px] space-y-1.5">

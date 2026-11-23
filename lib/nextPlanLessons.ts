@@ -197,7 +197,9 @@ export function planLessons(input: Input & { notes: MilestoneNote[]; base: NextP
       // What it really worked at once: at its busiest moment, or in its busiest shift.
       const k = Math.max(1, f.peak.working.length, c?.mostMoved ?? 1);
       if (f.peak.open <= k || !(overloaded(f) || f.waitH >= 24)) continue;
-      saw.push(`${f.peak.open} jobs sat open for ${f.crew} at once this year, and it never worked more than ${k} at a time${f.plannedPeak ? ` (the plan gave it ${f.plannedPeak})` : ""}; its jobs waited ${Math.round(f.waitH)} h in all.`);
+      // Only what this view can show for itself; how long jobs waited and
+      // what the plan gave it are the post-event review's to say.
+      saw.push(`${f.peak.open} of ${f.crew}'s jobs were ready at once this year, and it never worked more than ${k} at a time.`);
     }
     const n = (from: string) => sizes.filter(([, s]) => s.from === from).length;
     const counts = [[n("plan"), "from a staffing plan"], [n("counted"), "from a head count"], [n("worked"), "from the most jobs each worked at once this year"], [n("person"), "set by you"]].filter(([k]) => Number(k) > 0).map(([k, w]) => `${k} ${w}`);
