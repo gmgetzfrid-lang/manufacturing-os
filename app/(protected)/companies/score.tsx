@@ -1,39 +1,40 @@
 "use client";
 
-// A company's score as a colored badge by its band: green excellent,
-// green-amber good, amber watch, red concern, grey unrated. The same badge
-// on the registry and on the company's own page.
+// A company's score, quiet: the number in tabular figures and its band as
+// a dot and a word (green excellent or good, amber watch, red concern, grey
+// unrated). Color never fills a box; the number itself takes a color only
+// when the band asks for attention (watch, concern). The same on the
+// registry and on the company's own page.
 
 import React from "react";
 import { scoreBand } from "@/lib/companyScore";
 
-const FILL: Record<string, string> = {
-  green: "var(--state-released)",
-  lime: "color-mix(in srgb, var(--state-released) 62%, var(--state-held))",
-  amber: "var(--state-held)",
-  rose: "var(--state-overdue)",
-  slate: "var(--color-text-muted)",
+const DOT: Record<string, string> = { green: "is-good", lime: "is-good", amber: "is-warn", rose: "is-bad", slate: "is-muted" };
+/** Text color for a figure: only bands that need attention are colored. */
+const FIGURE: Record<string, string> = {
+  green: "text-[var(--color-text)]",
+  lime: "text-[var(--color-text)]",
+  amber: "text-[var(--state-held-text)]",
+  rose: "text-[var(--state-overdue-text)]",
+  slate: "text-[var(--color-text-muted)]",
 };
-const PILL: Record<string, string> = { green: "is-good", lime: "is-good", amber: "is-warn", rose: "is-bad", slate: "is-muted" };
 
-/** The score in a filled square, colored by band; `label` adds the band's word as a pill. */
+/** The score and its band's word ("85 · Excellent"); `label` false drops the word. */
 export function ScoreBadge({ score, label = true, size = "md" }: { score: number | null; label?: boolean; size?: "sm" | "md" | "lg" }) {
   const band = scoreBand(score);
-  const box = size === "lg" ? "min-w-12 h-12 text-[24px] rounded-lg" : size === "sm" ? "min-w-8 h-7 text-[15px] rounded-md" : "min-w-10 h-9 text-[19px] rounded-md";
+  const num = size === "lg" ? "text-[24px]" : size === "sm" ? "text-[15px]" : "text-[17px]";
   return (
     <span className="inline-flex items-center gap-2 whitespace-nowrap">
       {score != null && (
-        <span className={`inline-grid place-items-center px-1.5 font-display font-semibold tabular-nums text-white ${box}`} style={{ background: FILL[band.tone] }}>
-          {Math.round(score)}
-        </span>
+        <span className={`font-display font-semibold tabular-nums ${num} ${FIGURE[band.tone]}`}>{Math.round(score)}</span>
       )}
-      {label && <span className={`ui-pill ${PILL[band.tone]}`}>{band.label}</span>}
+      {label && <span className={`ui-pill ${DOT[band.tone]} ${band.tone === "amber" || band.tone === "rose" ? "" : "!font-normal !text-[var(--color-text-muted)]"}`}>{band.label}</span>}
     </span>
   );
 }
 
-/** A dimension's score as a figure in its band's color. */
+/** A dimension's score as a figure; colored only when its band needs attention. */
 export function ScoreFigure({ score, className = "" }: { score: number; className?: string }) {
   const band = scoreBand(score);
-  return <span className={`font-display font-semibold tabular-nums ${className}`} style={{ color: band.tone === "slate" ? undefined : FILL[band.tone] }}>{Math.round(score)}</span>;
+  return <span className={`font-display font-semibold tabular-nums ${FIGURE[band.tone]} ${className}`}>{Math.round(score)}</span>;
 }

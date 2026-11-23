@@ -5,14 +5,20 @@ import { useDraft, clearDraft } from '@/hooks/useDraft';
 import { useFileDrag } from '@/hooks/useFileDrag';
 import { tryUpload } from '@/lib/uploadRetry';
 import { Modal, ModalHeader, ModalBody, ModalFooter } from '@/components/ui/Modal';
-import LoadingBlock from '@/components/ui/LoadingBlock';
 import { PageShell } from '@/components/ui/PageShell';
 import { PageHero, PageBody, Card, StepLine, heroPrimary, heroQuiet, type HeroFact } from '@/components/ui/PageHero';
 import { Button } from '@/components/ui/Button';
-import { StatusTag, stageLabel, waitingOn, fmtDay, fmtWhen, sentence, useNarrow } from '@/components/requests/RequestBits';
+import CopyId from '@/components/ui/CopyId';
+import ErrorNote from '@/components/ui/ErrorNote';
+import { Skeleton, SkeletonRows, SkeletonText } from '@/components/ui/Skeleton';
+import { friendlyError } from '@/lib/friendlyError';
+import { field as kitField, label as kitLabel } from '@/components/admin/kit';
+import UnderlineTabs from '@/components/requests/UnderlineTabs';
+import { StatusTag, waitingOn, fmtDay, fmtWhen, relTime, historyWords, shortName, sentence } from '@/components/requests/RequestBits';
 import { isActionRequired } from '@/lib/ticketAttention';
 import FileThumb from '@/components/ui/FileThumb';
 import dynamic from 'next/dynamic';
+import Link from 'next/link';
 import MoreMenu from '@/components/ui/MoreMenu';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
@@ -51,22 +57,21 @@ import {
   UploadCloud,
   Loader2,
   FileIcon,
-  Maximize2,
   ShieldAlert,
-  ChevronDown,
+  ChevronRight,
   UserPlus,
   CheckSquare,
   AlertTriangle,
   FileCheck,
   Stamp,
   Pen,
-  Check, // Added Check icon
+  Check,
   HelpCircle,
   Archive,
   QrCode,
-  Info,
-  Paperclip as PaperclipIcon,
-  ClipboardList,
+  Pencil,
+  Trash2,
+  RotateCcw,
 } from 'lucide-react';
 
 // =========================================================================================
@@ -142,24 +147,24 @@ const ActionModal = ({ onClose, onSubmit, onRedline, title, description, isDestr
       <ModalBody className="space-y-4">
           {showCategorySelection && (
             <div>
-              <label htmlFor="action-reason" className="block text-[13px] text-[var(--color-text-muted)] mb-1.5">Reason</label>
+              <label htmlFor="action-reason" className={kitLabel}>Reason</label>
               <select
                 id="action-reason"
                 value={category}
                 onChange={(e) => setCategory(e.target.value)}
-                className="w-full h-10 px-3 border border-[var(--color-border-strong)] rounded-md text-[15px] bg-[var(--color-surface)] text-[var(--color-text)] focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
+                className={kitField}
               >
                 {REVISION_REASONS.map(r => <option key={r} value={r}>{r}</option>)}
               </select>
             </div>
           )}
           <div>
-            <label htmlFor="action-comment" className="block text-[13px] text-[var(--color-text-muted)] mb-1.5">
+            <label htmlFor="action-comment" className={kitLabel}>
               {showCategorySelection ? 'What to fix' : 'Comment'}
             </label>
-            <textarea 
+            <textarea
               id="action-comment"
-              className="w-full h-32 p-3 border border-[var(--color-border-strong)] rounded-md text-[15px] bg-[var(--color-surface)] text-[var(--color-text)] focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none resize-none"
+              className={`${kitField} !h-auto min-h-32 py-2.5 resize-y [field-sizing:content]`}
               placeholder="Say what and where"
               value={comment}
               onChange={(e) => setComment(e.target.value)}
@@ -171,6 +176,8 @@ const ActionModal = ({ onClose, onSubmit, onRedline, title, description, isDestr
               <p className="text-[13px] text-[var(--color-text-muted)] mt-1.5">
                 Filled in from your last comment.
               </p>
+            ) : !comment.trim() ? (
+              <p className="text-[13px] text-[var(--color-text-muted)] mt-1.5">{isDestructive ? 'Send back' : 'Confirm'} works once there&apos;s a note here.</p>
             ) : null}
           </div>
       </ModalBody>
@@ -209,7 +216,8 @@ interface AssignmentModalProps {
 const AssignmentModal = ({ onClose, onSubmit, isLoading, activeOrgId, isReassignment, currentDrafterId, draftKey }: AssignmentModalProps) => {
   const [drafters, setDrafters] = useState<{uid: string, email: string, role: string}[]>([]);
   const [loadingList, setLoadingList] = useState(!!activeOrgId);
-  const [listError, setListError] = useState<string | null>(null);
+  const [listError, setListError] = useState<unknown>(null);
+  const [listTry, setListTry] = useState(0);
   const [reason, setReason] = useState('');
   useDraft<string>(isReassignment ? draftKey : null, reason, setReason, (v) => !v.trim());
   const [reasonMissing, setReasonMissing] = useState(false);
@@ -218,6 +226,8 @@ const AssignmentModal = ({ onClose, onSubmit, isLoading, activeOrgId, isReassign
     if (!activeOrgId) return;
     let alive = true;
     void (async () => {
+      setLoadingList(true);
+      setListError(null);
       const { data, error } = await supabase
         .from('org_members')
         .select('uid, email, role')
@@ -225,12 +235,12 @@ const AssignmentModal = ({ onClose, onSubmit, isLoading, activeOrgId, isReassign
         .eq('role', 'Drafter')
         .eq('status', 'active');
       if (!alive) return;
-      if (error) setListError(error.message);
+      if (error) setListError(error);
       else setDrafters((data || []).map(r => ({ uid: r.uid, email: r.email, role: r.role })));
       setLoadingList(false);
     })();
     return () => { alive = false; };
-  }, [activeOrgId]);
+  }, [activeOrgId, listTry]);
 
   return (
     <Modal onClose={onClose} dismissable={!isLoading} size="lg">
@@ -238,41 +248,43 @@ const AssignmentModal = ({ onClose, onSubmit, isLoading, activeOrgId, isReassign
       <ModalBody className="space-y-4">
           {isReassignment && (
             <div>
-              <label htmlFor="reassign-why" className="block text-[13px] text-[var(--color-text-muted)] mb-1.5">Why the change</label>
-              <textarea 
+              <label htmlFor="reassign-why" className={kitLabel}>Why the change</label>
+              <textarea
                 id="reassign-why"
-                className="w-full p-3 border border-[var(--color-border-strong)] rounded-md text-[15px] focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none resize-none bg-[var(--color-surface)] text-[var(--color-text)]"
+                className={`${kitField} !h-auto py-2.5 resize-y [field-sizing:content]`}
                 rows={3}
                 placeholder="e.g. Out this week"
                 value={reason}
+                aria-invalid={reasonMissing || undefined}
+                aria-describedby={reasonMissing ? 'reassign-why-err' : undefined}
                 onChange={(e) => { setReason(e.target.value); setReasonMissing(false); }}
               />
-              {reasonMissing && <p role="alert" className="mt-1 text-[13px] font-semibold text-[var(--state-overdue)]">Say why first.</p>}
+              {reasonMissing && <p id="reassign-why-err" role="alert" className="mt-1.5 text-[13px] font-semibold text-[var(--state-overdue-text)]">Say why first, then pick the new drafter.</p>}
             </div>
           )}
 
-          <div className="max-h-[300px] overflow-y-auto custom-scrollbar border border-[var(--color-border)] rounded-lg">
+          <div className="max-h-[300px] overflow-y-auto custom-scrollbar border border-[var(--color-border)] rounded-xl">
             {loadingList ? (
-              <div className="flex items-center justify-center gap-2 py-8 text-sm text-[var(--color-text-muted)]"><Loader2 className="w-5 h-5 animate-spin" /> Loading drafters…</div>
-            ) : listError ? (
-              <p role="alert" className="p-4 text-[15px] font-semibold text-[var(--state-overdue)]">Couldn&apos;t load the drafters: {listError}</p>
+              <SkeletonRows rows={3} cols={1} what="drafters" sheet={false} />
+            ) : listError != null ? (
+              <ErrorNote compact className="p-4" error={listError} title="The drafters didn't load." onRetry={() => setListTry((n) => n + 1)} />
             ) : drafters.length === 0 ? (
-              <div className="p-4 text-center text-[var(--color-text-muted)]">No drafters in this workspace yet.</div>
+              <p className="p-4 text-center text-[15px] text-[var(--color-text-muted)]">No drafters in this workspace yet.</p>
             ) : (
-              <div className="grid grid-cols-1 gap-1">
+              <div className="grid grid-cols-1 divide-y divide-[var(--color-border)]">
                 {drafters.map(drafter => (
-                  <button 
-                    key={drafter.uid} 
+                  <button
+                    key={drafter.uid}
                     onClick={() => {
                       if (isReassignment && !reason.trim()) { setReasonMissing(true); return; }
                       onSubmit(drafter.uid, drafter.email.split('@')[0], reason);
                     }}
-                    disabled={isLoading || drafter.uid === currentDrafterId} 
-                    className="flex items-center p-3 hover:bg-[var(--color-surface-2)] rounded-lg transition-colors group text-left w-full border border-transparent hover:border-[var(--color-border)] disabled:opacity-50 disabled:cursor-not-allowed"
+                    disabled={isLoading || drafter.uid === currentDrafterId}
+                    className="flex items-center px-3 py-2.5 hover:bg-[var(--color-surface-2)] transition-colors group text-left w-full disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    <UserAvatar uid={drafter.uid} email={drafter.email} size={36} rounded="full" className="mr-3" />
-                    <div className="min-w-0"><p className="font-semibold text-[var(--color-text)] text-[15px] truncate">{drafter.email}</p><p className="text-[13px] text-[var(--color-text-muted)]">{drafter.uid === currentDrafterId ? 'On it now' : 'Drafter'}</p></div>
-                    <ChevronDown className="w-4 h-4 ml-auto text-[var(--color-text-faint)] group-hover:text-[var(--color-text-muted)] -rotate-90" />
+                    <UserAvatar uid={drafter.uid} email={drafter.email} size={32} rounded="full" className="mr-3" />
+                    <div className="min-w-0"><p className="font-semibold text-[var(--color-text)] text-[15px] truncate">{shortName(drafter.email)}</p><p className="text-[13px] text-[var(--color-text-muted)] truncate">{drafter.uid === currentDrafterId ? 'On it now' : drafter.email}</p></div>
+                    <ChevronRight aria-hidden className="w-4 h-4 ml-auto text-[var(--color-text-faint)] group-hover:text-[var(--color-text-muted)]" />
                   </button>
                 ))}
               </div>
@@ -303,31 +315,31 @@ const UploadIFCModal = ({ onClose, onSubmit, isLoading, error }: UploadIFCModalP
     <Modal onClose={onClose} dismissable={!isLoading}>
       <ModalHeader icon={Stamp} title="Issue for construction" subtitle="Add the final stamped PDF." onClose={isLoading ? undefined : onClose} />
       <ModalBody className="space-y-3">
-          <label {...drag.bind} className={`flex flex-col items-center justify-center w-full min-h-32 p-4 border-2 border-dashed border-[var(--color-border-strong)] rounded-xl cursor-pointer bg-[var(--color-surface-2)] hover:border-[var(--color-text-muted)] transition-colors ${drag.ring}`}>
+          <label {...drag.bind} className={`flex flex-col items-center justify-center w-full min-h-32 p-4 border border-dashed border-[var(--color-border-control)] rounded-xl cursor-pointer bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] transition-colors ${drag.ring}`}>
             {drag.over ? (
-              <p className="text-sm font-bold text-[var(--color-text)]">{drag.say}</p>
+              <p className="text-[15px] font-semibold text-[var(--color-text)]">{drag.say}</p>
             ) : file ? (
               <div className="flex items-center gap-3 min-w-0">
                 <FileThumb file={file} />
                 <div className="min-w-0 text-left">
-                  <p className="text-sm font-bold text-[var(--color-text)] truncate">{file.name}</p>
-                  <p className="text-xs text-[var(--color-text-muted)]">{formatBytes(file.size)} · tap to pick another</p>
+                  <p className="text-[15px] font-semibold text-[var(--color-text)] truncate">{file.name}</p>
+                  <p className="text-[13px] text-[var(--color-text-muted)]">PDF, {formatBytes(file.size)}. Tap to pick another.</p>
                 </div>
               </div>
             ) : (
               <div className="text-center">
-                <UploadCloud className="w-8 h-8 text-[var(--color-text-muted)] mx-auto mb-2" />
-                <p className="text-sm font-medium text-[var(--color-text)]">Drop the stamped PDF here, or tap to pick it</p>
+                <UploadCloud aria-hidden className="w-6 h-6 text-[var(--color-text-faint)] mx-auto mb-2" />
+                <p className="text-[15px] text-[var(--color-text)]">Drop the stamped PDF here, or <span className="text-[var(--color-accent-text)]">pick it</span></p>
               </div>
             )}
             <input type="file" className="hidden" accept=".pdf" onChange={(e) => { const f = e.target.files?.[0]; if (f) setFile(f); e.target.value = ''; }} />
           </label>
-          {error && <p role="alert" className="relative pl-3 text-[13px] font-semibold text-[var(--color-text)]"><span aria-hidden className="absolute left-0 inset-y-0 w-[3px] bg-[var(--state-overdue)]" />{error}</p>}
+          {error && <ErrorNote compact title="The PDF didn't upload." next={`${error} The file is still picked: tap Try again.`} />}
       </ModalBody>
       <ModalFooter>
            <button type="button" onClick={onClose} disabled={isLoading} className={heroQuiet}>Cancel</button>
-           <Button onClick={() => file && onSubmit(file)} disabled={!file} loading={isLoading}>
-             {isLoading ? 'Issuing…' : error ? 'Try again' : 'Issue final package'}
+           <Button onClick={() => file && onSubmit(file)} disabled={!file} loading={isLoading} title={!file ? 'Pick the stamped PDF first' : undefined}>
+             {isLoading ? 'Issuing' : error ? 'Try again' : 'Issue final package'}
            </Button>
       </ModalFooter>
     </Modal>
@@ -347,8 +359,8 @@ const DownloadComplianceModal = ({ onClose, onConfirm, fileName }: DownloadCompl
   <Modal onClose={onClose} size="sm" zIndex={500}>
     <ModalHeader icon={AlertTriangle} title="This is a draft" onClose={onClose} />
     <ModalBody>
-      <p className="text-sm text-[var(--color-text)]"><strong className="break-all">{fileName}</strong></p>
-      <p className="mt-2 border-l-2 border-amber-500 pl-2 text-sm font-semibold text-amber-800 dark:text-amber-300">Not for construction. For review only.</p>
+      <p className="text-[15px] text-[var(--color-text)]"><strong className="break-all">{fileName}</strong></p>
+      <p className="mt-2 border-l-[3px] border-[var(--state-held)] pl-2.5 text-[15px] font-semibold text-[var(--state-held-text)]">Not for construction. For review only.</p>
     </ModalBody>
     <ModalFooter>
       <button type="button" onClick={onClose} className={heroQuiet}>Cancel</button>
@@ -394,7 +406,7 @@ function RedlineEditorMount({
   isSaving: boolean;
 }) {
   const [resolvedUrl, setResolvedUrl] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
   useEffect(() => {
     let alive = true;
     void (async () => {
@@ -403,23 +415,23 @@ function RedlineEditorMount({
         const u = await getSignedUrlForPath(file.url);
         if (alive) setResolvedUrl(u);
       } catch (e) {
-        if (alive) setError((e as Error).message);
+        if (alive) setError(e ?? new Error('sign failed'));
       }
     })();
     return () => { alive = false; };
   }, [file.url]);
-  if (error) {
+  if (error != null) {
     return (
       <Modal onClose={onClose} size="sm" zIndex={500}>
         <ModalHeader icon={AlertTriangle} title="Couldn't open the markup" onClose={onClose} />
-        <ModalBody><p className="text-[15px] font-semibold text-[var(--state-overdue)]">Couldn&apos;t load the file: {error}</p></ModalBody>
+        <ModalBody><ErrorNote compact error={error} title="The file didn't load." /></ModalBody>
       </Modal>
     );
   }
   if (!resolvedUrl) {
     return (
       <div className="fixed inset-0 z-[200] bg-slate-900/80 flex items-center justify-center">
-        <div className="text-white text-sm inline-flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Preparing redline editor…</div>
+        <div role="status" className="text-white text-[15px] inline-flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Opening the file for markup</div>
       </div>
     );
   }
@@ -468,15 +480,15 @@ const FileViewerModal = ({
   // Resolve to a presigned download URL once the modal opens so the iframe
   // / img tags actually load. Without this they show "not found".
   const [resolvedUrl, setResolvedUrl] = useState<string | null>(null);
-  const [resolveError, setResolveError] = useState<string | null>(null);
+  const [resolveError, setResolveError] = useState<unknown>(null);
   const { userEmail } = useRole();
   const { showToast } = useToast();
   // Every pull is logged; if the log write fails, say so instead of
   // pretending it was recorded.
   const logPull = (row: Record<string, unknown>) => {
     void supabase.from("download_audits").insert(row).then(({ error }) => {
-      if (error) showToast({ type: "error", title: "Not logged", message: `This copy wasn't added to the download log: ${error.message}` });
-    }, (e: unknown) => showToast({ type: "error", title: "Not logged", message: `This copy wasn't added to the download log: ${e instanceof Error ? e.message : String(e)}` }));
+      if (error) showToast({ type: "error", title: "Not logged", message: `This copy wasn't added to the download log. ${friendlyError(error)}` });
+    }, (e: unknown) => showToast({ type: "error", title: "Not logged", message: `This copy wasn't added to the download log. ${friendlyError(e)}` }));
   };
 
   // Escape closes the viewer (the warning on top closes first).
@@ -499,7 +511,7 @@ const FileViewerModal = ({
     if (/^https?:\/\//i.test(file.url)) { setResolvedUrl(file.url); return; }
     getSignedUrlForPath(file.url)
       .then((u) => { if (alive) setResolvedUrl(u); })
-      .catch((e) => { if (alive) setResolveError((e as Error).message); });
+      .catch((e) => { if (alive) setResolveError(e ?? new Error('sign failed')); });
     return () => { alive = false; };
   }, [isOpen, file?.url, archived]);
 
@@ -643,13 +655,13 @@ const FileViewerModal = ({
   return (
     <>
       {showCompliance && (
-        <DownloadComplianceModal 
-          onClose={() => setShowCompliance(false)} 
+        <DownloadComplianceModal
+          onClose={() => setShowCompliance(false)}
           onConfirm={performDownload}
           fileName={file.name}
         />
       )}
-      
+
       <div role="dialog" aria-modal="true" aria-label={file.name} className="fixed inset-0 z-[100] bg-slate-950/95 backdrop-blur-md flex flex-col animate-in fade-in duration-300">
         <div className="flex items-center justify-between gap-3 px-4 sm:px-6 py-4 bg-slate-900 border-b border-slate-800 text-white shadow-md relative z-50">
           <div className="flex items-center space-x-4 min-w-0">
@@ -666,7 +678,7 @@ const FileViewerModal = ({
                 <span>•</span>
                 <span>{file.size}</span>
                 <span>•</span>
-                <span>{toDate(file.uploadedAt).toLocaleString()}</span>
+                <span>{fmtWhen(file.uploadedAt)}</span>
               </div>
             </div>
           </div>
@@ -686,7 +698,7 @@ const FileViewerModal = ({
               </button>
             )}
             {onApprove && file.type === 'Draft' && (
-              <button 
+              <button
                 onClick={onApprove}
                 className="flex items-center px-4 py-2 rounded-lg text-sm font-bold transition-colors bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]"
               >
@@ -698,7 +710,7 @@ const FileViewerModal = ({
             </button>
           </div>
         </div>
-        
+
         <div className="flex-1 overflow-hidden relative bg-slate-900/50 flex items-center justify-center p-8">
           {/* VISUAL PROTECTION LAYER */}
           {file.type === 'Draft' && <WatermarkOverlay />}
@@ -718,19 +730,19 @@ const FileViewerModal = ({
           ) : isPdf ? (
             resolvedUrl ? (
               <iframe src={`${resolvedUrl}#toolbar=0&navpanes=0`} className="w-full h-full rounded-lg shadow-2xl bg-[var(--color-surface)] border border-slate-700 relative z-0" title="PDF Viewer" />
-            ) : resolveError ? (
-              <div className="text-red-300 text-sm">Couldn&apos;t load the file: {resolveError}</div>
+            ) : resolveError != null ? (
+              <div role="alert" className="max-w-md text-center text-slate-200 text-[15px]">{friendlyError(resolveError)}</div>
             ) : (
-              <div className="text-slate-300 text-sm flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Loading the preview…</div>
+              <div role="status" className="text-slate-300 text-[15px] flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Loading the preview</div>
             )
           ) : isImage ? (
             resolvedUrl ? (
               // eslint-disable-next-line @next/next/no-img-element -- ephemeral signed-URL preview; optimizer can't cache short-lived URLs and intrinsic size is unknown
               <img src={resolvedUrl} alt="Preview" className="max-w-full max-h-full object-contain shadow-2xl rounded-lg border border-slate-700 relative z-0" />
-            ) : resolveError ? (
-              <div className="text-red-300 text-sm">Couldn&apos;t load the file: {resolveError}</div>
+            ) : resolveError != null ? (
+              <div role="alert" className="max-w-md text-center text-slate-200 text-[15px]">{friendlyError(resolveError)}</div>
             ) : (
-              <div className="text-slate-300 text-sm flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Loading the preview…</div>
+              <div role="status" className="text-slate-300 text-[15px] flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Loading the preview</div>
             )
           ) : (
             <div className="text-center p-12 bg-[var(--color-surface)] rounded-xl shadow-2xl max-w-md border border-[var(--color-border)] relative z-10">
@@ -755,7 +767,6 @@ export default function TicketDetailView() {
   const params = useParams();
   const router = useRouter();
   const { activeRole, roles, userEmail, activeOrgId, uid } = useRole();
-  const narrow = useNarrow();
   // The org's capability policy — so the buttons drawn here match what the
   // workflow-action route will actually allow (it re-derives with the same
   // policy). Undefined until loaded → defaults, which mirror historic rules.
@@ -772,22 +783,25 @@ export default function TicketDetailView() {
   // --- STATE ---
   const [ticket, setTicket] = useState<Ticket | null>(null);
   const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  
+  // Why it didn't open: a failed read (said in plain words, with Try
+  // again) or a plain fact (not there, in another workspace).
+  const [loadError, setLoadError] = useState<{ error?: unknown; words?: string } | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
+
   // Tab State
   const [activeTab, setActiveTab] = useState<'discussion' | 'audit'>('discussion');
-  
+
   // Workflow Actions State
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [pendingAction, setPendingAction] = useState<WorkflowAction | null>(null);
-  
+
   // Modal States
   const [showCommentModal, setShowCommentModal] = useState(false);
   const [showAssignModal, setShowAssignModal] = useState(false);
   const [showEngineerPicker, setShowEngineerPicker] = useState(false);
   const [showUploadIFC, setShowUploadIFC] = useState(false);
   const [preFilledComment, setPreFilledComment] = useState<string>('');
-  
+
   // Redline State
   const [showWorkflowDiagram, setShowWorkflowDiagram] = useState(false);
   const [showRedlineEditor, setShowRedlineEditor] = useState(false);
@@ -806,13 +820,53 @@ export default function TicketDetailView() {
   const [uploadProgress, setUploadProgress] = useState(0);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  // The file going up now, and the last one that didn't (kept, so Try
+  // again sends the same file as the same kind).
+  const [upFile, setUpFile] = useState<{ file: File; type: 'Draft' | 'Final' | 'Source' | 'Reference' } | null>(null);
+  const [failedUpload, setFailedUpload] = useState<{ file: File; type: 'Draft' | 'Final' | 'Source' | 'Reference' } | null>(null);
   const [ifcError, setIfcError] = useState<string | null>(null);
   // A redline that already went up, kept so pressing Send back again after a
   // failed step doesn't upload it twice.
   const redlineUpRef = useRef<{ blob: Blob; att: TicketAttachment } | null>(null);
   const [highlightCommentId, setHighlightCommentId] = useState<string | null>(null);
   const searchParams = useSearchParams();
-  
+  // Right after sending a request (?sent=1): offer email updates now, when
+  // they mean something, and say what they'll bring. Read from the
+  // person's own notification settings so it never offers what's on.
+  const justSent = searchParams.get('sent') === '1';
+  const [emailAsk, setEmailAsk] = useState<'off' | 'on' | 'hidden' | null>(null);
+  const [emailSaving, setEmailSaving] = useState(false);
+  const [emailDone, setEmailDone] = useState(false);
+  const [emailError, setEmailError] = useState<unknown>(null);
+  useEffect(() => {
+    if (!justSent || !uid) return;
+    let alive = true;
+    void supabase.from('notification_preferences').select('*').eq('user_id', uid).maybeSingle().then(({ data, error }) => {
+      if (!alive) return;
+      if (error) { setEmailAsk('hidden'); return; }
+      const p = (data ?? {}) as Record<string, unknown>;
+      const on = p.email_enabled !== false && p.digest_frequency !== 'never' && p.email_on_status_change !== false && p.email_on_assignment !== false;
+      setEmailAsk(on ? 'on' : 'off');
+    }, () => { if (alive) setEmailAsk('hidden'); });
+    return () => { alive = false; };
+  }, [justSent, uid]);
+  const closeSent = () => {
+    setEmailAsk('hidden');
+    try { const url = new URL(window.location.href); url.searchParams.delete('sent'); window.history.replaceState(null, '', url.toString()); } catch { /* address only */ }
+  };
+  const turnOnEmail = async () => {
+    if (!uid) return;
+    setEmailSaving(true); setEmailError(null);
+    const { error } = await supabase.from('notification_preferences').upsert(
+      { user_id: uid, email_enabled: true, email_on_status_change: true, email_on_assignment: true },
+      { onConflict: 'user_id' },
+    );
+    setEmailSaving(false);
+    if (error) { setEmailError(error); return; }
+    setEmailDone(true);
+    setEmailAsk('on');
+  };
+
   // Chat State
   const [newComment, setNewComment] = useState('');
   const [newCommentMentions, setNewCommentMentions] = useState<string[]>([]);
@@ -875,10 +929,10 @@ export default function TicketDetailView() {
       const { data, error } = await supabase.from('tickets').select('*').eq('id', ticketId).maybeSingle();
       if (!alive) return;
       // A failed read says so (it isn't the same as "not there").
-      if (error) { setLoadError(`Couldn't open this request: ${error.message}`); setLoading(false); return; }
-      if (!data) { setLoadError("This request isn't there. It may have been removed, or it's in another workspace."); setLoading(false); return; }
+      if (error) { setLoadError({ error }); setLoading(false); return; }
+      if (!data) { setLoadError({ words: "It may have been removed, or it's in another workspace." }); setLoading(false); return; }
       const t = fromRow(data as Record<string, unknown>);
-      if (activeOrgId && t.orgId && t.orgId !== activeOrgId) { setLoadError("This request is in another workspace. Switch to it in the sidebar to open it."); setLoading(false); return; }
+      if (activeOrgId && t.orgId && t.orgId !== activeOrgId) { setLoadError({ words: "It's in another workspace. Switch to that workspace in the sidebar to open it." }); setLoading(false); return; }
       setLoadError(null);
       setTicket(t);
       // Marking it seen happens in the background; a failure only means the
@@ -907,7 +961,7 @@ export default function TicketDetailView() {
       .subscribe();
 
     return () => { alive = false; supabase.removeChannel(channel); };
-  }, [ticketId, activeOrgId, uid]);
+  }, [ticketId, activeOrgId, uid, reloadKey]);
 
   // --- 2. SAFE SCROLL ---
   useEffect(() => {
@@ -933,7 +987,7 @@ export default function TicketDetailView() {
 
   const handleUpdateCategory = async (commentId: string) => {
     if (!ticket || !ticket.comments) return;
-    
+
     // Create a new array with the updated comment
     const updatedComments = ticket.comments.map(c => {
       if (c.id === commentId) {
@@ -953,7 +1007,7 @@ export default function TicketDetailView() {
       setEditingCommentId(null);
     } catch (e) {
       console.error("Failed to update category", e);
-      await appAlert({ message: `The reason wasn't changed: ${e instanceof Error ? e.message : String(e)}`, tone: "danger" });
+      await appAlert({ title: "The reason wasn't changed", message: friendlyError(e), tone: "danger" });
     }
   };
 
@@ -963,6 +1017,9 @@ export default function TicketDetailView() {
     if (!activeOrgId) { setUploadError("Pick a workspace first."); return; }
     setIsUploading(true);
     setUploadError(null);
+    setFailedUpload(null);
+    setUpFile({ file, type });
+    setUploadProgress(0);
     const orgId = activeOrgId;
     const ticketNo = ticket.ticketId;
     // The transfer and the save after it, as one step that's safe to repeat:
@@ -999,10 +1056,12 @@ export default function TicketDetailView() {
       setFileToUpload(null);
     } catch (err) {
       console.error(err);
-      setUploadError(`${file.name} wasn't added: ${err instanceof Error ? err.message : String(err)}`);
+      setUploadError(friendlyError(err));
+      setFailedUpload({ file, type });
       setFileToUpload(null);
     } finally {
       setIsUploading(false);
+      setUpFile(null);
       setUploadProgress(0);
     }
   };
@@ -1014,9 +1073,9 @@ export default function TicketDetailView() {
     if (!ticket) return;
     if (action.requiresFile) {
       const hasFiles = ticket.attachments && ticket.attachments.length > 0;
-      if (!hasFiles) { await appAlert({ message: "Compliance Check Failed: You must upload at least one file before proceeding.", tone: "danger" }); return; }
+      if (!hasFiles) { await appAlert({ title: "Add a file first", message: "This step needs at least one file on the request. Add it under Files, then try again.", tone: "danger" }); return; }
     }
-    
+
     // Open IFC Upload Modal
     if (action.action === 'submit_final') {
       setPendingAction(action);
@@ -1040,17 +1099,17 @@ export default function TicketDetailView() {
       setPreFilledComment(defaultText);
       setPendingAction(action);
       setShowCommentModal(true);
-    } 
+    }
     // MERGED FLOW: Approval now directly triggers Assignment
-    else if (action.action === 'assign' || action.action === 'approve_initial') { 
+    else if (action.action === 'assign' || action.action === 'approve_initial') {
       // If approving, we swap the action to 'assign' so the backend logic moves it straight to DRAFTING
-      const effectiveAction = action.action === 'approve_initial' 
-        ? { ...action, action: 'assign', label: 'Approve & Assign' } 
+      const effectiveAction = action.action === 'approve_initial'
+        ? { ...action, action: 'assign', label: 'Approve & Assign' }
         : action;
-      
-      setPendingAction(effectiveAction); 
-      setShowAssignModal(true); 
-    } 
+
+      setPendingAction(effectiveAction);
+      setShowAssignModal(true);
+    }
     else { executeWorkflowAction(action); }
   };
 
@@ -1077,7 +1136,7 @@ export default function TicketDetailView() {
       finalAttachment = toFinal(result.url);
     } catch (err) {
       console.error(err);
-      setIfcError(`The PDF didn't upload: ${err instanceof Error ? err.message : String(err)}`);
+      setIfcError(friendlyError(err));
       setActionLoading(null);
       return;
     }
@@ -1097,7 +1156,7 @@ export default function TicketDetailView() {
       variant: 'destructive',
       requiresComment: true
     };
-    
+
     setPendingAction(rejectAction);
     setShowCommentModal(true);
   };
@@ -1220,7 +1279,7 @@ export default function TicketDetailView() {
       setFileToRedline(null);
       redlineUpRef.current = null;
       return true;
-    } catch (err) { console.error(err); showToast({ type: "error", title: "That didn't go through", message: (err as Error).message }); setActionLoading(null); return false; }
+    } catch (err) { console.error(err); showToast({ type: "error", title: "That didn't go through", message: friendlyError(err) }); setActionLoading(null); return false; }
   };
 
   const handlePostComment = async (text: string) => {
@@ -1263,7 +1322,7 @@ export default function TicketDetailView() {
       // Give the words back so nothing typed is lost.
       setNewComment((cur) => cur || text);
       console.error('Failed to post comment', err);
-      await appAlert({ message: err instanceof Error ? err.message : 'Couldn\'t post comment.', tone: "danger" });
+      await appAlert({ title: "Your comment wasn't posted", message: `${friendlyError(err)} Your words are back in the box.`, tone: "danger" });
     }
   };
 
@@ -1322,7 +1381,7 @@ export default function TicketDetailView() {
       await callCommentApi('PATCH', { ticketId, commentId, text: draft });
     } catch (err) {
       setTicket((prev) => prev ? { ...prev, comments: prevComments } : prev);
-      await appAlert({ message: `Couldn't save edit: ${err instanceof Error ? err.message : String(err)}`, tone: "danger" });
+      await appAlert({ title: "Your edit wasn't saved", message: friendlyError(err), tone: "danger" });
     }
   };
 
@@ -1334,7 +1393,7 @@ export default function TicketDetailView() {
       await callCommentApi('DELETE', { ticketId, commentId });
     } catch (err) {
       setTicket((prev) => prev ? { ...prev, comments: prevComments } : prev);
-      await appAlert({ message: `Couldn't delete: ${err instanceof Error ? err.message : String(err)}`, tone: "danger" });
+      await appAlert({ title: "The comment wasn't deleted", message: friendlyError(err), tone: "danger" });
     }
   };
 
@@ -1349,19 +1408,21 @@ export default function TicketDetailView() {
     const { error } = await supabase.from("tickets").update({ watchers: next }).eq("id", ticketId);
     if (error) {
       setTicket((prev) => prev ? { ...prev, watchers: current } : prev);
-      await appAlert({ message: `Couldn't change watching: ${error.message}`, tone: "danger" });
+      await appAlert({ title: "Watching didn't change", message: friendlyError(error), tone: "danger" });
     }
   };
 
   if (loadError && !ticket) {
+    const failed = loadError.error !== undefined;
     return (
       <PageShell width="form">
-        <PageHero back={{ href: '/requests', label: 'Drafting requests' }} kicker="Drafting requests" title="This request didn't load." size="md" />
+        <PageHero back={{ href: '/requests', label: 'Drafting requests' }} kicker="Drafting requests" size="md"
+          title={failed ? "This request didn't open." : "This request isn't here."} />
         <PageBody>
-          <Card>
-            <p role="alert" className="relative pl-3 text-[15px] text-[var(--color-text)]"><span aria-hidden className="absolute left-0 inset-y-0 w-[3px] bg-[var(--state-overdue)]" />{loadError}</p>
-            <button type="button" onClick={() => router.push('/requests')} className={`${heroQuiet} mt-4`}>Go to drafting requests</button>
-          </Card>
+          {failed
+            ? <ErrorNote error={loadError.error} onRetry={() => { setLoadError(null); setLoading(true); setReloadKey((k) => k + 1); }} />
+            : <p className="text-[15px] text-[var(--color-text)]">{loadError.words}</p>}
+          <Link href="/requests" className={heroQuiet}>Go to drafting requests</Link>
         </PageBody>
       </PageShell>
     );
@@ -1370,9 +1431,15 @@ export default function TicketDetailView() {
     return (
       <PageShell width="full">
         <div className="mx-auto max-w-[1920px]">
-          <PageHero back={{ href: '/requests', label: 'Drafting requests' }} kicker="Drafting requests" title="Loading the request…" size="md" />
+          <PageHero back={{ href: '/requests', label: 'Drafting requests' }} kicker="Drafting requests" size="md" title={<Skeleton className="h-7 w-96 max-w-full" />} />
           <PageBody>
-            <Card><LoadingBlock what="the request" rows={6} className="border-0 p-0" /></Card>
+            <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_minmax(360px,420px)] gap-x-6 gap-y-8 items-start">
+              <div className="space-y-8 min-w-0">
+                <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5"><SkeletonText lines={4} /></div>
+                <SkeletonRows rows={4} cols={2} what="the request" />
+              </div>
+              <SkeletonRows rows={5} cols={0} what="the discussion" />
+            </div>
           </PageBody>
         </div>
       </PageShell>
@@ -1381,11 +1448,10 @@ export default function TicketDetailView() {
 
   const availableActions = WorkflowEngine.getActions(ticket, activeRole, uid ?? undefined, capPolicy);
   const sourceFiles = ticket.attachments?.filter(a => a.type === 'Source' || a.type === 'Reference') || [];
-  
+
   // LOGIC: DRAFTS SORTING & VERSIONING
   const draftFilesRaw = ticket.attachments?.filter(a => a.type === 'Draft') || [];
   const sortedDrafts = draftFilesRaw.sort((a, b) => toDate(b.uploadedAt).getTime() - toDate(a.uploadedAt).getTime());
-  
 
   const finalFiles = ticket.attachments?.filter(a => a.type === 'Final') || [];
 
@@ -1403,22 +1469,24 @@ export default function TicketDetailView() {
       case 'REVISION_REQ': return 'Sent back for a revision.';
       case 'PENDING_REVIEW': return 'Draft out for review.';
       case 'PENDING_FINAL_APPROVAL': return 'Waiting for engineer sign-off.';
-      case 'PENDING_IFC': return 'Approved. Ready to issue IFC.';
+      case 'PENDING_IFC': return 'Approved. Ready to issue for construction.';
       case 'FINAL_DRAFT': return 'Issued. Waiting to close.';
       case 'CLOSED': return 'Closed.';
       case 'CANCELED': return 'Canceled.';
       default: return sentence(String(ticket.status).replace(/_/g, ' ')) + '.';
     }
   })();
-  // One main step (drafts waiting to go out come first); the rest quiet;
-  // closing it in the menu. An override (Force close) or a destructive step
-  // is never the main one.
+  // One main step, the one you can take now (drafts waiting to go out come
+  // first); up to two other steps quiet beside it; admin overrides,
+  // reassigning and anything destructive in More. An override or a
+  // destructive step is never the main one.
   const isDanger = (a: typeof availableActions[number]) => a.variant === 'destructive' || /force/i.test(a.label);
+  const isOverride = (a: typeof availableActions[number]) => a.variant === 'ghost' || /\(admin\)/i.test(a.label);
   const mainAct = (hasStagedFiles ? availableActions.find((a) => a.action === 'submit_draft') : undefined)
-    ?? availableActions.find((a) => !isDanger(a) && a.variant !== 'outline' && a.variant !== 'ghost') ?? null;
+    ?? availableActions.find((a) => !isDanger(a) && !isOverride(a) && a.variant !== 'outline') ?? null;
   const restActs = availableActions.filter((a) => a !== mainAct);
-  const quietActs = restActs.filter((a) => !isDanger(a));
-  const dangerActs = restActs.filter(isDanger);
+  const quietActs = restActs.filter((a) => !isDanger(a) && !isOverride(a)).slice(0, 2);
+  const menuActs = restActs.filter((a) => !quietActs.includes(a));
   const iconOf = (a: typeof availableActions[number]) => actionLoading === a.action ? <Loader2 className="w-4 h-4 animate-spin" /> : a.action === 'save_progress' ? <Save className="w-4 h-4" /> : null;
   const moreMenu = [
     { icon: <HelpCircle className="w-4 h-4" />, label: "How a request flows", onClick: () => setShowWorkflowDiagram(true) },
@@ -1435,8 +1503,8 @@ export default function TicketDetailView() {
         deliverableRev: ticket.deliverableRev ?? null,
       });
     } },
-    ...(isAdmin && ticket.assignedDrafterId && ticket.status !== 'CLOSED' ? [{ icon: <UserPlus className="w-4 h-4" />, label: "Reassign", onClick: () => handleReassignClick() }] : []),
-    ...dangerActs.map((a, i) => ({ icon: <ShieldAlert className="w-4 h-4" />, label: sentence(a.label), onClick: () => initiateWorkflowAction(a), tone: "bad" as const, line: i === 0 })),
+    ...(isAdmin && ticket.assignedDrafterId && ticket.status !== 'CLOSED' ? [{ icon: <UserPlus className="w-4 h-4" />, label: "Reassign the drafter", onClick: () => handleReassignClick() }] : []),
+    ...menuActs.map((a, i) => ({ icon: isDanger(a) ? <ShieldAlert className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />, label: sentence(a.label), onClick: () => initiateWorkflowAction(a), tone: isDanger(a) ? "bad" as const : undefined, line: i === 0 })),
   ];
   const stepAt = requestStepIndex(ticket.status);
   const canAddFile = activeRole === 'Drafter' || activeRole === 'Requester' || activeRole === 'Admin' || uid === ticket.requesterId;
@@ -1445,14 +1513,15 @@ export default function TicketDetailView() {
   const onYou = isActionRequired(ticket, { uid, roles });
   const who = waitingOn(ticket);
   const watching = (ticket.watchers ?? []).includes(uid ?? '');
+  const lateDays = pastDue && ticket.targetCompletionAt ? Math.max(1, Math.floor((Date.now() - toDate(ticket.targetCompletionAt).getTime()) / 86_400_000)) : 0;
+  // Words, not numbers: every fact the same small size.
   const facts: HeroFact[] = [
-    ...(narrow ? [] : [{ label: 'Stage', value: stageLabel(ticket.status) }]),
     { label: 'Waiting on', value: onYou ? 'You' : (who ?? 'Nobody'), tone: onYou ? 'warn' as const : undefined },
-    { label: 'Due', value: ticket.targetCompletionAt ? fmtDay(ticket.targetCompletionAt) : 'None', tone: pastDue ? 'bad' as const : nearDue ? 'warn' as const : undefined },
-    ...(narrow ? [] : [{ label: 'Priority', value: typeof ticket.priority === 'number' ? `P${ticket.priority}` : 'None' }]),
+    { label: pastDue ? `Due, ${lateDays} day${lateDays === 1 ? '' : 's'} late` : 'Due', value: ticket.targetCompletionAt ? fmtDay(ticket.targetCompletionAt) : 'None', tone: pastDue ? 'bad' as const : nearDue ? 'warn' as const : undefined },
+    { label: 'Priority', value: typeof ticket.priority === 'number' ? (ticket.priority === 1 ? 'P1 urgent' : `P${ticket.priority}`) : 'None', tone: ticket.priority === 1 ? 'bad' as const : undefined },
   ];
   const stagedNote = hasStagedFiles
-    ? (availableActions.some((a) => a.action === 'submit_draft') ? ' Your drafts aren’t sent yet: Submit draft for review sends them.' : ' Drafts are added but not sent to the requester yet.')
+    ? (availableActions.some((a) => a.action === 'submit_draft') ? ' Your drafts aren’t sent yet: Send draft for review sends them.' : ' Drafts are added but not sent to the requester yet.')
     : '';
   const quietButtons = quietActs.map((a) => (
     <button key={a.action + a.label} type="button" onClick={() => initiateWorkflowAction(a)} disabled={!!actionLoading} className={heroQuiet}>
@@ -1465,15 +1534,47 @@ export default function TicketDetailView() {
   const issuedFirst = ['FINAL_DRAFT', 'PENDING_FINAL_APPROVAL', 'CLOSED'].includes(ticket.status);
   type FileRow = { file: TicketAttachment; kind: string; tag?: React.ReactNode; faded?: boolean; redline?: boolean; issued?: boolean };
   const fileGroups: Array<{ key: string; label: React.ReactNode; empty: string; rows: FileRow[] }> = [
-    { key: 'source', label: 'Source and reference', empty: 'No source files.', rows: sourceFiles.map((f) => ({ file: f, kind: f.type === 'Reference' ? 'Reference' : 'Source' })) },
+    { key: 'source', label: 'Source and reference', empty: 'No source files.', rows: sourceFiles.map((f) => ({ file: f, kind: f.name?.startsWith('REDLINE_') ? 'Redlines' : f.type === 'Reference' ? 'Reference' : 'Source' })) },
     { key: 'drafts', label: 'Drafts', empty: 'No drafts yet.', rows: sortedDrafts.map((f, i) => ({
-      file: f, kind: i === 0 ? 'Draft, latest' : 'Earlier draft', faded: i > 0,
+      file: f, kind: i === 0 ? 'Latest draft' : 'Earlier draft', faded: i > 0,
       tag: f.status === 'staged' ? <StatusTag tone="warn">Not sent yet</StatusTag> : undefined,
       redline: i === 0 && ticket.status === 'PENDING_REVIEW' && ticket.requesterId === uid,
     })) },
     { key: 'issued', label: <>Issued for construction{ticket.deliverableRev && /^\d+$/.test(ticket.deliverableRev) ? `, Rev ${ticket.deliverableRev}` : ''}</>, empty: 'Nothing issued yet.', rows: finalFiles.map((f) => ({ file: f, kind: 'Issued', issued: true })) },
   ];
   if (issuedFirst) fileGroups.splice(1, 2, fileGroups[2], fileGroups[1]);
+  const fileCount = fileGroups.reduce((n, g) => n + g.rows.length, 0);
+  const pickFile = canAddFile && !ticket.archivedAt ? (
+    <label className={`${heroQuiet} cursor-pointer ${isUploading ? 'opacity-50 pointer-events-none' : ''}`}>
+      <UploadCloud aria-hidden className="w-4 h-4" /> Add a file
+      <input
+        type="file"
+        className="sr-only"
+        disabled={isUploading}
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          // Everyone says what kind of file it is.
+          if (file) { setUploadError(null); setFailedUpload(null); setFileToUpload(file); }
+          e.target.value = '';
+        }}
+      />
+    </label>
+  ) : null;
+
+  // The history, newest first, in days.
+  const historyDays = (() => {
+    const rows = [...(ticket.history ?? [])].reverse();
+    const out: Array<{ day: string; items: typeof rows }> = [];
+    for (const ev of rows) {
+      const d = toDate(ev.date);
+      const today = new Date(); today.setHours(0, 0, 0, 0);
+      const diff = Math.round((today.getTime() - new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()) / 86_400_000);
+      const day = diff === 0 ? 'Today' : diff === 1 ? 'Yesterday' : fmtDay(d);
+      const last = out[out.length - 1];
+      if (last && last.day === day) last.items.push(ev); else out.push({ day, items: [ev] });
+    }
+    return out;
+  })();
 
   return (
     <PageShell width="full">
@@ -1513,18 +1614,18 @@ export default function TicketDetailView() {
         })()}
       />
       {showCommentModal && (
-      <ActionModal 
+      <ActionModal
         draftKey={actionDraftKey(pendingAction)}
-        onClose={() => setShowCommentModal(false)} 
+        onClose={() => setShowCommentModal(false)}
         title={pendingAction?.action === 'approve_minor_correction' ? 'Approve with a small fix' : pendingAction?.action === 'request_revision' || pendingAction?.action === 'reject' ? 'Ask for a revision' : pendingAction?.variant === 'destructive' ? 'Send it back' : (pendingAction?.label ?? 'Add a comment')}
         description={pendingAction?.action === 'approve_minor_correction' ? 'Say what to fix (a typo, a label). It is approved now; the drafter fixes it in the issued file with no new review.' : pendingAction?.action === 'request_revision' || pendingAction?.action === 'reject' ? 'Say what needs to change.' : pendingAction?.variant === 'destructive' ? 'Say why it is going back.' : 'Add a comment for the record.'}
-        isDestructive={pendingAction?.variant === 'destructive' || pendingAction?.action === 'request_revision'} 
+        isDestructive={pendingAction?.variant === 'destructive' || pendingAction?.action === 'request_revision'}
         showCategorySelection={pendingAction?.action === 'request_revision' || pendingAction?.action === 'reject'}
         onSubmit={(comment, category) => pendingAction && executeWorkflowAction(pendingAction, comment, undefined, undefined, category)}
-        isLoading={!!actionLoading} 
+        isLoading={!!actionLoading}
         defaultValue={preFilledComment}
         onRedline={
-          (pendingAction?.action === 'reject' || pendingAction?.action === 'request_revision') && sortedDrafts.length > 0 
+          (pendingAction?.action === 'reject' || pendingAction?.action === 'request_revision') && sortedDrafts.length > 0
           ? async () => {
               if (sortedDrafts.length === 1) {
                 setFileToRedline(sortedDrafts[0]);
@@ -1608,11 +1709,11 @@ export default function TicketDetailView() {
           <Modal onClose={() => setFileToUpload(null)} size="sm">
             <ModalHeader title="What kind of file is it?" onClose={() => setFileToUpload(null)} />
             <ModalBody>
-              <div className="p-3 border border-[var(--color-border)] rounded-md mb-4 flex items-center gap-3">
+              <div className="p-3 border border-[var(--color-border)] rounded-xl mb-4 flex items-center gap-3">
                 <FileThumb file={fileToUpload} />
                 <div className="overflow-hidden">
                   <p className="font-semibold text-[15px] truncate text-[var(--color-text)]">{fileToUpload.name}</p>
-                  <p className="text-[13px] text-[var(--color-text-muted)]">{formatBytes(fileToUpload.size)}</p>
+                  <p className="text-[13px] text-[var(--color-text-muted)]">{(fileToUpload.name.split('.').pop() || 'file').toUpperCase()}, {formatBytes(fileToUpload.size)}</p>
                 </div>
               </div>
               <div className="flex flex-col gap-2">
@@ -1631,31 +1732,15 @@ export default function TicketDetailView() {
       <PageHero
         back={{ onClick: () => router.back(), label: 'Back' }}
         size="md"
-        kicker="Drafting requests"
-        title={<><span className="block tabular-nums">{ticket.ticketId}</span>{ticket.title}</>}
+        kicker={<span className="inline-flex items-center gap-2 min-w-0 max-w-full"><Link href="/requests" className="shrink-0 hover:text-[var(--color-text)] hover:underline underline-offset-2">Drafting requests</Link><span aria-hidden className="text-[var(--color-text-faint)]">/</span><CopyId value={ticket.ticketId} label="request number" className="text-[15px] min-w-0" /></span>}
+        title={ticket.title}
         sub={<>{stateWords}{stagedNote}{availableActions.length === 0 ? ' Nothing for you to do here.' : ''}</>}
         facts={facts}
+        factsHero="none"
         tools={
           <>
             {quietButtons.length > 0 && <div className="max-lg:hidden flex items-center gap-2">{quietButtons}</div>}
-            {canAddFile && (
-              <label className={`${heroQuiet} cursor-pointer ${isUploading ? 'opacity-50 pointer-events-none' : ''}`}>
-                {isUploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <UploadCloud className="w-4 h-4" />}
-                <span className="max-sm:hidden">{isUploading ? `Uploading ${uploadProgress.toFixed(0)}%` : 'Add a file'}</span>
-                <span className="sr-only sm:hidden">Add a file</span>
-                <input
-                  type="file"
-                  className="hidden"
-                  onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    // Everyone says what kind of file it is.
-                    if (file) { setUploadError(null); setFileToUpload(file); }
-                    e.target.value = '';
-                  }}
-                />
-              </label>
-            )}
-            <MoreMenu items={moreMenu} iconOnly label="More: how it flows, traveler, reassign, close" triggerClass={heroQuiet} />
+            <MoreMenu items={moreMenu} iconOnly label="More: how it flows, traveler, reassign, admin steps" triggerClass={heroQuiet} />
           </>
         }
         primary={mainAct ? (
@@ -1666,7 +1751,7 @@ export default function TicketDetailView() {
       >
         <div className="space-y-4">
           {stepAt >= 0 && (
-            <button type="button" onClick={() => setShowWorkflowDiagram(true)} title="See what each step means" className="block w-full text-left rounded-md -m-1.5 p-1.5 hover:bg-[var(--color-surface)]">
+            <button type="button" onClick={() => setShowWorkflowDiagram(true)} title="See what each step means" className="block w-full text-left rounded-lg -m-1.5 p-1.5 hover:bg-[var(--color-surface)]">
               <span className="sm:hidden block mb-2.5 text-[14px] font-semibold text-[var(--color-text)]">Step {stepAt + 1} of {REQUEST_STEPS.length}: {REQUEST_STEPS[stepAt]}</span>
               <span className="hidden sm:block">
                 <StepLine steps={REQUEST_STEPS.map((label, i) => ({ label, state: i < stepAt ? 'done' : i === stepAt ? 'now' : 'next' }))} />
@@ -1681,6 +1766,32 @@ export default function TicketDetailView() {
       </PageHero>
 
       <PageBody>
+      {justSent && ticket.requesterId === uid && emailAsk && emailAsk !== 'hidden' && (
+        // Sent: the one moment email updates mean something. Says what they
+        // bring; never asks when they're already on.
+        <section aria-label="Request sent" className="relative rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 sm:px-5 py-4 flex flex-wrap items-center gap-x-4 gap-y-3">
+          <CheckCircle2 aria-hidden className="w-5 h-5 shrink-0 text-[var(--state-released)]" />
+          <div className="min-w-0 flex-1 basis-[260px]">
+            <p className="text-[15px] font-semibold text-[var(--color-text)]">Sent. A supervisor assigns a drafter next.</p>
+            {emailAsk === 'off' ? (
+              <p className="text-[14px] text-[var(--color-text-muted)]">Email you when a drafter picks up {ticket.ticketId} and when the draft is ready for your review?</p>
+            ) : (
+              <p className="text-[14px] text-[var(--color-text-muted)]">
+                {emailDone ? 'Email is on. ' : ''}You&apos;ll get an email when a drafter picks it up and when the draft is ready for your review. <Link href="/settings/notifications" className="text-[var(--color-accent-text)] hover:underline underline-offset-2">Email settings</Link>
+              </p>
+            )}
+            {emailError != null && <ErrorNote compact className="mt-1" error={emailError} title="Email wasn't turned on." onRetry={() => void turnOnEmail()} />}
+          </div>
+          {emailAsk === 'off' ? (
+            <div className="flex items-center gap-2">
+              <button type="button" onClick={closeSent} className={heroQuiet}>Not now</button>
+              <Button variant={mainAct ? 'secondary' : 'primary'} loading={emailSaving} onClick={() => void turnOnEmail()}>Turn on email</Button>
+            </div>
+          ) : (
+            <button type="button" onClick={closeSent} aria-label="Close" title="Close" className="w-9 h-9 pointer-coarse:w-11 pointer-coarse:h-11 grid place-items-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
+          )}
+        </section>
+      )}
       {ticket.status === 'REVISION_REQ' && latestRevision && (() => {
         // Redlines sent with the revision, so the drafter finds them here.
         const redlines = (ticket.attachments || [])
@@ -1689,10 +1800,10 @@ export default function TicketDetailView() {
         return (
           <Card label="What to fix" action={redlines[0] ? (
             <button type="button" onClick={() => setViewerFile(redlines[0])} className={heroQuiet}><Pen className="w-4 h-4" /> Open the redlines</button>
-          ) : undefined} className="relative">
-            <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] rounded-l-lg bg-[var(--state-held)]" />
+          ) : undefined} className="relative overflow-hidden">
+            <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] bg-[var(--state-held)]" />
             {latestRevision.category && <StatusTag tone="warn">{latestRevision.category}</StatusTag>}
-            <p className="text-[15px] text-[var(--color-text)] mt-1.5 whitespace-pre-wrap leading-relaxed max-w-[75ch]">{latestRevision.text}</p>
+            <p className="text-[16px] text-[var(--color-text)] mt-1.5 whitespace-pre-wrap leading-relaxed max-w-[75ch]">{latestRevision.text}</p>
             <p className="text-[13px] text-[var(--color-text-muted)] mt-1.5">
               {authorLabel(latestRevision.user ?? 'Reviewer')}{latestRevision.date ? `, ${fmtWhen(latestRevision.date)}` : ''}
             </p>
@@ -1715,14 +1826,9 @@ export default function TicketDetailView() {
               <HelpTooltip>Have the archive file{ticket.archiveId ? <> (<span className="break-all">&lt;root&gt;/data/{ticket.archiveId}.zip</span>)</> : ''}? Open it here. An admin can restore it fully on the Storage and backup page.</HelpTooltip>
             </p>
             {hasShape && (
-              <dl className="mt-3 flex flex-wrap gap-x-8 gap-y-2">
-                <div><dt className="text-[13px] text-[var(--color-text-muted)]">Comments</dt><dd className="font-display text-[19px] font-semibold tabular-nums">{sum.commentCount ?? 0}</dd></div>
-                <div><dt className="text-[13px] text-[var(--color-text-muted)]">Files</dt><dd className="font-display text-[19px] font-semibold tabular-nums">{sum.attachmentCount ?? 0}</dd></div>
-                <div><dt className="text-[13px] text-[var(--color-text-muted)]">History events</dt><dd className="font-display text-[19px] font-semibold tabular-nums">{sum.historyCount ?? 0}</dd></div>
-              </dl>
-            )}
-            {names.length > 0 && (
-              <p className="mt-2 text-[13px] text-[var(--color-text-muted)]">{names.join(', ')}{(sum.attachmentCount ?? 0) > names.length ? `, and ${(sum.attachmentCount ?? 0) - names.length} more` : ''}</p>
+              <p className="mt-2 text-[14px] text-[var(--color-text-muted)] tabular-nums">
+                {sum.commentCount ?? 0} comments, {sum.attachmentCount ?? 0} files, {sum.historyCount ?? 0} history events{names.length > 0 ? `: ${names.join(', ')}${(sum.attachmentCount ?? 0) > names.length ? `, and ${(sum.attachmentCount ?? 0) - names.length} more` : ''}` : ''}
+              </p>
             )}
           </Card>
         );
@@ -1731,68 +1837,91 @@ export default function TicketDetailView() {
       <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_minmax(360px,420px)] gap-x-6 gap-y-8 items-start">
         {/* LEFT: the request and its files */}
         <div className="space-y-8 min-w-0">
-          <Card label={<span className="inline-flex items-center gap-2"><span aria-hidden className="ui-icon-tile is-sm is-solid"><Info className="w-4 h-4" /></span>Details</span>} pad={false} className="overflow-hidden">
-            <dl className="grid grid-cols-2 md:grid-cols-4 gap-px bg-[var(--color-border)]">
+          <Card label="Scope of work">
+            <p className="text-[16px] text-[var(--color-text)] leading-relaxed whitespace-pre-wrap max-w-[80ch]">{ticket.description || <Muted>No scope written.</Muted>}</p>
+            <dl className="mt-4 pt-4 border-t border-[var(--color-border)] grid grid-cols-2 md:grid-cols-4 gap-x-6 gap-y-3 text-[14px]">
               {([
-                ['Unit', ticket.unit ? <span key="u" className="ui-tag">Unit {ticket.unit}</span> : <Muted key="u">None</Muted>],
-                ['Type', ticket.requestType ? <span key="t" className="ui-tag">{ticket.requestType}</span> : <Muted key="t">None</Muted>],
+                ['Unit', ticket.unit ? `Unit ${ticket.unit}` : <Muted key="u">None</Muted>],
+                ['Type', ticket.requestType || <Muted key="t">None</Muted>],
                 ['Requester', <span key="r" title={ticket.requesterEmail || undefined}>{ticket.requesterName || <Muted>Unknown</Muted>}</span>],
-                ['Drafter', ticket.assignedDrafterName || <Muted key="d">Not assigned</Muted>],
+                ['Drafter', ticket.assignedDrafterName || <Muted key="d">None yet</Muted>],
+                ['Started', fmtDay(ticket.createdAt)],
                 ['Engineer reviewer', ticket.assignedEngineerName ? (
-                  <span key="e" className="flex flex-wrap items-center gap-x-2" title={ticket.assignedEngineerEmail || undefined}>
+                  <span key="e" className="inline-flex flex-wrap items-center gap-x-2" title={ticket.assignedEngineerEmail || undefined}>
                     {ticket.assignedEngineerName}
                     {ticket.engineerApprovedAt && <StatusTag tone="good">Approved</StatusTag>}
                   </span>
-                ) : <Muted key="e">Not assigned</Muted>],
-                ['Started', fmtDay(ticket.createdAt)],
-                ['Deliverable', ticket.deliverableRev ? <span key="rev" className="ui-pill is-good">Rev {ticket.deliverableRev}</span> : <span key="rev" className="ui-pill is-muted">Not issued</span>],
+                ) : <Muted key="e">None</Muted>],
+                ['Deliverable', ticket.deliverableRev ? `Rev ${ticket.deliverableRev}` : <Muted key="rev">Not issued yet</Muted>],
                 ['Watchers', (
-                  <span key="w" className="flex items-center gap-2">
-                    <span className="ui-count">{(ticket.watchers ?? []).length}</span>
+                  <span key="w" className="inline-flex items-center gap-2">
+                    <span className="tabular-nums">{(ticket.watchers ?? []).length}</span>
                     <button type="button" onClick={toggleWatch} aria-pressed={watching}
-                      className="inline-flex items-center gap-1.5 h-8 px-2.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
-                      {watching ? <><Check className="w-3.5 h-3.5" /> Watching</> : <><Eye className="w-3.5 h-3.5" /> Watch</>}
+                      className="inline-flex items-center gap-1 text-[14px] font-semibold text-[var(--color-accent-text)] hover:underline underline-offset-2">
+                      {watching ? <><Check aria-hidden className="w-3.5 h-3.5" /> Watching</> : <><Eye aria-hidden className="w-3.5 h-3.5" /> Watch</>}
                     </button>
                   </span>
                 )],
               ] as Array<[string, React.ReactNode]>).map(([label, value]) => (
-                <div key={label} className="bg-[var(--color-surface)] px-4 py-3 min-w-0">
+                <div key={label} className="min-w-0">
                   <dt className="text-[13px] text-[var(--color-text-muted)]">{label}</dt>
-                  <dd className="mt-0.5 text-[15px] text-[var(--color-text)] min-h-8 flex items-center">{value}</dd>
+                  <dd className="mt-0.5 text-[var(--color-text)] min-w-0 truncate">{value}</dd>
                 </div>
               ))}
             </dl>
           </Card>
 
-          <Card label={<span className="inline-flex items-center gap-2"><span aria-hidden className="ui-icon-tile is-sm is-solid"><ClipboardList className="w-4 h-4" /></span>Scope of work</span>}>
-            <p className="text-[15px] text-[var(--color-text)] leading-relaxed whitespace-pre-wrap max-w-[80ch]">{ticket.description || <Muted>No scope written.</Muted>}</p>
-          </Card>
-
           {/* Files: drop one anywhere here to add it. */}
-          <section {...filesDrag.bind} className={`min-w-0 rounded-lg ${filesDrag.ring}`}>
-            <div className="flex items-end gap-3 mb-2.5 min-h-8">
-              <span aria-hidden className="ui-icon-tile is-sm is-solid self-center"><PaperclipIcon className="w-4 h-4" /></span>
-              <h2 className="font-display text-[19px] leading-tight font-semibold text-[var(--color-text)]">Files</h2>
-              <span className="ui-count is-solid self-center">{fileGroups.reduce((n, g) => n + g.rows.length, 0)}</span>
+          <section {...filesDrag.bind} aria-labelledby="req-files" className={`min-w-0 rounded-xl ${filesDrag.ring}`}>
+            <div className="flex flex-wrap items-end gap-x-3 gap-y-2 mb-3 min-h-8">
+              <h2 id="req-files" className="font-display text-[20px] leading-tight font-semibold text-[var(--color-text)]">
+                Files {fileCount > 0 && <span className="ui-count">{fileCount}</span>}
+              </h2>
               <div className="flex-1" />
               {filesDrag.over
-                ? <span className="text-[13px] font-semibold text-[var(--color-text)]">{filesDrag.say}</span>
-                : isUploading
-                  ? <span className="text-[13px] text-[var(--color-text-muted)] inline-flex items-center gap-1.5"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Uploading {uploadProgress.toFixed(0)}%</span>
-                  : !ticket.archivedAt && canAddFile && <span className="max-sm:hidden text-[13px] text-[var(--color-text-muted)]">Drop a file here to add it</span>}
+                ? <span className="text-[14px] font-semibold text-[var(--color-text)]">{filesDrag.say}</span>
+                : !ticket.archivedAt && canAddFile && <span className="max-md:hidden text-[13px] text-[var(--color-text-muted)]">Drop a file here, or</span>}
+              {pickFile}
             </div>
-            {uploadError && (
-              <p role="alert" className="mb-2 relative pl-3 text-[13px] font-semibold text-[var(--color-text)]"><span aria-hidden className="absolute left-0 inset-y-0 w-[3px] bg-[var(--state-overdue)]" />{uploadError}</p>
-            )}
-            <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
-              <table className="w-full text-[15px]">
+            <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
+              {/* The file going up (or the one that didn't), first: its own progress and its own Try again. */}
+              {(upFile || failedUpload) && (() => {
+                const u = upFile ?? failedUpload!;
+                const failed = !upFile;
+                return (
+                  <div className="relative flex items-center gap-3 px-4 py-3 border-b border-[var(--color-border)]" aria-live="polite">
+                    {failed && <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] bg-[var(--state-overdue)]" />}
+                    <FileThumb file={u.file} />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-[15px] font-semibold text-[var(--color-text)] truncate">{u.file.name}</p>
+                      {failed ? (
+                        <p className="text-[13px] text-[var(--state-overdue-text)]">Not added. {uploadError}</p>
+                      ) : (
+                        <div className="mt-1 flex items-center gap-2">
+                          <span className="block h-1.5 flex-1 max-w-64 rounded-full bg-[var(--color-surface-2)] overflow-hidden" role="progressbar" aria-label={`Uploading ${u.file.name}`} aria-valuenow={Math.round(uploadProgress)} aria-valuemin={0} aria-valuemax={100}>
+                            <span className="block h-full bg-[var(--color-main)] transition-[width] duration-200" style={{ width: `${Math.max(3, uploadProgress)}%` }} />
+                          </span>
+                          <span className="text-[13px] tabular-nums text-[var(--color-text-muted)]">{uploadProgress.toFixed(0)}% of {formatBytes(u.file.size)}, as {u.type === 'Draft' ? 'a draft' : u.type.toLowerCase()}</span>
+                        </div>
+                      )}
+                    </div>
+                    {failed && (
+                      <div className="flex items-center gap-1 shrink-0">
+                        <button type="button" onClick={() => void handleFileUpload(u.type, u.file)} className={`${heroQuiet} h-8`}><RotateCcw aria-hidden className="w-3.5 h-3.5" /> Try again</button>
+                        <button type="button" onClick={() => { setFailedUpload(null); setUploadError(null); }} aria-label={`Remove ${u.file.name}`} title="Remove" className="w-8 h-8 pointer-coarse:w-11 pointer-coarse:h-11 grid place-items-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+              <table className="w-full text-[14px]">
                 <thead className="bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text-muted)] text-left">
                   <tr>
                     <th className="font-semibold px-4 h-10 w-full">File</th>
                     <th className="font-semibold px-4 h-10 hidden sm:table-cell">Kind</th>
-                    <th className="font-semibold px-4 h-10 hidden 2xl:table-cell">Size</th>
+                    <th className="font-semibold px-4 h-10 hidden lg:table-cell text-right">Size</th>
                     <th className="font-semibold px-4 h-10 hidden sm:table-cell">Added</th>
-                    <th className="h-10 pr-3"><span className="sr-only">Open</span></th>
+                    <th className="h-10 pr-3"><span className="sr-only">Actions</span></th>
                   </tr>
                 </thead>
                 {fileGroups.map((g) => (
@@ -1805,32 +1934,29 @@ export default function TicketDetailView() {
                         className={`cursor-pointer hover:bg-[var(--color-surface-2)] ${r.faded ? 'text-[var(--color-text-muted)]' : 'text-[var(--color-text)]'}`}>
                         <td className="px-4 py-2.5 max-w-0">
                           <div className="flex items-center gap-2.5 min-w-0">
-                            <span aria-hidden className={`ui-icon-tile is-sm ${r.issued ? '!bg-[color-mix(in_srgb,var(--state-released)_15%,transparent)] !text-[var(--state-released)]' : r.faded ? '!bg-[var(--color-surface-2)] !text-[var(--color-text-muted)]' : ''}`}>
-                              {r.issued ? <CheckSquare className="w-4 h-4" /> : r.kind.startsWith('Draft') || r.kind.startsWith('Earlier') ? <FileText className="w-4 h-4" /> : <FileIcon className="w-4 h-4" />}
+                            <span aria-hidden className={`shrink-0 ${r.issued ? 'text-[var(--state-released)]' : 'text-[var(--color-text-faint)]'}`}>
+                              {r.issued ? <CheckSquare className="w-4 h-4" /> : r.kind.includes('draft') ? <FileText className="w-4 h-4" /> : <FileIcon className="w-4 h-4" />}
                             </span>
-                            <button type="button" onClick={() => setViewerFile(r.file)} title={r.file.name} className={`min-w-0 text-left truncate hover:text-[var(--color-accent-text)] ${r.faded ? '' : 'font-semibold'}`}>{r.file.name}</button>
+                            <button type="button" onClick={() => setViewerFile(r.file)} title={`Open ${r.file.name}`} className={`min-w-0 text-left truncate hover:text-[var(--color-accent-text)] ${r.faded ? '' : 'font-semibold'}`}>{r.file.name}</button>
                           </div>
-                          <div className="sm:hidden pl-[38px] text-[13px] text-[var(--color-text-muted)] flex flex-wrap items-center gap-x-2">{r.kind}{r.file.uploadedAt ? `, ${fmtDay(r.file.uploadedAt)}` : ''}{r.tag}</div>
+                          <div className="sm:hidden pl-[26px] text-[13px] text-[var(--color-text-muted)] flex flex-wrap items-center gap-x-2">{r.kind}{r.file.uploadedAt ? `, ${fmtDay(r.file.uploadedAt)}` : ''}{r.tag}</div>
                         </td>
                         <td className="px-4 py-2.5 hidden sm:table-cell whitespace-nowrap">
-                          <span className="flex flex-col items-start gap-1">
-                            <span className={`ui-tag ${r.faded ? 'is-more' : ''}`}>{r.kind}</span>
+                          <span className="flex flex-col items-start gap-0.5">
+                            <span>{r.kind}</span>
                             {r.tag}
                           </span>
                         </td>
-                        <td className="px-4 py-2.5 hidden 2xl:table-cell whitespace-nowrap tabular-nums text-[var(--color-text-muted)]">{r.file.size}</td>
-                        <td className="px-4 py-2.5 hidden sm:table-cell whitespace-nowrap tabular-nums text-[var(--color-text-muted)]">{fmtWhen(r.file.uploadedAt)}</td>
+                        <td className="px-4 py-2.5 hidden lg:table-cell whitespace-nowrap tabular-nums text-right text-[var(--color-text-muted)]">{r.file.size}</td>
+                        <td className="px-4 py-2.5 hidden sm:table-cell whitespace-nowrap tabular-nums text-[var(--color-text-muted)]" title={fmtWhen(r.file.uploadedAt)}>
+                          {fmtDay(r.file.uploadedAt)}{r.file.uploadedBy ? ` by ${shortName(r.file.uploadedBy)}` : ''}
+                        </td>
                         <td className="pr-3 py-1.5 whitespace-nowrap text-right">
-                          <div className="inline-flex items-center gap-1">
-                            {r.redline && (
-                              <button type="button" onClick={() => { setFileToRedline(r.file); setShowRedlineEditor(true); }} className={`${heroQuiet} h-8`}>
-                                <Pen className="w-3.5 h-3.5" /> Redline
-                              </button>
-                            )}
-                            <button type="button" onClick={() => setViewerFile(r.file)} aria-label={`Open ${r.file.name}`} className="w-8 h-8 grid place-items-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
-                              {r.issued ? <Maximize2 className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                          {r.redline && (
+                            <button type="button" onClick={() => { setFileToRedline(r.file); setShowRedlineEditor(true); }} className={`${heroQuiet} h-8`}>
+                              <Pen className="w-3.5 h-3.5" /> Redline
                             </button>
-                          </div>
+                          )}
                         </td>
                       </tr>
                     ))}
@@ -1855,24 +1981,20 @@ export default function TicketDetailView() {
 
         {/* RIGHT: discussion and history */}
         <section className="min-w-0 xl:sticky xl:top-4">
-          <div role="tablist" aria-label="Discussion and history" className="flex items-end gap-5 mb-2.5 min-h-8">
-            {([['discussion', 'Discussion', ticket.comments?.length ?? 0], ['audit', 'History', 0]] as const).map(([key, label, n]) => (
-              <button key={key} type="button" role="tab" aria-selected={activeTab === key} onClick={() => setActiveTab(key)}
-                className={`inline-flex items-center gap-2 pb-1 -mb-px border-b-2 font-display text-[19px] leading-tight font-semibold transition-colors ${activeTab === key ? 'text-[var(--color-heading)] border-[var(--color-main)]' : 'text-[var(--color-text-muted)] border-transparent hover:text-[var(--color-text)]'}`}>
-                {label}
-                {n > 0 && <span className={`ui-count font-sans ${activeTab === key ? 'is-solid' : '!bg-[var(--color-surface)]'}`}>{n}</span>}
-              </button>
-            ))}
+          <div className="mb-3 min-h-8 flex items-end">
+            <UnderlineTabs size="lg" label="Discussion and history" idBase="req-activity" value={activeTab} onChange={setActiveTab}
+              tabs={[{ key: 'discussion', label: 'Discussion', count: ticket.comments?.length ?? 0 }, { key: 'audit', label: 'History', count: ticket.history?.length ?? 0 }]} />
           </div>
-          <div className="flex flex-col rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] h-[min(70dvh,640px)] xl:h-[calc(100dvh-170px)] min-h-[420px]">
+          <div id="req-activity-panel" role="tabpanel" aria-labelledby={`req-activity-${activeTab}`}
+            className="flex flex-col rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] h-[min(70dvh,640px)] xl:h-[calc(100dvh-170px)] min-h-[420px]">
           <div ref={chatContainerRef} className="flex-1 overflow-y-auto custom-scrollbar relative">
             {activeTab === 'discussion' && (
               <>
-                {(!ticket.comments || ticket.comments.length === 0) && <p className="px-4 py-10 text-center text-[15px] text-[var(--color-text-muted)]">No comments yet.</p>}
+                {(!ticket.comments || ticket.comments.length === 0) && <p className="px-4 py-10 text-center text-[15px] text-[var(--color-text-muted)]">No comments yet. Ask a question or leave a note below.</p>}
                 <ol className="divide-y divide-[var(--color-border)]">
                 {ticket.comments?.map((comment, idx) => {
                   const kindTag = comment.type === 'Rejection' || comment.type === 'Revision'
-                    ? <StatusTag tone="warn">Revision requested</StatusTag>
+                    ? <StatusTag tone="warn">Revision asked</StatusTag>
                     : comment.type === 'Approval' ? <StatusTag tone="good">Approved</StatusTag>
                     : comment.type === 'Reassignment' ? <StatusTag>Reassigned</StatusTag>
                     : comment.type && comment.type !== 'General' ? <StatusTag>{comment.type}</StatusTag> : null;
@@ -1881,9 +2003,17 @@ export default function TicketDetailView() {
                   <li key={`${comment.id}-${idx}`} id={`comment-${comment.id}`} className={`flex gap-3 px-4 py-3.5 transition-colors ${highlightCommentId === comment.id ? 'bg-[var(--color-surface-2)]' : ''}`}>
                     <UserAvatar email={comment.user} size={28} rounded="full" className="shrink-0 mt-0.5" />
                     <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                      <div className="flex items-center gap-x-2 gap-y-0.5">
                         <span className="text-[15px] font-semibold text-[var(--color-text)]">{mine ? 'You' : authorLabel(comment.user)}</span>
-                        <span className="text-[13px] text-[var(--color-text-muted)] tabular-nums">{fmtWhen(comment.date)}</span>
+                        <span className="text-[13px] text-[var(--color-text-muted)] tabular-nums" title={fmtWhen(comment.date)}>{relTime(comment.date)}</span>
+                        {(comment as TicketComment & { editedAt?: string }).editedAt && <span className="text-[13px] text-[var(--color-text-muted)]">, edited</span>}
+                        <span className="flex-1" />
+                        {(mine || isAdmin) && editingTextId !== comment.id && (
+                          <MoreMenu iconOnly label="Comment actions" triggerClass="-my-1 w-8 h-8 pointer-coarse:w-11 pointer-coarse:h-11 grid place-items-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]" items={[
+                            { icon: <Pencil className="w-4 h-4" />, label: 'Edit', onClick: () => { setEditingTextId(comment.id); setEditTextDraft(comment.text); } },
+                            { icon: <Trash2 className="w-4 h-4" />, label: 'Delete', tone: 'bad', line: true, onClick: async () => { if (await appConfirm({ title: 'Delete this comment?', message: 'It cannot be brought back.', tone: "danger", confirmLabel: "Delete" })) void handleDeleteComment(comment.id); } },
+                          ]} />
+                        )}
                       </div>
                       {kindTag && (
                         <div className="mt-1 flex flex-wrap items-center gap-2">
@@ -1893,18 +2023,18 @@ export default function TicketDetailView() {
                             editingCommentId === comment.id ? (
                               <span className="inline-flex items-center gap-1">
                                 <select aria-label="Reason" value={editCategoryVal} onChange={(e) => setEditCategoryVal(e.target.value)}
-                                  className="h-8 px-2 rounded-md border border-[var(--color-border-strong)] text-[13px] text-[var(--color-text)] bg-[var(--color-surface)]">
+                                  className="h-8 pointer-coarse:h-11 px-2 rounded-lg border border-[var(--color-border-control)] text-[13px] max-sm:text-[16px] text-[var(--color-text)] bg-[var(--color-surface)]">
                                   {REVISION_REASONS.map(r => <option key={r} value={r}>{r}</option>)}
                                 </select>
-                                <button type="button" onClick={() => handleUpdateCategory(comment.id)} aria-label="Save reason" className="w-8 h-8 grid place-items-center rounded-md border border-[var(--color-border-strong)] hover:bg-[var(--color-surface-2)]"><Check className="w-3.5 h-3.5" /></button>
-                                <button type="button" onClick={() => setEditingCommentId(null)} aria-label="Cancel" className="w-8 h-8 grid place-items-center rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"><X className="w-3.5 h-3.5" /></button>
+                                <button type="button" onClick={() => handleUpdateCategory(comment.id)} aria-label="Save reason" title="Save reason" className="w-8 h-8 pointer-coarse:w-11 pointer-coarse:h-11 grid place-items-center rounded-lg border border-[var(--color-border-strong)] hover:bg-[var(--color-surface-2)]"><Check className="w-3.5 h-3.5" /></button>
+                                <button type="button" onClick={() => setEditingCommentId(null)} aria-label="Cancel" title="Cancel" className="w-8 h-8 pointer-coarse:w-11 pointer-coarse:h-11 grid place-items-center rounded-lg text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"><X className="w-3.5 h-3.5" /></button>
                               </span>
                             ) : (
                               <span className="inline-flex items-center gap-1 text-[13px] text-[var(--color-text-muted)]">
                                 {comment.category || 'No reason given'}
                                 {isAdmin && (
                                   <button type="button" onClick={() => { setEditingCommentId(comment.id); setEditCategoryVal(comment.category || REVISION_REASONS[0]); }}
-                                    className="w-7 h-7 grid place-items-center rounded-md hover:bg-[var(--color-surface-2)] hover:text-[var(--color-text)]" title="Change the reason" aria-label="Change the reason">
+                                    className="w-7 h-7 pointer-coarse:w-11 pointer-coarse:h-11 grid place-items-center rounded-lg hover:bg-[var(--color-surface-2)] hover:text-[var(--color-text)]" title="Change the reason" aria-label="Change the reason">
                                     <Pen className="w-3 h-3" />
                                   </button>
                                 )}
@@ -1916,25 +2046,14 @@ export default function TicketDetailView() {
                       {editingTextId === comment.id ? (
                         <div className="mt-1.5 space-y-2">
                           <textarea value={editTextDraft} onChange={(e) => setEditTextDraft(e.target.value)} autoFocus rows={3} aria-label="Edit comment"
-                            className="w-full p-2.5 rounded-md text-[15px] border border-[var(--color-border-strong)] text-[var(--color-text)] bg-[var(--color-surface)] focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none" />
+                            className={`${kitField} !h-auto py-2 resize-y [field-sizing:content]`} />
                           <div className="flex items-center gap-2 justify-end">
                             <button type="button" onClick={() => { setEditingTextId(null); setEditTextDraft(''); }} className={`${heroQuiet} h-8`}>Cancel</button>
                             <button type="button" onClick={() => void handleSaveCommentEdit(comment.id)} disabled={!editTextDraft.trim()} className={`${heroQuiet} h-8`}>Save</button>
                           </div>
                         </div>
                       ) : (
-                        <>
-                          <CommentBody text={comment.text} currentUserId={uid ?? undefined} className="mt-1 text-[15px] leading-relaxed text-[var(--color-text)]" />
-                          <div className="mt-1 flex items-center gap-3 text-[13px]">
-                            {(comment as TicketComment & { editedAt?: string }).editedAt && <span className="text-[var(--color-text-muted)]">Edited</span>}
-                            {(mine || isAdmin) && (
-                              <>
-                                <button type="button" onClick={() => { setEditingTextId(comment.id); setEditTextDraft(comment.text); }} className="text-[var(--color-accent-text)] hover:underline underline-offset-2">Edit</button>
-                                <button type="button" onClick={async () => { if (await appConfirm({ message: 'Delete this comment? It cannot be brought back.', tone: "danger", confirmLabel: "Delete" })) void handleDeleteComment(comment.id); }} className="text-[var(--state-overdue)] hover:underline underline-offset-2">Delete</button>
-                              </>
-                            )}
-                          </div>
-                        </>
+                        <CommentBody text={comment.text} currentUserId={uid ?? undefined} className="mt-1 text-[15px] leading-relaxed text-[var(--color-text)]" />
                       )}
                     </div>
                   </li>
@@ -1944,20 +2063,38 @@ export default function TicketDetailView() {
               </>
             )}
             {activeTab === 'audit' && (
-              (!ticket.history || ticket.history.length === 0)
-                ? <p className="px-4 py-10 text-center text-[15px] text-[var(--color-text-muted)]">No history yet.</p>
+              historyDays.length === 0
+                ? <p className="px-4 py-10 text-center text-[15px] text-[var(--color-text-muted)]">Nothing has happened yet.</p>
                 : (
-                  <ol className="divide-y divide-[var(--color-border)]">
-                    {ticket.history.map((event, idx) => (
-                      <li key={`history-${idx}`} className="px-4 py-3">
-                        <div className="flex items-baseline justify-between gap-3">
-                          <span className="text-[15px] font-semibold text-[var(--color-text)]">{sentence(event.action.replace(/_/g, ' '))}</span>
-                          <span className="shrink-0 text-[13px] text-[var(--color-text-muted)] tabular-nums">{fmtWhen(event.date)}</span>
-                        </div>
-                        <p className="text-[13px] text-[var(--color-text-muted)]">By {event.user?.split('@')[0] || 'someone'}{event.details ? `: ${event.details}` : ''}</p>
-                      </li>
+                  // Newest first, by day: what happened, who did it, when; the
+                  // reason they gave under it.
+                  <div className="px-4 py-3">
+                    {historyDays.map((g) => (
+                      <section key={g.day} className="mb-3 last:mb-0">
+                        <h3 className="text-[13px] font-semibold text-[var(--color-text-muted)] py-1.5">{g.day}</h3>
+                        <ol className="relative ml-1 border-l border-[var(--color-border-strong)]">
+                          {g.items.map((event, idx) => {
+                            const what = historyWords(event.action, event.details);
+                            const note = event.details && !/^ticket created via portal$/i.test(event.details) && !/^uploaded \w+ file:/i.test(event.details) && !/^assigned to /i.test(event.details) ? event.details : null;
+                            const reason = /\[reason: (.+)\]\s*$/i.exec(event.details || '')?.[1];
+                            return (
+                              <li key={`${g.day}-${idx}`} className="relative pl-4 py-2">
+                                <span aria-hidden className="absolute -left-[4.5px] top-[15px] w-2 h-2 rounded-full bg-[var(--color-surface)] border-2 border-[var(--color-border-control)]" />
+                                <div className="flex items-baseline justify-between gap-3">
+                                  <span className="text-[15px] font-semibold text-[var(--color-text)] min-w-0">{what}</span>
+                                  <span className="shrink-0 text-[13px] text-[var(--color-text-muted)] tabular-nums">{toDate(event.date).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}</span>
+                                </div>
+                                <p className="text-[13px] text-[var(--color-text-muted)]">
+                                  by {event.user ? shortName(event.user) : 'someone'}
+                                  {(note || reason) && <span className="block mt-0.5 text-[14px] text-[var(--color-text)] whitespace-pre-wrap line-clamp-3">{reason ?? note}</span>}
+                                </p>
+                              </li>
+                            );
+                          })}
+                        </ol>
+                      </section>
                     ))}
-                  </ol>
+                  </div>
                 )
             )}
           </div>
@@ -1981,9 +2118,10 @@ export default function TicketDetailView() {
                 <p className="text-[13px] text-[var(--color-text-muted)] min-w-0">
                   {newCommentMentions.length > 0 ? `${newCommentMentions.length} ${newCommentMentions.length === 1 ? 'person' : 'people'} will be notified` : null}
                 </p>
-                <button type="button" onClick={() => handlePostComment(newComment)} disabled={!newComment.trim()} className={heroQuiet}>
-                  <Send className="w-4 h-4" /> Send
-                </button>
+                {/* Quiet until there's something to send. */}
+                <Button size="sm" variant={newComment.trim() ? 'primary' : 'secondary'} onClick={() => handlePostComment(newComment)} disabled={!newComment.trim()}>
+                  <Send className="w-3.5 h-3.5" /> Send
+                </Button>
               </div>
             </div>
             )

@@ -13,10 +13,14 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { Loader2, X, Check, Plus, Pencil, FileText, Search, Sparkles } from "lucide-react";
+import { X, Check, Plus, Pencil, FileText, Search, Sparkles, HardHat } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
-import LoadingBlock from "@/components/ui/LoadingBlock";
+import { Button, useActionFeedback } from "@/components/ui/Button";
+import ErrorNote from "@/components/ui/ErrorNote";
+import { Skeleton, SkeletonRows, SkeletonText } from "@/components/ui/Skeleton";
+import { fieldBox, label as kitLabel, field as kitField } from "@/components/admin/kit";
+import { openContractor } from "@/lib/costsNav";
 import { useDraft } from "@/hooks/useDraft";
 import {
   getCompany, saveCompany, gatherCompanyProfile, addCompanyEvent, confirmQualityManual,
@@ -50,11 +54,12 @@ export default function CompanyProfilePage() {
   const [company, setCompany] = useState<Company | null>(null);
   const [profile, setProfile] = useState<CompanyProfileData | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
+  const [notFound, setNotFound] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
   // Errors from the panels below show as a line here; they never hide the page.
-  const [actionError, setActionError] = useState<string | null>(null);
-  const [profileError, setProfileError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<unknown>(null);
+  const [profileError, setProfileError] = useState<unknown>(null);
 
   const [reloadKey, setReloadKey] = useState(0);
   useEffect(() => {
@@ -64,18 +69,18 @@ export default function CompanyProfilePage() {
       try {
         const c = await getCompany(params.id);
         if (cancelled) return;
-        if (!c) { setError("Company not found."); setLoading(false); return; }
-        setError(null);
+        if (!c) { setNotFound(true); setLoading(false); return; }
+        setError(null); setNotFound(false);
         setCompany(c);
         setLoading(false);
         try {
           const p = await gatherCompanyProfile(c);
           if (!cancelled) { setProfile(p); setProfileError(null); }
         } catch (pe) {
-          if (!cancelled) setProfileError((pe as Error).message || "Couldn't gather the record.");
+          if (!cancelled) setProfileError(pe ?? new Error("gather failed"));
         }
       } catch (e) {
-        if (!cancelled) { setError((e as Error).message); setLoading(false); }
+        if (!cancelled) { setError(e ?? new Error("read failed")); setLoading(false); }
       }
     })();
     return () => { cancelled = true; };
@@ -85,24 +90,22 @@ export default function CompanyProfilePage() {
   const goBack = () => { if (window.history.length > 1) router.back(); else router.push("/companies"); };
   if (loading) return (
     <PageShell width="work">
-      <PageHero kicker="Known companies" title="Company" back={{ onClick: goBack, label: "Back to companies" }} size="md" />
-      <PageBody><Card><LoadingBlock what="the company" className="border-0 p-0" /></Card></PageBody>
+      <PageHero kicker="Known companies" title={<Skeleton className="h-7 w-80 max-w-full" />} back={{ onClick: goBack, label: "Back to companies" }} size="md" />
+      <PageBody>
+        <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5"><SkeletonText lines={3} /></div>
+        <SkeletonRows rows={5} cols={2} what="the company's record" />
+      </PageBody>
     </PageShell>
   );
-  if (error || !company) return (
+  if (error != null || notFound || !company) return (
     <PageShell width="work">
       <PageHero kicker="Known companies" back={{ href: "/companies", label: "Back to companies" }} size="md"
-        title={error === "Company not found." || !error ? "Company not found." : "Couldn't load this company."} />
+        title={error != null ? "This company didn't load." : "This company isn't here."} />
       <PageBody>
-        <Card>
-          <p role="alert" className="relative pl-3 text-[15px] text-[var(--color-text)]">
-            <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] bg-[var(--state-overdue)]" />{error ?? "Company not found."}
-          </p>
-          <div className="mt-3 flex gap-2">
-            {error && error !== "Company not found." && <button type="button" onClick={() => { setLoading(true); refresh(); }} className={heroQuiet}>Try again</button>}
-            <Link href="/companies" className={heroQuiet}>Back to companies</Link>
-          </div>
-        </Card>
+        {error != null
+          ? <ErrorNote error={error} onRetry={() => { setLoading(true); refresh(); }} />
+          : <p className="text-[15px] text-[var(--color-text)]">It may have been removed, or it&apos;s in another workspace.</p>}
+        <Link href="/companies" className={heroQuiet}>Back to companies</Link>
       </PageBody>
     </PageShell>
   );
@@ -116,14 +119,21 @@ export default function CompanyProfilePage() {
     : `${company.name} is not rated yet.`;
   const events = profile?.events ?? [];
   const bad = events.filter((e) => e.kind === "recordable" || e.kind === "stop_work").length;
+  // The score is the one big number (colored only when its band asks for
+  // attention); jobs and incidents sit small beside it.
   const facts: HeroFact[] = profile ? [
-    { label: "Score", value: sc?.composite != null ? Math.round(sc.composite) : "None", tone: band.tone === "green" ? "good" : band.tone === "amber" ? "warn" : band.tone === "rose" ? "bad" : undefined },
+    ...(sc?.composite != null ? [{ label: "Score", value: Math.round(sc.composite), hero: true, tone: band.tone === "amber" ? "warn" as const : band.tone === "rose" ? "bad" as const : undefined }] : []),
     { label: "Jobs", value: profile.projects.length },
     { label: <span title="Recordable injuries and stop works">Incidents</span>, value: bad, tone: bad > 0 ? "bad" : undefined },
   ] : [];
+  // What's on record last, so the page says what changed, not only totals.
+  const lastEvent = [...events].sort((a, b) => (b.eventDate || "").localeCompare(a.eventDate || ""))[0];
+  const lastLine = lastEvent
+    ? `Last on record: ${EVENT_KIND_LABEL[lastEvent.kind].toLowerCase()} ${fmtDay(`${lastEvent.eventDate}T12:00:00`)}${lastEvent.createdByName ? `, logged by ${lastEvent.createdByName}` : ""}.`
+    : company.qualityManualReviewedAt ? `Last on record: quality manual checked ${fmtDay(company.qualityManualReviewedAt)}.` : "";
   const cells: Array<[string, React.ReactNode]> = [
-    ["Kind", <span key="k" className="ui-tag">{COMPANY_KIND_LABEL[company.kind]}</span>],
-    ["Trade", company.trade ? <span key="t" className="ui-tag">{company.trade}</span> : <Faint key="t">None</Faint>],
+    ["Kind", COMPANY_KIND_LABEL[company.kind]],
+    ["Trade", company.trade ? company.trade : <Faint key="t">None</Faint>],
     ["Status", company.status === "do_not_use" ? <StatusTag key="s" tone="bad">Do not use</StatusTag> : company.status === "inactive" ? <StatusTag key="s">Inactive</StatusTag> : <StatusTag key="s" tone="good">Active</StatusTag>],
     ["Contact", company.contactName || <Faint key="c">None</Faint>],
     ["Phone", company.contactPhone ? <a key="p" href={`tel:${company.contactPhone}`} className="text-[var(--color-accent-text)] hover:underline underline-offset-2">{company.contactPhone}</a> : <Faint key="p">None</Faint>],
@@ -137,8 +147,9 @@ export default function CompanyProfilePage() {
         back={{ onClick: goBack, label: "Back to companies" }}
         size="md"
         title={answer}
-        sub={sc?.composite != null ? `${band.label}, from ${plural(sc.evidenceCount, "recorded evidence point")}.` : company.trade ? `${COMPANY_KIND_LABEL[company.kind]}, ${company.trade}.` : undefined}
+        sub={<>{sc?.composite != null ? `${band.label}, from ${plural(sc.evidenceCount, "recorded evidence point")}.` : company.trade ? `${COMPANY_KIND_LABEL[company.kind]}, ${company.trade}.` : ""}{lastLine ? <span className="block">{lastLine}</span> : null}</>}
         facts={facts}
+        factsHero={sc?.composite != null ? "auto" : "none"}
         tools={canManage ? (
           <button type="button" onClick={() => setShowEdit(true)} className={heroQuiet}>
             <Pencil className="w-3.5 h-3.5" /> Edit
@@ -157,35 +168,35 @@ export default function CompanyProfilePage() {
       />
 
       <PageBody>
-      {actionError && (
-        <div role="alert" className="flex items-center gap-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3 text-[15px] text-[var(--color-text)]">
-          <span className="relative pl-3 flex-1"><span aria-hidden className="absolute left-0 inset-y-0 w-[3px] bg-[var(--state-overdue)]" />{actionError}</span>
-          <button type="button" onClick={() => setActionError(null)} className="text-[var(--color-accent-text)] hover:underline underline-offset-2">Dismiss</button>
+      {actionError != null && (
+        <div className="flex items-start gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3">
+          <ErrorNote compact error={actionError} className="flex-1" />
+          <button type="button" onClick={() => setActionError(null)} aria-label="Dismiss" title="Dismiss" className="w-8 h-8 pointer-coarse:w-11 pointer-coarse:h-11 -my-1 grid place-items-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
         </div>
       )}
 
       <Card label="Details" pad={false} className="overflow-hidden">
-        <dl className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-px bg-[var(--color-border)]">
+        <dl className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-x-6 gap-y-3 px-4 sm:px-5 py-4">
           {cells.map(([label, value]) => (
-            <div key={label} className="bg-[var(--color-surface)] px-4 py-3 min-w-0">
+            <div key={label} className="min-w-0">
               <dt className="text-[13px] text-[var(--color-text-muted)]">{label}</dt>
               <dd className="mt-0.5 text-[15px] text-[var(--color-text)] min-w-0 truncate">{value}</dd>
             </div>
           ))}
         </dl>
-        {company.notes && <p className="px-4 py-3 border-t border-[var(--color-border)] text-[15px] text-[var(--color-text)] max-w-[80ch]">{company.notes}</p>}
+        {company.notes && <p className="px-4 sm:px-5 py-3 border-t border-[var(--color-border)] text-[15px] text-[var(--color-text)] max-w-[80ch]">{company.notes}</p>}
       </Card>
 
       <Card pad={false} className="overflow-hidden" label={
         <span className="inline-flex items-center gap-2">Score
-          {sc && <ScoreBadge score={sc.composite} size="sm" />}
+          {sc && <span className="font-sans"><ScoreBadge score={sc.composite} size="sm" /></span>}
           <HelpTooltip>Scored from recorded work only, never from typed-in ratings. A part with no evidence stays unrated and doesn&apos;t count.</HelpTooltip>
         </span>
       }>
         {!profile ? (
-          profileError
-            ? <p role="alert" className="px-4 py-3 text-[15px] text-[var(--color-text)]">Couldn&apos;t gather the record: {profileError} <button type="button" onClick={refresh} className="text-[var(--color-accent-text)] hover:underline underline-offset-2">Try again</button></p>
-            : <p className="px-4 py-3 flex items-center gap-2 text-[15px] text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin" /> Gathering the record…</p>
+          profileError != null
+            ? <ErrorNote compact className="px-4 py-3" error={profileError} title="The record wasn't gathered." onRetry={refresh} />
+            : <SkeletonRows rows={5} cols={1} what="the score" sheet={false} />
         ) : (
           <table className="w-full text-[15px]">
             <thead className="bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text-muted)] text-left">
@@ -203,8 +214,8 @@ export default function CompanyProfilePage() {
                   <td className="px-4 py-2.5 text-right">{d.score != null ? <ScoreFigure score={d.score} className="text-[17px]" /> : <Faint>None</Faint>}</td>
                   <td className="px-4 py-2.5 hidden sm:table-cell">
                     {d.score != null && (
-                      <span className="block h-2 w-32 rounded-full bg-[var(--color-accent-soft)] overflow-hidden" aria-hidden>
-                        <span className="block h-full rounded-full bg-[var(--color-main)]" style={{ width: `${d.score}%` }} />
+                      <span className="block h-1.5 w-32 rounded-full bg-[var(--color-surface-2)] overflow-hidden" aria-hidden>
+                        <span className="block h-full rounded-full bg-[var(--color-text-muted)]" style={{ width: `${d.score}%` }} />
                       </span>
                     )}
                   </td>
@@ -223,7 +234,7 @@ export default function CompanyProfilePage() {
         canManage={canManage} actorId={uid ?? ""} actorName={userEmail?.split("@")[0] ?? null}
         onChanged={() => void refresh()} setErr={setActionError} />
 
-      <HistoryPanels profile={profile} />
+      <HistoryPanels profile={profile} companyName={company.name} onPlan={(projectId) => { openContractor(company.name); router.push(`/projects/${projectId}?tab=costs`); }} />
 
       {showEdit && uid && (
         <EditCompanyModal company={company} actorId={uid}
@@ -239,15 +250,16 @@ function Faint({ children }: { children: React.ReactNode }) {
   return <span className="text-[var(--color-text-faint)]">{children}</span>;
 }
 
-const FIELD = "h-10 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[15px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] outline-none focus:border-[var(--color-main)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40";
-const LABEL = "block text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5";
+/** A field with no width of its own (inline rows), 40 px, 16 px on a phone. */
+const FIELD = `h-10 pointer-coarse:h-11 text-[15px] max-sm:text-[16px] ${fieldBox}`;
+const LABEL = kitLabel;
 const TH = "font-semibold px-4 h-10 whitespace-nowrap";
 
 // ── Quality manual ───────────────────────────────────────────────────────
 
 function QualityManualPanel({ orgId, company, canManage, actorId, onChanged, setErr }: {
   orgId: string; company: Company; canManage: boolean; actorId: string;
-  onChanged: () => void; setErr: (m: string | null) => void;
+  onChanged: () => void; setErr: (m: unknown) => void;
 }) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<Array<{ id: string; label: string }>>([]);
@@ -283,10 +295,10 @@ function QualityManualPanel({ orgId, company, canManage, actorId, onChanged, set
         body: JSON.stringify({ orgId, companyId: company.id, documentId: doc.id }),
       });
       const body = (await res.json().catch(() => null)) as { score?: number; findings?: RubricFinding[]; error?: string } | null;
-      if (!res.ok || body?.score == null || !body.findings) throw new Error(body?.error || `HTTP ${res.status}`);
+      if (!res.ok || body?.score == null || !body.findings) throw body?.error ? new Error(body.error) : { status: res.status, message: "" };
       setProposal({ score: body.score, findings: body.findings });
     } catch (e) {
-      setErr((e as Error).message);
+      setErr(e ?? new Error("evaluate failed"));
     } finally { setEvaluating(false); }
   };
 
@@ -303,7 +315,7 @@ function QualityManualPanel({ orgId, company, canManage, actorId, onChanged, set
       setProposal(null); setDoc(null); setQuery("");
       onChanged();
     } catch (e) {
-      setErr((e as Error).message);
+      setErr(e ?? new Error("confirm failed"));
     } finally { setConfirming(false); }
   };
 
@@ -354,9 +366,9 @@ function QualityManualPanel({ orgId, company, canManage, actorId, onChanged, set
                       className={`${FIELD} w-full pl-9`} />
                   </span>
                 )}
-                <button type="button" onClick={() => void evaluate()} disabled={!doc || evaluating} className={`${heroQuiet} h-10`}>
-                  {evaluating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />} Evaluate
-                </button>
+                <Button variant="secondary" onClick={() => void evaluate()} disabled={!doc} loading={evaluating} title={!doc ? "Find their quality manual first" : undefined}>
+                  {!evaluating && <Sparkles className="w-4 h-4" />} Evaluate
+                </Button>
               </div>
               {results.length > 0 && !doc && (
                 <ul className="rounded-md border border-[var(--color-border)] divide-y divide-[var(--color-border)] overflow-hidden">
@@ -377,9 +389,9 @@ function QualityManualPanel({ orgId, company, canManage, actorId, onChanged, set
                 <span className="text-[13px] text-[var(--color-text-muted)]">Nothing is recorded until you confirm.</span>
                 <span className="ml-auto flex items-center gap-2">
                   <button type="button" onClick={() => setProposal(null)} className={heroQuiet}>Discard</button>
-                  <button type="button" onClick={() => void confirm()} disabled={confirming} className={heroQuiet}>
-                    {confirming ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} Confirm to record
-                  </button>
+                  <Button variant="secondary" onClick={() => void confirm()} loading={confirming}>
+                    {!confirming && <Check className="w-4 h-4" />} Confirm to record
+                  </Button>
                 </span>
               </div>
               <table className="w-full text-[15px] rounded-md border border-[var(--color-border)]">
@@ -407,23 +419,24 @@ const EVENT_TONE: Record<CompanyEvent["kind"], Tone> = { recordable: "bad", stop
 function EventsPanel({ orgId, company, events, canManage, actorId, actorName, onChanged, setErr }: {
   orgId: string; company: Company; events: CompanyEvent[];
   canManage: boolean; actorId: string; actorName: string | null;
-  onChanged: () => void; setErr: (m: string | null) => void;
+  onChanged: () => void; setErr: (m: unknown) => void;
 }) {
   const [kind, setKind] = useState<CompanyEvent["kind"]>("near_miss");
   const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [desc, setDesc] = useState("");
-  const [busy, setBusy] = useState(false);
+  const logIt = useActionFeedback();
   // What happened autosaves on this device until it's logged.
   useDraft<string>(canManage ? `company-event:${company.id}` : null, desc, setDesc, (v) => !v.trim());
 
   const add = async () => {
-    setBusy(true); setErr(null);
+    if (logIt.loading) return;
+    setErr(null);
     try {
-      await addCompanyEvent({ orgId, companyId: company.id, kind, eventDate: date, description: desc, actorId, actorName });
+      await logIt.run(() => addCompanyEvent({ orgId, companyId: company.id, kind, eventDate: date, description: desc, actorId, actorName }));
       setDesc(""); onChanged();
     } catch (e) {
-      setErr((e as Error).message);
-    } finally { setBusy(false); }
+      setErr(e ?? new Error("log failed"));
+    }
   };
 
   return (
@@ -443,13 +456,13 @@ function EventsPanel({ orgId, company, events, canManage, actorId, actorName, on
             onKeyDown={(e) => { if (e.key === "Enter" && desc.trim()) void add(); }}
             placeholder="What happened? It goes on their permanent record."
             className={`${FIELD} flex-1 min-w-56`} />
-          <button type="button" onClick={() => void add()} disabled={busy || !desc.trim()} className={`${heroQuiet} h-10`}>
-            {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />} Log it
-          </button>
+          <Button variant="secondary" onClick={() => void add()} disabled={!desc.trim()} {...logIt.state} doneLabel="Logged" title={!desc.trim() ? "Say what happened first" : undefined}>
+            {!logIt.loading && <Plus className="w-4 h-4" />} Log it
+          </Button>
         </div>
       )}
       {events.length === 0 ? (
-        <p className="px-4 py-4 text-[15px] text-[var(--color-text-muted)]">No events on record.</p>
+        <p className="px-4 py-4 text-[15px] text-[var(--color-text-muted)]">No events on record yet.</p>
       ) : (
         <div className="max-h-96 overflow-y-auto">
           <table className="w-full text-[15px]">
@@ -475,7 +488,7 @@ function EventsPanel({ orgId, company, events, canManage, actorId, actorName, on
 
 // ── History: jobs, bids, change orders ───────────────────────────────────
 
-function HistoryPanels({ profile }: { profile: CompanyProfileData | null }) {
+function HistoryPanels({ profile, companyName, onPlan }: { profile: CompanyProfileData | null; companyName: string; onPlan: (projectId: string) => void }) {
   if (!profile) return null;
   const { projects, bids, changeOrders } = profile;
   if (projects.length === 0 && bids.length === 0 && changeOrders.length === 0) return null;
@@ -486,14 +499,21 @@ function HistoryPanels({ profile }: { profile: CompanyProfileData | null }) {
         <Card pad={false} className="overflow-hidden" label="Jobs" action={<span className="text-[13px] text-[var(--color-text-muted)] tabular-nums">{plural(projects.length, "job")}</span>}>
           <table className="w-full text-[15px]">
             <thead className="bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text-muted)] text-left">
-              <tr><th className={`${TH} w-full`}>Project</th><th className={TH}>Trade</th><th className={`${TH} text-right`}>Contract</th></tr>
+              <tr><th className={`${TH} w-full`}>Project</th><th className={`${TH} hidden sm:table-cell`}>Trade</th><th className={`${TH} text-right`}>Contract</th><th className={TH}><span className="sr-only">Staffing plan and rates</span></th></tr>
             </thead>
             <tbody className="divide-y divide-[var(--color-border)]">
               {projects.map((p) => (
                 <tr key={p.projectId}>
                   <td className="px-4 py-2.5"><Link href={`/projects/${p.projectId}`} className="font-semibold text-[var(--color-text)] hover:text-[var(--color-accent-text)]">{p.projectName}</Link></td>
-                  <td className="px-4 py-2.5 whitespace-nowrap">{p.trade ?? <Faint>None</Faint>}</td>
+                  <td className="px-4 py-2.5 whitespace-nowrap hidden sm:table-cell">{p.trade ?? <Faint>None</Faint>}</td>
                   <td className="px-4 py-2.5 whitespace-nowrap text-right tabular-nums">{p.contractValue != null ? fmtMoney(p.contractValue) : <Faint>None</Faint>}</td>
+                  <td className="px-4 py-2.5 whitespace-nowrap text-right">
+                    {/* Its staffing plan, rate sheet and every shift live on the project's Costs › Contractors page. */}
+                    <button type="button" onClick={() => onPlan(p.projectId)} title={`${companyName}'s staffing plan, rate sheet and shifts on this project`}
+                      className="inline-flex items-center gap-1.5 min-h-8 pointer-coarse:min-h-11 text-[14px] font-semibold text-[var(--color-accent-text)] hover:underline underline-offset-2">
+                      <HardHat aria-hidden className="w-4 h-4" /><span className="max-sm:sr-only">Staffing plan and rates</span>
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -559,7 +579,7 @@ function EditCompanyModal({ company, actorId, onClose, onSaved }: {
   const [contactPhone, setContactPhone] = useState(company.contactPhone ?? "");
   const [notes, setNotes] = useState(company.notes ?? "");
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
 
   const submit = async () => {
     setBusy(true); setError(null);
@@ -572,7 +592,7 @@ function EditCompanyModal({ company, actorId, onClose, onSaved }: {
       });
       onSaved();
     } catch (e) {
-      setError((e as Error).message);
+      setError(e ?? new Error("save failed"));
     } finally { setBusy(false); }
   };
 
@@ -582,10 +602,10 @@ function EditCompanyModal({ company, actorId, onClose, onSaved }: {
       <form onSubmit={(e) => { e.preventDefault(); if (name.trim()) void submit(); }} className="contents">
         <ModalBody className="space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-[1fr_200px] gap-4">
-            <div><label htmlFor="ce-name" className={LABEL}>Company name</label><input id="ce-name" value={name} onChange={(e) => setName(e.target.value)} required className={`${FIELD} w-full`} /></div>
+            <div><label htmlFor="ce-name" className={LABEL}>Company name</label><input id="ce-name" value={name} onChange={(e) => setName(e.target.value)} required className={kitField} /></div>
             <div>
               <label htmlFor="ce-kind" className={LABEL}>Kind</label>
-              <select id="ce-kind" value={kind} onChange={(e) => setKind(e.target.value as Company["kind"])} className={`${FIELD} w-full`}>
+              <select id="ce-kind" value={kind} onChange={(e) => setKind(e.target.value as Company["kind"])} className={kitField}>
                 {(Object.keys(COMPANY_KIND_LABEL) as Company["kind"][]).map((k) => (
                   <option key={k} value={k}>{COMPANY_KIND_LABEL[k]}</option>
                 ))}
@@ -593,10 +613,10 @@ function EditCompanyModal({ company, actorId, onClose, onSaved }: {
             </div>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-[1fr_200px] gap-4">
-            <div><label htmlFor="ce-trade" className={LABEL}>Trade <span className="font-normal">(optional)</span></label><input id="ce-trade" value={trade} onChange={(e) => setTrade(e.target.value)} className={`${FIELD} w-full`} /></div>
+            <div><label htmlFor="ce-trade" className={LABEL}>Trade <span className="font-normal text-[var(--color-text-muted)]">(optional)</span></label><input id="ce-trade" value={trade} onChange={(e) => setTrade(e.target.value)} className={kitField} /></div>
             <div>
               <label htmlFor="ce-status" className={LABEL}>Status</label>
-              <select id="ce-status" value={status} onChange={(e) => setStatus(e.target.value as Company["status"])} className={`${FIELD} w-full`} aria-describedby="ce-status-hint">
+              <select id="ce-status" value={status} onChange={(e) => setStatus(e.target.value as Company["status"])} className={kitField} aria-describedby="ce-status-hint">
                 <option value="active">Active</option>
                 <option value="inactive">Inactive</option>
                 <option value="do_not_use">Do not use</option>
@@ -605,22 +625,16 @@ function EditCompanyModal({ company, actorId, onClose, onSaved }: {
           </div>
           <p id="ce-status-hint" className="-mt-2 text-[13px] text-[var(--color-text-muted)]">Do not use keeps the record and flags the company across the app.</p>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <div><label htmlFor="ce-cname" className={LABEL}>Contact <span className="font-normal">(optional)</span></label><input id="ce-cname" value={contactName} onChange={(e) => setContactName(e.target.value)} className={`${FIELD} w-full`} /></div>
-            <div><label htmlFor="ce-email" className={LABEL}>Email <span className="font-normal">(optional)</span></label><input id="ce-email" type="email" value={contactEmail} onChange={(e) => setContactEmail(e.target.value)} className={`${FIELD} w-full`} /></div>
-            <div><label htmlFor="ce-phone" className={LABEL}>Phone <span className="font-normal">(optional)</span></label><input id="ce-phone" type="tel" value={contactPhone} onChange={(e) => setContactPhone(e.target.value)} className={`${FIELD} w-full`} /></div>
+            <div><label htmlFor="ce-cname" className={LABEL}>Contact <span className="font-normal text-[var(--color-text-muted)]">(optional)</span></label><input id="ce-cname" value={contactName} onChange={(e) => setContactName(e.target.value)} className={kitField} /></div>
+            <div><label htmlFor="ce-email" className={LABEL}>Email <span className="font-normal text-[var(--color-text-muted)]">(optional)</span></label><input id="ce-email" type="email" value={contactEmail} onChange={(e) => setContactEmail(e.target.value)} className={kitField} /></div>
+            <div><label htmlFor="ce-phone" className={LABEL}>Phone <span className="font-normal text-[var(--color-text-muted)]">(optional)</span></label><input id="ce-phone" type="tel" value={contactPhone} onChange={(e) => setContactPhone(e.target.value)} className={kitField} /></div>
           </div>
-          <div><label htmlFor="ce-notes" className={LABEL}>Notes <span className="font-normal">(optional)</span></label><textarea id="ce-notes" value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} className={`${FIELD} w-full h-auto py-2 resize-y`} /></div>
-          {error && (
-            <p role="alert" className="relative pl-3 text-[13px] font-semibold text-[var(--color-text)]">
-              <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] bg-[var(--state-overdue)]" />{error}
-            </p>
-          )}
+          <div><label htmlFor="ce-notes" className={LABEL}>Notes <span className="font-normal text-[var(--color-text-muted)]">(optional)</span></label><textarea id="ce-notes" value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} className={`${FIELD} w-full h-auto py-2 resize-y`} /></div>
+          {error != null && <ErrorNote compact error={error} title="The changes weren't saved." />}
         </ModalBody>
         <ModalFooter>
           <button type="button" onClick={onClose} disabled={busy} className={heroQuiet}>Cancel</button>
-          <button type="submit" disabled={busy || !name.trim()} className={heroPrimary}>
-            {busy && <Loader2 className="w-4 h-4 animate-spin" />} Save
-          </button>
+          <Button type="submit" disabled={!name.trim()} loading={busy} title={!name.trim() ? "The company needs a name" : undefined}>Save</Button>
         </ModalFooter>
       </form>
     </Modal>
