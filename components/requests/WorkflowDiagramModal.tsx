@@ -73,7 +73,7 @@ export default function WorkflowDiagramModal({
         role="dialog"
         aria-modal="true"
         aria-label="How a drafting request flows"
-        className="w-full max-w-lg bg-[var(--color-surface)] rounded-2xl shadow-2xl my-4 animate-in fade-in zoom-in-95 duration-200"
+        className="w-full max-w-lg bg-[var(--color-surface)] rounded-xl shadow-2xl my-4 animate-in fade-in zoom-in-95 duration-200"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-start gap-2 px-5 sm:px-6 pt-5 pb-4 border-b border-[var(--color-border)]">
@@ -83,7 +83,7 @@ export default function WorkflowDiagramModal({
               {currentIdx >= 0 ? `Step ${currentIdx + 1} of ${MAIN_FLOW.length}: ${MAIN_FLOW[currentIdx].label}.` : BRANCHES.find((b) => b.status === current)?.label ?? "Seven steps, start to close."}
             </h2>
           </div>
-          <button onClick={onClose} aria-label="Close" className="w-9 h-9 grid place-items-center rounded-[10px] bg-[var(--color-surface-2)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors"><X className="w-4 h-4" /></button>
+          <button type="button" onClick={onClose} aria-label="Close" title="Close" className="w-9 h-9 pointer-coarse:w-11 pointer-coarse:h-11 grid place-items-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors"><X className="w-4 h-4" /></button>
         </div>
 
         <div className="px-5 sm:px-6 py-5 max-h-[70vh] overflow-y-auto">

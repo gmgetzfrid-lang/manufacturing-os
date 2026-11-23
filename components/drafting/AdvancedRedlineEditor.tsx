@@ -30,6 +30,7 @@ import 'react-pdf/dist/Page/TextLayer.css';
 import { appConfirm } from "@/components/providers/DialogProvider";
 import { useDraft } from "@/hooks/useDraft";
 import { useEscapeClose } from "@/hooks/useEscapeClose";
+import { friendlyError } from "@/lib/friendlyError";
 import { vDim, vPanel, vKicker, vIcon, vTool, vGroup, vPrimary, vClose, vNote } from "@/components/viewers/viewerChrome";
 
 // Configure PDF Worker
@@ -472,7 +473,7 @@ export default function AdvancedRedlineEditor({ fileUrl, onClose, onSave, isSavi
 
     } catch (e) {
       console.error("Save Failed:", e);
-      setSaveMsg({ tone: "bad", text: `The redlines weren't saved: ${e instanceof Error ? e.message : String(e)}. Your marks are still here.` });
+      setSaveMsg({ tone: "bad", text: `The redlines weren't saved. ${friendlyError(e)} Your marks are still here.` });
     }
   };
 
@@ -562,7 +563,7 @@ export default function AdvancedRedlineEditor({ fileUrl, onClose, onSave, isSavi
 
           <div className="xl:order-last flex items-center gap-2 shrink-0">
             <button type="button" onClick={handleSave} disabled={isSaving} className={vPrimary}>
-              {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} {isSaving ? 'Saving…' : 'Save'}
+              {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} {isSaving ? 'Saving' : 'Save'}
             </button>
             <button type="button" onClick={() => void requestClose()} disabled={isSaving} aria-label="Close" title="Close (Esc)" className={vClose}><X className="w-5 h-5" /></button>
           </div>
@@ -662,7 +663,7 @@ export default function AdvancedRedlineEditor({ fileUrl, onClose, onSave, isSavi
                  <Document options={PDF_DOC_OPTIONS}
                    file={fileUrl}
                    onLoadSuccess={({ numPages }) => setNumPages(numPages)}
-                   loading={<div className="w-[min(80vw,720px)] h-[60vh] grid place-items-center bg-[var(--color-surface)] text-[var(--color-text-muted)] text-[13px]"><span className="inline-flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Opening the sheet…</span></div>}
+                   loading={<div className="w-[min(80vw,720px)] h-[60vh] grid place-items-center bg-[var(--color-surface)] text-[var(--color-text-muted)] text-[13px]"><span className="inline-flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Opening the sheet</span></div>}
                    error={<div role="alert" className="w-[min(80vw,720px)] h-[40vh] grid place-items-center bg-[var(--color-surface)] text-rose-300 text-[13px] font-semibold px-6 text-center">Couldn&apos;t open this file for redlines. Close and try again.</div>}
                    className="block"
                  >

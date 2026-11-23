@@ -27,14 +27,17 @@
 // surface where you act on it.
 
 import React, { Suspense, useCallback, useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import {
   RefreshCw, Map as MapIcon, ChevronRight,
-  ShieldCheck, AlertTriangle, Users, Boxes,
-  Radar, Info, Tag, LayoutGrid, OctagonPause,
+  ShieldCheck, AlertTriangle, Users,
+  Radar, Info, Tag, LayoutGrid,
 } from "lucide-react";
 import { PageHero, PageBody, Card, heroQuiet, type HeroFact } from "@/components/ui/PageHero";
+import CopyId from "@/components/ui/CopyId";
+import ErrorNote from "@/components/ui/ErrorNote";
+import { Skeleton, SkeletonRows } from "@/components/ui/Skeleton";
 import { bandSeg, bandSegItem } from "@/components/admin/band";
 import { PageShell } from "@/components/ui/PageShell";
 import LifecycleBoard from "@/components/documents/LifecycleBoard";
@@ -47,7 +50,6 @@ import { analyzeCheckoutCoordination, type CoordinationAnalysis } from "@/lib/co
 import { listPlotPlans } from "@/lib/plotPlans";
 import { MiniBars } from "@/components/ui/Sparkline";
 import ViewTabs, { HOME_VIEWS } from "@/components/navigation/ViewTabs";
-import LoadingBlock from "@/components/ui/LoadingBlock";
 import HelpTooltip from "@/components/ui/HelpTooltip";
 import type { WhiteboardState, PlotPlan, CheckoutSession } from "@/types/schema";
 
@@ -68,7 +70,7 @@ type CoordView = "collisions" | "flow";
 // default export is that thin wrapper.
 export default function CoordinationPage() {
   return (
-    <Suspense fallback={<PageShell><PageHero kicker="Home · Coordination" title="Coordination" /><PageBody><Card><LoadingBlock what="the coordination board" className="border-0 p-0" /></Card></PageBody></PageShell>}>
+    <Suspense fallback={<PageShell><PageHero kicker="Home · Coordination" title={<Skeleton className="h-7 w-72 max-w-full" />} /><PageBody><SkeletonRows rows={5} cols={2} what="the coordination board" /></PageBody></PageShell>}>
       <CoordinationInner />
     </Suspense>
   );
@@ -144,8 +146,8 @@ function CoordinationInner() {
     return m;
   }, [snap?.checkouts]);
 
-  const band = (title: React.ReactNode, sub?: React.ReactNode, tools?: React.ReactNode, facts?: HeroFact[]) => (
-    <PageHero kicker="Home · Coordination" title={title} sub={sub} tools={tools} facts={facts}>
+  const band = (title: React.ReactNode, sub?: React.ReactNode, tools?: React.ReactNode, facts?: HeroFact[], factsHero: "auto" | "none" = "none") => (
+    <PageHero kicker="Home · Coordination" title={title} sub={sub} tools={tools} facts={facts} factsHero={factsHero}>
       <div className="flex flex-wrap items-center gap-x-4 gap-y-3">
         <div className="[&>div]:mb-0"><ViewTabs tabs={HOME_VIEWS} /></div>
         {/* The two situational boards, one page. */}
@@ -164,17 +166,14 @@ function CoordinationInner() {
   );
 
   if (loading && !snap) {
-    return <PageShell>{band("Coordination")}<PageBody><Card><LoadingBlock what="the coordination board" rows={6} className="border-0 p-0" /></Card></PageBody></PageShell>;
+    return <PageShell>{band(<Skeleton className="h-7 w-72 max-w-full" />)}<PageBody><SkeletonRows rows={6} cols={2} what="the coordination board" /></PageBody></PageShell>;
   }
   if (!snap) {
     return (
       <PageShell>
-        {band("Couldn't load the board.")}
+        {band("The board didn't load.")}
         <PageBody>
-          <Card>
-            <p className="text-[15px] text-[var(--color-text-muted)]">If it keeps failing, the database updates may not be applied yet.</p>
-            <button type="button" onClick={() => void load()} className="mt-3 inline-flex items-center h-10 px-4 rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[15px] font-semibold hover:bg-[var(--color-accent-hover)]">Try again</button>
-          </Card>
+          <ErrorNote title="The board didn't load." next="Try again. If it keeps failing, the database updates may not be applied yet; an admin can check Admin › Settings › Database updates." onRetry={() => void load()} />
         </PageBody>
       </PageShell>
     );
@@ -192,9 +191,11 @@ function CoordinationInner() {
     : lockCount ? "No collisions." : "No active work to compare.";
   const sub = view === "flow" ? "Every controlled document by where it is in its life."
     : <Link href="/requests" className="text-[var(--color-accent-text)] hover:underline">{snap.openRequests} open request{snap.openRequests === 1 ? "" : "s"}</Link>;
-  const factLink = (href: string, n: number) => <Link href={href} className="hover:text-[var(--color-accent-text)]">{n}</Link>;
+  // A zero stays a plain (muted) zero; a count you can act on links to it.
+  const factLink = (href: string, n: number) => (n > 0 ? <Link href={href} className="hover:text-[var(--color-accent-text)] hover:underline underline-offset-2">{n}</Link> : n);
+  // Collisions is the one number that matters here: big when there are any.
   const facts: HeroFact[] | undefined = view === "flow" ? undefined : [
-    { label: "Collisions", value: collisions, tone: collisions ? "bad" : undefined },
+    { label: "Collisions", value: collisions, tone: collisions ? "bad" : undefined, hero: collisions > 0 },
     { label: "Holds", value: factLink("/admin/holds", holds), tone: holds ? "warn" : undefined },
     { label: "Checkouts", value: factLink("/checkouts", lockCount) },
   ];
@@ -207,7 +208,7 @@ function CoordinationInner() {
 
   return (
     <PageShell>
-      {band(view === "flow" ? "Document flow." : answer, sub, refresh, facts)}
+      {band(view === "flow" ? "Document flow." : answer, sub, refresh, facts, collisions > 0 ? "auto" : "none")}
       <PageBody>
         {view === "flow" && <Card pad={false} className="p-3 sm:p-4 overflow-hidden"><LifecycleBoard /></Card>}
 
@@ -221,21 +222,18 @@ function CoordinationInner() {
             </p>
           )}
           {snap.failed.length > 0 && (
-            <div role="alert" className="mb-3 text-[14px] text-[var(--state-overdue)] font-semibold flex flex-wrap items-center gap-x-3">
-              <span>Couldn&apos;t load {snap.failed.join(", ")}. Numbers below may be missing.</span>
-              <button type="button" onClick={() => void load()} className="font-normal text-[var(--color-accent-text)] hover:underline">Try again</button>
-            </div>
+            <ErrorNote compact className="mb-3" title={`${snap.failed[0][0].toUpperCase()}${snap.failed.join(", ").slice(1)} didn't load.`} next="Numbers below may be missing." onRetry={() => void load()} />
           )}
         </>} />
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           {/* Equipment state distribution */}
-          <Panel title="Equipment state" icon={<Boxes className="w-4 h-4" />} span={2}>
+          <Panel title="Equipment state" span={2}>
             {totalEquip === 0 ? (
-              <div className="text-[15px] text-[var(--color-text-muted)]">No equipment tracked yet. <Link href="/admin/assets" className="text-[var(--color-accent-text)] hover:underline">Register equipment</Link></div>
+              <div className="text-[15px] text-[var(--color-text-muted)]">No equipment tracked yet. <Link href="/admin/assets" className="text-[var(--color-accent-text)] hover:underline underline-offset-2">Register equipment</Link></div>
             ) : (
               <>
-                <p className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[15px] mb-3 text-[var(--color-text)]"><span className="inline-flex items-center gap-1.5"><span className="ui-count is-solid">{totalEquip}</span> tracked</span>{blocked > 0 && <span className="inline-flex items-center gap-1.5 font-semibold text-[var(--state-overdue)]"><span className="ui-count is-bad">{blocked}</span> blocked</span>}</p>
+                <p className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[15px] mb-3 text-[var(--color-text)] tabular-nums"><span>{totalEquip} tracked</span>{blocked > 0 && <span className="font-semibold text-[var(--state-overdue-text)]">{blocked} blocked</span>}</p>
                 <MiniBars
                   height={12}
                   segments={WHITEBOARD_STATES.map((s) => ({ value: snap.states[s], color: STATE_CONFIG[s].hex, label: STATE_CONFIG[s].label }))}
@@ -244,7 +242,7 @@ function CoordinationInner() {
                   {WHITEBOARD_STATES.map((s) => (
                     <span key={s} className="inline-flex items-center gap-1.5 text-[13px] text-[var(--color-text-muted)]">
                       <span className="w-2 h-2 rounded-full" style={{ backgroundColor: STATE_CONFIG[s].hex }} />
-                      {STATE_CONFIG[s].label} <span className="ui-count">{snap.states[s]}</span>
+                      {STATE_CONFIG[s].label} <span className="tabular-nums text-[var(--color-text)]">{snap.states[s]}</span>
                     </span>
                   ))}
                 </div>
@@ -253,10 +251,10 @@ function CoordinationInner() {
           </Panel>
 
           {/* Blockers (holds): framed around health, not just a count. */}
-          <Panel title="Blockers" icon={<OctagonPause className="w-4 h-4" />} href="/admin/holds">
+          <Panel title="Blockers" href="/admin/holds">
             {snap.failed.includes("holds")
-              ? <p className="text-[15px] font-semibold text-[var(--state-overdue)]">Couldn&apos;t read the holds</p>
-              : <p className="text-[15px] text-[var(--color-text)]">{holds === 0 ? "Nothing blocked right now." : <span className="inline-flex items-center gap-1.5"><span className="ui-count is-warn">{holds}</span> active hold{holds === 1 ? "" : "s"}</span>}</p>}
+              ? <p className="text-[15px] text-[var(--color-text-muted)]">The holds didn&apos;t load.</p>
+              : <p className="text-[15px] text-[var(--color-text)]">{holds === 0 ? "Nothing blocked right now." : <span className="font-semibold text-[var(--state-held-text)] tabular-nums">{holds} active hold{holds === 1 ? "" : "s"}</span>}</p>}
             {/* How holds are going: one fact a row. */}
             <dl className="mt-2 divide-y divide-[var(--color-border)] border-t border-[var(--color-border)] text-[14px]">
               {([
@@ -267,7 +265,7 @@ function CoordinationInner() {
               ].filter(Boolean) as Array<[string, string]>).map(([k, v]) => (
                 <div key={k} className="flex items-center justify-between gap-3 py-1.5">
                   <dt className="text-[var(--color-text-muted)]">{k}</dt>
-                  <dd className="font-display font-semibold tabular-nums text-[var(--color-text)]">{v}</dd>
+                  <dd className={`font-semibold tabular-nums ${v === "0" ? "text-[var(--color-text-faint)]" : "text-[var(--color-text)]"}`}>{v}</dd>
                 </div>
               ))}
             </dl>
@@ -283,17 +281,17 @@ function CoordinationInner() {
           </Panel>
 
           {/* Plot plans */}
-          <Panel title="Spatial boards" icon={<MapIcon className="w-4 h-4" />} span={3}>
+          <Panel title="Spatial boards" span={3}>
             {snap.plotPlans.length === 0 ? (
-              <div className="text-[15px] text-[var(--color-text-muted)]">No plot plans yet. <Link href="/plot-plans" className="text-[var(--color-accent-text)] hover:underline">Create a plot plan</Link></div>
+              <div className="text-[15px] text-[var(--color-text-muted)]">No plot plans yet. <Link href="/plot-plans" className="text-[var(--color-accent-text)] hover:underline underline-offset-2">Create a plot plan</Link></div>
             ) : (
               <div className="flex flex-wrap gap-2">
                 {snap.plotPlans.slice(0, 8).map((p) => (
                   <Link key={p.id} href={`/plot-plans/${p.id}`} className={QUIET_LINK}>
-                    <MapIcon className="w-3.5 h-3.5 text-[var(--color-main)]" /> {p.name} <span className="ui-count">{p.markers.length}</span>
+                    <MapIcon aria-hidden className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> {p.name} <span className="font-normal tabular-nums text-[var(--color-text-muted)]">{p.markers.length}</span>
                   </Link>
                 ))}
-                {snap.plotPlans.length > 8 && <Link href="/plot-plans" className="inline-flex items-center h-9 px-2 text-[14px] text-[var(--color-accent-text)] hover:underline">Show {snap.plotPlans.length - 8} more</Link>}
+                {snap.plotPlans.length > 8 && <Link href="/plot-plans" className="inline-flex items-center h-10 px-2 text-[14px] font-semibold text-[var(--color-accent-text)] hover:underline underline-offset-2">Show {snap.plotPlans.length - 8} more</Link>}
               </div>
             )}
           </Panel>
@@ -305,7 +303,7 @@ function CoordinationInner() {
 }
 
 /** The radar's heading, with what it watches one tap away. */
-const RADAR_LABEL = <span className="inline-flex items-center gap-2"><span aria-hidden className="ui-icon-tile is-sm is-solid"><Radar className="w-4 h-4" /></span>Collision radar <HelpTooltip>Two people with different documents checked out on the same equipment tag, unit or system. Checked every 45 seconds.</HelpTooltip></span>;
+const RADAR_LABEL = <span className="inline-flex items-center gap-1.5">Collision radar <HelpTooltip>Two people with different documents checked out on the same equipment tag, unit or system. Checked every 45 seconds.</HelpTooltip></span>;
 
 /** A quiet link that looks like a button (ink on a warm fill). */
 const QUIET_LINK = heroQuiet;
@@ -339,21 +337,23 @@ function CoordinationRadar({
   // (What it watches is the page's subtitle.) Coverage: proof of what it
   // actually examined, one ruled cell a number.
   const cover: Array<[string, number]> = [["Checkouts scanned", activeCheckouts], ["Documents", documents], ["On equipment", assetLinkedDocuments], ["On a unit or system", scopedDocuments], ["Comparable", comparableDocuments]];
+  // What it looked at, as one quiet line of labeled values (zeros muted).
   const Header = (
-    <dl className="mb-4 grid grid-cols-2 sm:grid-cols-5 border-y border-[var(--color-border)]">
-      {cover.map(([k, v], i) => (
-        <div key={k} className={`py-2 pr-3 border-[var(--color-border)] ${i % 2 ? "max-sm:pl-3 max-sm:border-l" : ""} ${i > 0 ? "sm:pl-4 sm:border-l" : ""} ${i >= 2 ? "max-sm:border-t" : ""}`}>
-          <dt className="text-[13px] text-[var(--color-text-muted)]">{k}</dt>
-          <dd className="font-display text-[22px] leading-tight font-semibold tabular-nums text-[var(--color-text)]">{v}</dd>
+    <dl className="mb-4 flex flex-wrap gap-x-6 gap-y-2 text-[14px]">
+      {cover.map(([k, v]) => (
+        <div key={k} className="flex items-baseline gap-1.5">
+          <dt className="text-[var(--color-text-muted)]">{k}</dt>
+          <dd className={`font-semibold tabular-nums ${v === 0 ? "text-[var(--color-text-faint)]" : "text-[var(--color-text)]"}`}>{v}</dd>
         </div>
       ))}
     </dl>
   );
+  const router = useRouter();
 
   // STATE 1: collisions found.
   if (overlaps.length > 0) {
     return (
-      <Card label={RADAR_LABEL} pad={false} className="overflow-hidden" action={<span className="inline-flex items-center gap-1.5 text-[14px] font-semibold text-[var(--state-overdue)]"><span className="ui-count is-bad">{overlaps.length}</span> active</span>}>
+      <Card label={RADAR_LABEL} pad={false} className="overflow-hidden" action={<span className="text-[14px] font-semibold tabular-nums text-[var(--state-overdue-text)]">{overlaps.length} active</span>}>
         <div className="px-4 sm:px-5 pt-4">{notes}{Header}</div>
         <div className="border-t border-[var(--color-border)] divide-y divide-[var(--color-border)]">
           {overlaps.slice(0, 8).map((o, i) => {
@@ -366,28 +366,31 @@ function CoordinationRadar({
             // Straight to a document in the collision; the list when none can be named.
             const first = o.checkoutIds.map((id) => sessionById.get(id)).find((x) => x?.libraryId && x.documentId);
             const href = first ? `/documents/${first.libraryId}?doc=${first.documentId}` : "/checkouts";
+            // The whole row opens it; the tag copies on its own.
             return (
-              <Link key={i} href={href} className="flex items-center gap-3 px-4 sm:px-5 py-3 hover:bg-[var(--color-surface-2)] transition-colors">
-                <span aria-hidden className="ui-icon-tile is-sm !bg-[color-mix(in_srgb,var(--state-overdue)_14%,transparent)] !text-[var(--state-overdue)]"><AlertTriangle className="w-4 h-4" /></span>
+              <div key={i} onClick={(e) => { if ((e.target as HTMLElement).closest("a,button")) return; router.push(href); }}
+                className="relative flex items-center gap-3 px-4 sm:px-5 py-3 cursor-pointer hover:bg-[var(--color-surface-2)] transition-colors">
+                <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] bg-[var(--state-overdue)]" />
+                <AlertTriangle aria-hidden className="w-4 h-4 shrink-0 text-[var(--state-overdue)]" />
                 <div className="min-w-0 flex-1 sm:grid sm:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)_auto] sm:items-center sm:gap-4">
-                  <div className="text-[15px] font-semibold text-[var(--color-text)] truncate">
-                    <span className="text-[13px] font-normal text-[var(--color-text-muted)] mr-1.5">{scope.kind}</span>
-                    <span className="ui-tag">{scope.tag}</span>
+                  <div className="flex items-center gap-1.5 min-w-0 text-[15px]">
+                    <span className="text-[13px] text-[var(--color-text-muted)]">{scope.kind}</span>
+                    {scope.tag ? <CopyId value={String(scope.tag)} label={scope.kind === "Asset" ? "tag" : `${scope.kind.toLowerCase()} name`} /> : null}
                   </div>
-                  <div className="text-[14px] text-[var(--color-text)] flex items-center gap-1.5 min-w-0">
-                    <Users className="w-3.5 h-3.5 shrink-0 text-[var(--color-text-muted)]" />
+                  <Link href={href} className="text-[14px] text-[var(--color-text)] flex items-center gap-1.5 min-w-0 hover:text-[var(--color-accent-text)]">
+                    <Users aria-hidden className="w-3.5 h-3.5 shrink-0 text-[var(--color-text-muted)]" />
                     <span className="truncate">{people.length > 0 ? people.join(", ") : `${o.checkoutIds.length} people`}</span>
-                  </div>
-                  <div className="text-[13px] text-[var(--color-text-muted)] whitespace-nowrap">{o.checkoutIds.length} checkouts on {o.documentIds.length} doc{o.documentIds.length === 1 ? "" : "s"}</div>
+                  </Link>
+                  <div className="text-[13px] text-[var(--color-text-muted)] whitespace-nowrap tabular-nums">{o.checkoutIds.length} checkouts on {o.documentIds.length} doc{o.documentIds.length === 1 ? "" : "s"}</div>
                 </div>
-                <ChevronRight className="w-4 h-4 text-[var(--color-text-faint)] shrink-0" />
-              </Link>
+                <ChevronRight aria-hidden className="w-4 h-4 text-[var(--color-text-faint)] shrink-0" />
+              </div>
             );
           })}
         </div>
         {overlaps.length > 8 && (
           <div className="px-4 sm:px-5 py-3 border-t border-[var(--color-border)]">
-            <Link href="/checkouts" className="text-[14px] text-[var(--color-accent-text)] hover:underline">Show {overlaps.length - 8} more</Link>
+            <Link href="/checkouts" className="text-[14px] font-semibold text-[var(--color-accent-text)] hover:underline underline-offset-2">Show {overlaps.length - 8} more</Link>
           </div>
         )}
       </Card>
@@ -424,16 +427,13 @@ function CoordinationRadar({
               ? "No documents are checked out."
               : <>Only {comparableDocuments} of {documents} checked-out document{documents === 1 ? "" : "s"} {comparableDocuments === 1 ? "is" : "are"} tied to equipment, a unit or a system. It needs two.</>}
           </div>
-          <div className="mt-3 flex flex-wrap gap-2">
+          {/* One way forward; the other two as plain links. */}
+          <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2">
             <Link href="/documents" className={QUIET_LINK}>
-              <Tag className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> Tag documents to equipment
+              <Tag aria-hidden className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> Tag documents to equipment
             </Link>
-            <Link href="/admin/assets" className={QUIET_LINK}>
-              <Boxes className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> Equipment registry
-            </Link>
-            <Link href="/plot-plans" className={QUIET_LINK}>
-              <MapIcon className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> Plot plans
-            </Link>
+            <Link href="/admin/assets" className="text-[14px] font-semibold text-[var(--color-accent-text)] hover:underline underline-offset-2">Equipment registry</Link>
+            <Link href="/plot-plans" className="text-[14px] font-semibold text-[var(--color-accent-text)] hover:underline underline-offset-2">Plot plans</Link>
           </div>
         </div>
       </div>
@@ -442,18 +442,17 @@ function CoordinationRadar({
 }
 
 function Panel({
-  title, icon, children, span = 1, href,
+  title, children, span = 1, href,
 }: {
   title: string;
-  icon?: React.ReactNode;
   children: React.ReactNode;
   span?: 1 | 2 | 3;
   href?: string;
 }) {
   const spanCls = span === 3 ? "lg:col-span-3" : span === 2 ? "lg:col-span-2" : "";
   return (
-    <Card label={icon ? <span className="inline-flex items-center gap-2"><span aria-hidden className="ui-icon-tile is-sm is-solid">{icon}</span>{title}</span> : title} className={spanCls}
-      action={href ? <Link href={href} className="text-[14px] text-[var(--color-accent-text)] hover:underline">Open {title.toLowerCase()}</Link> : undefined}>
+    <Card label={title} className={spanCls}
+      action={href ? <Link href={href} className="text-[14px] font-semibold text-[var(--color-accent-text)] hover:underline underline-offset-2">Open {title.toLowerCase()}</Link> : undefined}>
       {children}
     </Card>
   );

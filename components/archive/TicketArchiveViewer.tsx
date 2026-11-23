@@ -17,6 +17,7 @@ import { findInBackup } from "@/lib/archive";
 import { useFileDrag } from "@/hooks/useFileDrag";
 import FileThumb from "@/components/ui/FileThumb";
 import { formatBytes } from "@/lib/formatBytes";
+import { friendlyError } from "@/lib/friendlyError";
 
 
 type ZipFile = { async(type: "blob"): Promise<Blob>; async(type: "string"): Promise<string> };
@@ -86,7 +87,7 @@ export default function TicketArchiveViewer({
       entryPathsRef.current = paths;
       setRow(parsed);
     } catch (e) {
-      setError(`Couldn't read that archive: ${(e as Error).message}`);
+      setError(`That archive couldn't be read. ${friendlyError(e)}`);
     } finally {
       setLoading(false);
     }
@@ -105,7 +106,7 @@ export default function TicketArchiveViewer({
       objectUrlRef.current = url;
       setPreview({ name: att.name || key.split("/").pop() || "file", url, kind: kindOf(att.name || key) });
     } catch (e) {
-      setError((e as Error).message);
+      setError(`That file couldn't be opened. ${friendlyError(e)}`);
     }
   }, [revoke]);
 
@@ -138,7 +139,7 @@ export default function TicketArchiveViewer({
             <div
               {...drag.bind}
               onClick={() => inputRef.current?.click()}
-              className={`w-full max-w-lg rounded-2xl border-2 border-dashed p-10 text-center cursor-pointer transition-colors border-[var(--color-border-strong)] hover:bg-[var(--color-surface-2)] ${drag.ring}`}
+              className={`w-full max-w-lg rounded-xl border border-dashed p-10 text-center cursor-pointer transition-colors border-[var(--color-border-strong)] hover:bg-[var(--color-surface-2)] ${drag.ring}`}
             >
               <input ref={inputRef} type="file" accept=".zip,application/zip" className="hidden"
                 onChange={(e) => { const f = e.target.files?.[0]; if (f) void handleFile(f); e.target.value = ""; }} />
@@ -153,7 +154,7 @@ export default function TicketArchiveViewer({
                       </span>
                     </div>
                   )}
-                  <div className="inline-flex items-center gap-2 text-sm text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin" /> Reading archive…</div>
+                  <div className="inline-flex items-center gap-2 text-sm text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin" /> Reading the archive</div>
                 </div>
               ) : drag.over ? (
                 <div className="text-sm font-bold text-[var(--color-text)]">{drag.say}</div>
@@ -249,8 +250,8 @@ export default function TicketArchiveViewer({
         )}
 
         {error && (
-          <p role="alert" className="m-3 border-l-2 border-red-500 pl-3 text-[13px] text-red-700 dark:text-red-400 flex items-start gap-2">
-            <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> {error}
+          <p role="alert" className="m-3 border-l-[3px] border-[var(--state-overdue)] pl-3 text-[14px] text-[var(--color-text)] flex items-start gap-2">
+            <AlertTriangle aria-hidden className="w-4 h-4 mt-0.5 shrink-0 text-[var(--state-overdue)]" /> {error}
           </p>
         )}
       </div>

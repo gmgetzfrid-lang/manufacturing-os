@@ -14,6 +14,7 @@ import {
   X, Loader2, Upload, Sparkles, Download, FileText, ChevronRight, AlertTriangle, Table2,
 } from "lucide-react";
 import { useToast } from "@/components/providers/ToastProvider";
+import { friendlyError } from "@/lib/friendlyError";
 import { useRole } from "@/components/providers/RoleContext";
 import { Button } from "@/components/ui/Button";
 import { Input, Textarea, Select } from "@/components/ui/Field";
@@ -98,7 +99,7 @@ export default function GenerateModal({ orgId, template, onClose, onGenerated }:
       }
       onGenerated();
     } catch (e) {
-      showToast({ type: "error", title: (e as Error).message });
+      showToast({ type: "error", title: "That didn't work", message: friendlyError(e) });
     } finally { setBusy(null); setFiling(null); }
   };
 
@@ -151,7 +152,7 @@ export default function GenerateModal({ orgId, template, onClose, onGenerated }:
       setCost((c) => c + (res.estCostUsd ?? 0));
       setExpanded(0);
     } catch (e) {
-      showToast({ type: "error", title: (e as Error).message });
+      showToast({ type: "error", title: "That didn't work", message: friendlyError(e) });
     } finally { setBusy(null); }
   };
 
@@ -168,7 +169,7 @@ export default function GenerateModal({ orgId, template, onClose, onGenerated }:
       });
       onGenerated();
     } catch (e) {
-      showToast({ type: "error", title: (e as Error).message });
+      showToast({ type: "error", title: "That didn't work", message: friendlyError(e) });
     } finally { setBusy(null); }
   };
 
@@ -184,28 +185,28 @@ export default function GenerateModal({ orgId, template, onClose, onGenerated }:
 
   return (
     <div role="dialog" aria-modal="true" aria-label={`Generate: ${template.name}`} className="fixed inset-0 z-50 bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)] flex items-start justify-center p-4 overflow-y-auto" onClick={onClose}>
-      <div className="w-full max-w-3xl bg-[var(--color-surface)] rounded-lg shadow-2xl mt-8 mb-8"
+      <div className="w-full max-w-3xl bg-[var(--color-surface)] rounded-xl shadow-2xl mt-8 mb-8"
         onClick={(e) => e.stopPropagation()}>
-        <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center justify-between sticky top-0 bg-[var(--color-surface)] rounded-t-2xl z-10">
+        <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center justify-between sticky top-0 bg-[var(--color-surface)] rounded-t-xl z-10">
           <div>
             <div className="text-[13px] font-semibold text-[var(--color-text-muted)] inline-flex items-center gap-1.5"><Sparkles className="w-3.5 h-3.5" /> Generate documents</div>
-            <h2 className="mt-1 text-[24px] leading-tight font-semibold tracking-[-0.02em] text-[var(--color-text)]">{template.name}</h2>
+            <h2 className="mt-1 font-display text-[24px] leading-tight font-semibold text-[var(--color-text)]">{template.name}</h2>
           </div>
-          <button onClick={onClose} aria-label="Close" className="w-9 h-9 grid place-items-center rounded-[10px] bg-[var(--color-surface-2)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"><X className="w-4 h-4" /></button>
+          <button onClick={onClose} aria-label="Close" title="Close" className="w-9 h-9 pointer-coarse:w-11 pointer-coarse:h-11 grid place-items-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
         </div>
 
         <div className="p-5 space-y-4">
           <StepPath steps={["Add your data", "Check the wording", "Make the files"]} current={docs.length === 0 ? 0 : 1} />
           {/* ── 1. Data ─────────────────────────────────────────────────── */}
           <div {...dataDrag.bind} className={`rounded-xl border border-[var(--color-border)] p-3.5 ${dataDrag.ring}`}>
-            <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-2">
+            <div className="text-[14px] font-semibold text-[var(--color-text)] mb-2">
               1 · Data {dataDrag.over && <span className="normal-case tracking-normal font-bold text-[var(--color-text)]"> · {dataDrag.say}</span>}
             </div>
             <div className="flex items-center gap-2 flex-wrap">
               <label className="inline-flex">
                 <input type="file" accept=".xlsx,.xls,.csv" hidden disabled={busy !== null}
                   onChange={(e) => { void onFilePicked(e.target.files?.[0] ?? null); e.target.value = ""; }} />
-                <span className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[13px] font-bold border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] cursor-pointer">
+                <span className="inline-flex items-center gap-1.5 h-10 pointer-coarse:h-11 px-3.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] cursor-pointer">
                   {busy === "upload" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
                   {source ? "Replace spreadsheet" : "Upload or drop a spreadsheet (.xlsx / .csv)"}
                 </span>
@@ -217,7 +218,7 @@ export default function GenerateModal({ orgId, template, onClose, onGenerated }:
                     <span className="truncate">{picked.name}</span>
                     <span className="font-normal text-[var(--color-text-muted)]">
                       {(picked.size / 1024).toFixed(0)} KB
-                      {busy === "upload" ? " · uploading…" : source && rowCount !== null ? ` · ${rowCount} rows` : ""}
+                      {busy === "upload" ? ", uploading" : source && rowCount !== null ? `, ${rowCount} rows` : ""}
                     </span>
                   </span>
                 </span>
@@ -231,14 +232,14 @@ export default function GenerateModal({ orgId, template, onClose, onGenerated }:
               )}
             </div>
             {uploadError && picked && (
-              <p role="alert" className="mt-2 flex items-center gap-2 text-[13px] font-semibold text-red-700 dark:text-red-400">
-                The spreadsheet didn&apos;t upload: {uploadError}
-                <button type="button" onClick={() => void onFilePicked(picked)} disabled={busy !== null} className="underline font-bold">Try again</button>
+              <p role="alert" className="mt-2 flex flex-wrap items-center gap-x-2 text-[13px] font-semibold text-[var(--state-overdue-text)]">
+                The spreadsheet didn&apos;t upload. {friendlyError(uploadError)}
+                <button type="button" onClick={() => void onFilePicked(picked)} disabled={busy !== null} className="text-[var(--color-accent-text)] hover:underline underline-offset-2">Try again</button>
               </p>
             )}
             {sheetNames.length > 1 && (
               <label className="block mt-2">
-                <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Sheet</span>
+                <span className="block text-[14px] font-semibold text-[var(--color-text)] mb-1.5">Sheet</span>
                 <Select value={sheet} onChange={(e) => setSheet(e.target.value)}>
                   {sheetNames.map((s) => <option key={s} value={s}>{s}</option>)}
                 </Select>
@@ -266,10 +267,10 @@ export default function GenerateModal({ orgId, template, onClose, onGenerated }:
 
           {/* ── Column mapping (only when something's missing) ──────────── */}
           {mapping && (
-            <div className="border-l-2 border-amber-500 pl-3.5 py-1">
+            <div className="border-l-[3px] border-[var(--state-held)] pl-3.5 py-1">
               <div className="flex items-start gap-2 mb-2">
-                <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-                <div className="text-[13px] text-amber-900 dark:text-amber-200">
+                <AlertTriangle aria-hidden className="w-4 h-4 text-[var(--state-held)] shrink-0 mt-0.5" />
+                <div className="text-[14px] text-[var(--color-text)]">
                   <b>This template needs a few values your sheet doesn&apos;t obviously have.</b> Point each
                   one at the right column. The choice is remembered for next time.
                 </div>
@@ -302,7 +303,7 @@ export default function GenerateModal({ orgId, template, onClose, onGenerated }:
           {docs.length > 0 && (
             <div className="rounded-xl border border-[var(--color-border)] p-3.5">
               <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
-                <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">
+                <div className="text-[14px] font-semibold text-[var(--color-text)]">
                   2 · Check: {docs.length} document{docs.length === 1 ? "" : "s"} drafted
                 </div>
                 {cost > 0 && (
@@ -326,12 +327,12 @@ export default function GenerateModal({ orgId, template, onClose, onGenerated }:
                     {expanded === i && (
                       <div className="px-3 pb-3 space-y-2 border-t border-[var(--color-border)] pt-2">
                         <label className="block">
-                          <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">File name</span>
+                          <span className="block text-[14px] font-semibold text-[var(--color-text)] mb-1.5">File name</span>
                           <Input value={d.filename} onChange={(e) => updateFilename(i, e.target.value)} className="text-xs font-mono" />
                         </label>
                         {Object.entries(d.values).map(([tag, value]) => (
                           <label key={tag} className="block">
-                            <span className="text-[13px] font-semibold text-[var(--color-text-muted)] flex items-center gap-1.5">
+                            <span className="text-[14px] font-semibold text-[var(--color-text)] mb-1.5 flex items-center gap-1.5">
                               {tag}
                               {aiTags.has(tag) && (
                                 <span className="inline-flex items-center gap-0.5 text-[13px] px-1 py-0.5 rounded bg-[var(--color-surface-2)] border border-[var(--color-border)] dark:border-[var(--color-border)] text-[var(--color-text)] dark:text-[var(--color-text)]">
@@ -365,7 +366,7 @@ export default function GenerateModal({ orgId, template, onClose, onGenerated }:
           {/* ── 3. Generate ────────────────────────────────────────────── */}
           {docs.length > 0 && (
             <div className="rounded-xl border border-[var(--color-border)] p-3.5 space-y-2.5">
-              <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">
+              <div className="text-[14px] font-semibold text-[var(--color-text)]">
                 3 · Generate
               </div>
               <p className="text-[13px] text-[var(--color-text-muted)]">
@@ -384,7 +385,7 @@ export default function GenerateModal({ orgId, template, onClose, onGenerated }:
               )}
               {filing && (
                 <div className="text-[13px] font-bold text-[var(--color-text)] inline-flex items-center gap-1.5">
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" /> Filing {filing.done} of {filing.total}…
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" /> Filing {filing.done} of {filing.total}
                 </div>
               )}
               <div className="flex items-center justify-end gap-2">

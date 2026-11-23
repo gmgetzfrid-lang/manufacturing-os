@@ -14,18 +14,23 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import LoadingBlock from "@/components/ui/LoadingBlock";
 import { useDraft } from "@/hooks/useDraft";
-import { Plus, Search, Loader2, HardHat } from "lucide-react";
+import { Plus, Search } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { PageShell } from "@/components/ui/PageShell";
-import { PageHero, PageBody, Card, heroPrimary, heroQuiet, type HeroFact } from "@/components/ui/PageHero";
+import { PageHero, PageBody, heroPrimary, heroQuiet, type HeroFact } from "@/components/ui/PageHero";
 import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/ui/Modal";
-import { StatusTag } from "@/components/requests/RequestBits";
-import { bandInput, bandInputIcon, bandSeg, bandSegItem, plural } from "@/components/admin/band";
+import { Button } from "@/components/ui/Button";
+import ErrorNote from "@/components/ui/ErrorNote";
+import { Skeleton, SkeletonRows } from "@/components/ui/Skeleton";
+import { onTransitionClick, transitionPush } from "@/lib/viewTransition";
+import { field as kitField, label as kitLabel } from "@/components/admin/kit";
+import UnderlineTabs from "@/components/requests/UnderlineTabs";
+import { StatusTag, fmtDay } from "@/components/requests/RequestBits";
+import { bandInput, bandInputIcon, plural } from "@/components/admin/band";
 import {
   listCompanies, saveCompany, gatherCompanyProfile,
-  COMPANY_KIND_LABEL, type Company, type CompanyProfileData,
+  COMPANY_KIND_LABEL, EVENT_KIND_LABEL, type Company, type CompanyProfileData,
 } from "@/lib/companies";
 import { type DimensionScore } from "@/lib/companyScore";
 import { ScoreBadge, ScoreFigure } from "./score";
@@ -42,7 +47,7 @@ export default function CompaniesPage() {
   const [companies, setCompanies] = useState<Company[]>([]);
   const [profiles, setProfiles] = useState<Map<string, CompanyProfileData>>(new Map());
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
   const [search, setSearch] = useState("");
   const [kindFilter, setKindFilter] = useState<(typeof KIND_FILTERS)[number]>("all");
   const [showAdd, setShowAdd] = useState(false);
@@ -69,7 +74,7 @@ export default function CompaniesPage() {
       });
       await Promise.all(workers);
     } catch (e) {
-      setError((e as Error).message);
+      setError(e ?? new Error("read failed"));
       setLoading(false);
     }
   }, [activeOrgId]);
@@ -85,14 +90,17 @@ export default function CompaniesPage() {
   const doNotUse = companies.filter((c) => c.status === "do_not_use").length;
   const rated = companies.filter((c) => profiles.get(c.id)?.scorecard.composite != null).length;
   const contractors = companies.filter((c) => c.kind === "contractor").length;
-  const answer = loading ? "Known companies" : error && companies.length === 0 ? "Couldn't load the companies."
+  const answer = loading ? <Skeleton className="h-7 w-64 max-w-full" /> : error != null && companies.length === 0 ? "The companies didn't load."
     : companies.length === 0 ? "No companies yet." : `${plural(companies.length, "company", "companies")} on record.`;
+  // Plain facts, all small: the title already says how many.
   const facts: HeroFact[] = loading || companies.length === 0 ? [] : [
     { label: "Contractors", value: contractors },
     { label: "Rated", value: rated },
     { label: "Do not use", value: doNotUse, tone: doNotUse > 0 ? "bad" : undefined },
   ];
   const [limit, setLimit] = useState(20);
+  const kindCount = (k: (typeof KIND_FILTERS)[number]) => (k === "all" ? companies.length : companies.filter((c) => c.kind === k).length);
+  const open = (c: Company) => transitionPush(router, `/companies/${c.id}`);
 
   return (
     <PageShell width="work">
@@ -101,56 +109,54 @@ export default function CompaniesPage() {
         title={answer}
         sub="Scored only on recorded work, never on opinion."
         facts={facts}
+        factsHero="none"
         primary={canManage ? (
           <button type="button" onClick={() => setShowAdd(true)} className={heroPrimary}><Plus className="w-4 h-4" /> Add company</button>
         ) : undefined}
       >
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="relative flex-1 min-w-[220px]">
+        <div className="space-y-3">
+          <div className="border-b border-[var(--color-border)]">
+            <UnderlineTabs label="Kind of company" value={kindFilter} onChange={setKindFilter} className="-mb-px"
+              tabs={KIND_FILTERS.map((k) => ({ key: k, label: k === "all" ? "All" : COMPANY_KIND_LABEL[k], count: loading ? undefined : kindCount(k) }))} />
+          </div>
+          <div className="relative max-w-xl">
             <Search className={bandInputIcon} />
             <label htmlFor="company-search" className="sr-only">Search companies</label>
-            <input id="company-search" value={search} onChange={(e) => setSearch(e.target.value)}
+            <input id="company-search" type="search" enterKeyHint="search" value={search} onChange={(e) => setSearch(e.target.value)}
               placeholder="Find by name or trade (piping, E&I)"
               className={bandInput} />
-          </div>
-          <div className={bandSeg} role="group" aria-label="Kind of company">
-            {KIND_FILTERS.map((k) => (
-              <button key={k} type="button" onClick={() => setKindFilter(k)} aria-pressed={kindFilter === k} className={bandSegItem(kindFilter === k)}>
-                {k === "all" ? "All" : COMPANY_KIND_LABEL[k]}
-              </button>
-            ))}
           </div>
         </div>
       </PageHero>
 
       <PageBody className="!space-y-3">
-      {error && (
-        <div role="alert" className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3 text-[15px] text-[var(--color-text)]">
-          <span className="relative pl-3"><span aria-hidden className="absolute left-0 top-1 bottom-1 w-[3px] bg-[var(--state-overdue)]" />Couldn&apos;t load the companies: {error}</span>
-          <button type="button" onClick={() => void refresh()} className="text-[var(--color-accent-text)] hover:underline underline-offset-2">Try again</button>
-        </div>
+      {error != null && (
+        <ErrorNote error={error} title={companies.length > 0 ? "The list didn't refresh." : undefined} onRetry={() => void refresh()} />
       )}
 
       {loading ? (
-        <Card><LoadingBlock what="companies" className="border-0 p-0" /></Card>
+        <SkeletonRows rows={5} cols={4} what="companies" />
       ) : shown.length === 0 ? (
-        <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-12 text-center">
-          <span aria-hidden className="ui-icon-tile mx-auto mb-3"><HardHat className="w-5 h-5" /></span>
-          <div className="font-display text-[19px] font-semibold text-[var(--color-text)]">
-            {companies.length === 0 ? "Start the registry" : "No companies match"}
+        error != null ? null : (
+          <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-10 text-center">
+            <p className="text-[15px] text-[var(--color-text)]">
+              {companies.length === 0
+                ? "Add the contractors and vendors you work with; their record fills in as projects run."
+                : "No companies match."}
+            </p>
+            <div className="mt-4 flex justify-center">
+              {companies.length === 0
+                ? null
+                : <button type="button" onClick={() => { setSearch(""); setKindFilter("all"); }} className={heroQuiet}>Show every company</button>}
+            </div>
           </div>
-          <p className="mt-1 text-[15px] text-[var(--color-text-muted)] max-w-md mx-auto">
-            {companies.length === 0
-              ? "Add the contractors and vendors you work with. Their record fills in as projects run."
-              : "Try a different filter or search."}
-          </p>
-        </div>
+        )
       ) : (
-        <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
-          <table className="w-full text-[15px] max-sm:hidden">
+        <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
+          <table className="w-full text-[14px] max-sm:hidden">
             <thead className="bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text-muted)] text-left">
               <tr>
-                <th className="font-semibold px-4 h-10 w-full">Company</th>
+                <th className="font-semibold px-4 h-10 w-full">Company and last on record</th>
                 <th className="font-semibold px-4 h-10 hidden md:table-cell whitespace-nowrap">Kind</th>
                 <th className="font-semibold px-4 h-10 whitespace-nowrap">Score</th>
                 {DIMENSIONS.map(([key, label]) => (
@@ -164,7 +170,8 @@ export default function CompaniesPage() {
             </thead>
             <tbody className="divide-y divide-[var(--color-border)]">
               {shown.slice(0, limit).map((c) => (
-                <CompanyRow key={c.id} company={c} profile={profiles.get(c.id) ?? null} failed={profileFailed.has(c.id)} onOpen={() => router.push(`/companies/${c.id}`)}
+                <CompanyRow key={c.id} company={c} profile={profiles.get(c.id) ?? null} failed={profileFailed.has(c.id)} onOpen={() => open(c)}
+                  onLink={(e) => onTransitionClick(e, () => router.push(`/companies/${c.id}`))}
                   onKind={(KIND_FILTERS as readonly string[]).includes(c.kind) ? () => setKindFilter(kindFilter === c.kind ? "all" : (c.kind as (typeof KIND_FILTERS)[number])) : undefined}
                   onTrade={c.trade ? () => setSearch(search === c.trade ? "" : c.trade!) : undefined} />
               ))}
@@ -172,7 +179,8 @@ export default function CompaniesPage() {
           </table>
           <ul className="sm:hidden divide-y divide-[var(--color-border)]">
             {shown.slice(0, limit).map((c) => (
-              <CompanyItem key={c.id} company={c} profile={profiles.get(c.id) ?? null} failed={profileFailed.has(c.id)} />
+              <CompanyItem key={c.id} company={c} profile={profiles.get(c.id) ?? null} failed={profileFailed.has(c.id)}
+                onLink={(e) => onTransitionClick(e, () => router.push(`/companies/${c.id}`))} />
             ))}
           </ul>
           {shown.length > limit && (
@@ -219,11 +227,21 @@ function useCompanyFacts(profile: CompanyProfileData | null) {
   }, [profile]);
 }
 
+/** What changed last on a company's record: its newest logged event, else
+ *  when its quality manual was checked, else when it was added. */
+function lastOnRecord(c: Company, profile: CompanyProfileData | null): string | null {
+  const ev = [...(profile?.events ?? [])].sort((a, b) => (b.eventDate || "").localeCompare(a.eventDate || ""))[0];
+  if (ev) return `${EVENT_KIND_LABEL[ev.kind]} on ${fmtDay(`${ev.eventDate}T12:00:00`)}`;
+  if (c.qualityManualReviewedAt) return `Quality manual checked ${fmtDay(c.qualityManualReviewedAt)}`;
+  if (c.createdAt) return `Added ${fmtDay(c.createdAt)}`;
+  return null;
+}
+
 function ScoreCell({ profile, failed }: { profile: CompanyProfileData | null; failed?: boolean }) {
   if (!profile) {
     return failed
       ? <span className="text-[13px] text-[var(--color-text-muted)]" title="Open the company to try again">Couldn&apos;t gather</span>
-      : <span className="inline-flex items-center gap-1.5 text-[13px] text-[var(--color-text-faint)]"><Loader2 className="w-3 h-3 animate-spin" /> Gathering</span>;
+      : <Skeleton className="w-20 h-4" />;
   }
   const sc = profile.scorecard;
   return (
@@ -233,47 +251,49 @@ function ScoreCell({ profile, failed }: { profile: CompanyProfileData | null; fa
   );
 }
 
-function CompanyRow({ company: c, profile, failed, onOpen, onKind, onTrade }: { company: Company; profile: CompanyProfileData | null; failed?: boolean; onOpen: () => void; onKind?: () => void; onTrade?: () => void }) {
+function CompanyRow({ company: c, profile, failed, onOpen, onLink, onKind, onTrade }: { company: Company; profile: CompanyProfileData | null; failed?: boolean; onOpen: () => void; onLink: (e: React.MouseEvent<HTMLElement>) => void; onKind?: () => void; onTrade?: () => void }) {
   const f = useCompanyFacts(profile);
   const dims = new Map((profile?.scorecard.dimensions ?? []).map((d) => [d.key, d]));
   const blocked = c.status === "do_not_use";
+  const last = lastOnRecord(c, profile);
   return (
     <tr onClick={(e) => { if ((e.target as HTMLElement).closest("a,button")) return; onOpen(); }} className="cursor-pointer hover:bg-[var(--color-surface-2)]">
-      <td className="px-4 py-3 relative max-w-0">
-        {blocked && <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] bg-[var(--state-overdue)]" />}
-        <Link href={`/companies/${c.id}`} className="block truncate font-semibold text-[var(--color-text)] hover:text-[var(--color-accent-text)]">{c.name}</Link>
-        {(blocked || c.status === "inactive" || c.trade) && (
-          <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[13px] text-[var(--color-text-muted)]">
-            {blocked && <StatusTag tone="bad">Do not use</StatusTag>}
-            {c.status === "inactive" && <StatusTag>Inactive</StatusTag>}
-            {c.trade && (onTrade
-              ? <button type="button" onClick={onTrade} title={`Find every ${c.trade} company`} className="ui-tag max-w-full truncate">{c.trade}</button>
-              : <span className="ui-tag">{c.trade}</span>)}
-          </div>
-        )}
+      <td className="px-4 py-3 max-w-0">
+        <div className="flex items-center gap-2 min-w-0">
+          <Link href={`/companies/${c.id}`} onClick={onLink} className="truncate text-[15px] font-semibold text-[var(--color-text)] hover:text-[var(--color-accent-text)]">{c.name}</Link>
+          {blocked && <StatusTag tone="bad" className="shrink-0">Do not use</StatusTag>}
+          {c.status === "inactive" && <StatusTag className="shrink-0">Inactive</StatusTag>}
+        </div>
+        <div className="mt-0.5 flex items-center gap-1.5 min-w-0 text-[13px] text-[var(--color-text-muted)]">
+          {c.trade && (onTrade
+            ? <button type="button" onClick={onTrade} title={`Find every ${c.trade} company`} className="shrink-0 hover:text-[var(--color-accent-text)] hover:underline underline-offset-2">{c.trade}</button>
+            : <span className="shrink-0">{c.trade}</span>)}
+          {c.trade && last && <span aria-hidden>·</span>}
+          {last && <span className="truncate">{last}</span>}
+        </div>
       </td>
-      <td className="px-4 py-3 hidden md:table-cell whitespace-nowrap">
+      <td className="px-4 py-3 hidden md:table-cell whitespace-nowrap text-[var(--color-text)]">
         {onKind
-          ? <button type="button" onClick={onKind} title={`Show only ${COMPANY_KIND_LABEL[c.kind]}`} className="ui-tag">{COMPANY_KIND_LABEL[c.kind]}</button>
-          : <span className="ui-tag">{COMPANY_KIND_LABEL[c.kind]}</span>}
+          ? <button type="button" onClick={onKind} title={`Show only ${COMPANY_KIND_LABEL[c.kind]}`} className="hover:text-[var(--color-accent-text)] hover:underline underline-offset-2">{COMPANY_KIND_LABEL[c.kind]}</button>
+          : COMPANY_KIND_LABEL[c.kind]}
       </td>
-      <td className="px-4 py-3"><ScoreCell profile={profile} failed={failed} /></td>
+      <td className="px-4 py-3 whitespace-nowrap"><ScoreCell profile={profile} failed={failed} /></td>
       {DIMENSIONS.map(([key]) => {
         const d = dims.get(key);
         return (
           <td key={key} className="px-3 py-3 hidden lg:table-cell text-right whitespace-nowrap" title={d?.detail}>
             {d?.score != null
-              ? <ScoreFigure score={d.score} className="text-[17px]" />
+              ? <ScoreFigure score={d.score} className="text-[15px]" />
               : <span className="text-[var(--color-text-faint)]">{profile ? "None" : ""}</span>}
             {key === "safety" && (f.recordables > 0 || f.stopWorks > 0) && (
-              <div className="text-[13px] font-semibold text-[var(--state-overdue)]">
+              <div className="text-[13px] font-semibold text-[var(--state-overdue-text)]">
                 {f.recordables > 0 ? plural(f.recordables, "recordable") : plural(f.stopWorks, "stop work", "stop works")}
               </div>
             )}
           </td>
         );
       })}
-      <td className="px-4 py-3 hidden xl:table-cell text-right">{profile ? <span className={`ui-count ${f.jobs > 0 ? "" : "!bg-transparent !text-[var(--color-text-faint)]"}`}>{f.jobs}</span> : ""}</td>
+      <td className={`px-4 py-3 hidden xl:table-cell text-right tabular-nums ${f.jobs > 0 ? "text-[var(--color-text)]" : "text-[var(--color-text-faint)]"}`}>{profile ? f.jobs : ""}</td>
       <td className="px-4 py-3 hidden xl:table-cell text-right tabular-nums whitespace-nowrap">{profile ? (f.bidsTotal > 0 ? `${f.bidsWon} of ${f.bidsTotal}` : <span className="text-[var(--color-text-faint)]">None</span>) : ""}</td>
       <td className="px-4 py-3 hidden 2xl:table-cell text-right tabular-nums whitespace-nowrap">{profile ? (f.coCount > 0 ? <>{f.coCount} <span className="text-[var(--color-text-muted)]">{fmtMoney(f.coAmount)}</span></> : <span className="text-[var(--color-text-faint)]">None</span>) : ""}</td>
       <td className="px-4 py-3 hidden 2xl:table-cell whitespace-nowrap">
@@ -285,25 +305,31 @@ function CompanyRow({ company: c, profile, failed, onOpen, onKind, onTrade }: { 
   );
 }
 
-/** The same company as a stacked row on a phone. */
-function CompanyItem({ company: c, profile, failed }: { company: Company; profile: CompanyProfileData | null; failed?: boolean }) {
+/** The same company as a card on a phone: name and score, what kind and
+ *  trade, what's on record last, and any flag. */
+function CompanyItem({ company: c, profile, failed, onLink }: { company: Company; profile: CompanyProfileData | null; failed?: boolean; onLink: (e: React.MouseEvent<HTMLElement>) => void }) {
   const f = useCompanyFacts(profile);
   const blocked = c.status === "do_not_use";
+  const last = lastOnRecord(c, profile);
   return (
     <li className="relative">
-      {blocked && <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] bg-[var(--state-overdue)]" />}
-      <Link href={`/companies/${c.id}`} className="block px-4 py-3 active:bg-[var(--color-surface-2)]">
+      <Link href={`/companies/${c.id}`} onClick={onLink} className="block px-4 py-3 active:bg-[var(--color-surface-2)]">
         <div className="flex items-start justify-between gap-3">
           <span className="min-w-0 font-semibold text-[15px] text-[var(--color-text)] truncate">{c.name}</span>
           <ScoreCell profile={profile} failed={failed} />
         </div>
-        <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[13px] text-[var(--color-text-muted)]">
-          {blocked && <StatusTag tone="bad">Do not use</StatusTag>}
-          <span className="ui-tag">{COMPANY_KIND_LABEL[c.kind]}</span>
-          {c.trade && <span className="ui-tag">{c.trade}</span>}
-          {profile && f.jobs > 0 && <span>{plural(f.jobs, "job")}</span>}
-          {f.recordables > 0 && <span className="font-semibold text-[var(--state-overdue)]">{plural(f.recordables, "recordable")}</span>}
+        <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-[13px] text-[var(--color-text-muted)]">
+          <span>{COMPANY_KIND_LABEL[c.kind]}</span>
+          {c.trade && <><span aria-hidden>·</span><span>{c.trade}</span></>}
+          {profile && f.jobs > 0 && <><span aria-hidden>·</span><span>{plural(f.jobs, "job")}</span></>}
         </div>
+        {last && <p className="mt-0.5 text-[13px] text-[var(--color-text-muted)] truncate">{last}</p>}
+        {(blocked || f.recordables > 0) && (
+          <div className="mt-1 flex flex-wrap items-center gap-x-3">
+            {blocked && <StatusTag tone="bad">Do not use</StatusTag>}
+            {f.recordables > 0 && <StatusTag tone="bad">{plural(f.recordables, "recordable")}</StatusTag>}
+          </div>
+        )}
       </Link>
     </li>
   );
@@ -322,7 +348,7 @@ function AddCompanyModal({ orgId, actorId, onClose, onCreated }: {
   const [contactPhone, setContactPhone] = useState("");
   const [notes, setNotes] = useState("");
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
   const notesDraft = useDraft<string>(`new-company-notes:${orgId}`, notes, setNotes, (v) => !v.trim());
 
   const submit = async () => {
@@ -337,12 +363,12 @@ function AddCompanyModal({ orgId, actorId, onClose, onCreated }: {
       // Straight to the new company's file.
       onCreated(created);
     } catch (e) {
-      setError((e as Error).message);
+      setError(e ?? new Error("save failed"));
     } finally { setBusy(false); }
   };
 
-  const field = "w-full h-10 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[15px] text-[var(--color-text)] outline-none focus:border-[var(--color-main)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40";
-  const label = "block text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5";
+  const field = kitField;
+  const label = kitLabel;
   return (
     <Modal onClose={onClose} dismissable={!busy} size="lg">
       <ModalHeader title="Add a known company" subtitle="Their record fills in from real work." onClose={busy ? undefined : onClose} />
@@ -359,24 +385,20 @@ function AddCompanyModal({ orgId, actorId, onClose, onCreated }: {
               </select>
             </div>
           </div>
-          <div><label htmlFor="co-trade" className={label}>Trade <span className="font-normal">(optional)</span></label><input id="co-trade" value={trade} onChange={(e) => setTrade(e.target.value)} placeholder="Piping, E&I, scaffolding" className={field} /></div>
+          <div><label htmlFor="co-trade" className={label}>Trade <span className="font-normal text-[var(--color-text-muted)]">(optional)</span></label><input id="co-trade" value={trade} onChange={(e) => setTrade(e.target.value)} placeholder="Piping, E&I, scaffolding" className={field} /></div>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <div><label htmlFor="co-cname" className={label}>Contact <span className="font-normal">(optional)</span></label><input id="co-cname" value={contactName} onChange={(e) => setContactName(e.target.value)} className={field} /></div>
-            <div><label htmlFor="co-email" className={label}>Email <span className="font-normal">(optional)</span></label><input id="co-email" type="email" value={contactEmail} onChange={(e) => setContactEmail(e.target.value)} className={field} /></div>
-            <div><label htmlFor="co-phone" className={label}>Phone <span className="font-normal">(optional)</span></label><input id="co-phone" type="tel" value={contactPhone} onChange={(e) => setContactPhone(e.target.value)} className={field} /></div>
+            <div><label htmlFor="co-cname" className={label}>Contact <span className="font-normal text-[var(--color-text-muted)]">(optional)</span></label><input id="co-cname" autoComplete="name" value={contactName} onChange={(e) => setContactName(e.target.value)} className={field} /></div>
+            <div><label htmlFor="co-email" className={label}>Email <span className="font-normal text-[var(--color-text-muted)]">(optional)</span></label><input id="co-email" type="email" inputMode="email" autoComplete="email" value={contactEmail} onChange={(e) => setContactEmail(e.target.value)} className={field} /></div>
+            <div><label htmlFor="co-phone" className={label}>Phone <span className="font-normal text-[var(--color-text-muted)]">(optional)</span></label><input id="co-phone" type="tel" inputMode="tel" autoComplete="tel" value={contactPhone} onChange={(e) => setContactPhone(e.target.value)} className={field} /></div>
           </div>
-          <div><label htmlFor="co-notes" className={label}>Notes <span className="font-normal">(optional)</span></label><textarea id="co-notes" value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} className={`${field} h-auto py-2 resize-y`} /></div>
-          {error && (
-            <p role="alert" className="relative pl-3 text-[13px] font-semibold text-[var(--color-text)]">
-              <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] bg-[var(--state-overdue)]" />{error}
-            </p>
-          )}
+          <div><label htmlFor="co-notes" className={label}>Notes <span className="font-normal text-[var(--color-text-muted)]">(optional)</span></label><textarea id="co-notes" value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} className={`${field} !h-auto py-2 resize-y [field-sizing:content]`} /></div>
+          {error != null && <ErrorNote compact error={error} title="The company wasn't added." />}
         </ModalBody>
         <ModalFooter>
           <button type="button" onClick={onClose} disabled={busy} className={heroQuiet}>Cancel</button>
-          <button type="submit" disabled={busy || !name.trim()} className={heroPrimary}>
-            {busy && <Loader2 className="w-4 h-4 animate-spin" />} Add company
-          </button>
+          <Button type="submit" variant={name.trim() ? "primary" : "secondary"} disabled={!name.trim()} loading={busy} title={!name.trim() ? "Give the company a name first" : undefined}>
+            Add company
+          </Button>
         </ModalFooter>
       </form>
     </Modal>
