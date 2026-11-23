@@ -1,33 +1,39 @@
 "use client";
 
 // /documents/staged - the documents this person staged, from any folder or
-// library, in their order. From here: view them side by side and mark them
-// up (the markups are kept), send them (a link, email, text or QR code), or
-// send them all to drafting as one new request. The list and the markups are
-// kept on this device (lib/stagedDocs), and the page says so.
+// library, in their order, shown straight away: the viewer is the page body,
+// with the markup tools in its toolbar and Send and Send to drafting over
+// the sheets. A slim list beside it (a row of chips on a phone) jumps
+// between the documents and holds the rare things: move up or down, clear
+// markups, remove. Markups drawn on a sheet are kept with the staged set.
+// The list and the markups are kept on this device (lib/stagedDocs), and
+// the page says so.
 
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowDown, ArrowUp, Eye, Loader2, PenTool, Send, Trash2, X, Eraser } from "lucide-react";
+import { ArrowDown, ArrowUp, Eraser, FolderOpen, Loader2, PenLine, PenTool, Send, Trash2, X } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { appConfirm } from "@/components/providers/DialogProvider";
-import { PageShell } from "@/components/ui/PageShell";
-import { PageHero, PageBody, Card, heroPrimary, heroQuiet } from "@/components/ui/PageHero";
-import MoreMenu from "@/components/ui/MoreMenu";
+import { PageHero, heroQuiet } from "@/components/ui/PageHero";
+import MoreMenu, { type MoreItem } from "@/components/ui/MoreMenu";
 import ViewTabs, { DOCUMENT_VIEWS } from "@/components/navigation/ViewTabs";
 import { StatusTag } from "@/components/documents/StatusTag";
 import SendSheet, { type SendDoc } from "@/components/documents/SendSheet";
-import { btnIcon, btnQuiet, btnRow, tbl } from "@/components/admin/kit";
+import { btnIcon, btnQuiet, btnRow } from "@/components/admin/kit";
+import { vPrimary, vQuiet } from "@/components/viewers/viewerChrome";
 import { supabase } from "@/lib/supabase";
 import { docRecordFromRow, DOC_LIST_COLUMNS } from "@/lib/docRecord";
 import { useStagedDocs, hasMarkups, sheetOfRecord, type StagedDoc } from "@/lib/stagedDocs";
 import { draftingSheet, issuedFileUrl, markedUpPdf, prepareDraftingRequest } from "@/lib/sendToDrafting";
 import type { DocumentRecord } from "@/types/schema";
 
-// The viewer (react-pdf + fabric) loads only when it opens.
-const MultiDocViewer = dynamic(() => import("@/components/viewers/MultiDocViewer"), { ssr: false });
+// The viewer (react-pdf + fabric) loads in the browser only.
+const MultiDocViewer = dynamic(() => import("@/components/viewers/MultiDocViewer"), {
+  ssr: false,
+  loading: () => <Opening />,
+});
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
@@ -43,6 +49,18 @@ interface Row {
   status: string | null;
   library: string;
   marked: boolean;
+}
+
+/** The sheets' place while they are being read. */
+function Opening({ text = "Opening the staged documents…" }: { text?: string }) {
+  return (
+    <div className="surface-charcoal h-full grid place-items-center">
+      <div className="flex flex-col items-center gap-3 text-[var(--color-text-muted)]">
+        <Loader2 className="w-8 h-8 animate-spin" />
+        <span className="text-[14px]">{text}</span>
+      </div>
+    </div>
+  );
 }
 
 export default function StagedPage() {
@@ -69,7 +87,7 @@ export default function StagedPage() {
           if (error) throw new Error(error.message);
           for (const r of data ?? []) { const rec = docRecordFromRow(r as unknown as Record<string, unknown>); if (rec.id) byId.set(rec.id, rec); }
         }
-        const libIds = [...new Set([...byId.values()].map((d) => d.libraryId).filter(Boolean))];
+        const libIds = [...new Set(ids.map((id) => byId.get(id)?.libraryId).filter((x): x is string => !!x))];
         const names = new Map<string, string>();
         if (libIds.length) {
           const { data } = await supabase.from("libraries").select("id, name").in("id", libIds);
@@ -104,15 +122,40 @@ export default function StagedPage() {
   // built from `rows`: a markup drawn in the viewer must not hand the viewer
   // a new list (it would read every file again).
   const records = useMemo(() => staged.docs.map((s) => known.get(s.id)).filter((d): d is DocumentRecord => !!d), [staged.docs, known]);
-  const notFound = rows.filter((r) => r.rec === null).length;
   const reading = rows.some((r) => r.rec === undefined) && !loadError;
   const n = staged.count;
-  const libraries = new Set(staged.docs.map((d) => d.libraryId)).size;
   const markedCount = staged.markedUpIds.length;
 
-  // ── Viewing and marking up ──
-  const [viewer, setViewer] = useState<{ start?: string } | null>(null);
-  const openViewer = (start?: string) => { if (records.length) setViewer({ start }); };
+  // ── Which document is in view, and going to one from the list ──
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const [jump, setJump] = useState<{ id: string; seq: number } | null>(null);
+  const show = (r: Row) => {
+    setActiveId(r.staged.id);
+    if (r.rec) setJump((j) => ({ id: r.staged.id, seq: (j?.seq ?? 0) + 1 }));
+  };
+  const onActiveDocChange = useCallback((id: string) => setActiveId(id), []);
+  const shownId = activeId && rows.some((r) => r.staged.id === activeId) ? activeId : rows.find((r) => r.rec)?.staged.id ?? rows[0]?.staged.id ?? null;
+  // The one in view stays in sight in the list (sideways on a phone, up and
+  // down beside the sheets), without moving the page.
+  const chipsRef = useRef<HTMLOListElement>(null);
+  const listRef = useRef<HTMLOListElement>(null);
+  useEffect(() => {
+    const chips = chipsRef.current, on = chips?.querySelector<HTMLElement>("[data-on]");
+    if (chips && on && (on.offsetLeft < chips.scrollLeft || on.offsetLeft + on.offsetWidth > chips.scrollLeft + chips.clientWidth)) {
+      chips.scrollTo({ left: Math.max(0, on.offsetLeft - 12), behavior: "smooth" });
+    }
+    const list = listRef.current, item = list?.querySelector<HTMLElement>("[data-on]");
+    if (list && item && (item.offsetTop < list.scrollTop || item.offsetTop + item.offsetHeight > list.scrollTop + list.clientHeight)) {
+      list.scrollTo({ top: Math.max(0, item.offsetTop - 8), behavior: "smooth" });
+    }
+  }, [shownId]);
+
+  // The viewer opens again when the documents change (one moved, removed or
+  // added, or markups cleared from the list), at the one that was in view.
+  const [fresh, setFresh] = useState(0);
+  const viewerKey = `${records.map((d) => d.id).join(",")}#${fresh}`;
+  const [opened, setOpened] = useState<{ key: string; start?: string }>({ key: "" });
+  if (opened.key !== viewerKey) setOpened({ key: viewerKey, start: activeId ?? undefined });
 
   // ── Send (link, email, text, QR code) ──
   const [sending, setSending] = useState(false);
@@ -150,6 +193,7 @@ export default function StagedPage() {
     }
   };
 
+  // ── The list's rare things ──
   const clearAll = async () => {
     const ok = await appConfirm({
       title: `Clear all ${plural(n, "staged document")}?`,
@@ -160,226 +204,213 @@ export default function StagedPage() {
     });
     if (ok) staged.clear();
   };
+  const nameOf = (r: Row) => r.number || r.title || "this document";
   const clearMarkups = async (r: Row) => {
-    const ok = await appConfirm({ message: `Clear your markups on ${r.number || r.title || "this document"}?`, confirmLabel: "Clear markups", tone: "danger" });
-    if (ok) staged.clearMarkups(r.staged.id);
+    const ok = await appConfirm({ message: `Clear your markups on ${nameOf(r)}?`, confirmLabel: "Clear markups", tone: "danger" });
+    if (!ok) return;
+    setActiveId(r.staged.id);
+    if (staged.clearMarkups(r.staged.id)) setFresh((f) => f + 1);
   };
-
+  const remove = (r: Row) => {
+    // Removing the one in view: the next one comes into view (else the one before).
+    if (r.staged.id === shownId) {
+      const i = rows.indexOf(r);
+      const next = rows.slice(i + 1).find((x) => x.rec) ?? rows.slice(0, i).reverse().find((x) => x.rec);
+      setActiveId(next?.staged.id ?? null);
+    }
+    staged.remove(r.staged.id);
+  };
+  const move = (r: Row, dir: -1 | 1) => { setActiveId(shownId); staged.move(r.staged.id, dir); };
   const libHref = (r: Row) => `/documents/${r.rec?.libraryId || r.staged.libraryId}?doc=${r.staged.id}`;
-  const canOpen = (r: Row) => !!r.rec;
-  const stop = (e: React.SyntheticEvent) => e.stopPropagation();
+  const menuFor = (r: Row, i: number): MoreItem[] => [
+    ...(i > 0 ? [{ icon: <ArrowUp className="w-4 h-4" />, label: "Move up", onClick: () => move(r, -1) }] : []),
+    ...(i < n - 1 ? [{ icon: <ArrowDown className="w-4 h-4" />, label: "Move down", onClick: () => move(r, 1) }] : []),
+    ...(r.marked ? [{ icon: <Eraser className="w-4 h-4" />, label: "Clear markups", onClick: () => clearMarkups(r) }] : []),
+    ...(r.rec ? [{ icon: <FolderOpen className="w-4 h-4" />, label: r.library ? `Open in ${r.library}` : "Open in its library", onClick: () => router.push(libHref(r)) }] : []),
+    { icon: <X className="w-4 h-4" />, label: "Remove from Staged", tone: "bad", line: true, onClick: () => remove(r) },
+  ];
 
-  const answer = n === 0 ? "Nothing staged." : `${plural(n, "document")} staged.`;
-  const facts = n > 0 ? [
-    { label: "Libraries", value: libraries.toLocaleString() },
-    { label: "Marked up", value: markedCount.toLocaleString() },
-  ] : undefined;
-
-  const sendPrimary = n > 0 ? (
-    <button type="button" onClick={() => setSending(true)} disabled={records.length === 0} className={heroPrimary}
-      title="Send them: a link someone outside can open, or the workspace link, by copy, email, text or QR code">
-      <Send className="w-4 h-4" /> Send
-    </button>
-  ) : undefined;
-
-  const orderButtons = (r: Row, i: number, big = false) => (
-    <div className="flex items-center gap-1">
-      <button type="button" onClick={(e) => { stop(e); staged.move(r.staged.id, -1); }} disabled={i === 0}
-        className={`${btnIcon} ${big ? "!w-10 !h-10 border border-[var(--color-border-strong)]" : ""}`} aria-label={`Move ${r.number || "it"} up`} title="Move up">
-        <ArrowUp className="w-4 h-4" />
+  // ── The page's actions, in the toolbar over the sheets ──
+  const ready = records.length > 0;
+  const actions = (
+    <>
+      <button type="button" onClick={() => void sendToDrafting()} disabled={drafting || !ready} className={`${vQuiet} !h-10 max-sm:!h-11 !text-[14px]`}
+        title="Start one new drafting request with every staged sheet attached: marked-up sheets with your markups drawn in, the rest as issued">
+        {drafting ? <Loader2 className="w-4 h-4 animate-spin" /> : <PenTool className="w-4 h-4" />}
+        <span className="truncate">{drafting ? `Preparing ${plural(records.length, "sheet")}…` : "Send to drafting"}</span>
       </button>
-      <button type="button" onClick={(e) => { stop(e); staged.move(r.staged.id, 1); }} disabled={i === n - 1}
-        className={`${btnIcon} ${big ? "!w-10 !h-10 border border-[var(--color-border-strong)]" : ""}`} aria-label={`Move ${r.number || "it"} down`} title="Move down">
-        <ArrowDown className="w-4 h-4" />
+      <button type="button" onClick={() => setSending(true)} disabled={!ready} className={`${vPrimary} max-sm:!h-11`} data-staged-send
+        title="Send them: a link someone outside can open, or the workspace link, by copy, email, text or QR code">
+        <Send className="w-4 h-4" /> Send
       </button>
-    </div>
+    </>
   );
-  const statusCell = (r: Row) => r.rec === null
-    ? <span className="text-[13px] font-semibold text-[var(--state-overdue)]">Not found</span>
-    : r.status ? <StatusTag status={r.status} /> : <span className="text-[var(--color-text-faint)]">-</span>;
+
+  const kept = (
+    <>
+      {reading && <span className="inline-flex items-center gap-1.5 mr-2"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Reading the latest revisions…</span>}
+      Kept on this device until you clear it.
+    </>
+  );
+
+  const messages = [
+    staged.error ? { text: staged.error, off: staged.dismissError } : null,
+    loadError ? { text: `The staged documents could not be read: ${loadError}`, off: () => setRetry((t) => t + 1), retry: true } : null,
+    draftError ? { text: draftError, off: () => setDraftError(null) } : null,
+  ].filter((m): m is { text: string; off: () => void; retry?: boolean } => !!m);
+
+  // ── Nothing staged ──
+  if (n === 0) {
+    return (
+      <div className="mx-auto w-full px-4 sm:px-6 lg:px-8 py-6 pb-20">
+        <PageHero kicker="Document control" size="md" title="Nothing staged."
+          sub="Tap Stage on any document, or select several and tap Stage.">
+          <ViewTabs tabs={DOCUMENT_VIEWS} />
+        </PageHero>
+        <div className="mt-2"><Link href="/documents" className={btnQuiet}>Go to Documents</Link></div>
+      </div>
+    );
+  }
+
+  const allMissing = !reading && !loadError && records.length === 0;
 
   return (
-    <PageShell width="work">
-      <PageHero
-        kicker="Document control"
-        title={answer}
-        sub={n === 0 ? "Tap Stage on any document, or select several and tap Stage." : undefined}
-        facts={facts}
-        primary={sendPrimary}
-        tools={n > 0 ? (
+    <div className="h-full min-h-[560px] flex flex-col mx-auto w-full px-4 sm:px-6 lg:px-8 pt-6 pb-4 max-sm:pb-0">
+      <PageHero kicker="Document control" size="md" className="!pb-5" title={`${plural(n, "document")} staged.`}
+        tools={(
           <MoreMenu triggerClass={heroQuiet} items={[
             { icon: <Trash2 className="w-4 h-4" />, label: "Clear all", tone: "bad", onClick: clearAll },
           ]} />
-        ) : undefined}
+        )}
       >
         <ViewTabs tabs={DOCUMENT_VIEWS} />
-        {n > 0 && (
-          <div className="flex flex-wrap items-center gap-2">
-            <button type="button" onClick={() => openViewer()} disabled={records.length === 0} className={heroQuiet}
-              title="Open them side by side, in this order, with markup tools. Your markups are kept.">
-              <Eye className="w-4 h-4" /> View and mark up
-            </button>
-            <button type="button" onClick={() => void sendToDrafting()} disabled={drafting || records.length === 0} className={heroQuiet}
-              title="Start one new drafting request with every staged sheet attached: marked-up sheets with your markups drawn in, the rest as issued">
-              {drafting ? <Loader2 className="w-4 h-4 animate-spin" /> : <PenTool className="w-4 h-4" />}
-              {drafting ? `Preparing ${plural(records.length, "sheet")}…` : "Send to drafting"}
-            </button>
-          </div>
-        )}
       </PageHero>
 
-      <PageBody>
-        {(staged.error || loadError || draftError) && (
-          <div className="space-y-1.5 -mb-4">
-            {[
-              staged.error ? { text: staged.error, off: staged.dismissError } : null,
-              loadError ? { text: `The staged documents could not be read: ${loadError}`, off: () => setRetry((t) => t + 1), retry: true } : null,
-              draftError ? { text: draftError, off: () => setDraftError(null) } : null,
-            ].filter(Boolean).map((m) => (
-              <div key={m!.text} role="alert" className="flex items-start gap-2 text-[14px] font-semibold text-[var(--state-overdue)]">
-                <span className="flex-1 min-w-0">{m!.text}</span>
-                {m!.retry
-                  ? <button type="button" onClick={m!.off} className={btnRow}>Try again</button>
-                  : <button type="button" onClick={m!.off} className={btnIcon} aria-label="Dismiss"><X className="w-4 h-4" /></button>}
-              </div>
-            ))}
-          </div>
-        )}
-
-        {n === 0 ? (
-          <Card>
-            <p className="text-[15px] text-[var(--color-text)]">Staged documents show here in the order you stage them, from any folder or library. View them side by side, mark them up, and send them by link, QR code or to drafting.</p>
-            <div className="mt-3"><Link href="/documents" className={btnQuiet}>Go to Documents</Link></div>
-          </Card>
-        ) : (
-          <section aria-label="Staged documents" data-staged-list>
-            {notFound > 0 && (
-              <p className="mb-2.5 text-[14px] text-[var(--color-text)]">
-                {notFound === 1 ? "1 staged document could not be found. It may have been deleted, or you may no longer have access. Remove it from the list." : `${notFound} staged documents could not be found. They may have been deleted, or you may no longer have access. Remove them from the list.`}
-              </p>
-            )}
-
-            {/* Desktop: the ruled table. Tap a row to open it in the viewer there. */}
-            <div className={`${tbl.wrap} max-md:hidden`}>
-              <table className={tbl.table}>
-                <thead className={tbl.thead}>
-                  <tr>
-                    <th className={`${tbl.th} w-12 text-right`}>#</th>
-                    <th className={tbl.th}>Doc No.</th>
-                    <th className={`${tbl.th} w-full`}>Title</th>
-                    <th className={tbl.th}>Rev</th>
-                    <th className={tbl.th}>Status</th>
-                    <th className={tbl.th}>Library</th>
-                    <th className={tbl.th}>Marked up</th>
-                    <th className={tbl.th}><span className="sr-only">Order</span></th>
-                    <th className={tbl.th}><span className="sr-only">Remove</span></th>
-                  </tr>
-                </thead>
-                <tbody className={tbl.tbody}>
-                  {rows.map((r, i) => (
-                    <tr key={r.staged.id} onClick={() => canOpen(r) && openViewer(r.staged.id)}
-                      className={`${tbl.tr} ${canOpen(r) ? "cursor-pointer" : ""}`} data-staged-row>
-                      <td className={`${tbl.td} text-right tabular-nums text-[var(--color-text-muted)]`}>{i + 1}</td>
-                      <td className={`${tbl.td} whitespace-nowrap`}>
-                        <Link href={libHref(r)} onClick={stop} title={`Open ${r.number || "it"} in ${r.library || "its library"}`}
-                          className="font-display text-[16px] font-semibold tabular-nums text-[var(--color-text)] underline decoration-dotted underline-offset-2 hover:text-[var(--color-accent-text)] hover:decoration-solid">
-                          {r.number || "No number"}
-                        </Link>
-                        {r.sheet && <div className="text-[13px] text-[var(--color-text-muted)]">Sheet {r.sheet}</div>}
-                      </td>
-                      <td className={`${tbl.td} max-w-0`}>
-                        {canOpen(r) ? (
-                          <button type="button" onClick={(e) => { stop(e); openViewer(r.staged.id); }} className="block w-full truncate text-left hover:underline underline-offset-2" title={`View ${r.title || r.number}`}>
-                            {r.title || <span className="text-[var(--color-text-faint)]">No title</span>}
-                          </button>
-                        ) : <div className="truncate text-[var(--color-text-muted)]">{r.title}</div>}
-                      </td>
-                      <td className={`${tbl.td} font-display text-[16px] font-semibold tabular-nums`}>{r.rev || "-"}</td>
-                      <td className={tbl.td}>{statusCell(r)}</td>
-                      <td className={`${tbl.td} whitespace-nowrap`}>{r.library || "-"}</td>
-                      <td className={`${tbl.td} whitespace-nowrap`}>
-                        {r.marked ? (
-                          <div className="flex items-center gap-2">
-                            <span className="font-semibold">Yes</span>
-                            <button type="button" onClick={(e) => { stop(e); void clearMarkups(r); }} className={btnRow}>Clear markups</button>
-                          </div>
-                        ) : <span className="text-[var(--color-text-muted)]">No</span>}
-                      </td>
-                      <td className={tbl.td} onClick={stop}>{orderButtons(r, i)}</td>
-                      <td className={tbl.td}>
-                        <button type="button" onClick={(e) => { stop(e); staged.remove(r.staged.id); }} className={btnRow} aria-label={`Remove ${r.number || r.title} from Staged`}>Remove</button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+      {messages.length > 0 && (
+        <div className="mb-3 space-y-1.5">
+          {messages.map((m) => (
+            <div key={m.text} role="alert" className="flex items-start gap-2 text-[14px] font-semibold text-[var(--state-overdue)]">
+              <span className="flex-1 min-w-0">{m.text}</span>
+              {m.retry
+                ? <button type="button" onClick={m.off} className={btnRow}>Try again</button>
+                : <button type="button" onClick={m.off} className={btnIcon} aria-label="Dismiss"><X className="w-4 h-4" /></button>}
             </div>
+          ))}
+        </div>
+      )}
 
-            {/* Phone: the same, as cards. Tap a card to open it in the viewer there. */}
-            <ul className="md:hidden space-y-2.5">
-              {rows.map((r, i) => (
-                <li key={r.staged.id} data-staged-card onClick={() => canOpen(r) && openViewer(r.staged.id)}
-                  className={`rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-3.5 ${canOpen(r) ? "cursor-pointer active:bg-[var(--color-surface-2)]" : ""}`}>
-                  <div className="flex items-start gap-3">
-                    <span className="mt-0.5 w-7 h-7 shrink-0 rounded-full bg-[var(--color-surface-2)] border border-[var(--color-border)] grid place-items-center text-[13px] font-semibold tabular-nums text-[var(--color-text-muted)]">{i + 1}</span>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-baseline gap-2 flex-wrap">
-                        <Link href={libHref(r)} onClick={stop}
-                          className="font-display text-[18px] leading-tight font-semibold tabular-nums text-[var(--color-text)] underline decoration-dotted underline-offset-2">
-                          {r.number || "No number"}
-                        </Link>
-                        {r.sheet && <span className="text-[14px] text-[var(--color-text-muted)]">Sheet <span className="font-semibold text-[var(--color-text)] tabular-nums">{r.sheet}</span></span>}
-                        {r.rev && <span className="text-[14px] text-[var(--color-text-muted)]">Rev <span className="font-semibold text-[var(--color-text)] tabular-nums">{r.rev}</span></span>}
-                        {statusCell(r)}
-                      </div>
-                      {r.title && r.title !== r.number && <div className="mt-0.5 text-[15px] text-[var(--color-text)] line-clamp-2">{r.title}</div>}
-                      <div className="mt-0.5 text-[13px] text-[var(--color-text-muted)]">
-                        {r.library || "Library not known"}{r.marked ? " · Marked up" : ""}
-                      </div>
-                    </div>
-                  </div>
-                  <div className="mt-3 flex items-center gap-2 flex-wrap" onClick={stop}>
-                    {orderButtons(r, i, true)}
-                    <div className="flex-1" />
-                    {r.marked && (
-                      <button type="button" onClick={() => void clearMarkups(r)} className={`${btnRow} !h-10`}>
-                        <Eraser className="w-4 h-4" /> Clear markups
-                      </button>
-                    )}
-                    <button type="button" onClick={() => staged.remove(r.staged.id)} className={`${btnRow} !h-10`} aria-label={`Remove ${r.number || r.title} from Staged`}>Remove</button>
+      {/* The documents: the list to go between them, and the sheets. On a
+          phone the sheets go edge to edge, under a row of chips. */}
+      <section aria-label="Staged documents" data-staged-view
+        className="flex-1 min-h-0 flex flex-col md:flex-row rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden max-sm:-mx-4 max-sm:rounded-none max-sm:border-x-0 max-sm:border-b-0">
+
+        {/* Desktop: a slim column, in order. */}
+        <aside className="max-md:hidden w-[264px] shrink-0 border-r border-[var(--color-border)] flex flex-col min-h-0" aria-label="The staged documents, in order">
+          <ol ref={listRef} className="relative flex-1 min-h-0 overflow-y-auto p-2 space-y-1" data-staged-list>
+            {rows.map((r, i) => {
+              const on = r.staged.id === shownId;
+              return (
+                <li key={r.staged.id} data-staged-item data-on={on ? "" : undefined}
+                  className={`relative flex items-start gap-1 rounded-md transition-colors ${on ? "bg-[var(--color-surface-2)] ring-1 ring-[var(--color-border-strong)]" : "hover:bg-[var(--color-surface-2)]"}`}>
+                  {on && <span aria-hidden className="absolute left-0 inset-y-2 w-[3px] rounded-full bg-[var(--color-main)]" />}
+                  <button type="button" onClick={() => show(r)} aria-current={on ? "true" : undefined}
+                    title={r.rec === null ? "Not found. It may have been deleted, or you may no longer have access." : `Show ${nameOf(r)}`}
+                    className="min-w-0 flex-1 flex items-start gap-2.5 text-left pl-3 pr-1 py-2.5 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent-ring)]">
+                    <span className={`mt-0.5 w-6 h-6 shrink-0 rounded-full grid place-items-center text-[12px] font-bold tabular-nums ${on ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] ring-1 ring-[var(--color-border)]"}`}>{i + 1}</span>
+                    <span className="min-w-0 flex-1">
+                      <span className={`block font-display text-[16px] leading-tight font-semibold tabular-nums truncate ${r.rec === null ? "text-[var(--color-text-muted)]" : "text-[var(--color-text)]"}`}>{r.number || "No number"}</span>
+                      {r.title && r.title !== r.number && <span className="block text-[13px] leading-snug text-[var(--color-text)] truncate">{r.title}</span>}
+                      {(r.sheet || r.rev) && (
+                        <span className="mt-0.5 block text-[13px] leading-snug text-[var(--color-text-muted)] tabular-nums truncate">
+                          {[r.sheet ? `Sheet ${r.sheet}` : null, r.rev ? `Rev ${r.rev}` : null].filter(Boolean).join(" · ")}
+                        </span>
+                      )}
+                      <span className="mt-1.5 flex items-center gap-x-2 gap-y-1 flex-wrap">
+                        {r.rec === null
+                          ? <span className="text-[13px] font-semibold text-[var(--state-overdue)]">Not found</span>
+                          : r.status ? <StatusTag status={r.status} /> : null}
+                        {r.library && <span className="min-w-0 truncate text-[13px] text-[var(--color-text-muted)]">{r.library}</span>}
+                      </span>
+                      {r.rec === null && <span className="mt-1 block text-[13px] leading-snug text-[var(--color-text-muted)]">It may have been deleted, or you may no longer have access.</span>}
+                      {r.marked && <span className="mt-1.5 flex items-center gap-1 text-[13px] font-semibold text-[var(--color-text)]"><PenLine className="w-3.5 h-3.5" /> Marked up</span>}
+                    </span>
+                  </button>
+                  <div className="shrink-0 pt-1.5 pr-1">
+                    <MoreMenu iconOnly label={`More for ${nameOf(r)}`} items={menuFor(r, i)}
+                      triggerClass={`${btnIcon} !w-9 !h-9`} />
                   </div>
                 </li>
-              ))}
-            </ul>
+              );
+            })}
+          </ol>
+          <p className="shrink-0 px-3 py-2.5 border-t border-[var(--color-border)] text-[13px] text-[var(--color-text-muted)]">{kept}</p>
+        </aside>
 
-            <p className="mt-2.5 text-[13px] text-[var(--color-text-muted)]">
-              {reading && <span className="inline-flex items-center gap-1.5 mr-2"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Reading the latest revisions…</span>}
-              Kept on this device until you clear it.
-            </p>
-          </section>
-        )}
-      </PageBody>
+        {/* Phone and narrow screens: a row of chips over the sheets. */}
+        <div className="md:hidden shrink-0 border-b border-[var(--color-border)]">
+          <ol ref={chipsRef} className="relative flex items-center gap-2 px-3 py-2 overflow-x-auto overscroll-x-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" data-staged-chips>
+            {rows.map((r, i) => {
+              const on = r.staged.id === shownId;
+              return (
+                <li key={r.staged.id} data-staged-chip data-on={on ? "" : undefined}
+                  className={`shrink-0 flex items-center h-11 rounded-full border transition-colors ${on ? "bg-[var(--color-text)] border-[var(--color-text)] text-[var(--color-surface)]" : "bg-[var(--color-surface)] border-[var(--color-border-strong)] text-[var(--color-text)]"}`}>
+                  <button type="button" onClick={() => show(r)} aria-current={on ? "true" : undefined}
+                    className={`h-full flex items-center gap-2 pl-3.5 ${on ? "pr-1" : "pr-3.5"} rounded-full text-[14px] whitespace-nowrap`}>
+                    <span className={`tabular-nums text-[13px] font-semibold ${on ? "opacity-70" : "text-[var(--color-text-muted)]"}`}>{i + 1}</span>
+                    <span className="font-semibold tabular-nums">{r.number || "No number"}</span>
+                    {r.sheet && <span className={`text-[13px] ${on ? "opacity-80" : "text-[var(--color-text-muted)]"}`}>Sheet {r.sheet}</span>}
+                    {r.rec === null && <span className={`text-[13px] font-semibold ${on ? "" : "text-[var(--state-overdue)]"}`}>Not found</span>}
+                    {r.marked && <PenLine className="w-3.5 h-3.5" aria-label="Marked up" />}
+                  </button>
+                  {on && (
+                    <MoreMenu iconOnly label={`More for ${nameOf(r)}`} items={menuFor(r, i)}
+                      triggerClass="w-10 h-10 mr-0.5 grid place-items-center rounded-full text-[var(--color-surface)] hover:bg-white/15" />
+                  )}
+                </li>
+              );
+            })}
+          </ol>
+          <p className="px-4 pb-2 -mt-0.5 text-[13px] text-[var(--color-text-muted)]">{kept}</p>
+        </div>
 
-      {viewer && records.length > 0 && (
-        <MultiDocViewer
-          docs={records}
-          setName="Staged"
-          startDocId={viewer.start}
-          initialMarkups={staged.markups}
-          onMarkupsChange={(id, pages) => { staged.setMarkups(id, pages); }}
-          note={staged.error}
-          onDismissNote={staged.dismissError}
-          onClose={() => setViewer(null)}
-          currentUserId={uid ?? undefined}
-          currentUserEmail={userEmail ?? undefined}
-          orgId={activeOrgId ?? undefined}
-          userRole={activeRole}
-        />
-      )}
+        {/* The sheets, large, with the tools and the actions over them. */}
+        <div className="relative flex-1 min-h-0 min-w-0">
+          {ready ? (
+            <MultiDocViewer
+              key={viewerKey}
+              embedded
+              docs={records}
+              setName="Staged"
+              startDocId={opened.start}
+              jumpTo={jump}
+              onActiveDocChange={onActiveDocChange}
+              actions={actions}
+              initialMarkups={staged.markups}
+              onMarkupsChange={(id, pages) => { staged.setMarkups(id, pages); }}
+              currentUserId={uid ?? undefined}
+              currentUserEmail={userEmail ?? undefined}
+              orgId={activeOrgId ?? undefined}
+              userRole={activeRole}
+            />
+          ) : allMissing ? (
+            <div className="surface-charcoal h-full grid place-items-center p-6">
+              <p className="max-w-md text-center text-[15px] text-[var(--color-text)]">
+                {n === 1 ? "The staged document could not be found." : "None of the staged documents could be found."} {n === 1 ? "It may have been deleted, or you may no longer have access. Remove it from the list." : "They may have been deleted, or you may no longer have access. Remove them from the list."}
+              </p>
+            </div>
+          ) : loadError ? (
+            <div className="surface-charcoal h-full grid place-items-center p-6">
+              <button type="button" onClick={() => setRetry((t) => t + 1)} className={vQuiet}>Try again</button>
+            </div>
+          ) : (
+            <Opening />
+          )}
+        </div>
+      </section>
 
       {sending && activeOrgId && (
         <SendSheet orgId={activeOrgId} docs={sendDocs} markedUp={markedUp} markedUpIds={staged.markedUpIds} onClose={() => setSending(false)} />
       )}
-    </PageShell>
+    </div>
   );
 }

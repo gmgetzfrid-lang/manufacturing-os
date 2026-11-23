@@ -2,7 +2,8 @@
 
 // StagingTray - "Staged: 3 documents" along the bottom of every Documents
 // page while something is staged, with the first few numbers and Open, which
-// goes to the Staged page (view them, mark them up, send them). It takes its
+// goes to the Staged page: the documents themselves, open at the first one,
+// to mark up and send. It takes its
 // own row under the page rather than floating over it, so it never covers
 // the last rows of a table; things pinned to the bottom of the screen (a
 // phone's main button, the corner cards) move up by its height

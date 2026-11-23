@@ -14,6 +14,10 @@
 // and a collapsible tag ribbon. Pages render fit-to-width by default (no max
 // cap) so a wide refinery P&ID truly fills the screen; fit-page, zoom, rotate
 // and a real browser-fullscreen toggle round out the viewer controls.
+//
+// Two ways to show it: over a page (a library's book, with a close), or
+// `embedded` as a page's own body (the Staged page), where the page lists
+// the documents beside it and brings its own actions.
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -296,7 +300,20 @@ function InlinePageMarkup({ naturalWidth, tool, color, strokeWidth, enabled, val
 
 interface MultiDocViewerProps {
   docs: DocumentRecord[];
-  onClose: () => void;
+  /** Closes the viewer (opened over a page). Not used when `embedded`. */
+  onClose?: () => void;
+  /** Drawn as a page's own body (the Staged page) instead of over the
+   *  page: no dimmed page behind, no close, no sheet rail (the page lists
+   *  the documents itself), and Escape is left to the page. */
+  embedded?: boolean;
+  /** The page's own actions (Send, Send to drafting), at the top right of
+   *  the chrome; on a phone, in a bar along the bottom. In place of the
+   *  viewer's own "Send to drafting". */
+  actions?: React.ReactNode;
+  /** Called with the document in view as it changes (scrolling, arrows). */
+  onActiveDocChange?: (docId: string) => void;
+  /** Go to this document: a new `seq` goes there again. */
+  jumpTo?: { id: string; seq: number } | null;
   currentUserId?: string;
   currentUserEmail?: string;
   orgId?: string;
@@ -320,7 +337,7 @@ interface MultiDocViewerProps {
   onDismissNote?: () => void;
 }
 
-export default function MultiDocViewer({ docs, onClose, currentUserId, currentUserEmail, orgId, userRole, customColumns, labelColumns, setName = "Reference book", startDocId, initialMarkups, onMarkupsChange, note, onDismissNote }: MultiDocViewerProps) {
+export default function MultiDocViewer({ docs, onClose, embedded = false, actions, onActiveDocChange, jumpTo, currentUserId, currentUserEmail, orgId, userRole, customColumns, labelColumns, setName = "Reference book", startDocId, initialMarkups, onMarkupsChange, note, onDismissNote }: MultiDocViewerProps) {
   const router = useRouter();
   const [bookBusy, setBookBusy] = useState(false);
   const [docBusy, setDocBusy] = useState(false);
@@ -478,13 +495,19 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
         const mark = c.scrollTop + c.clientHeight * 0.35;
         let best = -1;
         let firstVisible = -1;
+        let lastVisible = -1;
+        let past = false;
         for (let i = 0; i < sectionRefs.current.length; i++) {
           const el = sectionRefs.current[i];
           if (!el || el.offsetParent === null) continue; // skip sheets hidden by focus mode
           if (firstVisible < 0) firstVisible = i;
-          if (el.offsetTop <= mark) best = i; else break;
+          lastVisible = i;
+          if (!past && el.offsetTop <= mark) best = i; else past = true;
         }
-        const next = best >= 0 ? best : firstVisible;
+        // Scrolled to the end: the last sheet is the one in view, even when
+        // it is too short for its top to reach the line.
+        const atEnd = c.scrollTop > 0 && c.scrollTop + c.clientHeight >= c.scrollHeight - 2;
+        const next = atEnd && lastVisible >= 0 ? lastVisible : best >= 0 ? best : firstVisible;
         if (next >= 0) setActiveIdx((prev) => (prev === next ? prev : next));
       });
     };
@@ -628,13 +651,24 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (embedded) {
+        // On a page: Escape is the page's, and a dialog over the page (Send)
+        // keeps its keys.
+        if (e.key === "Escape" || e.metaKey || e.ctrlKey || e.altKey || escapeStackBusy() || downloadConfirm || showBulkCheckout) return;
+        if (e.target instanceof HTMLElement && (e.target.isContentEditable || e.target instanceof HTMLSelectElement || e.target.closest("[role=menu]"))) return;
+        if (exportMenu || tagMenuOpen || moreOpen) return;
+        if (e.key === "ArrowRight" || e.key === "ArrowDown") { e.preventDefault(); step(1); }
+        if (e.key === "ArrowLeft" || e.key === "ArrowUp") { e.preventDefault(); step(-1); }
+        if (e.key === "f" || e.key === "F") void toggleFullscreen();
+        return;
+      }
       if (e.key === "Escape") {
         if (document.fullscreenElement) return;
         // A dialog over the viewer (stamp confirm, bulk checkout) closes first,
         // then an open menu; only then the viewer.
         if (escapeStackBusy() || showBulkCheckout) return;
         if (exportMenu || tagMenuOpen || moreOpen) { setExportMenu(null); setTagMenuOpen(false); setMoreOpen(false); return; }
-        onClose();
+        onClose?.();
         return;
       }
       if (downloadConfirm || showBulkCheckout) return;
@@ -643,7 +677,7 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
       if (e.key === "f" || e.key === "F") void toggleFullscreen();
       if (e.key === "b" || e.key === "B") setSidebarOpen((v) => !v);
     },
-    [onClose, step, toggleFullscreen, downloadConfirm, showBulkCheckout, exportMenu, tagMenuOpen, moreOpen]
+    [embedded, onClose, step, toggleFullscreen, downloadConfirm, showBulkCheckout, exportMenu, tagMenuOpen, moreOpen]
   );
 
   useEffect(() => {
@@ -728,6 +762,25 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
     };
   }, [entries, startIdx]);
   useEffect(() => () => stopHolding.current(), []);
+
+  // The page asks for a document (its list of them): go there, and stop
+  // holding the place it opened at.
+  const lastJump = useRef<number | null>(jumpTo?.seq ?? null);
+  useEffect(() => {
+    if (!jumpTo || jumpTo.seq === lastJump.current) return;
+    lastJump.current = jumpTo.seq;
+    const idx = entries.findIndex((e) => e.doc.id === jumpTo.id);
+    if (idx < 0) return;
+    startedAt.current = true;
+    stopHolding.current();
+    goToSheet(idx, { addToFocus: !isVisible(idx) });
+  }, [jumpTo, entries, goToSheet, isVisible]);
+
+  // Tell the page which document is in view.
+  const onActiveRef = useRef(onActiveDocChange);
+  useEffect(() => { onActiveRef.current = onActiveDocChange; });
+  const activeDocId = entries[activeIdx]?.doc.id;
+  useEffect(() => { if (activeDocId) onActiveRef.current?.(activeDocId); }, [activeDocId]);
 
   const activeEntry = entries[activeIdx];
   const activeControlState = activeEntry?.doc && currentUserId ? determineControlState(activeEntry.doc, currentUserId) : "uncontrolled";
@@ -943,14 +996,21 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
   const closeConfirm = () => { setDownloadConfirm(null); setActionError(null); };
 
   return (
-    <div className="fixed inset-0 z-[85]" role="dialog" aria-modal="true" aria-label={`${setName}, ${docs.length} sheet${docs.length === 1 ? "" : "s"}`}>
-      {/* The page behind stays in view at the edges, dimmed. */}
-      <div className={vDim} aria-hidden="true" />
+    <div
+      className={embedded ? "relative isolate h-full min-h-0" : "fixed inset-0 z-[85]"}
+      role={embedded ? "region" : "dialog"}
+      aria-modal={embedded ? undefined : true}
+      aria-label={`${setName}, ${docs.length} sheet${docs.length === 1 ? "" : "s"}`}
+    >
+      {/* Over a page: the page behind stays in view at the edges, dimmed. */}
+      {!embedded && <div className={vDim} aria-hidden="true" />}
 
       {/* Full screen (F) takes this panel to the whole screen. */}
-      <div ref={rootRef} className={vPanel}>
+      <div ref={rootRef} className={embedded ? "surface-charcoal absolute inset-0 overflow-hidden flex flex-col" : vPanel}>
       <div className="flex-1 min-h-0 flex">
-      {/* ── THUMBNAIL RAIL (push panel; never overlaps the page) ── */}
+      {/* ── THUMBNAIL RAIL (push panel; never overlaps the page). On a
+          page, the page lists the documents itself. ── */}
+      {!embedded && (
       <div className={`${sidebarOpen ? "w-52" : "w-0"} shrink-0 border-r border-[var(--color-border)] overflow-hidden transition-[width] duration-200 flex flex-col`} aria-hidden={!sidebarOpen}>
         <div className="px-3 py-2.5 border-b border-[var(--color-border)] flex items-center gap-2 shrink-0">
           <BookOpen className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
@@ -999,6 +1059,7 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
           })}
         </div>
       </div>
+      )}
 
       {/* ── MAIN: the chrome, then the pages ── */}
       <div className="relative flex-1 min-w-0 flex flex-col">
@@ -1006,9 +1067,9 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
             Row one: which sheet, big; the one orange action (when there are
             markups to send) and the X. Row two: getting around the book.
             Wraps on phones so every control stays reachable. */}
-        <header className="relative z-[60] shrink-0 border-b border-[var(--color-border)] px-3 sm:px-5 pt-2.5 pb-2 space-y-2">
+        <header className={`relative z-[60] shrink-0 border-b border-[var(--color-border)] px-3 sm:px-5 pt-2.5 pb-2 space-y-2 ${embedded ? "@container" : ""}`}>
           <div className="flex items-center gap-3">
-            <button type="button" onClick={() => setSidebarOpen((v) => !v)} className={vTool(sidebarOpen, "w-9 h-9")} title="Sheets in this book (B)" aria-label="Sheets in this book" aria-pressed={sidebarOpen}><Menu className="w-4 h-4" /></button>
+            {!embedded && <button type="button" onClick={() => setSidebarOpen((v) => !v)} className={vTool(sidebarOpen, "w-9 h-9")} title="Sheets in this book (B)" aria-label="Sheets in this book" aria-pressed={sidebarOpen}><Menu className="w-4 h-4" /></button>}
             <div className="min-w-0 flex-1">
               <div className={vKicker}>
                 <span className="max-sm:hidden">{setName} · </span>Sheet {posInBook} of {visibleIdxs.length}
@@ -1019,27 +1080,33 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
               </div>
               <h2 className={vTitle} title={activeEntry?.doc.title || activeName}>{activeName}</h2>
             </div>
-            {markedUpIds.length > 0 && (
+            {actions ? (
+              <div className="max-sm:hidden flex items-center gap-2 shrink-0">{actions}</div>
+            ) : markedUpIds.length > 0 && (
               <button type="button" onClick={() => void sendMarkupsToDrafting()} disabled={sendingDraft} title="Send all marked-up sheets (with your markups in them) to one new drafting request" className={vPrimary} aria-label={`Send to drafting (${markedUpIds.length} marked up)`}>
                 {sendingDraft ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
                 <span className="max-sm:hidden">Send to drafting</span> ({markedUpIds.length})
               </button>
             )}
-            <button type="button" aria-label="Close" onClick={onClose} className={vClose} title="Close (Esc)">
-              <X className="w-5 h-5" />
-            </button>
+            {!embedded && onClose && (
+              <button type="button" aria-label="Close" onClick={onClose} className={vClose} title="Close (Esc)">
+                <X className="w-5 h-5" />
+              </button>
+            )}
           </div>
 
           <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
           {/* Sheets: left / up goes back a sheet (the arrow keys too) */}
+          <div className={embedded ? "hidden @min-[560px]:block shrink-0" : "contents"}>
           <div className={vGroup}>
             <button type="button" onClick={() => step(-1)} disabled={visibleIdxs.indexOf(activeIdx) <= 0} className={vIcon} title="Previous sheet (Left arrow)" aria-label="Previous sheet"><ChevronLeft className="w-4 h-4" /></button>
             <span className="px-1 min-w-[3rem] text-center" aria-live="polite">{posInBook} / {visibleIdxs.length}</span>
             <button type="button" onClick={() => step(1)} disabled={visibleIdxs.indexOf(activeIdx) >= visibleIdxs.length - 1} className={vIcon} title="Next sheet (Right arrow)" aria-label="Next sheet"><ChevronRight className="w-4 h-4" /></button>
           </div>
+          </div>
 
           {/* Find a sheet: tag, number, name or anything on it */}
-          <div className="relative min-w-0 flex-1 basis-[200px] max-w-md">
+          <div className={`relative min-w-0 flex-1 basis-[200px] max-w-md ${embedded ? "hidden @min-[1080px]:block" : ""}`}>
             <div className="flex items-center gap-1.5 h-9 rounded-[10px] bg-[var(--color-ink-2)] border border-[var(--color-ink-line)] px-2.5 transition-colors focus-within:border-[var(--color-ink-fg)]">
               <Search className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
               <input
@@ -1108,7 +1175,8 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
           </div>
 
           {/* Zoom / fit-width / rotate / pan */}
-          <div className={`${vGroup} max-md:hidden`}>
+          <div className={embedded ? "hidden @min-[640px]:block shrink-0" : "contents"}>
+          <div className={`${vGroup} ${embedded ? "" : "max-md:hidden"}`}>
             <button type="button" onClick={() => setZoom((z) => Math.max(0.4, Math.round((z - 0.15) * 100) / 100))} className={vIcon} title="Zoom out" aria-label="Zoom out"><ZoomOut className="w-4 h-4" /></button>
             <button type="button" onClick={() => setZoom(1)} className="h-9 px-1 min-w-[2.75rem] text-center rounded-[10px] hover:bg-[var(--color-ink-2)]" title="Fit to width: reset zoom to 100%">{Math.round(zoom * 100)}%</button>
             <button type="button" onClick={() => setZoom((z) => Math.min(3, Math.round((z + 0.15) * 100) / 100))} className={vIcon} title="Zoom in (or Ctrl + scroll)" aria-label="Zoom in"><ZoomIn className="w-4 h-4" /></button>
@@ -1120,12 +1188,13 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
               </button>
             )}
           </div>
+          </div>
 
           {/* All-tags jump dropdown — every tag in the book, click to scroll there. */}
           {totalCollectionTags > 0 && (
             <div className="relative shrink-0">
               <button type="button" onClick={() => setTagMenuOpen((v) => !v)} title="Jump to any tag in this book" aria-expanded={tagMenuOpen} className={`${vQuiet} ${tagMenuOpen ? "bg-[var(--color-ink-line)]" : ""}`}>
-                <Tags className="w-4 h-4" /> <span className="hidden lg:inline">Tags</span> <ChevronDown className="w-3.5 h-3.5" />
+                <Tags className="w-4 h-4" /> <span className={embedded ? "hidden @min-[1240px]:inline" : "hidden lg:inline"}>Tags</span> <ChevronDown className="w-3.5 h-3.5" />
               </button>
               {tagMenuOpen && (
                 <>
@@ -1150,12 +1219,12 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
           )}
 
           {/* Markup toggle — reveals the compact tools. A white pill while on. */}
-          <button type="button" onClick={() => setMarkupMode((v) => !v)} aria-label="Markup" aria-pressed={markupMode}
+          <button type="button" onClick={() => setMarkupMode((v) => !v)} aria-label="Mark up" aria-pressed={markupMode} data-markup-toggle
             title={onMarkupsChange
-              ? "Markup: draw on the page. Kept on this device until you clear it."
-              : "Markup: draw on the page. Discarded on close unless you download the sheet or send it to drafting."}
+              ? "Mark up: draw on the sheet. Kept on this device until you clear it."
+              : "Mark up: draw on the sheet. Discarded on close unless you download the sheet or send it to drafting."}
             className={`inline-flex items-center justify-center gap-1.5 h-9 px-3 shrink-0 rounded-[10px] text-[13px] font-semibold transition-colors ${markupMode ? "bg-[var(--color-ink-fg)] text-[var(--color-ink)]" : "bg-[var(--color-ink-2)] text-[var(--color-text)] hover:bg-[var(--color-ink-line)]"}`}>
-            <Pen className="w-4 h-4" /> <span className="hidden lg:inline">Markup</span>
+            <Pen className="w-4 h-4" /> <span className={embedded ? "hidden @min-[360px]:inline" : "hidden lg:inline"}>Mark up</span>
           </button>
 
           {/* Focus toggle */}
@@ -1166,12 +1235,12 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
             </button>
           )}
 
-          <div className="flex-1 max-lg:hidden" />
+          <div className={embedded ? "flex-1 hidden @min-[880px]:block" : "flex-1 max-lg:hidden"} />
 
           {/* ── DOWNLOAD (uncontrolled) — this sheet / pinned / whole book ── */}
           <div className="relative shrink-0">
             <button type="button" onClick={() => setExportMenu((m) => (m === "download" ? null : "download"))} title="Download an uncontrolled (stamped) copy" aria-expanded={exportMenu === "download"} aria-label="Download" className={`${vQuiet} ${exportMenu === "download" ? "bg-[var(--color-ink-line)]" : ""}`}>
-              {bookBusy || docBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />} <span className="hidden lg:inline">Download</span> <ChevronDown className="w-3.5 h-3.5" />
+              {bookBusy || docBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />} <span className={embedded ? "hidden @min-[880px]:inline" : "hidden lg:inline"}>Download</span> <ChevronDown className="w-3.5 h-3.5" />
             </button>
             {exportMenu === "download" && (
               <>
@@ -1189,7 +1258,7 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
           {/* ── PRINT (uncontrolled) — this sheet / pinned / whole book ── */}
           <div className="relative shrink-0">
             <button type="button" onClick={() => setExportMenu((m) => (m === "print" ? null : "print"))} title="Print an uncontrolled (stamped) copy" aria-expanded={exportMenu === "print"} aria-label="Print" className={`${vQuiet} ${exportMenu === "print" ? "bg-[var(--color-ink-line)]" : ""}`}>
-              {bookBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Printer className="w-4 h-4" />} <span className="hidden lg:inline">Print</span> <ChevronDown className="w-3.5 h-3.5" />
+              {bookBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Printer className="w-4 h-4" />} <span className={embedded ? "hidden @min-[880px]:inline" : "hidden lg:inline"}>Print</span> <ChevronDown className="w-3.5 h-3.5" />
             </button>
             {exportMenu === "print" && (
               <>
@@ -1217,9 +1286,11 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
             )}
           </div>
 
+          <div className={embedded ? "hidden @min-[560px]:block shrink-0" : "contents"}>
           <button type="button" onClick={() => void toggleFullscreen()} className={vIcon} title={isFullscreen ? "Exit full screen (F)" : "Full screen (F)"} aria-label={isFullscreen ? "Exit full screen" : "Full screen"}>
             {isFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
           </button>
+          </div>
           </div>
         </header>
 
@@ -1251,14 +1322,16 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
             <div className="sticky top-0 z-10 bg-[color-mix(in_srgb,var(--color-ink)_88%,transparent)] backdrop-blur-sm border-b border-[var(--color-border)] px-4 py-1.5 flex items-center gap-3">
               <div className="w-5 h-5 rounded-full bg-[var(--color-ink-2)] flex items-center justify-center text-[11px] font-bold text-[var(--color-text)] shrink-0">{idx + 1}</div>
               <span className="text-[13px] font-bold text-[var(--color-text)] shrink-0">{entry.doc.documentNumber || "-"}</span>
-              <span className="text-[13px] text-[var(--color-text-muted)] font-medium truncate">{entry.doc.title || entry.doc.name}</span>
+              {(entry.doc.title || entry.doc.name) !== entry.doc.documentNumber && (
+                <span className="text-[13px] text-[var(--color-text-muted)] font-medium truncate">{entry.doc.title || entry.doc.name}</span>
+              )}
               <div className="ml-auto flex items-center gap-2 shrink-0">
                 <span className="text-[13px] text-[var(--color-text-muted)] hidden sm:inline">Rev {entry.doc.rev || "-"}</span>
                 <span className="text-[13px] text-[var(--color-text-muted)] hidden md:inline">· {entry.doc.status || "-"}</span>
                 {isMarkedUp(entry.doc.id) && (
                   <span className="text-[12px] font-bold text-[var(--color-text)] inline-flex items-center gap-1"><Pen className="w-3 h-3" /> Marked up</span>
                 )}
-                <button
+                {!embedded && <button
                   type="button"
                   onClick={() => togglePick(idx)}
                   title={picked.has(entry.doc.id ?? "") ? "Remove from focus set" : "Add to focus set - review just the sheets you need"}
@@ -1266,7 +1339,7 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
                   aria-pressed={picked.has(entry.doc.id ?? "")}
                 >
                   <Pin className={`w-3 h-3 ${picked.has(entry.doc.id ?? "") ? "fill-current" : ""}`} /> {picked.has(entry.doc.id ?? "") ? "Focused" : "Focus"}
-                </button>
+                </button>}
               </div>
             </div>
 
@@ -1351,7 +1424,9 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
 
       {/* ── MARKUP TOOLS (compact; appear when Markup is on) ── */}
       {markupMode && (
-        <div className="absolute top-11 left-1/2 -translate-x-1/2 z-40 max-w-[calc(100%-16px)] overflow-x-auto flex items-center gap-1 rounded-xl bg-[color-mix(in_srgb,var(--color-ink)_92%,transparent)] backdrop-blur border border-[var(--color-border)] shadow-2xl shadow-black/50 px-2 py-1.5" role="toolbar" aria-label="Markup tools">
+        // On a page, on a phone: along the bottom, every tool in sight
+        // (two rows), where a thumb reaches them.
+        <div className={`absolute top-11 left-1/2 -translate-x-1/2 z-40 max-w-[calc(100%-16px)] overflow-x-auto flex items-center gap-1 rounded-xl bg-[color-mix(in_srgb,var(--color-ink)_92%,transparent)] backdrop-blur border border-[var(--color-border)] shadow-2xl shadow-black/50 px-2 py-1.5 ${embedded ? "max-sm:top-auto max-sm:bottom-2 max-sm:w-[calc(100%-16px)] max-sm:flex-wrap max-sm:justify-center max-sm:gap-y-1.5" : ""}`} role="toolbar" aria-label="Markup tools">
           {([
             ["select", "Select / move", MousePointer2],
             ["pen", "Pen", Pen],
@@ -1397,6 +1472,14 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
         )
       )}
       </div>
+
+      {/* A phone: the page's actions in a bar along the bottom, where a
+          thumb reaches them. */}
+      {actions && (
+        <div className="sm:hidden shrink-0 border-t border-[var(--color-border)] px-3 pt-2.5 pb-[calc(10px+env(safe-area-inset-bottom))] flex items-center gap-2 [&>*]:flex-1 [&>*]:min-w-0">
+          {actions}
+        </div>
+      )}
       </div>
       </div>
       </div>
@@ -1410,7 +1493,7 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
           actorUserId={currentUserId}
           actorEmail={currentUserEmail}
           actorRole={userRole || ""}
-          onSuccess={() => { setShowBulkCheckout(false); onClose(); }}
+          onSuccess={() => { setShowBulkCheckout(false); if (!embedded) onClose?.(); }}
         />
       )}
 
