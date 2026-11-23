@@ -10,8 +10,8 @@ import HoldStrip from "@/components/documents/HoldStrip";
 import WatchButton from "@/components/ui/WatchButton";
 import QuickNoteComposer from "@/components/notes/QuickNoteComposer";
 import PresenceIndicator from "@/components/ui/PresenceIndicator";
-import ShareLinkModal from "@/components/documents/ShareLinkModal";
-import { Link as LinkIcon } from "lucide-react";
+import SendSheet from "@/components/documents/SendSheet";
+import { Share as ShareIcon } from "lucide-react";
 import ModifyDocumentRouter from "@/components/documents/lifecycle/ModifyDocumentRouter";
 import ImpactPanel from "@/components/documents/ImpactPanel";
 import RelatedPanel from "@/components/documents/RelatedPanel";
@@ -651,10 +651,10 @@ export default function InspectorPanel({
           <div className="flex items-center gap-2 flex-wrap">
             <button
               onClick={() => setShareOpen(true)}
-              title="Generate a public share link for someone outside the org"
+              title="Send a link: to someone outside the company (no sign-in, controlled) or to someone in this workspace"
               className="inline-flex items-center gap-1.5 h-9 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
             >
-              <LinkIcon className="w-3 h-3" /> Share
+              <ShareIcon className="w-3.5 h-3.5" /> Send
             </button>
             <NextLink
               href={`/transmittals?compose=1&doc=${selectedDoc.id}`}
@@ -1023,14 +1023,16 @@ export default function InspectorPanel({
       )}
 
       {shareOpen && selectedDoc.id && selectedDoc.orgId && uid && (
-        <ShareLinkModal
-          isOpen={shareOpen}
-          onClose={() => setShareOpen(false)}
+        <SendSheet
           orgId={selectedDoc.orgId}
-          documentId={selectedDoc.id}
-          documentLabel={selectedDoc.documentNumber || selectedDoc.title || selectedDoc.name}
-          createdBy={uid}
-          createdByName={userEmail?.split("@")[0]}
+          docs={[{
+            id: selectedDoc.id,
+            documentNumber: selectedDoc.documentNumber || null,
+            title: selectedDoc.title || selectedDoc.name || null,
+            rev: selectedDoc.rev ?? null,
+            libraryId: selectedDoc.libraryId ?? "",
+          }]}
+          onClose={() => setShareOpen(false)}
         />
       )}
     </div>
