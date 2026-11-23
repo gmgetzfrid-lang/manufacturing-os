@@ -24,6 +24,8 @@ import {
 import { useRole } from "@/components/providers/RoleContext";
 import ViewTabs, { INTELLIGENCE_VIEWS } from "@/components/navigation/ViewTabs";
 import { PageHero } from "@/components/ui/PageHero";
+import { ErrorNote } from "@/components/ui/ErrorNote";
+import { friendlyError } from "@/lib/friendlyError";
 import { bandInput, bandInputIcon, bandSeg, bandSegItem } from "@/components/admin/band";
 import {
   buildOrgGraph, type OrgGraph, type GraphNode, type GraphNodeType, type GraphEdge,
@@ -127,7 +129,7 @@ function GraphPageInner() {
           if (s.length < 2_000_000) window.sessionStorage.setItem(snapKey, s);
         } catch { /* quota — fresh build still rendered */ }
       })
-      .catch((e) => { if (alive) setError((e as Error).message); });
+      .catch((e) => { if (alive) setError(friendlyError(e)); });
     listPendingPairs(activeOrgId)
       .then((pairs) => {
         if (!alive) return;
@@ -429,7 +431,7 @@ function GraphPageInner() {
       setGraph((g) => g ? { ...g, edges: [...g.edges, { a: from.id, b: target.id, type }] } : g);
       setConnect({ from, status: "picking", done: { a: from.label, b: target.label } });
     } catch (e) {
-      setConnect((c) => c && ({ ...c, status: "picking", error: (e as Error).message }));
+      setConnect((c) => c && ({ ...c, status: "picking", error: friendlyError(e) }));
     }
   }, [activeOrgId, uid, userEmail]);
 
@@ -543,6 +545,7 @@ function GraphPageInner() {
         title={graphAnswer}
         sub={graphSub}
         facts={graphFacts}
+        factsHero="none"
       >
         <ViewTabs tabs={INTELLIGENCE_VIEWS} />
       <div className="mt-4 flex items-center gap-2 flex-wrap">
@@ -622,11 +625,12 @@ function GraphPageInner() {
       {/* Map */}
       <div className="relative flex-1 min-h-0">
         {error ? (
-          <div className="flex items-center justify-center h-full text-sm text-[var(--state-overdue)] px-6 text-center">{error}</div>
+          <div className="px-3 sm:px-4 pt-2"><ErrorNote title="Couldn't load the graph." next={error} onRetry={() => window.location.reload()} /></div>
         ) : !view ? (
-          <div className="flex flex-col items-center justify-center h-full gap-2">
-            <Loader2 className="w-6 h-6 animate-spin text-[var(--color-text-faint)]" />
-            <div className="text-[13px] text-[var(--color-text-muted)]">Assembling the org graph…</div>
+          // The map's shape while it assembles; the controls above stay usable.
+          <div role="status" className="absolute inset-3 sm:inset-4">
+            <span className="sr-only">Assembling the org graph</span>
+            <span aria-hidden className="ui-skeleton block w-full h-full !rounded-xl" />
           </div>
         ) : (
           <>
@@ -687,10 +691,10 @@ function GraphPageInner() {
             <div className="absolute top-2 left-3 flex flex-col items-start gap-2 max-h-[calc(100%-1rem)] z-10">
               <button onClick={() => setInsightsOpen((v) => !v)}
                 aria-expanded={insightsOpen}
-                className={`inline-flex items-center gap-1.5 h-9 pl-1.5 pr-2 rounded-md border text-[14px] font-semibold shadow-sm ${
-                  insightsOpen ? "bg-[var(--color-accent-soft)] border-[var(--color-main)] text-[var(--color-accent-text)]" : "bg-[var(--color-surface)] border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
+                className={`inline-flex items-center gap-1.5 h-9 pointer-coarse:h-11 px-3 rounded-lg border text-[14px] font-semibold bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] ${
+                  insightsOpen ? "border-[var(--color-text-muted)]" : "border-[var(--color-border-strong)]"
                 }`}>
-                <span className={`ui-icon-tile is-sm !w-6 !h-6 ${insightsOpen ? "is-solid" : ""}`} aria-hidden><Lightbulb className="w-3.5 h-3.5" /></span> Insights
+                <Lightbulb aria-hidden className="w-4 h-4 text-[var(--color-text-muted)]" /> Insights
                 {insights && insights.orphans.length > 0 && (
                   <span className="ui-count is-warn" title={`${insights.orphans.length} orphans`}>
                     {badgeText(insights.orphans.length)}
@@ -699,7 +703,7 @@ function GraphPageInner() {
               </button>
 
               {insightsOpen && insights && (
-                <div className="w-72 max-w-[calc(100vw-1.5rem)] rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]/97 backdrop-blur shadow-2xl overflow-hidden flex flex-col min-h-0">
+                <div className="w-72 max-w-[calc(100vw-1.5rem)] rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] ui-float ui-float-in overflow-hidden flex flex-col min-h-0">
                   <div className="flex border-b border-[var(--color-border)]">
                     {([
                       { key: "orphans" as const, label: "Orphans", icon: CircleDashed, count: insights.orphans.length, tone: "text-[var(--state-overdue)]" },
@@ -710,9 +714,9 @@ function GraphPageInner() {
                         onClick={() => { setInsightTab(t.key); if (t.key === "orphans") patchSettings({ hideUnlinked: false }); }}
                         aria-pressed={insightTab === t.key}
                         className={`flex-1 inline-flex items-center justify-center gap-1 px-2 py-2 text-[13px] font-semibold ${
-                          insightTab === t.key ? "text-[var(--color-accent-text)] border-b-[3px] border-[var(--color-main)] bg-[var(--color-accent-soft)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+                          insightTab === t.key ? "text-[var(--color-text)] border-b-2 border-[var(--color-current)]" : "text-[var(--color-text-muted)] border-b-2 border-transparent hover:text-[var(--color-text)]"
                         }`}>
-                        <t.icon className={`w-3.5 h-3.5 ${t.tone}`} /> {t.label} <span className={`ui-count !h-5 !min-w-5 !px-1.5 !text-[12px] ${insightTab === t.key ? "is-solid" : ""}`}>{t.count}</span>
+                        {t.label} <span className="ui-count">{t.count}</span>
                       </button>
                     ))}
                   </div>

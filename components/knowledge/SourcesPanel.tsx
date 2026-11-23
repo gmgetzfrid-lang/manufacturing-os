@@ -10,6 +10,8 @@
 // enforcement.
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { Skeleton, SkeletonRows } from "@/components/ui/Skeleton";
+import { friendlyError } from "@/lib/friendlyError";
 import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/ui/Modal";
 import {
   Loader2, Plus, Link2, FolderOpen, Library, RefreshCw, Trash2, Search, ChevronRight,
@@ -43,7 +45,7 @@ function AddSourcesModal({ orgId, libraryId, existing, onClose, onAdded }: {
     let cancelled = false;
     browseKnowledgeContainers(orgId)
       .then((b) => { if (!cancelled) setBrowse(b); })
-      .catch((e) => { if (!cancelled) setBrowseError((e as Error).message); });
+      .catch((e) => { if (!cancelled) setBrowseError(friendlyError(e)); });
     return () => { cancelled = true; };
   }, [orgId]);
 
@@ -115,7 +117,7 @@ function AddSourcesModal({ orgId, libraryId, existing, onClose, onAdded }: {
       onAdded();
       onClose();
     } catch (e) {
-      showToast({ type: "error", title: (e as Error).message });
+      showToast({ type: "error", title: friendlyError(e) });
     } finally { setSaving(false); }
   };
 
@@ -182,7 +184,7 @@ function AddSourcesModal({ orgId, libraryId, existing, onClose, onAdded }: {
             <p role="alert" className="border-l-2 border-[var(--state-overdue)] pl-2 text-[13px] font-bold text-[var(--state-overdue)]">Couldn&apos;t list what you can link: {browseError}</p>
           )}
           {!browse && !browseError && (
-            <div className="py-8 text-center text-sm text-[var(--color-text-muted)]"><Loader2 className="w-5 h-5 animate-spin inline mr-2" /> Loading Document Control…</div>
+            <SkeletonRows rows={4} cols={1} sheet={false} what="Document Control" />
           )}
           {browse && (
             <>
@@ -316,7 +318,7 @@ export default function SourcesPanel({ orgId, libraryId, isController, onChanged
     let cancelled = false;
     listKnowledgeSources(orgId, libraryId)
       .then((r) => { if (!cancelled) { setSources(r.sources); setUnavailable(null); } })
-      .catch((e: unknown) => { if (!cancelled) setUnavailable(e instanceof Error ? e.message : String(e)); }); // pre-migration DB, or a failed read
+      .catch((e: unknown) => { if (!cancelled) setUnavailable(friendlyError(e)); }); // pre-migration DB, or a failed read
     return () => { cancelled = true; };
   }, [orgId, libraryId, tick]);
 
@@ -334,7 +336,7 @@ export default function SourcesPanel({ orgId, libraryId, isController, onChanged
       bump();
       onChanged();
     } catch (e) {
-      showToast({ type: "error", title: (e as Error).message });
+      showToast({ type: "error", title: friendlyError(e) });
     } finally { setBusy(null); }
   };
 
@@ -351,7 +353,7 @@ export default function SourcesPanel({ orgId, libraryId, isController, onChanged
       bump();
       onChanged();
     } catch (e) {
-      showToast({ type: "error", title: (e as Error).message });
+      showToast({ type: "error", title: friendlyError(e) });
     } finally { setBusy(null); }
   };
 
@@ -362,7 +364,7 @@ export default function SourcesPanel({ orgId, libraryId, isController, onChanged
           <Link2 className="w-3.5 h-3.5" /> Sources
         </span>
         {sources === null ? (
-          <span className="inline-flex items-center gap-1.5 text-[13px] text-[var(--color-text-muted)]"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading sources…</span>
+          <span role="status" className="inline-flex items-center gap-2"><span className="sr-only">Loading sources</span><Skeleton className="!w-40" /></span>
         ) : sources.length === 0 ? (
           <span className="text-[13px] text-[var(--color-text-muted)] italic">
             None linked. This library only has direct uploads.

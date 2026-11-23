@@ -7,6 +7,8 @@
 // register export, and the "give me X and I can do more" suggestions.
 
 import React, { useEffect, useState } from "react";
+import { SkeletonRows } from "@/components/ui/Skeleton";
+import { friendlyError } from "@/lib/friendlyError";
 import {
   Loader2, Download, RefreshCw, ChevronRight, Lightbulb, ArrowRight, ClipboardCheck, ScanSearch,
 } from "lucide-react";
@@ -52,7 +54,7 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
     let cancelled = false;
     getDrawingIntel(orgId, libraryId)
       .then((i) => { if (!cancelled) { setIntel(i); setLoadError(null); } })
-      .catch((e) => { if (!cancelled) setLoadError((e as Error).message); });
+      .catch((e) => { if (!cancelled) setLoadError(friendlyError(e)); });
     return () => { cancelled = true; };
   }, [orgId, libraryId, refreshKey]);
 
@@ -72,7 +74,7 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
   if (!intel) {
     return (
       <Section label="Drawing intelligence" icon={ScanSearch}>
-        <div className={`${sheet} px-4 sm:px-5 py-4 text-[14px] text-[var(--color-text-muted)] flex items-center gap-2`}><Loader2 className="w-4 h-4 animate-spin" /> Loading drawing intelligence…</div>
+        <SkeletonRows rows={3} cols={2} what="drawing intelligence" />
       </Section>
     );
   }
@@ -100,7 +102,7 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
       showToast({ type: "success", title: `${res.docs} document${res.docs === 1 ? "" : "s"} queued. Indexing starts now.` });
       onRebuilt();
     } catch (e) {
-      showToast({ type: "error", title: (e as Error).message });
+      showToast({ type: "error", title: friendlyError(e) });
     } finally { setBusy(null); }
   };
 
@@ -117,7 +119,7 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
         title: `Audit recorded for ${res.recorded} sheet${res.recorded === 1 ? "" : "s"}.`,
       });
     } catch (e) {
-      showToast({ type: "error", title: (e as Error).message });
+      showToast({ type: "error", title: friendlyError(e) });
     } finally { setBusy(null); }
   };
 
@@ -126,7 +128,7 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
     try {
       await downloadEquipmentRegister(orgId, libraryId);
     } catch (e) {
-      showToast({ type: "error", title: (e as Error).message });
+      showToast({ type: "error", title: friendlyError(e) });
     } finally { setBusy(null); }
   };
 

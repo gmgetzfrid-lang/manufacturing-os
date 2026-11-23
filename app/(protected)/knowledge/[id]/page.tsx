@@ -7,9 +7,9 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import {
-  Loader2, FileText, Upload,
-  Trash2, RefreshCw, AlertTriangle, History, Globe, Bot,
-  ChevronRight, ChevronDown, Wand2, Eye, MessageSquare, ArrowRight, FolderUp, Search,
+  Loader2, Upload,
+  Trash2, RefreshCw, AlertTriangle, Globe, Bot,
+  ChevronRight, Wand2, Eye, MessageSquare, ArrowRight, FolderUp, Search,
 } from "lucide-react";
 import Link from "next/link";
 import dynamic from "next/dynamic";
@@ -20,7 +20,6 @@ import { PageHero, PageBody, Card, heroQuiet } from "@/components/ui/PageHero";
 import { bandSeg, bandSegItem } from "@/components/admin/band";
 import { Button } from "@/components/ui/Button";
 import { appConfirm } from "@/components/providers/DialogProvider";
-import LoadingBlock from "@/components/ui/LoadingBlock";
 import MoreMenu from "@/components/ui/MoreMenu";
 import { useFileDrag } from "@/hooks/useFileDrag";
 import { useDraft } from "@/hooks/useDraft";
@@ -44,6 +43,10 @@ import { SourcesMenu, AnswerMenu, SkillHint, useAnswerSkills } from "@/component
 import type { AnswerMode } from "@/lib/answerModes";
 import SemanticIndexPanel from "@/components/knowledge/SemanticIndexPanel";
 import { collectDroppedFiles, filesFromDirectoryInput } from "@/lib/folderUpload";
+import { friendlyError } from "@/lib/friendlyError";
+import { ErrorNote } from "@/components/ui/ErrorNote";
+import { SkeletonRows } from "@/components/ui/Skeleton";
+import { btnIcon } from "@/components/admin/kit";
 
 // pdf.js only loads when someone actually opens a cited page.
 const CitedPageViewer = dynamic(() => import("@/components/knowledge/CitedPageViewer"), { ssr: false });
@@ -154,7 +157,7 @@ export default function KnowledgeLibraryPage() {
       setLoadError(null);
     } catch (e) {
       // A failed read says so, instead of "not found" or an empty shelf.
-      setLoadError((e as Error).message);
+      setLoadError(friendlyError(e));
     } finally {
       setLoading(false);
     }
@@ -256,7 +259,7 @@ export default function KnowledgeLibraryPage() {
   const retryUpload = async (file: File) => {
     setFailedUploads((fs) => fs.filter((f) => f.file !== file));
     try { await upOne(file); showToast({ type: "success", title: `${file.name} uploaded. Indexing it now.` }); }
-    catch (e) { setFailedUploads((fs) => [...fs, { file, error: (e as Error).message }]); }
+    catch (e) { setFailedUploads((fs) => [...fs, { file, error: friendlyError(e) }]); }
     await refresh();
   };
 
@@ -277,7 +280,7 @@ export default function KnowledgeLibraryPage() {
         setUploadState({ name: file.name, phase: "Uploading…" });
         doc = await upOne(file, (p) => setUploadState({ name: file.name, phase: `Uploading… ${Math.round(p.percent)}%` }));
       } catch (e) {
-        setFailedUploads((fs) => [...fs, { file, error: (e as Error).message }]);
+        setFailedUploads((fs) => [...fs, { file, error: friendlyError(e) }]);
       }
       if (doc) {
         // Say what it read, not just that it finished.
@@ -291,7 +294,7 @@ export default function KnowledgeLibraryPage() {
           });
           showToast({ type: "success", title: `Read ${read}${of ? ` of ${of}` : ""} page${(of ?? read) === 1 ? "" : "s"} of ${file.name}. It's searchable now.` });
         } catch (e) {
-          showToast({ type: "error", title: `${file.name} is on the shelf but wasn't fully read: ${(e as Error).message}. Use Resume indexing on its row.` });
+          showToast({ type: "error", title: `${file.name} is on the shelf but wasn't fully read. Use Resume indexing on its row.`, message: friendlyError(e) });
         }
       }
     } else {
@@ -302,7 +305,7 @@ export default function KnowledgeLibraryPage() {
       const worker = async () => {
         for (let file = queue.shift(); file; file = queue.shift()) {
           try { await upOne(file); }
-          catch (e) { failed.push({ file, error: (e as Error).message }); }
+          catch (e) { failed.push({ file, error: friendlyError(e) }); }
           done++;
           if (mountedRef.current) setUploadState({ name: `${pdfs.length} PDFs`, phase: `Uploading ${done} of ${pdfs.length}…` });
         }
@@ -328,7 +331,7 @@ export default function KnowledgeLibraryPage() {
       setDocsOpen(true);
       void promise.then(
         (files) => onFiles(files.map((f) => f.file)),
-        (err) => showToast({ type: "error", title: (err as Error).message }),
+        (err) => showToast({ type: "error", title: friendlyError(err) }),
       );
     }
     docsDrag.bind.onDrop(e);
@@ -340,7 +343,7 @@ export default function KnowledgeLibraryPage() {
       await ingestKnowledgeDocument(doc.id, () => { void listKnowledgeDocuments(libraryId).then(setDocs); });
       showToast({ type: "success", title: `${doc.name} indexed.` });
     } catch (e) {
-      showToast({ type: "error", title: (e as Error).message });
+      showToast({ type: "error", title: friendlyError(e) });
     } finally {
       setReindexing(null);
       await refresh();
@@ -364,7 +367,7 @@ export default function KnowledgeLibraryPage() {
         (done) => setRemoving({ label: "Removing documents", done, total: ids.length }));
       setSelected(new Set());
       showToast({ type: "success", title: `${n} document${n === 1 ? "" : "s"} removed.` });
-    } catch (e) { showToast({ type: "error", title: (e as Error).message }); }
+    } catch (e) { showToast({ type: "error", title: friendlyError(e) }); }
     finally { setRemoving(null); await refresh(); }
   };
 
@@ -386,7 +389,7 @@ export default function KnowledgeLibraryPage() {
       router.push("/knowledge");
     } catch (e) {
       setRemoving(null);
-      showToast({ type: "error", title: (e as Error).message });
+      showToast({ type: "error", title: friendlyError(e) });
     }
   };
 
@@ -437,7 +440,7 @@ export default function KnowledgeLibraryPage() {
     return (
       <PageShell>
         <PageHero back={{ href: "/knowledge", label: "Back to Knowledge" }} kicker="Intelligence · Knowledge" title="Loading the library…" size="md" />
-        <PageBody><Card><LoadingBlock what="the library" rows={6} className="border-0 p-0" /></Card></PageBody>
+        <PageBody><SkeletonRows rows={6} cols={2} what="the library" /></PageBody>
       </PageShell>
     );
   }
@@ -445,17 +448,18 @@ export default function KnowledgeLibraryPage() {
     return (
       <PageShell>
         <PageHero back={{ href: "/knowledge", label: "Back to Knowledge" }} kicker="Intelligence · Knowledge"
-          title={loadError ? "This library didn't open." : "This library isn't there."} size="md" />
+          title={loadError ? "Couldn't open this library." : "This library isn't there."} size="md" />
         <PageBody>
-          <Card>
-            {loadError
-              ? <p role="alert" className="text-[15px] font-semibold text-[var(--state-overdue)]">Couldn&apos;t open this library: {loadError}</p>
-              : <p className="text-[14px] text-[var(--color-text-muted)]">It may have been deleted.</p>}
-            <div className="mt-4 flex gap-2">
-              {loadError && <Button variant="secondary" onClick={() => { setLoading(true); void refresh(); }}><RefreshCw className="w-4 h-4" /> Try again</Button>}
-              <Button variant="secondary" onClick={() => router.push("/knowledge")}>Go to Knowledge</Button>
-            </div>
-          </Card>
+          {loadError ? (
+            <ErrorNote title="Couldn't open this library." next={loadError} onRetry={() => { setLoading(true); void refresh(); }} />
+          ) : (
+            <Card>
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-3">
+                <p className="flex-1 text-[15px] text-[var(--color-text-muted)]">It may have been deleted.</p>
+                <Button variant="secondary" onClick={() => router.push("/knowledge")}>Go to Knowledge</Button>
+              </div>
+            </Card>
+          )}
         </PageBody>
       </PageShell>
     );
@@ -466,17 +470,18 @@ export default function KnowledgeLibraryPage() {
 
   // The answer: how much is in here, and how much of it can be asked.
   const answer = docs.length === 0
-    ? "Empty, nothing to ask yet"
+    ? "Nothing to ask yet."
     : readyDocs === docs.length
-      ? `All ${docs.length.toLocaleString()} ${docs.length === 1 ? "document" : "documents"} indexed`
+      ? `All ${docs.length.toLocaleString()} ${docs.length === 1 ? "document" : "documents"} indexed.`
       : readyDocs === 0
-        ? "Nothing indexed yet"
-        : `${readyDocs.toLocaleString()} of ${docs.length.toLocaleString()} documents indexed`;
+        ? "Nothing indexed yet."
+        : `${readyDocs.toLocaleString()} of ${docs.length.toLocaleString()} documents indexed.`;
+  // A failure is the one number that needs someone; the rest stay small.
   const facts = docs.length > 0 ? [
+    ...(docGroups.failed > 0 ? [{ label: "Failed", value: docGroups.failed.toLocaleString(), tone: "bad" as const, hero: true }] : []),
     { label: "Documents", value: docs.length.toLocaleString() },
-    { label: "Indexed", value: readyDocs.toLocaleString(), tone: readyDocs === docs.length ? "good" as const : undefined },
-    ...(indexingDocs > 0 ? [{ label: "In progress", value: indexingDocs.toLocaleString(), tone: "warn" as const }] : []),
-    ...(docGroups.failed > 0 ? [{ label: "Failed", value: docGroups.failed.toLocaleString(), tone: "bad" as const }] : []),
+    { label: "Indexed", value: readyDocs.toLocaleString() },
+    ...(indexingDocs > 0 ? [{ label: "In progress", value: indexingDocs.toLocaleString() }] : []),
   ] : undefined;
 
   return (
@@ -487,16 +492,11 @@ export default function KnowledgeLibraryPage() {
         title={answer}
         size="md"
         facts={facts}
+        factsHero={docGroups.failed > 0 ? "auto" : "none"}
         sub={
           <>
             {library.description ? <span className="line-clamp-2">{library.description}</span> : null}
             {indexingDocs > 0 && <span className="block mt-1">Asking works on what&apos;s already indexed.</span>}
-            {loadError && (
-              <span role="alert" className="block mt-1 text-[var(--state-overdue)] font-semibold">
-                Couldn&apos;t refresh the library: {loadError}{" "}
-                <button type="button" onClick={() => void refresh()} className="font-normal text-[var(--color-accent-text)] hover:underline">Try again</button>
-              </span>
-            )}
           </>
         }
         tools={isController ? (
@@ -514,8 +514,8 @@ export default function KnowledgeLibraryPage() {
           <div className="flex items-center gap-x-3 gap-y-1 flex-wrap text-[14px] text-[var(--color-text-muted)]">
             <span>Also searches</span>
             {links.map((l) => (
-              <Link key={l.id} href={`/knowledge/${l.linkedLibraryId}`} title={`Open ${l.linkedLibraryName}, a reference library`} className="ui-tag">
-                {l.linkedLibraryName} <span className="font-sans font-normal opacity-75">reference</span>
+              <Link key={l.id} href={`/knowledge/${l.linkedLibraryId}`} title={`Open ${l.linkedLibraryName}, a reference library`} className="font-semibold text-[var(--color-accent-text)] hover:underline underline-offset-2">
+                {l.linkedLibraryName} <span className="font-normal text-[var(--color-text-muted)]">(reference)</span>
               </Link>
             ))}
             <span>This library governs; answers say which document won.</span>
@@ -524,11 +524,12 @@ export default function KnowledgeLibraryPage() {
       </PageHero>
 
       <PageBody>
+      {loadError && <ErrorNote compact title="Couldn't refresh the library." next={loadError} onRetry={() => void refresh()} />}
       {removing && (
-        <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3 text-[14px]">
+        <div role="status" className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3 text-[14px]">
           <div className="flex items-center gap-2">
-            <Loader2 className="w-4 h-4 animate-spin text-[var(--color-text-muted)] shrink-0" />
-            <span className="font-semibold">{removing.label}…</span>
+            <Loader2 aria-hidden className="w-4 h-4 animate-spin text-[var(--color-text-muted)] shrink-0" />
+            <span className="font-semibold">{removing.label}</span>
             <span className="text-[var(--color-text-muted)] ml-auto">{removing.done} of {removing.total} documents removed</span>
           </div>
           {removing.total > 0 && (
@@ -560,11 +561,10 @@ export default function KnowledgeLibraryPage() {
 
       <section>
         {/* ── Documents ──────────────────────────────────────────────────── */}
-        <div className="flex items-end gap-3 mb-2.5 min-h-8">
-          <h2 className="flex items-center gap-2.5 font-display text-[19px] leading-tight font-semibold text-[var(--color-text)]">
-            <span aria-hidden className="ui-icon-tile is-sm is-solid"><FileText className="w-4 h-4" /></span>
+        <div className="flex items-end gap-3 mb-3 min-h-8">
+          <h2 className="flex items-baseline gap-2.5 font-display text-[20px] leading-tight font-semibold text-[var(--color-text)]">
             Documents
-            {docs.length > 0 && <span className="ui-count is-solid">{docs.length.toLocaleString()}</span>}
+            {docs.length > 0 && <span className="ui-count">{docs.length.toLocaleString()}</span>}
           </h2>
         </div>
         {/* The whole sheet is a drop target: files or folders (every PDF
@@ -572,7 +572,7 @@ export default function KnowledgeLibraryPage() {
         <div
           {...docsDrag.bind}
           onDrop={onDrop}
-          className={`rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4 sm:p-5 ${docsDrag.over ? docsDrag.ring : ""}`}
+          className={`rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 sm:p-5 ${docsDrag.over ? docsDrag.ring : ""}`}
         >
           {docsDrag.over && <p className="mb-2 text-center text-[15px] font-semibold text-[var(--color-text)]">{docsDrag.say}: PDFs and whole folders</p>}
           {activeOrgId && (
@@ -582,10 +582,10 @@ export default function KnowledgeLibraryPage() {
           <div className="flex items-center gap-2 flex-wrap mb-3">
             <button onClick={() => setDocsOpen((v) => !v)} aria-expanded={docsOpen}
               className="flex items-center gap-1.5 text-[15px] font-semibold text-[var(--color-text)] hover:underline mr-auto">
-              {docsOpen ? <ChevronDown className="w-4 h-4 text-[var(--color-text-muted)]" /> : <ChevronRight className="w-4 h-4 text-[var(--color-text-muted)]" />}
-              <span className="inline-flex items-center gap-1.5 flex-wrap">
-                <span className={`ui-count ${readyDocs === docs.length && docs.length > 0 ? "is-solid" : ""}`}>{readyDocs.toLocaleString()}</span> of {docs.length.toLocaleString()} indexed
-                {indexingDocs > 0 && <span className="ui-pill is-warn ml-1"><Loader2 className="w-3 h-3 animate-spin" /> {indexingDocs} in progress</span>}
+              <ChevronRight aria-hidden className={`ui-chevron w-4 h-4 text-[var(--color-text-muted)] ${docsOpen ? "rotate-90" : ""}`} />
+              <span className="inline-flex items-center gap-1.5 flex-wrap tabular-nums">
+                {readyDocs.toLocaleString()} of {docs.length.toLocaleString()} indexed
+                {indexingDocs > 0 && <span className="ui-pill is-muted ml-1"><Loader2 aria-hidden className="w-3 h-3 animate-spin" /> {indexingDocs} in progress</span>}
               </span>
             </button>
             {/* Re-index lives HERE, with the documents — not inside Drawing
@@ -606,15 +606,15 @@ export default function KnowledgeLibraryPage() {
                   if (!ok || !activeOrgId) return;
                   try {
                     const res = await rebuildDrawingIndex(activeOrgId, libraryId);
-                    showToast({ type: "success", title: `${res.docs} document(s) queued - indexing starts now.` });
+                    showToast({ type: "success", title: `${res.docs} ${res.docs === 1 ? "document" : "documents"} queued. Indexing starts now.` });
                     void refresh();
                   } catch (e) {
-                    showToast({ type: "error", title: (e as Error).message });
+                    showToast({ type: "error", title: friendlyError(e) });
                   }
                 }}
-                className={heroQuiet + " !h-8 !text-[13px]"}
+                className="inline-flex items-center gap-1.5 h-8 pointer-coarse:h-10 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
               >
-                <RefreshCw className="w-3.5 h-3.5" /> Re-index all
+                <RefreshCw aria-hidden className="w-3.5 h-3.5" /> Re-index all
               </button>
             )}
             {isController && (
@@ -628,7 +628,7 @@ export default function KnowledgeLibraryPage() {
                       const files = e.target.files ? filesFromDirectoryInput(e.target.files).map((f) => f.file) : null;
                       setDocsOpen(true);
                       void onFiles(files);
-                    } catch (err) { showToast({ type: "error", title: (err as Error).message }); }
+                    } catch (err) { showToast({ type: "error", title: friendlyError(err) }); }
                     e.target.value = "";
                   }} />
                 <div className="flex items-center gap-1.5">
@@ -656,17 +656,17 @@ export default function KnowledgeLibraryPage() {
               {failedUploads.map(({ file, error }) => (
                 <li key={`${file.name}-${file.size}-${file.lastModified}`} className="relative flex items-center gap-2 pl-4 py-0.5 text-[14px]">
                   <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] rounded-full bg-[var(--state-overdue)]" />
-                  <span className="min-w-0 flex-1 truncate"><span className="font-semibold text-[var(--color-text)]">{file.name}</span> <span className="text-[var(--color-text-muted)]">({(file.size / 1024 / 1024).toFixed(1)} MB)</span> <span className="text-[var(--state-overdue)] font-semibold">didn&apos;t upload: {error}</span></span>
-                  <button type="button" onClick={() => void retryUpload(file)} disabled={uploadState !== null} className={heroQuiet + " !h-8 !text-[13px]"}>Try again</button>
-                  <button type="button" onClick={() => setFailedUploads((fs) => fs.filter((f) => f.file !== file))} aria-label={`Dismiss ${file.name}`} className="shrink-0 w-8 h-8 grid place-items-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">×</button>
+                  <span className="min-w-0 flex-1 truncate"><span className="font-semibold text-[var(--color-text)]">{file.name}</span> <span className="text-[var(--color-text-muted)]">({(file.size / 1024 / 1024).toFixed(1)} MB)</span> <span className="text-[var(--state-overdue-text)] font-semibold">didn&apos;t upload.</span> <span className="text-[var(--color-text-muted)]">{error}</span></span>
+                  <button type="button" onClick={() => void retryUpload(file)} disabled={uploadState !== null} className="shrink-0 text-[14px] font-semibold text-[var(--color-accent-text)] hover:underline underline-offset-2">Try again</button>
+                  <button type="button" onClick={() => setFailedUploads((fs) => fs.filter((f) => f.file !== file))} aria-label={`Dismiss ${file.name}`} title="Dismiss" className={btnIcon}>×</button>
                 </li>
               ))}
             </ul>
           )}
           {autoIndexing && (
-            <div className="mb-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-2.5 text-[14px]">
+            <div role="status" className="mb-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-2.5 text-[14px]">
               <div className="flex items-center gap-2">
-                <Loader2 className="w-4 h-4 animate-spin text-[var(--color-text-muted)] shrink-0" />
+                <Loader2 aria-hidden className="w-4 h-4 animate-spin text-[var(--color-text-muted)] shrink-0" />
                 <span className="font-semibold truncate">Indexing {autoIndexing.name}</span>
                 <span className="text-[var(--color-text-muted)] shrink-0 ml-auto">
                   {autoIndexing.remaining} in queue. Keeps going anywhere in the app.
@@ -693,9 +693,8 @@ export default function KnowledgeLibraryPage() {
           )}
 
           {!docsOpen && docs.length > 0 ? null : docs.length === 0 && !uploadState ? (
-            <div className="rounded-md border border-dashed border-[var(--color-border-strong)] p-8 text-center text-[15px] text-[var(--color-text-muted)]">
-              <span aria-hidden className="ui-icon-tile mx-auto mb-2 !grid !w-11 !h-11"><FileText className="w-5 h-5" /></span>
-              {isController ? "Drag PDFs or whole folders here to build the shelf." : "No documents yet. Admin or Doc Control can add PDFs."}
+            <div className="rounded-lg border border-dashed border-[var(--color-border-strong)] p-6 text-center text-[15px] text-[var(--color-text-muted)]">
+              {isController ? "Drag PDFs or whole folders here, or use Add PDFs above." : "No documents yet. Admin or Doc Control can add PDFs."}
             </div>
           ) : (
             <>
@@ -704,21 +703,22 @@ export default function KnowledgeLibraryPage() {
                 <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-text-faint)]" />
                 <input id="kdoc-search" value={docQuery} onChange={(e) => { setDocQuery(e.target.value); setDocLimit(200); }}
                   aria-label="Search documents"
-                  placeholder={`Search ${docs.length.toLocaleString()} documents: "EP 5-2-3", "piping specs"…`}
-                  className="w-full h-9 pl-9 pr-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none focus:border-[var(--color-main)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40" />
+                  placeholder={`e.g. EP 5-2-3 or piping specs (${docs.length.toLocaleString()} documents)`}
+                  autoComplete="off" enterKeyHint="search"
+                  className="w-full h-10 pointer-coarse:h-11 pl-9 pr-3 rounded-lg border border-[var(--color-border-control)] bg-[var(--color-surface)] text-[15px] max-sm:text-[16px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)]" />
               </div>
               <div className={bandSeg} role="group" aria-label="Show">
                 {([
                   ["all", "All"], ["ready", "Fully indexed"], ["partial", "Partly read"], ["working", "In progress"], ["failed", "Failed"], ["uploaded", "Uploaded here"],
                 ] as const).filter(([k]) => k === "all" || docGroups[k] > 0).map(([k, label]) => (
                   <button key={k} onClick={() => { setDocFilter(k); setDocLimit(200); }} aria-pressed={docFilter === k}
-                    className={`${bandSegItem(docFilter === k)} !h-7 !text-[13px]`}>
-                    {label} <span className={`ui-count !h-5 !min-w-5 !px-1.5 !text-[12px] ${k === "failed" ? "is-bad" : k === "partial" ? "is-warn" : docFilter === k ? "is-solid" : ""}`}>{docGroups[k].toLocaleString()}</span>
+                    className={bandSegItem(docFilter === k)}>
+                    {label} <span className={`ui-count ${k === "failed" ? "is-bad" : k === "partial" ? "is-warn" : ""}`}>{docGroups[k].toLocaleString()}</span>
                   </button>
                 ))}
               </div>
               <select aria-label="Sort documents" value={docSort} onChange={(e) => setDocSort(e.target.value as typeof docSort)}
-                className="h-9 px-2 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)]">
+                className="h-10 pointer-coarse:h-11 px-3 rounded-lg border border-[var(--color-border-control)] bg-[var(--color-surface)] text-[14px] max-sm:text-[16px] font-semibold text-[var(--color-text)]">
                 <option value="name">Sort: number</option>
                 <option value="pages">Sort: most pages</option>
                 <option value="problems">Sort: problems first</option>
@@ -726,7 +726,7 @@ export default function KnowledgeLibraryPage() {
             </div>
             {isController && selected.size > 0 && (
               <div className="mb-2 flex items-center gap-3 text-[14px]">
-                <span className="inline-flex items-center gap-1.5 font-semibold text-[var(--color-text)]"><span className="ui-count is-solid">{selected.size}</span> selected</span>
+                <span className="font-semibold text-[var(--color-text)] tabular-nums">{selected.size} selected</span>
                 <Button size="sm" variant="danger" onClick={() => void removeDocs([...selected])} disabled={removing !== null}>
                   <Trash2 className="w-3.5 h-3.5" /> Remove {selected.size}
                 </Button>
@@ -734,8 +734,9 @@ export default function KnowledgeLibraryPage() {
               </div>
             )}
             {shownDocs.length === 0 && (
-              <div className="rounded-md border border-dashed border-[var(--color-border)] p-4 text-center text-[14px] text-[var(--color-text-muted)]">
+              <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 p-4 text-[14px] text-[var(--color-text-muted)]">
                 No document matches{docQuery ? ` "${docQuery}"` : ""}{docFilter !== "all" ? " in this filter" : ""}.
+                <button type="button" onClick={() => { setDocQuery(""); setDocFilter("all"); }} className="font-semibold text-[var(--color-accent-text)] hover:underline underline-offset-2">Show all</button>
               </div>
             )}
             {shownDocs.length > 0 && (
@@ -792,24 +793,23 @@ export default function KnowledgeLibraryPage() {
                   )}
                   <td className={`py-3 min-w-0 relative ${isController ? "px-3" : "px-4 sm:px-5"}`}>
                     {bad && !isController && <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] bg-[var(--state-overdue)]" />}
-                    <div className="flex items-start gap-2.5 min-w-0">
-                    <span aria-hidden className="ui-icon-tile is-sm !w-6 !h-6 mt-px"><FileText className="w-3.5 h-3.5" /></span>
+                    <div className="min-w-0">
                     <div className="min-w-0 flex-1">
                     <div className="ui-id text-[16px] break-words">{doc.name.replace(/\.pdf$/i, "")}</div>
                     <div className="mt-0.5 flex items-center gap-x-3 gap-y-1 flex-wrap text-[13px] text-[var(--color-text-muted)]">
                       {doc.sourceDocumentId && (
-                        <span className="ui-tag !h-6 !text-[12.5px]" title="Mirrors a controlled document - kept current by the source sync">
-                          From Doc Control{doc.sourceRev ? `, Rev ${doc.sourceRev}` : ""}
+                        <span title="Mirrors a controlled document, kept current by the source sync">
+                          From Doc Control{doc.sourceRev ? <>, Rev <span className="ui-id">{doc.sourceRev}</span></> : ""}
                         </span>
                       )}
                       <span className="md:hidden">{statusTag}</span>
                       {doc.status === "ready" && !fullyRead && <span className="tabular-nums">{doc.pagesIndexed} of {doc.pageCount ?? "?"} pages read</span>}
                       {doc.status === "indexing" && <span className="tabular-nums">{doc.pagesIndexed}{doc.pageCount ? ` of ${doc.pageCount}` : ""} pages so far</span>}
-                      {bad && doc.error && <span className="text-[var(--state-overdue)] truncate max-w-[60ch]">{doc.error.slice(0, 80)}</span>}
+                      {bad && doc.error && <span className="text-[var(--state-overdue-text)] truncate max-w-[60ch]" title={doc.error}>{friendlyError(doc.error)}</span>}
                     </div>
                     {doc.status === "indexing" && doc.pageCount ? (
                       <div className="mt-1.5 h-1 max-w-sm rounded-full bg-[var(--color-surface-2)] overflow-hidden">
-                        <div className="h-full bg-[var(--state-held)] transition-all" style={{ width: `${Math.round((doc.pagesIndexed / doc.pageCount) * 100)}%` }} />
+                        <div className="h-full bg-[var(--color-text-muted)] transition-all" style={{ width: `${Math.round((doc.pagesIndexed / doc.pageCount) * 100)}%` }} />
                       </div>
                     ) : null}
                     </div>
@@ -818,20 +818,14 @@ export default function KnowledgeLibraryPage() {
                   <td className="px-3 py-3 text-right font-display tabular-nums font-semibold text-[15px] text-[var(--color-text)] hidden sm:table-cell whitespace-nowrap">{doc.pageCount ?? "?"}</td>
                   <td className="px-3 py-3 hidden md:table-cell whitespace-nowrap">{statusTag}</td>
                   <td className="px-2 py-2 whitespace-nowrap text-right">
-                    {isController && doc.status !== "ready" && (
-                      <button onClick={() => void resumeIndex(doc)} disabled={reindexing !== null}
-                        title="Resume indexing"
-                        aria-label={`Resume indexing ${doc.name}`}
-                        className="w-8 h-8 inline-grid place-items-center rounded-md hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
-                        {reindexing === doc.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
-                      </button>
-                    )}
-                    {isController && !doc.sourceDocumentId && (
-                      <button onClick={() => void removeDocs([doc.id])} title="Remove" aria-label={`Remove ${doc.name}`} disabled={removing !== null}
-                        className="w-8 h-8 inline-grid place-items-center rounded-md hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)] hover:text-[var(--state-overdue)]">
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    )}
+                    {reindexing === doc.id ? (
+                      <span role="status" className="inline-grid w-8 h-8 place-items-center text-[var(--color-text-muted)]"><Loader2 aria-label="Resuming" className="w-4 h-4 animate-spin" /></span>
+                    ) : isController && (doc.status !== "ready" || !doc.sourceDocumentId) ? (
+                      <MoreMenu iconOnly label={`More for ${doc.name}`} triggerClass={btnIcon} items={[
+                        ...(doc.status !== "ready" ? [{ icon: <RefreshCw className="w-4 h-4" />, label: "Resume indexing", onClick: () => { if (reindexing === null) void resumeIndex(doc); } }] : []),
+                        ...(!doc.sourceDocumentId ? [{ icon: <Trash2 className="w-4 h-4" />, label: "Remove", tone: "bad" as const, line: doc.status !== "ready", onClick: () => { if (removing === null) void removeDocs([doc.id]); } }] : []),
+                      ]} />
+                    ) : null}
                   </td>
                 </tr>
                 );
@@ -904,7 +898,7 @@ function AskEntry({ orgId, libraryId, libraryName, readyDocs, docsTotal }: {
     let cancelled = false;
     void listThreads(orgId, { libraryId, limit: 4 }).then(
       (ts) => { if (!cancelled) { setRecent(ts); setRecentError(null); } },
-      (e: unknown) => { if (!cancelled) { setRecent([]); setRecentError(e instanceof Error ? e.message : String(e)); } },
+      (e: unknown) => { if (!cancelled) { setRecent([]); setRecentError(friendlyError(e)); } },
     );
     void import("@/lib/aiInstructions").then((m) =>
       m.countActiveInstructions(orgId, "knowledge").then((n) => { if (!cancelled) setInstructionCount(n); }))
@@ -937,56 +931,60 @@ function AskEntry({ orgId, libraryId, libraryName, readyDocs, docsTotal }: {
     <section>
       <div className="flex items-end gap-x-3 gap-y-1 flex-wrap mb-2.5 min-h-8">
         <div className="min-w-0 flex-1 basis-[16rem]">
-          <h2 className="flex items-center gap-2.5 font-display text-[19px] leading-tight font-semibold text-[var(--color-text)]">
-            <span aria-hidden className="ui-icon-tile is-sm is-solid"><MessageSquare className="w-4 h-4" /></span> Ask this library
+          <h2 className="font-display text-[20px] leading-tight font-semibold text-[var(--color-text)]">
+            Ask this library
           </h2>
-          <div className="text-[14px] text-[var(--color-text-muted)]">
+          <div className="mt-0.5 text-[14px] text-[var(--color-text-muted)]">
             Answers come only from the indexed documents, cited to the page.
             {instructionCount > 0 && (
-              <Link href="/admin/ai-instructions" className="ml-1.5 inline-flex items-center gap-1 text-[var(--color-accent-text)] hover:underline">
-                <span className="ui-count !h-5 !min-w-5 !px-1.5 !text-[12px]">{instructionCount}</span> standing instruction{instructionCount === 1 ? "" : "s"} apply
+              <Link href="/admin/ai-instructions" className="ml-1.5 text-[var(--color-accent-text)] hover:underline underline-offset-2">
+                {instructionCount} standing instruction{instructionCount === 1 ? "" : "s"} apply
               </Link>
             )}
           </div>
         </div>
-        <Link href={askHref} className="inline-flex items-center gap-1 text-[14px] text-[var(--color-accent-text)] hover:underline">
-          All conversations <ArrowRight className="w-3.5 h-3.5" />
+        <Link href={askHref} className="text-[14px] font-semibold text-[var(--color-accent-text)] hover:underline underline-offset-2">
+          All conversations
         </Link>
       </div>
-      <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4 sm:p-5">
+      <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 sm:p-5">
       {/* Ask right here — the question opens in the chat already running,
-          instead of a door you have to walk through first. */}
-      <form onSubmit={ask} className="rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] focus-within:border-[var(--color-main)] focus-within:ring-2 focus-within:ring-[var(--color-accent-ring)]/30">
+          instead of a door you have to walk through first. Focus is a soft
+          ring outside the box (the border never changes), the box grows
+          with the question, the toolbar stays put, and Ask wakes up only
+          once there's something to ask. */}
+      <form onSubmit={ask} className="ui-field-box rounded-xl border border-[var(--color-border-control)] bg-[var(--color-surface)]">
         <textarea id="library-ask" value={q} onChange={(e) => setQ(e.target.value)} disabled={readyDocs === 0} rows={2}
+          aria-label="Ask this library"
+          enterKeyHint="send"
           onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); ask(); } }}
-          placeholder={readyDocs === 0 ? "Asking unlocks when the first document is indexed" : "Ask this library, e.g. \"What piping spec should I use for 150 class sour gas?\""}
-          className="w-full resize-none bg-transparent px-4 pt-3 pb-1 text-[15px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none disabled:opacity-60" />
+          placeholder={readyDocs === 0 ? "Asking unlocks when the first document is indexed" : "e.g. What piping spec should I use for 150 class sour gas?"}
+          className="ui-field-bare block w-full resize-none bg-transparent px-4 pt-3 pb-1 text-[16px] leading-6 text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] disabled:opacity-60 [field-sizing:content] min-h-[3.5rem] max-h-[40vh] overflow-y-auto" />
         <div className="px-4 pb-1"><SkillHint skills={skills} picked={picked} question={q} answerMode={mode} /></div>
         <div className="flex flex-wrap items-center gap-1.5 px-2 pb-2">
           <SourcesMenu scope="library" libraryId={libraryId} libraries={[]} fixedLibrary={libraryName} webOn={web} onToggleWeb={() => setWeb((v) => !v)} />
           <AnswerMenu answerMode={mode} onAnswerMode={setMode} skills={skills} picked={picked} onPick={setPicked} question={q} />
           <span className="flex-1" />
-          <button type="submit" disabled={readyDocs === 0 || !q.trim()}
-            className="shrink-0 ml-auto inline-flex items-center gap-1.5 h-10 px-4 rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[15px] font-semibold hover:bg-[var(--color-accent-hover)] shadow-[0_1px_0_rgb(0_0_0/0.12)] disabled:opacity-40 disabled:shadow-none transition-colors">
-            Ask <ArrowRight className="w-3.5 h-3.5" />
-          </button>
+          <Button type="submit" variant={q.trim() && readyDocs > 0 ? "primary" : "secondary"} disabled={readyDocs === 0 || !q.trim()} className="shrink-0 ml-auto">
+            Ask <ArrowRight aria-hidden className="w-4 h-4" />
+          </Button>
         </div>
       </form>
       {readyDocs === 0 && (
-        <p className="relative mt-3 pl-4 py-0.5 text-[14px] text-[var(--color-text)] font-semibold">
-          <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] rounded-full bg-[var(--state-held)]" />
+        <p className="mt-3 text-[14px] text-[var(--color-text-muted)]">
+          <span className="ui-pill is-warn mr-2">{docsTotal > 0 ? "Indexing" : "Nothing indexed"}</span>
           {docsTotal > 0
             ? "Documents are indexing below. Asking unlocks as soon as the first one finishes."
-            : "Nothing indexed yet. Link a source or add PDFs below first."}
+            : "Link a source or add PDFs below first."}
         </p>
       )}
       {recentError && (
-        <p role="alert" className="mt-3 text-[13px] font-semibold text-[var(--state-overdue)]">Couldn&apos;t load the recent conversations: {recentError}</p>
+        <ErrorNote compact className="mt-3" title="Couldn't load the recent conversations." next={recentError} />
       )}
       {recent && recent.length > 0 && (
         <div className="mt-4">
-          <div className="text-[13px] font-semibold text-[var(--color-heading)] mb-1.5 flex items-center gap-1.5">
-            <History className="w-3.5 h-3.5" /> Recent conversations <span className="ui-count !h-5 !min-w-5 !px-1.5 !text-[12px]">{recent.length}</span>
+          <div className="text-[14px] font-semibold text-[var(--color-text)] mb-1.5 flex items-baseline gap-2">
+            Recent conversations <span className="ui-count">{recent.length}</span>
           </div>
           <ul className="divide-y divide-[var(--color-border)] border-t border-[var(--color-border)] -mx-4 sm:-mx-5">
             {recent.map((t) => (
@@ -1001,10 +999,10 @@ function AskEntry({ orgId, libraryId, libraryName, readyDocs, docsTotal }: {
                     <span className="flex gap-3 text-[13px] text-[var(--color-text-muted)]">
                       <span>{(t.createdByName ?? "Someone").split("@")[0]}</span>
                       <span>{new Date(t.lastMessageAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}, {new Date(t.lastMessageAt).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}</span>
-                      {t.settledAt && <span className="ui-pill is-good !h-5 !text-[12px]">Settled</span>}
+                      {t.settledAt && <span className="ui-pill is-good">Settled</span>}
                     </span>
                   </span>
-                  <ArrowRight className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
+                  <ArrowRight aria-hidden className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
                 </Link>
               </li>
             ))}

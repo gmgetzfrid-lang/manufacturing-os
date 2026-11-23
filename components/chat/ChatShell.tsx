@@ -15,8 +15,10 @@
 // live, not because something was cut.
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { friendlyError } from "@/lib/friendlyError";
+import { ErrorNote } from "@/components/ui/ErrorNote";
 import { useRouter, useSearchParams } from "next/navigation";
-import { PanelLeftOpen, BookOpen, Waypoints, GitPullRequest, Puzzle, Gauge, Settings2, AlertTriangle } from "lucide-react";
+import { PanelLeftOpen, BookOpen, Waypoints, GitPullRequest, Puzzle, Gauge, Settings2 } from "lucide-react";
 import MoreMenu from "@/components/ui/MoreMenu";
 import { useDraft, clearDraft } from "@/hooks/useDraft";
 import { useRole } from "@/components/providers/RoleContext";
@@ -93,6 +95,16 @@ export default function ChatShell() {
   // An unsent question survives a reload or leaving the page.
   const chatDraftKey = orgId ? `chat:${orgId}:${active?.id ?? "new"}` : null;
   useDraft<string>(chatDraftKey, value, setValue, (v) => !v.trim());
+  // "?q=" fills the box with a question to start from (an example offered
+  // elsewhere, like Status's "What do we have on E-101?"); it never sends
+  // on its own, and never overwrites what someone already typed.
+  const prefill = searchParams.get("q");
+  const prefilledRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!prefill || prefilledRef.current === prefill) return;
+    prefilledRef.current = prefill;
+    setValue((v) => (v.trim() ? v : prefill.slice(0, 2000)));
+  }, [prefill]);
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
   // The Web switch. Off on every page load — documents only is the default
   // a user can rely on; turning the web on is a choice made each session.
@@ -133,7 +145,7 @@ export default function ChatShell() {
     void (async () => {
       const [libs, prof, count] = await Promise.all([
         listKnowledgeLibraries(orgId).catch((e: unknown) => {
-          showToast({ type: "error", title: "Couldn't load the libraries", message: e instanceof Error ? e.message : String(e) });
+          showToast({ type: "error", title: "Couldn't load the libraries", message: friendlyError(e) });
           return [] as KnowledgeLibrary[];
         }),
         uid ? getProfile(orgId, uid).catch(() => null) : Promise.resolve(null),
@@ -179,7 +191,7 @@ export default function ChatShell() {
       setThreads(list);
       setThreadsError(null);
     } catch (e) {
-      setThreadsError(e instanceof ChatTablesMissingError ? e.message : (e as Error).message);
+      setThreadsError(e instanceof ChatTablesMissingError ? e.message : friendlyError(e));
     } finally {
       setThreadsLoading(false);
     }
@@ -204,14 +216,14 @@ export default function ChatShell() {
       catch (e) {
         if (cancelled) return;
         setThreadLoading(false);
-        setThreadError(`Couldn't open this conversation: ${e instanceof Error ? e.message : String(e)}`);
+        setThreadError(`Couldn't open this conversation: ${friendlyError(e)}`);
         return;
       }
       if (cancelled) return;
       if (!t || t.orgId !== orgId) { setThreadLoading(false); showToast({ type: "error", title: "That conversation isn't here anymore." }); router.replace("/assistant"); return; }
       let ms: ChatMessage[] = [];
       try { ms = await listMessages(t.id); }
-      catch (e) { if (!cancelled) setThreadError(`Couldn't load this conversation's turns: ${e instanceof Error ? e.message : String(e)}`); }
+      catch (e) { if (!cancelled) setThreadError(`Couldn't load this conversation's turns: ${friendlyError(e)}`); }
       if (cancelled) return;
       setThreadLoading(false);
       setActive(t); setMessages(ms); setPanel(null); setPast(null);
@@ -237,7 +249,7 @@ export default function ChatShell() {
     void (async () => {
       const [own, links] = await Promise.all([
         listKnowledgeDocuments(libraryId).catch((e: unknown) => {
-          showToast({ type: "error", title: "Couldn't load this library's documents", message: e instanceof Error ? e.message : String(e) });
+          showToast({ type: "error", title: "Couldn't load this library's documents", message: friendlyError(e) });
           return [] as KnowledgeDocument[];
         }),
         listLibraryLinks(libraryId).catch(() => []),
@@ -304,7 +316,7 @@ export default function ChatShell() {
     try { await updateThread(t.id, patch); }
     catch (e) {
       patchThread(t.id, { pinned: t.pinned, settledAt: t.settledAt, title: t.title });
-      showToast({ type: "error", title: `Couldn't ${what}`, message: e instanceof Error ? e.message : String(e) });
+      showToast({ type: "error", title: `Couldn't ${what}`, message: friendlyError(e) });
     }
   };
   const onPin = (t: ChatThread, pinned: boolean) => saveThread(t, { pinned }, pinned ? "pin it" : "unpin it");
@@ -317,7 +329,7 @@ export default function ChatShell() {
       await deleteThread(t.id);
       setThreads((ts) => ts.filter((x) => x.id !== t.id));
       if (active?.id === t.id) startNew();
-    } catch (e) { showToast({ type: "error", title: (e as Error).message }); }
+    } catch (e) { showToast({ type: "error", title: friendlyError(e) }); }
   };
 
   // ── Attachments ──
@@ -350,7 +362,7 @@ export default function ChatShell() {
       onProgress: (p) => put({ percent: p.percent }),
     }), { onRetried: (att) => put({ att, percent: 100, error: undefined, retryable: false }) }).then(
       (att) => put({ att, percent: 100 }),
-      (e) => put({ error: (e as Error).message, retryable: true }),
+      (e) => put({ error: friendlyError(e), retryable: true }),
     );
   };
   const retryAttachment = (localId: string) => {
@@ -433,7 +445,7 @@ export default function ChatShell() {
         const t = await createThread({ orgId, scope, libraryId, title: q.slice(0, 120), uid, userName });
         await updateThread(t.id, { instructions: draftInstructions.trim() });
         threadId = t.id;
-      } catch (e) { showToast({ type: "error", title: (e as Error).message }); return; }
+      } catch (e) { showToast({ type: "error", title: friendlyError(e) }); return; }
     }
 
     const tmpId = `tmp-${Date.now()}`;
@@ -495,7 +507,7 @@ export default function ChatShell() {
             const now = new Date().toISOString();
             setThreads((ts) => ts.map((t) => (t.id === ev.threadId ? { ...t, lastMessageAt: now, settledAt: null } : t)));
             setActive((a) => (a && a.id === ev.threadId ? { ...a, lastMessageAt: now, settledAt: null } : a));
-            if (active?.settledAt) void updateThread(ev.threadId, { settledAt: null }).catch((e: unknown) => showToast({ type: "error", title: "Couldn't move it back to Active", message: e instanceof Error ? e.message : String(e) }));
+            if (active?.settledAt) void updateThread(ev.threadId, { settledAt: null }).catch((e: unknown) => showToast({ type: "error", title: "Couldn't move it back to Active", message: friendlyError(e) }));
             break;
           }
           case "error": {
@@ -508,7 +520,7 @@ export default function ChatShell() {
               showToast({ type: "error", title: String(ev.error ?? "The question didn't run."), duration: 8000 });
             } else if (ev.threadId) {
               // The server recorded the failed turn — show it as it is.
-              void listMessages(ev.threadId).then(setMessages).catch((e: unknown) => setThreadError(`Couldn't reload the conversation: ${e instanceof Error ? e.message : String(e)}`));
+              void listMessages(ev.threadId).then(setMessages).catch((e: unknown) => setThreadError(`Couldn't reload the conversation: ${friendlyError(e)}`));
             }
             break;
           }
@@ -518,7 +530,7 @@ export default function ChatShell() {
     } catch (e) {
       if (!controller.signal.aborted) {
         setMessages((ms) => ms.filter((m) => m.id !== tmpId));
-        showToast({ type: "error", title: (e as Error).message || "The question failed." });
+        showToast({ type: "error", title: friendlyError(e) });
       }
     } finally {
       if (!controller.signal.aborted) {
@@ -544,7 +556,7 @@ export default function ChatShell() {
       });
       if (!agreed) return;
       try { await acceptAiAgreement(orgId); }
-      catch (e) { setValue(q); showToast({ type: "error", title: "Your agreement wasn't saved", message: e instanceof Error ? e.message : String(e) }); return; }
+      catch (e) { setValue(q); showToast({ type: "error", title: "Your agreement wasn't saved", message: friendlyError(e) }); return; }
       setValue(q);
       showToast({ type: "success", title: "Thanks. Send your question again." });
       return;
@@ -581,7 +593,7 @@ export default function ChatShell() {
     abortRef.current?.abort();
     setStreaming(null);
     showToast({ type: "info", title: "Stopped. If the answer still lands, reopen the conversation to see it." });
-    if (active) void listMessages(active.id).then(setMessages).catch((e: unknown) => setThreadError(`Couldn't reload the conversation: ${e instanceof Error ? e.message : String(e)}`));
+    if (active) void listMessages(active.id).then(setMessages).catch((e: unknown) => setThreadError(`Couldn't reload the conversation: ${friendlyError(e)}`));
   };
 
   // ── Citations open the real page ──
@@ -623,7 +635,7 @@ export default function ChatShell() {
       const result = await executeAction(orgId, action);
       outcome = { ok: true, note: String(result.status ?? "done") };
     } catch (e) {
-      outcome = { ok: false, note: e instanceof Error ? e.message : "The action failed." };
+      outcome = { ok: false, note: friendlyError(e) };
     }
     let next: ActionState = { approved: [], outcomes: {} };
     setActions((as) => {
@@ -632,7 +644,7 @@ export default function ChatShell() {
       return { ...as, [m.id]: next };
     });
     void mergeMessagePayload(m.id, { approved: next.approved, outcomes: next.outcomes }).catch((e: unknown) =>
-      showToast({ type: "error", title: "The result shows here but wasn't saved with the conversation", message: e instanceof Error ? e.message : String(e) }));
+      showToast({ type: "error", title: "The result shows here but wasn't saved with the conversation", message: friendlyError(e) }));
   }, [orgId, showToast]);
 
   // ── Memory: reuse a past answer here ──
@@ -653,7 +665,7 @@ export default function ChatShell() {
       });
       setMessages((ms) => [...ms, ...added]);
       setValue(""); setPast(null); setPanel(null);
-    } catch (e) { showToast({ type: "error", title: (e as Error).message }); }
+    } catch (e) { showToast({ type: "error", title: friendlyError(e) }); }
   }, [orgId, uid, active, userName, libraryFilterId, router, showToast]);
 
   // ── Instructions + profile ──
@@ -699,7 +711,7 @@ export default function ChatShell() {
       {/* Rail */}
       {railOpen && (
         <div className={isMobile
-          ? "absolute inset-y-0 left-0 z-40 w-[85vw] max-w-xs shadow-2xl rounded-r-lg overflow-hidden"
+          ? "absolute inset-y-0 left-0 z-40 w-[85vw] max-w-xs ui-float rounded-r-xl overflow-hidden"
           : "w-72 shrink-0 rounded-lg overflow-hidden border border-[var(--color-border)]"}>
           <ThreadRail
             threads={threads} activeId={active?.id ?? null} libraryNames={libraryNames} uid={uid}
@@ -748,10 +760,7 @@ export default function ChatShell() {
 
         {threadError && (
           // Said in place, at the top of the conversation it is about.
-          <p role="alert" className="relative mx-4 sm:mx-6 mt-4 pl-4 py-1 flex items-start gap-2 text-[14px] font-semibold text-[var(--state-overdue)]">
-            <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] rounded-full bg-[var(--state-overdue)]" />
-            <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> {threadError}
-          </p>
+          <ErrorNote compact className="mx-4 sm:mx-6 mt-4" title={threadError} next="" />
         )}
         <MessageStream
           messages={messages} streaming={streaming} scope={scope}

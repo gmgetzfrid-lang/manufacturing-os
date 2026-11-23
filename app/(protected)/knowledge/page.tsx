@@ -8,11 +8,12 @@
 import React, { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import {
-  BookOpen, Plus, Loader2, Settings2, AlertTriangle, MessageSquare,
-} from "lucide-react";
+import { Plus, Settings2, AlertTriangle } from "lucide-react";
 import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/ui/Modal";
-import LoadingBlock from "@/components/ui/LoadingBlock";
+import { ErrorNote } from "@/components/ui/ErrorNote";
+import { SkeletonRows } from "@/components/ui/Skeleton";
+import { friendlyError } from "@/lib/friendlyError";
+import { transitionPush } from "@/lib/viewTransition";
 import { useDraft } from "@/hooks/useDraft";
 import { useRole } from "@/components/providers/RoleContext";
 import { useToast } from "@/components/providers/ToastProvider";
@@ -21,7 +22,6 @@ import { PageHero, PageBody, Card, heroPrimary, heroQuiet } from "@/components/u
 import ViewTabs, { INTELLIGENCE_VIEWS } from "@/components/navigation/ViewTabs";
 import { Button } from "@/components/ui/Button";
 import { Input, Textarea } from "@/components/ui/Field";
-import { EmptyState } from "@/components/ui/EmptyState";
 import AiSettingsModal from "@/components/knowledge/AiSettingsModal";
 import {
   listKnowledgeLibraries, createKnowledgeLibrary, getAiConnections,
@@ -35,7 +35,7 @@ export default function KnowledgePage() {
   const isController = activeRole === "Admin" || activeRole === "DocCtrl";
 
   const [libraries, setLibraries] = useState<KnowledgeLibrary[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
   const [aiConfigured, setAiConfigured] = useState<boolean | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
@@ -56,7 +56,7 @@ export default function KnowledgePage() {
     try {
       setLibraries(await listKnowledgeLibraries(activeOrgId));
       setError(null);
-    } catch (e) { setError((e as Error).message); }
+    } catch (e) { setError(e ?? true); }
     try {
       const conns = await getAiConnections(activeOrgId);
       setAiConfigured(!!conns.effective);
@@ -78,17 +78,17 @@ export default function KnowledgePage() {
       // Straight into the new library, where the PDFs go.
       router.push(`/knowledge/${lib.id}`);
     } catch (e) {
-      setCreateError((e as Error).message);
+      setCreateError(friendlyError(e));
     } finally { setCreating(false); }
   };
 
   const docTotal = (libraries ?? []).reduce((n, l) => n + (l.documentCount ?? 0), 0);
   const emptyCount = (libraries ?? []).filter((l) => (l.documentCount ?? 0) === 0).length;
   const answer = libraries === null
-    ? (error ? "The libraries didn't load" : "Knowledge")
-    : libraries.length === 0 ? "No knowledge libraries yet"
-      : docTotal === 0 ? "No documents in any library yet"
-        : `${docTotal.toLocaleString()} ${docTotal === 1 ? "document" : "documents"} you can ask`;
+    ? (error ? "Couldn't load the libraries." : "Knowledge")
+    : libraries.length === 0 ? "No knowledge libraries yet."
+      : docTotal === 0 ? "No documents in any library yet."
+        : `${docTotal.toLocaleString()} ${docTotal === 1 ? "document" : "documents"} you can ask.`;
   const when = (iso: string) => {
     const d = new Date(iso);
     return d.toLocaleDateString(undefined, { month: "short", day: "numeric", ...(d.getFullYear() !== new Date().getFullYear() ? { year: "numeric" } : {}) });
@@ -103,8 +103,9 @@ export default function KnowledgePage() {
         facts={libraries && libraries.length > 0 ? [
           { label: "Libraries", value: libraries.length },
           { label: "Documents", value: docTotal.toLocaleString() },
-          { label: "Empty", value: emptyCount, tone: emptyCount > 0 ? "warn" : undefined },
+          { label: "Empty", value: emptyCount },
         ] : undefined}
+        factsHero="none"
         tools={
           <button type="button" className={heroQuiet} onClick={() => setShowSettings(true)}>
             <Settings2 className="w-4 h-4" /><span className="max-sm:hidden">AI settings</span><span className="sr-only sm:hidden">AI settings</span>
@@ -128,73 +129,62 @@ export default function KnowledgePage() {
           <button type="button" className={heroQuiet} onClick={() => setShowSettings(true)}>Add a key</button>
         </div>
       )}
-      {error && (
-        <div className="relative pl-4 py-1">
-          <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] rounded-full bg-[var(--state-overdue)]" />
-          <p role="alert" className="text-[15px] font-semibold text-[var(--state-overdue)]">
-            Couldn&apos;t load the libraries: {error}. If the knowledge tables aren&apos;t migrated yet, run migration 20260911.
-          </p>
-        </div>
+      {!!error && (
+        <ErrorNote error={error} title="Couldn't load the libraries." onRetry={() => void refresh()} />
       )}
 
       {libraries === null ? (
-        error ? null : <Card><LoadingBlock what="the libraries" rows={4} className="border-0 p-0" /></Card>
+        error ? null : <SkeletonRows rows={4} cols={3} what="the libraries" />
       ) : libraries.length === 0 ? (
         <Card>
-          <EmptyState
-            icon={BookOpen}
-            title="No knowledge libraries yet"
-            description={isController
-              ? "Create a library, drop your standards and engineering-practice PDFs in, and ask it questions instead of reading 400 pages."
-              : "Admin or Doc Control can create libraries of standards and reference PDFs that everyone can then query."}
-          />
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-3">
+            <p className="flex-1 min-w-[16rem] text-[15px] text-[var(--color-text-muted)]">
+              {isController
+                ? "Make a library, drop your standards and engineering-practice PDFs in, and ask it questions instead of reading 400 pages."
+                : "Admin or Doc Control can make libraries of standards and reference PDFs that everyone can then ask."}
+            </p>
+            {isController && <Button variant="secondary" onClick={() => setShowCreate(true)}><Plus aria-hidden className="w-4 h-4" /> Make the first library</Button>}
+          </div>
         </Card>
       ) : (
         // The libraries as one ruled table: the whole row opens it.
-        <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
-          <table className="w-full text-[15px]">
-            <thead className="bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text-muted)] text-left">
+        <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
+          <table className="w-full text-[15px] tabular-nums">
+            <thead className="bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text-muted)] text-left max-sm:hidden">
               <tr>
                 <th className="font-semibold px-4 h-10">Library</th>
                 <th className="font-semibold px-4 text-right whitespace-nowrap">Documents</th>
                 <th className="font-semibold px-4 hidden sm:table-cell">Status</th>
-                <th className="font-semibold px-4 hidden md:table-cell">Created</th>
-                <th className="font-semibold px-4 hidden lg:table-cell">By</th>
+                <th className="font-semibold px-4 hidden md:table-cell">Added</th>
                 <th className="px-4 hidden sm:table-cell"><span className="sr-only">Ask</span></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[var(--color-border)]">
               {libraries.map((lib) => {
                 const n = lib.documentCount ?? 0;
+                const by = lib.createdByName ? lib.createdByName.split("@")[0] : "";
                 return (
-                  <tr key={lib.id} onClick={() => router.push(`/knowledge/${lib.id}`)} className="hover:bg-[var(--color-surface-2)] cursor-pointer align-top">
+                  <tr key={lib.id} onClick={() => transitionPush(router, `/knowledge/${lib.id}`)} className="hover:bg-[var(--color-surface-2)] cursor-pointer align-top">
                     <td className="px-4 py-3 min-w-0">
-                      <div className="flex items-start gap-3 min-w-0">
-                        <span aria-hidden className="ui-icon-tile is-sm mt-0.5"><BookOpen className="w-4 h-4" /></span>
-                        <div className="min-w-0">
-                          <Link href={`/knowledge/${lib.id}`} onClick={(e) => e.stopPropagation()}
-                            className="font-display text-[17px] font-semibold text-[var(--color-text)] hover:text-[var(--color-accent-text)]">
-                            {lib.name}
-                          </Link>
-                          {lib.description && (
-                            <p className="mt-0.5 text-[14px] text-[var(--color-text-muted)] line-clamp-1 max-w-[70ch]">{lib.description}</p>
-                          )}
-                        </div>
-                      </div>
+                      <Link href={`/knowledge/${lib.id}`} onClick={(e) => e.stopPropagation()}
+                        className="text-[16px] font-semibold text-[var(--color-text)] hover:text-[var(--color-accent-text)]">
+                        {lib.name}
+                      </Link>
+                      {lib.description && (
+                        <p className="mt-0.5 text-[14px] text-[var(--color-text-muted)] line-clamp-1 max-w-[70ch]">{lib.description}</p>
+                      )}
+                      <p className="sm:hidden mt-0.5 text-[13px] text-[var(--color-text-muted)]">{n === 0 ? "Empty" : `${n.toLocaleString()} ${n === 1 ? "document" : "documents"}`} · added {when(lib.createdAt)}</p>
                     </td>
-                    <td className="px-4 py-3 text-right whitespace-nowrap">
-                      <span className={`ui-count !h-7 !px-2.5 !text-[15px] font-display ${n === 0 ? "!bg-[var(--color-surface-2)] !text-[var(--color-text-muted)]" : "is-solid"}`}>{n.toLocaleString()}</span>
-                    </td>
+                    <td className={`px-4 py-3 text-right whitespace-nowrap max-sm:hidden ${n === 0 ? "text-[var(--color-text-faint)]" : "text-[var(--color-text)]"}`}>{n.toLocaleString()}</td>
                     <td className="px-4 py-3 hidden sm:table-cell whitespace-nowrap">
-                      <span className={`ui-pill ${n === 0 ? "is-warn" : "is-good"}`}>{n === 0 ? "Empty" : "Ready to ask"}</span>
+                      <span className={`ui-pill ${n === 0 ? "is-muted" : "is-good"}`}>{n === 0 ? "Empty" : "Ready to ask"}</span>
                     </td>
-                    <td className="px-4 py-3 hidden md:table-cell whitespace-nowrap text-[var(--color-text-muted)]">{when(lib.createdAt)}</td>
-                    <td className="px-4 py-3 hidden lg:table-cell whitespace-nowrap text-[var(--color-text-muted)]">{lib.createdByName ? lib.createdByName.split("@")[0] : ""}</td>
+                    <td className="px-4 py-3 hidden md:table-cell whitespace-nowrap text-[14px] text-[var(--color-text-muted)]">{when(lib.createdAt)}{by ? ` by ${by}` : ""}</td>
                     {/* Straight to asking this library. */}
                     <td className="px-4 py-3 text-right whitespace-nowrap hidden sm:table-cell">
                       {n > 0 && (
                         <Link href={`/assistant?library=${lib.id}`} onClick={(e) => e.stopPropagation()}
-                          className="ui-tag"><MessageSquare className="w-3.5 h-3.5" /> Ask</Link>
+                          className="text-[14px] font-semibold text-[var(--color-accent-text)] hover:underline underline-offset-2">Ask it</Link>
                       )}
                     </td>
                   </tr>
@@ -208,23 +198,23 @@ export default function KnowledgePage() {
 
       {showCreate && (
         <Modal onClose={() => setShowCreate(false)} dismissable={!creating}>
-            <ModalHeader icon={BookOpen} title="New knowledge library" onClose={creating ? undefined : () => setShowCreate(false)} />
-            <ModalBody className="space-y-3">
+            <ModalHeader title="New knowledge library" onClose={creating ? undefined : () => setShowCreate(false)} />
+            <ModalBody className="space-y-4">
               <label className="block">
-                <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Name</span>
-                <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Engineering Standards & Practices" autoFocus />
+                <span className="block text-[14px] font-semibold text-[var(--color-text)] mb-1.5">Name</span>
+                <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Engineering standards and practices" autoFocus autoComplete="off" />
               </label>
               <label className="block">
-                <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Description (optional)</span>
+                <span className="block text-[14px] font-semibold text-[var(--color-text)] mb-1.5">Description <span className="font-normal text-[var(--color-text-muted)]">(optional)</span></span>
                 <Textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={2}
-                  placeholder="What lives in this library and who should ask it questions" />
+                  placeholder="e.g. API and company standards for piping and vessels" />
               </label>
-              {createError && <p role="alert" className="text-[13px] font-semibold text-[var(--state-overdue)]">Not made: {createError}</p>}
+              {createError && <p role="alert" className="text-[14px] font-semibold text-[var(--state-overdue-text)]">Not made. {createError}</p>}
             </ModalBody>
             <ModalFooter>
                 <Button variant="secondary" onClick={() => setShowCreate(false)} disabled={creating}>Cancel</Button>
-                <Button onClick={() => void create()} disabled={creating || !name.trim()}>
-                  {creating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />} Create
+                <Button variant={name.trim() ? "primary" : "secondary"} loading={creating} onClick={() => void create()} disabled={!name.trim()}>
+                  Create
                 </Button>
             </ModalFooter>
         </Modal>

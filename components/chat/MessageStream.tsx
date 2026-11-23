@@ -9,11 +9,11 @@
 //     scroll up.
 
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { ArrowDown, AlertTriangle } from "lucide-react";
+import { ArrowDown, ArrowRight } from "lucide-react";
 import { StreamingAnswer } from "@/components/knowledge/answer/AnswerExperience";
 import type { ChatMessage, ChatScope } from "@/lib/chatClient";
-import { EXAMPLES, SCOPE_META } from "./shared";
-import LoadingBlock from "@/components/ui/LoadingBlock";
+import { EXAMPLES } from "./shared";
+import { SkeletonText } from "@/components/ui/Skeleton";
 
 export interface StreamingState {
   status: string;
@@ -97,8 +97,6 @@ export default function MessageStream({
   };
 
   const empty = messages.length === 0 && !streaming;
-  const meta = SCOPE_META[scope];
-  const Icon = meta.icon;
 
   return (
     <div className="relative flex-1 min-h-0">
@@ -107,32 +105,29 @@ export default function MessageStream({
             question bubble and prose still cap themselves narrower. */}
         <div className="mx-auto max-w-5xl pt-4 pb-6">
           {empty && loading ? (
-            <div className="pt-6 max-w-3xl mx-auto"><LoadingBlock what="the conversation" rows={5} /></div>
+            <div className="pt-6 max-w-3xl mx-auto"><SkeletonText lines={5} /></div>
           ) : empty ? (
             <div className="pt-[6vh] sm:pt-[8vh] max-w-2xl mx-auto animate-rise">
-              {/* The one big line on an empty chat: what you can do here. */}
-              <h2 className="flex items-center gap-3 font-display text-[30px] sm:text-[38px] leading-[1.05] font-semibold tracking-[-0.01em] text-[var(--color-text)]">
-                <span aria-hidden className="ui-icon-tile is-solid !w-12 !h-12 !rounded-lg"><Icon className="w-6 h-6" /></span>
-                {scope === "library" ? "Ask the library" : scope === "tools" ? "Ask the system" : "Ask the internet"}
+              {/* The one line on an empty chat: what you can do here. (How
+                  answers are sourced is said once, under the box.) */}
+              <h2 className="font-display text-[26px] leading-tight font-semibold text-[var(--color-text)]">
+                {scope === "library" ? "Ask the library." : scope === "tools" ? "Ask the system." : "Ask the internet."}
               </h2>
-              <p className="mt-2 text-[15px] text-[var(--color-text-muted)]">
-                {meta.hint}{scope !== "internet" ? " It reads only documents cleared for AI." : ""}
-              </p>
+              {scope !== "internet" && (
+                <p className="mt-1.5 text-[15px] text-[var(--color-text-muted)]">It reads only documents cleared for AI.</p>
+              )}
               {emptyNote && (
-                // A warning is a row with its status on the edge.
-                <p className="relative mt-4 pl-4 py-1 flex items-start gap-2 text-[14px] font-semibold text-[var(--color-text)]">
-                  <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] rounded-full bg-[var(--state-held)]" />
-                  <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0 text-[var(--state-held)]" /> {emptyNote}
+                <p className="mt-4 text-[14px] text-[var(--color-text)]">
+                  <span className="ui-pill is-warn mr-2">Can&apos;t ask yet</span>{emptyNote}
                 </p>
               )}
-              <h3 className="mt-7 mb-2 font-display text-[17px] font-semibold text-[var(--color-heading)]">Try one of these</h3>
+              <h3 className="mt-8 mb-2 text-[14px] font-semibold text-[var(--color-text-muted)]">Try one of these</h3>
               <div className="flex flex-col divide-y divide-[var(--color-border)] border-y border-[var(--color-border)]">
                 {EXAMPLES[scope].map((e) => (
-                  <button key={e} onClick={() => onExample(e)}
-                    className="group -mx-2 px-2 flex items-center gap-3 py-3 text-left text-[15px] text-[var(--color-text)] rounded-md hover:bg-[var(--color-accent-soft)] transition-colors">
-                    <span aria-hidden className="ui-icon-tile is-sm"><Icon className="w-4 h-4" /></span>
+                  <button key={e} type="button" onClick={() => onExample(e)} disabled={!!emptyNote}
+                    className="group -mx-2 px-2 flex items-center gap-3 py-3 text-left text-[15px] text-[var(--color-text)] rounded-lg hover:bg-[var(--color-surface-2)] disabled:opacity-60 disabled:hover:bg-transparent transition-colors">
                     <span className="flex-1">{e}</span>
-                    <ArrowDown className="w-4 h-4 -rotate-90 shrink-0 text-[var(--color-text-faint)] group-hover:text-[var(--color-accent-text)] group-hover:translate-x-0.5 transition-transform" />
+                    <ArrowRight aria-hidden className="w-4 h-4 shrink-0 text-[var(--color-text-faint)] group-hover:text-[var(--color-accent-text)] transition-colors" />
                   </button>
                 ))}
               </div>
@@ -162,7 +157,7 @@ export default function MessageStream({
       </div>
       {!atBottom && !empty && (
         <button onClick={jump}
-          className="absolute left-1/2 -translate-x-1/2 bottom-3 inline-flex items-center gap-1.5 h-9 px-3.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] shadow-lg hover:bg-[var(--color-surface-2)] transition-colors animate-pop">
+          className="absolute left-1/2 -translate-x-1/2 bottom-3 inline-flex items-center gap-1.5 h-9 pointer-coarse:h-11 px-3.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] ui-float hover:bg-[var(--color-surface-2)] transition-colors animate-pop">
           <ArrowDown className="w-3.5 h-3.5" /> Latest
         </button>
       )}

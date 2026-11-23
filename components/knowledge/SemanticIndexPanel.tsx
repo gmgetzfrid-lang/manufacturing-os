@@ -21,6 +21,8 @@
 // resumes exactly where it stopped.
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import { SkeletonText } from "@/components/ui/Skeleton";
+import { friendlyError } from "@/lib/friendlyError";
 import { Brain, Loader2, Square, RefreshCw } from "lucide-react";
 import { useToast } from "@/components/providers/ToastProvider";
 import { appConfirm } from "@/components/providers/DialogProvider";
@@ -133,7 +135,7 @@ export default function SemanticIndexPanel({ orgId, libraryId, isController }: {
         setBuildNote({ tone: "info", text: `Paused with ${final.remaining.toLocaleString()} passage${final.remaining === 1 ? "" : "s"} to go. Everything built is saved; press Build index to continue.` });
       }
     } catch (e) {
-      const message = (e as Error).message;
+      const message = friendlyError(e);
       // 412 = no embeddings key. That's a setup step, not a failure — show it
       // where the user is looking rather than as a toast they'll dismiss.
       if (/embeddings key/i.test(message)) setNeedsKey(message);
@@ -162,7 +164,7 @@ export default function SemanticIndexPanel({ orgId, libraryId, isController }: {
       await load();
       await build({ keepBuildingState: true });
     } catch (e) {
-      setBuildNote({ tone: "err", text: (e as Error).message });
+      setBuildNote({ tone: "err", text: friendlyError(e) });
       setBuilding(false);
     }
   };
@@ -189,7 +191,7 @@ export default function SemanticIndexPanel({ orgId, libraryId, isController }: {
       <Note tone="warn" title={/migration/i.test(unavailable) ? "Waiting on a database migration." : "Couldn't read the meaning index."}>{unavailable}</Note>,
     );
   }
-  if (!status) return shell(null, <p className="flex items-center gap-2 text-[14px] text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin" /> Counting the meaning index… (slow while it&apos;s being built)</p>);
+  if (!status) return shell(null, <div><p className="sr-only">Counting the meaning index</p><SkeletonText lines={2} /></div>);
   if (status.total === 0) {
     return shell(
       <StatusTag tone="none">Nothing to index</StatusTag>,

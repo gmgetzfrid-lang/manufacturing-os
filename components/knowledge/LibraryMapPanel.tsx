@@ -14,6 +14,8 @@
 // one Valve data sheet". The app reads what was marked, from its text.
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import { SkeletonRows } from "@/components/ui/Skeleton";
+import { friendlyError } from "@/lib/friendlyError";
 import { Map as MapIcon, Loader2, FileText, ClipboardCheck, Table2, BookOpen, ChevronDown, Plus, RefreshCw, X, AlertTriangle } from "lucide-react";
 import { getLibraryCatalog, mapLibraryCatalog, markCatalog, unmarkCatalog, type CatalogSummaryEntry, type CatalogListingInfo } from "@/lib/knowledge";
 import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/ui/Modal";
@@ -41,14 +43,14 @@ export default function LibraryMapPanel({ orgId, libraryId, libraryName, docs }:
 
   const load = useCallback(async () => {
     try { setData(await getLibraryCatalog(orgId, libraryId)); setError(null); }
-    catch (e) { setError((e as Error).message); }
+    catch (e) { setError(friendlyError(e)); }
   }, [orgId, libraryId]);
 
   const runMap = useCallback(async () => {
     setMapping({ profiled: 0, remaining: data?.unmapped ?? 0 });
     setError(null);
     try { await mapLibraryCatalog(orgId, libraryId, (p) => setMapping(p)); }
-    catch (e) { setError((e as Error).message); }
+    catch (e) { setError(friendlyError(e)); }
     finally { setMapping(null); void load(); }
   }, [orgId, libraryId, data?.unmapped, load]);
 
@@ -59,14 +61,14 @@ export default function LibraryMapPanel({ orgId, libraryId, libraryName, docs }:
     setBusyCatalog(c.documentId ?? c.libraryId);
     setError(null);
     try { await markCatalog(orgId, c.libraryId, c.name, c.documentId); }
-    catch (e) { setError((e as Error).message); }
+    catch (e) { setError(friendlyError(e)); }
     finally { setBusyCatalog(null); void load(); }
   }, [orgId, load]);
   const unmark = useCallback(async (c: CatalogListingInfo) => {
     setBusyCatalog(c.documentId ?? c.libraryId);
     setError(null);
     try { await unmarkCatalog(orgId, c.libraryId, c.documentId); }
-    catch (e) { setError((e as Error).message); }
+    catch (e) { setError(friendlyError(e)); }
     finally { setBusyCatalog(null); void load(); }
   }, [orgId, load]);
 
@@ -80,7 +82,7 @@ export default function LibraryMapPanel({ orgId, libraryId, libraryName, docs }:
   }, [data, mapping, runMap]);
 
   if (!data && !error) {
-    return <p className="mb-6 flex items-center gap-1.5 text-[13px] text-[var(--color-text-muted)]"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading the library map…</p>;
+    return <div className="mb-6"><SkeletonRows rows={2} cols={1} what="the library map" /></div>;
   }
   const entries = data?.entries ?? [];
   const counts = new Map<string, number>();
@@ -93,7 +95,7 @@ export default function LibraryMapPanel({ orgId, libraryId, libraryName, docs }:
       <div className="flex items-center gap-3 flex-wrap">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2.5 font-display text-[17px] font-semibold text-[var(--color-heading)]">
-            <span aria-hidden className="ui-icon-tile is-sm"><MapIcon className="w-4 h-4" /></span> Library map
+            Library map
             {entries.length > 0 && <span className="ui-count font-sans">{entries.length}</span>}
           </div>
           <div className="text-[13px] text-[var(--color-text-muted)]">
@@ -115,7 +117,7 @@ export default function LibraryMapPanel({ orgId, libraryId, libraryName, docs }:
           {mapping.remaining > 0 ? `, ${mapping.remaining} to go` : ""}. You can keep working; it continues while this page is open.
         </div>
       )}
-      {error && <div className="mt-3 text-[12px] font-bold text-[var(--state-overdue)]">{error}</div>}
+      {error && <p role="alert" className="mt-3 text-[14px] font-semibold text-[var(--state-overdue-text)]">{error}</p>}
 
       {entries.length > 0 && (
         <div className="mt-4 flex flex-wrap gap-1.5">
@@ -280,7 +282,7 @@ function MarkCatalogModal({ orgId, libraryId, libraryName, docs, onClose, onDone
     try {
       const mark = await markCatalog(orgId, libraryId, name.trim(), scope === "document" ? docId! : undefined);
       setResult(mark);
-    } catch (e) { setError((e as Error).message); }
+    } catch (e) { setError(friendlyError(e)); }
     finally { setBusy(false); }
   };
 
@@ -338,7 +340,7 @@ function MarkCatalogModal({ orgId, libraryId, libraryName, docs, onClose, onDone
                 </ul>
               </div>
             )}
-            {error && <div className="text-[12px] font-bold text-[var(--state-overdue)]">{error}</div>}
+            {error && <p role="alert" className="text-[14px] font-semibold text-[var(--state-overdue-text)]">{error}</p>}
           </>
         )}
       </ModalBody>
@@ -350,7 +352,7 @@ function MarkCatalogModal({ orgId, libraryId, libraryName, docs, onClose, onDone
             <button type="button" onClick={onClose} disabled={busy} className="h-9 px-3.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">Cancel</button>
             <button type="button" onClick={() => void save()} disabled={!can}
               className="inline-flex items-center gap-1.5 h-9 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[13px] font-semibold hover:bg-[var(--color-accent-hover)] disabled:opacity-40">
-              {busy ? <><Loader2 className="w-4 h-4 animate-spin" /> Reading…</> : "Mark and read it"}
+              {busy ? <><Loader2 className="w-4 h-4 animate-spin" /> Reading</> : "Mark and read it"}
             </button>
           </>
         )}

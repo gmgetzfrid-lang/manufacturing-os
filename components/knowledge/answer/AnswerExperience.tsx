@@ -12,7 +12,7 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import {
-  BookOpen, Sparkles, Send, FileText, AlertTriangle, ExternalLink, History, Globe,
+  Sparkles, Send, AlertTriangle, ExternalLink, History, Globe,
   ChevronRight, ChevronDown, Copy, Check, PenLine, Eye,
   ThumbsUp, ThumbsDown, FlaskConical, X, Waypoints, Loader2, Printer, Upload, RefreshCw, ShieldCheck, Plus, CircleHelp,
 } from "lucide-react";
@@ -43,29 +43,30 @@ export type DocLink = NonNullable<KnowledgeAnswer["mentionedDocs"]>[number];
 /** The small name of a group (13 px, muted, sentence case). */
 const LABEL = "text-[13px] font-semibold text-[var(--color-text-muted)]";
 /** The direct answer: the one big line, in the condensed display face. */
-const HERO = "font-display text-[24px] sm:text-[28px] leading-[1.15] font-semibold text-[var(--color-text)]";
+const HERO = "font-display text-[22px] sm:text-[24px] leading-[1.2] font-semibold text-[var(--color-text)] max-w-[40ch]";
 /** A longer direct answer (a sentence or two): still the display face, at a
  *  size that reads as a paragraph, not a poster. */
-const HERO_LONG = "font-display text-[19px] sm:text-[20px] leading-normal font-medium text-[var(--color-text)]";
+const HERO_LONG = "font-display text-[18px] sm:text-[20px] leading-normal font-medium text-[var(--color-text)] max-w-[60ch]";
 /** Body text of the answer. */
-const BODY = "text-[15px] leading-relaxed text-[var(--color-text)]";
+// Reading width capped so an answer never runs as a wall across the screen.
+const BODY = "text-[15px] leading-relaxed text-[var(--color-text)] max-w-[70ch]";
 /** A secondary button: white, ruled, graphite text. */
 const QUIET_CORE = "inline-flex items-center justify-center gap-1.5 border border-[var(--color-border-strong)] bg-[var(--color-surface)] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-text-faint)] disabled:opacity-40 transition-colors";
 /** A quiet action (copy, open a page, ask again). */
 const QUIET = `${QUIET_CORE} h-8 px-3 rounded-md text-[13px]`;
 const QUIET_LG = `${QUIET_CORE} h-9 px-3.5 rounded-md text-[14px]`;
 /** A dialog's one main action (the floating proof card). */
-const ORANGE = "inline-flex items-center justify-center gap-1.5 h-9 px-4 rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[14px] font-semibold hover:bg-[var(--color-accent-hover)] shadow-[0_1px_0_rgb(0_0_0/0.12)] disabled:opacity-40 transition-colors";
+const ORANGE = "inline-flex items-center justify-center gap-1.5 h-9 pointer-coarse:h-11 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[14px] font-semibold hover:bg-[var(--color-accent-hover)] disabled:opacity-40 transition-colors";
 /** The step that moves the latest answer forward: still a secondary button
  *  (Send is the chat's one filled button), with a graphite edge. */
 const NEXT = `${QUIET_LG} !border-[var(--color-text)]`;
 const act = (primary: boolean) => (primary ? NEXT : QUIET_LG);
 /** A link: signal-colored text, underlined on hover. */
 const LINK = "inline-flex items-center gap-1 text-[14px] text-[var(--color-accent-text)] hover:underline";
-/** A citation number, the same solid brand badge everywhere it appears. */
-const NUM = "ui-count is-solid shrink-0 font-display";
+/** A citation number: plain muted figures in a narrow column. */
+const NUM = "ui-count shrink-0 font-display w-5 justify-end";
 /** A small count badge beside a group name. */
-const COUNT = "ui-count !h-5 !min-w-5 !px-1.5 !text-[12px]";
+const COUNT = "ui-count";
 
 /** A short numbered list: the number in a narrow column, the text beside
  *  it. Reasons and conditions read top to bottom, no decoration. */
@@ -140,7 +141,7 @@ function ProofQuote({ c, context, className }: { c: KnowledgeCitation; context?:
   );
   if (!c.quote) {
     return (
-      <p className="text-[12.5px] text-[var(--color-text-muted)]">
+      <p className="text-[13px] text-[var(--color-text-muted)]">
         The passage text wasn&apos;t stored for this answer. Open the page to read it in the document.
       </p>
     );
@@ -244,7 +245,7 @@ function ProofCard({ proof, onClose, onOpenPage }: {
       <div className="fixed inset-0 z-40 bg-[color-mix(in_srgb,var(--color-ink)_22%,transparent)]" onClick={onClose} />
       <div
         role="dialog" aria-label="Source proof"
-        className="fixed z-50 animate-pop rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] shadow-[var(--shadow-2xl)] overflow-hidden"
+        className="fixed z-50 ui-float-in rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] ui-float overflow-hidden"
         style={{ left: proof.x, width: Math.min(PROOF_W, typeof window !== "undefined" ? window.innerWidth - 24 : PROOF_W), ...(proof.up ? { bottom: proof.y } : { top: proof.y }) }}
       >
         <div className="px-4 pt-3 pb-4">
@@ -478,7 +479,7 @@ function FactCard({ n, text, citations, onCite }: {
               <button key={c.n}
                 onClick={() => onCite(c)}
                 title={`Open ${c.documentName ?? "the document"} at page ${c.page} - passage highlighted`}
-                className="ui-id inline-flex items-center gap-1.5 text-[13.5px]">
+                className="ui-id inline-flex items-center gap-1.5 text-[14px]">
                 <span className={`${COUNT} !bg-[var(--color-main)] !text-white`}>{c.n}</span>
                 {(c.documentName ?? "Source").replace(/\.pdf$/i, "").slice(0, 32)}, p. {c.page}
               </button>
@@ -768,7 +769,7 @@ export function SourceCard({ citation, onOpen, delay }: {
       <button onClick={() => setExpanded((e) => !e)} aria-expanded={expanded}
         className="w-full py-2.5 flex items-center gap-2.5 text-left">
         <span className={NUM}>{c.n}</span>
-        <span className="ui-id text-[16px] truncate min-w-0">
+        <span className="text-[15px] font-semibold text-[var(--color-accent-text)] truncate min-w-0">
           {(c.documentName ?? "Document").replace(/\.pdf$/i, "")}
         </span>
         {c.tier && (
@@ -778,7 +779,7 @@ export function SourceCard({ citation, onOpen, delay }: {
           </StatusTag>
         )}
         <span className="shrink-0 font-display tabular-nums text-[14px] text-[var(--color-text-muted)]">p. {c.page}</span>
-        <ChevronDown className={`ml-auto shrink-0 w-4 h-4 text-[var(--color-text-muted)] transition-transform ${expanded ? "rotate-180" : ""}`} />
+        <ChevronDown aria-hidden className={`ui-chevron ml-auto shrink-0 w-4 h-4 text-[var(--color-text-muted)] ${expanded ? "rotate-180" : ""}`} />
       </button>
       {expanded && (
         <div className="pb-3 pl-9 space-y-2 animate-rise">
@@ -822,12 +823,12 @@ function ProofItem({ c, onOpen, open, onToggle, flash, domId }: {
         <span className={NUM}>{c.n}</span>
         <span className="min-w-0">
           <span className="flex items-baseline gap-3 min-w-0">
-            <span className="ui-id min-w-0 flex-1 text-[16px] leading-snug group-hover:underline decoration-[var(--color-border-strong)]">{doc}</span>
-            <span className="shrink-0 ui-pill !h-[22px] !px-2 font-display tabular-nums">p. {c.page}</span>
+            <span className="min-w-0 flex-1 text-[15px] font-semibold leading-snug text-[var(--color-accent-text)] group-hover:underline underline-offset-2">{doc}</span>
+            <span className="shrink-0 text-[13px] tabular-nums text-[var(--color-text-muted)]">p. {c.page}</span>
           </span>
           {c.claim && <span className="block mt-0.5 text-[14px] text-[var(--color-text-muted)] leading-snug">{c.claim}</span>}
         </span>
-        <ChevronDown className={`mt-1 w-4 h-4 text-[var(--color-text-muted)] transition-transform ${open ? "rotate-180" : ""}`} />
+        <ChevronDown aria-hidden className={`ui-chevron mt-1 w-4 h-4 text-[var(--color-text-muted)] ${open ? "rotate-180" : ""}`} />
       </button>
       {open && (
         <div className="pb-3 pl-9 space-y-2">
@@ -907,7 +908,7 @@ function ProofTrail({ citations, onOpen, openSet, onToggle, onShowRelated, showR
             <span className={COUNT}>{related.length}</span>
             <span className="ml-auto shrink-0 whitespace-nowrap inline-flex items-center gap-1 text-[13px] text-[var(--color-accent-text)] group-hover:underline">
               {showRelated ? "Hide" : `Show ${related.length}`}
-              <ChevronDown className={`w-3.5 h-3.5 transition-transform ${showRelated ? "rotate-180" : ""}`} />
+              <ChevronDown aria-hidden className={`ui-chevron w-3.5 h-3.5 ${showRelated ? "rotate-180" : ""}`} />
             </span>
           </button>
           {showRelated && rows(related)}
@@ -1054,7 +1055,7 @@ function ExportButtons({ question, answer }: { question: string; answer: Knowled
         {menu && (
           <>
             <div className="fixed inset-0 z-40" onClick={() => setMenu(false)} />
-            <div role="menu" className="absolute right-0 top-full mt-1 z-50 w-64 rounded-lg bg-[var(--color-surface)] shadow-2xl ring-1 ring-[var(--color-border-strong)] py-1">
+            <div role="menu" className="absolute right-0 top-full mt-1 z-50 w-64 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] ui-float ui-float-in py-1">
               {COPY_OPTIONS.map((o) => (
                 <button key={o.kind} role="menuitem" type="button" onClick={() => void copy(o.kind)}
                   className="w-full text-left px-3 py-2 hover:bg-[var(--color-surface-2)]">
@@ -1221,11 +1222,10 @@ function HelperBand({ answer, mode, onRethink, onOpenDoc, onFill, primary }: {
         <ul className="divide-y divide-[var(--color-border)] border-y border-[var(--color-border)]">
           {docs.map((d) => (
             <li key={d.documentId} className="flex flex-wrap items-center gap-x-3 gap-y-2 py-2.5">
-              <span aria-hidden className="ui-icon-tile is-sm"><FileText className="w-4 h-4" /></span>
               <span className="min-w-0 flex-1 basis-48">
                 <span className="flex items-center gap-2 min-w-0">
                   <span className="ui-id min-w-0 truncate text-[16px]">{d.name.replace(/\.pdf$/i, "")}</span>
-                  <span className="shrink-0 ui-pill !h-[22px]">{DOC_TYPE_WORD[d.type] ?? "Document"}</span>
+                  <span className="shrink-0 text-[13px] text-[var(--color-text-muted)]">{DOC_TYPE_WORD[d.type] ?? "Document"}</span>
                 </span>
                 {d.why && <span className="block text-[13px] text-[var(--color-text-muted)] truncate">{d.why}</span>}
               </span>
@@ -1614,8 +1614,8 @@ export function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDo
         <aside aria-label="Sources"
           className="min-w-0 mt-8 pt-6 border-t border-[var(--color-border)] @min-[760px]:mt-0 @min-[760px]:pt-0 @min-[760px]:border-t-0 @min-[760px]:pl-8 @min-[760px]:border-l">
           <div className="flex items-center justify-between gap-3 mb-3">
-            <h3 className="flex items-center gap-2 font-display text-[19px] font-semibold text-[var(--color-text)]">
-              <span aria-hidden className="ui-icon-tile is-sm"><BookOpen className="w-4 h-4" /></span> Sources
+            <h3 className="font-display text-[20px] font-semibold text-[var(--color-text)]">
+              Sources
             </h3>
             <span className="text-[13px] text-[var(--color-text-muted)] text-right">Tap a number in the answer to jump here</span>
           </div>
@@ -1624,7 +1624,6 @@ export function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDo
           {webCitations.length > 0 && (
             <div className="mt-6">
               <div className="flex items-center gap-2 pb-1">
-                <span aria-hidden className="ui-icon-tile is-sm !w-6 !h-6"><Globe className="w-3.5 h-3.5" /></span>
                 <span className={LABEL}>From the web</span>
                 <span className={COUNT}>{webCitations.length}</span>
               </div>
@@ -1641,7 +1640,7 @@ export function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDo
                       <div className="flex items-start gap-3">
                         <span className={NUM}>{c.n}</span>
                         <span className="min-w-0">
-                          <span className="block ui-id text-[16px] leading-snug">{c.title ?? host}</span>
+                          <span className="block text-[15px] font-semibold text-[var(--color-text)] leading-snug">{c.title ?? host}</span>
                           <span className="block text-[13px] text-[var(--color-text-muted)] truncate">{host}</span>
                         </span>
                       </div>
@@ -1665,7 +1664,6 @@ export function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDo
           {jobCitations.length > 0 && (
             <div className="mt-6">
               <div className="flex items-center gap-2 pb-1">
-                <span aria-hidden className="ui-icon-tile is-sm !w-6 !h-6"><History className="w-3.5 h-3.5" /></span>
                 <span className={LABEL}>From past jobs</span>
                 <span className={COUNT}>{jobCitations.length}</span>
               </div>
@@ -1703,13 +1701,13 @@ export function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDo
       {(answer.missingDocs ?? []).length > 0 && (
         // A gap in this answer: a row with a red edge, right under it.
         <EdgeRow tone="overdue" className="space-y-1.5 animate-rise">
-          <h4 className="flex items-center gap-2 font-display text-[17px] font-semibold text-[var(--color-text)]">
-            <BookOpen className="w-4 h-4 text-[var(--state-overdue)]" /> Not in your libraries
-            <span className="ui-count is-bad !h-5 !min-w-5 !px-1.5 !text-[12px]">{answer.missingDocs!.length}</span>
+          <h4 className="flex items-baseline gap-2 font-display text-[20px] font-semibold text-[var(--color-text)]">
+            Not in your libraries
+            <span className="ui-count is-bad">{answer.missingDocs!.length}</span>
           </h4>
           <div className="flex flex-wrap gap-1.5">
             {answer.missingDocs!.map((d) => (
-              <span key={d} className="ui-pill is-bad !h-7 !px-2.5 font-display !text-[15px]">{d}</span>
+              <span key={d} className="font-display font-semibold tabular-nums text-[15px] text-[var(--color-text)]">{d}</span>
             ))}
           </div>
           <p className="text-[14px] leading-relaxed text-[var(--color-text-muted)]">
@@ -1851,8 +1849,7 @@ export function CitationChips({ citations, onOpen }: {
   return (
     <div className="mt-5">
       <div className="flex items-center gap-2 pb-2">
-        <span aria-hidden className="ui-icon-tile is-sm"><BookOpen className="w-4 h-4" /></span>
-        <span className="font-display text-[17px] font-semibold text-[var(--color-heading)]">Sources</span>
+        <span className="font-display text-[20px] font-semibold text-[var(--color-text)]">Sources</span>
         <span className={COUNT}>{citations.length}</span>
       </div>
       <ol className="divide-y divide-[var(--color-border)] border-y border-[var(--color-border)]">
@@ -1861,7 +1858,7 @@ export function CitationChips({ citations, onOpen }: {
           <li key={c.n}>
             <a href={c.url} title={c.quote ?? c.title} className="group flex items-center gap-3 py-2.5">
               <span className={NUM}>{c.n}</span>
-              <span className="ui-id min-w-0 flex-1 truncate text-[16px] group-hover:underline">{(c.title ?? "Past job").slice(0, 60)}</span>
+              <span className="min-w-0 flex-1 truncate text-[15px] font-semibold text-[var(--color-accent-text)] group-hover:underline underline-offset-2">{(c.title ?? "Past job").slice(0, 60)}</span>
               <ChevronRight className="w-4 h-4 text-[var(--color-text-faint)] shrink-0" />
             </a>
           </li>
@@ -2049,10 +2046,10 @@ export function StreamingAnswer({ status, draft }: { status: string; draft: stri
           className="min-w-0 mt-8 pt-6 border-t border-[var(--color-border)] @min-[760px]:mt-0 @min-[760px]:pt-0 @min-[760px]:border-t-0 @min-[760px]:pl-8 @min-[760px]:border-l">
           <div className="flex items-center justify-between gap-3 mb-3">
             <h3 className="flex items-center gap-2 font-display text-[19px] font-semibold text-[var(--color-text)]">
-              <span aria-hidden className="ui-icon-tile is-sm"><BookOpen className="w-4 h-4" /></span> Sources
+              Sources
             </h3>
             <span className="text-[13px] text-[var(--color-text-muted)]">
-              {inEvidence ? "Marking the exact words on each page…" : "They arrive with the answer"}
+              {inEvidence ? "Marking the exact words on each page" : "They arrive with the answer"}
             </span>
           </div>
           <ol className="divide-y divide-[var(--color-border)] border-t border-[var(--color-border)]" aria-hidden>

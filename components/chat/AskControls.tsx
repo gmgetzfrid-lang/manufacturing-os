@@ -93,7 +93,7 @@ export function SourcesMenu({ scope, libraryId, libraries, onScopeChange, scopeL
         <ChevronDown className="w-3 h-3 shrink-0 opacity-70" />
       </button>
       {open && (
-        <div className={`absolute left-0 ${down ? "top-10" : "bottom-10"} z-50 w-80 max-w-[90vw] rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] shadow-2xl p-1.5`}>
+        <div className={`absolute left-0 ${down ? "top-10" : "bottom-10"} z-50 w-80 max-w-[90vw] rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] ui-float ui-float-in p-1.5`}>
           <Head>Where answers come from</Head>
           {scopeLocked && <div className="px-2 pb-1 text-[13px] text-[var(--color-text-muted)]">Picking another source starts a new conversation</div>}
           {fixedLibrary ? (
@@ -159,7 +159,7 @@ export function AnswerMenu({ answerMode, onAnswerMode, skills, picked, onPick, q
         <Sparkles className="w-3.5 h-3.5" /> {modeLabel}<span className="max-sm:hidden"> · {on.length} skill{on.length === 1 ? "" : "s"}</span> <ChevronDown className="w-3 h-3" />
       </button>
       {open && (
-        <div className={`absolute ${down ? "right-0 top-10" : "left-0 bottom-10"} z-50 w-[22rem] max-w-[90vw] rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] shadow-2xl p-1.5 max-h-[70vh] overflow-y-auto`}>
+        <div className={`absolute ${down ? "right-0 top-10" : "left-0 bottom-10"} z-50 w-[22rem] max-w-[90vw] rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] ui-float ui-float-in p-1.5 max-h-[70vh] overflow-y-auto`}>
           <Head>Shape of the answer</Head>
           {[{ id: null as AnswerMode | null, label: "Auto", hint: AUTO_MODE_HINT }, ...ANSWER_MODES].map((m) => (
             <button key={m.id ?? "auto"} type="button" role="menuitemradio" aria-checked={answerMode === m.id}

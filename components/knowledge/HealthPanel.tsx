@@ -7,6 +7,7 @@
 // index work away.
 
 import React, { useCallback, useEffect, useState } from "react";
+import { SkeletonText } from "@/components/ui/Skeleton";
 import {
   Loader2, RefreshCw, Wrench, ChevronRight, HeartPulse,
 } from "lucide-react";
@@ -184,7 +185,7 @@ export default function HealthPanel({ orgId, libraryId, isController, onRepaired
         <div className={`${sheet} px-4 py-4 text-[14px]`}>
           {error
             ? <p role="alert" className="text-[var(--state-overdue)]"><span className="font-semibold">Couldn&apos;t check the library.</span> <span className="text-[var(--color-text-muted)]">{error}</span></p>
-            : <p className="flex items-center gap-2 text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin" /> Checking that every linked document is accounted for…</p>}
+            : <div><p className="sr-only">Checking that every linked document is accounted for</p><SkeletonText lines={2} /></div>}
         </div>
       </Section>
     );

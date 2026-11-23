@@ -21,6 +21,7 @@
 // enforces the same.
 
 import React, { useEffect, useMemo, useState } from "react";
+import { friendlyError } from "@/lib/friendlyError";
 import Link from "next/link";
 import {
   X, Waypoints, Loader2, Sparkles, Check, AlertTriangle, ArrowRight,
@@ -155,7 +156,7 @@ export default function GraphShapeWizard({
         }
         ok += 1;
       } catch (e) {
-        setError(`Some links failed: ${(e as Error).message}`);
+        setError(`Some links failed. ${friendlyError(e)}`);
       }
     }
     setWritten(ok);

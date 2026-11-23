@@ -11,6 +11,7 @@
 // submitted data is offered, and the server refuses it anyway.
 
 import React, { useEffect, useState } from "react";
+import { friendlyError } from "@/lib/friendlyError";
 import {
   Loader2, Plug, CheckCircle2, AlertTriangle, Trash2, KeyRound, Users, Sparkles, Cpu, Gauge,
 } from "lucide-react";
@@ -179,8 +180,8 @@ export function KeyEditor({ orgId, current, onChanged }: {
       setApiKey("");
       onChanged();
     } catch (e) {
-      setNotice({ tone: "err", text: (e as Error).message });
-      showToast({ type: "error", title: (e as Error).message });
+      setNotice({ tone: "err", text: friendlyError(e) });
+      showToast({ type: "error", title: friendlyError(e) });
     } finally { setBusy(null); }
   };
 
@@ -197,7 +198,7 @@ export function KeyEditor({ orgId, current, onChanged }: {
           : "Your saved key works - the model answered.",
       });
     } catch (e) {
-      setNotice({ tone: "err", text: (e as Error).message });
+      setNotice({ tone: "err", text: friendlyError(e) });
     } finally { setBusy(null); }
   };
 
@@ -214,7 +215,7 @@ export function KeyEditor({ orgId, current, onChanged }: {
       showToast({ type: "success", title: "Key removed." });
       onChanged();
     } catch (e) {
-      showToast({ type: "error", title: (e as Error).message });
+      showToast({ type: "error", title: friendlyError(e) });
     } finally { setBusy(null); }
   };
 
@@ -308,7 +309,7 @@ export function JobModelsEditor({ orgId, current, jobModels, ready, jobUse, onCh
       onChanged();
     } catch (e) {
       setPicks(picks);
-      setNotice({ tone: "err", text: (e as Error).message });
+      setNotice({ tone: "err", text: friendlyError(e) });
     } finally { setBusy(null); }
   };
 
@@ -435,8 +436,8 @@ export function EmbeddingKeyEditor({ orgId, current, onChanged }: {
       setApiKey("");
       onChanged();
     } catch (e) {
-      setNotice({ tone: "err", text: (e as Error).message });
-      showToast({ type: "error", title: (e as Error).message });
+      setNotice({ tone: "err", text: friendlyError(e) });
+      showToast({ type: "error", title: friendlyError(e) });
     } finally { setBusy(null); }
   };
 
@@ -454,7 +455,7 @@ export function EmbeddingKeyEditor({ orgId, current, onChanged }: {
           : "Your saved embeddings key works.",
       });
     } catch (e) {
-      setNotice({ tone: "err", text: (e as Error).message });
+      setNotice({ tone: "err", text: friendlyError(e) });
     } finally { setBusy(null); }
   };
 
@@ -473,7 +474,7 @@ export function EmbeddingKeyEditor({ orgId, current, onChanged }: {
       showToast({ type: "success", title: "Embeddings key removed." });
       onChanged();
     } catch (e) {
-      showToast({ type: "error", title: (e as Error).message });
+      showToast({ type: "error", title: friendlyError(e) });
     } finally { setBusy(null); }
   };
 
@@ -597,7 +598,7 @@ export function UsagePanel({ orgId }: { orgId: string }) {
       showToast({ type: "success", title: `Default monthly cap set to ${fmtUsd(cap)} per person.` });
       setTick((t) => t + 1);
     } catch (e) {
-      showToast({ type: "error", title: (e as Error).message });
+      showToast({ type: "error", title: friendlyError(e) });
     } finally { setSavingCap(false); }
   };
 
@@ -615,7 +616,7 @@ export function UsagePanel({ orgId }: { orgId: string }) {
       }
       setTick((t) => t + 1);
     } catch (e) {
-      showToast({ type: "error", title: (e as Error).message });
+      showToast({ type: "error", title: friendlyError(e) });
     } finally { setSavingUser(null); }
   };
 
@@ -755,7 +756,7 @@ export default function AiSettingsModal({ orgId, open, onClose }: {
     let cancelled = false;
     getAiConnections(orgId)
       .then((next) => { if (!cancelled) { setData(next); setLoadError(null); } })
-      .catch((e) => { if (!cancelled) setLoadError((e as Error).message); });
+      .catch((e) => { if (!cancelled) setLoadError(friendlyError(e)); });
     return () => { cancelled = true; };
   }, [open, orgId, reloadTick]);
 

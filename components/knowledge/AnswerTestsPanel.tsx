@@ -9,7 +9,10 @@
 // test that passed there and fails now is flagged as a regression.
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { FlaskConical, Play, Square, Plus, Loader2, ChevronRight, CheckCircle2, XCircle, AlertTriangle, Pencil, Trash2, Flag } from "lucide-react";
+import { SkeletonRows } from "@/components/ui/Skeleton";
+import { friendlyError } from "@/lib/friendlyError";
+import { ErrorNote } from "@/components/ui/ErrorNote";
+import { Play, Square, Plus, Loader2, ChevronRight, CheckCircle2, XCircle, AlertTriangle, Pencil, Trash2, Flag } from "lucide-react";
 import {
   loadAnswerTests, runAnswerTests, saveAnswerTest, archiveAnswerTest, setAnswerTestBaseline,
   type AnswerTestsState, type AnswerTestRun, type AnswerTestCase,
@@ -41,7 +44,7 @@ export default function AnswerTestsPanel({ orgId, libraryId }: { orgId: string; 
 
   const load = useCallback(async (runId?: string) => {
     try { setState(await loadAnswerTests(orgId, libraryId, runId)); setError(null); }
-    catch (e) { setError((e as Error).message); }
+    catch (e) { setError(friendlyError(e)); }
   }, [orgId, libraryId]);
   useEffect(() => { void load(); }, [load]);
 
@@ -54,7 +57,7 @@ export default function AnswerTestsPanel({ orgId, libraryId }: { orgId: string; 
         onProgress: (p) => setRunning({ done: p.done, total: p.total, run: p.run }),
       });
       await load(final.id);
-    } catch (e) { setError((e as Error).message); }
+    } catch (e) { setError(friendlyError(e)); }
     finally { setRunning(null); }
   }, [orgId, libraryId, cap, load]);
 
@@ -66,13 +69,11 @@ export default function AnswerTestsPanel({ orgId, libraryId }: { orgId: string; 
 
   if (error && !state) {
     return (
-      <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-[13px] text-[var(--color-text-muted)] flex items-center gap-2">
-        <FlaskConical className="w-4 h-4" /> Answer tests: {error}
-      </div>
+      <ErrorNote className="mb-6" title="Couldn't load the answer tests." next={error} onRetry={() => void load()} />
     );
   }
   if (!state) {
-    return <p className="mb-6 flex items-center gap-1.5 text-[13px] text-[var(--color-text-muted)]"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading answer tests…</p>;
+    return <div className="mb-6"><SkeletonRows rows={2} cols={1} what="answer tests" /></div>;
   }
 
   const save = async (d: AnswerTestDraft) => {
@@ -87,7 +88,7 @@ export default function AnswerTestsPanel({ orgId, libraryId }: { orgId: string; 
       <div className="flex items-center gap-3 flex-wrap">
         <button onClick={() => setOpen((v) => !v)} aria-expanded={open} className="flex-1 min-w-0 text-left">
           <div className="font-display text-[17px] font-semibold text-[var(--color-heading)] flex items-center gap-2">
-            <span aria-hidden className="ui-icon-tile is-sm"><FlaskConical className="w-4 h-4" /></span>
+            
             Answer tests {cases.length > 0 && <span className="ui-count font-sans">{cases.length}</span>} <ChevronRight className={`w-3.5 h-3.5 ui-chevron${(open) ? " rotate-90" : ""}`} />
           </div>
           <div className="text-[13px] text-[var(--color-text-muted)]">
@@ -132,7 +133,7 @@ export default function AnswerTestsPanel({ orgId, libraryId }: { orgId: string; 
           <span><b>Regression:</b> {regressions.length} critical test{regressions.length === 1 ? "" : "s"} passed on the baseline run and fail{regressions.length === 1 ? "s" : ""} now. Don&apos;t promote this version until they pass.</span>
         </div>
       )}
-      {error && <div className="mt-2 text-[13px] font-bold text-[var(--state-overdue)]">{error}</div>}
+      {error && <p role="alert" className="mt-2 text-[14px] font-semibold text-[var(--state-overdue-text)]">{error}</p>}
 
       {open && (
         <div className="mt-4 space-y-3">
@@ -155,7 +156,7 @@ export default function AnswerTestsPanel({ orgId, libraryId }: { orgId: string; 
                 ))}
               </select>
               {shownRun && !shownRun.is_baseline && shownRun.status !== "running" && (
-                <button onClick={() => void setAnswerTestBaseline(orgId, shownRun.id).then(() => load(shownRun.id), (e: unknown) => setError(`Not kept as the baseline: ${e instanceof Error ? e.message : String(e)}`))} className="inline-flex items-center gap-1 font-bold text-[var(--color-accent-text)] hover:underline">
+                <button onClick={() => void setAnswerTestBaseline(orgId, shownRun.id).then(() => load(shownRun.id), (e: unknown) => setError(`Not kept as the baseline: ${friendlyError(e)}`))} className="inline-flex items-center gap-1 font-bold text-[var(--color-accent-text)] hover:underline">
                   <Flag className="w-3 h-3" /> Keep as baseline
                 </button>
               )}
@@ -188,7 +189,7 @@ export default function AnswerTestsPanel({ orgId, libraryId }: { orgId: string; 
                     </button>
                     <button aria-label="Run this test" title="Run this test" disabled={!!running} onClick={() => void run([c.id])} className="p-1 text-[var(--color-text-muted)] hover:text-[var(--color-accent-hover)] disabled:opacity-40"><Play className="w-3.5 h-3.5" /></button>
                     <button aria-label="Edit test" title="Edit" onClick={() => setEditing(toDraft(c))} className="p-1 text-[var(--color-text-muted)] hover:text-[var(--color-text)]"><Pencil className="w-3.5 h-3.5" /></button>
-                    <button aria-label="Remove test" title="Remove" onClick={() => void archiveAnswerTest(orgId, c.id).then(() => load(state.runId ?? undefined), (e: unknown) => setError(`The test wasn't removed: ${e instanceof Error ? e.message : String(e)}`))} className="p-1 text-[var(--color-text-muted)] hover:text-[var(--state-overdue)]"><Trash2 className="w-3.5 h-3.5" /></button>
+                    <button aria-label="Remove test" title="Remove" onClick={() => void archiveAnswerTest(orgId, c.id).then(() => load(state.runId ?? undefined), (e: unknown) => setError(`The test wasn't removed: ${friendlyError(e)}`))} className="p-1 text-[var(--color-text-muted)] hover:text-[var(--state-overdue)]"><Trash2 className="w-3.5 h-3.5" /></button>
                   </div>
                   {isOpen && r && (
                     <div className="mt-2 ml-6 space-y-2">

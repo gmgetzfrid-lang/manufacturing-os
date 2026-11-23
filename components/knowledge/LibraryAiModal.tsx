@@ -6,6 +6,8 @@
 // standards precedence).
 
 import React, { useEffect, useState } from "react";
+import { SkeletonRows } from "@/components/ui/Skeleton";
+import { friendlyError } from "@/lib/friendlyError";
 import { Loader2, Save, Link2, Wand2 } from "lucide-react";
 import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/ui/Modal";
 import { useToast } from "@/components/providers/ToastProvider";
@@ -68,7 +70,7 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
         setDocs(documents);
         setLoaded(true);
       })
-      .catch((e: unknown) => { if (!cancelled) { setLoadError(e instanceof Error ? e.message : String(e)); setLoaded(true); } });
+      .catch((e: unknown) => { if (!cancelled) { setLoadError(friendlyError(e)); setLoaded(true); } });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- reseed only when the modal (re)opens
   }, [open, orgId, library.id]);
@@ -97,7 +99,7 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
       onSaved();
       onClose();
     } catch (e) {
-      showToast({ type: "error", title: "Not saved", message: (e as Error).message });
+      showToast({ type: "error", title: "Not saved", message: friendlyError(e) });
     } finally { setSaving(false); }
   };
 
@@ -271,7 +273,7 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
               and every answer says which document won.
             </p>
             {!loaded ? (
-              <div className="py-4 text-center text-[13px] text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin inline mr-1.5" /> Loading the other libraries…</div>
+              <SkeletonRows rows={3} cols={0} sheet={false} what="the other libraries" />
             ) : loadError ? (
               <p role="alert" className="text-[13px] font-semibold text-[var(--state-overdue)]">Couldn&apos;t load the other libraries: {loadError}</p>
             ) : allLibraries.length === 0 ? (
