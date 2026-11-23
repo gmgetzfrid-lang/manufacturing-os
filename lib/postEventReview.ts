@@ -1332,8 +1332,17 @@ function loadFindings(loads: PartyLoad[], downstream: (w: Array<{ job: LoadJob; 
       applies: "unit", load: L, evidence, hours: L.partyH, moved: fin ? (L.down.finishH > 0 ? 2 : 0) : null,
       why: lines.slice(0, 3).filter(Boolean).join(" "), effect: L.waited.length ? finWords(L.down) : "",
       jobs: { head: ["Job", "Ready", "Planned start", "Started", `Waited for ${P}`, "Nobody on it", "Held up after it"], rows },
-      ask: L.waited.length ? `Plan ${P} for the ${L.peak.open} jobs that were ready at once, not ${n}.` : `Have ${P} work ${n} at once when its work is ready: it worked ${L.mostWorking.n} at most while ${L.peak.open} were ready.`,
-      because: L.waited.length ? `${plural(L.waited.length, "job")} waited ${L.partyH} h for ${P}${held.length ? ` and held up ${plural(held.length, "job")} after them` : ""}${L.down.finishH > 0 && lateH ? `; ${L.down.finishH} h of the ${lateH} h late finish came through here` : ""}.` : `${plural(L.idle.length, "ready job")} sat ${L.nobodyH} h while ${P} was working fewer than ${n}.`,
+      // The bigger of the two sets the advice: more crews when jobs waited
+      // for the party most; using the crews it had when ready work sat
+      // while it was working fewer than planned.
+      ask: !L.waited.length
+        ? `Have ${P} work ${n} at once when its work is ready: it worked ${L.mostWorking.n} at most while ${L.peak.open} were ready.`
+        : L.nobodyH > L.partyH
+          ? `Keep ${P} working ${n} at once whenever its work is ready: ready jobs sat ${L.nobodyH} h while it was working fewer than ${n}.`
+          : `Plan more than ${n} of ${P}'s jobs at once for the days its work comes ready together: ${L.peak.open} were ready on ${dayAt(L.peak.at, tz)}.`,
+      because: L.waited.length && L.nobodyH <= L.partyH
+        ? `${plural(L.waited.length, "job")} waited ${L.partyH} h for ${P}${held.length ? ` and held up ${plural(held.length, "job")} after them` : ""}${L.down.finishH > 0 && lateH ? `; ${L.down.finishH} h of the ${lateH} h late finish came through here` : ""}.`
+        : `${plural(L.idle.length, "ready job")} sat ${L.nobodyH} h while ${P} was working fewer than ${n}${L.waited.length ? `, more than the ${L.partyH} h jobs waited for it` : ""}.`,
       next: `On ${dayAt(L.peak.at, tz)}, ${L.peak.open} of ${P}'s jobs were ready and ${L.peak.working} were being worked.`,
     }));
   }

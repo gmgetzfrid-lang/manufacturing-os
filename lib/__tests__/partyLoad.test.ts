@@ -105,7 +105,7 @@ describe("who held work up: a party with more ready than it was planned to work"
     // Where the late hours went: E-7's piece is the crew's; E-4's piece is not explained by anything in the records.
     expect(r.lateBars.map((b) => [b.label, b.hours, b.segs.map((x) => [x.key, x.hours])])).toEqual([["E-7", 8, [["contractors:load:clean", 8]]], [r.lateBars[1].label, 4, [[null, 4]]]]);
     expect(r.lateBars[1].label).toMatch(/^E-[456]$/);
-    expect(f.ask).toBe("Plan Clean for the 7 jobs that were ready at once, not 3.");
+    expect(f.ask).toBe("Plan more than 3 of Clean's jobs at once for the days its work comes ready together: 7 were ready on Mon, Oct 26, 6:00 AM.");
     // The jobs table: what each held up right after it.
     expect(loadJobRows(clean, tz).map((row) => [row[0], row[3], row[4]])).toEqual([["E-7 Hydroblast Bundle", "8 h", "E-7 Close Up, 8 h; Start-up on Unit - Start-Up, 8 h"], ["E-4 Hydroblast Bundle", "4 h", "E-4 Close Up, 4 h"], ["E-5 Hydroblast Bundle", "4 h", "E-5 Close Up, 4 h"], ["E-6 Hydroblast Bundle", "4 h", "E-6 Close Up, 4 h"]]);
     // Day by day, the chart as a table.
