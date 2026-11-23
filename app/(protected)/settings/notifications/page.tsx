@@ -1,24 +1,22 @@
 "use client";
 
-// /settings/notifications — per-user notification preferences page.
+// /settings/notifications: which emails a person gets.
 //
-// Backed by the notification_preferences table. Users can toggle email
-// for each category independently (mentions, assignments, status
-// changes, watcher activity, SLA warnings) and pick a digest frequency.
-// In-app bell notifications are always on — they're the persistent
-// inbox; the email side is the opt-in noise layer.
+// Backed by the notification_preferences table. Email can be switched on
+// for each kind of event (mentions, assignments, status changes, watched
+// activity, due date warnings), plus how often. The bell in the app always
+// shows everything; email is the opt-in part.
 
-import React, { useEffect, useState } from "react";
-import {
-  Save, Check, Loader2,
-  AtSign, UserPlus, Activity, AlertOctagon, Briefcase, Mail, ListChecks, Clock,
-} from "lucide-react";
+import React, { useCallback, useEffect, useState } from "react";
 import { bandSeg, bandSegItem } from "@/components/admin/band";
+import { said } from "@/components/admin/said";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
 import { PageShell } from "@/components/ui/PageShell";
-import { PageHero, PageBody, Card, heroPrimary } from "@/components/ui/PageHero";
-import LoadingBlock from "@/components/ui/LoadingBlock";
+import { PageHero, PageBody, Card } from "@/components/ui/PageHero";
+import { Button, useActionFeedback } from "@/components/ui/Button";
+import { ErrorNote } from "@/components/ui/ErrorNote";
+import { SkeletonRows } from "@/components/ui/Skeleton";
 
 interface Prefs {
   email_enabled: boolean;
@@ -40,120 +38,128 @@ const DEFAULTS: Prefs = {
   digest_frequency: "immediate",
 };
 
+const EVENTS: Array<{ key: keyof Prefs; title: string; hint: string }> = [
+  { key: "email_on_mention", title: "Mentions", hint: "Someone @-mentions you in a comment." },
+  { key: "email_on_assignment", title: "Assignments", hint: "You're assigned as drafter or engineer reviewer on a request." },
+  { key: "email_on_status_change", title: "Status changes", hint: "A request you're on moves ahead, is approved, closed, or sent back." },
+  { key: "email_on_watched_activity", title: "Watched activity", hint: "Comments and new files on requests you watch." },
+  { key: "email_on_sla_warning", title: "Due date warnings", hint: "A request you're responsible for is close to its target date." },
+];
+
+const same = (a: Prefs, b: Prefs) => (Object.keys(a) as Array<keyof Prefs>).every((k) => a[k] === b[k]);
+
 export default function NotificationSettingsPage() {
   const { uid } = useRole();
   const [prefs, setPrefs] = useState<Prefs>(DEFAULTS);
+  // What's saved, so Save stays quiet until something changes.
+  const [savedPrefs, setSavedPrefs] = useState<Prefs>(DEFAULTS);
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [loadFailed, setLoadFailed] = useState(false);
+  const [loadError, setLoadError] = useState<unknown>(null);
+  const save = useActionFeedback();
 
-  useEffect(() => {
+  const load = useCallback(async () => {
     if (!uid) return;
-    (async () => {
-      setLoading(true);
-      try {
-        const { data, error: readErr } = await supabase
-          .from("notification_preferences")
-          .select("*")
-          .eq("user_id", uid)
-          .maybeSingle();
-        if (readErr) throw readErr;
-        setLoadFailed(false);
-        if (data) {
-          setPrefs({
-            email_enabled: data.email_enabled ?? true,
-            email_on_mention: data.email_on_mention ?? true,
-            email_on_assignment: data.email_on_assignment ?? true,
-            email_on_status_change: data.email_on_status_change ?? true,
-            email_on_watched_activity: data.email_on_watched_activity ?? true,
-            email_on_sla_warning: data.email_on_sla_warning ?? true,
-            digest_frequency: (data.digest_frequency as Prefs["digest_frequency"]) ?? "immediate",
-          });
-        }
-      } catch (e) {
-        // Don't show the defaults as if they were saved: saving them would
-        // overwrite the real choices.
-        setLoadFailed(true);
-        setError(`Couldn't load your notification settings: ${(e as Error).message}`);
-      } finally {
-        setLoading(false);
-      }
-    })();
-  }, [uid]);
-
-  const save = async () => {
-    if (!uid) return;
-    setSaving(true); setError(null); setSaved(false);
+    setLoading(true);
     try {
-      const { error: upsertErr } = await supabase
+      const { data, error: readErr } = await supabase
         .from("notification_preferences")
-        .upsert({ user_id: uid, ...prefs }, { onConflict: "user_id" });
-      if (upsertErr) throw upsertErr;
-      setSaved(true);
-      setTimeout(() => setSaved(false), 2500);
+        .select("*")
+        .eq("user_id", uid)
+        .maybeSingle();
+      if (readErr) throw readErr;
+      setLoadError(null);
+      const next: Prefs = data ? {
+        email_enabled: data.email_enabled ?? true,
+        email_on_mention: data.email_on_mention ?? true,
+        email_on_assignment: data.email_on_assignment ?? true,
+        email_on_status_change: data.email_on_status_change ?? true,
+        email_on_watched_activity: data.email_on_watched_activity ?? true,
+        email_on_sla_warning: data.email_on_sla_warning ?? true,
+        digest_frequency: (data.digest_frequency as Prefs["digest_frequency"]) ?? "immediate",
+      } : DEFAULTS;
+      setPrefs(next);
+      setSavedPrefs(next);
     } catch (e) {
-      setError((e as Error).message);
+      // Don't show the defaults as if they were saved: saving them would
+      // overwrite the real choices.
+      setLoadError(e);
     } finally {
-      setSaving(false);
+      setLoading(false);
+    }
+  }, [uid]);
+  useEffect(() => { void load(); }, [load]);
+
+  const doSave = async () => {
+    if (!uid) return;
+    setError(null);
+    try {
+      await save.run(async () => {
+        const { error: upsertErr } = await supabase
+          .from("notification_preferences")
+          .upsert({ user_id: uid, ...prefs }, { onConflict: "user_id" });
+        if (upsertErr) throw upsertErr;
+      });
+      setSavedPrefs(prefs);
+    } catch (e) {
+      setError(said(e, "Couldn't save your settings."));
     }
   };
 
-  if (loading) {
-    return <PageShell width="form"><PageHero kicker="Settings · Notifications" title="Notifications" size="md" overlap={false} back={{ href: "/dashboard", label: "Back to Home" }} /><LoadingBlock what="your notification settings" /></PageShell>;
+  const back = { href: "/settings", label: "Back to Settings" };
+  if (loading && !loadError) {
+    return (
+      <PageShell width="form">
+        <PageHero kicker="Settings · Notifications" title="Notifications" size="md" back={back} />
+        <PageBody><SkeletonRows rows={5} cols={1} what="your notification settings" /></PageBody>
+      </PageShell>
+    );
+  }
+  if (loadError) {
+    return (
+      <PageShell width="form">
+        <PageHero kicker="Settings · Notifications" title="Couldn't load your settings." size="md" back={back} />
+        <PageBody><ErrorNote error={loadError} onRetry={() => void load()} /></PageBody>
+      </PageShell>
+    );
   }
 
-  const onCount = [prefs.email_on_mention, prefs.email_on_assignment, prefs.email_on_status_change, prefs.email_on_watched_activity, prefs.email_on_sla_warning].filter(Boolean).length;
+  const onCount = EVENTS.filter((e) => prefs[e.key]).length;
+  const dirty = !same(prefs, savedPrefs);
   const saveButton = (
-    <button type="button" onClick={save} disabled={saving || loadFailed} className={heroPrimary}
-      title={loadFailed ? "Reload the page to load your settings first" : undefined}>
-      {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : saved ? <Check className="w-4 h-4" /> : <Save className="w-4 h-4" />}
-      {saved ? "Saved" : "Save preferences"}
-    </button>
+    <Button {...save.state} doneLabel="Saved" onClick={() => void doSave()} disabled={!dirty && !save.done}
+      title={!dirty ? "Nothing changed yet" : undefined}>
+      Save
+    </Button>
   );
 
   return (
     <PageShell width="form">
         <PageHero
           kicker="Settings · Notifications"
-          back={{ href: "/dashboard", label: "Back to Home" }}
+          back={back}
           size="md"
-          title={loadFailed ? "Couldn't load your settings." : prefs.email_enabled ? `Email on for ${onCount} of 5 events.` : "Email is off."}
+          title={prefs.email_enabled ? `Email on for ${onCount} of ${EVENTS.length} events.` : "Email is off."}
           sub="The bell in the app always shows everything."
           primary={saveButton}
         />
 
         <PageBody>
-        {/* Master switch */}
-        <Card label={<CardTitle icon={Mail}>Email</CardTitle>}>
-          {error && (
-            <p role="alert" className="mb-3 relative pl-3 text-[15px] text-[var(--color-text)]">
-              <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] bg-[var(--state-overdue)]" />{error}
-            </p>
-          )}
-          <div className="flex items-start gap-3">
-            <div className="flex-1">
-              <div className="flex items-center gap-2 text-[15px] font-semibold text-[var(--color-text)]">Email notifications <span className={`ui-pill ${prefs.email_enabled ? "is-good" : "is-muted"}`}>{prefs.email_enabled ? "On" : "Off"}</span></div>
-              <div className="text-[13px] text-[var(--color-text-muted)] mt-0.5">Off means no email at all, whatever is set below.</div>
-            </div>
-            <Toggle label="Email notifications" on={prefs.email_enabled} onChange={(v) => setPrefs({ ...prefs, email_enabled: v })} />
-          </div>
+        {error && <p role="alert" className="text-[14px] font-semibold text-[var(--state-overdue-text)]">{error}</p>}
+
+        <Card pad={false} className="divide-y divide-[var(--color-border)] overflow-hidden">
+          <PrefRow title="Email notifications" hint="Off means no email at all, whatever is set below."
+            on={prefs.email_enabled} onChange={(v) => setPrefs({ ...prefs, email_enabled: v })} strong />
         </Card>
 
-        {/* Per-event */}
-        <Card label={<CardTitle icon={ListChecks}>Email me when</CardTitle>} pad={false} className={`overflow-hidden ${prefs.email_enabled ? "" : "opacity-50 pointer-events-none"}`}>
-        <div className="divide-y divide-[var(--color-border)] border-t border-[var(--color-border)]">
-          <PrefRow icon={AtSign} title="Mentions" hint="Someone @-mentions you in a comment." on={prefs.email_on_mention} onChange={(v) => setPrefs({ ...prefs, email_on_mention: v })} />
-          <PrefRow icon={UserPlus} title="Assignments" hint="You were assigned as drafter or engineer reviewer on a request." on={prefs.email_on_assignment} onChange={(v) => setPrefs({ ...prefs, email_on_assignment: v })} />
-          <PrefRow icon={Briefcase} title="Status changes" hint="A request you're on moved ahead, was approved, closed, or sent back for revision." on={prefs.email_on_status_change} onChange={(v) => setPrefs({ ...prefs, email_on_status_change: v })} />
-          <PrefRow icon={Activity} title="Watched activity" hint="Comments and new files on requests you watch." on={prefs.email_on_watched_activity} onChange={(v) => setPrefs({ ...prefs, email_on_watched_activity: v })} />
-          <PrefRow icon={AlertOctagon} title="Due date warnings" hint="A request you're responsible for is close to its target completion date." on={prefs.email_on_sla_warning} onChange={(v) => setPrefs({ ...prefs, email_on_sla_warning: v })} />
-        </div>
+        <Card label="Email me when" pad={false} className={`divide-y divide-[var(--color-border)] overflow-hidden ${prefs.email_enabled ? "" : "opacity-50"}`}>
+          {EVENTS.map((ev) => (
+            <PrefRow key={ev.key} title={ev.title} hint={ev.hint} disabled={!prefs.email_enabled}
+              on={prefs[ev.key] as boolean} onChange={(v) => setPrefs({ ...prefs, [ev.key]: v })} />
+          ))}
         </Card>
 
-        {/* Digest cadence */}
-        <Card label={<CardTitle icon={Clock}>How often</CardTitle>}>
+        <Card label="How often">
           <div className={bandSeg} role="radiogroup" aria-label="How often to email">
             {(["immediate", "hourly", "daily", "never"] as const).map((opt) => (
               <button
@@ -170,52 +176,37 @@ export default function NotificationSettingsPage() {
           </div>
           <p className="mt-2 text-[13px] text-[var(--color-text-muted)]">Only Right away and Never work today. Hourly and daily batching isn&apos;t built yet.</p>
         </Card>
-        {saved && <p role="status" className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-[var(--color-text)]"><Check className="w-4 h-4 text-[var(--state-released)]" /> Saved</p>}
         </PageBody>
     </PageShell>
   );
 }
 
-/** A section heading with its icon on a solid brand tile. */
-function CardTitle({ icon: Icon, children }: { icon: React.ComponentType<{ className?: string }>; children: React.ReactNode }) {
+function PrefRow({ title, hint, on, onChange, disabled, strong }: {
+  title: string; hint: string; on: boolean; onChange: (v: boolean) => void; disabled?: boolean; strong?: boolean;
+}) {
   return (
-    <span className="inline-flex items-center gap-2.5">
-      <span aria-hidden className="ui-icon-tile is-sm is-solid"><Icon className="w-4 h-4" /></span>{children}
-    </span>
-  );
-}
-
-interface PrefRowProps {
-  icon: React.ComponentType<{ className?: string }>;
-  title: string;
-  hint: string;
-  on: boolean;
-  onChange: (v: boolean) => void;
-}
-function PrefRow({ icon: Icon, title, hint, on, onChange }: PrefRowProps) {
-  return (
-    <div className="px-5 py-4 flex items-start gap-3">
-      <span aria-hidden className="ui-icon-tile is-sm"><Icon className="w-4 h-4" /></span>
+    <div className="px-4 sm:px-5 py-4 flex items-start gap-4">
       <div className="flex-1 min-w-0">
-        <div className="text-[15px] font-semibold text-[var(--color-text)]">{title}</div>
+        <div className={`${strong ? "text-[16px]" : "text-[15px]"} font-semibold text-[var(--color-text)]`}>{title}</div>
         <div className="text-[13px] text-[var(--color-text-muted)] mt-0.5">{hint}</div>
       </div>
-      <Toggle label={title} on={on} onChange={onChange} />
+      <Toggle label={title} on={on} onChange={onChange} disabled={disabled} />
     </div>
   );
 }
 
-function Toggle({ on, onChange, label }: { on: boolean; onChange: (v: boolean) => void; label: string }) {
+function Toggle({ on, onChange, label, disabled }: { on: boolean; onChange: (v: boolean) => void; label: string; disabled?: boolean }) {
   return (
     <button
       type="button"
       role="switch"
       aria-checked={on}
       aria-label={label}
+      disabled={disabled}
       onClick={() => onChange(!on)}
-      className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent-ring)] focus-visible:ring-offset-2 ${on ? "bg-[var(--color-main)]" : "bg-[var(--color-border-strong)]"}`}
+      className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors shrink-0 mt-0.5 disabled:cursor-not-allowed ${on ? "bg-[var(--color-main)]" : "bg-[var(--color-border-control)]"}`}
     >
-      <span className={`inline-block h-5 w-5 transform rounded-full bg-[var(--color-surface)] shadow transition-transform ${on ? "translate-x-5" : "translate-x-1"}`} />
+      <span className={`inline-block h-5 w-5 rounded-full bg-[var(--color-surface)] transition-transform motion-reduce:transition-none ${on ? "translate-x-[22px]" : "translate-x-0.5"}`} />
     </button>
   );
 }

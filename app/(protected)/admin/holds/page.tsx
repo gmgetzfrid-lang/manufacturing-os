@@ -14,11 +14,14 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { Check, PauseCircle, BarChart3 } from "lucide-react";
+import { Check } from "lucide-react";
 import { PageShell } from "@/components/ui/PageShell";
 import { PageHero, PageBody } from "@/components/ui/PageHero";
-import { tbl, sheet, fieldBox, btnPrimary, btnQuiet, btnRow, Pill, RowEdge, Section, Problem } from "@/components/admin/kit";
-import LoadingBlock from "@/components/ui/LoadingBlock";
+import { tbl, sheet, fieldBox, btnRow, btnLink, link, RowEdge, Section, Problem, shortDate } from "@/components/admin/kit";
+import { said } from "@/components/admin/said";
+import { Button } from "@/components/ui/Button";
+import { SkeletonRows } from "@/components/ui/Skeleton";
+import { ErrorNote } from "@/components/ui/ErrorNote";
 import { plural } from "@/components/admin/band";
 import { useRole } from "@/components/providers/RoleContext";
 import {
@@ -46,7 +49,8 @@ export default function HoldsPage() {
   const [docs, setDocs] = useState<Map<string, DocMeta>>(new Map());
   const [metrics, setMetrics] = useState<HoldMetrics | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
+  const [releaseError, setReleaseError] = useState<string | null>(null);
   const [releasingId, setReleasingId] = useState<string | null>(null);
   const [releaseDraft, setReleaseDraft] = useState("");
   const [busy, setBusy] = useState(false);
@@ -80,16 +84,16 @@ export default function HoldsPage() {
       } else {
         setDocs(new Map());
       }
-    } catch (e) { setError((e as Error).message); }
+    } catch (e) { setError(e); }
     finally { setLoading(false); }
   }, [activeOrgId]);
 
   useEffect(() => { void refresh(); }, [refresh]);
 
   const onRelease = async (holdId: string) => {
-    if (!uid) { setError("Your sign-in is still loading. Try again in a moment."); return; }
+    if (!uid) { setReleaseError("Your sign-in is still loading. Try again in a moment."); return; }
     setBusy(true);
-    setError(null);
+    setReleaseError(null);
     try {
       await releaseHold({
         holdId, releasedBy: uid,
@@ -101,7 +105,7 @@ export default function HoldsPage() {
       setReleasingId(null);
       setReleaseDraft("");
       await refresh();
-    } catch (e) { setError(`Couldn't release the hold: ${(e as Error).message}`); }
+    } catch (e) { setReleaseError(said(e, "Couldn't release the hold.")); }
     finally { setBusy(false); }
   };
 
@@ -110,14 +114,14 @@ export default function HoldsPage() {
 
   if (!activeOrgId) return (
     <PageShell width="work">
-      <PageHero kicker="Document control · Holds" title="Holds" sub="No active organization." overlap={false} />
+      <PageHero kicker="Document control · Holds" title="Holds" sub="Pick a workspace first, from your profile." />
     </PageShell>
   );
 
   // The answer: how much is blocked, and for how long.
   const onHold = metrics?.activeCount ?? holds.length;
   const answer = loading && !metrics ? "Holds"
-    : error && holds.length === 0 ? "Couldn't load the holds."
+    : error != null && holds.length === 0 ? "Couldn't load the holds."
     : onHold === 0 ? "Nothing on hold."
     : `${plural(onHold, "document")} on hold.`;
 
@@ -126,11 +130,11 @@ export default function HoldsPage() {
       <PageHero
         kicker="Document control · Holds"
         title={answer}
-        sub={metrics ? `Oldest first. Holds are released in ${metrics.avgClosedDurationDays} days on average.` : "Oldest first."}
-        facts={metrics ? [
-          { label: "Longest", value: `${metrics.longestActiveDays}d`, tone: metrics.longestActiveDays > 14 ? "bad" : undefined },
-          { label: "Opened, 7d", value: metrics.openedLast7Days },
-          { label: "Released, 7d", value: metrics.releasedLast7Days },
+        sub={metrics && metrics.avgClosedDurationDays > 0 ? `A hold is released in ${metrics.avgClosedDurationDays} ${metrics.avgClosedDurationDays === 1 ? "day" : "days"} on average.` : undefined}
+        facts={metrics && (onHold > 0 || metrics.openedLast7Days > 0 || metrics.releasedLast7Days > 0) ? [
+          { label: "Longest on hold", value: `${metrics.longestActiveDays} d`, tone: metrics.longestActiveDays > 14 ? "bad" : undefined },
+          { label: "Opened this week", value: metrics.openedLast7Days },
+          { label: "Released this week", value: metrics.releasedLast7Days },
         ] : undefined}
       >
         <div className="[&>div]:mb-0">
@@ -139,21 +143,21 @@ export default function HoldsPage() {
       </PageHero>
 
       <PageBody>
-      {loading ? (
-        <LoadingBlock what="the holds" />
+      {loading && holds.length === 0 ? (
+        <SkeletonRows rows={4} cols={3} what="the holds" />
       ) : holds.length === 0 ? (
-        error ? (
-          <Problem retry={busy ? undefined : () => void refresh()}>{error}</Problem>
+        error != null ? (
+          <ErrorNote error={error} title="Couldn't load the holds." onRetry={busy ? undefined : () => void refresh()} />
         ) : (
           <div className={`${sheet} px-5 py-8 text-center`}>
-            <span aria-hidden className="ui-icon-tile mx-auto mb-3 !grid !w-12 !h-12"><Check className="w-6 h-6" /></span>
-            <Pill tone="good">Every document is free to move</Pill>
-            <p className="mt-1 text-[15px] text-[var(--color-text-muted)]">Holds are placed from a document&apos;s side panel, for example while waiting on sign-off or vendor data.</p>
+            <p className="text-[15px] text-[var(--color-text)]">A hold is placed from a document&apos;s side panel, for example while waiting on sign-off or vendor data.</p>
+            <Link href="/documents" className={`${link} mt-1.5 inline-block font-semibold`}>Open Documents</Link>
           </div>
         )
       ) : (
-        <Section label="On hold" icon={PauseCircle} count={holds.length}>
-          {error && <Problem className="mb-3" retry={busy ? undefined : () => void refresh()}>{error}</Problem>}
+        <Section label="On hold" count={holds.length}>
+          {error != null && <ErrorNote compact className="mb-3" error={error} title="Couldn't refresh the holds." onRetry={busy ? undefined : () => void refresh()} />}
+          {releaseError && <Problem className="mb-3">{releaseError}</Problem>}
           <div className={tbl.wrap}>
             <table className={tbl.table}>
               <thead className={`${tbl.thead} max-sm:hidden`}>
@@ -187,12 +191,12 @@ export default function HoldsPage() {
                           )}
                         </td>
                         <td className={`${tbl.td} max-sm:col-span-2 max-sm:row-start-2 max-sm:py-1`}>
-                          <Pill tone="warn">{h.reason}</Pill>
-                          <span className="sm:hidden ml-2 text-[13px] text-[var(--color-text-muted)]">{ageDays === 0 ? "today" : `${ageDays}d`}{lateDays > 0 && <span className="font-semibold text-[var(--state-overdue)]">, {lateDays}d late</span>}</span>
+                          <span className="text-[14px] font-semibold text-[var(--color-text)]">{h.reason}</span>
+                          <span className="sm:hidden ml-2 text-[13px] text-[var(--color-text-muted)]">{ageDays === 0 ? "since today" : `${ageDays} d`}{lateDays > 0 && <span className="font-semibold text-[var(--state-overdue-text)]">, {lateDays} d past the expected release</span>}</span>
                         </td>
                         <td className={`${tbl.td} max-sm:hidden text-right whitespace-nowrap`}>
-                          <span className="font-display text-[16px] font-semibold tabular-nums">{ageDays === 0 ? "Today" : `${ageDays}d`}</span>
-                          {lateDays > 0 && <span className="mt-1 flex justify-end"><span className="ui-count is-bad">{lateDays}d late</span></span>}
+                          <span className="font-semibold tabular-nums" title={`Since ${shortDate(h.openedAt as string)}`}>{ageDays === 0 ? "Since today" : `${ageDays} d`}</span>
+                          {lateDays > 0 && <span className="block text-[13px] font-semibold text-[var(--state-overdue-text)]">{lateDays} d past expected</span>}
                         </td>
                         <td className={`${tbl.td} max-lg:hidden text-[var(--color-text-muted)]`}>{h.openedByName ?? ""}</td>
                         <td className={`${tbl.td} max-xl:hidden text-[14px] text-[var(--color-text-muted)] max-w-[32ch]`}><span className="line-clamp-2">{h.notes ?? ""}</span></td>
@@ -216,13 +220,11 @@ export default function HoldsPage() {
                                 placeholder="How it was resolved (optional)"
                                 aria-label="How it was resolved"
                                 onKeyDown={(e) => { if (e.key === "Enter" && !busy) void onRelease(h.id!); }}
-                                className={`${fieldBox} h-10 text-[15px] flex-1 min-w-[220px]`}
+                                className={`${fieldBox} h-10 pointer-coarse:h-11 text-[15px] max-sm:text-[16px] flex-1 min-w-[220px]`}
                                 autoFocus
                               />
-                              <button type="button" onClick={() => onRelease(h.id!)} disabled={busy} className={btnPrimary}>
-                                <Check className="w-4 h-4" /> Release hold
-                              </button>
-                              <button type="button" onClick={() => { setReleasingId(null); setReleaseDraft(""); }} disabled={busy} className={btnQuiet}>
+                              <Button onClick={() => void onRelease(h.id!)} loading={busy}>Release hold</Button>
+                              <button type="button" onClick={() => { setReleasingId(null); setReleaseDraft(""); }} disabled={busy} className={btnLink}>
                                 Cancel
                               </button>
                             </div>
@@ -240,15 +242,15 @@ export default function HoldsPage() {
 
       {/* By reason */}
       {totalByReason.length > 0 && (
-        <Section label="By reason" icon={BarChart3}>
+        <Section label="By reason">
           <div className={`${sheet} divide-y divide-[var(--color-border)]`}>
-            {totalByReason.map((r) => (
+            {totalByReason.map((r, i) => (
               <div key={r.reason} className="flex items-center gap-4 px-4 py-2.5">
-                <div className="w-48 max-sm:w-32 shrink-0 truncate text-[15px] text-[var(--color-text)]">{r.reason}</div>
-                <div className="flex-1 bg-[var(--color-surface-2)] rounded-sm h-2.5 overflow-hidden">
-                  <div className="h-full bg-[var(--state-held)]" style={{ width: `${(r.count / maxBarCount) * 100}%` }} />
+                <div className="w-48 max-sm:w-32 shrink-0 truncate text-[14px] text-[var(--color-text)]">{r.reason}</div>
+                <div className="flex-1 bg-[var(--viz-track)] rounded-full h-2 overflow-hidden">
+                  <div className="h-full rounded-full" style={{ width: `${Math.max(2, (r.count / maxBarCount) * 100)}%`, background: i === 0 ? "var(--color-main)" : "var(--viz-neutral)" }} />
                 </div>
-                <div className="w-10 flex justify-end"><span className="ui-count is-warn">{r.count}</span></div>
+                <div className="w-10 text-right text-[14px] font-semibold tabular-nums">{r.count}</div>
               </div>
             ))}
           </div>

@@ -1,6 +1,6 @@
 "use client";
 
-// /admin/storage — "Storage, Usage & Backup" control center.
+// /admin/storage: storage, use and backup in one place.
 //
 // One place to answer the only questions that matter for cost:
 //   • How full are we, and is it time to act?            (health watermark)
@@ -16,20 +16,27 @@
 import React, { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import {
-  Database, HardDrive, AlertTriangle, RefreshCw, Loader2, Gauge,
-  Sparkles, Copy, Trash2, ShieldCheck, FileJson, FileArchive, ChevronRight,
-  Archive, Recycle, Lock, CheckCircle2, ServerCog, UploadCloud, FolderArchive,
+  AlertTriangle, RefreshCw, Loader2, Copy, Trash2, FileJson, FileArchive,
+  Archive, Lock, CheckCircle2, FolderArchive, X,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
 import { CATEGORY_LABEL, type DataClass } from "@/lib/storageClassify";
 import { appConfirm } from "@/components/providers/DialogProvider";
-import LoadingBlock from "@/components/ui/LoadingBlock";
 import FileThumb from "@/components/ui/FileThumb";
 import { tryUpload } from "@/lib/uploadRetry";
 import { PageShell } from "@/components/ui/PageShell";
-import { PageHero, PageBody, Card, heroPrimary, heroQuiet } from "@/components/ui/PageHero";
-import { fieldBox, btnQuiet, btnRow, btnDanger, FormRow, Section, Pill, Problem, shortDateTime } from "@/components/admin/kit";
+import { PageHero, PageBody, heroQuiet } from "@/components/ui/PageHero";
+import { fieldBox, field, label, btnQuiet, btnRow, btnDanger, btnLink, btnIcon, link, sheet, tbl, FormRow, Section, StatusTag, Problem, shortDate, shortDateTime, toneText, type Tone } from "@/components/admin/kit";
+import { bandSelect, plural } from "@/components/admin/band";
+import { said, responseError } from "@/components/admin/said";
+import { Button } from "@/components/ui/Button";
+import { ErrorNote } from "@/components/ui/ErrorNote";
+import { SkeletonRows } from "@/components/ui/Skeleton";
+import { CopyId } from "@/components/ui/CopyId";
+import MoreMenu from "@/components/ui/MoreMenu";
+import HelpTooltip from "@/components/ui/HelpTooltip";
+import Disclosure from "@/components/admin/Disclosure";
 
 interface TableRow {
   name: string; rows: number; bytes: number;
@@ -92,20 +99,17 @@ function subfolder(root: string, sub: string): string {
   return base ? `${base}${sep}${sub}${sep}` : `${sub}${sep}`;
 }
 
-const CATEGORY_META: Record<DataClass, { icon: typeof Recycle; tint: string; bar: string; blurb: string }> = {
-  purge: {
-    icon: Recycle, tint: "text-[var(--state-released)]", bar: "bg-[var(--state-released)]",
-    blurb: "Byproducts. Safe to delete once old. No records are lost.",
-  },
-  archive: {
-    icon: Archive, tint: "text-[var(--state-held)]", bar: "bg-[var(--state-held)]",
-    blurb: "Real records. Never deleted. Kept live, then archived offline when old.",
-  },
-  reference: {
-    icon: ShieldCheck, tint: "text-[var(--color-accent-text)]", bar: "bg-[var(--color-main)]",
-    blurb: "Small settings and lookup data. Kept live. Not a cost concern.",
-  },
+const CATEGORY_BLURB: Record<DataClass, string> = {
+  purge: "Byproducts. Safe to delete once old. No records are lost.",
+  archive: "Real records. Never deleted. Kept live, then archived offline when old.",
+  reference: "Small settings and lookup data. Kept live. Not a cost concern.",
 };
+
+/** A failed route's error: its own words when it sent some, else its
+ *  status (said() turns that into plain words). */
+function httpError(status: number, words?: unknown): Error {
+  return typeof words === "string" && words ? new Error(words) : Object.assign(new Error("It didn't go through."), { status });
+}
 
 export default function StorageBackupPage() {
   const { activeOrgId, activeRole } = useRole();
@@ -139,12 +143,12 @@ export default function StorageBackupPage() {
   const [ticketRestoreFile, setTicketRestoreFile] = useState<File | null>(null);
   // Reads that feed a panel. A failed one says so in its panel instead of
   // looking like "nothing to do".
-  const [readErrors, setReadErrors] = useState<Partial<Record<"purge" | "shed" | "ticket" | "catalog" | "settings", string>>>({});
-  const noteRead = useCallback((k: "purge" | "shed" | "ticket" | "catalog" | "settings", err: string | null) => {
+  const [readErrors, setReadErrors] = useState<Partial<Record<"purge" | "shed" | "ticket" | "catalog" | "settings", unknown>>>({});
+  const noteRead = useCallback((k: "purge" | "shed" | "ticket" | "catalog" | "settings", err: unknown) => {
     setReadErrors((prev) => {
-      if (!err && !prev[k]) return prev;
+      if (err == null && prev[k] == null) return prev;
       const next = { ...prev };
-      if (err) next[k] = err; else delete next[k];
+      if (err != null) next[k] = err; else delete next[k];
       return next;
     });
   }, []);
@@ -208,10 +212,10 @@ export default function StorageBackupPage() {
         headers: { Authorization: `Bearer ${token}` },
       });
       const body = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(body?.error || `HTTP ${res.status}`);
+      if (!res.ok) throw httpError(res.status, body?.error);
       setStats(body as Stats);
     } catch (e) {
-      setError((e as Error).message);
+      setError(said(e, "Couldn't measure storage."));
     } finally {
       setLoading(false);
     }
@@ -226,10 +230,10 @@ export default function StorageBackupPage() {
         headers: { Authorization: `Bearer ${token}` },
       });
       const body = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(body?.error || `HTTP ${res.status}`);
+      if (!res.ok) throw httpError(res.status, body?.error);
       setPreview(body as PurgePreview);
       noteRead("purge", null);
-    } catch (e) { noteRead("purge", (e as Error).message || "Couldn't check."); }
+    } catch (e) { noteRead("purge", e); }
     finally { setPreviewLoading(false); }
   }, [activeOrgId, canPurge, authToken, noteRead]);
 
@@ -241,7 +245,7 @@ export default function StorageBackupPage() {
         headers: { Authorization: `Bearer ${token}` },
       });
       const body = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(body?.error || `HTTP ${res.status}`);
+      if (!res.ok) throw httpError(res.status, body?.error);
       if (body?.settings) {
         setArchiveRoot(body.settings.location_hint || null);
         setLocDraft(body.settings.location_hint || "");
@@ -251,7 +255,7 @@ export default function StorageBackupPage() {
         setQuotaDraft(body.settings.quota_bytes ? String(Math.round((body.settings.quota_bytes / (1024 ** 3)) * 10) / 10) : "");
       }
       noteRead("settings", null);
-    } catch (e) { noteRead("settings", (e as Error).message || "Couldn't load."); }
+    } catch (e) { noteRead("settings", e); }
   }, [activeOrgId, canPurge, authToken, noteRead]);
 
   const loadShedPreview = useCallback(async (keep: number) => {
@@ -262,10 +266,10 @@ export default function StorageBackupPage() {
         headers: { Authorization: `Bearer ${token}` },
       });
       const body = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(body?.error || `HTTP ${res.status}`);
+      if (!res.ok) throw httpError(res.status, body?.error);
       setShedPreview(body);
       noteRead("shed", null);
-    } catch (e) { noteRead("shed", (e as Error).message || "Couldn't check."); }
+    } catch (e) { noteRead("shed", e); }
   }, [activeOrgId, canPurge, authToken, noteRead]);
 
   const loadTicketShedPreview = useCallback(async (days: number) => {
@@ -276,10 +280,10 @@ export default function StorageBackupPage() {
         headers: { Authorization: `Bearer ${token}` },
       });
       const body = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(body?.error || `HTTP ${res.status}`);
+      if (!res.ok) throw httpError(res.status, body?.error);
       setTicketPreview(body);
       noteRead("ticket", null);
-    } catch (e) { noteRead("ticket", (e as Error).message || "Couldn't check."); }
+    } catch (e) { noteRead("ticket", e); }
   }, [activeOrgId, canPurge, authToken, noteRead]);
 
   const loadCatalog = useCallback(async () => {
@@ -290,10 +294,10 @@ export default function StorageBackupPage() {
         headers: { Authorization: `Bearer ${token}` },
       });
       const body = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(body?.error || `HTTP ${res.status}`);
+      if (!res.ok) throw httpError(res.status, body?.error);
       if (Array.isArray(body?.archives)) setCatalog(body.archives as CatalogArchive[]);
       noteRead("catalog", null);
-    } catch (e) { noteRead("catalog", (e as Error).message || "Couldn't load."); }
+    } catch (e) { noteRead("catalog", e); }
   }, [activeOrgId, canPurge, authToken, noteRead]);
 
   useEffect(() => { void load(); }, [load]);
@@ -330,12 +334,12 @@ export default function StorageBackupPage() {
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({ orgId: activeOrgId, locationHint: locDraft, naming: noteDraft }),
       });
-      if (!res.ok) throw new Error((await res.text().catch(() => "")) || `HTTP ${res.status}`);
+      if (!res.ok) throw await responseError(res);
       setArchiveRoot(locDraft.trim() || null);
       setFinderNote(noteDraft.trim() || null);
       setEditingLoc(false);
     } catch (e) {
-      setError((e as Error).message);
+      setError(said(e, "Couldn't save the archive folder."));
     } finally {
       setSavingLoc(false);
     }
@@ -353,11 +357,11 @@ export default function StorageBackupPage() {
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({ orgId: activeOrgId, quotaBytes: bytes }),
       });
-      if (!res.ok) throw new Error((await res.text().catch(() => "")) || `HTTP ${res.status}`);
+      if (!res.ok) throw await responseError(res);
       setQuotaBytes(bytes);
       setEditingQuota(false);
     } catch (e) {
-      setError((e as Error).message);
+      setError(said(e, "Couldn't save the limit."));
     } finally {
       setSavingQuota(false);
     }
@@ -382,11 +386,11 @@ export default function StorageBackupPage() {
         }),
       });
       const body = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(body?.error || `HTTP ${res.status}`);
+      if (!res.ok) throw httpError(res.status, body?.error);
       setEditingLimits(false);
       await load();
     } catch (e) {
-      setError((e as Error).message);
+      setError(said(e, "Couldn't save the plan limits."));
     } finally { setSavingLimits(false); }
   };
 
@@ -400,10 +404,10 @@ export default function StorageBackupPage() {
         headers: { Authorization: `Bearer ${token}` },
       });
       const body = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(body?.error || `HTTP ${res.status}`);
+      if (!res.ok) throw httpError(res.status, body?.error);
       setOrphanScan(body);
     } catch (e) {
-      setOrphanMsg({ text: (e as Error).message, warn: true });
+      setOrphanMsg({ text: said(e, "Couldn't scan for orphaned files."), warn: true });
     } finally { setOrphanBusy(null); }
   };
 
@@ -428,7 +432,7 @@ export default function StorageBackupPage() {
         body: JSON.stringify({ orgId: activeOrgId, confirm: true }),
       });
       const body = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(body?.error || `HTTP ${res.status}`);
+      if (!res.ok) throw httpError(res.status, body?.error);
       setOrphanMsg({
         text: `Freed ${fmtBytes(body.freedBytes ?? 0)}: ${fmtNum(body.deleted ?? 0)} orphaned file(s) deleted.`,
         warn: (body.errors?.length ?? 0) > 0,
@@ -436,7 +440,7 @@ export default function StorageBackupPage() {
       setOrphanScan(null);
       await load();
     } catch (e) {
-      setOrphanMsg({ text: (e as Error).message, warn: true });
+      setOrphanMsg({ text: said(e, "Couldn't delete the orphaned files."), warn: true });
     } finally { setOrphanBusy(null); }
   };
 
@@ -458,10 +462,10 @@ export default function StorageBackupPage() {
         body: JSON.stringify({ orgId: activeOrgId, days: purgeDays, confirm: true }),
       });
       const body = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(body?.error || `HTTP ${res.status}`);
+      if (!res.ok) throw httpError(res.status, body?.error);
       await Promise.all([load(), loadPreview(purgeDays)]);
     } catch (e) {
-      setError((e as Error).message);
+      setError(said(e, "Couldn't free up space."));
     } finally {
       setPurging(false);
     }
@@ -483,7 +487,7 @@ export default function StorageBackupPage() {
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({ orgId: activeOrgId, keep: shedKeep, confirm: true }),
       });
-      if (!res.ok) throw new Error((await res.text().catch(() => "")) || `HTTP ${res.status}`);
+      if (!res.ok) throw await responseError(res);
       const archiveId = res.headers.get("X-Archive-Id") || "";
       const files = res.headers.get("X-Archive-Files") || "0";
       const bytes = Number(res.headers.get("X-Archive-Bytes") || "0");
@@ -496,7 +500,7 @@ export default function StorageBackupPage() {
       if (archiveId) setPendingArchive({ orgId: activeOrgId, archiveId, files, bytes });
       void loadCatalog();
     } catch (e) {
-      setError((e as Error).message);
+      setError(said(e, "Couldn't build the archive."));
     } finally {
       setShedBusy(false);
     }
@@ -524,7 +528,7 @@ export default function StorageBackupPage() {
         body: JSON.stringify({ orgId: activeOrgId, archiveId: pendingArchive.archiveId, confirm: true }),
       });
       const body = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(body?.error || `HTTP ${res.status}`);
+      if (!res.ok) throw httpError(res.status, body?.error);
       setPendingArchive(null);
       // Delete-shortfall honesty: stamped-but-not-deleted objects keep billing.
       const reclaimed = Number(body?.reclaimed ?? 0);
@@ -537,7 +541,7 @@ export default function StorageBackupPage() {
       }
       await Promise.all([load(), loadShedPreview(shedKeep), loadCatalog()]);
     } catch (e) {
-      setError((e as Error).message);
+      setError(said(e, "Couldn't reclaim the space."));
     } finally {
       setCommitting(false);
     }
@@ -559,7 +563,7 @@ export default function StorageBackupPage() {
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({ orgId: activeOrgId, days: ticketDays, confirm: true }),
       });
-      if (!res.ok) throw new Error((await res.text().catch(() => "")) || `HTTP ${res.status}`);
+      if (!res.ok) throw await responseError(res);
       const archiveId = res.headers.get("X-Archive-Id") || "";
       const tickets = res.headers.get("X-Archive-Tickets") || "0";
       const files = res.headers.get("X-Archive-Files") || "0";
@@ -573,7 +577,7 @@ export default function StorageBackupPage() {
       if (archiveId) setPendingTicketArchive({ orgId: activeOrgId, archiveId, tickets, files, bytes });
       void loadCatalog();
     } catch (e) {
-      setError((e as Error).message);
+      setError(said(e, "Couldn't build the ticket archive."));
     } finally {
       setTicketBusy(false);
     }
@@ -601,11 +605,11 @@ export default function StorageBackupPage() {
         body: JSON.stringify({ orgId: activeOrgId, archiveId: pendingTicketArchive.archiveId, confirm: true }),
       });
       const body = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(body?.error || `HTTP ${res.status}`);
+      if (!res.ok) throw httpError(res.status, body?.error);
       setPendingTicketArchive(null);
       await Promise.all([load(), loadTicketShedPreview(ticketDays), loadCatalog()]);
     } catch (e) {
-      setError((e as Error).message);
+      setError(said(e, "Couldn't reclaim the space."));
     } finally {
       setTicketCommitting(false);
     }
@@ -631,11 +635,11 @@ export default function StorageBackupPage() {
         body: JSON.stringify({ orgId: activeOrgId, archiveId }),
       });
       const body = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(body?.error || `HTTP ${res.status}`);
+      if (!res.ok) throw httpError(res.status, body?.error);
       if (which === "ticket") setPendingTicketArchive(null); else setPendingArchive(null);
       await Promise.all([load(), which === "ticket" ? loadTicketShedPreview(ticketDays) : loadShedPreview(shedKeep), loadCatalog()]);
     } catch (e) {
-      setError((e as Error).message);
+      setError(said(e, "Couldn't discard the archive."));
     } finally {
       setBusy(false);
     }
@@ -667,7 +671,7 @@ export default function StorageBackupPage() {
         body: JSON.stringify({ orgId: activeOrgId, archiveId: row.archiveId, confirm: true }),
       });
       const body = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(body?.error || `HTTP ${res.status}`);
+      if (!res.ok) throw httpError(res.status, body?.error);
       const reclaimed = Number(body?.reclaimed ?? 0);
       const keysDeleted = Number(body?.keysDeleted ?? reclaimed);
       const errCount = Array.isArray(body?.errors) ? body.errors.length : 0;
@@ -681,7 +685,7 @@ export default function StorageBackupPage() {
       }
       await Promise.all([load(), loadShedPreview(shedKeep), loadTicketShedPreview(ticketDays), loadCatalog()]);
     } catch (e) {
-      setError((e as Error).message);
+      setError(said(e, "Couldn't reclaim the space."));
     } finally {
       setCatalogBusyId(null);
     }
@@ -711,7 +715,7 @@ export default function StorageBackupPage() {
         body: file,
       });
       const body = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(body?.error || `HTTP ${res.status}`);
+      if (!res.ok) throw httpError(res.status, body?.error);
       return body as unknown;
     };
     const report = (body: unknown) => {
@@ -737,7 +741,7 @@ export default function StorageBackupPage() {
     try {
       report(await tryUpload(file.name, send, { onRetried: report }));
     } catch (e) {
-      setTicketRestoreMsg({ text: `Couldn't restore from ${file.name}: ${(e as Error).message}`, warn: true });
+      setTicketRestoreMsg({ text: said(e, `Couldn't restore from ${file.name}.`), warn: true });
     } finally {
       setTicketRestoreBusy(false);
     }
@@ -753,7 +757,7 @@ export default function StorageBackupPage() {
       const token = await authToken();
       const headers = { ...(init.headers || {}), Authorization: `Bearer ${token}` };
       const res = await fetch(url, { ...init, headers });
-      if (!res.ok) throw new Error((await res.text().catch(() => "")) || `HTTP ${res.status}`);
+      if (!res.ok) throw await responseError(res);
       const blob = await res.blob();
       const href = URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -761,7 +765,7 @@ export default function StorageBackupPage() {
       document.body.appendChild(a); a.click(); document.body.removeChild(a);
       URL.revokeObjectURL(href);
     } catch (e) {
-      setError((e as Error).message);
+      setError(said(e, "The download didn't finish."));
     } finally {
       setBusy(false);
     }
@@ -784,7 +788,7 @@ export default function StorageBackupPage() {
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({ orgId: activeOrgId, includeFiles: true }),
       });
-      if (!res.ok) throw new Error((await res.text().catch(() => "")) || `HTTP ${res.status}`);
+      if (!res.ok) throw await responseError(res);
       const archiveId = res.headers.get("X-Archive-Id") || "";
       const blob = await res.blob();
       const href = URL.createObjectURL(blob);
@@ -795,7 +799,7 @@ export default function StorageBackupPage() {
       URL.revokeObjectURL(href);
       if (archiveId) setLastArchiveId(archiveId);
     } catch (e) {
-      setError((e as Error).message);
+      setError(said(e, "The backup didn't finish."));
     } finally {
       setBusyZip(false);
     }
@@ -811,783 +815,663 @@ export default function StorageBackupPage() {
   const byCat = stats?.db.byCategory ?? { purge: 0, archive: 0, reference: 0 };
   const reclaimNow = (preview?.totalEstBytes ?? 0) + (stats?.dedup?.reclaimableBytes ?? 0);
   const ticketRow = tables.find((t) => t.name === "tickets");
+  const bandTone = (b: "ok" | "warn" | "crit"): Tone => (b === "crit" ? "bad" : b === "warn" ? "warn" : "none");
+  const bandBar = (b: "ok" | "warn" | "crit") => (b === "crit" ? "bg-[var(--state-overdue)]" : b === "warn" ? "bg-[var(--state-held)]" : "bg-[var(--color-text-faint)]");
+  const small = `${bandSelect} !h-9 pointer-coarse:!h-11`;
 
   return (
     <PageShell width="work">
       <PageHero
-        kicker="Admin · Storage, usage and backup"
-        back={{ href: "/dashboard", label: "Back to Home" }}
-        title={stats ? `${pct}% full.` : error ? "Couldn't measure storage." : "Storage and backup"}
+        kicker="Admin · Storage and backup"
+        back={{ href: "/settings", label: "Back to Settings" }}
+        title={stats ? `${pct}% full.` : error && !loading ? "Couldn't measure storage." : "Storage and backup"}
         sub={stats
           ? (health === "crit" ? "Act now: take a full backup, then free up space." : health === "warn" ? "Time to take a full backup and free up space." : "Plenty of room. Take a full backup every quarter.")
           : "How full storage is, what can be cleared, and backups."}
         facts={stats ? [
-          { label: "Used", value: fmtBytes(usedBytes), tone: health === "crit" ? "bad" : health === "warn" ? "warn" : undefined },
+          { label: "Used", value: fmtBytes(usedBytes), tone: health === "crit" ? "bad" : health === "warn" ? "warn" : undefined, hero: true },
           { label: isRealQuota ? "Limit" : "Soft budget", value: fmtBytes(budgetBytes) },
           { label: "Can free now", value: fmtBytes(reclaimNow) },
         ] : undefined}
         tools={
-          <button
-            type="button"
-            onClick={() => void load()}
-            disabled={loading}
-            aria-label="Refresh"
-            title="Refresh"
-            className={heroQuiet}
-          >
-            {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+          <button type="button" onClick={() => void load()} disabled={loading} aria-label="Measure again" title="Measure again" className={heroQuiet}>
+            <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
           </button>
         }
         // The one main action here: a real backup out (records + files).
         primary={
-          <button type="button" onClick={() => void downloadZip()} disabled={busyZip || !activeOrgId} className={heroPrimary}>
-            {busyZip ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileArchive className="w-4 h-4" />}
-            {busyZip ? "Building backup…" : "Full backup (ZIP)"}
-          </button>
+          <Button loading={busyZip} disabled={!activeOrgId} onClick={() => void downloadZip()}>
+            {!busyZip && <FileArchive className="w-4 h-4" />}
+            {busyZip ? "Building backup" : "Full backup (ZIP)"}
+          </Button>
         }
       >
         {stats && (
-          <div className="h-2.5 rounded-sm bg-[var(--color-surface)] border border-[var(--color-border)] overflow-hidden" role="img" aria-label={`${pct}% of storage used`}>
-            <div className="h-full transition-all" style={{ width: `${Math.max(2, pct)}%`, background: health === "crit" ? "var(--state-overdue)" : health === "warn" ? "var(--state-held)" : "var(--color-text-muted)" }} />
+          <div className="h-2 rounded-full bg-[var(--color-surface-2)] border border-[var(--color-border)] overflow-hidden" role="img" aria-label={`${pct}% of storage used`}>
+            <div className="h-full rounded-full transition-[width] duration-300 motion-reduce:transition-none" style={{ width: `${Math.max(2, pct)}%`, background: health === "crit" ? "var(--state-overdue)" : health === "warn" ? "var(--state-held)" : "var(--color-text-muted)" }} />
           </div>
         )}
       </PageHero>
 
       <PageBody>
-      {error && <Problem>{error}</Problem>}
+      {error && stats && <Problem retry={() => void load()}>{error}</Problem>}
       {lastArchiveId && (
         <p role="status" className="text-[14px] text-[var(--color-text)] flex items-start gap-2">
-          <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5 text-[var(--state-released)]" />
-          <span>Saved as archive <b className="font-semibold">{lastArchiveId}</b>. Store it at <span className="font-mono text-[13px] break-all">{archiveRoot ? subfolder(archiveRoot, "full-backups") : "<root>/full-backups/"}{lastArchiveId}.zip</span>. Quote this id if anyone needs a file it holds.</span>
+          <CheckCircle2 aria-hidden className="w-4 h-4 shrink-0 mt-0.5 text-[var(--state-released)]" />
+          <span>Saved as archive <CopyId value={lastArchiveId} label="archive ID" />. Store it at <span className="font-mono text-[13px] break-all">{archiveRoot ? subfolder(archiveRoot, "full-backups") : "<root>/full-backups/"}{lastArchiveId}.zip</span>. Quote this ID if anyone needs a file it holds.</span>
         </p>
       )}
 
       {loading && !stats ? (
-        <Card><LoadingBlock what="storage use" rows={5} className="border-0 p-0" /></Card>
-      ) : stats ? (
+        <SkeletonRows rows={4} cols={2} what="storage use" />
+      ) : !stats ? (
+        error ? <ErrorNote title="Couldn't measure storage." next={error} onRetry={() => void load()} /> : null
+      ) : (
         <>
           {/* ── Where it stands: the limit, the database, the files ─────── */}
-          <Section label="Where it stands" icon={Gauge}>
-          <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] divide-y divide-[var(--color-border)]">
-            <FormRow label="Storage limit" hint={isRealQuota ? "Admins are alerted at 70% and 90%." : "A guide until you set your plan's real limit."}>
-              <div className="@xl:pt-1.5 flex items-center gap-3 flex-wrap">
-                <span className="font-display text-[20px] font-semibold tabular-nums text-[var(--color-heading)]">{fmtBytes(budgetBytes)}</span>
-                <Pill tone={health === "crit" ? "bad" : health === "warn" ? "warn" : "good"}>{health === "crit" ? "Act now" : health === "warn" ? "Plan a backup" : "Healthy"}</Pill>
-                {canPurge && (editingQuota ? (
-                  <span className="inline-flex items-center gap-2 flex-wrap">
-                    <label className="text-[14px] text-[var(--color-text-muted)]" htmlFor="quota-gb">Limit in GB</label>
-                    <input id="quota-gb" value={quotaDraft} onChange={(e) => setQuotaDraft(e.target.value)} inputMode="decimal" placeholder="e.g. 10"
-                      className={`${fieldBox} h-9 w-24 text-[15px]`} />
-                    <button type="button" onClick={() => void saveQuota()} disabled={savingQuota} className={btnRow}>
-                      {savingQuota ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null} Save
+          <Section label="Where it stands">
+            <div className={`${sheet} divide-y divide-[var(--color-border)]`}>
+              <FormRow label="Storage limit" hint={isRealQuota ? "Admins are alerted at 70% and 90%." : "A guide until you set your plan's real limit."}>
+                <div className="@xl:pt-1 flex items-center gap-x-4 gap-y-2 flex-wrap">
+                  <span className="font-display text-[20px] font-semibold tabular-nums text-[var(--color-text)]">{fmtBytes(budgetBytes)}</span>
+                  <StatusTag tone={health === "crit" ? "bad" : health === "warn" ? "warn" : "none"}>{health === "crit" ? "Act now" : health === "warn" ? "Plan a backup" : "Healthy"}</StatusTag>
+                  {canPurge && (editingQuota ? (
+                    <form className="inline-flex items-center gap-2 flex-wrap" onSubmit={(e) => { e.preventDefault(); void saveQuota(); }}>
+                      <label className="text-[14px] text-[var(--color-text-muted)]" htmlFor="quota-gb">Limit in GB</label>
+                      <input id="quota-gb" value={quotaDraft} onChange={(e) => setQuotaDraft(e.target.value)} inputMode="decimal" placeholder="10"
+                        className={`${fieldBox} h-9 pointer-coarse:h-11 w-24 text-[15px] max-sm:text-[16px] tabular-nums`} />
+                      <Button size="sm" variant="secondary" type="submit" loading={savingQuota}>Save</Button>
+                      <button type="button" onClick={() => { setEditingQuota(false); setQuotaDraft(quotaBytes ? String(Math.round((quotaBytes / (1024 ** 3)) * 10) / 10) : ""); }} className={btnLink}>Cancel</button>
+                    </form>
+                  ) : (
+                    <button type="button" onClick={() => setEditingQuota(true)} className={btnLink}>
+                      {isRealQuota ? "Change the limit" : "Set your limit"}
                     </button>
-                    <button type="button" onClick={() => { setEditingQuota(false); setQuotaDraft(quotaBytes ? String(Math.round((quotaBytes / (1024 ** 3)) * 10) / 10) : ""); }} className={btnRow}>Cancel</button>
+                  ))}
+                </div>
+              </FormRow>
+              <FormRow label="Database" hint="Postgres">
+                <div className="@xl:pt-1"><span className="font-display text-[20px] font-semibold tabular-nums">{fmtBytes(stats.db.totalBytes)}</span> <span className="text-[14px] text-[var(--color-text-muted)]">in {plural(tables.length, "table")}</span></div>
+              </FormRow>
+              <FormRow label="Files" hint={stats.r2Real ? "Cloudflare R2, measured" : "Cloudflare R2, estimated"}>
+                <div className="@xl:pt-1">
+                  <span className="font-display text-[20px] font-semibold tabular-nums">{stats.r2Real ? fmtBytes(stats.r2Real.bytes) : `~${fmtBytes(stats.r2Estimate.totalBytes)}`}</span>{" "}
+                  <span className="text-[14px] text-[var(--color-text-muted)]">
+                    {stats.r2Real
+                      ? `${plural(stats.r2Real.objects, "file")}, measured ${new Date(stats.generatedAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}`
+                      : `${plural(stats.r2Estimate.versionCount, "revision")}, ${plural(stats.r2Estimate.photoCount, "photo")}`}
+                    {stats.r2Real?.newest && `. Newest ${shortDateTime(stats.r2Real.newest)}`}
                   </span>
-                ) : (
-                  <button type="button" onClick={() => setEditingQuota(true)} className={btnRow}>
-                    <Gauge className="w-3.5 h-3.5" /> {isRealQuota ? "Change the limit" : "Set your limit"}
-                  </button>
-                ))}
-              </div>
-            </FormRow>
-            <FormRow label={<span className="inline-flex items-center gap-2"><span aria-hidden className="ui-icon-tile is-sm"><Database className="w-4 h-4" /></span> Database</span>} hint="Postgres">
-              <div className="@xl:pt-1.5"><span className="font-display text-[20px] font-semibold tabular-nums">{fmtBytes(stats.db.totalBytes)}</span> <span className="text-[14px] text-[var(--color-text-muted)]">in {tables.length} tables</span></div>
-            </FormRow>
-            <FormRow label={<span className="inline-flex items-center gap-2"><span aria-hidden className="ui-icon-tile is-sm"><HardDrive className="w-4 h-4" /></span> Files</span>} hint={stats.r2Real ? "Cloudflare R2, measured" : "Cloudflare R2, estimated"}>
-              <div className="@xl:pt-1.5">
-                <span className="font-display text-[20px] font-semibold tabular-nums">{stats.r2Real ? fmtBytes(stats.r2Real.bytes) : `~${fmtBytes(stats.r2Estimate.totalBytes)}`}</span>{" "}
-                <span className="text-[14px] text-[var(--color-text-muted)]">
-                  {stats.r2Real
-                    ? `${fmtNum(stats.r2Real.objects)} files, measured ${new Date(stats.generatedAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}`
-                    : `${fmtNum(stats.r2Estimate.versionCount)} revisions, ${fmtNum(stats.r2Estimate.photoCount)} photos`}
-                  {stats.r2Real?.newest && `. Newest ${shortDateTime(stats.r2Real.newest)}`}
+                </div>
+              </FormRow>
+            </div>
+
+            {/* The measurement failed and the page fell back to a row-sum that
+                can't see knowledge PDFs, templates or orphans. Say so: an
+                estimate that never moves looks exactly like a wrong number. */}
+            {!stats.r2Real && (
+              <p role="alert" className="mt-3 text-[14px] text-[var(--color-text)] flex items-start gap-2">
+                <AlertTriangle aria-hidden className="w-4 h-4 mt-0.5 shrink-0 text-[var(--state-held)]" />
+                <span>
+                  <b className="font-semibold">The file total is an estimate, not a measurement.</b> Measuring the bucket failed, so it
+                  only counts document revisions and asset photos, not knowledge PDFs, request attachments, output templates or orphaned files.
+                  {stats.r2Error && <> {said(stats.r2Error, "Why it failed:")}</>}
                 </span>
-              </div>
-            </FormRow>
-          </div>
+              </p>
+            )}
+            {stats.r2Real?.truncated && (
+              <p className="mt-3 text-[14px] text-[var(--color-text)] flex items-start gap-2">
+                <AlertTriangle aria-hidden className="w-4 h-4 mt-0.5 shrink-0 text-[var(--state-held)]" />
+                <span>
+                  <b className="font-semibold">Measuring stopped early, so the real total is higher.</b> The bucket has more than 500,000
+                  files. Treat {fmtBytes(stats.r2Real.bytes)} as the least it could be.
+                </span>
+              </p>
+            )}
+
+            <div className="mt-3 space-y-2">
+              {/* WHERE the bytes are: the receipt behind the total. */}
+              {stats.r2Real && (stats.r2Real.segments?.length ?? 0) > 0 && (
+                <Disclosure title="Where the files are" meta={plural(stats.r2Real.segments!.length, "place")}>
+                  <table className="w-full text-[14px] tabular-nums">
+                    <thead className="sr-only"><tr><th>Where</th><th>Share</th><th>Size</th><th>Files</th><th>Newest</th></tr></thead>
+                    <tbody className="divide-y divide-[var(--color-border)]">
+                      {stats.r2Real.segments!.map((s) => {
+                        const share = stats.r2Real!.bytes > 0 ? Math.round((s.bytes / stats.r2Real!.bytes) * 100) : 0;
+                        return (
+                          <tr key={s.label}>
+                            <td className="py-2 pr-3 font-semibold text-[var(--color-text)]">{s.label}</td>
+                            <td className="py-2 pr-3 w-[30%] max-sm:hidden">
+                              <div className="h-1.5 rounded-full bg-[var(--color-surface-2)] overflow-hidden">
+                                <div className="h-full rounded-full bg-[var(--color-text-faint)]" style={{ width: `${Math.max(1, share)}%` }} />
+                              </div>
+                            </td>
+                            <td className="py-2 pr-3 text-right whitespace-nowrap">{fmtBytes(s.bytes)}</td>
+                            <td className="py-2 pr-3 text-right whitespace-nowrap text-[var(--color-text-muted)]">{plural(s.objects, "file")}</td>
+                            <td className="py-2 text-right whitespace-nowrap text-[var(--color-text-muted)] max-sm:hidden">{s.newest ? `Newest ${shortDate(s.newest)}` : ""}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                  <p className="mt-2 text-[13px] text-[var(--color-text-muted)]">
+                    These add up to the measured total. If a batch you just uploaded is missing, its row&apos;s newest date shows whether the files landed.
+                  </p>
+                </Disclosure>
+              )}
+
+              {/* Plan headroom: real use against the hosting plan's ceilings. */}
+              {stats.freeTier && (
+                <Disclosure title="Hosting plan limits"
+                  meta={<StatusTag tone={bandTone(stats.freeTier.dbBand === "crit" || stats.r2Real?.band === "crit" ? "crit" : stats.freeTier.dbBand === "warn" || stats.r2Real?.band === "warn" ? "warn" : "ok")}>
+                    {stats.freeTier.dbBand === "ok" && (stats.r2Real?.band ?? "ok") === "ok" ? "Within limits" : "Near a limit"}
+                  </StatusTag>}
+                  open={stats.freeTier.dbBand !== "ok" || stats.r2Real?.band === "warn" || stats.r2Real?.band === "crit"}>
+                  <div className="space-y-3">
+                    {stats.r2Real && (
+                      <Meter label="Cloudflare R2 (files)" used={stats.r2Real.bytes} limit={stats.freeTier.r2LimitBytes} pct={stats.r2Real.pct} tone={bandTone(stats.r2Real.band)} bar={bandBar(stats.r2Real.band)} />
+                    )}
+                    <Meter label="Supabase (database)" used={stats.db.totalBytes} limit={stats.freeTier.dbLimitBytes} pct={stats.freeTier.dbPct} tone={bandTone(stats.freeTier.dbBand)} bar={bandBar(stats.freeTier.dbBand)} />
+                  </div>
+                  {editingLimits ? (
+                    <form className="mt-4 flex items-end gap-3 flex-wrap" onSubmit={(e) => { e.preventDefault(); void saveLimits(); }}>
+                      <label className="block">
+                        <span className={label}>Files (GB)</span>
+                        <input value={r2LimitDraft} onChange={(e) => setR2LimitDraft(e.target.value)} inputMode="decimal"
+                          className={`${fieldBox} h-10 pointer-coarse:h-11 w-28 text-[15px] max-sm:text-[16px] tabular-nums`} />
+                      </label>
+                      <label className="block">
+                        <span className={label}>Database (MB)</span>
+                        <input value={dbLimitDraft} onChange={(e) => setDbLimitDraft(e.target.value)} inputMode="decimal"
+                          className={`${fieldBox} h-10 pointer-coarse:h-11 w-28 text-[15px] max-sm:text-[16px] tabular-nums`} />
+                      </label>
+                      <Button variant="secondary" type="submit" loading={savingLimits}>Save limits</Button>
+                      <button type="button" onClick={() => setEditingLimits(false)} className={`${btnLink} h-10`}>Cancel</button>
+                    </form>
+                  ) : (
+                    <p className="mt-3 text-[13px] text-[var(--color-text-muted)]">
+                      Use is measured. The limits are your hosting plan&apos;s
+                      {stats.freeTier.source === "settings" ? ", set by an admin here." : ": the free tiers until changed (R2 10 GB, Supabase 500 MB)."}{" "}
+                      <button type="button" onClick={() => {
+                        setR2LimitDraft(String(Math.round((stats.freeTier!.r2LimitBytes / 1024 ** 3) * 10) / 10));
+                        setDbLimitDraft(String(Math.round(stats.freeTier!.dbLimitBytes / 1024 ** 2)));
+                        setEditingLimits(true);
+                      }} className={link}>
+                        {stats.freeTier.source === "settings" ? "Change plan limits" : "Upgraded your plan? Set the real limits"}
+                      </button>
+                    </p>
+                  )}
+                </Disclosure>
+              )}
+            </div>
           </Section>
 
-          {/* The measurement failed and the page fell back to a row-sum that
-              structurally cannot see knowledge PDFs, templates, or orphans.
-              Silently showing that as "storage used" is worse than showing
-              nothing — it never moves no matter how much you upload. */}
-          {!stats.r2Real && (
-            <p role="alert" className="text-[14px] text-[var(--state-overdue)] flex items-start gap-2">
-              <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
-              <span>
-                <b>The file total above is an estimate, not a measurement.</b> Measuring the bucket failed, so it
-                only counts document revisions and asset photos. Knowledge-library PDFs, ticket attachments,
-                output templates and orphaned files are not counted.
-                {stats.r2Error && <> Reason: <span className="font-mono">{stats.r2Error}</span></>}
-              </span>
-            </p>
-          )}
-          {stats.r2Real?.truncated && (
-            <p className="text-[14px] text-[var(--state-held)] flex items-start gap-2">
-              <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
-              <span>
-                <b>Measuring stopped early, so the real total is higher.</b> The bucket has more than 500,000
-                files. Treat {fmtBytes(stats.r2Real.bytes)} as the least it could be.
-              </span>
-            </p>
-          )}
-
-          {/* WHERE the bytes are. A single total invites "is that even right?";
-              an itemized breakdown with object counts and a newest-file stamp
-              is the receipt that answers it. */}
-          {stats.r2Real && (stats.r2Real.segments?.length ?? 0) > 0 && (
-            <details className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4 sm:p-5">
-              <summary className="cursor-pointer list-none font-display text-[17px] font-semibold text-[var(--color-text)] hover:text-[var(--color-accent-text)] flex items-center gap-2"><ChevronRight className="w-4 h-4 text-[var(--color-text-muted)] transition-transform [details[open]>&]:rotate-90" />Where the files are
-              </summary>
-              <div className="mt-2.5" />
-              <div className="space-y-2">
-                {stats.r2Real.segments!.map((s) => {
-                  const share = stats.r2Real!.bytes > 0
-                    ? Math.round((s.bytes / stats.r2Real!.bytes) * 100) : 0;
-                  return (
-                    <div key={s.label}>
-                      <div className="flex items-baseline justify-between gap-2 text-[13px]">
-                        <span className="font-semibold text-[var(--color-text)] truncate">{s.label}</span>
-                        <span className="text-[var(--color-text-muted)] shrink-0 tabular-nums">
-                          {fmtBytes(s.bytes)} · {fmtNum(s.objects)} files
-                          {s.newest && <> · newest {new Date(s.newest).toLocaleDateString()}</>}
-                        </span>
-                      </div>
-                      <div className="mt-1 h-1.5 rounded-full bg-[var(--color-surface-2)] overflow-hidden">
-                        <div className="h-full rounded-full bg-[var(--color-main)]" style={{ width: `${Math.max(1, share)}%` }} />
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-              <p className="mt-2.5 text-[13px] text-[var(--color-text-faint)]">
-                These add up to the measured total. If a batch you just uploaded is missing, its row&apos;s
-                newest date shows whether the files landed.
-              </p>
-            </details>
-          )}
-
-          {/* ── Plan headroom: REAL usage vs the hosting plan's ceilings ──── */}
-          {stats.freeTier && (
-            <details className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4 sm:p-5" open={stats.freeTier.dbBand !== "ok" || stats.r2Real?.band === "warn" || stats.r2Real?.band === "crit"}>
-              <summary className="cursor-pointer list-none font-display text-[17px] font-semibold text-[var(--color-text)] hover:text-[var(--color-accent-text)] flex items-center gap-2"><ChevronRight className="w-4 h-4 text-[var(--color-text-muted)] transition-transform [details[open]>&]:rotate-90" />Hosting plan limits
-              </summary>
-              <div className="space-y-3 mt-2.5">
-                {stats.r2Real && (
-                  <div>
-                    <div className="flex items-center justify-between text-[13px] mb-1">
-                      <span className="font-semibold text-[var(--color-text)]">Cloudflare R2 (files)</span>
-                      <span className={`font-semibold ${stats.r2Real.band === "crit" ? "text-[var(--state-overdue)]" : stats.r2Real.band === "warn" ? "text-[var(--state-held)]" : "text-[var(--state-released)]"}`}>
-                        {fmtBytes(stats.r2Real.bytes)} of {fmtBytes(stats.freeTier.r2LimitBytes)} · {stats.r2Real.pct}%
-                      </span>
-                    </div>
-                    <div className="h-2 rounded-full bg-[var(--color-surface-2)] overflow-hidden">
-                      <div className={`h-full rounded-full ${stats.r2Real.band === "crit" ? "bg-[var(--state-overdue)]" : stats.r2Real.band === "warn" ? "bg-[var(--state-held)]" : "bg-[var(--state-released)]"}`}
-                        style={{ width: `${Math.min(100, Math.max(1, stats.r2Real.pct))}%` }} />
-                    </div>
-                  </div>
-                )}
-                <div>
-                  <div className="flex items-center justify-between text-[13px] mb-1">
-                    <span className="font-semibold text-[var(--color-text)]">Supabase (database)</span>
-                    <span className={`font-semibold ${stats.freeTier.dbBand === "crit" ? "text-[var(--state-overdue)]" : stats.freeTier.dbBand === "warn" ? "text-[var(--state-held)]" : "text-[var(--state-released)]"}`}>
-                      {fmtBytes(stats.db.totalBytes)} of {fmtBytes(stats.freeTier.dbLimitBytes)} · {stats.freeTier.dbPct}%
-                    </span>
-                  </div>
-                  <div className="h-2 rounded-full bg-[var(--color-surface-2)] overflow-hidden">
-                    <div className={`h-full rounded-full ${stats.freeTier.dbBand === "crit" ? "bg-[var(--state-overdue)]" : stats.freeTier.dbBand === "warn" ? "bg-[var(--state-held)]" : "bg-[var(--state-released)]"}`}
-                      style={{ width: `${Math.min(100, Math.max(1, stats.freeTier.dbPct))}%` }} />
-                  </div>
-                </div>
-              </div>
-              {editingLimits ? (
-                <div className="mt-2.5 flex items-center gap-2 flex-wrap text-[13px]">
-                  <span className="text-[var(--color-text-muted)] font-semibold">R2 (GB):</span>
-                  <input value={r2LimitDraft} onChange={(e) => setR2LimitDraft(e.target.value)} inputMode="decimal"
-                    className="w-16 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] px-2 py-1 font-mono" />
-                  <span className="text-[var(--color-text-muted)] font-semibold">Database (MB):</span>
-                  <input value={dbLimitDraft} onChange={(e) => setDbLimitDraft(e.target.value)} inputMode="decimal"
-                    className="w-16 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] px-2 py-1 font-mono" />
-                  <button onClick={() => void saveLimits()} disabled={savingLimits}
-                    className="inline-flex items-center gap-1 px-2 py-1 rounded-lg font-semibold border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40">
-                    {savingLimits ? <Loader2 className="w-3 h-3 animate-spin" /> : null} Save limits
-                  </button>
-                  <button onClick={() => setEditingLimits(false)} className="text-[var(--color-text-muted)] font-semibold">Cancel</button>
-                </div>
-              ) : (
-                <p className="mt-2.5 text-[13px] text-[var(--color-text-muted)] leading-relaxed">
-                  Use is measured. The limits are your hosting plan&apos;s
-                  {stats.freeTier.source === "settings"
-                    ? " (set by an admin here)"
-                    : " (the free tiers until changed: R2 10 GB, Supabase 500 MB)"}.
-                  Admins get a notification at 70% and 90%.{" "}
-                  <button onClick={() => {
-                    setR2LimitDraft(String(Math.round((stats.freeTier!.r2LimitBytes / 1024 ** 3) * 10) / 10));
-                    setDbLimitDraft(String(Math.round(stats.freeTier!.dbLimitBytes / 1024 ** 2)));
-                    setEditingLimits(true);
-                  }} className="text-[var(--color-accent-text)] hover:underline">
-                    {stats.freeTier.source === "settings" ? "Change plan limits" : "Upgraded your plan? Set the real limits"}
-                  </button>
-                </p>
-              )}
-            </details>
-          )}
-
-          {/* ── Orphaned files: bucket objects nothing references ─────────── */}
-          <details className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4 sm:p-5" open={!!orphanScan || !!orphanMsg}>
-            <summary className="cursor-pointer list-none font-display text-[17px] font-semibold text-[var(--color-text)] hover:text-[var(--color-accent-text)] flex items-center gap-2"><ChevronRight className="w-4 h-4 text-[var(--color-text-muted)] transition-transform [details[open]>&]:rotate-90" />Orphaned files</summary>
-            <div className="mt-2 flex items-center justify-between gap-2 flex-wrap">
-              <div>
-                <p className="text-[13px] text-[var(--color-text-muted)]">
-                  Files in storage that nothing uses, like knowledge PDFs you deleted. Scanning changes nothing.
-                  Deleting checks each file again and never touches anything newer than 7 days.
-                </p>
-              </div>
-              <button onClick={() => void scanOrphanFiles()} disabled={orphanBusy !== null}
-                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[13px] font-semibold border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-all">
-                {orphanBusy === "scan" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />} Scan
-              </button>
-            </div>
-            {orphanMsg && (
-              <div role="status" className={`mt-2 text-[13px] font-semibold ${orphanMsg.warn ? "text-[var(--state-held)]" : "text-[var(--state-released)]"}`}>{orphanMsg.text}</div>
-            )}
-            {orphanScan && (
-              orphanScan.orphans.length === 0 ? (
-                <div className="mt-2 text-[13px] font-semibold text-[var(--state-released)]">
-                  Clean: all {fmtNum(orphanScan.totalObjects)} files in storage are in use.
-                  {orphanScan.skippedYoung > 0 && ` (${orphanScan.skippedYoung} too new to judge yet.)`}
-                </div>
-              ) : (
-                <div className="mt-3 space-y-2">
-                  <div className="flex items-center gap-3 flex-wrap">
-                    <span className="font-display text-[17px] font-semibold text-[var(--color-text)]">
-                      {fmtBytes(orphanScan.orphanBytes)} reclaimable
-                    </span>
-                    <span className="text-[13px] text-[var(--color-text-muted)]">
-                      {fmtNum(orphanScan.orphans.length)} orphan(s) · {fmtNum(orphanScan.referencedKeys)} referenced keys checked
-                      {orphanScan.skippedYoung > 0 && ` · ${orphanScan.skippedYoung} skipped (under 7 days old)`}
-                    </span>
-                    <button onClick={() => void purgeOrphanFiles()} disabled={orphanBusy !== null}
-                      className={`ml-auto ${btnDanger}`}>
-                      {orphanBusy === "delete" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
-                      Delete orphans, free {fmtBytes(orphanScan.orphanBytes)}
-                    </button>
-                  </div>
-                  <ul className="max-h-40 overflow-y-auto rounded-lg border border-[var(--color-border)] divide-y divide-[var(--color-border)] text-[13px]">
-                    {orphanScan.orphans.slice(0, 50).map((o) => (
-                      <li key={o.key} className="px-2.5 py-1 flex items-center gap-2">
-                        <span className="truncate flex-1 font-mono text-[var(--color-text-muted)]" title={o.key}>{o.key}</span>
-                        <span className="shrink-0 tabular-nums font-semibold text-[var(--color-text)]">{fmtBytes(o.size)}</span>
-                      </li>
-                    ))}
-                    {orphanScan.orphans.length > 50 && (
-                      <li className="px-2.5 py-1 text-[var(--color-text-muted)] italic">…and {fmtNum(orphanScan.orphans.length - 50)} more</li>
-                    )}
-                  </ul>
-                </div>
-              )
-            )}
-          </details>
-
-          {/* ── Category breakdown: purge vs keep vs reference ───────────── */}
-          <details className="group/cat rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4 sm:p-5">
-            <summary className="cursor-pointer list-none mb-2 font-display text-[17px] font-semibold text-[var(--color-text)] hover:text-[var(--color-accent-text)] flex items-center gap-2"><ChevronRight className="w-4 h-4 text-[var(--color-text-muted)] transition-transform [details[open]>&]:rotate-90" />Database by kind: what can go, what stays</summary>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            {(["purge", "archive", "reference"] as DataClass[]).map((cat) => {
-              const M = CATEGORY_META[cat];
-              const Icon = M.icon;
-              const bytes = byCat[cat] ?? 0;
-              const share = stats.db.totalBytes > 0 ? Math.round((bytes / stats.db.totalBytes) * 100) : 0;
-              return (
-                <div key={cat} className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
-                  <div className={`flex items-center gap-2 text-[13px] font-semibold mb-1 ${M.tint}`}>
-                    <Icon className="w-4 h-4" /> {CATEGORY_LABEL[cat]}
-                  </div>
-                  <div className="text-[15px] font-semibold text-[var(--color-text)]">{fmtBytes(bytes)}</div>
-                  <div className="h-1.5 rounded-full bg-[var(--color-surface-2)] overflow-hidden my-1.5">
-                    <div className={`h-full rounded-full ${M.bar}`} style={{ width: `${Math.max(1, share)}%` }} />
-                  </div>
-                  <div className="text-[13px] text-[var(--color-text-muted)] leading-relaxed">{M.blurb}</div>
-                </div>
-              );
-            })}
-          </div>
-          </details>
-
-          {/* ── Free up space (purge) ────────────────────────────────────── */}
+          {/* ── Free up space ─────────────────────────────────────────────── */}
           {canPurge ? (
-            <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4 sm:p-5">
-              <div className="flex items-center justify-between gap-3 flex-wrap mb-2">
-                <div className="flex items-center gap-2 font-display text-[17px] font-semibold text-[var(--color-text)]">
-                  <Recycle className="w-4 h-4 text-[var(--color-text-muted)]" /> Free up space
-                  <span className="font-sans text-[13px] font-normal text-[var(--color-text-muted)]">Your workspace, byproducts only</span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <span className="text-[13px] text-[var(--color-text-muted)]">older than</span>
-                  <select
-                    value={purgeDays}
-                    onChange={(e) => setPurgeDays(Number(e.target.value))}
-                    className="text-[13px] font-semibold rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1 text-[var(--color-text)]"
-                  >
-                    {[30, 90, 180, 365].map((d) => <option key={d} value={d}>{d} days</option>)}
-                  </select>
-                </div>
-              </div>
-
-              <div className="divide-y divide-[var(--color-border)] rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden mb-3">
-                {readErrors.purge ? (
-                  <div role="alert" className="px-3 py-3 text-[13px] text-[var(--state-overdue)]">
-                    Couldn&apos;t check what can be purged: {readErrors.purge}{" "}
-                    <button type="button" onClick={() => void loadPreview(purgeDays)} className="text-[var(--color-accent-text)] hover:underline">Try again</button>
-                  </div>
-                ) : previewLoading && !preview ? (
-                  <div className="px-3 py-3 text-[13px] text-[var(--color-text-muted)] inline-flex items-center gap-2"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Checking what can be purged…</div>
-                ) : (preview?.targets ?? []).map((t) => (
-                  <div key={t.table} className="px-3 py-2 flex items-center gap-3" title={t.reason}>
-                    <Recycle className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" />
-                    <div className="flex-1 min-w-0">
-                      <div className="text-[13px] font-semibold text-[var(--color-text)]">{t.label}</div>
-                      <div className="text-[13px] text-[var(--color-text-muted)] font-mono truncate">{t.table}</div>
+            <Section label="Free up space" action={<span className="text-[13px] text-[var(--color-text-muted)]">Your workspace only</span>}>
+              <div className="space-y-3">
+                {/* Purge: disposable rows only. */}
+                <Panel title="Old byproducts" help="Rows the app makes as it works (logs, previews, old notices). Records are never touched. A purge is written to the audit log."
+                  control={<label className="inline-flex items-center gap-2 text-[13px] text-[var(--color-text-muted)]">Older than
+                    <select value={purgeDays} onChange={(e) => setPurgeDays(Number(e.target.value))} className={small}>
+                      {[30, 90, 180, 365].map((d) => <option key={d} value={d}>{d} days</option>)}
+                    </select></label>}>
+                  {readErrors.purge != null ? (
+                    <ErrorNote compact error={readErrors.purge} title="Couldn't check what can be purged." onRetry={() => void loadPreview(purgeDays)} />
+                  ) : previewLoading && !preview ? (
+                    <SkeletonRows rows={2} cols={2} what="what can be purged" />
+                  ) : (preview?.targets.length ?? 0) > 0 ? (
+                    <div className="rounded-lg border border-[var(--color-border)] overflow-hidden">
+                      <table className={tbl.table}>
+                        <thead className={tbl.thead}><tr><th className={tbl.th}>What</th><th className={`${tbl.th} text-right`}>Rows</th><th className={`${tbl.th} text-right`}>Size</th></tr></thead>
+                        <tbody className={tbl.tbody}>
+                          {preview!.targets.map((t) => (
+                            <tr key={t.table} title={t.reason}>
+                              <td className="px-4 py-2"><div className="font-semibold text-[var(--color-text)]">{t.label}</div><div className="text-[13px] text-[var(--color-text-muted)] font-mono truncate">{t.table}</div></td>
+                              <td className="px-4 py-2 text-right">{fmtNum(t.rows)}</td>
+                              <td className="px-4 py-2 text-right text-[var(--color-text-muted)]">≈{fmtBytes(t.estBytes)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
                     </div>
-                    <div className="text-right">
-                      <div className="text-[13px] font-semibold text-[var(--color-text)]">{fmtNum(t.rows)} rows</div>
-                      <div className="text-[13px] text-[var(--color-text-muted)]">≈{fmtBytes(t.estBytes)}</div>
+                  ) : null}
+                  {readErrors.purge == null && (
+                    <div className="mt-3 flex items-center justify-between gap-3 flex-wrap">
+                      <p className="text-[14px] text-[var(--color-text-muted)]">
+                        {preview && preview.totalRows > 0
+                          ? <>Frees about <b className="font-semibold text-[var(--color-text)]">{fmtBytes(preview.totalEstBytes)}</b> across {plural(preview.totalRows, "row")}.</>
+                          : preview ? `Nothing older than ${purgeDays} days to purge.` : ""}
+                      </p>
+                      {preview && preview.totalRows > 0 && (
+                        <button type="button" onClick={() => void runPurge()} disabled={purging} className={btnDanger}>
+                          {purging ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                          Purge {plural(preview.totalRows, "row")}
+                        </button>
+                      )}
                     </div>
-                  </div>
-                ))}
-              </div>
-
-              <div className="flex items-center justify-between gap-3 flex-wrap">
-                <div className="text-[13px] text-[var(--color-text-muted)] max-w-md">
-                  {preview && preview.totalRows > 0
-                    ? <>Frees about <b className="text-[var(--color-text)]">{fmtBytes(preview.totalEstBytes)}</b> across {fmtNum(preview.totalRows)} rows. It&apos;s written to the audit log.</>
-                    : readErrors.purge ? "" : "Nothing old enough to purge in this window."}
-                </div>
-                <button
-                  onClick={() => void runPurge()}
-                  disabled={purging || !preview || preview.totalRows === 0}
-                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-[13px] font-semibold border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40 transition-colors"
-                >
-                  {purging ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
-                  Purge {preview && preview.totalRows > 0 ? `${fmtNum(preview.totalRows)} rows` : "now"}
-                </button>
-              </div>
-            </div>
-          ) : (
-            <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4 sm:p-5 text-[13px] text-[var(--color-text-muted)] flex items-center gap-2">
-              <Lock className="w-4 h-4 shrink-0" /> Only Admin and Doc Control can free up space. You can still see usage and download backups.
-            </div>
-          )}
-
-          {/* ── Archive for space (the shed) ─────────────────────────────── */}
-          {canPurge && (
-            <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4 sm:p-5">
-              <div className="flex items-center justify-between gap-3 flex-wrap mb-2">
-                <div className="flex items-center gap-2 font-display text-[17px] font-semibold text-[var(--color-text)]">
-                  <Archive className="w-4 h-4 text-[var(--color-text-muted)]" /> Archive older revision history for space
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <span className="text-[13px] text-[var(--color-text-muted)]">keep last</span>
-                  <select value={shedKeep} onChange={(e) => setShedKeep(Number(e.target.value))}
-                    className="text-[13px] font-semibold rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1 text-[var(--color-text)]">
-                    {[3, 5, 10, 20].map((d) => <option key={d} value={d}>{d} revisions</option>)}
-                  </select>
-                </div>
-              </div>
-              <p className="text-[13px] text-[var(--color-text-muted)] mb-3 max-w-2xl">
-                Keeps the <b>last {shedKeep} revisions</b> of every document live and moves the files of older ones into one offline archive. Each revision&apos;s record, checksum and reason stay. Only the file moves. The current revision is never touched.
-              </p>
-
-              {readErrors.shed ? (
-                <div role="alert" className="text-[13px] text-[var(--state-overdue)]">
-                  Couldn&apos;t check older revisions: {readErrors.shed}{" "}
-                  <button type="button" onClick={() => void loadShedPreview(shedKeep)} className="text-[var(--color-accent-text)] hover:underline">Try again</button>
-                </div>
-              ) : shedPreview && shedPreview.selectedCount > 0 ? (
-                <div className="flex items-center justify-between gap-3 flex-wrap">
-                  <div className="text-[13px] text-[var(--color-text-muted)]">
-                    <b className="text-[var(--color-text)]">{fmtNum(shedPreview.selectedCount)}</b> superseded file(s) · reclaim ≈<b className="text-[var(--color-text)]">{fmtBytes(shedPreview.reclaimableBytes)}</b>
-                    {(shedPreview.remainingCount ?? 0) > 0 && <> · <b className="text-[var(--state-held)]">{fmtNum(shedPreview.remainingCount!)} more</b> past this archive&apos;s size limit. Build again after reclaiming.</>}
-                    {archiveRoot && <> → save to <span className="font-mono break-all">{subfolder(archiveRoot, "data")}&lt;id&gt;.zip</span></>}
-                  </div>
-                  <button onClick={() => void produceArchive()} disabled={shedBusy}
-                    className={btnQuiet}>
-                    {shedBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Archive className="w-3.5 h-3.5" />} Build &amp; download archive
-                  </button>
-                </div>
-              ) : (
-                <div className="text-[13px] text-[var(--color-text-muted)]">{shedPreview ? `No document has more than ${shedKeep} revisions, so there's nothing older to archive yet.` : <span className="inline-flex items-center gap-1.5"><Loader2 className="w-3 h-3 animate-spin" /> Checking older revisions…</span>}</div>
-              )}
-
-              {pendingArchive && (
-                <div className="mt-3 border-l-[3px] border-[var(--state-held)] pl-3">
-                  <div className="text-[13px] text-[var(--state-held)] font-semibold mb-1 flex items-center gap-1.5"><FolderArchive className="w-3.5 h-3.5" /> Step 2 of 2: reclaim the space</div>
-                  <div className="text-[13px] text-[var(--color-text)] mb-2">
-                    First save <span className="font-mono">{pendingArchive.archiveId}.zip</span> to <span className="font-mono break-all">{archiveRoot ? subfolder(archiveRoot, "data") : "<root>/data/"}</span>. Then reclaim about {fmtBytes(pendingArchive.bytes)} from live storage. Until you do, the files stay online.
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button onClick={() => void commitArchive()} disabled={committing}
-                      className={btnDanger}>
-                      {committing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />} I saved it, reclaim {fmtBytes(pendingArchive.bytes)}
-                    </button>
-                    <button onClick={() => void cancelPending(pendingArchive.archiveId, "doc")} disabled={committing} className="text-[13px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--state-overdue)]">Discard</button>
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* ── Archive closed tickets for space ─────────────────────────── */}
-          {canPurge && (
-            <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4 sm:p-5">
-              <div className="flex items-center justify-between gap-3 flex-wrap mb-2">
-                <div className="flex items-center gap-2 font-display text-[17px] font-semibold text-[var(--color-text)]">
-                  <Archive className="w-4 h-4 text-[var(--color-text-muted)]" /> Archive closed tickets for space
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <span className="text-[13px] text-[var(--color-text-muted)]">closed over</span>
-                  <select value={ticketDays} onChange={(e) => setTicketDays(Number(e.target.value))}
-                    className="text-[13px] font-semibold rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1 text-[var(--color-text)]">
-                    {[90, 180, 365, 730].map((d) => <option key={d} value={d}>{d} days</option>)}
-                  </select>
-                </div>
-              </div>
-              <p className="text-[13px] text-[var(--color-text-muted)] mb-3 max-w-2xl">
-                Moves <b>long-closed tickets</b> (comments, history and attachments) into one offline archive and leaves a small stub in the list. Opening a stub asks for the archive, and one restore brings it all back. Only <b>closed or canceled</b> tickets. Open requests are never touched.
-              </p>
-
-              {readErrors.ticket ? (
-                <div role="alert" className="text-[13px] text-[var(--state-overdue)]">
-                  Couldn&apos;t check closed tickets: {readErrors.ticket}{" "}
-                  <button type="button" onClick={() => void loadTicketShedPreview(ticketDays)} className="text-[var(--color-accent-text)] hover:underline">Try again</button>
-                </div>
-              ) : ticketPreview && ticketPreview.selectedCount > 0 ? (
-                <div className="flex items-center justify-between gap-3 flex-wrap">
-                  <div className="text-[13px] text-[var(--color-text-muted)]">
-                    <b className="text-[var(--color-text)]">{fmtNum(ticketPreview.selectedCount)}</b> closed ticket(s) · reclaim ≈<b className="text-[var(--color-text)]">{fmtBytes(ticketPreview.reclaimableBytes)}</b> of attachments
-                    {archiveRoot && <> → save to <span className="font-mono break-all">{subfolder(archiveRoot, "data")}&lt;id&gt;.zip</span></>}
-                  </div>
-                  <button onClick={() => void produceTicketArchive()} disabled={ticketBusy}
-                    className={btnQuiet}>
-                    {ticketBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Archive className="w-3.5 h-3.5" />} Build &amp; download archive
-                  </button>
-                </div>
-              ) : (
-                <div className="text-[13px] text-[var(--color-text-muted)]">{ticketPreview ? `No ticket has been closed longer than ${ticketDays} days, so there's nothing to archive yet.` : <span className="inline-flex items-center gap-1.5"><Loader2 className="w-3 h-3 animate-spin" /> Checking closed tickets…</span>}</div>
-              )}
-
-              {pendingTicketArchive && (
-                <div className="mt-3 border-l-[3px] border-[var(--state-held)] pl-3">
-                  <div className="text-[13px] text-[var(--state-held)] font-semibold mb-1 flex items-center gap-1.5"><FolderArchive className="w-3.5 h-3.5" /> Step 2 of 2: reclaim the space</div>
-                  <div className="text-[13px] text-[var(--color-text)] mb-2">
-                    First save <span className="font-mono">{pendingTicketArchive.archiveId}.zip</span> to <span className="font-mono break-all">{archiveRoot ? subfolder(archiveRoot, "data") : "<root>/data/"}</span>. Then move {pendingTicketArchive.tickets} ticket(s) to the archive and reclaim about {fmtBytes(pendingTicketArchive.bytes)}. Until you do, everything stays online.
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button onClick={() => void commitTicketArchive()} disabled={ticketCommitting}
-                      className={btnDanger}>
-                      {ticketCommitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />} I saved it, reclaim {fmtBytes(pendingTicketArchive.bytes)}
-                    </button>
-                    <button onClick={() => void cancelPending(pendingTicketArchive.archiveId, "ticket")} disabled={ticketCommitting} className="text-[13px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--state-overdue)]">Discard</button>
-                  </div>
-                </div>
-              )}
-
-              <div className="mt-3 pt-3 border-t border-[var(--color-border)] flex items-center justify-between gap-3 flex-wrap">
-                <div className="text-[13px] text-[var(--color-text-muted)]">
-                  Bringing closed tickets back? Restore their comments, history and files from the saved archive.
-                </div>
-                <label className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[13px] font-semibold border border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] cursor-pointer ${ticketRestoreBusy ? "opacity-40 pointer-events-none" : ""}`}>
-                  {ticketRestoreBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FolderArchive className="w-3.5 h-3.5" />} Restore from archive…
-                  <input type="file" accept=".zip" className="hidden"
-                    onChange={(e) => { const f = e.target.files?.[0]; if (f) void restoreTicketsFromArchive(f); e.currentTarget.value = ""; }} />
-                </label>
-              </div>
-              {ticketRestoreFile && (
-                <div className="mt-2 flex items-center gap-2.5">
-                  <FileThumb file={ticketRestoreFile} size={32} />
-                  <span className="min-w-0 flex-1">
-                    <span className="block text-[13px] font-semibold text-[var(--color-text)] truncate">{ticketRestoreFile.name}</span>
-                    <span className="block text-[13px] text-[var(--color-text-muted)]">
-                      {fmtBytes(ticketRestoreFile.size)}
-                      {ticketRestoreBusy && <span className="inline-flex items-center gap-1 ml-2"><Loader2 className="w-3 h-3 animate-spin" /> Uploading and restoring…</span>}
-                    </span>
-                  </span>
-                  {!ticketRestoreBusy && (
-                    <button type="button" onClick={() => void restoreTicketsFromArchive(ticketRestoreFile)}
-                      className="shrink-0 px-2 py-1 rounded-md border border-[var(--color-border-strong)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
-                      Try again
-                    </button>
                   )}
-                </div>
-              )}
-              {ticketRestoreMsg && <div role="status" className={`mt-2 text-[13px] font-semibold ${ticketRestoreMsg.warn ? "text-[var(--state-held)]" : "text-[var(--color-text)]"}`}>{ticketRestoreMsg.text}</div>}
-            </div>
+                </Panel>
+
+                {/* The shed: older revision files go to an offline archive. */}
+                <Panel title="Older revision files" help={`Keeps the last ${shedKeep} revisions of every document live and moves the files of older ones into one offline archive. Each revision's record, checksum and reason stay; only the file moves. The current revision is never touched.`}
+                  control={<label className="inline-flex items-center gap-2 text-[13px] text-[var(--color-text-muted)]">Keep the last
+                    <select value={shedKeep} onChange={(e) => setShedKeep(Number(e.target.value))} className={small}>
+                      {[3, 5, 10, 20].map((d) => <option key={d} value={d}>{d} revisions</option>)}
+                    </select></label>}>
+                  {readErrors.shed != null ? (
+                    <ErrorNote compact error={readErrors.shed} title="Couldn't check older revisions." onRetry={() => void loadShedPreview(shedKeep)} />
+                  ) : !shedPreview ? (
+                    <SkeletonRows rows={1} cols={1} what="older revisions" sheet={false} />
+                  ) : shedPreview.selectedCount > 0 ? (
+                    <div className="flex items-center justify-between gap-3 flex-wrap">
+                      <p className="text-[14px] text-[var(--color-text-muted)]">
+                        <b className="font-semibold text-[var(--color-text)]">{plural(shedPreview.selectedCount, "older file")}</b>, about <b className="font-semibold text-[var(--color-text)]">{fmtBytes(shedPreview.reclaimableBytes)}</b>.
+                        {(shedPreview.remainingCount ?? 0) > 0 && <> <span className="text-[var(--state-held-text)] font-semibold">{fmtNum(shedPreview.remainingCount!)} more</span> past one archive&apos;s size limit; build again after reclaiming.</>}
+                        {archiveRoot && <> Save to <span className="font-mono break-all">{subfolder(archiveRoot, "data")}&lt;id&gt;.zip</span></>}
+                      </p>
+                      <button type="button" onClick={() => void produceArchive()} disabled={shedBusy} className={btnQuiet}>
+                        {shedBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Archive className="w-4 h-4" />} Build and download archive
+                      </button>
+                    </div>
+                  ) : (
+                    <p className="text-[14px] text-[var(--color-text-muted)]">No document has more than {shedKeep} revisions, so there&apos;s nothing older to archive.</p>
+                  )}
+                  {pendingArchive && (
+                    <PendingStep
+                      archiveId={pendingArchive.archiveId}
+                      folder={archiveRoot ? subfolder(archiveRoot, "data") : "<root>/data/"}
+                      what={<>Then reclaim about {fmtBytes(pendingArchive.bytes)} from live storage. Until you do, the files stay online.</>}
+                      bytes={pendingArchive.bytes} busy={committing}
+                      onReclaim={() => void commitArchive()} onDiscard={() => void cancelPending(pendingArchive.archiveId, "doc")} />
+                  )}
+                </Panel>
+
+                {/* Closed requests go to an offline archive; a stub stays. */}
+                <Panel title="Long-closed requests" help="Moves long-closed requests (comments, history and attachments) into one offline archive and leaves a small stub in the list. Opening a stub asks for the archive, and one restore brings it all back. Only closed or canceled requests; open ones are never touched."
+                  control={<label className="inline-flex items-center gap-2 text-[13px] text-[var(--color-text-muted)]">Closed over
+                    <select value={ticketDays} onChange={(e) => setTicketDays(Number(e.target.value))} className={small}>
+                      {[90, 180, 365, 730].map((d) => <option key={d} value={d}>{d} days</option>)}
+                    </select></label>}>
+                  {readErrors.ticket != null ? (
+                    <ErrorNote compact error={readErrors.ticket} title="Couldn't check closed requests." onRetry={() => void loadTicketShedPreview(ticketDays)} />
+                  ) : !ticketPreview ? (
+                    <SkeletonRows rows={1} cols={1} what="closed requests" sheet={false} />
+                  ) : ticketPreview.selectedCount > 0 ? (
+                    <div className="flex items-center justify-between gap-3 flex-wrap">
+                      <p className="text-[14px] text-[var(--color-text-muted)]">
+                        <b className="font-semibold text-[var(--color-text)]">{plural(ticketPreview.selectedCount, "closed request")}</b>, about <b className="font-semibold text-[var(--color-text)]">{fmtBytes(ticketPreview.reclaimableBytes)}</b> of attachments.
+                        {archiveRoot && <> Save to <span className="font-mono break-all">{subfolder(archiveRoot, "data")}&lt;id&gt;.zip</span></>}
+                      </p>
+                      <button type="button" onClick={() => void produceTicketArchive()} disabled={ticketBusy} className={btnQuiet}>
+                        {ticketBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Archive className="w-4 h-4" />} Build and download archive
+                      </button>
+                    </div>
+                  ) : (
+                    <p className="text-[14px] text-[var(--color-text-muted)]">No request has been closed longer than {ticketDays} days.</p>
+                  )}
+                  {pendingTicketArchive && (
+                    <PendingStep
+                      archiveId={pendingTicketArchive.archiveId}
+                      folder={archiveRoot ? subfolder(archiveRoot, "data") : "<root>/data/"}
+                      what={<>Then move {pendingTicketArchive.tickets} request(s) to the archive and reclaim about {fmtBytes(pendingTicketArchive.bytes)}. Until you do, everything stays online.</>}
+                      bytes={pendingTicketArchive.bytes} busy={ticketCommitting}
+                      onReclaim={() => void commitTicketArchive()} onDiscard={() => void cancelPending(pendingTicketArchive.archiveId, "ticket")} />
+                  )}
+                  <div className="mt-4 pt-3 border-t border-[var(--color-border)] flex items-center justify-between gap-3 flex-wrap">
+                    <p className="text-[14px] text-[var(--color-text-muted)]">Bringing closed requests back? Restore them from the saved archive.</p>
+                    <label className={`${btnQuiet} cursor-pointer ${ticketRestoreBusy ? "opacity-50 pointer-events-none" : ""}`}>
+                      {ticketRestoreBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <FolderArchive className="w-4 h-4" />} Restore from archive
+                      <input type="file" accept=".zip" className="sr-only" disabled={ticketRestoreBusy}
+                        onChange={(e) => { const f = e.target.files?.[0]; if (f) void restoreTicketsFromArchive(f); e.currentTarget.value = ""; }} />
+                    </label>
+                  </div>
+                  {ticketRestoreFile && (
+                    <div className="mt-2 flex items-center gap-2.5">
+                      <FileThumb file={ticketRestoreFile} size={32} />
+                      <span className="min-w-0 flex-1">
+                        <span className="block text-[14px] font-semibold text-[var(--color-text)] truncate">{ticketRestoreFile.name}</span>
+                        <span className="block text-[13px] text-[var(--color-text-muted)]">
+                          {fmtBytes(ticketRestoreFile.size)}
+                          {ticketRestoreBusy && <span className="inline-flex items-center gap-1 ml-2"><Loader2 aria-hidden className="w-3 h-3 animate-spin" /> Uploading and restoring</span>}
+                        </span>
+                      </span>
+                      {!ticketRestoreBusy && (
+                        <Button size="sm" variant="secondary" onClick={() => void restoreTicketsFromArchive(ticketRestoreFile)}>Try again</Button>
+                      )}
+                    </div>
+                  )}
+                  {ticketRestoreMsg && <p role="status" className={`mt-2 text-[14px] font-semibold ${ticketRestoreMsg.warn ? "text-[var(--state-held-text)]" : "text-[var(--color-text)]"}`}>{ticketRestoreMsg.text}</p>}
+                </Panel>
+
+                {/* Orphaned files: bucket objects nothing references. */}
+                <Panel title="Orphaned files" help="Files in storage that nothing uses, like knowledge PDFs you deleted. Scanning changes nothing. Deleting checks each file again and never touches anything newer than 7 days."
+                  control={<button type="button" onClick={() => void scanOrphanFiles()} disabled={orphanBusy !== null} className={btnRow}>
+                    {orphanBusy === "scan" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />} {orphanScan ? "Scan again" : "Scan"}
+                  </button>}>
+                  {orphanMsg && (
+                    <p role="status" className={`text-[14px] font-semibold ${orphanMsg.warn ? "text-[var(--state-held-text)]" : "text-[var(--color-text)]"}`}>{orphanMsg.text}</p>
+                  )}
+                  {!orphanScan && !orphanMsg && <p className="text-[14px] text-[var(--color-text-muted)]">Scan to find files nothing uses.</p>}
+                  {orphanScan && (
+                    orphanScan.orphans.length === 0 ? (
+                      <p className="text-[14px] text-[var(--color-text)]">
+                        All {fmtNum(orphanScan.totalObjects)} files in storage are in use.
+                        {orphanScan.skippedYoung > 0 && <span className="text-[var(--color-text-muted)]"> {orphanScan.skippedYoung} too new to judge yet.</span>}
+                      </p>
+                    ) : (
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-3 flex-wrap">
+                          <span className="font-display text-[20px] font-semibold tabular-nums text-[var(--color-text)]">{fmtBytes(orphanScan.orphanBytes)}</span>
+                          <span className="text-[14px] text-[var(--color-text-muted)]">
+                            in {plural(orphanScan.orphans.length, "orphaned file")}; {fmtNum(orphanScan.referencedKeys)} files in use checked
+                            {orphanScan.skippedYoung > 0 && `, ${orphanScan.skippedYoung} under 7 days old skipped`}
+                          </span>
+                          <button type="button" onClick={() => void purgeOrphanFiles()} disabled={orphanBusy !== null} className={`sm:ml-auto ${btnDanger}`}>
+                            {orphanBusy === "delete" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                            Delete them
+                          </button>
+                        </div>
+                        <ul className="max-h-40 overflow-y-auto rounded-lg border border-[var(--color-border)] divide-y divide-[var(--color-border)] text-[13px]">
+                          {orphanScan.orphans.slice(0, 50).map((o) => (
+                            <li key={o.key} className="px-3 py-1.5 flex items-center gap-2">
+                              <span className="truncate flex-1 font-mono text-[var(--color-text-muted)]" title={o.key}>{o.key}</span>
+                              <span className="shrink-0 tabular-nums font-semibold text-[var(--color-text)]">{fmtBytes(o.size)}</span>
+                            </li>
+                          ))}
+                          {orphanScan.orphans.length > 50 && (
+                            <li className="px-3 py-1.5 text-[var(--color-text-muted)]">And {fmtNum(orphanScan.orphans.length - 50)} more</li>
+                          )}
+                        </ul>
+                      </div>
+                    )
+                  )}
+                </Panel>
+              </div>
+            </Section>
+          ) : (
+            <p className="text-[14px] text-[var(--color-text-muted)] flex items-center gap-2">
+              <Lock aria-hidden className="w-4 h-4 shrink-0" /> Only Admin and Doc Control can free up space. You can still see use and download backups.
+            </p>
           )}
 
-          {/* ── Offline archive catalog ──────────────────────────────────── */}
-          {canPurge && readErrors.catalog && (
-            <p role="alert" className="px-1 border-l-[3px] border-[var(--state-overdue)] pl-3 text-[13px] text-[var(--state-overdue)]">
-              Couldn&apos;t load the offline archive catalog: {readErrors.catalog}{" "}
-              <button type="button" onClick={() => void loadCatalog()} className="text-[var(--color-accent-text)] hover:underline">Try again</button>
-            </p>
+          {/* ── Offline archives: every archive made, and where each stands ─ */}
+          {canPurge && readErrors.catalog != null && (
+            <ErrorNote compact error={readErrors.catalog} title="Couldn't load the offline archives." onRetry={() => void loadCatalog()} />
           )}
           {canPurge && catalog && catalog.length > 0 && (
-            <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4 sm:p-5">
-              <div className="flex items-center justify-between gap-3 flex-wrap mb-2">
-                <div className="flex items-center gap-2 font-display text-[17px] font-semibold text-[var(--color-text)]">
-                  <FolderArchive className="w-4 h-4 text-[var(--color-text-muted)]" /> Offline archive catalog
-                </div>
-                <button onClick={() => void loadCatalog()} title="Refresh" aria-label="Refresh the catalog"
-                  className="p-1.5 rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
-                  <RefreshCw className="w-3.5 h-3.5" />
-                </button>
-              </div>
-              <p className="text-[13px] text-[var(--color-text-muted)] mb-3 max-w-2xl">
-                Every archive this workspace has made, and where each stands. One that stopped before
-                <b> “I saved it, reclaim”</b> (closed tab, crash) shows as <b>awaiting reclaim</b>. Running Reclaim again is
-                safe: it retries any deletes that failed.
-              </p>
-
+            <Section label={<>Offline archives <HelpTooltip>Every archive this workspace has made, and where each stands. One that stopped before &ldquo;I saved it, reclaim&rdquo; (a closed tab, a crash) shows as waiting for reclaim. Running Reclaim again is safe: it retries any deletes that failed.</HelpTooltip></>}
+              count={catalog.length}
+              action={<button type="button" onClick={() => void loadCatalog()} title="Check again" aria-label="Check the archives again" className={btnIcon}><RefreshCw className="w-4 h-4" /></button>}>
               {catalogMsg && (
-                <div role="status" className={`mb-3 border-l-2 pl-2.5 text-[13px] font-semibold ${catalogMsg.warn ? "border-[var(--state-held)] text-[var(--state-held)]" : "border-[var(--state-released)] text-[var(--color-text)]"}`}>
-                  {catalogMsg.warn ? <AlertTriangle className="w-3.5 h-3.5 inline -mt-0.5 mr-1" /> : <CheckCircle2 className="w-3.5 h-3.5 inline -mt-0.5 mr-1" />}
+                <p role="status" className={`mb-3 text-[14px] font-semibold flex items-start gap-1.5 ${catalogMsg.warn ? "text-[var(--state-held-text)]" : "text-[var(--color-text)]"}`}>
+                  {catalogMsg.warn ? <AlertTriangle aria-hidden className="w-4 h-4 mt-0.5 shrink-0" /> : <CheckCircle2 aria-hidden className="w-4 h-4 mt-0.5 shrink-0 text-[var(--state-released)]" />}
                   {catalogMsg.text}
+                </p>
+              )}
+              <div className={tbl.wrap}>
+                <table className={tbl.table}>
+                  <thead className={`${tbl.thead} max-md:hidden`}>
+                    <tr>
+                      <th className={tbl.th}>Archive</th>
+                      <th className={tbl.th}>Status</th>
+                      <th className={tbl.th}>Made</th>
+                      <th className={`${tbl.th} text-right`}>Size</th>
+                      <th className={`${tbl.th} w-[1%]`}><span className="sr-only">Actions</span></th>
+                    </tr>
+                  </thead>
+                  <tbody className={tbl.tbody}>
+                    {catalog.map((row) => {
+                      const busy = catalogBusyId === row.archiveId;
+                      const isTicket = row.ticketPending + row.ticketCommitted > 0;
+                      const st: { tone: Tone; word: string } =
+                        row.status === "producing" ? { tone: "bad", word: "Never finished building" } :
+                        row.status === "pending" ? { tone: "warn", word: "Waiting for reclaim, still billed" } :
+                        row.status === "committed" ? { tone: "none", word: "Reclaimed; the zip is the only copy" } :
+                        row.status === "full" ? { tone: "none", word: "Full backup" } :
+                        { tone: "none", word: "Nothing linked" };
+                      const canDiscard = row.status === "pending" || row.status === "producing" || row.status === "empty";
+                      return (
+                        <tr key={row.archiveId} className={`${tbl.tr} max-md:grid max-md:grid-cols-[1fr_auto] max-md:gap-x-2 max-md:py-2`}>
+                          <td className={`${tbl.td} max-md:py-1`}>
+                            <CopyId value={row.archiveId} label="archive ID" className="font-mono text-[13px]" />
+                            {copiedArchiveId === row.archiveId && <span className="ml-2 text-[12px] text-[var(--color-text-muted)]">Save path copied</span>}
+                            <div className="text-[13px] text-[var(--color-text-muted)]">{row.kind === "full" ? "Full backup" : isTicket ? "Closed requests" : "Revision files"}</div>
+                          </td>
+                          <td className={`${tbl.td} max-md:col-span-2 max-md:row-start-2 max-md:py-0.5`}>
+                            <StatusTag tone={st.tone}>{st.word}</StatusTag>
+                            {row.status === "pending" && (
+                              <div className="text-[13px] text-[var(--color-text-muted)] mt-0.5">{row.docPending > 0 ? plural(row.docPending, "revision") : plural(row.ticketPending, "request")} waiting</div>
+                            )}
+                          </td>
+                          <td className={`${tbl.td} max-md:col-span-2 max-md:row-start-3 max-md:py-0.5 text-[var(--color-text-muted)]`}>
+                            {row.createdAt ? shortDateTime(row.createdAt) : <span className="text-[var(--color-text-faint)]">Not recorded</span>}
+                            {row.createdByEmail && <div className="text-[13px] truncate max-w-[24ch]">{row.createdByEmail}</div>}
+                          </td>
+                          <td className={`${tbl.td} max-md:col-span-2 max-md:row-start-4 max-md:py-0.5 md:text-right whitespace-nowrap`}>
+                            {row.fileCount > 0 ? <>{fmtBytes(row.totalBytes)}<div className="text-[13px] text-[var(--color-text-muted)]">{plural(row.fileCount, "file")}</div></> : <span className="text-[var(--color-text-faint)]">None</span>}
+                          </td>
+                          <td className={`${tbl.td} max-md:col-start-2 max-md:row-start-1 max-md:py-1 text-right whitespace-nowrap`}>
+                            <span className="inline-flex items-center gap-1">
+                              {row.status === "pending" && (
+                                <button type="button" onClick={() => void commitFromCatalog(row)} disabled={busy} className={`${btnRow} !text-[var(--state-overdue-text)]`}>
+                                  {busy && <Loader2 className="w-3.5 h-3.5 animate-spin" />} Reclaim
+                                </button>
+                              )}
+                              <MoreMenu iconOnly label={`More for ${row.archiveId}`} triggerClass={btnIcon} items={[
+                                { icon: <Copy className="w-4 h-4" />, label: "Copy save path", onClick: () => copyArchivePath(row) },
+                                ...(canDiscard ? [{ icon: <X className="w-4 h-4" />, label: "Discard", tone: "bad" as const, line: true, onClick: () => cancelPending(row.archiveId, isTicket ? "ticket" : "doc") }] : []),
+                              ]} />
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </Section>
+          )}
+
+          {/* ── Backup and restore ─────────────────────────────────────────── */}
+          <Section label={<>Backup and restore <HelpTooltip>The full backup (top of the page) holds every record and every file (PDF, DWG, photo), so you can rebuild from nothing. Take one every quarter.</HelpTooltip></>}>
+            {canPurge && readErrors.settings != null && (
+              <ErrorNote compact className="mb-3" error={readErrors.settings} title="Couldn't load the archive folder." onRetry={() => void loadArchiveSettings()} />
+            )}
+            <div className={`${sheet} divide-y divide-[var(--color-border)]`}>
+              {/* The archive folder: one place, shared, with a fixed layout under it. */}
+              {canPurge && (
+                <FormRow label="Archive folder" hint="Where your team keeps backups. Anyone asked for an archived file is pointed here.">
+                  {!editingLoc && archiveRoot ? (
+                    <div className="@xl:pt-1 text-[14px] min-w-0">
+                      <div className="flex items-start gap-3">
+                        <span className="font-mono break-all text-[var(--color-text)] flex-1 min-w-0">{archiveRoot}</span>
+                        <button type="button" onClick={() => setEditingLoc(true)} className={btnLink}>Change</button>
+                      </div>
+                      <dl className="mt-1.5 grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-[13px] text-[var(--color-text-muted)]">
+                        <dt>Full backups</dt><dd className="font-mono break-all">{subfolder(archiveRoot, "full-backups")}</dd>
+                        <dt>Space-saver</dt><dd className="font-mono break-all">{subfolder(archiveRoot, "data")}</dd>
+                        {finderNote && <><dt>Finder note</dt><dd>{finderNote}</dd></>}
+                      </dl>
+                    </div>
+                  ) : (
+                    <form className="space-y-3" onSubmit={(e) => { e.preventDefault(); void saveArchiveLoc(); }}>
+                      {!archiveRoot && <StatusTag tone="warn">Not set yet</StatusTag>}
+                      <label className="block">
+                        <span className={label}>Folder</span>
+                        <input value={locDraft} onChange={(e) => setLocDraft(e.target.value)} placeholder="\\fileserver\drafting\mos-archives"
+                          className={`${field} font-mono`} />
+                      </label>
+                      <label className="block">
+                        <span className={label}>Finder note <span className="font-normal text-[var(--color-text-muted)]">(optional)</span></span>
+                        <input value={noteDraft} onChange={(e) => setNoteDraft(e.target.value)} placeholder="Ask IT for access to the DC-3 share"
+                          className={field} />
+                      </label>
+                      {locDraft.trim() && (
+                        <p className="text-[13px] text-[var(--color-text-muted)] break-all">People will be told: <span className="font-mono">{subfolder(locDraft, "data")}&lt;archive-id&gt;.zip</span>{noteDraft.trim() ? <> ({noteDraft.trim()})</> : null}</p>
+                      )}
+                      <div className="flex items-center gap-3">
+                        <Button variant="secondary" type="submit" loading={savingLoc} disabled={!locDraft.trim()}>Save folder</Button>
+                        {archiveRoot && (
+                          <button type="button" onClick={() => { setEditingLoc(false); setLocDraft(archiveRoot || ""); }} className={btnLink}>Cancel</button>
+                        )}
+                      </div>
+                    </form>
+                  )}
+                </FormRow>
+              )}
+              <FormRow label="Records only" hint="Every record as JSON, with links to the files that work for 24 hours.">
+                <button type="button" onClick={() => void downloadJson()} disabled={busyJson || !activeOrgId} className={btnQuiet}>
+                  {busyJson ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileJson className="w-4 h-4" />}
+                  Download JSON
+                </button>
+              </FormRow>
+              <FormRow label="From a backup">
+                <div className="@xl:pt-1.5 flex flex-wrap items-center gap-x-5 gap-y-2">
+                  <Link href="/admin/archive-view" className={link}>View files in a backup</Link>
+                  <Link href="/admin/restore" className={link}>Restore records</Link>
+                  <Link href="/admin/data-export" className={link}>Scheduled push to your own bucket</Link>
                 </div>
+              </FormRow>
+            </div>
+          </Section>
+
+          {/* ── Details: measured, nothing here changes anything ────────── */}
+          <Section label="Details">
+            <div className="space-y-2">
+              <Disclosure title="Database by kind" meta={`${fmtBytes(byCat.purge ?? 0)} can go`}>
+                <table className="w-full text-[14px] tabular-nums">
+                  <thead className="text-left text-[13px] text-[var(--color-text-muted)]"><tr><th className="font-semibold pb-1.5 pr-3">Kind</th><th className="font-semibold pb-1.5 pr-3 text-right">Size</th><th className="font-semibold pb-1.5 max-sm:hidden">What it is</th></tr></thead>
+                  <tbody className="divide-y divide-[var(--color-border)]">
+                    {(["purge", "archive", "reference"] as DataClass[]).map((cat) => (
+                      <tr key={cat}>
+                        <td className="py-2 pr-3 font-semibold whitespace-nowrap">{CATEGORY_LABEL[cat]}</td>
+                        <td className="py-2 pr-3 text-right whitespace-nowrap">{fmtBytes(byCat[cat] ?? 0)}</td>
+                        <td className="py-2 text-[13px] text-[var(--color-text-muted)] max-sm:hidden">{CATEGORY_BLURB[cat]}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </Disclosure>
+
+              {stats.dedup && stats.dedup.totalVersions > 0 && (
+                <Disclosure title="Duplicate revision files" meta={`~${fmtBytes(stats.dedup.reclaimableBytes)}`}>
+                  <dl className="flex flex-wrap gap-x-8 gap-y-2">
+                    <div><dt className="text-[13px] text-[var(--color-text-muted)]">Stored more than once</dt><dd className="text-[16px] font-semibold tabular-nums">~{fmtBytes(stats.dedup.reclaimableBytes)}</dd></div>
+                    <div><dt className="text-[13px] text-[var(--color-text-muted)]">Files stored 2 or more times</dt><dd className="text-[16px] font-semibold tabular-nums">{fmtNum(stats.dedup.dupGroups)}</dd></div>
+                  </dl>
+                  <p className="mt-2 text-[13px] text-[var(--color-text-muted)]">Identical files are each stored on their own. This is measured only; nothing here changes them.</p>
+                </Disclosure>
               )}
 
-              <div className="divide-y divide-[var(--color-border)] rounded-lg border border-[var(--color-border)] overflow-hidden">
-                {catalog.map((row) => {
-                  const busy = catalogBusyId === row.archiveId;
-                  const isTicket = row.ticketPending + row.ticketCommitted > 0;
-                  const chip =
-                    row.status === "producing" ? { cls: "text-[var(--state-overdue)]", label: "never finished building" } :
-                    row.status === "pending" ? { cls: "text-[var(--state-held)]", label: "awaiting reclaim, still billed" } :
-                    row.status === "committed" ? { cls: "text-[var(--state-released)]", label: "reclaimed, the zip is the only copy" } :
-                    row.status === "full" ? { cls: "text-[var(--color-text-muted)]", label: "full backup" } :
-                    { cls: "text-[var(--color-text-faint)]", label: "no linked rows" };
-                  return (
-                    <div key={row.archiveId} className="px-3 py-2.5 flex items-center gap-3 flex-wrap bg-[var(--color-surface)]">
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="font-mono text-[13px] font-semibold text-[var(--color-text)]">{row.archiveId}</span>
-                          <span className={`text-[13px] font-semibold ${chip.cls}`}>{chip.label}</span>
-                          <span className="text-[13px] text-[var(--color-text-faint)]">{row.kind === "full" ? "full backup" : isTicket ? "closed tickets" : "revision history"}</span>
-                        </div>
-                        <div className="text-[13px] text-[var(--color-text-muted)] mt-0.5">
-                          {row.createdAt ? new Date(row.createdAt).toLocaleString() : "-"}
-                          {row.createdByEmail ? <> · by {row.createdByEmail}</> : null}
-                          {row.fileCount > 0 && <> · {fmtNum(row.fileCount)} file(s), {fmtBytes(row.totalBytes)}</>}
-                          {row.status === "pending" && (
-                            <> · pending: {row.docPending > 0 ? `${fmtNum(row.docPending)} revision(s)` : `${fmtNum(row.ticketPending)} ticket(s)`}</>
-                          )}
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-1.5 shrink-0">
-                        <button onClick={() => void copyArchivePath(row)} title="Copy the conventional save path for this archive"
-                          className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[13px] font-semibold border border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
-                          <Copy className="w-3 h-3" /> {copiedArchiveId === row.archiveId ? "Copied" : "Path"}
-                        </button>
-                        {row.status === "pending" && (
-                          <button onClick={() => void commitFromCatalog(row)} disabled={busy}
-                            className={btnDanger}>
-                            {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />} I saved it, reclaim
-                          </button>
-                        )}
-                        {(row.status === "pending" || row.status === "producing" || row.status === "empty") && (
-                          <button onClick={() => void cancelPending(row.archiveId, isTicket ? "ticket" : "doc")} disabled={busy}
-                            className="px-2 py-1 rounded-lg text-[13px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--state-overdue)]">
-                            Discard
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-          {/* ── Backup (records + binaries) ──────────────────────────────── */}
-          <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4 sm:p-5">
-            <div className="flex items-center gap-2 font-display text-[17px] font-semibold text-[var(--color-text)] mb-1">
-              <ShieldCheck className="w-4 h-4 text-[var(--color-text-muted)]" /> Backup and restore
-            </div>
-            <p className="text-[13px] text-[var(--color-text-muted)] mb-3 max-w-2xl">
-              The full backup (top of the page) holds every record <b>and</b> every file (PDF, DWG, photo), so you can
-              rebuild from nothing. Take one every quarter.
-            </p>
-            {canPurge && readErrors.settings && (
-              <p role="alert" className="mb-3 text-[13px] text-[var(--state-overdue)]">
-                Couldn&apos;t load the archive settings: {readErrors.settings}{" "}
-                <button type="button" onClick={() => void loadArchiveSettings()} className="text-[var(--color-accent-text)] hover:underline">Try again</button>
-              </p>
-            )}
-
-            {/* Archive root folder — one place, shared, with a fixed convention underneath */}
-            {canPurge && (
-              <div className={`rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] p-3 mb-3 ${archiveRoot || editingLoc ? "" : "border-l-[3px] border-l-[var(--state-held)]"}`}>
-                {!editingLoc && archiveRoot ? (
-                  <div className="flex items-start gap-2">
-                    <FolderArchive className="w-4 h-4 text-[var(--color-text-muted)] mt-0.5 shrink-0" />
-                    <div className="flex-1 min-w-0 text-[13px]">
-                      <div className="text-[var(--color-text)]"><b>Archive root:</b> <span className="font-mono break-all">{archiveRoot}</span></div>
-                      <div className="text-[var(--color-text-muted)] mt-1 leading-relaxed">
-                        Full backups → <span className="font-mono break-all">{subfolder(archiveRoot, "full-backups")}</span><br />
-                        Space-saver exports → <span className="font-mono break-all">{subfolder(archiveRoot, "data")}</span>
-                      </div>
-                      {finderNote && <div className="text-[var(--color-text-muted)] mt-1"><b>Finder note:</b> {finderNote}</div>}
-                      <div className="text-[var(--color-text-faint)] mt-1">Anyone asked to view an archived file is pointed to the exact path under here{finderNote ? ", plus your note" : ""}.</div>
-                    </div>
-                    <button onClick={() => setEditingLoc(true)} className="text-[13px] font-semibold text-[var(--color-accent-text)] hover:underline shrink-0">Edit</button>
-                  </div>
+              <Disclosure title="AI use (shared key)" meta={stats.ai ? `${fmtNum(stats.ai.last24h)} calls today` : "Not counted"}>
+                {stats.ai ? (
+                  <>
+                    <dl className="flex flex-wrap gap-x-8 gap-y-2">
+                      <div><dt className="text-[13px] text-[var(--color-text-muted)]">Last 24 hours</dt><dd className="text-[16px] font-semibold tabular-nums">{plural(stats.ai.last24h, "call")}</dd></div>
+                      <div><dt className="text-[13px] text-[var(--color-text-muted)]">Last 30 days</dt><dd className="text-[16px] font-semibold tabular-nums">{plural(stats.ai.last30d, "call")}</dd></div>
+                    </dl>
+                    <p className="mt-2 text-[13px] text-[var(--color-text-muted)]">The shared key&apos;s free tier allows about 10 calls a minute and 1,000 a day, for everyone together.</p>
+                  </>
                 ) : (
-                  <div>
-                    <div className={`flex items-center gap-1.5 text-[13px] font-semibold mb-1 ${archiveRoot ? "text-[var(--color-text)]" : "text-[var(--state-held)]"}`}>
-                      <FolderArchive className="w-4 h-4 shrink-0" /> Set your archive root folder
-                    </div>
-                    <div className="text-[13px] text-[var(--color-text-muted)] mb-2 leading-relaxed">
-                      One folder, shared with your team. Full backups go in <span className="font-mono">/full-backups</span>, space-saver exports in <span className="font-mono">/data</span>. People are told to fetch archives from there.
-                    </div>
-                    <div className="space-y-2">
-                      <input value={locDraft} onChange={(e) => setLocDraft(e.target.value)} placeholder="e.g.  \\fileserver\drafting\mos-archives   or   /Volumes/Backups/MOS"
-                        className="w-full text-[13px] rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-2 text-[var(--color-text)] font-mono" />
-                      <input value={noteDraft} onChange={(e) => setNoteDraft(e.target.value)} placeholder="Optional finder note, e.g. “ask IT for access to the DC-3 share”"
-                        className="w-full text-[13px] rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-2 text-[var(--color-text)]" />
-                      {locDraft.trim() && (
-                        <div className="text-[13px] text-[var(--color-text-muted)] break-all">Users will be told: <span className="font-mono">{subfolder(locDraft, "data")}&lt;archive-id&gt;.zip</span>{noteDraft.trim() ? <> ({noteDraft.trim()})</> : null}</div>
-                      )}
-                      <div className="flex items-center gap-2">
-                        <button onClick={() => void saveArchiveLoc()} disabled={savingLoc || !locDraft.trim()}
-                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[13px] font-semibold border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40">
-                          {savingLoc ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null} Save root
-                        </button>
-                        {archiveRoot && (
-                          <button onClick={() => { setEditingLoc(false); setLocDraft(archiveRoot || ""); }}
-                            className="text-[13px] font-semibold text-[var(--color-text-muted)]">Cancel</button>
-                        )}
-                      </div>
-                    </div>
-                  </div>
+                  <p className="text-[14px] text-[var(--color-text-muted)]">AI use isn&apos;t counted yet. Apply migration <span className="font-mono">20260806</span>.</p>
                 )}
-              </div>
-            )}
+              </Disclosure>
 
-            <button
-              onClick={() => void downloadJson()} disabled={busyJson || !activeOrgId}
-              className="inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-sm font-semibold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors"
-            >
-              {busyJson ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileJson className="w-4 h-4" />}
-              Records only (JSON)
-            </button>
-            <div className="mt-3 space-y-2 text-[13px]">
-              <div className="flex items-center gap-4 flex-wrap">
-                <Link href="/admin/archive-view" className="inline-flex items-center gap-1.5 text-[var(--color-accent-text)] hover:underline">
-                  <Archive className="w-3.5 h-3.5" /> View from a backup →
-                </Link>
-                <Link href="/admin/restore" className="inline-flex items-center gap-1.5 text-[var(--color-accent-text)] hover:underline">
-                  <UploadCloud className="w-3.5 h-3.5" /> Restore from a backup →
-                </Link>
-                <Link href="/admin/data-export" className="inline-flex items-center gap-1.5 text-[var(--color-accent-text)] hover:underline">
-                  <ServerCog className="w-3.5 h-3.5" /> Scheduled push to your own bucket →
-                </Link>
-              </div>
+              <Disclosure title="Tables by size" meta={plural(tables.length, "table")}>
+                {ticketRow && (
+                  <p className="mb-2 text-[13px] text-[var(--color-text-muted)]">
+                    <b className="font-semibold text-[var(--color-text)]">Why &ldquo;{ticketRow.name}&rdquo; is heavy per row:</b> {ticketRow.reason}
+                  </p>
+                )}
+                <table className="w-full text-[14px] tabular-nums">
+                  <thead className="text-left text-[13px] text-[var(--color-text-muted)]">
+                    <tr>
+                      <th className="font-semibold pb-1.5 pr-3">Table</th>
+                      <th className="font-semibold pb-1.5 pr-3 max-sm:hidden">Kind</th>
+                      <th className="font-semibold pb-1.5 pr-3 w-[28%] max-md:hidden"><span className="sr-only">Share</span></th>
+                      <th className="font-semibold pb-1.5 pr-3 text-right">Size</th>
+                      <th className="font-semibold pb-1.5 text-right">Rows</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[var(--color-border)]">
+                    {tables.slice(0, 30).map((t) => (
+                      <tr key={t.name} title={`${CATEGORY_LABEL[t.category]}: ${t.reason}`}>
+                        <td className="py-1.5 pr-3 max-w-0 w-[40%]">
+                          <span className="block font-mono text-[13px] text-[var(--color-text)] truncate">{t.name}</span>
+                          {t.grower && <span className="text-[12px] font-semibold text-[var(--state-held-text)]">Grows fast</span>}
+                        </td>
+                        <td className="py-1.5 pr-3 text-[13px] text-[var(--color-text-muted)] whitespace-nowrap max-sm:hidden">{CATEGORY_LABEL[t.category]}</td>
+                        <td className="py-1.5 pr-3 max-md:hidden">
+                          <div className="h-1.5 rounded-full bg-[var(--color-surface-2)] overflow-hidden">
+                            <div className="h-full rounded-full bg-[var(--color-text-faint)]" style={{ width: `${maxBytes > 0 ? Math.max(2, (t.bytes / maxBytes) * 100) : 0}%` }} />
+                          </div>
+                        </td>
+                        <td className="py-1.5 pr-3 text-right whitespace-nowrap font-semibold">{fmtBytes(t.bytes)}</td>
+                        <td className="py-1.5 text-right whitespace-nowrap text-[var(--color-text-muted)]">{fmtNum(t.rows)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </Disclosure>
             </div>
-          </div>
-
-          {/* ── Dedup opportunity ────────────────────────────────────────── */}
-          {stats.dedup && stats.dedup.totalVersions > 0 && (
-            <details className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4 sm:p-5">
-              <summary className="cursor-pointer list-none flex items-center gap-2 font-display text-[17px] font-semibold text-[var(--color-text)] hover:text-[var(--color-accent-text)] mb-2">
-                <Copy className="w-3.5 h-3.5" /> Duplicate revision files
-              </summary>
-              <div className="flex items-center gap-6 flex-wrap">
-                <div>
-                  <div className="text-[15px] font-semibold text-[var(--color-text)]">~{fmtBytes(stats.dedup.reclaimableBytes)}</div>
-                  <div className="text-[13px] text-[var(--color-text-muted)]">stored more than once</div>
-                </div>
-                <div>
-                  <div className="text-[15px] font-semibold text-[var(--color-text)]">{fmtNum(stats.dedup.dupGroups)}</div>
-                  <div className="text-[13px] text-[var(--color-text-muted)]">files stored 2+ times</div>
-                </div>
-                <div className="flex-1 min-w-[12rem] text-[13px] text-[var(--color-text-muted)] leading-relaxed">
-                  Identical files are each stored on their own. This is measured only; nothing here changes them.
-                </div>
-              </div>
-            </details>
-          )}
-
-          {/* ── AI usage ─────────────────────────────────────────────────── */}
-          <details className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4 sm:p-5">
-            <summary className="cursor-pointer list-none flex items-center gap-2 font-display text-[17px] font-semibold text-[var(--color-text)] hover:text-[var(--color-accent-text)] mb-2">
-              <Sparkles className="w-3.5 h-3.5" /> AI usage (shared key)
-            </summary>
-            {stats.ai ? (
-              <div className="flex items-center gap-6 flex-wrap">
-                <div>
-                  <div className="text-[15px] font-semibold text-[var(--color-text)]">{fmtNum(stats.ai.last24h)}</div>
-                  <div className="text-[13px] text-[var(--color-text-muted)]">calls · last 24h</div>
-                </div>
-                <div>
-                  <div className="text-[15px] font-semibold text-[var(--color-text)]">{fmtNum(stats.ai.last30d)}</div>
-                  <div className="text-[13px] text-[var(--color-text-muted)]">calls · last 30d</div>
-                </div>
-                <div className="flex-1 min-w-[12rem] text-[13px] text-[var(--color-text-muted)] leading-relaxed">
-                  The free Gemini tier allows about 10 calls a minute and 1,000 a day, shared by everyone.
-                </div>
-              </div>
-            ) : (
-              <div className="text-[13px] text-[var(--color-text-muted)]">
-                AI use isn&apos;t being counted yet. Apply migration <span className="font-mono">20260806</span>.
-              </div>
-            )}
-          </details>
-
-          {/* ── Ticket design-issue callout ──────────────────────────────── */}
-          {/* ── Tables by size ───────────────────────────────────────────── */}
-          <details className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
-            <summary className="cursor-pointer px-4 sm:px-5 py-3.5 border-b border-[var(--color-border)] flex items-center justify-between flex-wrap gap-2">
-              <span className="font-display text-[17px] font-semibold text-[var(--color-text)]">Tables by size</span>
-              <span className="text-[13px] font-medium text-[var(--color-text-muted)] inline-flex items-center gap-2">
-                <span className="inline-flex items-center gap-1"><Recycle className="w-3 h-3 text-[var(--state-released)]" /> purge</span>
-                <span className="inline-flex items-center gap-1"><Archive className="w-3 h-3 text-[var(--state-held)]" /> keep</span>
-                <span className="inline-flex items-center gap-1"><ShieldCheck className="w-3 h-3 text-[var(--color-text-muted)]" /> ref</span>
-                <span className="inline-flex items-center gap-1"><AlertTriangle className="w-3 h-3 text-[var(--state-held)]" /> grower</span>
-                <span className="text-[var(--color-text-muted)]">· hover a row for why</span>
-              </span>
-            </summary>
-            {ticketRow && (
-              <p className="px-4 py-2 border-b border-[var(--color-border)] text-[13px] text-[var(--color-text-muted)] leading-relaxed">
-                <b className="text-[var(--color-text)]">Why “{ticketRow.name}” is heavy per row:</b> {ticketRow.reason}
-              </p>
-            )}
-            <div className="divide-y divide-[var(--color-border)]">
-              {tables.slice(0, 30).map((t) => {
-                const M = CATEGORY_META[t.category];
-                const Icon = M.icon;
-                return (
-                  <div key={t.name} className="px-4 py-2 flex items-center gap-3 cursor-help" title={`${CATEGORY_LABEL[t.category]}: ${t.reason}`}>
-                    <div className="w-40 sm:w-56 min-w-0 flex items-center gap-1.5">
-                      <Icon className={`w-3.5 h-3.5 shrink-0 ${M.tint}`} />
-                      {t.grower && <AlertTriangle className="w-3 h-3 text-[var(--state-held)] shrink-0" />}
-                      <span className="font-mono text-[13px] text-[var(--color-text)] truncate">{t.name}</span>
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="h-2 rounded-full bg-[var(--color-surface-2)] overflow-hidden">
-                        <div className={`h-full rounded-full ${M.bar}`} style={{ width: `${maxBytes > 0 ? Math.max(2, (t.bytes / maxBytes) * 100) : 0}%` }} />
-                      </div>
-                    </div>
-                    <div className="w-20 text-right text-[13px] font-semibold text-[var(--color-text)]">{fmtBytes(t.bytes)}</div>
-                    <div className="w-24 text-right text-[13px] text-[var(--color-text-muted)]">{fmtNum(t.rows)} rows</div>
-                  </div>
-                );
-              })}
-            </div>
-          </details>
-
-          <p className="px-1 text-[12px] text-[var(--color-text-muted)] leading-relaxed">{stats.note} Snapshot {new Date(stats.generatedAt).toLocaleString()}.</p>
+            <p className="mt-3 text-[12px] text-[var(--color-text-muted)]">{stats.note} Measured {shortDateTime(stats.generatedAt)}.</p>
+          </Section>
         </>
-      ) : null}
+      )}
       </PageBody>
     </PageShell>
+  );
+}
+
+/** One way to free space: a title (the why in a tooltip), the one setting
+ *  it takes on the right, then what it would do. */
+function Panel({ title, help, control, children }: { title: string; help?: React.ReactNode; control?: React.ReactNode; children: React.ReactNode }) {
+  return (
+    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 sm:p-5">
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 mb-3">
+        <h3 className="inline-flex items-center gap-1.5 text-[16px] font-semibold text-[var(--color-text)]">{title}{help && <HelpTooltip>{help}</HelpTooltip>}</h3>
+        {control}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+/** Used against a limit: a gray bar unless it needs someone. */
+function Meter({ label: text, used, limit, pct, tone, bar }: { label: string; used: number; limit: number; pct: number; tone: Tone; bar: string }) {
+  return (
+    <div>
+      <div className="flex items-center justify-between gap-3 text-[14px] mb-1">
+        <span className="font-semibold text-[var(--color-text)]">{text}</span>
+        <span className={`tabular-nums ${toneText(tone)} ${tone === "none" ? "!text-[var(--color-text-muted)]" : "font-semibold"}`}>{fmtBytes(used)} of {fmtBytes(limit)}, {pct}%</span>
+      </div>
+      <div className="h-2 rounded-full bg-[var(--color-surface-2)] overflow-hidden">
+        <div className={`h-full rounded-full ${bar}`} style={{ width: `${Math.min(100, Math.max(1, pct))}%` }} />
+      </div>
+    </div>
+  );
+}
+
+/** Step 2 of building an archive: save the zip, then reclaim the space
+ *  (destructive, confirmed) or discard the archive. */
+function PendingStep({ archiveId, folder, what, bytes, busy, onReclaim, onDiscard }: {
+  archiveId: string; folder: string; what: React.ReactNode; bytes: number; busy: boolean;
+  onReclaim: () => void; onDiscard: () => void;
+}) {
+  return (
+    <div className="mt-4 relative pl-4">
+      <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] rounded-full bg-[var(--state-held)]" />
+      <StatusTag tone="warn">Step 2 of 2: reclaim the space</StatusTag>
+      <p className="mt-1 text-[14px] text-[var(--color-text)]">
+        First save <span className="font-mono">{archiveId}.zip</span> to <span className="font-mono break-all">{folder}</span>. {what}
+      </p>
+      <div className="mt-2 flex items-center gap-4 flex-wrap">
+        <button type="button" onClick={onReclaim} disabled={busy} className={btnDanger}>
+          {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />} I saved it, reclaim {fmtBytes(bytes)}
+        </button>
+        <button type="button" onClick={onDiscard} disabled={busy} className={`${btnLink} !text-[var(--color-text-muted)]`}>Discard</button>
+      </div>
+    </div>
   );
 }

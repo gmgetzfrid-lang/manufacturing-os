@@ -1,8 +1,12 @@
 "use client";
 
+// Deleting a library can't be undone, so it asks for the library's name
+// typed out before the Delete button wakes up.
+
 import { useState } from "react";
-import { AlertTriangle, Loader2, Trash2 } from "lucide-react";
 import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/ui/Modal";
+import { Button } from "@/components/ui/Button";
+import { Field, Input } from "@/components/ui/Field";
 
 interface DeleteModalProps {
   isOpen: boolean;
@@ -13,8 +17,8 @@ interface DeleteModalProps {
 }
 
 export default function DeleteSafetyModal(props: DeleteModalProps) {
-  // The body unmounts whenever the modal is closed, so each reopen is already a
-  // fresh mount with reset state, no synthetic remount key needed.
+  // The body unmounts whenever the dialog is closed, so each reopen is a
+  // fresh mount with reset state.
   if (!props.isOpen) return null;
   return <DeleteSafetyModalBody {...props} />;
 }
@@ -26,63 +30,26 @@ function DeleteSafetyModalBody({
   isLoading,
 }: DeleteModalProps) {
   const [confirmText, setConfirmText] = useState("");
-  const isMatch = confirmText === libraryName;
+  const isMatch = confirmText.trim() === libraryName.trim();
 
   return (
     <Modal onClose={onClose} size="sm" zIndex={60} dismissable={!isLoading}>
-      <ModalHeader
-        icon={AlertTriangle}
-        iconClassName="bg-[var(--color-surface-2)] text-[var(--state-overdue)]"
-        title="Delete Library?"
-        onClose={isLoading ? undefined : onClose}
-      />
-      <ModalBody className="space-y-4">
-        <p className="text-sm text-[var(--color-text-muted)] leading-relaxed">
-          This <span className="font-semibold text-[var(--state-overdue)]">can&apos;t be undone</span>. It
-          permanently deletes the <strong className="text-[var(--color-text)]">{libraryName}</strong> library setup.
-          Documents inside it may be left without a library if they aren&apos;t moved first.
-        </p>
-
-        <div className="space-y-2">
-          <label className="text-[13px] font-semibold text-[var(--color-text-muted)] ">
-            Type{" "}
-            <span className="select-all font-mono text-[var(--color-text)] bg-[var(--color-surface-2)] px-1 py-0.5 rounded border border-[var(--color-border)] normal-case">
-              {libraryName}
-            </span>{" "}
-            to confirm:
-          </label>
-          <input
-            type="text"
-            value={confirmText}
-            onChange={(e) => setConfirmText(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter" && isMatch && !isLoading) void onConfirm(); }}
-            className="w-full p-3 border border-[var(--color-border-strong)] rounded-lg text-sm font-semibold bg-[var(--color-surface)] text-[var(--color-text)] focus:ring-2 focus:ring-[var(--state-overdue)] focus:border-red-500 outline-none transition-all placeholder:font-normal"
-            placeholder="Type the library name…"
-            autoFocus
-          />
-        </div>
-      </ModalBody>
-      <ModalFooter>
-        <button
-          onClick={onClose}
-          className="px-4 py-2 text-sm font-semibold text-[var(--color-text-muted)] hover:bg-[var(--color-surface)] hover:text-[var(--color-text)] border border-transparent hover:border-[var(--color-border)] rounded-lg transition-all"
-          disabled={isLoading}
-        >
-          Cancel
-        </button>
-        <button
-          onClick={onConfirm}
-          disabled={!isMatch || isLoading}
-          className="inline-flex items-center justify-center gap-2 h-10 px-4 rounded-md bg-[var(--state-overdue)] text-white text-[15px] font-semibold hover:brightness-95 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-        >
-          {isLoading ? (
-            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-          ) : (
-            <Trash2 className="w-4 h-4 mr-2" />
-          )}
-          Delete this library
-        </button>
-      </ModalFooter>
+      <ModalHeader title={`Delete ${libraryName}?`} onClose={isLoading ? undefined : onClose} />
+      <form onSubmit={(e) => { e.preventDefault(); if (isMatch && !isLoading) void onConfirm(); }}>
+        <ModalBody className="space-y-4">
+          <p className="text-[15px] text-[var(--color-text)]">
+            This deletes the library&apos;s setup for good. Documents still in it are left without a library, so move them first.
+          </p>
+          <Field label={<>Type <span className="font-mono select-all">{libraryName}</span> to confirm</>}>
+            <Input value={confirmText} onChange={(e) => setConfirmText(e.target.value)} autoComplete="off" spellCheck={false} autoFocus />
+          </Field>
+        </ModalBody>
+        <ModalFooter>
+          {!isMatch && <span className="mr-auto text-[13px] text-[var(--color-text-muted)]">Type the name to turn on Delete.</span>}
+          <Button type="button" variant="secondary" onClick={onClose} disabled={isLoading}>Cancel</Button>
+          <Button type="submit" variant="danger" loading={isLoading} disabled={!isMatch}>Delete library</Button>
+        </ModalFooter>
+      </form>
     </Modal>
   );
 }

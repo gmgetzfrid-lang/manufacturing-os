@@ -8,7 +8,7 @@
 // beside the letterhead, so nobody has to leave the project to set it.
 
 import React, { useEffect, useState } from "react";
-import { Presentation, FileUp, Loader2, Download, Trash2, RefreshCw, Check } from "lucide-react";
+import { FileUp, Loader2, Download, Trash2, RefreshCw, Check } from "lucide-react";
 import { Card } from "@/components/ui/PageHero";
 import { btnQuiet, btnDanger, fieldBox } from "@/components/admin/kit";
 import { useOrgBranding } from "@/components/providers/OrgBrandingProvider";
@@ -22,6 +22,8 @@ import { LAYOUT_ROLES, ROLE_WORD, layoutFor, templateColors, templateFonts, type
 import { loadSlideTemplate, PPTX_MIME, TEMPLATE_ACCEPT, templateLook, uploadSlideTemplate } from "@/lib/slideTemplateStore";
 import type { ScreenDeck } from "@/lib/slidePreview";
 import SlideFrame from "@/components/slides/SlideFrame";
+import { Skeleton } from "@/components/ui/Skeleton";
+import { said } from "@/components/admin/said";
 
 const mb = (n: number) => (n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
 const day = (iso: string) => new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
@@ -65,7 +67,7 @@ export default function SlideTemplateSetup({ bare = false }: { bare?: boolean } 
       await store(made);
       setMsg(`Saved. Slides now go onto ${f.name}.`);
       if (old) { void deleteFile(old.path).catch(() => {}); if (old.thumbPath) void deleteFile(old.thumbPath).catch(() => {}); }
-    } catch (e) { setErr((e as Error).message); }
+    } catch (e) { setErr(said(e, "The template didn't upload.")); }
     finally { setBusy(null); }
   };
   const drag = useFileDrag((fs) => { void upload(fs[0]); }, !!busy || !canEdit);
@@ -79,7 +81,7 @@ export default function SlideTemplateSetup({ bare = false }: { bare?: boolean } 
       void deleteFile(ref.path).catch(() => {});
       if (ref.thumbPath) void deleteFile(ref.thumbPath).catch(() => {});
       setMsg("Removed. Slides use the workspace colors.");
-    } catch (e) { setErr((e as Error).message); }
+    } catch (e) { setErr(said(e, "Couldn't remove the template.")); }
     finally { setBusy(null); }
   };
 
@@ -97,7 +99,7 @@ export default function SlideTemplateSetup({ bare = false }: { bare?: boolean } 
         if (l) next = { ...next, colors: templateColors(l), fonts: templateFonts(l) };
       }
       await store(next);
-    } catch (e) { setErr((e as Error).message); }
+    } catch (e) { setErr(said(e, "Couldn't change the layout.")); }
     finally { setBusy(null); }
   };
 
@@ -110,21 +112,21 @@ export default function SlideTemplateSetup({ bare = false }: { bare?: boolean } 
       const out = await deckOnTemplate(testSlides(info, ref.pick), { info, data, look: templateLook(info, ref), pick: ref.pick, title: "Test deck" });
       const name = `Test deck, ${ref.name.replace(/\.(pptx|potx)$/i, "")}.pptx`;
       if (!(await saveFile(out, name, PPTX_MIME))) setHeld({ data: out, name });
-    } catch (e) { setErr(`The test deck couldn't be made: ${(e as Error).message}`); }
+    } catch (e) { setErr(said(e, "The test deck couldn't be made.")); }
     finally { setBusy(null); }
   };
 
   const fileButton = (label: string, Icon: typeof FileUp) => (
     <label className={`${btnQuiet} cursor-pointer ${busy || !canEdit ? "pointer-events-none opacity-50" : ""}`}>
-      {busy === "read" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Icon className="w-4 h-4" />} {busy === "read" ? "Reading…" : label}
+      {busy === "read" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Icon className="w-4 h-4" />} {busy === "read" ? "Reading" : label}
       <input type="file" accept={TEMPLATE_ACCEPT} className="sr-only" disabled={!!busy || !canEdit} onChange={(e) => { void upload(e.target.files?.[0]); e.target.value = ""; }} />
     </label>
   );
-  const heading = <span className="inline-flex items-center gap-2.5"><span aria-hidden className="ui-icon-tile is-sm is-solid"><Presentation className="w-4 h-4" /></span>Slide template</span>;
+  const heading = "Slide template";
   const notes = (
     <>
-      {err && <p role="alert" className="mt-3 text-[14px] font-semibold text-[var(--state-overdue)]">{err}</p>}
-      {msg && <p role="status" className="mt-3 inline-flex items-center gap-1.5 text-[14px] text-[var(--state-released)]"><Check className="w-4 h-4" /> {msg}</p>}
+      {err && <p role="alert" className="mt-3 text-[14px] font-semibold text-[var(--state-overdue-text)]">{err}</p>}
+      {msg && <p role="status" className="mt-3 inline-flex items-center gap-1.5 text-[14px] text-[var(--color-text)]"><Check className="w-4 h-4 text-[var(--state-released)]" /> {msg}</p>}
       {held && (
         <p role="status" className="mt-3 flex items-center gap-3 text-[14px] font-semibold text-[var(--color-text)]">
           The test deck is ready.
@@ -140,8 +142,8 @@ export default function SlideTemplateSetup({ bare = false }: { bare?: boolean } 
       <>
         <label {...drag.bind}
           className={`flex flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed px-4 py-9 text-center cursor-pointer transition-colors ${drag.over ? `border-[var(--color-main)] ${drag.ring}` : "border-[var(--color-border-strong)] hover:bg-[var(--color-surface-2)]"} ${!canEdit ? "pointer-events-none opacity-60" : ""}`}>
-          <span aria-hidden className="ui-icon-tile">{busy === "read" ? <Loader2 className="w-5 h-5 animate-spin" /> : <FileUp className="w-5 h-5" />}</span>
-          <span className="text-[16px] font-semibold text-[var(--color-text)]">{drag.over ? drag.say : busy === "read" ? "Reading your template…" : "Upload your company's PowerPoint template"}</span>
+          <span aria-hidden className="text-[var(--color-text-faint)]">{busy === "read" ? <Loader2 className="w-5 h-5 animate-spin" /> : <FileUp className="w-5 h-5" />}</span>
+          <span className="text-[16px] font-semibold text-[var(--color-text)]">{drag.over ? drag.say : busy === "read" ? "Reading your template" : "Upload your company's PowerPoint template"}</span>
           <span className="text-[14px] text-[var(--color-text-muted)] max-w-md">A .pptx or .potx. Review slides go onto its layouts, fonts and colors.</span>
           <input type="file" accept={TEMPLATE_ACCEPT} className="sr-only" disabled={!!busy || !canEdit} onChange={(e) => { void upload(e.target.files?.[0]); e.target.value = ""; }} />
         </label>
@@ -181,9 +183,12 @@ export default function SlideTemplateSetup({ bare = false }: { bare?: boolean } 
             {shown.deck.slides.map((h, i) => <SlideFrame key={i} html={h} w={shown.deck!.w} h={shown.deck!.h} label={`Test slide ${i + 1}`} className="rounded-sm overflow-hidden ring-1 ring-[var(--color-border-strong)]" />)}
           </div>
         ) : shown?.error ? (
-          <p role="alert" className="text-[14px] font-semibold text-[var(--state-overdue)]">The slides couldn&apos;t be drawn: {shown.error}</p>
+          <p role="alert" className="text-[14px] font-semibold text-[var(--state-overdue-text)]">{said(shown.error, "The test slides couldn't be drawn.")}</p>
         ) : (
-          <p className="inline-flex items-center gap-2 text-[14px] text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin" /> Laying test slides on your template…</p>
+          <div role="status" className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            <span className="sr-only">Laying test slides on your template</span>
+            {[0, 1, 2, 3].map((i) => <Skeleton key={i} className="block !h-auto aspect-video rounded-sm" />)}
+          </div>
         )}
       </div>
 
@@ -197,7 +202,7 @@ export default function SlideTemplateSetup({ bare = false }: { bare?: boolean } 
             <div key={role} className="px-4 py-2.5 flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4">
               <label htmlFor={`lay-${role}`} className="sm:w-48 shrink-0 text-[15px] font-semibold text-[var(--color-text)]">{ROLE_WORD[role]}</label>
               <select id={`lay-${role}`} value={value} disabled={!canEdit || !!busy} onChange={(e) => void pickLayout(role, e.target.value)}
-                className={`${fieldBox} h-10 text-[15px] w-full sm:w-72`}>
+                className={`${fieldBox} h-10 pointer-coarse:h-11 text-[15px] max-sm:text-[16px] w-full sm:w-72`}>
                 {(optional || !auto) && <option value="none">{optional ? "Leave out" : "None"}</option>}
                 {ref.layouts.map((l) => <option key={l.file} value={l.file}>{l.name}{l.file === auto ? " (app's pick)" : ""}</option>)}
               </select>

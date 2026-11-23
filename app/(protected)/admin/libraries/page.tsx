@@ -5,14 +5,16 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { useRole } from "@/components/providers/RoleContext";
 import Link from "next/link";
-import { Plus, Search, Trash2, Library } from "lucide-react";
-import LoadingBlock from "@/components/ui/LoadingBlock";
+import { Plus, Search, Trash2 } from "lucide-react";
+import { SkeletonRows } from "@/components/ui/Skeleton";
+import { ErrorNote } from "@/components/ui/ErrorNote";
 import { PageShell } from "@/components/ui/PageShell";
 import { PageHero, PageBody, heroPrimary } from "@/components/ui/PageHero";
-import { tbl, btnRow, btnIcon, Problem, Pill } from "@/components/admin/kit";
+import { tbl, btnRow, btnIcon, link, shortDate, StatusTag } from "@/components/admin/kit";
+import { said } from "@/components/admin/said";
 import { bandInput, bandInputIcon, bandSelect, plural } from "@/components/admin/band";
 import MoreMenu from "@/components/ui/MoreMenu";
-import LibraryWizard, { newLibraryDraftKey } from "./LibraryWizard";
+import LibraryWizard, { newLibraryDraftKey, newLibraryNameDraftKey } from "./LibraryWizard";
 import { clearDraft } from "@/hooks/useDraft";
 import DeleteSafetyModal from "./DeleteSafetyModal";
 import LibraryAiSwitch from "@/components/documents/LibraryAiSwitch";
@@ -25,7 +27,7 @@ export default function LibraryAdminPage() {
   const canManageAi = activeRole === "Admin" || activeRole === "DocCtrl";
 
   const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<unknown>(null);
   const [reloadTick, setReloadTick] = useState(0);
   const [libraries, setLibraries] = useState<LibraryConfig[]>([]);
   const [saving, setSaving] = useState(false);
@@ -81,7 +83,7 @@ export default function LibraryAdminPage() {
       } catch (err) {
         console.error("Error fetching libraries:", err);
         setLibraries([]);
-        setLoadError(err instanceof Error ? err.message : "Couldn't load libraries.");
+        setLoadError(err);
       } finally {
         setLoading(false);
       }
@@ -92,11 +94,11 @@ export default function LibraryAdminPage() {
 
   const handleSaveLibrary = async (config: Omit<LibraryConfig, "id">) => {
     if (!activeOrgId) {
-      await appAlert({ message: "No active org selected. Set an orgId first.", tone: "danger" });
+      await appAlert({ message: "Pick a workspace first, from your profile.", tone: "danger" });
       return;
     }
     if (!uid) {
-      await appAlert({ message: "Not authenticated.", tone: "danger" });
+      await appAlert({ message: "Your sign-in has expired. Sign in again, then try again.", tone: "danger" });
       return;
     }
 
@@ -109,7 +111,7 @@ export default function LibraryAdminPage() {
           l.id !== editingLib?.id
       );
       if (exists) {
-        await appAlert({ message: "A Library with this name already exists. Please choose a unique name.", tone: "danger" });
+        await appAlert({ message: "A library with this name already exists. Pick another name.", tone: "danger" });
         setSaving(false);
         return;
       }
@@ -144,6 +146,7 @@ export default function LibraryAdminPage() {
 
         setLibraries((prev) => [{ id: newLib.id, ...config, orgId: activeOrgId } as LibraryConfig, ...prev]);
         clearDraft(newLibraryDraftKey(activeOrgId));
+        clearDraft(newLibraryNameDraftKey(activeOrgId));
         setIsModalOpen(false);
         setEditingLib(null);
         // Straight into the new library.
@@ -155,8 +158,7 @@ export default function LibraryAdminPage() {
       setEditingLib(null);
     } catch (err) {
       console.error("Failed to save library", err);
-      const msg = err && typeof err === "object" && "message" in err ? String((err as { message: unknown }).message) : "";
-      await appAlert({ title: "Couldn't save the library", message: msg || "Check that you have permission to change libraries.", tone: "danger" });
+      await appAlert({ title: "Couldn't save the library", message: said(err), tone: "danger" });
     } finally {
       setSaving(false);
     }
@@ -178,8 +180,7 @@ export default function LibraryAdminPage() {
       setLibraryToDelete(null);
     } catch (e) {
       console.error(e);
-      const msg = e && typeof e === "object" && "message" in e ? String((e as { message: unknown }).message) : "";
-      await appAlert({ title: "Couldn't delete the library", message: msg || "Try again.", tone: "danger" });
+      await appAlert({ title: "Couldn't delete the library", message: said(e), tone: "danger" });
     } finally {
       setDeleting(false);
     }
@@ -211,9 +212,9 @@ export default function LibraryAdminPage() {
   if (!isController) {
     return (
       <PageShell width="work">
-        <PageHero kicker="Admin · Libraries" overlap={false}
+        <PageHero kicker="Admin · Libraries"
           title={activeRole ? "Admin and Doc Control only." : "Libraries"}
-          sub={activeRole ? "Only Admin and Doc Control manage libraries." : "Loading…"} />
+          sub={activeRole ? "Only Admin and Doc Control manage libraries." : undefined} />
       </PageShell>
     );
   }
@@ -221,7 +222,7 @@ export default function LibraryAdminPage() {
   if (!activeOrgId) {
     return (
       <PageShell width="work">
-        <PageHero kicker="Admin · Libraries" title="No workspace selected." sub="Pick one from your profile." overlap={false} />
+        <PageHero kicker="Admin · Libraries" title="No workspace picked." sub="Pick one from your profile." />
       </PageShell>
     );
   }
@@ -229,13 +230,13 @@ export default function LibraryAdminPage() {
   if (loading) {
     return (
       <PageShell width="work">
-        <PageHero kicker="Admin · Libraries" title="Libraries" overlap={false} />
-        <LoadingBlock what="libraries" />
+        <PageHero kicker="Admin · Libraries" title="Libraries" />
+        <PageBody><SkeletonRows rows={4} cols={3} what="libraries" /></PageBody>
       </PageShell>
     );
   }
 
-  const answer = loadError && libraries.length === 0 ? "Couldn't load libraries."
+  const answer = loadError != null && libraries.length === 0 ? "Couldn't load the libraries."
     : libraries.length === 0 ? "No libraries yet."
     : `${plural(libraries.length, "library", "libraries")}.`;
 
@@ -268,7 +269,8 @@ export default function LibraryAdminPage() {
         kicker="Admin · Libraries"
         title={answer}
         sub="Each library sets its own folders, numbering and review steps."
-        facts={libraries.length > 0 ? [{ label: "Kept from the AI", value: neverAi.size }] : undefined}
+        factsHero="none"
+        facts={neverAi.size > 0 ? [{ label: "Kept from the AI", value: neverAi.size }] : undefined}
         primary={<button type="button" onClick={openCreate} className={heroPrimary}><Plus className="w-4 h-4" /> New library</button>}
       >
         <div className="flex items-center gap-2 flex-wrap">
@@ -295,13 +297,18 @@ export default function LibraryAdminPage() {
       </PageHero>
 
       <PageBody>
-        {loadError && (
-          <Problem retry={() => setReloadTick((n) => n + 1)}>Couldn&apos;t load libraries: {loadError}</Problem>
-        )}
-
-        {filteredLibraries.length === 0 ? (
-          <div className={`${tbl.wrap} px-5 py-10 text-center text-[var(--color-text-muted)]`}>
-            {loadError ? "The libraries didn't load." : searchTerm ? "No libraries match that search." : "Make the first library: drawings, procedures, vendor manuals."}
+        {loadError != null ? (
+          <ErrorNote error={loadError} title="Couldn't load the libraries." onRetry={() => setReloadTick((n) => n + 1)} />
+        ) : filteredLibraries.length === 0 ? (
+          <div className={`${tbl.wrap} px-5 py-8 text-center`}>
+            {searchTerm ? (
+              <p className="text-[15px] text-[var(--color-text)]">No library matches &ldquo;{searchTerm}&rdquo;. <button type="button" onClick={() => setSearchTerm("")} className={link}>Clear</button></p>
+            ) : (
+              <>
+                <p className="text-[15px] text-[var(--color-text)]">Drawings, procedures and vendor manuals each live in a library.</p>
+                <button type="button" onClick={openCreate} className={`${link} mt-1.5 font-semibold`}>Make the first library</button>
+              </>
+            )}
           </div>
         ) : (
           <div className={tbl.wrap}>
@@ -312,6 +319,7 @@ export default function LibraryAdminPage() {
                   <th className={`${tbl.th} max-lg:hidden`}>Kind</th>
                   <th className={`${tbl.th} max-md:hidden`}>Who can read</th>
                   <th className={`${tbl.th} max-md:hidden`}>AI reading</th>
+                  <th className={`${tbl.th} max-xl:hidden`}>Changed</th>
                   <th className={`${tbl.th} w-[1%]`}><span className="sr-only">Actions</span></th>
                 </tr>
               </thead>
@@ -321,20 +329,20 @@ export default function LibraryAdminPage() {
                   return (
                     <tr key={lib.id} className={`${tbl.tr} max-sm:grid max-sm:grid-cols-[1fr_auto]`}>
                       <td className={`${tbl.td} min-w-0`}>
-                        <div className="flex items-center gap-3 min-w-0">
-                          <span aria-hidden className="ui-icon-tile is-sm"><Library className="w-4 h-4" /></span>
-                          <div className="min-w-0">
-                            <Link href={`/documents/${lib.id}`} title={`Open ${lib.name}`} className="font-semibold text-[var(--color-text)] hover:text-[var(--color-accent-text)]">{lib.name}</Link>
-                            {lib.description && <div className="text-[14px] text-[var(--color-text-muted)] line-clamp-1 max-w-[60ch]">{lib.description}</div>}
+                        <div className="min-w-0">
+                          <Link href={`/documents/${lib.id}`} title={`Open ${lib.name}`} className="font-semibold text-[var(--color-text)] hover:text-[var(--color-accent-text)] hover:underline underline-offset-2">{lib.name}</Link>
+                          {lib.description && <div className="text-[14px] text-[var(--color-text-muted)] line-clamp-1 max-w-[60ch]">{lib.description}</div>}
+                          <div className="md:hidden mt-0.5 text-[13px] text-[var(--color-text-muted)]">
+                            {[lib.type ? String(lib.type).replace(/_/g, " ") : null, !roles ? "Everyone can read" : roles.length === 0 ? "Nobody can read yet" : `Read: ${roles.join(", ")}`, neverAi.has(lib.id!) ? "Kept from the AI" : null].filter(Boolean).join(" · ")}
                           </div>
                         </div>
                       </td>
                       <td className={`${tbl.td} max-lg:hidden whitespace-nowrap`}>
-                        {lib.type ? <span className="ui-tag capitalize">{String(lib.type).replace(/_/g, " ").toLowerCase()}</span> : null}
+                        {lib.type ? <span className="text-[var(--color-text-muted)]">{String(lib.type).replace(/_/g, " ")}</span> : null}
                       </td>
                       <td className={`${tbl.td} max-md:hidden`}>
                         {/* Who can read: everyone, or the roles as tags; +N opens the library's settings. */}
-                        {!roles ? <Pill tone="brand">Everyone</Pill> : roles.length === 0 ? <Pill tone="warn">Nobody yet</Pill> : (
+                        {!roles ? <span className="text-[var(--color-text)]">Everyone</span> : roles.length === 0 ? <StatusTag tone="warn">Nobody yet</StatusTag> : (
                           <div className="flex flex-wrap items-center gap-1 max-w-[260px]">
                             {roles.slice(0, 3).map((ro) => <span key={ro} className="ui-tag">{ro}</span>)}
                             {roles.length > 3 && (
@@ -349,6 +357,7 @@ export default function LibraryAdminPage() {
                             onChanged={(x) => setNeverAi((s) => { const n = new Set(s); if (x) n.add(lib.id!); else n.delete(lib.id!); return n; })} />
                         )}
                       </td>
+                      <td className={`${tbl.td} max-xl:hidden whitespace-nowrap text-[var(--color-text-muted)]`}>{shortDate(lib.updatedAt as string | undefined) || shortDate(lib.createdAt as string | undefined)}</td>
                       {/* Repeated on every row, so quiet: Edit, and Delete folded into More. */}
                       <td className={`${tbl.td} text-right`}>
                         <div className="flex items-center justify-end gap-1.5">
