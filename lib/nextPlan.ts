@@ -19,17 +19,20 @@
 //   - An activity done inside fewer shifts than its plan gets that length;
 //     nothing is made longer from a guess.
 //   - Start-up begins once every work order is done.
-//   - A crew's hands, when set, limit how much of its work can run at once;
-//     work over that waits (the most urgent first).
-//   - A crew held to so many jobs at once (what it really worked at a time
-//     this year) takes them that many at a time, the ones that hold the
-//     finish first.
+//   - CREW_RULE: a crew's size is set before the job starts and held for
+//     the whole job. Its hands on the tools from its staffing plan's first
+//     shifts on this job (days and nights each), else the first meeting it
+//     was counted at; with no hands known, the most of its jobs it worked
+//     in one shift this year, as jobs at a time. A person's setting
+//     replaces it, held the same way. Work over that waits, the ones that
+//     hold the finish first; the crew never grows mid-job. Another crew
+//     comes only for the whole job, from its first shift.
 //
 // Pure: no database here.
 
 import type { Milestone } from "@/types/schema";
 import type { AsBuilt } from "@/lib/asBuiltSchedule";
-import type { AsBuiltWork } from "@/lib/asBuiltWork";
+import { shiftKey, type AsBuiltWork } from "@/lib/asBuiltWork";
 import { shiftAt, nextShift, shiftWindowsBetween, calendarShift, type ShiftTimes, type ShiftWindow } from "@/lib/shiftReport";
 import { dayKey, dayKeyToMs } from "@/lib/scheduleTz";
 import { discoveryOf, kindOf } from "@/lib/discovery";
@@ -79,6 +82,8 @@ export type PlanChange = { id: string; said: string; at: number } & (
   // One crew kept the whole event: so many on the tools on days and on
   // nights (null: not held), every shift.
   | { kind: "crew"; crew: string; day: number | null; night: number | null }
+  // Another crew (or more) brought for the whole job, from its first shift.
+  | { kind: "more"; crew: string; crews: number }
   // A lesson (lib/nextPlanLessons) left out by a person.
   | { kind: "skip"; lesson: string }
   // From the lessons: an activity's length and calendar (off-site time is
@@ -110,6 +115,45 @@ export interface NextPlan {
   jobsCap: Record<string, number>;
   /** Crews kept the whole event: hands on the tools, days and nights. */
   crewSize: Record<string, { day: number | null; night: number | null }>;
+  /** Each crew's size, held the whole job, and where it came from
+   *  (nextPlan; empty from schedule() alone). */
+  sizes: Record<string, CrewSize>;
+}
+
+/** The rule, said the same way on screen. */
+export const CREW_RULE = "A crew's size is set before the job starts and held for the whole job: its staffing plan's first shifts on this job, else the first shift meeting it was counted at, else the most jobs it worked at once this year. Work that doesn't fit waits for the crew; the crew never grows mid-job. People can be released at the end, once its work runs out.";
+
+/** Where a held count came from: the contractor's staffing plan, or a head
+ *  count at a shift meeting; `at` is that shift's start. */
+export interface SizeFrom { from: "plan" | "counted"; at: number }
+
+/** A crew's size, set before the job starts and held for the whole job. */
+export interface CrewSize {
+  /** Hands on the tools every day and every night shift (null: it works
+   *  no shifts of that kind). Null when held by jobs at a time. */
+  hands: { day: number | null; night: number | null } | null;
+  /** Jobs at a time, every shift (null: held by hands). */
+  jobs: number | null;
+  /** Where it came from: its staffing plan, a head count, the most jobs it
+   *  worked at once this year, or a person's setting. */
+  from: "plan" | "counted" | "worked" | "person";
+  /** For hands: where each came from. */
+  first: { day: SizeFrom | null; night: SizeFrom | null };
+  /** The most of its jobs it worked in one shift this year (0: none logged). */
+  worked: number;
+  /** The shift kinds it works in this plan. */
+  works: { day: boolean; night: boolean };
+  /** Hands it had for a shift kind it works with none for the other, so it
+   *  is held by jobs at a time instead ("nights": no count on nights). */
+  missing: "day" | "night" | "pace" | null;
+  /** Another crew (or more) brought for the whole job. */
+  more: number;
+  /** Hands one more crew adds on a day and on a night shift (by hands:
+   *  one job going a whole shift, at its pace). */
+  perCrew: { day: number | null; night: number | null } | null;
+  /** Its staffing plan puts more on the tools later than on its first
+   *  shift: held at the first count. Each rise over the most before it. */
+  ramp: Array<{ kind: "day" | "night"; first: number; firstAt: number; rises: Array<{ at: number; n: number }> }>;
 }
 
 const H = 3_600_000;
@@ -232,12 +276,13 @@ export function planActivities(input: { built: AsBuilt; work: AsBuiltWork; miles
 const hits = (a: PlanAct, t: Target) => (t.ids?.length ? t.ids.includes(a.id) : false) || (t.order ? a.order === t.order : false);
 
 /** The activities after the changes, and the hands set. */
-export function applyChanges(base: PlanAct[], changes: PlanChange[], tz: string, times: ShiftTimes, day1: number): { acts: PlanAct[]; pre: PlanAct[]; headsSet: Record<string, Record<number, number>>; jobsCap: Record<string, number>; crewSize: Record<string, { day: number | null; night: number | null }> } {
+export function applyChanges(base: PlanAct[], changes: PlanChange[], tz: string, times: ShiftTimes, day1: number): { acts: PlanAct[]; pre: PlanAct[]; headsSet: Record<string, Record<number, number>>; jobsCap: Record<string, number>; crewSize: Record<string, { day: number | null; night: number | null }>; more: Record<string, number> } {
   let acts: PlanAct[] = base.map((a) => ({ ...a, preds: [...a.preds], changedBy: [...(a.changedBy ?? [])] }));
   const pre: PlanAct[] = [];
   const headsSet: Record<string, Record<number, number>> = {};
   const jobsCap: Record<string, number> = {};
   const crewSize: Record<string, { day: number | null; night: number | null }> = {};
+  const more: Record<string, number> = {};
   const mark = (a: PlanAct, c: PlanChange) => { a.changedBy = [...new Set([...(a.changedBy ?? []), c.id])]; };
   for (const c of changes) {
     if (c.kind === "drop") {
@@ -282,6 +327,9 @@ export function applyChanges(base: PlanAct[], changes: PlanChange[], tz: string,
       else crewSize[c.crew] = { day: c.day == null ? null : Math.max(1, Math.round(c.day)), night: c.night == null ? null : Math.max(1, Math.round(c.night)) };
     } else if (c.kind === "jobs") {
       if (c.n >= 1) jobsCap[c.crew] = Math.round(c.n); else delete jobsCap[c.crew];
+    } else if (c.kind === "more") {
+      const n = (more[c.crew] ?? 0) + Math.max(0, Math.round(c.crews));
+      if (n > 0) more[c.crew] = n; else delete more[c.crew];
     } else if (c.kind === "set") {
       const a = acts.find((x) => x.id === c.actId);
       if (a) {
@@ -300,7 +348,7 @@ export function applyChanges(base: PlanAct[], changes: PlanChange[], tz: string,
       for (const a of acts) if (hits(a, c.target)) { a.floor = c.at; mark(a, c); }
     }
   }
-  return { acts, pre, headsSet, jobsCap, crewSize };
+  return { acts, pre, headsSet, jobsCap, crewSize, more };
 }
 
 /** Schedule the activities: forward through their links and calendars; a
@@ -333,10 +381,13 @@ export function schedule(input: {
   // Shifts to schedule into (grown as needed).
   const shifts: ShiftWindow[] = shiftWindowsBetween(day1, day1 + 30 * 86_400_000, tz, times, 4000);
   const idxAt = (t: number) => { let lo = 0, hi = shifts.length - 1; while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (shifts[mid].start <= t) lo = mid; else hi = mid - 1; } return lo; };
-  const occupancy = (s: number, f: number) => {
+  /** Hours of an activity in each shift it works: only shifts on its own
+   *  calendar (day work left open overnight is not night work). */
+  const occupancy = (s: number, f: number, cal: Cal) => {
     const out: Array<[number, number]> = [];
     if (f <= s) return out;
     for (let i = idxAt(s); i < shifts.length && shifts[i].start < f; i++) {
+      if (cal !== "both" && shifts[i].kind !== cal) continue;
       const ov = (Math.min(f, shifts[i].end) - Math.max(s, shifts[i].start)) / H;
       if (ov > 1e-6) out.push([i, ov]);
     }
@@ -384,7 +435,7 @@ export function schedule(input: {
           let next: number | null = null;
           if (hands) {
             // A shift with none of the crew's work yet always takes one job.
-            const bad = occupancy(s, f).find(([i, h]) => (used[a.crew]?.[i] ?? 0) > 1e-6 && (used[a.crew]?.[i] ?? 0) + h > capOf(a.crew, i) + 1e-6);
+            const bad = occupancy(s, f, a.cal).find(([i, h]) => (used[a.crew]?.[i] ?? 0) > 1e-6 && (used[a.crew]?.[i] ?? 0) + h > capOf(a.crew, i) + 1e-6);
             if (bad) next = shifts[Math.min(shifts.length - 1, bad[0] + 1)].start;
           }
           if (next == null && cap && a.hours > 0) next = crowded(spans[a.crew] ?? [], s, f, cap);
@@ -394,7 +445,7 @@ export function schedule(input: {
           f = advance(s, a.hours, a.cal, tz, times);
         }
       }
-      for (const [i, h] of occupancy(s, f)) { (used[a.crew] ??= [])[i] = (used[a.crew][i] ?? 0) + h; }
+      for (const [i, h] of occupancy(s, f, a.cal)) { (used[a.crew] ??= [])[i] = (used[a.crew][i] ?? 0) + h; }
       if (a.hours > 0) (spans[a.crew] ??= []).push([s, f]);
       done.set(a.id, { start: s, finish: f, held });
       waiting.delete(a.id);
@@ -425,17 +476,28 @@ export function schedule(input: {
   const finish = out.length ? Math.max(...out.map((a) => a.finish)) : day1;
   const n = Math.max(1, idxAt(finish) + 1);
   const shown = shifts.slice(0, n);
+  // Per crew, per shift: hours of its work, and the most of its jobs going
+  // at one moment in that shift (on their own calendars).
   const load: Record<string, number[]> = {}, jobs: Record<string, number[]> = {};
+  const within: Record<string, Array<Array<{ start: number; finish: number }>>> = {};
   for (const a of out) {
-    for (const [i, h] of occupancy(a.start, a.finish)) {
+    for (const [i, h] of occupancy(a.start, a.finish, a.cal)) {
       if (i >= n) continue;
       (load[a.crew] ??= Array(n).fill(0))[i] += h;
-      (jobs[a.crew] ??= Array(n).fill(0))[i] += 1;
+      ((within[a.crew] ??= Array.from({ length: n }, () => []))[i]).push({ start: Math.max(a.start, shown[i].start), finish: Math.min(a.finish, shown[i].end) });
     }
   }
+  for (const [crew, xs] of Object.entries(within)) jobs[crew] = xs.map((x) => mostAtOnce(x));
+  // Hands the work takes each shift, at the crew's pace; never more than a
+  // crew held by hands has (a job bigger than the crew gets all of them).
   const heads: Record<string, number[]> = {}, headsShown: Record<string, Array<number | null>> = {};
   for (const [crew, l] of Object.entries(load)) {
-    heads[crew] = l.map((h, i) => (h > 0 ? Math.ceil((h * paceOf(crew)) / toolOf(shown[i]) - 1e-9) : 0));
+    heads[crew] = l.map((h, i) => {
+      if (!(h > 0)) return 0;
+      const need = Math.ceil((h * paceOf(crew)) / toolOf(shown[i]) - 1e-9);
+      const size = headsSet[crew]?.[i] ?? crewSize[crew]?.[shown[i].kind === "night" ? "night" : "day"] ?? null;
+      return size == null ? need : Math.min(need, size);
+    });
     headsShown[crew] = l.map((_, i) => headsSet[crew]?.[i] ?? null);
   }
 
@@ -461,7 +523,17 @@ export function schedule(input: {
     }
     cur = pred.reduce((x, y) => (y.finish > x.finish ? y : x));
   }
-  return { acts: out, pre: input.pre ?? [], start: day1, finish, driving, shifts: shown, load, jobs, heads, headsSet: headsShown, pace: input.pace, jobsCap, crewSize };
+  return { acts: out, pre: input.pre ?? [], start: day1, finish, driving, shifts: shown, load, jobs, heads, headsSet: headsShown, pace: input.pace, jobsCap, crewSize, sizes: {} };
+}
+
+/** The most intervals open at one moment. */
+export function mostAtOnce(acts: Array<{ start: number; finish: number }>): number {
+  const ev: Array<[number, number]> = [];
+  for (const a of acts) if (a.finish > a.start) { ev.push([a.start, 1]); ev.push([a.finish, -1]); }
+  ev.sort((x, y) => x[0] - y[0] || x[1] - y[1]);
+  let n = 0, best = 0;
+  for (const [, d] of ev) { n += d; best = Math.max(best, n); }
+  return best;
 }
 
 /** Man-hours per plan hour for each crew, from what this year showed. */
@@ -476,28 +548,157 @@ export function paceOf(work: AsBuiltWork): Record<string, { mh: number; from: st
 
 export type PlanInput = { built: AsBuilt; work: AsBuiltWork; milestones: Milestone[]; tz: string; times: ShiftTimes; changes: PlanChange[]; withFound?: boolean };
 
+/** Not a crew: time off site, and steps with no crew named. */
+const NOT_A_CREW = new Set(["Off site", "Not set"]);
+
+/** Each crew's size by default (CREW_RULE), for the activities it has in
+ *  the plan: hands on the tools from its staffing plan's first shifts on
+ *  this job, else the first meeting it was counted at, days and nights each,
+ *  when its pace is known and every shift kind it works has a count; else
+ *  the most of its jobs it worked in one shift this year, as jobs at a time. */
+export function crewSizes(work: AsBuiltWork, acts: PlanAct[]): Record<string, CrewSize> {
+  const keys = work.shifts.map(shiftKey);
+  const startOf = new Map(work.shifts.map((w) => [shiftKey(w), w.start]));
+  const pace = paceOf(work);
+  // The most of each crew's steps moved in one shift this year.
+  const moved = new Map<string, Map<string, number>>();
+  for (const w of work.steps.values()) for (const k of w.worked) {
+    const m = moved.get(w.crew) ?? new Map<string, number>(); m.set(k, (m.get(k) ?? 0) + 1); moved.set(w.crew, m);
+  }
+  const recs = new Map(work.crews.map((c) => [c.crew, c]));
+  const names = [...new Set(acts.filter((a) => a.hours > 0 && !NOT_A_CREW.has(a.crew)).map((a) => a.crew))];
+  // A company's staffing plan read for two or more of this job's crews is
+  // the company's, not any one crew's: those crews go by their counts.
+  const planned = (crew: string) => Object.values(recs.get(crew)?.byShift ?? {}).some((x) => (x.planned?.direct ?? 0) > 0);
+  const byCompany = new Map<string, number>();
+  for (const crew of names) if (planned(crew)) { const co = recs.get(crew)!.company; byCompany.set(co, (byCompany.get(co) ?? 0) + 1); }
+  // A shift's length (12 h), for what one more crew is.
+  const lenOf = (kind: "day" | "night") => { const w = work.shifts.find((x) => x.kind === kind); return w ? (w.end - w.start) / H : 12; };
+  const out: Record<string, CrewSize> = {};
+  for (const crew of names) {
+    const mine = acts.filter((a) => a.crew === crew && a.hours > 0);
+    const works = { day: mine.some((a) => a.cal !== "night"), night: mine.some((a) => a.cal !== "day") };
+    const r = recs.get(crew);
+    // 0: no shift with its progress logged this year (held to one job at a time).
+    const worked = Math.max(0, ...(moved.get(crew)?.values() ?? []));
+    const shared = !!r && (byCompany.get(r.company) ?? 0) > 1;
+    const firstOf = (kind: "day" | "night", get: (x: AsBuiltWork["crews"][number]["byShift"][string]) => number | null | undefined) => {
+      for (const k of keys) {
+        if (!k.endsWith(`:${kind}`)) continue;
+        const x = r?.byShift[k]; const n = x ? get(x) : null;
+        if (n != null && n > 0) return { n: Math.round(n), key: k };
+      }
+      return null;
+    };
+    const pc = pace[crew]?.mh;
+    const perCrew = pc ? { day: works.day ? Math.max(1, Math.ceil((lenOf("day") * pc) / work.toolHours.day - 1e-9)) : null, night: works.night ? Math.max(1, Math.ceil((lenOf("night") * pc) / work.toolHours.night - 1e-9)) : null } : null;
+    const hands: { day: number | null; night: number | null } = { day: null, night: null };
+    const first: CrewSize["first"] = { day: null, night: null };
+    const ramp: CrewSize["ramp"] = [];
+    let missing: CrewSize["missing"] = pc ? null : "pace";
+    for (const kind of ["day", "night"] as const) {
+      if (!works[kind]) continue;
+      const p = shared ? null : firstOf(kind, (x) => x.planned?.direct);
+      const got = p ?? firstOf(kind, (x) => x.counted?.direct ?? x.counted?.total);
+      if (!got) { missing ??= kind; continue; }
+      hands[kind] = got.n;
+      first[kind] = { from: p ? "plan" : "counted", at: startOf.get(got.key)! };
+      if (p) {
+        // A staffing plan that adds people after its first shift.
+        let top = p.n; const rises: Array<{ at: number; n: number }> = [];
+        for (const k of keys.slice(keys.indexOf(p.key) + 1)) {
+          if (!k.endsWith(`:${kind}`)) continue;
+          const n = Math.round(r?.byShift[k]?.planned?.direct ?? 0);
+          if (n > top) { rises.push({ at: startOf.get(k)!, n: n - top }); top = n; }
+        }
+        if (rises.length) ramp.push({ kind, first: p.n, firstAt: startOf.get(p.key)!, rises });
+      }
+    }
+    const byHands = !missing && (hands.day != null || hands.night != null);
+    out[crew] = byHands
+      ? { hands, jobs: null, from: first.day?.from === "plan" || first.night?.from === "plan" ? "plan" : "counted", first, worked, works, missing: null, more: 0, perCrew, ramp }
+      : { hands: null, jobs: Math.max(1, worked), from: "worked", first: { day: null, night: null }, worked, works, missing: hands.day != null || hands.night != null ? missing : null, more: 0, perCrew, ramp: [] };
+  }
+  return out;
+}
+
+/** The sizes held: a person's setting over the default (held the same
+ *  way, the whole job), then any crew brought for the whole job. */
+export function holdCrews(defaults: Record<string, CrewSize>, set: { jobsCap: Record<string, number>; crewSize: Record<string, { day: number | null; night: number | null }>; more: Record<string, number> }): Record<string, CrewSize> {
+  const out: Record<string, CrewSize> = {};
+  const none: CrewSize = { hands: null, jobs: null, from: "person", first: { day: null, night: null }, worked: 1, works: { day: true, night: true }, missing: null, more: 0, perCrew: null, ramp: [] };
+  for (const crew of new Set([...Object.keys(defaults), ...Object.keys(set.jobsCap), ...Object.keys(set.crewSize)])) {
+    const d = defaults[crew] ?? none;
+    let s: CrewSize;
+    if (set.crewSize[crew]) {
+      // Hands typed in: a shift kind it works left out keeps the default's
+      // hands; with none there, it is held to its jobs at a time as well.
+      const c = set.crewSize[crew];
+      const day = d.works.day ? c.day ?? d.hands?.day ?? null : null, night = d.works.night ? c.night ?? d.hands?.night ?? null : null;
+      const gap = (d.works.day && day == null) || (d.works.night && night == null);
+      s = { ...d, from: "person", hands: { day, night }, jobs: gap ? d.jobs ?? Math.max(1, d.worked) : null, first: { day: c.day != null ? null : d.first.day, night: c.night != null ? null : d.first.night }, missing: null, ramp: [] };
+    } else if (set.jobsCap[crew]) {
+      s = { ...d, from: "person", hands: null, jobs: set.jobsCap[crew], first: { day: null, night: null }, missing: null, ramp: [] };
+    } else s = { ...d };
+    const more = set.more[crew] ?? 0;
+    if (more > 0) {
+      s.more = more;
+      if (s.hands) s.hands = { day: s.hands.day != null ? s.hands.day + more * (s.perCrew?.day ?? 0) : null, night: s.hands.night != null ? s.hands.night + more * (s.perCrew?.night ?? 0) : null };
+      if (s.jobs != null) s.jobs += more;
+    }
+    out[crew] = s;
+  }
+  return out;
+}
+
 /** The whole thing: this year's job, the changes, scheduled. Work found by
- *  inspection is left out unless `withFound`. */
+ *  inspection is left out unless `withFound`. Every crew is held at its
+ *  size for the whole job (CREW_RULE). */
 export function nextPlan(input: PlanInput): NextPlan {
   const base = planActivities(input);
   const floors = base.map((a) => a.floor).filter((t): t is number => t != null);
   const day1 = floors.length ? shiftAt(Math.min(...floors), input.tz, input.times).start : Date.now();
   const out = input.withFound ? [] : discoveryIds(input.work, input.milestones);
   const found: PlanChange[] = out.length ? [{ id: "found:out", said: "", at: 0, kind: "drop", target: { ids: out } }] : [];
-  const { acts, pre, headsSet, jobsCap, crewSize } = applyChanges(base, [...found, ...input.changes], input.tz, input.times, day1);
-  return schedule({ acts, pre, tz: input.tz, times: input.times, pace: paceOf(input.work), toolHours: input.work.toolHours, headsSet, jobsCap, crewSize, day1 });
+  const { acts, pre, headsSet, jobsCap, crewSize, more } = applyChanges(base, [...found, ...input.changes], input.tz, input.times, day1);
+  const sizes = holdCrews(crewSizes(input.work, acts), { jobsCap, crewSize, more });
+  const caps: Record<string, number> = {}, hands: Record<string, { day: number | null; night: number | null }> = {};
+  for (const [crew, s] of Object.entries(sizes)) { if (s.jobs != null) caps[crew] = s.jobs; if (s.hands) hands[crew] = s.hands; }
+  return { ...schedule({ acts, pre, tz: input.tz, times: input.times, pace: paceOf(input.work), toolHours: input.work.toolHours, headsSet, jobsCap: caps, crewSize: hands, day1 }), sizes };
+}
+
+/** A staffing plan that adds people mid-job, in words; null when it doesn't.
+ *  `dayOf`: Day N of the plan for a time; `days`: the job's length. */
+export function rampWarning(co: string, s: CrewSize, dayOf: (t: number) => number, days: number): string | null {
+  if (!s.ramp.length || !s.hands) return null;
+  const both = s.hands.day != null && s.hands.night != null;
+  const parts = s.ramp.map((r) => r.rises.map((x, i) => `${x.n}${i ? " more" : " on the tools"} on Day ${dayOf(x.at)}`).join(" and ") + (both ? ` (${r.kind} shift)` : ""));
+  const job = days <= 4 ? `a ${days}-day job` : Math.round(days / 7) <= 1 ? "a one-week job" : Math.round(days / 7) === 2 ? "a two-week job" : `a ${Math.round(days / 7)}-week job`;
+  const firsts = [s.first.day, s.first.night].filter((x): x is SizeFrom => !!x);
+  const sameDay = firsts.length && firsts.every((x) => dayOf(x.at) === dayOf(firsts[0].at));
+  // The first-shift counts held (before any crew brought for the whole job).
+  const held = (k: "day" | "night") => (s.hands![k] == null ? null : s.hands![k]! - s.more * (s.perCrew?.[k] ?? 0));
+  const counts = both ? `${held("day")} on days, ${held("night")} on nights` : String(held("day") ?? held("night"));
+  return `${co}'s staffing plan adds ${parts.join(", and ")}. People can't be found mid-job on ${job}: this schedule holds ${co} at its ${sameDay ? `Day ${dayOf(firsts[0].at)}` : "first-shift"} count (${counts}).`;
+}
+
+/** Crews with a night shift on site in this plan: nights too for their
+ *  day work adds no one (CREW_RULE). */
+export function nightCrews(plan: Pick<NextPlan, "acts">): Set<string> {
+  return new Set(plan.acts.filter((a) => a.hours > 0 && a.cal !== "day" && !NOT_A_CREW.has(a.crew)).map((a) => a.crew));
 }
 
 /** The one change that pulls the finish in most: running a work order on
- *  the finish path on nights too, or letting it start as soon as its links
- *  allow. Null when neither moves it. */
+ *  the finish path on nights too (by crews already on nights), or letting it
+ *  start as soon as its links allow. Null when neither moves it. */
 export function finishLever(input: { built: AsBuilt; work: AsBuiltWork; milestones: Milestone[]; tz: string; times: ShiftTimes; changes: PlanChange[] }, plan: NextPlan): { change: PlanChange; finish: number; savedH: number; acts: number; hours: number } | null {
   const byId = new Map(plan.acts.map((a) => [a.id, a]));
   const orders = [...new Set(plan.driving.map((id) => byId.get(id)?.order).filter((o): o is string => !!o))];
   let best: { change: PlanChange; finish: number; savedH: number; acts: number; hours: number } | null = null;
   const tries: PlanChange[] = [];
-  const dayOnes = orders.filter((o) => plan.acts.some((a) => a.order === o && a.cal === "day"));
-  if (dayOnes.length) tries.push({ id: "lever:nights", said: "", at: 0, kind: "nights", target: { ids: plan.acts.filter((a) => dayOnes.includes(a.order) && a.cal === "day").map((a) => a.id) }, on: true });
+  const nights = nightCrews(plan);
+  const dayWork = plan.acts.filter((a) => orders.includes(a.order) && a.cal === "day" && nights.has(a.crew));
+  if (dayWork.length) tries.push({ id: "lever:nights", said: "", at: 0, kind: "nights", target: { ids: dayWork.map((a) => a.id) }, on: true });
   for (const o of orders) tries.push({ id: `lever:asap:${o}`, said: "", at: 0, kind: "asap", target: { order: o } });
   for (const t of tries) {
     const p = nextPlan({ ...input, changes: [...input.changes, t] });

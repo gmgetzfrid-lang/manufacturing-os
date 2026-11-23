@@ -8,12 +8,15 @@
 //     and what gets it out (blinds, unbolting, pulling) moved to first thing
 //     once the unit is down, in the order it was really done, so it is back
 //     in time.
-//   - A crew handed more jobs at once than it ever worked at a time: it takes
-//     them that many at a time, the ones that hold the finish first.
+//   - Crews (CREW_RULE, lib/nextPlan): every crew held at its size for the
+//     whole job. Said once, with what this year shows about it (a crew
+//     handed more jobs at once than it ever worked at a time); not a lesson
+//     to leave out.
 // Then the target (this year's planned finish): when the schedule still
 // misses it, the changes that pull the finish in, one at a time, the one
-// that saves the most first: start sooner, nights too, a second crew. More
-// time is said only when none of them closes the gap.
+// that saves the most first: start sooner, nights too (by a night shift
+// already on site), another crew for the whole job. More time is said only
+// when none of them closes the gap.
 //
 // Pure: no database here.
 
@@ -24,8 +27,8 @@ import { shiftKey } from "@/lib/asBuiltWork";
 import type { ShiftTimes } from "@/lib/shiftReport";
 import { crewFlows, overloaded, type CrewFlow } from "@/lib/crewFlow";
 import { causeOfText } from "@/lib/postEventReview";
-import { nextPlan, OFFSITE_STEP, type NextPlan, type PlanChange } from "@/lib/nextPlan";
-export { OFFSITE_STEP };
+import { nextPlan, nightCrews, dayNumber, mostAtOnce, CREW_RULE, OFFSITE_STEP, type NextPlan, type PlanChange } from "@/lib/nextPlan";
+export { OFFSITE_STEP, mostAtOnce };
 
 const H = 3_600_000;
 const r1 = (n: number) => Math.round(n * 10) / 10;
@@ -52,6 +55,8 @@ export interface Lesson {
   /** The activities it is about (as the plan names them after the change). */
   acts: string[];
   crew?: string;
+  /** The schedule's own rule, said here: nothing to leave out. */
+  rule?: boolean;
 }
 
 type Input = { built: AsBuilt; work: AsBuiltWork; milestones: Milestone[]; tz: string; times: ShiftTimes };
@@ -180,34 +185,30 @@ export function planLessons(input: Input & { notes: MilestoneNote[]; base: NextP
   // (Links the work didn't wait on are the schedule's own rule now: it
   // follows the order the work was really done in.)
 
-  // ── A crew handed more at once than it worked ──
+  // ── Crews: every crew held at its size (CREW_RULE) ──
+  // Said once, with what this year shows: a crew handed more jobs at once
+  // than it ever worked at a time.
   const flows = input.flows ?? crewFlows(built, work, new Map(input.milestones.filter((m) => m.id).map((m) => [m.id!, m.dependsOn ?? []])));
-  for (const f of flows) {
-    const c = work.crews.find((x) => x.crew === f.crew);
-    // What it really worked at once: at its busiest moment, or in its busiest shift.
-    const k = Math.max(1, f.peak.working.length, c?.mostMoved ?? 1);
-    const mine = base.acts.filter((a) => a.crew === f.crew && a.hours > 0);
-    const most = mostAtOnce(mine);
-    if (f.peak.open <= k || !(overloaded(f) || f.waitH >= 24)) continue;
-    out.push({
-      id: `crew:${f.crew}`, area: "contractors", crew: f.crew, acts: mine.map((a) => a.id),
-      title: `${f.crew}: ${k} job${k === 1 ? "" : "s"} at a time`,
-      saw: `${f.peak.open} jobs sat open for ${f.crew} at once this year, and it never worked more than ${k} at a time${f.plannedPeak ? `; the plan gave it ${f.plannedPeak}` : ""}. Its jobs waited ${Math.round(f.waitH)} h in all.`,
-      does: most > k ? `${f.crew} takes its jobs ${k} at a time, the ones that hold the finish first (the plan as it stands gives it ${most} at once).` : `${f.crew} takes its jobs ${k} at a time, the ones that hold the finish first.`,
-      changes: [change(`crew:${f.crew}:jobs`, { kind: "jobs", crew: f.crew, n: k })],
+  const sizes = Object.entries(base.sizes);
+  if (sizes.length) {
+    const saw: string[] = [];
+    for (const f of flows) {
+      const c = work.crews.find((x) => x.crew === f.crew);
+      // What it really worked at once: at its busiest moment, or in its busiest shift.
+      const k = Math.max(1, f.peak.working.length, c?.mostMoved ?? 1);
+      if (f.peak.open <= k || !(overloaded(f) || f.waitH >= 24)) continue;
+      saw.push(`${f.peak.open} jobs sat open for ${f.crew} at once this year, and it never worked more than ${k} at a time${f.plannedPeak ? ` (the plan gave it ${f.plannedPeak})` : ""}; its jobs waited ${Math.round(f.waitH)} h in all.`);
+    }
+    const n = (from: string) => sizes.filter(([, s]) => s.from === from).length;
+    const counts = [[n("plan"), "from a staffing plan"], [n("counted"), "from a head count"], [n("worked"), "from the most jobs each worked at once this year"], [n("person"), "set by you"]].filter(([k]) => Number(k) > 0).map(([k, w]) => `${k} ${w}`);
+    out.unshift({
+      id: "crews:held", area: "contractors", rule: true, acts: [], changes: [],
+      title: "Every crew held at its size for the whole job",
+      saw: [...saw, `${sizes.length} crew${sizes.length === 1 ? "" : "s"} sized: ${counts.join(", ")}. Each one's size and where it came from is under Crews below.`].join(" "),
+      does: CREW_RULE,
     });
   }
   return out;
-}
-
-/** The most activities open at one moment. */
-export function mostAtOnce(acts: Array<{ start: number; finish: number }>): number {
-  const ev: Array<[number, number]> = [];
-  for (const a of acts) if (a.finish > a.start) { ev.push([a.start, 1]); ev.push([a.finish, -1]); }
-  ev.sort((x, y) => x[0] - y[0] || x[1] - y[1]);
-  let n = 0, best = 0;
-  for (const [, d] of ev) { n += d; best = Math.max(best, n); }
-  return best;
 }
 
 /** The changes the lessons put in (those not left out). */
@@ -220,7 +221,7 @@ export function lessonChanges(lessons: Lesson[], skipped: Set<string>): PlanChan
 export function lessonEffects(input: Input, lessons: Lesson[], skipped: Set<string>, person: PlanChange[], plan: NextPlan): Record<string, number> {
   const out: Record<string, number> = {};
   for (const l of lessons) {
-    if (skipped.has(l.id)) continue;
+    if (skipped.has(l.id) || l.rule) continue;
     const others = lessonChanges(lessons, new Set([...skipped, l.id]));
     const without = nextPlan({ ...input, changes: [...others, ...(l.honest ?? []), ...person] });
     out[l.id] = r1((without.finish - plan.finish) / H);
@@ -230,9 +231,33 @@ export function lessonEffects(input: Input, lessons: Lesson[], skipped: Set<stri
 
 export interface Lever { change: PlanChange; words: string; savedH: number; finish: number }
 
+/** Another crew brought for the whole job (a "more" change), in words, from
+ *  the plan with it in: its days on site, what it adds every shift, and what
+ *  that costs in man-hours over the whole job (CREW_RULE: never mid-job). */
+export function moreWords(p: NextPlan, crew: string, tz: string): string {
+  const s = p.sizes[crew];
+  const busy = (p.jobs[crew] ?? []).map((n) => n > 0);
+  const i0 = busy.indexOf(true), i1 = busy.lastIndexOf(true);
+  if (!s || i0 < 0) return `Bring another ${crew} crew for the whole job`;
+  const day = (i: number) => dayNumber(p, p.shifts[i].start, tz);
+  const span = `Day ${day(i0)} to Day ${day(i1)}`;
+  // Every shift from its first to its last that it works.
+  const on = p.shifts.slice(i0, i1 + 1).filter((w) => (w.kind === "night" ? s.works.night : s.works.day));
+  if (s.hands && s.perCrew) {
+    const add = { day: s.hands.day != null ? s.perCrew.day ?? 0 : 0, night: s.hands.night != null ? s.perCrew.night ?? 0 : 0 };
+    const mh = on.reduce((n, w) => n + (w.kind === "night" ? add.night : add.day) * ((w.end - w.start) / H), 0);
+    const what = [add.day ? `${add.day} more on the tools every day shift` : "", add.night ? `${add.night} more every night shift` : ""].filter(Boolean).join(" and ");
+    return `Bring another ${crew} crew for the whole job, ${span}: ${what} (${Math.round(mh).toLocaleString("en-US")} man-hours)`;
+  }
+  const n = s.jobs ?? 1;
+  return `Bring another ${crew} crew for the whole job, ${span}: ${n} jobs at a time instead of ${n - 1}, one more crew on each of its ${on.length} shifts (its hands aren't known)`;
+}
+
 /** What pulls the finish in to `target`, one change at a time, the one that
  *  saves the most first; stops at the target or when nothing saves half an
- *  hour. `orderName`: each work order's name. */
+ *  hour. `orderName`: each work order's name. No crew grows mid-job: nights
+ *  too only by a crew's night shift already on site, and any more crew is
+ *  brought for the whole job (CREW_RULE). */
 export function toTarget(input: Input, changes: PlanChange[], plan: NextPlan, target: number, orderName: (key: string) => string): { levers: Lever[]; finish: number; shortH: number } {
   const levers: Lever[] = [];
   let cur = plan, list = [...changes];
@@ -240,15 +265,17 @@ export function toTarget(input: Input, changes: PlanChange[], plan: NextPlan, ta
     const byId = new Map(cur.acts.map((a) => [a.id, a]));
     const path = cur.driving.map((id) => byId.get(id)).filter((a): a is NonNullable<typeof a> => !!a);
     const orders = [...new Set(path.map((a) => a.order))];
-    const tries: Array<{ c: PlanChange; words: string }> = [];
+    const nights = nightCrews(cur);
+    const tries: Array<{ c: PlanChange; words: string; crew?: string }> = [];
     for (const o of orders) {
       if (path.some((a) => a.order === o && a.floor != null && a.start <= a.floor + 60_000)) tries.push({ c: change(`lever:asap:${o}:${round}`, { kind: "asap", target: { order: o } }), words: `Start ${orderName(o)} as soon as what comes before it is done, not on this year's planned date` });
-      const days = cur.acts.filter((a) => a.order === o && a.cal === "day");
-      if (days.length) tries.push({ c: change(`lever:nights:${o}:${round}`, { kind: "nights", target: { ids: days.map((a) => a.id) }, on: true }), words: `Put a night crew on ${orderName(o)} (its ${r1(days.reduce((n, a) => n + a.hours, 0))} h of work runs days and nights, 12-hour shifts)` });
+      const days = cur.acts.filter((a) => a.order === o && a.cal === "day" && nights.has(a.crew));
+      const by = [...new Set(days.map((a) => a.crew))];
+      if (days.length) tries.push({ c: change(`lever:nights:${o}:${round}`, { kind: "nights", target: { ids: days.map((a) => a.id) }, on: true }), words: `Run ${orderName(o)} on nights too, with ${by.join(" and ")}'s night shift already on site (its ${r1(days.reduce((n, a) => n + a.hours, 0))} h of work runs days and nights, no one added)` });
     }
     for (const crew of new Set(path.filter((a) => a.heldForCrew).map((a) => a.crew))) {
-      const n = cur.jobsCap[crew]; if (!n) continue;
-      tries.push({ c: change(`lever:jobs:${crew}:${round}`, { kind: "jobs", crew, n: n + 1 }), words: `Another ${crew} crew: ${n + 1} jobs at a time instead of ${n}` });
+      if (!cur.sizes[crew]) continue;
+      tries.push({ c: change(`lever:more:${crew}:${round}`, { kind: "more", crew, crews: 1 }), words: "", crew });
     }
     let best: { p: NextPlan; t: (typeof tries)[number] } | null = null;
     for (const t of tries) {
@@ -256,7 +283,8 @@ export function toTarget(input: Input, changes: PlanChange[], plan: NextPlan, ta
       if (p.finish < (best?.p.finish ?? cur.finish) - 30 * 60_000) best = { p, t };
     }
     if (!best) break;
-    levers.push({ change: best.t.c, words: best.t.words, savedH: r1((cur.finish - best.p.finish) / H), finish: best.p.finish });
+    const words = best.t.crew ? moreWords(best.p, best.t.crew, input.tz) : best.t.words;
+    levers.push({ change: best.t.c, words, savedH: r1((cur.finish - best.p.finish) / H), finish: best.p.finish });
     list = [...list, best.t.c]; cur = best.p;
   }
   return { levers, finish: cur.finish, shortH: r1(Math.max(0, cur.finish - target) / H) };

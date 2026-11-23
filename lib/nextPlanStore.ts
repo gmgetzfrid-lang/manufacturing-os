@@ -41,6 +41,7 @@ export function cleanChange(v: unknown): PlanChange | null {
     }
     case "crew": { const crew = str(c.crew, 80); const d = c.day == null ? null : num(c.day), n = c.night == null ? null : num(c.night); return crew && (d == null || (d >= 0 && d <= 2000)) && (n == null || (n >= 0 && n <= 2000)) ? { ...base, kind: "crew", crew, day: d == null ? null : Math.round(d), night: n == null ? null : Math.round(n) } : null; }
     case "jobs": { const n = num(c.n); const crew = str(c.crew, 80); return crew && n != null && n >= 0 && n <= 200 ? { ...base, kind: "jobs", crew, n: Math.round(n) } : null; }
+    case "more": { const n = num(c.crews); const crew = str(c.crew, 80); return crew && n != null && n >= 1 && n <= 20 ? { ...base, kind: "more", crew, crews: Math.round(n) } : null; }
     case "skip": { const l = str(c.lesson, 200); return l ? { ...base, kind: "skip", lesson: l } : null; }
     case "heads": { const n = num(c.n), s = num(c.shift); const crew = str(c.crew, 80); return crew && n != null && n >= 0 && n <= 2000 && s != null && s >= 0 && s < 2000 ? { ...base, kind: "heads", crew, shift: Math.round(s), n: Math.round(n) } : null; }
     default: return null;
