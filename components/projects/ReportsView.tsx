@@ -47,6 +47,7 @@ import { useProjectWord } from "@/components/projects/ProjectTypeContext";
 import { useWoClasses, passes, WoClassSelects } from "@/components/projects/WoClassFilter";
 import { typeLabel, unitLabel, NONE } from "@/lib/woClass";
 import { appAlert } from "@/components/providers/DialogProvider";
+import { requestSetup } from "@/lib/scheduleSetup";
 
 interface Props {
   milestones: Milestone[];
@@ -491,13 +492,17 @@ export default function ReportsView(p: Props) {
       {cover === "shift" && shiftRow}
     </>
   );
-  const lhRow = lh && sel !== "sheet" && sel !== "timelog" && !(sel === "hourly" && format === "xlsx") ? (
-    row("Letterhead", <>
+  // The letterhead it prints on, or plain pages (the app default) and where
+  // to add one, right here: Setup opens at Printed reports, in place.
+  const lhRow = sel !== "sheet" && sel !== "timelog" && !(sel === "hourly" && format === "xlsx") ? (
+    lh ? row("Letterhead", <>
       <label className="inline-flex items-center gap-2 text-[12.5px] cursor-pointer select-none">
         <input type="checkbox" checked={useLh} onChange={(e) => setUseLh(e.target.checked)} className="w-4 h-4 accent-[var(--color-text)]" />
         <span className="font-semibold">{lh.name || "Company letterhead"}</span>
       </label>
-    </>)
+    </>) : row("Letterhead", <span className="text-[12.5px] text-[var(--color-text-muted)]">
+      Plain pages, the app default.{p.canEdit && <> <button type="button" onClick={() => requestSetup("print")} className="font-semibold text-[var(--color-accent-text)] hover:underline">Add the company letterhead</button></>}
+    </span>)
   ) : null;
   const primary = "inline-flex items-center gap-1.5 h-9 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[13px] font-bold hover:bg-[var(--color-accent-hover)] disabled:opacity-50";
   const secondary = "inline-flex items-center gap-1.5 h-9 px-3.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50";

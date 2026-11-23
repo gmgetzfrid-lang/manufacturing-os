@@ -55,7 +55,13 @@ interface Props {
   /** Given: what's missing is reported here, and the page shows it on its
    *  first card (SetupNotice) instead of this banner. */
   onMissing?: (missing: SetupItem[]) => void;
+  /** false: only report what's missing; another copy on the page (the
+   *  project page's own, on every tab) opens the wizard when asked. */
+  listen?: boolean;
 }
+
+/** Fired when the setup wizard closes, so lists of what the project needs re-read. */
+export const SETUP_CLOSED_EVENT = "schedule-setup:closed";
 
 /** What's still to set up, as a row on a card: the reports hang on it. */
 export function SetupNotice({ missing, canManage }: { missing: SetupItem[]; canManage: boolean }) {
@@ -82,7 +88,7 @@ export function SetupNotice({ missing, canManage }: { missing: SetupItem[]; canM
 
 /** Setup › Unit & equipment done: the unit picked, every work order's
  *  equipment confirmed (a codebook with no units: nothing to pick). */
-function useEquipmentSet(p: Props): boolean | null {
+function useEquipmentSet(p: Pick<Props, "projectId" | "milestones">): boolean | null {
   const orgId = p.milestones.find((m) => m.orgId)?.orgId ?? null;
   const eq = useProjectEquipment(orgId, p.projectId, p.milestones);
   if (!orgId) return true;
@@ -102,8 +108,9 @@ function useRolesSet(projectId: string): boolean | null {
   return set;
 }
 
-/** The banner (while anything required is missing) and the wizard. */
-export function ScheduleSetup(p: Props) {
+/** Every setup step and where it stands (the wizard's list, the Setup
+ *  button's count, what this project needs). */
+export function useSetupItems(p: Pick<Props, "projectId" | "timezone" | "milestones" | "hasBaseline">): { items: SetupItem[]; critical: CriticalMode | null } {
   const saved = useShiftTimesSaved(p.projectId);
   const critical = useCriticalMode(p.projectId);
   const st = useShiftTimesState(p.projectId);
@@ -118,13 +125,21 @@ export function ScheduleSetup(p: Props) {
   const items = useMemo(() => setupChecklist({
     timezoneSet: !!p.timezone, shiftTimesSaved: saved, criticalChosen: critical != null, hasBaseline: p.hasBaseline, nightDecided, letterheadSet, typeSet, equipmentSet, manpowerSet: mpSet, rolesSet,
   }), [p.timezone, saved, critical, p.hasBaseline, nightDecided, letterheadSet, typeSet, equipmentSet, mpSet, rolesSet]);
+  return { items, critical };
+}
+
+/** The banner (while anything required is missing) and the wizard. */
+export function ScheduleSetup(p: Props) {
+  const { items, critical } = useSetupItems(p);
   const missing = missingRequired(items);
+  const listen = p.listen !== false;
   // Opens by itself for someone who can fix it — only once everything has
   // been read (nothing "checking"), and only once on this device.
   const [open, setOpen] = useState<SetupItemId | null>(null);
   // Opened at a step from elsewhere on the page (the calendar's "Night
   // crews"), on whichever tab it is: this part is on all of them.
   useEffect(() => {
+    if (!listen) return;
     // Asked for from another tab (Close-out, the header) before this was on the page.
     const asked = takePendingSetup();
     // eslint-disable-next-line react-hooks/set-state-in-effect -- opens once, at the step asked for
@@ -135,7 +150,7 @@ export function ScheduleSetup(p: Props) {
   // eslint-disable-next-line react-hooks/exhaustive-deps -- the step asked for; the first missing one is only a fallback
   }, []);
   const settled = !items.some((i) => i.checking);
-  const first = p.canManage && settled ? missing[0]?.id : undefined;
+  const first = listen && p.canManage && settled ? missing[0]?.id : undefined;
   useEffect(() => {
     if (!first) return;
     try {
@@ -178,15 +193,7 @@ export function ScheduleSetup(p: Props) {
 
 /** The always-there way back in: "Setup ✓" / "Setup · 2 to do". */
 export function ScheduleSetupButton(p: Props) {
-  const saved = useShiftTimesSaved(p.projectId);
-  const critical = useCriticalMode(p.projectId);
-  const st = useShiftTimesState(p.projectId);
-  const nightDecided = st.loaded ? st.times.nightJobs !== undefined : null;
-  const letterheadSet = !!useLetterhead(p.projectId).lh;
-  const equipmentSet = useEquipmentSet(p);
-  const mpSet = useStaffingSet(p.projectId, p.milestones);
-  const rolesSet = useRolesSet(p.projectId);
-  const items = setupChecklist({ timezoneSet: !!p.timezone, shiftTimesSaved: saved, criticalChosen: critical != null, hasBaseline: p.hasBaseline, nightDecided, letterheadSet, typeSet: projectTypeSet(st.times.projectType), equipmentSet, manpowerSet: mpSet, rolesSet });
+  const { items, critical } = useSetupItems(p);
   const todo = toDo(items).length;
   const [open, setOpen] = useState(false);
   return (
@@ -273,7 +280,7 @@ function SetupWizard({ items: given, start, critical, onClose: close, ...rest }:
   const [tzSaved, setTzSaved] = useState<string | null>(null);
   const p = { ...rest, timezone: tzSaved ?? rest.timezone, onProjectChanged: () => undefined };
   const items = given.map((i) => (i.id === "timezone" && tzSaved ? { ...i, done: true } : i));
-  const onClose = () => { close(); if (tzSaved) rest.onProjectChanged(); };
+  const onClose = () => { close(); if (tzSaved) rest.onProjectChanged(); window.dispatchEvent(new CustomEvent(SETUP_CLOSED_EVENT, { detail: { projectId: rest.projectId } })); };
   const [at, setAt] = useState<SetupItemId>(start);
   const idx = items.findIndex((i) => i.id === at);
   const item = items[idx];

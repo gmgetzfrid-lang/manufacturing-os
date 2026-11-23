@@ -22,10 +22,15 @@ import { useShiftTimes } from "@/lib/shiftTimesStore";
 import { gatherProjectSnapshot } from "@/lib/projectSnapshot";
 import type { ProjectStateSnapshot } from "@/lib/projectHealth";
 import { listChecklists, listChecklistItems, computeChecklistProgress, type Checklist } from "@/lib/checklists";
-import { listTurnoverItems, seedTurnoverItems, addTurnoverItem, updateTurnoverItem, attachTurnoverDocument, reviewTurnoverItem, type TurnoverItem } from "@/lib/turnover";
+import { listTurnoverItems, seedTurnoverItems, addTurnoverItem, updateTurnoverItem, attachTurnoverDocument, reviewTurnoverItem, seedsForJobKind, type TurnoverItem } from "@/lib/turnover";
 import { uploadProjectFile, projectFileHome, type ProjectFileHome } from "@/lib/projectUpload";
 import ProjectFilePlace from "@/components/projects/ProjectFilePlace";
-import { loadCloseoutSettings, saveCloseoutSettings, type CloseoutSettings } from "@/lib/closeoutSettings";
+import { loadCloseoutSettings, saveCloseoutSettings, savePssrNeeded, CLOSEOUT_CHANGED, type CloseoutSettings } from "@/lib/closeoutSettings";
+import { pssrSource, turnoverSource, JOB_SIZES, type Source } from "@/lib/requirementSource";
+import { saveJobKind } from "@/lib/projectStamps";
+import { loadAfeHistory, readAfe, type Afe, type AfeRevision } from "@/lib/costRevisions";
+import { AfeEditor } from "@/components/projects/cost/CostEdits";
+import { SourceLine, NeededChoice } from "@/components/projects/NeedParts";
 import { workSummary, vsPlanWords } from "@/lib/closeoutStatus";
 import { phaseStats, chartKey, shiftLabel, behindAt, noScheduleWords, slipWords, slipStepLine, type CostLine, type CostEntry, type SlipStep } from "@/lib/phaseReport";
 import { buildLookBack, lostWords, rootWords, whileWaiting, finishChain, causeOf, ownCause, CAUSE_LABEL, type Cause as CauseKind, type StepLook, type LookBack } from "@/lib/lookBack";
@@ -52,9 +57,26 @@ import { tryUpload } from "@/lib/uploadRetry";
 import { fileSize } from "@/components/projects/cost/FilePreview";
 
 const money = (n: number) => `$${Math.round(n).toLocaleString("en-US")}`;
+// Where the punch list and change order steps come from: the app's own rule.
+const PUNCH_RULE: Source = { kind: "default", note: "open punch items count as left to close" };
+const CO_RULE: Source = { kind: "default", note: "change orders waiting on a decision count as left to close" };
 const upper = (x: string) => (x ? x[0].toUpperCase() + x.slice(1) : x);
 
-type PssrList = { list: Checklist; satisfied: number; applicable: number };
+export type PssrList = { list: Checklist; satisfied: number; applicable: number };
+
+/** Every PSSR on the project, with how far each is (a project in phases
+ *  has one a phase). null: couldn't be read. */
+export async function readPssrs(orgId: string, projectId: string): Promise<PssrList[] | null> {
+  const lists = await listChecklists(orgId, projectId).catch(() => null);
+  if (!lists) return null;
+  const mine = lists.filter((c) => c.kind === "pssr" && c.status !== "void");
+  return Promise.all(mine.map(async (c) => { const pr = computeChecklistProgress(await listChecklistItems(c.id)); return { list: c, satisfied: pr.satisfied, applicable: pr.applicable }; })).catch(() => null);
+}
+
+// Open Close-out on its post-event review (What this project needs' "Open
+// the review"): asked for before the tab is on the page, taken once.
+let pendingView: "steps" | "review" | null = null;
+export function openCloseoutView(v: "steps" | "review"): void { pendingView = v; }
 
 // ── What's left to close a job once its work is done ──
 // One reading for the close-out's steps and the project page's band, so
@@ -65,7 +87,7 @@ export interface CloseItem { id: CloseItemId; name: string; detail: string }
 /** The close-out steps after the work: open ones in order, then the clear ones. */
 export interface CloseOpen { open: CloseItem[]; clear: CloseItem[] }
 
-const listOk = (x: PssrList | undefined) => !!x && (x.list.status === "complete" || (x.applicable > 0 && x.satisfied === x.applicable));
+export const listOk = (x: PssrList | undefined) => !!x && (x.list.status === "complete" || (x.applicable > 0 && x.satisfied === x.applicable));
 const joinNames = (xs: string[]) => (xs.length <= 1 ? xs.join("") : `${xs.slice(0, -1).join(", ")} and ${xs[xs.length - 1]}`);
 
 /** Each phase's PSSR (or the job's): clear, and in words. */
@@ -114,14 +136,12 @@ export function useCloseOpen(orgId: string | undefined, projectId: string | unde
     if (!on || !orgId || !projectId) return;
     let live = true;
     void (async () => {
-      const [lists, settings, items, snap] = await Promise.all([
-        listChecklists(orgId, projectId).catch(() => null),
+      const [pssrs, settings, items, snap] = await Promise.all([
+        readPssrs(orgId, projectId),
         loadCloseoutSettings(projectId).catch(() => ({} as CloseoutSettings)),
         listTurnoverItems(orgId, projectId).catch(() => null),
         gatherProjectSnapshot(orgId, projectId).catch(() => null),
       ]);
-      const mine = (lists ?? []).filter((c) => c.kind === "pssr" && c.status !== "void");
-      const pssrs = lists ? await Promise.all(mine.map(async (c) => { const pr = computeChecklistProgress(await listChecklistItems(c.id)); return { list: c, satisfied: pr.satisfied, applicable: pr.applicable }; })).catch(() => null) : null;
       if (live) setV(closeOpenOf({ phases, pssrs, settings, items, snap }));
     })();
     return () => { live = false; };
@@ -169,9 +189,14 @@ export function PathSteps({ rows }: { rows: PathRow[] }) {
   );
 }
 
-export default function CloseoutTab({ orgId, projectId, projectName, projectStatus, jobKind, tz, phases, uid, userEmail, canManage, onTab, onPickPhase, onLessons, onComplete, onOpen }: {
+export default function CloseoutTab({ orgId, projectId, projectName, projectStatus, jobKind, tz, phases, uid, userEmail, canManage, onTab, onPickPhase, onLessons, onComplete, onOpen, madeAt, nameOf, onJobKind }: {
   orgId: string; projectId: string; projectName: string; projectStatus: string; jobKind: string | null; tz: string;
   phases: ProjectPhase[]; uid: string; userEmail: string | null; canManage: boolean;
+  /** When the project was made, and a person's name from their id: where the turnover list came from. */
+  madeAt?: string | null;
+  nameOf?: (uid: string | null | undefined) => string | null;
+  /** The job size changed here (it sets the usual turnover list). */
+  onJobKind?: (kind: string) => void;
   /** Go to another tab (Quality's punch list, Costs, Reports). */
   onTab: (tab: string) => void;
   /** Pick a phase on the project (to import its schedule on Plan). */
@@ -194,6 +219,9 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
   const [pssrs, setPssrs] = useState<PssrList[] | undefined>(undefined);
   const [items, setItems] = useState<TurnoverItem[] | null>(null);
   const [settings, setSettings] = useState<CloseoutSettings>({});
+  // The AFE and its last change: where the final cost is measured from, and who set it.
+  const [afe, setAfe] = useState<{ afe: Afe | null; last: AfeRevision | null } | null>(null);
+  const [afeEdit, setAfeEdit] = useState(false);
   const [tick, setTick] = useState(0);
   const reload = () => setTick((t) => t + 1);
   const [err, setErr] = useState<string | null>(null);
@@ -206,7 +234,8 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
   const [newDoc, setNewDoc] = useState("");
   const [phasePick, setPhasePick] = useState<string | null>(null);
   // The close-out's pages: the steps to close, and the post-event review.
-  const [view, setView] = useState<"steps" | "review">("steps");
+  const [view, setView] = useState<"steps" | "review">(() => pendingView ?? "steps");
+  useEffect(() => { pendingView = null; }, []);
   // Where attached files are saved: the project's library, else one picked here.
   const [home, setHome] = useState<ProjectFileHome | null>(null);
   // The shift meetings' head counts, and each company's bid (lib/manpower).
@@ -215,8 +244,16 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
   useEffect(() => {
     let live = true;
     loadShiftRecords(projectId).then((r) => { if (live) setRecords(r); }).catch(() => { if (live) setRecords(new Map()); });
+    void Promise.all([readAfe(projectId).catch(() => null), loadAfeHistory(projectId).then((h) => h.history).catch(() => [] as AfeRevision[])])
+      .then(([a, h]) => { if (live) setAfe({ afe: a, last: [...h].reverse().find((x) => x.at) ?? null }); });
     return () => { live = false; };
   }, [projectId, tick]);
+  // A close-out setting changed elsewhere on the page (What this project needs): read again.
+  useEffect(() => {
+    const on = () => setTick((t) => t + 1);
+    window.addEventListener(CLOSEOUT_CHANGED, on);
+    return () => window.removeEventListener(CLOSEOUT_CHANGED, on);
+  }, []);
 
   useEffect(() => {
     let live = true;
@@ -289,7 +326,7 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
   const tiedIds = new Set(Object.values(byPhase).map((v) => v.checklistId).filter(Boolean) as string[]);
   // A PSSR uploaded before phases were set up, not tied to one yet.
   const untied = phases.length ? (pssrs ?? []).filter((x) => !tiedIds.has(x.list.id)) : [];
-  const phasePssr = (id: string) => { const v = byPhase[id]; return { notNeeded: !!v?.notNeeded, list: v?.checklistId ? (pssrs ?? []).find((x) => x.list.id === v.checklistId) : undefined }; };
+  const phasePssr = (id: string) => { const v = byPhase[id]; return { notNeeded: !!v?.notNeeded, list: v?.checklistId ? (pssrs ?? []).find((x) => x.list.id === v.checklistId) : undefined, source: pssrSource(v, true) }; };
   const pssrNotNeeded = settings.pssr === "not_needed";
   const pssr = pssrs === undefined ? undefined : pssrs[0] ?? null;
   const pssrOk = phases.length
@@ -387,13 +424,14 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
               {ok && <Check className="inline w-3.5 h-3.5 mr-1 -mt-0.5 text-[var(--state-released)]" />}
               {p.name}
             </span>
-            <span className="min-w-0 flex-1 basis-32 text-[var(--color-text-muted)]">{x.notNeeded ? "Not needed" : x.list ? `${x.list.list.title}: ${x.list.satisfied} of ${x.list.applicable} items done${x.list.list.status === "complete" ? ", complete" : ""}` : "Not uploaded"}</span>
+            <span className="min-w-0 flex-1 basis-32 text-[var(--color-text-muted)]">
+              {x.notNeeded ? "Not needed" : x.list ? `${x.list.list.title}: ${x.list.satisfied} of ${x.list.applicable} items done${x.list.list.status === "complete" ? ", complete" : ""}` : "Not uploaded"}
+              {/* Changed for this project: who said so, and when. */}
+              {x.source.kind !== "default" && <SourceLine source={x.source} tz={tz} />}
+            </span>
             {x.list && <button type="button" onClick={() => onTab("quality")} className={btn}>Open</button>}
-            {!x.list && !x.notNeeded && canManage && <>
-              <button type="button" onClick={() => { setErr(null); setUploading(p.id); }} className={main === "pssr" && firstPssrMissing?.id === p.id ? pri : btn}><UploadCloud className="w-4 h-4" /> Upload</button>
-              <button type="button" disabled={!!busy} onClick={() => void run("pssr", () => saveCloseoutSettings(projectId, { pssrByPhase: { [p.id]: { notNeeded: true, checklistId: null } } }))} className={quiet}>Not needed</button>
-            </>}
-            {x.notNeeded && canManage && <button type="button" disabled={!!busy} onClick={() => void run("pssr", () => saveCloseoutSettings(projectId, { pssrByPhase: { [p.id]: { notNeeded: false, checklistId: null } } }))} className={quiet}>Needed after all</button>}
+            {!x.list && !x.notNeeded && canManage && <button type="button" onClick={() => { setErr(null); setUploading(p.id); }} className={main === "pssr" && firstPssrMissing?.id === p.id ? pri : btn}><UploadCloud className="w-4 h-4" /> Upload</button>}
+            {!x.list && canManage && <NeededChoice needed={!x.notNeeded} what={`${p.name}'s PSSR`} disabled={!!busy} onChange={(v) => void run("pssr", () => savePssrNeeded(projectId, p.id, v, userEmail))} />}
           </div>
         );
       })}
@@ -441,22 +479,22 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
     },
     phases.length ? {
       state: stateAt(1), title: <>PSSR for each phase <HelpTooltip>Pre-startup safety review. Each phase starts up on its own, so each has its own PSSR. Upload it as a PDF: it is saved to the project&rsquo;s documents and read into items you check off. Or mark it not needed.</HelpTooltip></>,
-      detail: pssrs === undefined ? "Checking…" : "Upload each phase's PSSR, or mark it not needed.",
+      detail: pssrs === undefined ? "Checking…" : <>Upload each phase&rsquo;s PSSR, or mark it not needed for this project.<SourceLine source={{ kind: "default", note: "each phase needs its own PSSR, because the project is split into phases" }} tz={tz} /></>,
       children: pssrRows,
     } : {
       state: stateAt(1), title: <>PSSR <HelpTooltip>Pre-startup safety review. Upload it as a PDF: it is saved to the project&rsquo;s documents and read into items you check off. Or mark it not needed for this job.</HelpTooltip></>,
-      detail: pssrNotNeeded ? "Not needed for this job." : pssr === undefined ? "Checking…" : pssr ? `${pssr.list.title}: ${pssr.satisfied} of ${pssr.applicable} items done${pssr.list.status === "complete" ? ", complete" : ""}`
-        : "Upload the PSSR, or mark it not needed.",
-      action: pssrNotNeeded ? (canManage ? <button type="button" disabled={!!busy} onClick={() => void run("pssr", () => saveCloseoutSettings(projectId, { pssr: null }))} className={quiet}>Needed after all</button> : null)
-        : pssr ? <button type="button" onClick={() => onTab("quality")} className={btn}>Open <ArrowRight className="w-3.5 h-3.5" /></button>
-          : canManage ? <span className="flex items-center gap-3 flex-wrap">
-            <button type="button" onClick={() => { setErr(null); setUploading("all"); }} className={main === "pssr" ? pri : btn}><UploadCloud className="w-4 h-4" /> Upload PSSR</button>
-            <button type="button" disabled={!!busy} onClick={() => void run("pssr", () => saveCloseoutSettings(projectId, { pssr: "not_needed" }))} className={quiet}>Not needed</button>
-          </span> : null,
+      detail: <>{pssrNotNeeded ? "Not needed for this project." : pssr === undefined ? "Checking…" : pssr ? `${pssr.list.title}: ${pssr.satisfied} of ${pssr.applicable} items done${pssr.list.status === "complete" ? ", complete" : ""}`
+        : "Upload the PSSR, or mark it not needed for this project."}
+        <SourceLine source={pssrSource({ notNeeded: pssrNotNeeded, at: settings.pssrAt ?? null, by: settings.pssrBy ?? null }, false)} tz={tz} /></>,
+      action: pssr ? <button type="button" onClick={() => onTab("quality")} className={btn}>Open <ArrowRight className="w-3.5 h-3.5" /></button>
+        : canManage ? <span className="flex items-center gap-3 flex-wrap">
+          {!pssrNotNeeded && <button type="button" onClick={() => { setErr(null); setUploading("all"); }} className={main === "pssr" ? pri : btn}><UploadCloud className="w-4 h-4" /> Upload PSSR</button>}
+          <NeededChoice needed={!pssrNotNeeded} what="The PSSR" disabled={!!busy} onChange={(v) => void run("pssr", () => savePssrNeeded(projectId, null, v, userEmail))} />
+        </span> : null,
     },
     {
       state: stateAt(2), title: <>Turnover documents {items && items.length > 0 && <HelpTooltip>Switch off the documents this job doesn&rsquo;t need. Attach each one as it comes in, then accept it.</HelpTooltip>}</>,
-      detail: !items ? "Checking…" : items.length === 0 ? "None set for this job yet." : `${inCount} of ${required.length} required in`,
+      detail: !items ? "Checking…" : <>{required.length === 0 ? "None needed for this project yet." : `${inCount} of ${required.length} needed in and accepted`}<SourceLine source={turnoverSource(items, madeAt ?? null, nameOf)} tz={tz} /></>,
       children: items && (
         <div className="mt-2 divide-y divide-[var(--color-border)] border-y border-[var(--color-border)]">
           {/* Where attached files go: asked once, picked by the person, changeable here. */}
@@ -473,7 +511,18 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
           ))}
           {canManage && (
             <div className="py-2 flex items-center gap-2 flex-wrap">
-              {items.length === 0 && <button type="button" disabled={!!busy} onClick={() => void run("seed", async () => { const r = await seedTurnoverItems({ orgId, projectId, jobKind, actor }); return { ok: r.ok, error: r.error }; })} className={btn}>Start from the usual list</button>}
+              {items.length === 0 && <>
+                {/* The usual list is sized by the job: pick the size here, then start from it. */}
+                <label className="inline-flex items-center gap-2 text-[14px] text-[var(--color-text)]">
+                  <span>Usual list for a</span>
+                  <select value={jobKind ?? "standard"} disabled={!!busy} aria-label="Job size"
+                    onChange={(e) => { const k = e.target.value as "small" | "standard" | "capital"; void run("jobsize", async () => { const r = await saveJobKind(projectId, k, userEmail); if (r.ok) onJobKind?.(k); return r; }); }}
+                    className="h-9 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[14px] font-semibold">
+                    {JOB_SIZES.map((j) => <option key={j.v} value={j.v}>{j.label}</option>)}
+                  </select>
+                </label>
+                <button type="button" disabled={!!busy} onClick={() => void run("seed", async () => { const r = await seedTurnoverItems({ orgId, projectId, jobKind, actor }); return { ok: r.ok, error: r.error }; })} className={btn}>Start from it ({seedsForJobKind(jobKind).length} documents)</button>
+              </>}
               <input value={newDoc} onChange={(e) => setNewDoc(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && newDoc.trim()) { const n = newDoc.trim(); setNewDoc(""); void run("add", async () => { const r = await addTurnoverItem({ orgId, projectId, name: n, required: true, actor }); return { ok: r.ok, error: r.error }; }); } }}
                 placeholder="Add a document this job needs" aria-label="Add a document this job needs" className="h-9 flex-1 min-w-40 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 text-[14px] placeholder:text-[var(--color-text-faint)] outline-none focus:border-[var(--color-main)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40" />
               <button type="button" disabled={!newDoc.trim() || !!busy} onClick={() => { const n = newDoc.trim(); setNewDoc(""); void run("add", async () => { const r = await addTurnoverItem({ orgId, projectId, name: n, required: true, actor }); return { ok: r.ok, error: r.error }; }); }} className={btn}><Plus className="w-3.5 h-3.5" /> Add</button>
@@ -482,12 +531,21 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
         </div>
       ),
     },
-    { state: stateAt(3), title: "Punch list", detail: !snap ? "Checking…" : snap.punchOpen === 0 ? "Nothing open" : `${snap.punchOpen} open`,
+    { state: stateAt(3), title: "Punch list", detail: <>{!snap ? "Checking…" : snap.punchOpen === 0 ? "Nothing open" : `${snap.punchOpen} open`}<SourceLine source={PUNCH_RULE} tz={tz} /></>,
       action: <button type="button" onClick={() => onTab("quality")} className={btn}>Open</button> },
-    { state: stateAt(4), title: "Change orders", detail: !snap ? "Checking…" : snap.openChangeOrders === 0 ? "None waiting on a decision" : `${snap.openChangeOrders} waiting on a decision`,
+    { state: stateAt(4), title: "Change orders", detail: <>{!snap ? "Checking…" : snap.openChangeOrders === 0 ? "None waiting on a decision" : `${snap.openChangeOrders} waiting on a decision`}<SourceLine source={CO_RULE} tz={tz} /></>,
       action: snap && snap.openChangeOrders > 0 ? <button type="button" onClick={() => onTab("costs")} className={btn}>Decide <ArrowRight className="w-3.5 h-3.5" /></button> : null },
-    { state: stateAt(5), title: <>Final cost <HelpTooltip>Post the last invoices on Costs before closing.</HelpTooltip></>, detail: money0 ? `${money(invoiced)} invoiced${money0.afe != null ? ` of ${money(money0.afe)} AFE` : ""}` : "Checking…",
-      action: <button type="button" onClick={() => onTab("costs")} className={btn}>Invoices</button> },
+    { state: stateAt(5), title: <>Final cost <HelpTooltip>Post the last invoices on Costs before closing.</HelpTooltip></>,
+      detail: <>{money0 ? `${money(invoiced)} invoiced${money0.afe != null ? ` of ${money(money0.afe)} AFE` : ""}` : "Checking…"}
+        {afe && <SourceLine source={afe.afe?.authorized != null ? { kind: "set", stamp: afe.last ? { at: afe.last.at, by: afe.last.by } : null, note: afe.last?.note ? `${afe.last.note[0].toLowerCase()}${afe.last.note.slice(1)}` : undefined } : { kind: "default", note: "no AFE, so nothing to measure the cost against" }} tz={tz} />}</>,
+      action: <span className="flex items-center gap-2 flex-wrap">
+        {canManage && afe && !afeEdit && <button type="button" onClick={() => setAfeEdit(true)} className={quiet}>{afe.afe?.authorized != null ? "Change the AFE" : "Set the AFE"}</button>}
+        <button type="button" onClick={() => onTab("costs")} className={btn}>Invoices</button>
+      </span>,
+      children: afeEdit && afe ? (
+        <div className="mt-2"><AfeEditor orgId={orgId} projectId={projectId} afe={afe.afe ?? { afeNumber: null, chargeAccount: null, authorized: null, docId: null }} actor={actor} cur="USD" quietSave
+          onCancel={() => setAfeEdit(false)} onSaved={() => { setAfeEdit(false); reload(); }} /></div>
+      ) : undefined },
     { state: stateAt(6), title: "Lessons & findings", detail: "Keep what this job taught for next time.",
       action: <button type="button" onClick={onLessons} className={btn}>Review</button> },
     ...(projectStatus !== "completed" ? [{
