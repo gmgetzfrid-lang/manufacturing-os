@@ -18,6 +18,7 @@
 // mean?".
 
 import { supabase } from "@/lib/supabase";
+import { friendlyError } from "@/lib/friendlyError";
 
 // ─── Postgres error translation ─────────────────────────────────
 
@@ -113,7 +114,8 @@ export function translatePostgresError(
       return {
         code,
         heading: `Couldn't save ${entity}`,
-        message: rawMessage || "Something went wrong. Try again, or contact support if it persists.",
+        // Never a raw database message on screen: plain words, and what to do.
+        message: rawMessage ? friendlyError({ message: rawMessage, code }) : "Something went wrong. Try again, or contact support if it persists.",
       };
   }
 }

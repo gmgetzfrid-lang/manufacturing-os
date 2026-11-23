@@ -78,7 +78,7 @@ describe("translatePostgresError", () => {
 
   it("handles string errors", () => {
     const out = translatePostgresError("some raw error");
-    expect(out.message).toBe("some raw error");
+    expect(out.message).toMatch(/^some raw error\. Try again/);
   });
 
   it("handles null / undefined", () => {

@@ -120,17 +120,12 @@ export function DialogHost() {
           <X className="w-4 h-4" />
         </button>
         <div className="flex items-start gap-3 pr-6">
-          <div
-            className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${
-              danger ? "bg-rose-50 text-rose-600 dark:bg-rose-500/15" : "bg-[var(--color-surface-2)] text-[var(--color-text)]"
-            }`}
-          >
-            <Icon className="w-4.5 h-4.5" />
-          </div>
-          <div className="min-w-0 flex-1 pt-0.5">
-            {current.title && <h2 className="text-sm font-black">{current.title}</h2>}
+          {/* A plain icon, no tile: red only when the action can't be undone. */}
+          <Icon aria-hidden className={`w-5 h-5 mt-0.5 shrink-0 ${danger ? "text-[var(--state-overdue)]" : "text-[var(--color-text-muted)]"}`} />
+          <div className="min-w-0 flex-1">
+            {current.title && <h2 className="text-[16px] leading-6 font-semibold text-[var(--color-text)]">{current.title}</h2>}
             {current.message && (
-              <div className={`text-sm text-[var(--color-text-muted)] ${current.title ? "mt-1" : ""}`}>
+              <div className={`text-[14px] leading-5 text-[var(--color-text-muted)] ${current.title ? "mt-1" : ""}`}>
                 {current.message}
               </div>
             )}
