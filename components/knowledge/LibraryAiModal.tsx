@@ -8,7 +8,7 @@
 import React, { useEffect, useState } from "react";
 import { SkeletonRows } from "@/components/ui/Skeleton";
 import { friendlyError } from "@/lib/friendlyError";
-import { Loader2, Save, Link2, Wand2 } from "lucide-react";
+import { Loader2, Save, Link2 } from "lucide-react";
 import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/ui/Modal";
 import { useToast } from "@/components/providers/ToastProvider";
 import { Button } from "@/components/ui/Button";
@@ -105,7 +105,7 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
 
   return (
     <Modal onClose={onClose} size="lg" dismissable={!saving}>
-        <ModalHeader icon={Wand2} title="Library AI setup"
+        <ModalHeader title="Library AI setup"
           subtitle={<>How the AI answers questions asked of <b>{library.name}</b>.</>}
           onClose={saving ? undefined : onClose} />
 

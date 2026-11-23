@@ -175,7 +175,7 @@ function AddSourcesModal({ orgId, libraryId, existing, onClose, onAdded }: {
 
   return (
     <Modal onClose={onClose} size="md" dismissable={!saving}>
-        <ModalHeader icon={Link2} title="Add sources from Document Control"
+        <ModalHeader title="Add sources from Document Control"
           subtitle="Linked libraries and folders stay live: new documents index, rev-ups re-index, archived ones drop out. No files are copied."
           onClose={saving ? undefined : onClose} />
 

@@ -6,12 +6,17 @@
 // canonical Asset fields plus asset_type lookup by name.
 
 import React, { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   X, KeyRound, Loader2, AlertTriangle, CheckCircle2, Upload, ChevronRight, ArrowLeft,
 } from "lucide-react";
 import { createAsset, listAssetTypes, type AssetType } from "@/lib/assets";
 import StepPath from "@/components/ui/StepPath";
 import { useDraft } from "@/hooks/useDraft";
+
+/** Full-screen overlays live on <body>, above the top bar (the page is its
+ *  own stacking layer while it animates between views). */
+const onBody = (node: React.ReactNode) => (typeof document === "undefined" ? node : createPortal(node, document.body));
 
 const STEPS = ["Paste", "Match columns", "Check", "Done"];
 const STEP_INDEX: Record<"paste" | "map" | "preview" | "done", number> = { paste: 0, map: 1, preview: 2, done: 3 };
@@ -163,7 +168,7 @@ export default function AssetCsvImportModal({
     }
   };
 
-  return (
+  return onBody(
     <div role="dialog" aria-modal="true" aria-label="Import equipment from CSV" className="fixed inset-0 z-[400] bg-[var(--color-ink)]/60 flex items-start sm:items-center justify-center overflow-y-auto p-4">
       <div className="w-full max-w-2xl bg-[var(--color-surface)] rounded-lg shadow-2xl border border-[var(--color-border)] overflow-hidden">
         <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center gap-3">

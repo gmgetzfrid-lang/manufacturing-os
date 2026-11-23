@@ -10,6 +10,7 @@
 // about it lives one click inside.
 
 import React, { useEffect, useState, useCallback, useMemo, useDeferredValue, Suspense } from "react";
+import { createPortal } from "react-dom";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   Tag, Plus, Search, Camera,
@@ -64,6 +65,10 @@ import { friendlyError } from "@/lib/friendlyError";
 import { transitionPush } from "@/lib/viewTransition";
 import { sheet, link, btnQuiet, btnLink, btnDanger, btnIcon, field, label as labelCls, StatusTag, Problem, Section, shortDate } from "@/components/admin/kit";
 import { bandInput, bandInputIcon, bandSelect, bandSeg, bandSegItem, plural } from "@/components/admin/band";
+
+/** Full-screen overlays live on <body>, above the top bar (the page is its
+ *  own stacking layer while it animates between views). */
+const onBody = (node: React.ReactNode) => (typeof document === "undefined" ? node : createPortal(node, document.body));
 
 // DocCtrl belongs here: document controllers own the asset↔document wiring
 // (categories, codebook areas, file links), so gating them out of asset
@@ -1439,8 +1444,8 @@ function AssetEditDrawer({
     } catch (e) { await appAlert({ title: "Couldn't remove the photo", message: friendlyError(e), tone: "danger" }); }
   };
 
-  return (
-    <div role="dialog" aria-modal="true" aria-label={isCreate ? "New asset" : `Asset ${asset?.tag ?? ""}`} className="fixed inset-0 z-[400] flex" onClick={() => { if (!busy) onClose(); }}>
+  return onBody(
+    <div role="dialog" aria-modal="true" aria-label={isCreate ? "New asset" : `Asset ${asset?.tag ?? ""}`} className="fixed inset-0 z-[600] flex" onClick={() => { if (!busy) onClose(); }}>
       <div className="absolute inset-0 bg-[var(--color-ink)]/60" />
       <div onClick={(e) => e.stopPropagation()} className="relative ml-auto w-full max-w-xl bg-[var(--color-surface)] ui-float sm:rounded-l-xl flex flex-col h-dvh">
         <div className="px-5 sm:px-6 pt-5 pb-4 border-b border-[var(--color-border)] shrink-0">

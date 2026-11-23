@@ -15,7 +15,7 @@ import Link from "next/link";
 //   * or mix both — imported rows are just rows.
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { flushSync } from "react-dom";
+import { createPortal, flushSync } from "react-dom";
 import {
   Plus, Trash2, Sparkles, Check, X, FileText, AlertTriangle,
   GraduationCap, Pencil, Square,
@@ -43,6 +43,10 @@ import {
 import CodebookLearn from "@/components/admin/CodebookLearn";
 import { useFileDrag } from "@/hooks/useFileDrag";
 import { formatBytes } from "@/lib/formatBytes";
+
+/** Full-screen overlays live on <body>, above the top bar (the page is its
+ *  own stacking layer while it animates between views). */
+const onBody = (node: React.ReactNode) => (typeof document === "undefined" ? node : createPortal(node, document.body));
 
 const WRITER_ROLES = new Set(["Admin", "DocCtrl"]);
 
@@ -796,7 +800,7 @@ function ImportModal({ orgId, uid, book, onClose, onApplied }: {
 
   const KIND_LABEL: Record<string, string> = { unit: "Unit", equipment_type: "Equipment", drawing_type: "Drawing" };
 
-  return (
+  return onBody(
     <div role="dialog" aria-modal="true" aria-label="Build the codebook from a document" className="fixed inset-0 z-[200] bg-[var(--color-ink)]/55 flex items-start sm:items-center justify-center overflow-y-auto p-4 animate-in fade-in">
       <div className="w-full max-w-2xl bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl ui-float ui-float-in flex flex-col max-h-[88vh]">
         <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-start gap-2.5">

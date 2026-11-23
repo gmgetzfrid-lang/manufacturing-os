@@ -9,6 +9,7 @@
 // the photo carousel's "start smaller, go bigger" feel.
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { X, Loader2, FileText, Maximize2, Minimize2, Link2, Trash2, Plus, Printer, ZoomIn, ZoomOut, Hand, MousePointer2 } from "lucide-react";
 import { Document, Page, pdfjs } from "react-pdf";
 import { PDF_DOC_OPTIONS } from "@/lib/pdfjsConfig";
@@ -23,6 +24,10 @@ import {
 } from "@/lib/assets";
 import DocumentLinkPicker from "@/components/documents/DocumentLinkPicker";
 import { appAlert } from "@/components/providers/DialogProvider";
+
+/** Full-screen overlays live on <body>, above the top bar (the page is its
+ *  own stacking layer while it animates between views). */
+const onBody = (node: React.ReactNode) => (typeof document === "undefined" ? node : createPortal(node, document.body));
 
 pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
 
@@ -216,7 +221,7 @@ export default function FileReferenceModal({ tag, type, orgId, userId, canManage
     } finally { setPrinting(false); }
   };
 
-  return (
+  return onBody(
     <div ref={rootRef} role="dialog" aria-modal="true" aria-label={`${tag} linked drawings`} className="fixed inset-0 z-[500] flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-3 sm:p-6" onClick={onClose}>
       <div
         className={`bg-slate-900 shadow-2xl border border-slate-700 overflow-hidden flex flex-col ${isFull ? "w-screen h-dvh rounded-none" : "w-[94vw] sm:w-[80vw] h-[85dvh] max-w-[1400px] rounded-2xl"}`}

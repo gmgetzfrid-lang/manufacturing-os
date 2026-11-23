@@ -15,6 +15,7 @@
 // custom skill's findings only ever queue for review.
 
 import React, { useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { friendlyError } from "@/lib/friendlyError";
 import {
   X, Plus, Loader2, FlaskConical, CheckCircle2, AlertTriangle,
@@ -25,6 +26,10 @@ import { createLinkRule, testSkillPatterns, type LinkRuleVisibility } from "@/li
 import { createAnswerSkill } from "@/lib/answerSkills";
 import StepPath from "@/components/ui/StepPath";
 import { useDraft } from "@/hooks/useDraft";
+
+/** Full-screen overlays live on <body>, above the top bar (the page is its
+ *  own stacking layer while it animates between views). */
+const onBody = (node: React.ReactNode) => (typeof document === "undefined" ? node : createPortal(node, document.body));
 
 export type StudioKind = "connection" | "reasoning";
 
@@ -125,7 +130,7 @@ export default function SkillStudio({ orgId, userId, userName, kind = "connectio
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose, saving, drafting]);
 
-  return (
+  return onBody(
     <div role="dialog" aria-modal="true" className="fixed inset-0 z-50 flex items-center justify-center bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)] p-4" onClick={onClose}>
       <div className="w-full max-w-lg max-h-[92vh] overflow-y-auto rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] ui-float ui-float-in"
         onClick={(e) => e.stopPropagation()}>

@@ -288,7 +288,7 @@ function MarkCatalogModal({ orgId, libraryId, libraryName, docs, onClose, onDone
 
   return (
     <Modal onClose={busy ? () => undefined : (result ? onDone : onClose)} size="md" dismissable={!busy}>
-      <ModalHeader icon={Table2} title="Mark a catalog" subtitle="Tell the assistant what this is - it reads it from the text, no AI cost." onClose={busy ? undefined : (result ? onDone : onClose)} />
+      <ModalHeader title="Mark a catalog" subtitle="Tell the assistant what this is - it reads it from the text, no AI cost." onClose={busy ? undefined : (result ? onDone : onClose)} />
       <ModalBody className="space-y-4">
         {result ? (
           result.entries > 0 ? (

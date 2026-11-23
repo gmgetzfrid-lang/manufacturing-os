@@ -21,6 +21,7 @@
 // enforces the same.
 
 import React, { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { friendlyError } from "@/lib/friendlyError";
 import Link from "next/link";
 import {
@@ -29,6 +30,10 @@ import {
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { useEscapeClose } from "@/components/documents/useEscapeClose";
+
+/** Full-screen overlays live on <body>, above the top bar (the page is its
+ *  own stacking layer while it animates between views). */
+const onBody = (node: React.ReactNode) => (typeof document === "undefined" ? node : createPortal(node, document.body));
 
 interface Candidate {
   ref: string;
@@ -178,7 +183,7 @@ export default function GraphShapeWizard({
 
   const acceptedCount = rows.filter((r) => r.accepted).length;
 
-  return (
+  return onBody(
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)] p-4" onClick={onClose}>
       <div className="w-full max-w-xl max-h-[92vh] flex flex-col rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] shadow-2xl overflow-hidden"
         onClick={(e) => e.stopPropagation()}>

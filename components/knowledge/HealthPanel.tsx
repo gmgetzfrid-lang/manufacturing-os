@@ -9,7 +9,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { SkeletonText } from "@/components/ui/Skeleton";
 import {
-  Loader2, RefreshCw, Wrench, ChevronRight, HeartPulse,
+  Loader2, RefreshCw, Wrench, ChevronRight,
 } from "lucide-react";
 import { getLibraryHealth, repairLibrary, fixLinkedDocumentNames, type KnowledgeHealthReport, type RepairResult } from "@/lib/knowledge";
 import type { NameRepairResult } from "@/lib/documentNameRepair";
@@ -181,7 +181,7 @@ export default function HealthPanel({ orgId, libraryId, isController, onRepaired
 
   if (!report) {
     return (
-      <Section label="Library health" icon={HeartPulse} action={error ? actions(false) : undefined}>
+      <Section label="Library health" action={error ? actions(false) : undefined}>
         <div className={`${sheet} px-4 py-4 text-[14px]`}>
           {error
             ? <p role="alert" className="text-[var(--state-overdue)]"><span className="font-semibold">Couldn&apos;t check the library.</span> <span className="text-[var(--color-text-muted)]">{error}</span></p>
@@ -218,7 +218,7 @@ export default function HealthPanel({ orgId, libraryId, isController, onRepaired
 
   return (
     <Section
-      icon={HeartPulse}
+     
       label={<span className="inline-flex items-center gap-2.5">Library health {verdict}</span>}
       action={actions(true)}
     >

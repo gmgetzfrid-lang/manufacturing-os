@@ -10,7 +10,7 @@ import React, { useEffect, useState } from "react";
 import { SkeletonRows } from "@/components/ui/Skeleton";
 import { friendlyError } from "@/lib/friendlyError";
 import {
-  Loader2, Download, RefreshCw, ChevronRight, Lightbulb, ArrowRight, ClipboardCheck, ScanSearch,
+  Loader2, Download, RefreshCw, ChevronRight, Lightbulb, ArrowRight, ClipboardCheck,
 } from "lucide-react";
 import { useToast } from "@/components/providers/ToastProvider";
 import { appConfirm } from "@/components/providers/DialogProvider";
@@ -62,7 +62,7 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
   // otherwise "why is there no census" is undiagnosable from the UI.
   if (loadError) {
     return (
-      <Section label="Drawing intelligence" icon={ScanSearch}>
+      <Section label="Drawing intelligence">
         <div className={`${sheet} px-4 sm:px-5 py-4`}>
           {/migration/i.test(loadError)
             ? <Note tone="warn" title="Waiting on a database migration.">{loadError}</Note>
@@ -73,7 +73,7 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
   }
   if (!intel) {
     return (
-      <Section label="Drawing intelligence" icon={ScanSearch}>
+      <Section label="Drawing intelligence">
         <SkeletonRows rows={3} cols={2} what="drawing intelligence" />
       </Section>
     );
@@ -285,7 +285,7 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
 
   return (
     <Section
-      icon={ScanSearch}
+     
       label={<span className="inline-flex items-center gap-2">{isDrawingSet ? "Drawing intelligence" : "What indexing got out of these documents"}
         {isDrawingSet && <span className="font-sans font-normal text-[14px] leading-snug"><HelpTooltip>Counted from every sheet&apos;s extracted tags, not guessed by AI: the equipment census, the cross-reference audit and the register export.</HelpTooltip></span>}
       </span>}

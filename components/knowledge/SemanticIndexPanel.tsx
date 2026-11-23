@@ -180,7 +180,7 @@ export default function SemanticIndexPanel({ orgId, libraryId, isController }: {
     </HelpTooltip></span>
   );
   const shell = (tag: React.ReactNode, body: React.ReactNode, action?: React.ReactNode) => (
-    <Section icon={Brain} label={<span className="inline-flex items-center gap-2.5">Meaning-based search {tag}{help}</span>} action={action}>
+    <Section label={<span className="inline-flex items-center gap-2.5">Meaning-based search {tag}{help}</span>} action={action}>
       <div className={`${sheet} px-4 sm:px-5 py-4`}>{body}</div>
     </Section>
   );
@@ -234,7 +234,7 @@ export default function SemanticIndexPanel({ orgId, libraryId, isController }: {
     : <StatusTag tone="warn">Partly built</StatusTag>;
 
   return (
-    <Section icon={Brain} label={<span className="inline-flex items-center gap-2.5">Meaning-based search {tag}{help}</span>} action={action}>
+    <Section label={<span className="inline-flex items-center gap-2.5">Meaning-based search {tag}{help}</span>} action={action}>
       <div className={`${sheet} overflow-hidden`}>
         <Cells cells={[
           { label: "Passages with meaning", value: <>{status.estimated ? "≈ " : ""}{covered.toLocaleString()}<span className="text-[var(--color-text-muted)] font-medium text-[18px]"> of {status.total.toLocaleString()}</span></> },
