@@ -10,9 +10,9 @@ import React from "react";
 export type PanelTone = "good" | "warn" | "bad" | "none";
 
 const TONE_TEXT: Record<PanelTone, string> = {
-  good: "text-[var(--state-released)]",
-  warn: "text-[var(--state-held)]",
-  bad: "text-[var(--state-overdue)]",
+  good: "text-[var(--state-released-text)]",
+  warn: "text-[var(--state-held-text)]",
+  bad: "text-[var(--state-overdue-text)]",
   none: "text-[var(--color-heading)]",
 };
 const TONE_RULE: Record<PanelTone, string> = {
@@ -35,13 +35,14 @@ export interface Cell {
 /** A row of ruled cells: a muted label, a big condensed number, an
  *  optional hint. Two across on a phone, one row on a desk. */
 export function Cells({ cells, size = "lg" }: { cells: Cell[]; size?: "lg" | "sm" }) {
-  const big = size === "lg" ? "text-[26px] sm:text-[28px]" : "text-[20px]";
+  // Section-sized figures (the page has one hero number; panels never shout).
+  const big = size === "lg" ? "text-[20px]" : "text-[18px]";
   return (
     <dl className={`grid grid-cols-2 ${cells.length >= 4 ? "md:grid-cols-4" : cells.length === 3 ? "md:grid-cols-3" : ""} [&>div]:border-[var(--color-border)] max-md:[&>div:nth-child(2n)]:border-l md:[&>div+div]:border-l max-md:[&>div:nth-child(n+3)]:border-t`}>
       {cells.map((c, i) => (
         <div key={i} className="min-w-0 px-4 sm:px-5 py-3.5">
           <dt className="text-[13px] text-[var(--color-text-muted)] truncate">{c.label}</dt>
-          <dd className={`font-display ${big} leading-tight mt-0.5 font-semibold tabular-nums ${TONE_TEXT[c.tone ?? "none"]}`}>{c.value}</dd>
+          <dd className={`font-display ${big} leading-tight mt-0.5 font-semibold tabular-nums ${c.value === 0 || c.value === "0" ? "text-[var(--color-text-faint)]" : TONE_TEXT[c.tone ?? "none"]}`}>{c.value}</dd>
           {c.bar !== undefined && <Bar className="mt-1.5" segments={[{ key: "done", value: c.bar, color: "var(--color-main)" }]} total={100} thin />}
           {c.hint && <dd className="mt-0.5 text-[13px] leading-snug text-[var(--color-text-muted)]">{c.hint}</dd>}
         </div>
@@ -62,7 +63,7 @@ export function Bar({ segments, total, thin = false, className = "", label }: {
   const sum = Math.max(total, 1);
   return (
     <div role={label ? "img" : undefined} aria-label={label}
-      className={`${thin ? "h-1.5" : "h-2.5"} rounded-full overflow-hidden flex bg-[var(--color-accent-soft)] ${className}`}>
+      className={`${thin ? "h-1.5" : "h-2.5"} rounded-full overflow-hidden flex bg-[var(--color-surface-2)] ${className}`}>
       {segments.filter((s) => s.value > 0).map((s) => (
         <span key={s.key} title={s.title} className="h-full transition-[width] duration-500" style={{ width: `${Math.min(100, (s.value / sum) * 100)}%`, background: s.color }} />
       ))}

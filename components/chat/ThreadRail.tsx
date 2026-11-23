@@ -12,8 +12,8 @@ import {
 } from "lucide-react";
 import type { ChatThread } from "@/lib/chatClient";
 import { SCOPE_META, relativeTime } from "./shared";
-import LoadingBlock from "@/components/ui/LoadingBlock";
-import { bandSeg, bandSegItem } from "@/components/admin/band";
+import { SkeletonRows } from "@/components/ui/Skeleton";
+import { ErrorNote } from "@/components/ui/ErrorNote";
 
 export interface RailProps {
   threads: ChatThread[];
@@ -81,14 +81,19 @@ export default function ThreadRail(p: RailProps) {
           )}
         </div>
         <div className="flex items-center gap-1.5 min-w-0">
-          <div className={`${bandSeg} shrink-0`} role="group" aria-label="Whose conversations">
-            <button onClick={() => setMine(false)} aria-pressed={!mine} className={`${bandSegItem(!mine)} !h-7 !text-[13px]`}>Everyone</button>
-            <button onClick={() => setMine(true)} aria-pressed={mine} className={`${bandSegItem(mine)} !h-7 !text-[13px]`}>Mine</button>
+          {/* Whose conversations: two underline tabs, quiet, no filled toggle. */}
+          <div className="shrink-0 flex items-end gap-4 border-b border-[var(--color-border)]" role="group" aria-label="Whose conversations">
+            {([[false, "Everyone"], [true, "Mine"]] as const).map(([m, label]) => (
+              <button key={label} type="button" onClick={() => setMine(m)} aria-pressed={mine === m}
+                className={`h-8 pointer-coarse:h-11 -mb-px border-b-2 text-[14px] transition-colors ${mine === m ? "border-[var(--color-current)] font-semibold text-[var(--color-text)]" : "border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
+                {label}
+              </button>
+            ))}
           </div>
           {p.libraryFilter && (
             // The filter as a solid tag: its x shows every conversation again.
             <button onClick={p.onClearLibraryFilter} title="Show every conversation" aria-label={`Stop showing only ${p.libraryFilter.name}`}
-              className="ui-tag ml-auto min-w-0 !bg-[var(--color-main)] !text-white !border-[var(--color-main)]">
+              className="ui-tag ml-auto min-w-0">
               <span className="truncate">{p.libraryFilter.name}</span> <X className="w-3.5 h-3.5 shrink-0" />
             </button>
           )}
@@ -97,9 +102,9 @@ export default function ThreadRail(p: RailProps) {
 
       <div className="flex-1 overflow-y-auto pb-3">
         {p.error ? (
-          <p role="alert" className="px-3 py-3 text-[13px] font-semibold text-[var(--state-overdue)]">Couldn&apos;t load the conversations: {p.error}</p>
+          <ErrorNote compact className="px-3 py-3" title="Couldn't load the conversations." error={p.error} />
         ) : p.loading && p.threads.length === 0 ? (
-          <LoadingBlock what="conversations" rows={4} className="mx-3 mt-1" />
+          <SkeletonRows rows={4} cols={0} sheet={false} what="conversations" />
         ) : filtered.length === 0 ? (
           <p className="px-3 py-6 text-center text-[14px] text-[var(--color-text-muted)]">
             {p.threads.length === 0
@@ -124,7 +129,7 @@ export default function ThreadRail(p: RailProps) {
                   aria-expanded={settledOpen}
                   className="w-full flex items-center gap-1.5 px-3 py-1.5 text-[13px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
                   <ChevronRight className={`w-3.5 h-3.5 ui-chevron${(settledOpen) ? " rotate-90" : ""}`} />
-                  Settled <span className="ui-count !h-5 !min-w-5 !px-1.5 !text-[12px]">{settled.length}</span>
+                  Settled <span className="ui-count">{settled.length}</span>
                 </button>
                 {settledOpen && <div className="divide-y divide-[var(--color-border)] border-y border-[var(--color-border)]">{settled.map((t) => <Row key={t.id} t={t} p={p} />)}</div>}
               </div>
@@ -140,7 +145,7 @@ function Section({ label, count, children }: { label: string; count: number; chi
   return (
     <div className="mt-3">
       <div className="px-3 pb-1.5 flex items-center gap-1.5 text-[13px] font-semibold text-[var(--color-heading)]">
-        {label} <span className="ui-count !h-5 !min-w-5 !px-1.5 !text-[12px]">{count}</span>
+        {label} <span className="ui-count">{count}</span>
       </div>
       <div className="divide-y divide-[var(--color-border)] border-y border-[var(--color-border)]">{children}</div>
     </div>
@@ -222,7 +227,7 @@ function Row({ t, p }: { t: ChatThread; p: RailProps }) {
         <MoreHorizontal className="w-4 h-4" />
       </button>
       {menu && (
-        <div role="menu" className="absolute right-1.5 top-10 z-20 w-44 rounded-lg bg-[var(--color-surface)] shadow-2xl ring-1 ring-[var(--color-border-strong)] p-1 animate-pop">
+        <div role="menu" className="absolute right-1.5 top-10 z-20 w-44 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] ui-float ui-float-in p-1">
           <MenuItem icon={t.pinned ? PinOff : Pin} label={t.pinned ? "Unpin" : "Pin"}
             onClick={() => { setMenu(false); p.onPin(t, !t.pinned); }} />
           <MenuItem icon={t.settledAt ? ArchiveRestore : Archive} label={t.settledAt ? "Reopen" : "Settle"}

@@ -13,7 +13,9 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { Plus, Loader2, Trash2, Lock, Users, ArrowUpRight, Puzzle } from "lucide-react";
+import { Plus, Loader2, Trash2, Lock, Users, ArrowUpRight } from "lucide-react";
+import { SkeletonRows } from "@/components/ui/Skeleton";
+import { friendlyError } from "@/lib/friendlyError";
 import HelpTooltip from "@/components/ui/HelpTooltip";
 import { Section, Problem, tbl, sheet, btnQuiet, btnIcon, link, Pill } from "@/components/admin/kit";
 import SkillStudio from "@/components/intelligence/SkillStudio";
@@ -42,7 +44,7 @@ export default function ConnectionSkillsPanel() {
   const refresh = useCallback(async () => {
     if (!activeOrgId) return;
     try { setRules(await listLinkRules(activeOrgId)); setError(null); }
-    catch (e) { setError((e as Error).message); }
+    catch (e) { setError(friendlyError(e)); }
   }, [activeOrgId]);
 
   useEffect(() => {
@@ -58,21 +60,21 @@ export default function ConnectionSkillsPanel() {
   const toggle = async (r: LinkRule) => {
     setBusyId(r.id);
     try { await setLinkRuleEnabled(r.id, !r.enabled); await refresh(); }
-    catch (e) { setError((e as Error).message); }
+    catch (e) { setError(friendlyError(e)); }
     finally { setBusyId(null); }
   };
 
   const flipVisibility = async (r: LinkRule) => {
     setBusyId(r.id);
     try { await setLinkRuleVisibility(r.id, r.visibility === "org" ? "private" : "org"); await refresh(); }
-    catch (e) { setError((e as Error).message); }
+    catch (e) { setError(friendlyError(e)); }
     finally { setBusyId(null); }
   };
 
   const remove = async (r: LinkRule) => {
     setBusyId(r.id);
     try { await deleteLinkRule(r.id); await refresh(); }
-    catch (e) { setError((e as Error).message); }
+    catch (e) { setError(friendlyError(e)); }
     finally { setBusyId(null); }
   };
 
@@ -80,17 +82,16 @@ export default function ConnectionSkillsPanel() {
 
   if (rules === undefined) {
     return (
-      <Section label="Connection skills" icon={Puzzle}>
-        <div className={`${sheet} px-4 py-4 text-[14px] text-[var(--color-text-muted)] flex items-center gap-2`}><Loader2 className="w-4 h-4 animate-spin" /> Loading connection skills…</div>
+      <Section label="Connection skills">
+        <SkeletonRows rows={3} cols={2} what="connection skills" />
       </Section>
     );
   }
 
   return (
     <Section
-      icon={Puzzle}
       label={<span className="inline-flex items-center gap-2">Connection skills
-        {rules && rules.length > 0 && <span className="inline-flex items-center gap-1 font-sans text-[14px] font-normal text-[var(--color-text-muted)]"><span className="ui-count is-solid">{enabledCount}</span> of {rules.length} on</span>}
+        {rules && rules.length > 0 && <span className="inline-flex items-center gap-1 font-sans text-[14px] font-normal text-[var(--color-text-muted)]">{enabledCount} of {rules.length} on</span>}
         <span className="font-sans font-normal text-[14px] leading-snug"><HelpTooltip>
           The detectors Find connections runs: the built-ins, and ones you write for your own numbering (work orders, permit numbers, ISO sheets).
         </HelpTooltip></span>
@@ -132,7 +133,7 @@ export default function ConnectionSkillsPanel() {
                   <tr key={r.id} className={`${tbl.tr} max-md:grid max-md:grid-cols-[1fr_auto_auto] max-md:items-start max-md:py-1.5`}>
                     <td className={`${tbl.td} max-md:py-1 align-top min-w-0`}>
                       <div className="flex items-center gap-2.5 min-w-0">
-                        <span aria-hidden className={`ui-icon-tile is-sm ${r.enabled ? "" : "!bg-[var(--color-surface-2)] !text-[var(--color-text-muted)]"}`}><Puzzle className="w-4 h-4" /></span>
+                        
                         <span className={`font-semibold ${r.enabled ? "text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>{r.name}</span>
                       </div>
                       {r.description && <div className="text-[14px] text-[var(--color-text-muted)] line-clamp-1 max-w-[70ch]" title={r.description}>{r.description}</div>}

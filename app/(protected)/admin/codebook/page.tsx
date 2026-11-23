@@ -14,21 +14,24 @@ import Link from "next/link";
 //     edits are never steamrolled),
 //   * or mix both — imported rows are just rows.
 
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal, flushSync } from "react-dom";
 import {
-  Plus, Trash2, Loader2, Sparkles, Check, X, FileText,
-  Boxes, Factory, FileDigit, ScanLine, BookOpen, AlertTriangle, Save,
-  GraduationCap, Pencil,
+  Plus, Trash2, Sparkles, Check, X, FileText, AlertTriangle,
+  GraduationCap, Pencil, Square,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
 import { PageShell } from "@/components/ui/PageShell";
 import { PageHero, PageBody, StepLine, heroPrimary } from "@/components/ui/PageHero";
-import { tbl, fieldBox, link, btnIcon, btnQuiet, Section, Problem } from "@/components/admin/kit";
-import { bandSeg, bandSegItem, plural } from "@/components/admin/band";
+import { tbl, fieldBox, link, btnIcon, btnQuiet, btnLink, Section, Problem } from "@/components/admin/kit";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Field";
-import LoadingBlock from "@/components/ui/LoadingBlock";
+import { ErrorNote } from "@/components/ui/ErrorNote";
+import { SkeletonRows } from "@/components/ui/Skeleton";
+import MoreMenu from "@/components/ui/MoreMenu";
+import { friendlyError } from "@/lib/friendlyError";
+import { withViewTransition } from "@/lib/viewTransition";
 import StepPath from "@/components/ui/StepPath";
 import FileThumb from "@/components/ui/FileThumb";
 import { useDraft } from "@/hooks/useDraft";
@@ -41,27 +44,33 @@ import CodebookLearn from "@/components/admin/CodebookLearn";
 import { useFileDrag } from "@/hooks/useFileDrag";
 import { formatBytes } from "@/lib/formatBytes";
 
+/** Full-screen overlays live on <body>, above the top bar (the page is its
+ *  own stacking layer while it animates between views). */
+const onBody = (node: React.ReactNode) => (typeof document === "undefined" ? node : createPortal(node, document.body));
+
 const WRITER_ROLES = new Set(["Admin", "DocCtrl"]);
 
 
 type Tab = "units" | "equipment" | "drawings" | "numbering" | "legend";
 
-const TABS: Array<{ key: Tab; label: string; icon: React.ComponentType<{ className?: string }> }> = [
-  { key: "units", label: "Units", icon: Factory },
-  { key: "equipment", label: "Equipment types", icon: Boxes },
-  { key: "drawings", label: "Drawing types", icon: FileDigit },
-  { key: "numbering", label: "Drawing numbers", icon: ScanLine },
-  { key: "legend", label: "Legend", icon: BookOpen },
+const TABS: Array<{ key: Tab; label: string }> = [
+  { key: "units", label: "Units" },
+  { key: "equipment", label: "Equipment types" },
+  { key: "drawings", label: "Drawing types" },
+  { key: "numbering", label: "Drawing numbers" },
+  { key: "legend", label: "Legend" },
 ];
 
 export default function CodebookPage() {
   const { activeOrgId, uid, activeRole } = useRole();
   const canWrite = !!activeRole && WRITER_ROLES.has(activeRole);
   const [book, setBook] = useState<Codebook | null>(null);
-  const [tab, setTab] = useState<Tab>("units");
+  const [tab, setTabNow] = useState<Tab>("units");
+  // Switching sections cross-fades (instant under reduced motion).
+  const setTab = (t: Tab) => withViewTransition(() => flushSync(() => setTabNow(t)));
   const [importOpen, setImportOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<unknown>(null);
 
   const refresh = useCallback(async () => {
     if (!activeOrgId) return;
@@ -69,7 +78,7 @@ export default function CodebookPage() {
       const next = await loadCodebook(activeOrgId);
       setBook(next);
       setLoadError(null);
-    } catch (e) { setLoadError((e as Error).message || "Couldn't load the codebook."); }
+    } catch (e) { setLoadError(e ?? true); }
   }, [activeOrgId]);
 
   useEffect(() => {
@@ -81,9 +90,11 @@ export default function CodebookPage() {
     return (
       <PageShell width="work">
         <PageHero kicker="Admin · Site codebook" title={loadError ? "Couldn't load the codebook." : "Site codebook"} overlap={false} />
-        {loadError ? (
-          <Problem className="mt-6" retry={() => void refresh()}>Couldn&apos;t load the Site Codebook: {loadError}</Problem>
-        ) : <LoadingBlock what="the Site Codebook" />}
+        <PageBody>
+          {loadError ? (
+            <ErrorNote error={loadError} title="Couldn't load the Site Codebook." onRetry={() => void refresh()} />
+          ) : <SkeletonRows rows={6} cols={2} what="the Site Codebook" />}
+        </PageBody>
       </PageShell>
     );
   }
@@ -131,6 +142,7 @@ export default function CodebookPage() {
           { label: "Equipment types", value: book.equipmentTypes.length },
           { label: "Drawing types", value: book.drawingTypes.length },
         ]}
+        factsHero="none"
         primary={canWrite ? (
           <button type="button" className={heroPrimary} onClick={() => setImportOpen(true)}>
             <Sparkles className="w-4 h-4" /> Build from a document
@@ -150,18 +162,28 @@ export default function CodebookPage() {
             ]} />
           </div>
         </div>
-        {/* The codebook's sections steer the page, so they live in the band. */}
-        <div className={`${bandSeg} mt-5`} role="tablist" aria-label="Codebook sections">
-          {TABS.map((t) => (
-            <button key={t.key} type="button" role="tab" aria-selected={tab === t.key} onClick={() => setTab(t.key)}
-              className={bandSegItem(tab === t.key)}>
-              <t.icon className="w-3.5 h-3.5" /> {t.label}
-              {(() => {
-                const n = t.key === "units" ? book.units.length : t.key === "equipment" ? book.equipmentTypes.length : t.key === "drawings" ? book.drawingTypes.length : null;
-                return n !== null && n > 0 ? <span className={`ui-count !h-5 !min-w-5 !px-1.5 !text-[12px] ${tab === t.key ? "is-solid" : ""}`}>{n}</span> : null;
-              })()}
-            </button>
-          ))}
+        {/* The codebook's sections, as an underline row of tabs; a count is
+            plain muted figures after the label. */}
+        <div className="mt-6 flex items-end gap-6 overflow-x-auto border-b border-[var(--color-border)]" role="tablist" aria-label="Codebook sections"
+          onKeyDown={(e) => {
+            const i = TABS.findIndex((t) => t.key === tab);
+            const j = e.key === "ArrowRight" ? (i + 1) % TABS.length : e.key === "ArrowLeft" ? (i - 1 + TABS.length) % TABS.length : -1;
+            if (j < 0) return;
+            e.preventDefault();
+            setTab(TABS[j].key);
+            (e.currentTarget.querySelectorAll("[role=tab]")[j] as HTMLElement | undefined)?.focus();
+          }}>
+          {TABS.map((t) => {
+            const n = t.key === "units" ? book.units.length : t.key === "equipment" ? book.equipmentTypes.length : t.key === "drawings" ? book.drawingTypes.length : null;
+            const on = tab === t.key;
+            return (
+              <button key={t.key} type="button" role="tab" aria-selected={on} tabIndex={on ? 0 : -1} onClick={() => setTab(t.key)}
+                className={`shrink-0 whitespace-nowrap inline-flex items-center gap-1.5 h-10 pointer-coarse:h-11 -mb-px border-b-2 text-[15px] transition-colors ${on ? "border-[var(--color-current)] font-semibold text-[var(--color-text)]" : "border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
+                {t.label}
+                {n !== null && n > 0 && <span className="ui-count">{n}</span>}
+              </button>
+            );
+          })}
         </div>
       </PageHero>
 
@@ -224,7 +246,7 @@ function EntryTable({ kind, title, entries, canWrite, codeHint, labelHint, withP
       }, uid);
       setDraft({ code: "", label: "", prefixes: "" });
       onChanged();
-    } catch (e) { onError((e as Error).message); }
+    } catch (e) { onError(`Couldn't add ${draft.code}. ${friendlyError(e)}`); }
     finally { setBusy(false); }
   };
 
@@ -233,13 +255,14 @@ function EntryTable({ kind, title, entries, canWrite, codeHint, labelHint, withP
       title: `Remove ${e.code} (${e.label})?`,
       message: "Features stop recognizing this code. Nothing else is deleted.",
       confirmLabel: "Remove",
+      tone: "danger",
     });
     if (!ok) return;
-    try { await deleteEntry(e.id); onChanged(); } catch (err) { onError((err as Error).message); }
+    try { await deleteEntry(e.id); onChanged(); } catch (err) { onError(`Couldn't remove ${e.code}. ${friendlyError(err)}`); }
   };
 
   return (
-    <Section label={title} icon={kind === "unit" ? Factory : kind === "equipment_type" ? Boxes : FileDigit} count={entries.length} action={<span className="text-[13px] text-[var(--color-text-muted)]">{plural(entries.length, "code")}</span>}>
+    <Section label={title} count={entries.length}>
     <div className={tbl.wrap}>
       <table className={tbl.table}>
         <thead className={tbl.thead}>
@@ -270,9 +293,9 @@ function EntryTable({ kind, title, entries, canWrite, codeHint, labelHint, withP
           {withPrefixes && (
             <input value={draft.prefixes} onChange={(e) => setDraft({ ...draft, prefixes: e.target.value })} placeholder="Prefixes, e.g. E or EA, E" aria-label="Tag prefixes" className={`${fieldBox} h-10 text-[15px] w-52`} />
           )}
-          <button type="button" className={btnQuiet} onClick={() => void add()} disabled={busy || !draft.code.trim() || !draft.label.trim()}>
-            {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />} Add
-          </button>
+          <Button variant="secondary" loading={busy} onClick={() => void add()} disabled={!draft.code.trim() || !draft.label.trim()}>
+            <Plus aria-hidden className="w-4 h-4" /> Add
+          </Button>
         </div>
       )}
     </div>
@@ -296,12 +319,12 @@ function EntryRow({ entry, withPrefixes, canWrite, orgId, uid, onChanged, onErro
       }, uid);
       setEditing(false);
       onChanged();
-    } catch (e) { onError((e as Error).message); }
+    } catch (e) { onError(`Couldn't save ${entry.code}. ${friendlyError(e)}`); }
   };
 
   return (
     <tr className={tbl.tr}>
-      <td className={tbl.td}><span className="ui-tag !text-[15px]">{entry.code}</span></td>
+      <td className={tbl.td}><span className="ui-id text-[16px]">{entry.code}</span></td>
       <td className={tbl.td}>
         {editing
           ? <input value={label} onChange={(e) => setLabel(e.target.value)} aria-label="Label" className={`${fieldBox} h-9 text-[15px] w-full`} autoFocus />
@@ -316,16 +339,16 @@ function EntryRow({ entry, withPrefixes, canWrite, orgId, uid, onChanged, onErro
             ? <input value={prefixes} onChange={(e) => setPrefixes(e.target.value)} aria-label="Tag prefixes" className={`${fieldBox} h-9 text-[15px] w-full`} />
             : (
               <span className="flex flex-wrap gap-1">
-                {(entry.meta.tagPrefixes ?? []).slice(0, 4).map((p) => <span key={p} className="ui-tag">{p}-</span>)}
+                <span className="font-display font-semibold tabular-nums text-[var(--color-text)]">{(entry.meta.tagPrefixes ?? []).slice(0, 4).map((p) => `${p}-`).join(", ")}</span>
                 {(entry.meta.tagPrefixes ?? []).length > 4 && (
-                  <button type="button" onClick={() => canWrite && setEditing(true)} title={(entry.meta.tagPrefixes ?? []).map((p) => `${p}-`).join(", ")} className="ui-tag is-more">+{(entry.meta.tagPrefixes ?? []).length - 4}</button>
+                  <button type="button" onClick={() => canWrite && setEditing(true)} title={(entry.meta.tagPrefixes ?? []).map((p) => `${p}-`).join(", ")} className="text-[13px] text-[var(--color-text-muted)] hover:underline underline-offset-2">and {(entry.meta.tagPrefixes ?? []).length - 4} more</button>
                 )}
               </span>
             )}
         </td>
       )}
       <td className={`${tbl.td} max-sm:hidden text-[14px] text-[var(--color-text-muted)]`}>
-        <span className={`ui-pill ${entry.origin === "import" ? "" : "is-muted"}`}>{entry.origin === "import" ? "Imported" : "Typed in"}</span>
+        {entry.origin === "import" ? "Imported" : "Typed in"}
       </td>
       {canWrite && (
         <td className={`${tbl.td} text-right`}>
@@ -336,10 +359,10 @@ function EntryRow({ entry, withPrefixes, canWrite, orgId, uid, onChanged, onErro
                 <button type="button" onClick={() => { setEditing(false); setLabel(entry.label); setPrefixes((entry.meta.tagPrefixes ?? []).join(", ")); }} className={btnIcon} title="Cancel" aria-label="Cancel"><X className="w-4 h-4" /></button>
               </>
             ) : (
-              <>
-                <button type="button" onClick={() => setEditing(true)} className={btnIcon} title="Edit" aria-label={`Edit ${entry.code}`}><Pencil className="w-4 h-4" /></button>
-                <button type="button" onClick={onRemove} className={`${btnIcon} hover:text-[var(--state-overdue)]`} title="Remove" aria-label={`Remove ${entry.code}`}><Trash2 className="w-4 h-4" /></button>
-              </>
+              <MoreMenu iconOnly label={`More for ${entry.code}`} triggerClass={btnIcon} items={[
+                { icon: <Pencil className="w-4 h-4" />, label: "Change", onClick: () => setEditing(true) },
+                { icon: <Trash2 className="w-4 h-4" />, label: "Remove", tone: "bad", line: true, onClick: onRemove },
+              ]} />
             )}
           </div>
         </td>
@@ -383,15 +406,15 @@ function NumberingTab({ book, canWrite, orgId, uid, onChanged, onError }: {
       }, uid);
       setSaved(true); setTimeout(() => setSaved(false), 1800);
       onChanged();
-    } catch (e) { onError((e as Error).message); }
+    } catch (e) { onError(`Couldn't save the numbering. ${friendlyError(e)}`); }
     finally { setSaving(false); }
   };
 
   return (
-    <div className="space-y-4">
-      <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4 sm:p-5">
-        <h2 className="font-display text-[17px] font-semibold text-[var(--color-text)] mb-1">Drawing number segments, in order</h2>
-        <p className="text-[13px] text-[var(--color-text-muted)] mb-3">
+    <div className="space-y-8">
+      <Section label="Drawing number segments, in order">
+      <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 sm:p-5">
+        <p className="text-[14px] text-[var(--color-text-muted)] mb-3">
           Separators (dashes, dots, “SHT”) are handled for you. Unit (2), Drawing type (2), Paper size (1), Number, Sheet reads <span className="font-display font-semibold">2002-D-10001 SHT.4</span>.
         </p>
         <div className="space-y-1.5">
@@ -433,15 +456,16 @@ function NumberingTab({ book, canWrite, orgId, uid, onChanged, onError }: {
           </Button>
         )}
       </div>
+      </Section>
 
-      <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4 sm:p-5">
-        <h2 className="font-display text-[17px] font-semibold text-[var(--color-text)] mb-2">Preview: paste one of your real drawing numbers</h2>
-        <Input value={sample} onChange={(e) => setSample(e.target.value)} aria-label="Sample drawing number" className="max-w-md" placeholder="2002-D-10001 SHT.4" />
+      <Section label="Check it with a real drawing number">
+      <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 sm:p-5">
+        <Input value={sample} onChange={(e) => setSample(e.target.value)} aria-label="Sample drawing number" className="max-w-md font-display tabular-nums" placeholder="2002-D-10001 SHT.4" autoComplete="off" />
         <div className="mt-2.5 flex flex-wrap gap-1.5 text-[13px]">
           {segments.length === 0 ? (
             <span className="text-[var(--color-text-muted)]">Add segments above to see the decode.</span>
           ) : !parsed ? (
-            <span className="inline-flex items-center gap-1 text-[var(--state-overdue)] font-semibold"><AlertTriangle className="w-3.5 h-3.5" /> Doesn&apos;t match the segments. Change the segments or the sample.</span>
+            <span className="inline-flex items-center gap-1.5 text-[14px] text-[var(--state-overdue-text)] font-semibold"><AlertTriangle aria-hidden className="w-4 h-4" /> Doesn&apos;t match the segments. Change the segments or the sample.</span>
           ) : (
             <>
               <PreviewChip label="Unit" value={parsed.unitCode} extra={parsed.unitLabel} />
@@ -453,26 +477,25 @@ function NumberingTab({ book, canWrite, orgId, uid, onChanged, onError }: {
           )}
         </div>
       </div>
+      </Section>
 
-      <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4 sm:p-5 flex items-center gap-4 flex-wrap">
-        <div>
-          <h2 className="font-display text-[17px] font-semibold text-[var(--color-text)]">The number after the point</h2>
-          <p className="text-[13px] text-[var(--color-text-muted)]">Is it the tag&apos;s number (E-5 is 2030.05)? If not, equipment IDs are never worked out from the name: they come from the schedule or are typed in.</p>
-        </div>
+      <Section label="The number after the point">
+      <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 sm:p-5 flex items-center gap-4 flex-wrap">
+        <p className="basis-full text-[14px] text-[var(--color-text-muted)]">Is it the tag&apos;s number (E-5 is 2030.05)? If not, equipment IDs are never worked out from the name: they come from the schedule or are typed in.</p>
         <label className="text-[13px] text-[var(--color-text-muted)] inline-flex items-center gap-1.5">
           <input type="checkbox" checked={mirrors} disabled={!canWrite} onChange={(e) => setMirrors(e.target.checked)} className="w-4 h-4 accent-[var(--color-main)]" /> it&apos;s the tag&apos;s number
         </label>
-        <label className={`text-[13px] text-[var(--color-text-muted)] inline-flex items-center gap-1.5 ${mirrors ? "" : "opacity-40"}`}>
+        <label className={`text-[14px] text-[var(--color-text-muted)] inline-flex items-center gap-1.5 whitespace-nowrap ${mirrors ? "" : "opacity-40"}`}>
           pad to <Input type="number" value={padTo} disabled={!canWrite || !mirrors} min={0} max={6}
             onChange={(e) => setPadTo(Math.max(0, Math.min(6, Number(e.target.value) || 0)))} className="w-14 h-8" /> digits
         </label>
         {canWrite && (
-          <button type="button" className={`ml-auto ${btnQuiet}`} onClick={() => void save()} disabled={saving}>
-            {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : saved ? <Check className="w-3.5 h-3.5" /> : <Save className="w-3.5 h-3.5" />}
-            {saved ? "Saved" : "Save numbering"}
-          </button>
+          <Button variant="secondary" className="ml-auto" loading={saving} done={saved} doneLabel="Saved" onClick={() => void save()}>
+            Save numbering
+          </Button>
         )}
       </div>
+      </Section>
     </div>
   );
 }
@@ -516,33 +539,33 @@ function LegendTab({ book, canWrite, orgId, uid, onChanged, onError }: {
   const setLegend = async (ids: string[]) => {
     onError(null);
     try { await saveConfig(orgId, { legendDocIds: ids.slice(0, 3) }, uid); onChanged(); }
-    catch (e) { onError((e as Error).message); }
+    catch (e) { onError(`Couldn't change the legend. ${friendlyError(e)}`); }
   };
 
   return (
-    <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4 sm:p-5">
-      <h2 className="font-display text-[17px] font-semibold text-[var(--color-text)] mb-1">Symbols legend and decoder sheets · {book.legendDocIds.length} of 3</h2>
-      <p className="text-[13px] text-[var(--color-text-muted)] mb-3">
+    <Section label="Symbols legend and decoder sheets" action={<span className="text-[14px] text-[var(--color-text-muted)] tabular-nums">{book.legendDocIds.length} of 3</span>}>
+    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 sm:p-5">
+      <p className="text-[14px] text-[var(--color-text-muted)] mb-3">
         Attach your P&ID legend sheets (indexed in any knowledge library). Every knowledge library inherits them automatically, so the AI can read your symbols when it answers.
       </p>
       <div className="space-y-1.5 mb-3">
         {book.legendDocIds.map((id) => (
-          <div key={id} className="flex items-center gap-2 px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)]/60">
-            <FileText className="w-3.5 h-3.5 text-[var(--color-text-muted)] shrink-0" />
+          <div key={id} className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-[var(--color-border)]">
+            <FileText aria-hidden className="w-4 h-4 text-[var(--color-text-faint)] shrink-0" />
             <span className="text-[14px] font-semibold text-[var(--color-text)] truncate flex-1">{names.get(id) ?? id}</span>
             {canWrite && (
               <button onClick={() => void setLegend(book.legendDocIds.filter((x) => x !== id))}
-                className="p-1 text-[var(--color-text-faint)] hover:text-[var(--state-overdue)] rounded" title="Detach" aria-label="Detach legend">
-                <X className="w-3.5 h-3.5" />
+                className={btnIcon} title="Detach" aria-label="Detach legend">
+                <X className="w-4 h-4" />
               </button>
             )}
           </div>
         ))}
-        {book.legendDocIds.length === 0 && <div className="text-[13px] text-[var(--color-text-muted)]">No legend attached yet.</div>}
+        {book.legendDocIds.length === 0 && <div className="text-[14px] text-[var(--color-text-muted)]">No legend attached yet.</div>}
       </div>
       {canWrite && book.legendDocIds.length < 3 && (
         <div>
-          <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search indexed documents by name…" />
+          <Input value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Find an indexed document" placeholder="e.g. P&ID legend" autoComplete="off" enterKeyHint="search" />
           {results.length > 0 && (
             <div className="mt-1 rounded-lg border border-[var(--color-border)] divide-y divide-[var(--color-border)] overflow-hidden">
               {results.map((r) => (
@@ -556,6 +579,7 @@ function LegendTab({ book, canWrite, orgId, uid, onChanged, onError }: {
         </div>
       )}
     </div>
+    </Section>
   );
 }
 
@@ -581,6 +605,10 @@ function ImportModal({ orgId, uid, book, onClose, onApplied }: {
   const [notes, setNotes] = useState("");
   const [accepted, setAccepted] = useState<Set<string>>(new Set());
   const [applying, setApplying] = useState(false);
+  // Reading runs part by part; Stop ends it after the part in flight and
+  // shows what was found so far.
+  const stopRef = useRef(false);
+  const [stopping, setStopping] = useState(false);
 
   const handleFile = async (file: File) => {
     setError(null);
@@ -640,6 +668,8 @@ function ImportModal({ orgId, uid, book, onClose, onApplied }: {
   };
 
   const run = async () => {
+    stopRef.current = false;
+    setStopping(false);
     setRunning(true); setError(null); setDiff(null); setProgress(""); setReadLine(null);
     try {
       const { data: { session } } = await supabase.auth.getSession();
@@ -647,7 +677,7 @@ function ImportModal({ orgId, uid, book, onClose, onApplied }: {
       const post = async (payload: Record<string, unknown>) => {
         const res = await fetch("/api/codebook/import", { method: "POST", headers, body: JSON.stringify(payload) });
         const json = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error((json as { error?: string }).error ?? `HTTP ${res.status}`);
+        if (!res.ok) throw Object.assign(new Error((json as { error?: string }).error ?? ""), { status: res.status });
         return json as { text?: string; proposals?: ProposedEntry[]; notes?: string; pageCount?: number; thinText?: boolean };
       };
 
@@ -659,7 +689,7 @@ function ImportModal({ orgId, uid, book, onClose, onApplied }: {
       let pageCount = 0;
       let visionPages = 0; // >0 → propose from page images, not text
       if (pickedFile || pickedDoc) {
-        setProgress("Reading the document…");
+        setProgress("Reading the document");
         const ex = await post({
           orgId, action: "extract",
           fileBase64: pickedFile?.base64, fileName: pickedFile?.name,
@@ -685,10 +715,11 @@ function ImportModal({ orgId, uid, book, onClose, onApplied }: {
         //     (CAD-exported legends, scanned standards). Render + read pages
         //     in small batches — same bounded-call shape as text chunks.
         for (let start = 1; start <= visionPages; start += VISION_BATCH) {
+          if (stopRef.current) { failedParts.length = 0; allNotes.push(`Stopped after ${partsRead} of ${visionPages} pages.`); break; }
           const pages: number[] = [];
           for (let p = start; p < start + VISION_BATCH && p <= visionPages; p++) pages.push(p);
           const label = pages.length === 1 ? `page ${pages[0]}` : `pages ${pages[0]}–${pages[pages.length - 1]}`;
-          setProgress(`Reading ${label} of ${pageCount} visually…`);
+          setProgress(`Reading ${label} of ${pageCount}`);
           const payload = {
             orgId, action: "propose-vision", pages,
             fileBase64: pickedFile?.base64, fileName: pickedFile?.name,
@@ -709,7 +740,8 @@ function ImportModal({ orgId, uid, book, onClose, onApplied }: {
       } else {
         const chunks = chunkText(sourceText);
         for (let i = 0; i < chunks.length; i++) {
-          setProgress(chunks.length > 1 ? `Finding codes: part ${i + 1} of ${chunks.length}…` : "Finding codes…");
+          if (stopRef.current) { allNotes.push(`Stopped after ${partsRead} of ${chunks.length} parts.`); break; }
+          setProgress(chunks.length > 1 ? `Finding codes, part ${i + 1} of ${chunks.length}` : "Finding codes");
           const payload = {
             orgId, text: chunks[i],
             partLabel: chunks.length > 1 ? `part ${i + 1} of ${chunks.length}` : undefined,
@@ -744,8 +776,8 @@ function ImportModal({ orgId, uid, book, onClose, onApplied }: {
       }
       // Adds + changes start accepted; unchanged needs no action.
       setAccepted(new Set([...d.adds.map(keyOf), ...d.changes.map((c) => keyOf(c.proposed))]));
-    } catch (e) { setError((e as Error).message); }
-    finally { setRunning(false); setProgress(""); }
+    } catch (e) { setError(friendlyError(e)); }
+    finally { setRunning(false); setProgress(""); setStopping(false); }
   };
 
   const apply = async () => {
@@ -757,7 +789,7 @@ function ImportModal({ orgId, uid, book, onClose, onApplied }: {
       pasteDraft.clear();
       setText("");
       onApplied();
-    } catch (e) { setError((e as Error).message); setApplying(false); }
+    } catch (e) { setError(`Couldn't apply the codes. ${friendlyError(e)}`); setApplying(false); }
   };
 
   const toggle = (k: string) => setAccepted((prev) => {
@@ -768,16 +800,15 @@ function ImportModal({ orgId, uid, book, onClose, onApplied }: {
 
   const KIND_LABEL: Record<string, string> = { unit: "Unit", equipment_type: "Equipment", drawing_type: "Drawing" };
 
-  return (
-    <div role="dialog" aria-modal="true" aria-label="Build the codebook from a document" className="fixed inset-0 z-[200] bg-[var(--color-ink)]/60 flex items-start sm:items-center justify-center overflow-y-auto p-4 animate-in fade-in">
-      <div className="w-full max-w-2xl bg-[var(--color-surface)] rounded-2xl shadow-2xl flex flex-col max-h-[88vh] animate-in zoom-in-95">
-        <div className="px-5 py-3.5 border-b border-[var(--color-border)] flex items-center gap-2.5">
-          <Sparkles className="w-4 h-4 text-[var(--color-text-muted)]" />
+  return onBody(
+    <div role="dialog" aria-modal="true" aria-label="Build the codebook from a document" className="fixed inset-0 z-[200] bg-[var(--color-ink)]/55 flex items-start sm:items-center justify-center overflow-y-auto p-4 animate-in fade-in">
+      <div className="w-full max-w-2xl bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl ui-float ui-float-in flex flex-col max-h-[88vh]">
+        <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-start gap-2.5">
           <div className="flex-1">
-            <div className="text-sm font-semibold text-[var(--color-text)]">Build the codebook from a document</div>
-            <div className="text-[13px] text-[var(--color-text-muted)]">Runs on your own AI key. Nothing is written until you review and apply.</div>
+            <h2 className="font-display text-[20px] leading-tight font-semibold text-[var(--color-text)]">Build the codebook from a document</h2>
+            <p className="text-[14px] text-[var(--color-text-muted)] mt-0.5">Runs on your own AI key. Nothing is written until you check it and apply.</p>
           </div>
-          <button onClick={onClose} disabled={running || applying} aria-label="Close" className="p-1.5 rounded hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4 text-[var(--color-text-muted)]" /></button>
+          <button onClick={onClose} disabled={running || applying} aria-label="Close" title="Close" className={btnIcon}><X className="w-4 h-4" /></button>
         </div>
 
         <div className="p-5 space-y-3 overflow-y-auto">
@@ -786,7 +817,7 @@ function ImportModal({ orgId, uid, book, onClose, onApplied }: {
           {!diff && (
             <>
               <div>
-                <div className="text-[13px] font-semibold text-[var(--color-text)] mb-1">Upload your standard</div>
+                <div className="text-[14px] font-semibold text-[var(--color-text)] mb-1.5">Upload your standard</div>
                 <input ref={fileInputRef} type="file" className="hidden"
                   accept=".pdf,.docx,.txt,.md,.csv,.tsv,text/plain,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                   onChange={(e) => { const f = e.target.files?.[0]; if (f) void handleFile(f); e.target.value = ""; }} />
@@ -812,15 +843,15 @@ function ImportModal({ orgId, uid, book, onClose, onApplied }: {
               </div>
               <div className="text-center text-[13px] font-semibold text-[var(--color-text-faint)]">or</div>
               <div>
-                <div className="text-[13px] font-semibold text-[var(--color-text)] mb-1">Paste your standard</div>
+                <label htmlFor="cb-paste" className="block text-[14px] font-semibold text-[var(--color-text)] mb-1.5">Paste your standard</label>
                 {pasteDraft.restored && text.trim() && <p className="text-[13px] text-[var(--color-text-muted)] mb-1">Brought back what you pasted last time.</p>}
-                <textarea value={text} onChange={(e) => setText(e.target.value)} rows={7}
-                  placeholder={"Paste the unit list / identifier tables / numbering convention…\n\ne.g.  20  Crude Unit\n      25  DHT\n      Equipment: 30 Exchangers (E-), 10 Vessels (V-) …"}
-                  className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)]/50 text-[var(--color-text)] px-3 py-2 text-[14px] font-mono resize-y" />
+                <textarea id="cb-paste" value={text} onChange={(e) => setText(e.target.value)} rows={7}
+                  placeholder={"e.g.  20  Crude Unit\n      25  DHT\n      Equipment: 30 Exchangers (E-), 10 Vessels (V-)"}
+                  className={`${fieldBox} w-full py-2 text-[14px] max-sm:text-[16px] font-mono resize-y`} />
               </div>
               <div className="text-center text-[13px] font-semibold text-[var(--color-text-faint)]">or</div>
               <div>
-                <div className="text-[13px] font-semibold text-[var(--color-text)] mb-1">Pick an indexed document</div>
+                <div className="text-[14px] font-semibold text-[var(--color-text)] mb-1.5">Pick an indexed document</div>
                 {pickedDoc ? (
                   <div className="flex items-center gap-2 px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] text-[14px] font-semibold text-[var(--color-text)]">
                     <FileText className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> {pickedDoc.name}
@@ -828,7 +859,7 @@ function ImportModal({ orgId, uid, book, onClose, onApplied }: {
                   </div>
                 ) : (
                   <>
-                    <Input value={docQuery} onChange={(e) => setDocQuery(e.target.value)} placeholder="Search your knowledge libraries…" />
+                    <Input value={docQuery} onChange={(e) => setDocQuery(e.target.value)} aria-label="Find an indexed document" placeholder="e.g. numbering standard" autoComplete="off" enterKeyHint="search" />
                     {docResults.length > 0 && (
                       <div className="mt-1 rounded-lg border border-[var(--color-border)] divide-y divide-[var(--color-border)] overflow-hidden">
                         {docResults.map((r) => (
@@ -843,11 +874,7 @@ function ImportModal({ orgId, uid, book, onClose, onApplied }: {
             </>
           )}
 
-          {error && (
-            <p role="alert" className="text-[14px] font-semibold text-[var(--state-overdue)] flex items-start gap-2">
-              <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" /> {error}
-            </p>
-          )}
+          {error && <Problem>{error}</Problem>}
 
           {diff && (
             <>
@@ -863,10 +890,9 @@ function ImportModal({ orgId, uid, book, onClose, onApplied }: {
               {/* The learning loop: a correction worth repeating becomes a
                   standing instruction — taught once, obeyed on every future
                   import. */}
-              <Link href="/admin/ai-instructions?scope=codebook"
-                className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-[var(--color-accent-text)] hover:underline">
-                <GraduationCap className="w-3.5 h-3.5" />
-                Spotted something it keeps getting wrong? Teach the AI a standing rule →
+              <Link href="/admin/ai-instructions?scope=codebook" className={btnLink}>
+                <GraduationCap aria-hidden className="w-4 h-4" />
+                Something it keeps getting wrong? Teach the AI a standing rule
               </Link>
               <div className="rounded-lg border border-[var(--color-border)] divide-y divide-[var(--color-border)] max-h-72 overflow-y-auto">
                 {[...diff.adds.map((p) => ({ p, change: null as null | CodebookEntry })),
@@ -879,7 +905,7 @@ function ImportModal({ orgId, uid, book, onClose, onApplied }: {
                       <span className="font-display font-semibold tabular-nums text-[var(--color-text)] w-14">{p.code}</span>
                       <span className="font-semibold text-[var(--color-text)] flex-1">{p.label}</span>
                       {p.tagPrefixes && p.tagPrefixes.length > 0 && <span className="font-mono text-[var(--color-text-muted)]">{p.tagPrefixes.join(", ")}-</span>}
-                      {change && <span className="text-[13px] font-semibold text-[var(--state-held)]" title={`Currently: ${change.label}`}>replaces “{change.label}”</span>}
+                      {change && <span className="text-[13px] text-[var(--color-text-muted)]" title={`Currently: ${change.label}`}>replaces “{change.label}”</span>}
                     </label>
                   );
                 })}
@@ -893,14 +919,22 @@ function ImportModal({ orgId, uid, book, onClose, onApplied }: {
 
         <div className="px-5 py-3 border-t border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center justify-end gap-2">
           <button type="button" onClick={onClose} disabled={running || applying} className={btnQuiet}>Cancel</button>
+          {/* While it reads, the progress shows beside the button and the
+              button itself turns into Stop, in the same place. */}
+          {running && progress && <span role="status" className="mr-auto text-[14px] text-[var(--color-text-muted)] tabular-nums truncate">{stopping ? "Stopping after this part" : progress}</span>}
           {!diff ? (
-            <Button onClick={() => void run()} disabled={running || (!text.trim() && !pickedDoc && !pickedFile)}>
-              {running ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
-              {running && progress ? progress : "Read & propose"}
-            </Button>
+            running ? (
+              <Button variant="secondary" disabled={stopping} loading={stopping} onClick={() => { stopRef.current = true; setStopping(true); }}>
+                {!stopping && <Square aria-hidden className="w-3.5 h-3.5 fill-current" />} Stop
+              </Button>
+            ) : (
+              <Button variant={text.trim() || pickedDoc || pickedFile ? "primary" : "secondary"} onClick={() => void run()} disabled={!text.trim() && !pickedDoc && !pickedFile}>
+                <Sparkles aria-hidden className="w-4 h-4" /> Read and find codes
+              </Button>
+            )
           ) : (
-            <Button onClick={() => void apply()} disabled={applying || accepted.size === 0}>
-              {applying ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} Apply {accepted.size} row{accepted.size === 1 ? "" : "s"}
+            <Button onClick={() => void apply()} loading={applying} disabled={accepted.size === 0}>
+              <Check aria-hidden className="w-4 h-4" /> Apply {accepted.size} row{accepted.size === 1 ? "" : "s"}
             </Button>
           )}
         </div>

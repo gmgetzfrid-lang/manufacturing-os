@@ -8,6 +8,7 @@
 // name big, one line of its state, then the content; at most one orange.
 
 import React, { useEffect, useState } from "react";
+import { friendlyError } from "@/lib/friendlyError";
 import Link from "next/link";
 import dynamic from "next/dynamic";
 import {
@@ -170,7 +171,7 @@ function AttachmentPane({ att, header }: {
   const [failed, setFailed] = useState<string | null>(null);
   useEffect(() => {
     let cancelled = false;
-    void attachmentUrl(att.path).then((u) => { if (!cancelled) setUrl(u); }, (e: unknown) => { if (!cancelled) setFailed(e instanceof Error ? e.message : String(e)); });
+    void attachmentUrl(att.path).then((u) => { if (!cancelled) setUrl(u); }, (e: unknown) => { if (!cancelled) setFailed(friendlyError(e)); });
     return () => { cancelled = true; };
   }, [att.path]);
   return (
@@ -185,7 +186,7 @@ function AttachmentPane({ att, header }: {
         ) : failed ? (
           <p role="alert" className="flex items-start gap-2 text-[14px] font-semibold text-[var(--state-overdue)]"><AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> Couldn&apos;t open the file: {failed}</p>
         ) : (
-          <div className="flex items-center gap-2 text-[13.5px] text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin" /> Loading the file…</div>
+          <div className="flex items-center gap-2 text-[14px] text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin" /> Loading the file…</div>
         )}
         {url && (
           <a href={url} target="_blank" rel="noopener noreferrer" className="inline-block text-[14px] text-[var(--color-accent-text)] hover:underline">Open in a new tab</a>
@@ -218,7 +219,7 @@ function InstructionsPane({
   const run = async (what: "instructions" | "profile" | "promote", fn: () => Promise<void>) => {
     setSaving(what); setSaveError(null);
     try { await fn(); flash(what); }
-    catch (e) { setSaveError({ what, msg: e instanceof Error ? e.message : String(e) }); }
+    catch (e) { setSaveError({ what, msg: friendlyError(e) }); }
     finally { setSaving(null); }
   };
   useEffect(() => { setText(instructions); }, [instructions]);

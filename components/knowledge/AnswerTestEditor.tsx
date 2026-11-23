@@ -9,6 +9,7 @@
 // tests panel.
 
 import React, { useMemo, useState } from "react";
+import { friendlyError } from "@/lib/friendlyError";
 import { useDraft } from "@/hooks/useDraft";
 import { Plus, X, Loader2, FlaskConical } from "lucide-react";
 import { pressureClassOf } from "@/lib/pressureClass";
@@ -95,7 +96,7 @@ export default function AnswerTestEditor({ initial, citations = [], onSave, onCa
       const tags = initial.tags.filter((t) => t !== "critical").concat(critical ? ["critical"] : []);
       await onSave({ id: initial.id, question: question.trim(), expect, tags, notes: notes.trim() || undefined, sourceQuestionId: initial.sourceQuestionId });
       typedDraft.clear();
-    } catch (e) { setError((e as Error).message); }
+    } catch (e) { setError(friendlyError(e)); }
     finally { setSaving(false); }
   };
 

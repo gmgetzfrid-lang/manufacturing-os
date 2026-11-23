@@ -7,7 +7,8 @@
 
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
-import { Loader2, Waypoints, Activity } from "lucide-react";
+import { ErrorNote } from "@/components/ui/ErrorNote";
+import { SkeletonText } from "@/components/ui/Skeleton";
 import { findEstate } from "@/lib/find/client";
 import type { FindResponse } from "@/lib/find/types";
 import { EntityStrip, RelationChips, PageHits, ActivityPanel, CoverageLine } from "@/components/find/FindPanels";
@@ -18,37 +19,39 @@ export default function EstatePanel({ orgId, assetId, tag }: { orgId: string; as
   // Keyed by what was asked, so a stale answer is never shown for a new tag
   // and no state is reset synchronously inside the effect.
   const key = `${orgId}|${assetId}|${tag}`;
-  const [state, setState] = useState<{ key: string; res: FindResponse | null; error: string | null }>({ key: "", res: null, error: null });
+  const [state, setState] = useState<{ key: string; res: FindResponse | null; error: unknown }>({ key: "", res: null, error: null });
+  const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     let alive = true;
     findEstate({ orgId, query: tag, scope: { assetId }, limit: 60 })
       .then((r) => { if (alive) setState({ key, res: r, error: null }); })
-      .catch((e) => { if (alive) setState({ key, res: null, error: (e as Error).message }); });
+      .catch((e) => { if (alive) setState({ key, res: null, error: e ?? true }); });
     return () => { alive = false; };
-  }, [orgId, assetId, tag, key]);
+  }, [orgId, assetId, tag, key, attempt]);
   const res = state.key === key ? state.res : null;
   const error = state.key === key ? state.error : null;
 
   return (
-    <section className="bg-[var(--color-surface)] rounded-lg border border-[var(--color-border)] overflow-hidden">
-      <div className="px-4 sm:px-5 pt-4 pb-3 border-b border-[var(--color-border)] flex items-center justify-between">
-        <h2 className="font-display text-[17px] font-semibold text-[var(--color-heading)] inline-flex items-center gap-2.5"><span className="ui-icon-tile is-sm" aria-hidden><Waypoints className="w-4 h-4" /></span> Across the estate</h2>
-        <Link href={`/documents/graph?q=${encodeURIComponent(tag)}`} className="text-[13px] text-[var(--color-accent-text)] hover:underline">Explore on the map →</Link>
+    <section className="min-w-0">
+      <div className="flex flex-wrap items-end gap-x-3 gap-y-1 mb-3 min-h-8">
+        <h2 className="font-display text-[20px] leading-tight font-semibold text-[var(--color-text)]">Across the estate</h2>
+        <span className="flex-1" />
+        <Link href={`/documents/graph?q=${encodeURIComponent(tag)}`} className="text-[14px] font-semibold text-[var(--color-accent-text)] hover:underline underline-offset-2">Explore on the map</Link>
       </div>
-      <div className="p-4 space-y-4">
-        {error && <div role="alert" className="text-[13px] text-[var(--state-overdue)]">Couldn&apos;t look across the estate: {error}</div>}
-        {!res && !error && <div className="text-xs text-[var(--color-text-muted)] inline-flex items-center gap-2"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Looking across drawings, text, folders and work in flight…</div>}
+      <div className="bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] p-4 space-y-4">
+        {!!error && <ErrorNote compact error={error} title="Couldn't look across the estate." onRetry={() => setAttempt((n) => n + 1)} />}
+        {!res && !error && <SkeletonText lines={4} />}
         {res && (
           <>
             <EntityStrip entities={res.entities} />
             {res.groups.map((g) => (
               <div key={g.key}>
-                <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5 flex items-center gap-1.5">{g.label} <span className="ui-count !h-5 !text-[12px]">{g.ids.length}</span></div>
-                <ul className="divide-y divide-[var(--color-border)] rounded-lg border border-[var(--color-border)]">
+                <div className="text-[14px] font-semibold text-[var(--color-text)] mb-1.5 flex items-center gap-2">{g.label} <span className="ui-count">{g.ids.length}</span></div>
+                <ul className="divide-y divide-[var(--color-border)] border-y border-[var(--color-border)]">
                   {g.ids.slice(0, 8).map((id) => {
                     const r = res.results.find((x) => x.id === id)!;
                     return (
-                      <li key={id} className="px-3 py-2">
+                      <li key={id} className="py-2">
                         <Link href={r.href} className="flex items-center gap-2 hover:underline">
                           <FileTypeIcon type={fileTypeOf(r.name)} className="w-4 h-4 shrink-0" />
                           <span className="text-[14px] font-semibold text-[var(--color-accent-text)] truncate">{r.name}</span>
@@ -60,12 +63,12 @@ export default function EstatePanel({ orgId, assetId, tag }: { orgId: string; as
                     );
                   })}
                 </ul>
-                {g.ids.length > 8 && <div className="text-[13px] text-[var(--color-text-muted)] mt-1">…and {g.ids.length - 8} more on the map.</div>}
+                {g.ids.length > 8 && <div className="text-[13px] text-[var(--color-text-muted)] mt-1">And {g.ids.length - 8} more on the map.</div>}
               </div>
             ))}
-            {res.results.length === 0 && <div className="text-[13px] text-[var(--color-text-muted)]">Nothing in the estate is linked to {tag} yet. Reading its drawings (Intelligence › Knowledge) is what creates these links.</div>}
+            {res.results.length === 0 && <div className="text-[14px] text-[var(--color-text-muted)]">Nothing in the estate is linked to {tag} yet. Reading its drawings (Intelligence, Knowledge) is what makes these links.</div>}
             <div>
-              <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-1 inline-flex items-center gap-1"><Activity className="w-3 h-3" /> Happening now</div>
+              <div className="text-[14px] font-semibold text-[var(--color-text)] mb-1">Happening now</div>
               <ActivityPanel activity={res.activity} />
             </div>
             <CoverageLine coverage={res.coverage} />

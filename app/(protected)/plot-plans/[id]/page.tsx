@@ -9,9 +9,13 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import {
-  Loader2, Save, Pencil, X, MapPin, Search, ExternalLink, ChevronRight,
+  Pencil, X, MapPin, Search, ExternalLink, ChevronRight,
 } from "lucide-react";
-import LoadingBlock from "@/components/ui/LoadingBlock";
+import { Button } from "@/components/ui/Button";
+import { CopyId } from "@/components/ui/CopyId";
+import { ErrorNote } from "@/components/ui/ErrorNote";
+import { SkeletonRows } from "@/components/ui/Skeleton";
+import { friendlyError } from "@/lib/friendlyError";
 import { useRole } from "@/components/providers/RoleContext";
 import { getPlotPlan, saveMarkers } from "@/lib/plotPlans";
 import { listAssets, type Asset } from "@/lib/assets";
@@ -32,11 +36,12 @@ export default function PlotPlanBoard() {
   const [plan, setPlan] = useState<PlotPlan | null>(null);
   const [assets, setAssets] = useState<Asset[]>([]);
   const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<unknown>(null);
   const [markers, setMarkers] = useState<PlotPlanMarker[]>([]);
   const [editing, setEditing] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
   const [placingAssetId, setPlacingAssetId] = useState<string | null>(null);
   const [selectedMarker, setSelectedMarker] = useState<string | null>(null);
   const [pickerSearch, setPickerSearch] = useState("");
@@ -55,7 +60,7 @@ export default function PlotPlanBoard() {
       setMarkers(p?.markers ?? []);
       setAssets(a);
     } catch (e) {
-      setLoadError((e as Error).message || "Couldn't load this plot plan.");
+      setLoadError(e ?? true);
     } finally { setLoading(false); }
   }, [activeOrgId, id]);
 
@@ -113,15 +118,17 @@ export default function PlotPlanBoard() {
   };
 
   const save = async () => {
-    if (!uid) { showToast({ type: "error", title: "Save failed", message: "Your sign-in is still loading. Try again in a moment." }); return; }
+    if (!uid) { showToast({ type: "error", title: "Couldn't save yet", message: "Your sign-in is still loading. Try again in a moment." }); return; }
     setSaving(true);
+    setSaved(false);
     try {
       await saveMarkers({ id, markers, actorUserId: uid });
       setDirty(false);
-      setEditing(false);
-      showToast({ type: "success", title: "Saved", message: `${markers.length} marker${markers.length === 1 ? "" : "s"} placed.` });
+      // "Saved" shows in the button for a moment, then the board leaves edit mode.
+      setSaved(true);
+      window.setTimeout(() => { setEditing(false); setSaved(false); }, 900);
     } catch (e) {
-      showToast({ type: "error", title: "Save failed", message: (e as Error).message });
+      showToast({ type: "error", title: "Couldn't save the markers", message: friendlyError(e) });
     } finally { setSaving(false); }
   };
 
@@ -133,7 +140,7 @@ export default function PlotPlanBoard() {
       await setEquipmentState({ assetId: asset.id, orgId: activeOrgId, newState: next, previousState: cur, actorUserId: uid, actorEmail: userEmail ?? undefined, actorRole: activeRole ?? undefined });
       setAssets((prev) => prev.map((a) => (a.id === asset.id ? { ...a, whiteboard_state: next } : a)));
     } catch (e) {
-      showToast({ type: "error", title: "Couldn't update state", message: (e as Error).message });
+      showToast({ type: "error", title: "Couldn't change its state", message: friendlyError(e) });
     }
   };
 
@@ -142,7 +149,7 @@ export default function PlotPlanBoard() {
     try {
       await setEquipmentState({ assetId: asset.id, orgId: activeOrgId, newState: "blocked", previousState: (asset.whiteboard_state ?? "pending") as WhiteboardState, actorUserId: uid, actorEmail: userEmail ?? undefined, actorRole: activeRole ?? undefined });
       setAssets((prev) => prev.map((a) => (a.id === asset.id ? { ...a, whiteboard_state: "blocked" } : a)));
-    } catch (e) { showToast({ type: "error", title: "Couldn't update state", message: (e as Error).message }); }
+    } catch (e) { showToast({ type: "error", title: "Couldn't change its state", message: friendlyError(e) }); }
   };
 
   // Live state counts across markers.
@@ -169,7 +176,7 @@ export default function PlotPlanBoard() {
   if (loading) return (
     <PageShell width="full">
       <PageHero kicker="Operating areas" title="Plot plan" back={back} size="md" overlap={false} />
-      <LoadingBlock what="the plot plan" />
+      <PageBody><SkeletonRows rows={6} cols={1} what="the plot plan" /></PageBody>
     </PageShell>
   );
   if (loadError || !plan) {
@@ -178,16 +185,13 @@ export default function PlotPlanBoard() {
         <PageHero kicker="Operating areas" back={back} size="md"
           title={loadError ? "Couldn't load this plot plan." : "Plot plan not found."} />
         <PageBody>
-          <Card>
-            {loadError ? (
-              <p role="alert" className="text-[15px] font-semibold text-[var(--state-overdue)]">
-                Couldn&apos;t load this plot plan: {loadError}{" "}
-                <button type="button" onClick={() => void load()} className="font-normal text-[var(--color-accent-text)] hover:underline">Try again</button>
-              </p>
-            ) : (
+          {loadError ? (
+            <ErrorNote error={loadError} title="Couldn't load this plot plan." onRetry={() => void load()} />
+          ) : (
+            <Card>
               <p className="text-[15px] text-[var(--color-text-muted)]">It may have been deleted. <Link href="/plot-plans" className="text-[var(--color-accent-text)] hover:underline">See all plot plans</Link></p>
-            )}
-          </Card>
+            </Card>
+          )}
         </PageBody>
       </PageShell>
     );
@@ -222,7 +226,7 @@ export default function PlotPlanBoard() {
           <button type="button" onClick={() => { setEditing(true); setSelectedMarker(null); }} className={heroQuiet}><Pencil className="w-4 h-4" /> Edit markers</button>
         )) : undefined}
         primary={isController && editing ? (
-          <button type="button" onClick={save} disabled={saving} className={heroPrimary}>{saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Save markers</button>
+          <Button loading={saving} done={saved} doneLabel="Saved" onClick={() => void save()} disabled={!dirty && !saved}>Save markers</Button>
         ) : undefined}
       >
         {/* Legend: how many markers sit in each state. */}
@@ -243,12 +247,12 @@ export default function PlotPlanBoard() {
         {editing && (
           <div className="md:w-64 shrink-0 border-b md:border-b-0 md:border-r border-[var(--color-border)] flex flex-col max-h-72 md:max-h-none">
             <div className="p-4 border-b border-[var(--color-border)]">
-              <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-2">Place an asset</div>
+              <label htmlFor="pp-pick" className="block text-[14px] font-semibold text-[var(--color-text)] mb-1.5">Place equipment</label>
               <div className="relative">
-                <Search className="w-3.5 h-3.5 text-[var(--color-text-faint)] absolute left-2.5 top-1/2 -translate-y-1/2" />
-                <input value={pickerSearch} onChange={(e) => setPickerSearch(e.target.value)} aria-label="Search equipment" placeholder="Search equipment…" className="w-full h-9 pl-8 pr-2 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-[14px] outline-none focus:border-[var(--color-main)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40" />
+                <Search aria-hidden className="w-4 h-4 text-[var(--color-text-faint)] absolute left-3 top-1/2 -translate-y-1/2" />
+                <input id="pp-pick" value={pickerSearch} onChange={(e) => setPickerSearch(e.target.value)} placeholder="e.g. P-2001" autoComplete="off" enterKeyHint="search" className="w-full h-10 pointer-coarse:h-11 pl-9 pr-2 rounded-lg border border-[var(--color-border-control)] bg-[var(--color-surface)] text-[var(--color-text)] text-[15px] max-sm:text-[16px] placeholder:text-[var(--color-text-faint)]" />
               </div>
-              {placingAssetId && <div className="mt-2 text-[13px] font-semibold text-[var(--color-text)] bg-[var(--color-surface-2)] rounded px-2 py-1">Now tap the drawing to place {assetById.get(placingAssetId)?.tag}.</div>}
+              {placingAssetId && <p role="status" className="mt-2 text-[14px] text-[var(--color-text)]">Now tap the drawing to place <span className="font-display font-semibold tabular-nums">{assetById.get(placingAssetId)?.tag}</span>.</p>}
             </div>
             <div className="flex-1 overflow-y-auto p-2 space-y-1">
               {pickerAssets.length === 0 ? (
@@ -315,7 +319,7 @@ export default function PlotPlanBoard() {
               <div className="text-[13px] font-semibold text-[var(--color-text-muted)] flex-1">On this drawing</div>
               <button type="button" onClick={() => setSelectedMarker(null)} aria-label="Close" className="w-9 h-9 grid place-items-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
             </div>
-            <div className="font-display text-[30px] leading-none font-semibold tabular-nums text-[var(--color-text)] break-words mb-2">{selAsset.tag}</div>
+            <div className="font-display text-[26px] leading-tight font-semibold text-[var(--color-text)] break-words mb-2"><CopyId value={selAsset.tag} label="tag" /></div>
             {selAsset.description && <p className="text-[14px] text-[var(--color-text-muted)] mb-3">{selAsset.description}</p>}
             <div className="mb-3">
               <span className="inline-flex items-center gap-1.5 text-[14px] font-semibold text-[var(--color-text)]">
@@ -328,12 +332,12 @@ export default function PlotPlanBoard() {
                 Advance to {STATE_CONFIG[nextState((selAsset.whiteboard_state ?? "pending") as WhiteboardState)].label} <ChevronRight className="w-4 h-4" />
               </button>
               {selAsset.whiteboard_state !== "blocked" && (
-                <button type="button" onClick={() => setBlocked(selAsset)} className={`${heroQuiet} !h-10 w-full !text-[var(--state-overdue)]`}>
+                <button type="button" onClick={() => setBlocked(selAsset)} className={`${heroQuiet} w-full !text-[var(--state-overdue-text)]`}>
                   Mark blocked
                 </button>
               )}
-              <Link href={`/assets/${encodeURIComponent(selAsset.tag)}`} className={`${heroQuiet} !h-10 w-full`}>
-                Open asset <ExternalLink className="w-3.5 h-3.5" />
+              <Link href={`/assets/${encodeURIComponent(selAsset.tag)}`} className={`${heroQuiet} w-full`}>
+                Open its page <ExternalLink className="w-4 h-4" />
               </Link>
             </div>
           </div>
@@ -342,8 +346,8 @@ export default function PlotPlanBoard() {
         {/* Selected marker actions (edit mode → remove) */}
         {editing && selectedMarker && (
           <div className="md:w-60 shrink-0 border-t md:border-t-0 md:border-l border-[var(--color-border)] p-5">
-            <div className="font-display text-[19px] font-semibold tabular-nums text-[var(--color-text)] mb-2">{assetById.get(selectedMarker)?.tag}</div>
-            <button type="button" onClick={() => removeMarker(selectedMarker)} className={`${heroQuiet} !h-10 w-full !text-[var(--state-overdue)]`}>Remove marker</button>
+            <div className="font-display text-[20px] font-semibold tabular-nums text-[var(--color-text)] mb-2">{assetById.get(selectedMarker)?.tag}</div>
+            <button type="button" onClick={() => removeMarker(selectedMarker)} className={`${heroQuiet} w-full !text-[var(--state-overdue-text)]`}>Remove marker</button>
           </div>
         )}
       </div>

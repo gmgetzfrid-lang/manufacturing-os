@@ -10,6 +10,7 @@
 // back as completed pages followed by the original form.
 
 import React, { useEffect, useState } from "react";
+import { friendlyError } from "@/lib/friendlyError";
 import { FileText, Download, Loader2, AlertTriangle, Copy, Check, Sparkles } from "lucide-react";
 import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/ui/Modal";
 import {
@@ -43,7 +44,7 @@ export default function FormFillModal({ orgId, documentId, formName, question, a
         setValues(Object.fromEntries(d.form.fields.map((f) => [f.name, f.value])));
         setBusy(null);
       },
-      (e) => { if (!cancelled) { setError((e as Error).message); setBusy(null); } },
+      (e) => { if (!cancelled) { setError(friendlyError(e)); setBusy(null); } },
     );
     return () => { cancelled = true; };
     // One draft per opening — the inputs are fixed for the modal's life.
@@ -56,7 +57,7 @@ export default function FormFillModal({ orgId, documentId, formName, question, a
     if (!draft) return;
     setBusy("download");
     try { await downloadLibraryForm(orgId, documentId, values); }
-    catch (e) { setError((e as Error).message); }
+    catch (e) { setError(friendlyError(e)); }
     finally { setBusy(null); }
   };
   const copyAll = async () => {

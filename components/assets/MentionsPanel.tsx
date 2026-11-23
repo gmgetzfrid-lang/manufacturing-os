@@ -18,7 +18,9 @@
 
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
-import { Quote, ChevronDown, ChevronRight, ExternalLink, Loader2, Link2 } from "lucide-react";
+import { ChevronRight, ExternalLink } from "lucide-react";
+import { ErrorNote } from "@/components/ui/ErrorNote";
+import { SkeletonRows } from "@/components/ui/Skeleton";
 import {
   mentionsForAsset, groupByDocument,
   type MentionedDocument, type MentionEvidence,
@@ -43,8 +45,9 @@ export default function MentionsPanel({ orgId, assetId, tag }: Props) {
   // response that lands late must never overwrite the current one.
   const key = `${orgId}:${assetId}`;
   const [state, setState] = useState<{
-    key: string; docs: MentionedDocument[] | null; error: string | null;
+    key: string; docs: MentionedDocument[] | null; error: unknown;
   }>({ key: "", docs: null, error: null });
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     let live = true;
@@ -56,12 +59,12 @@ export default function MentionsPanel({ orgId, assetId, tag }: Props) {
         // mentionsForAsset already tolerates a missing table (pre-migration)
         // by returning []; anything reaching here is a real failure.
         if (live) {
-          setState({ key, docs: null, error: e instanceof Error ? e.message : "Couldn't load mentions." });
+          setState({ key, docs: null, error: e ?? true });
         }
       }
     })();
     return () => { live = false; };
-  }, [orgId, assetId, key]);
+  }, [orgId, assetId, key, attempt]);
 
   const ready = state.key === key;
   const docs = ready ? state.docs : null;
@@ -70,37 +73,25 @@ export default function MentionsPanel({ orgId, assetId, tag }: Props) {
   const total = docs?.reduce((n, d) => n + d.totalMentions, 0) ?? 0;
 
   return (
-    <section className="bg-[var(--color-surface)] rounded-lg border border-[var(--color-border)] overflow-hidden">
-      <div className="px-4 sm:px-5 pt-4 pb-3 border-b border-[var(--color-border)] flex items-center justify-between gap-2">
-        <h2 className="font-display text-[17px] font-semibold text-[var(--color-heading)] inline-flex items-center gap-2.5">
-          <span className="ui-icon-tile is-sm" aria-hidden><Link2 className="w-4 h-4" /></span> Mentioned in
-        </h2>
+    <section className="min-w-0">
+      <div className="flex flex-wrap items-end gap-x-3 gap-y-1 mb-3 min-h-8">
+        <h2 className="font-display text-[20px] leading-tight font-semibold text-[var(--color-text)]">Mentioned in</h2>
         {docs && docs.length > 0 && (
-          <span className="flex items-center gap-3 text-[13px] text-[var(--color-text-muted)]">
-            <span className="inline-flex items-center gap-1.5"><span className="ui-count">{total}</span> mention{total === 1 ? "" : "s"}</span>
-            <span className="inline-flex items-center gap-1.5"><span className="ui-count">{docs.length}</span> document{docs.length === 1 ? "" : "s"}</span>
+          <span className="text-[14px] text-[var(--color-text-muted)] tabular-nums">
+            {total} mention{total === 1 ? "" : "s"} in {docs.length} document{docs.length === 1 ? "" : "s"}
           </span>
         )}
       </div>
+      <div className="bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] overflow-hidden">
 
-      {docs === null && !error && (
-        <div className="p-6 flex items-center justify-center text-[13px] text-[var(--color-text-faint)]">
-          <Loader2 className="w-4 h-4 animate-spin mr-2" /> Reading the index…
-        </div>
-      )}
+      {docs === null && !error && <SkeletonRows rows={2} cols={1} sheet={false} what="mentions" />}
 
-      {error && (
-        <div role="alert" className="p-4 text-[13px] text-[var(--state-overdue)]">Couldn&apos;t load mentions: {error}</div>
-      )}
+      {!!error && <ErrorNote compact className="px-4 py-4" error={error} title="Couldn't load the mentions." onRetry={() => setAttempt((n) => n + 1)} />}
 
       {docs !== null && docs.length === 0 && !error && (
-        <div className="p-6 text-center text-[13px] text-[var(--color-text-faint)] italic">
-          Nothing indexed mentions <span className="font-display tabular-nums not-italic">{tag}</span> yet.
-          <div className="mt-1 not-italic text-[13px]">
-            Only documents approved for indexing are read. An Admin can run the mention
-            indexer from the graph page.
-          </div>
-        </div>
+        <p className="px-4 py-4 text-[14px] text-[var(--color-text-muted)]">
+          Nothing indexed mentions <span className="font-display font-semibold tabular-nums text-[var(--color-text)]">{tag}</span> yet. Only documents cleared for indexing are read; an admin runs the mention reader from the graph page.
+        </p>
       )}
 
       {docs && docs.length > 0 && (
@@ -108,6 +99,7 @@ export default function MentionsPanel({ orgId, assetId, tag }: Props) {
           {docs.map((d) => <DocRow key={d.key} doc={d} />)}
         </ul>
       )}
+      </div>
     </section>
   );
 }
@@ -123,20 +115,19 @@ function DocRow({ doc }: { doc: MentionedDocument }) {
   return (
     <li>
       <button
+        type="button"
+        aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
         className="w-full text-left px-4 py-2.5 hover:bg-[var(--color-surface-2)] transition-colors"
       >
         <div className="flex items-center gap-2">
-          {open ? <ChevronDown className="w-3.5 h-3.5 shrink-0 text-[var(--color-text-faint)]" />
-                : <ChevronRight className="w-3.5 h-3.5 shrink-0 text-[var(--color-text-faint)]" />}
+          <ChevronRight aria-hidden className={`ui-chevron w-4 h-4 shrink-0 text-[var(--color-text-muted)] ${open ? "rotate-90" : ""}`} />
           <span className="text-[14px] font-semibold text-[var(--color-text)] truncate flex-1">{doc.documentName}</span>
-          <span className="ui-count shrink-0" title={`${doc.totalMentions} mentions`}>{doc.totalMentions}×</span>
-          <span className="text-[13px] text-[var(--color-text-muted)] shrink-0 tabular-nums">{pageCount} page{pageCount === 1 ? "" : "s"}</span>
+          <span className="text-[13px] text-[var(--color-text-muted)] shrink-0 tabular-nums">{doc.totalMentions} on {pageCount} page{pageCount === 1 ? "" : "s"}</span>
         </div>
         {!open && lead && (
-          <p className="mt-1 ml-5 text-[13px] text-[var(--color-text-muted)] line-clamp-2 italic">
-            <Quote className="inline w-3 h-3 mr-1 -mt-0.5 text-[var(--color-text-faint)]" />
-            {lead.snippet}
+          <p className="mt-1 ml-6 text-[14px] text-[var(--color-text-muted)] line-clamp-2">
+            &ldquo;{lead.snippet}&rdquo;
           </p>
         )}
       </button>
@@ -155,11 +146,11 @@ function DocRow({ doc }: { doc: MentionedDocument }) {
                     {m.count}× · matched &ldquo;{m.matchedText}&rdquo;
                   </span>
                   {m.confidence < 0.9 && (
-                    <span className="ui-pill is-warn">Unconfirmed</span>
+                    <span className="ui-pill is-muted">Unconfirmed</span>
                   )}
                   {href && <ExternalLink className="w-3 h-3 text-[var(--color-text-faint)] ml-auto shrink-0" />}
                 </div>
-                <p className="mt-0.5 text-[13px] text-[var(--color-text)] italic">{m.snippet}</p>
+                <p className="mt-0.5 text-[14px] text-[var(--color-text)]">&ldquo;{m.snippet}&rdquo;</p>
               </>
             );
             return (
@@ -167,12 +158,12 @@ function DocRow({ doc }: { doc: MentionedDocument }) {
                 {href ? (
                   <Link
                     href={href}
-                    className="block ml-5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-2 mt-1.5 hover:border-[var(--color-border)]"
+                    className="block ml-6 border-l-2 border-[var(--color-border-strong)] pl-3 py-1.5 mt-1.5 hover:border-[var(--color-accent)]"
                   >
                     {body}
                   </Link>
                 ) : (
-                  <div className="ml-5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-2 mt-1.5">
+                  <div className="ml-6 border-l-2 border-[var(--color-border)] pl-3 py-1.5 mt-1.5">
                     {body}
                   </div>
                 )}

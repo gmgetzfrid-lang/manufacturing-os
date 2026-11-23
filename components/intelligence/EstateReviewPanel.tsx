@@ -12,7 +12,8 @@
 
 import React, { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { Link2, Check, X, Loader2, RefreshCw, Factory, Briefcase, Cpu, FolderOpen, Quote, Network } from "lucide-react";
+import { Link2, Check, X, Loader2, RefreshCw, Factory, Briefcase, Cpu, FolderOpen, Quote } from "lucide-react";
+import { SkeletonRows } from "@/components/ui/Skeleton";
 import { useRole } from "@/components/providers/RoleContext";
 import HelpTooltip from "@/components/ui/HelpTooltip";
 import { Section, tbl, sheet, btnRow, btnQuiet, Pill } from "@/components/admin/kit";
@@ -108,7 +109,6 @@ export default function EstateReviewPanel() {
 
   return (
     <Section
-      icon={Network}
       label={<span className="inline-flex items-center gap-2">Links waiting for you{rows && rows.length > 0 && <span className="ui-count is-warn font-sans">{rows.length}</span>}
         <span className="font-sans font-normal text-[14px] leading-snug"><HelpTooltip>
           Only what is proven links by itself: a unit&apos;s number and name together (&ldquo;20 - Crude&rdquo;), a drawing number, a folder under a linked folder. A name on its own is asked here.
@@ -117,13 +117,13 @@ export default function EstateReviewPanel() {
       </span>}
       action={canDecide ? (
         <button type="button" onClick={run} disabled={running} title="Work the links out again. Links that are no longer proven come back here; a person's links are never touched." className={btnQuiet}>
-          {running ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />} {running ? "Checking…" : "Check the links again"}
+          {running ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />} {running ? "Checking" : "Check the links again"}
         </button>
       ) : undefined}
     >
       {note && <p role="status" className="mb-2.5 text-[14px] text-[var(--color-text-muted)] max-w-[90ch]">{note}</p>}
       {rows === null ? (
-        <div className={`${sheet} px-4 py-4 text-[14px] text-[var(--color-text-muted)] inline-flex items-center gap-2 w-full`}><Loader2 className="w-4 h-4 animate-spin" /> Loading the links…</div>
+        <SkeletonRows rows={3} cols={2} what="the links" />
       ) : rows.length === 0 ? (
         <div className={`${sheet} px-4 py-4 flex flex-wrap items-center gap-x-3 gap-y-1`}>
           <Pill tone="good">Nothing waiting</Pill>

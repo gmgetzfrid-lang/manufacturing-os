@@ -11,8 +11,9 @@
 // submitted data is offered, and the server refuses it anyway.
 
 import React, { useEffect, useState } from "react";
+import { friendlyError } from "@/lib/friendlyError";
 import {
-  Loader2, Plug, CheckCircle2, AlertTriangle, Trash2, KeyRound, Users, Sparkles, Cpu, Gauge,
+  Loader2, Plug, CheckCircle2, AlertTriangle, Trash2,
 } from "lucide-react";
 import { useToast } from "@/components/providers/ToastProvider";
 import { appConfirm } from "@/components/providers/DialogProvider";
@@ -79,12 +80,12 @@ const StateTag = ({ tone, children }: { tone: "good" | "warn"; children: React.R
 
 /** One settings section: its heading on the panel, the form on a white
  *  sheet (the same shape as a page Card). */
-function Section({ title, icon: Icon, state, help, children }: { title: string; icon?: React.ComponentType<{ className?: string }>; state?: React.ReactNode; help?: React.ReactNode; children: React.ReactNode }) {
+function Section({ title, state, help, children }: { title: string; icon?: React.ComponentType<{ className?: string }>; state?: React.ReactNode; help?: React.ReactNode; children: React.ReactNode }) {
   return (
     <section className="min-w-0">
       <div className="flex items-end gap-3 mb-2.5 min-h-8">
         <h2 className="font-display text-[19px] leading-tight font-semibold text-[var(--color-text)] inline-flex items-center gap-1.5">
-          {Icon && <span aria-hidden className="ui-icon-tile is-sm is-solid mr-1"><Icon className="w-4 h-4" /></span>}
+          
           {title}{help && <HelpTooltip>{help}</HelpTooltip>}
         </h2>
         <div className="flex-1" />
@@ -179,8 +180,8 @@ export function KeyEditor({ orgId, current, onChanged }: {
       setApiKey("");
       onChanged();
     } catch (e) {
-      setNotice({ tone: "err", text: (e as Error).message });
-      showToast({ type: "error", title: (e as Error).message });
+      setNotice({ tone: "err", text: friendlyError(e) });
+      showToast({ type: "error", title: friendlyError(e) });
     } finally { setBusy(null); }
   };
 
@@ -197,7 +198,7 @@ export function KeyEditor({ orgId, current, onChanged }: {
           : "Your saved key works - the model answered.",
       });
     } catch (e) {
-      setNotice({ tone: "err", text: (e as Error).message });
+      setNotice({ tone: "err", text: friendlyError(e) });
     } finally { setBusy(null); }
   };
 
@@ -214,12 +215,12 @@ export function KeyEditor({ orgId, current, onChanged }: {
       showToast({ type: "success", title: "Key removed." });
       onChanged();
     } catch (e) {
-      showToast({ type: "error", title: (e as Error).message });
+      showToast({ type: "error", title: friendlyError(e) });
     } finally { setBusy(null); }
   };
 
   return (
-    <Section title="Your API key" icon={KeyRound}
+    <Section title="Your API key"
       help="Only you use it, only you pay for it. Verify and save makes a live call with the key first, so a key that saves is a key that works. Test only never saves anything. Saving again replaces your key; if your provider runs out of credits it stops answering until you top up."
       state={current && !grandfatheredBlocked
         ? <StateTag tone="good">Active, key ending {current.keyLast4 ?? "????"}</StateTag>
@@ -308,12 +309,12 @@ export function JobModelsEditor({ orgId, current, jobModels, ready, jobUse, onCh
       onChanged();
     } catch (e) {
       setPicks(picks);
-      setNotice({ tone: "err", text: (e as Error).message });
+      setNotice({ tone: "err", text: friendlyError(e) });
     } finally { setBusy(null); }
   };
 
   return (
-    <Section title="Model for each job" icon={Cpu}
+    <Section title="Model for each job"
       help={`Each choice shows what one use costs on it, from your own averages once you have a few. Everything else (codebook, flows, links, equipment census, catalog) runs on the main model, ${mainName}.`}>
       {!ready && (
         <p className="relative pl-4 py-0.5 text-[14px] font-semibold text-[var(--color-text)]">
@@ -435,8 +436,8 @@ export function EmbeddingKeyEditor({ orgId, current, onChanged }: {
       setApiKey("");
       onChanged();
     } catch (e) {
-      setNotice({ tone: "err", text: (e as Error).message });
-      showToast({ type: "error", title: (e as Error).message });
+      setNotice({ tone: "err", text: friendlyError(e) });
+      showToast({ type: "error", title: friendlyError(e) });
     } finally { setBusy(null); }
   };
 
@@ -454,7 +455,7 @@ export function EmbeddingKeyEditor({ orgId, current, onChanged }: {
           : "Your saved embeddings key works.",
       });
     } catch (e) {
-      setNotice({ tone: "err", text: (e as Error).message });
+      setNotice({ tone: "err", text: friendlyError(e) });
     } finally { setBusy(null); }
   };
 
@@ -473,12 +474,12 @@ export function EmbeddingKeyEditor({ orgId, current, onChanged }: {
       showToast({ type: "success", title: "Embeddings key removed." });
       onChanged();
     } catch (e) {
-      showToast({ type: "error", title: (e as Error).message });
+      showToast({ type: "error", title: friendlyError(e) });
     } finally { setBusy(null); }
   };
 
   return (
-    <Section title="Meaning-based search (optional)" icon={Sparkles}
+    <Section title="Meaning-based search (optional)"
       help={<>Finds &ldquo;pipe supports&rdquo; in a standard that says &ldquo;hanger and support details&rdquo;. This is a separate service from your chat key: Anthropic doesn&apos;t make an embeddings model, so Claude answers the questions and this key builds the index. Without it, search stays keyword-only. Verify and save makes a real embed call first. Embedding spend bills to your own account with that provider; the meter&apos;s figure is an estimate, your provider&apos;s invoice is the real number.</>}
       state={saved
         ? <StateTag tone="good">Active, key ending {current?.embeddingKeyLast4 ?? "????"}</StateTag>
@@ -566,7 +567,7 @@ export function UsagePanel({ orgId }: { orgId: string }) {
   if (failed) return <p className={NOTE}>Couldn&apos;t load this month&apos;s AI spend.</p>;
   if (!usage) {
     return (
-      <Section title="Your AI use this month" icon={Gauge}>
+      <Section title="Your AI use this month">
         <p className="text-center text-[14px] text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin inline mr-1.5" /> Loading this month&apos;s AI spend…</p>
       </Section>
     );
@@ -597,7 +598,7 @@ export function UsagePanel({ orgId }: { orgId: string }) {
       showToast({ type: "success", title: `Default monthly cap set to ${fmtUsd(cap)} per person.` });
       setTick((t) => t + 1);
     } catch (e) {
-      showToast({ type: "error", title: (e as Error).message });
+      showToast({ type: "error", title: friendlyError(e) });
     } finally { setSavingCap(false); }
   };
 
@@ -615,14 +616,14 @@ export function UsagePanel({ orgId }: { orgId: string }) {
       }
       setTick((t) => t + 1);
     } catch (e) {
-      showToast({ type: "error", title: (e as Error).message });
+      showToast({ type: "error", title: friendlyError(e) });
     } finally { setSavingUser(null); }
   };
 
   const cell = "px-4 sm:px-5 py-3 min-w-0";
   const figure = "font-display text-[24px] leading-none font-semibold tabular-nums text-[var(--color-text)]";
   return (
-    <Section title={`Your AI use, ${usage.monthLabel}`} icon={Gauge}
+    <Section title={`Your AI use, ${usage.monthLabel}`}
       help="These numbers are yours alone: every question you ask, and every indexing or drawing-reading run your key pays for, is metered under your user id with the token counts your provider reported. All of it counts toward the cap. Estimated from provider token counts times published rates. Questions stop at 100% and reset on the 1st (UTC).">
       {/* The month in ruled cells: spent against the cap, then what it bought. */}
       <dl className="-mx-4 sm:-mx-5 -mt-4 sm:-mt-5 grid grid-cols-2 sm:grid-cols-4 divide-x divide-[var(--color-border)] border-b border-[var(--color-border)]">
@@ -672,7 +673,7 @@ export function UsagePanel({ orgId }: { orgId: string }) {
         <div className="pt-4 border-t border-[var(--color-border)] space-y-3">
           <div className="flex items-center gap-x-3 gap-y-2 flex-wrap">
             <h3 className="font-display text-[17px] font-semibold text-[var(--color-text)] inline-flex items-center gap-1.5">
-              <span aria-hidden className="ui-icon-tile is-sm"><Users className="w-4 h-4" /></span> Team this month <span className="ui-count font-sans">{usage.team.length}</span>
+              Team this month <span className="ui-count font-sans">{usage.team.length}</span>
             </h3>
             <div className="ml-auto flex items-center gap-2">
               <label htmlFor="ai-default-cap" className="text-[13px] text-[var(--color-text-muted)]">Default cap, $ per person</label>
@@ -755,14 +756,14 @@ export default function AiSettingsModal({ orgId, open, onClose }: {
     let cancelled = false;
     getAiConnections(orgId)
       .then((next) => { if (!cancelled) { setData(next); setLoadError(null); } })
-      .catch((e) => { if (!cancelled) setLoadError((e as Error).message); });
+      .catch((e) => { if (!cancelled) setLoadError(friendlyError(e)); });
     return () => { cancelled = true; };
   }, [open, orgId, reloadTick]);
 
   if (!open) return null;
   return (
     <Modal onClose={onClose} size="lg">
-        <ModalHeader icon={KeyRound} title="AI settings"
+        <ModalHeader title="AI settings"
           subtitle="Your questions run on your own API key and monthly cap. Keys are stored on the server and never shown again."
           onClose={onClose} />
         <ModalBody className="space-y-6">

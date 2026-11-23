@@ -281,7 +281,10 @@ export default function OrgGraph2D({
       }
 
       // ── Labels last, so nothing draws over them ──────────────────────
-      const fontPx = Math.max(9, Math.min(13, 11 / cam.scale));
+      // Labels stay 12 px on screen at every zoom (the world is scaled, so
+      // the size is divided back out): never a 5 px label when zoomed out.
+      const px = 1 / cam.scale;
+      const fontPx = 12 * px;
       ctx.font = `600 ${fontPx}px ${bodyFont}`;
       ctx.textAlign = "center";
       for (const { n, x, y, r } of labelable.slice(0, 400)) {
@@ -289,9 +292,9 @@ export default function OrgGraph2D({
         // A soft plate behind the text keeps it readable over dense webs.
         const tw = ctx.measureText(label).width;
         ctx.fillStyle = `${bg}cc`;
-        ctx.fillRect(x - tw / 2 - 2, y - r - 4 - fontPx, tw + 4, fontPx + 2);
+        ctx.fillRect(x - tw / 2 - 3 * px, y - r - 5 * px - fontPx, tw + 6 * px, fontPx + 4 * px);
         ctx.fillStyle = textColor;
-        ctx.fillText(label, x, y - r - 5);
+        ctx.fillText(label, x, y - r - 6 * px);
       }
 
       // Clean up grow-in state for nodes that left.

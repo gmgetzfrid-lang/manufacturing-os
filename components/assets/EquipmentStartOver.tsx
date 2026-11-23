@@ -6,10 +6,12 @@
 // drawings again" with the fixed matching. The server does the work
 // (/api/equipment-bridge/start-over) and audits it.
 
-import React, { useCallback, useEffect, useState } from "react";
-import { RotateCcw, Loader2, CheckCircle2, ChevronRight } from "lucide-react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import { RotateCcw, Loader2, CheckCircle2, ChevronRight, Square } from "lucide-react";
 import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/ui/Modal";
 import { btnPrimary, btnQuiet, btnDanger, Problem } from "@/components/admin/kit";
+import { SkeletonText } from "@/components/ui/Skeleton";
+import { friendlyError } from "@/lib/friendlyError";
 import { plural } from "@/components/admin/band";
 import { appConfirm } from "@/components/providers/DialogProvider";
 import { estatePost } from "@/lib/estate/client";
@@ -51,7 +53,7 @@ function ByUnit({ list, limit = 400 }: { list: PlanAsset[]; limit?: number }) {
 function Row({ n, title, children, tone }: { n: number; title: React.ReactNode; children?: React.ReactNode; tone?: "bad" | "good" }) {
   const head = (
     <span className="flex items-baseline gap-3 min-w-0">
-      <span className={`font-display text-[22px] font-semibold tabular-nums w-14 shrink-0 text-right ${tone === "bad" && n > 0 ? "text-[var(--state-overdue)]" : "text-[var(--color-heading)]"}`}>{n.toLocaleString()}</span>
+      <span className={`font-display text-[20px] font-semibold tabular-nums w-14 shrink-0 text-right ${n === 0 ? "text-[var(--color-text-faint)]" : tone === "bad" ? "text-[var(--state-overdue-text)]" : "text-[var(--color-heading)]"}`}>{n.toLocaleString()}</span>
       <span className="text-[15px] text-[var(--color-text)]">{title}</span>
     </span>
   );
@@ -62,7 +64,7 @@ function Row({ n, title, children, tone }: { n: number; title: React.ReactNode; 
         {head}
         <span className="shrink-0 inline-flex items-center gap-1 text-[13px] font-semibold text-[var(--color-accent-text)]">
           <span className="group-open:hidden">Show</span><span className="hidden group-open:inline">Hide</span>
-          <ChevronRight className="w-3.5 h-3.5 transition-transform group-open:rotate-90" aria-hidden />
+          <ChevronRight className="ui-chevron w-3.5 h-3.5 group-open:rotate-90" aria-hidden />
         </span>
       </summary>
       <div className="mt-2 ml-[68px] max-h-56 overflow-y-auto pr-1">{children}</div>
@@ -74,19 +76,23 @@ export default function EquipmentStartOver({ orgId, onClose, onChanged }: { orgI
   const [stage, setStage] = useState<Stage>({ k: "loading" });
   const [keepEdited, setKeepEdited] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Reading the drawings again runs in steps; Stop ends it after the step
+  // in flight (what was read so far stays).
+  const stopRef = useRef(false);
+  const [stopping, setStopping] = useState(false);
 
   const fetchPreview = useCallback((keep: boolean) => estatePost<StartOverPreview>(URL, { orgId, action: "preview", keepEdited: keep }), [orgId]);
   const load = async (keep: boolean) => {
     setError(null);
     setStage({ k: "loading" });
     try { setStage({ k: "preview", p: await fetchPreview(keep) }); }
-    catch (e) { setError((e as Error).message); setStage({ k: "loading" }); }
+    catch (e) { setError(friendlyError(e)); setStage({ k: "loading" }); }
   };
   useEffect(() => {
     let alive = true;
     fetchPreview(true)
       .then((p) => { if (alive) setStage({ k: "preview", p }); })
-      .catch((e) => { if (alive) setError((e as Error).message); });
+      .catch((e) => { if (alive) setError(friendlyError(e)); });
     return () => { alive = false; };
   }, [fetchPreview]);
 
@@ -113,19 +119,25 @@ export default function EquipmentStartOver({ orgId, onClose, onChanged }: { orgI
       setStage({ k: "done", r });
       onChanged();
     } catch (e) {
-      setError((e as Error).message);
+      setError(friendlyError(e));
       // The list changed since the preview: show it again as it is now.
       await load(keepEdited);
     }
   };
 
-  const reread = async (r: StartOverResult | null) => {
+  const runIdRef = useRef<string | null>(null);
+  const reread = async (r: StartOverResult | null, resume = false) => {
     setError(null);
-    const runId = `start-over-${new Date().toISOString().slice(0, 16)}`;
+    // Carrying on after a Stop keeps the same run, so it undoes as one.
+    const runId = resume && runIdRef.current ? runIdRef.current : `start-over-${new Date().toISOString().slice(0, 16)}`;
+    runIdRef.current = runId;
     const sum: RereadResult = { drawings: 0, applied: 0, assets: 0, left: 0, libraries: 0, linked: false };
+    stopRef.current = false;
+    setStopping(false);
     setStage({ k: "reading", so: sum, r });
     try {
       for (let i = 0; i < 40; i++) {
+        if (stopRef.current) break;
         const step = await estatePost<RereadResult>(URL, { orgId, action: "reread", runId });
         sum.drawings += step.drawings; sum.applied += step.applied; sum.assets += step.assets;
         sum.left = step.left; sum.libraries = step.libraries; sum.linked = step.linked;
@@ -135,8 +147,10 @@ export default function EquipmentStartOver({ orgId, onClose, onChanged }: { orgI
       setStage({ k: "read", so: { ...sum } });
       onChanged();
     } catch (e) {
-      setError((e as Error).message);
+      setError(friendlyError(e));
       setStage({ k: "read", so: { ...sum } });
+    } finally {
+      setStopping(false);
     }
   };
 
@@ -144,8 +158,8 @@ export default function EquipmentStartOver({ orgId, onClose, onChanged }: { orgI
   let footer: React.ReactNode;
   if (stage.k === "loading") {
     body = error
-      ? <Problem retry={() => void load(keepEdited)}>Couldn&apos;t work out what would change: {error}</Problem>
-      : <p className="py-8 text-center text-[15px] text-[var(--color-text-muted)] inline-flex w-full justify-center items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Working out what would change…</p>;
+      ? <Problem retry={() => void load(keepEdited)}>Couldn&apos;t work out what would change. {error}</Problem>
+      : <div><p className="mb-3 text-[14px] text-[var(--color-text-muted)]">Working out what would change.</p><SkeletonText lines={4} /></div>;
     footer = <button type="button" className={btnQuiet} onClick={onClose}>Cancel</button>;
   } else if (stage.k === "preview" || stage.k === "running") {
     const p = stage.p;
@@ -153,7 +167,7 @@ export default function EquipmentStartOver({ orgId, onClose, onChanged }: { orgI
     const nothing = !p.plan.remove.length && !merged && !p.drawings.entries && !p.drawings.links;
     body = (
       <div>
-        {error && <p role="alert" className="mb-3 text-[14px] text-[var(--state-overdue)]">{error}</p>}
+        {error && <Problem className="mb-3">{error}</Problem>}
         <Row n={p.plan.remove.length} tone="bad" title={<>{p.plan.remove.length === 1 ? "record the reader added that has" : "records the reader added that have"} no photos, files or notes. <b>Removed.</b></>}>
           <ByUnit list={p.plan.remove} />
         </Row>
@@ -205,7 +219,7 @@ export default function EquipmentStartOver({ orgId, onClose, onChanged }: { orgI
         ) : (
           <button type="button" className={btnDanger} disabled={busy} onClick={() => void run(p)}>
             {stage.k === "running" ? <Loader2 className="w-4 h-4 animate-spin" /> : <RotateCcw className="w-4 h-4" />}
-            {stage.k === "running" ? "Starting over…" : (() => {
+            {stage.k === "running" ? "Starting over" : (() => {
               const t = and([p.plan.remove.length > 0 && `remove ${p.plan.remove.length.toLocaleString()}`, merged > 0 && `merge ${merged.toLocaleString()}`]) || "clear the drawings";
               return t.charAt(0).toUpperCase() + t.slice(1);
             })()}
@@ -227,7 +241,7 @@ export default function EquipmentStartOver({ orgId, onClose, onChanged }: { orgI
           return `${t.charAt(0).toUpperCase()}${t.slice(1)}.`;
         })()}</p>
         {r.skipped.length > 0 && <p className="text-[14px] text-[var(--color-text-muted)]">Left as they were: {r.skipped.slice(0, 6).join("; ")}{r.skipped.length > 6 ? ` and ${r.skipped.length - 6} more` : ""}.</p>}
-        {error && <p role="alert" className="text-[14px] text-[var(--state-overdue)]">{error}</p>}
+        {error && <Problem>{error}</Problem>}
         <p className="text-[14px] text-[var(--color-text-muted)]">Next, read the drawings again: equipment is matched by its ID first, then by its tag in the unit.</p>
       </div>
     );
@@ -244,16 +258,23 @@ export default function EquipmentStartOver({ orgId, onClose, onChanged }: { orgI
       <div className="space-y-2 text-[15px]">
         <p className="inline-flex items-center gap-2 font-semibold">
           {reading ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4 text-[var(--state-released)]" />}
-          {reading ? "Reading the drawings again…" : so.libraries === 0 ? "No drawings have been read yet." : "Drawings read again."}
+          {reading ? (stopping ? "Stopping after this batch" : "Reading the drawings again") : so.libraries === 0 ? "No drawings have been read yet." : so.left > 0 ? "Stopped. What was read so far stays." : "Drawings read again."}
         </p>
-        <p>{plural(so.applied, "drawing")} matched, {plural(so.assets, "record")} added{so.left ? `, ${so.left.toLocaleString()} to go` : ""}.</p>
-        {error && <p role="alert" className="text-[14px] text-[var(--state-overdue)]">{error}</p>}
+        <p className="tabular-nums">{plural(so.applied, "drawing")} matched, {plural(so.assets, "record")} added{so.left ? `, ${so.left.toLocaleString()} to go` : ""}.</p>
+        {error && <Problem>{error}</Problem>}
         {!reading && so.libraries === 0 && <p className="text-[14px] text-[var(--color-text-muted)]">Read them first in Intelligence, then come back.</p>}
       </div>
     );
+    // While it reads, the same spot holds Stop (it ends after the batch in
+    // flight); when it's done, Done.
     footer = reading
-      ? <button type="button" className={btnQuiet} disabled>Working…</button>
-      : <button type="button" className={btnPrimary} onClick={onClose}>Done</button>;
+      ? <button type="button" className={btnQuiet} disabled={stopping} onClick={() => { stopRef.current = true; setStopping(true); }}>
+          {stopping ? <Loader2 aria-hidden className="w-4 h-4 animate-spin" /> : <Square aria-hidden className="w-3.5 h-3.5 fill-current" />} {stopping ? "Stopping" : "Stop"}
+        </button>
+      : <>
+          {so.left > 0 && so.libraries > 0 && <button type="button" className={btnQuiet} onClick={() => void reread(null, true)}>Read the rest</button>}
+          <button type="button" className={btnPrimary} onClick={onClose}>Done</button>
+        </>;
   }
 
   return (

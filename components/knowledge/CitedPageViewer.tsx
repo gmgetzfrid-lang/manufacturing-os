@@ -22,6 +22,7 @@
 // Built on the same react-pdf + self-hosted worker the document viewers use.
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { friendlyError } from "@/lib/friendlyError";
 import { Document, Page, pdfjs } from "react-pdf";
 import { PDF_DOC_OPTIONS } from "@/lib/pdfjsConfig";
 import "react-pdf/dist/Page/AnnotationLayer.css";
@@ -141,7 +142,7 @@ export default function CitedPageViewer({
     setUrl(null);
     getSignedUrlForPath(view.fileKey)
       .then((u) => { if (!cancelled) setUrl(u); })
-      .catch((e) => { if (!cancelled) setError((e as Error).message); });
+      .catch((e) => { if (!cancelled) setError(friendlyError(e)); });
     return () => { cancelled = true; };
   }, [view.fileKey]);
 
@@ -292,7 +293,7 @@ export default function CitedPageViewer({
       }
       setLocateNote(notes.length > 0 ? notes.join(" ") : null);
     } catch (e) {
-      setLocateNote((e as Error).message);
+      setLocateNote(friendlyError(e));
     } finally {
       setLocating(false);
     }
@@ -369,7 +370,7 @@ export default function CitedPageViewer({
     ? `Jumped here from ${title.replace(/\.pdf$/i, "")} · page ${pageNumber}${numPages ? ` of ${numPages}` : ""}`
     : `Page ${page} cited${pageNumber !== page ? ` · you're on page ${pageNumber}` : marks.length > 0 ? " · tags marked" : " · passage highlighted"}${numPages ? ` · ${numPages} pages` : ""}`;
   const square = "w-9 h-9 grid place-items-center rounded-[10px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40 transition-colors";
-  const tool = "h-8 inline-flex items-center gap-1 px-2.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[12.5px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-border-strong)] disabled:opacity-40 transition-colors";
+  const tool = "h-8 inline-flex items-center gap-1 px-2.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[13px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-border-strong)] disabled:opacity-40 transition-colors";
   const iconTool = "w-8 h-8 grid place-items-center rounded-lg text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40 transition-colors";
 
   return (
@@ -383,7 +384,7 @@ export default function CitedPageViewer({
       <div role={embedded ? undefined : "dialog"} aria-modal={embedded ? undefined : true} aria-label={embedded ? undefined : view.title}
         className={embedded
         ? "w-full h-full bg-[var(--color-surface)] flex flex-col overflow-hidden"
-        : "w-[75vw] h-[75vh] max-md:w-[96vw] max-md:h-[92vh] bg-[var(--color-surface)] rounded-[20px] shadow-2xl flex flex-col overflow-hidden animate-pop"}
+        : "w-[75vw] h-[75vh] max-md:w-[96vw] max-md:h-[92vh] bg-[var(--color-surface)] rounded-xl ui-float flex flex-col overflow-hidden ui-float-in"}
         onClick={(e) => e.stopPropagation()}>
         {/* Header: where you are, the document (big), the page in words. */}
         <div className="px-4 sm:px-5 pt-3 pb-3.5 shrink-0">
@@ -425,7 +426,7 @@ export default function CitedPageViewer({
               className={iconTool} title="Previous page" aria-label="Previous page">
               <ChevronLeft className="w-4 h-4" />
             </button>
-            <span className="px-1 text-[12.5px] font-bold text-[var(--color-text)] tabular-nums" aria-live="polite">
+            <span className="px-1 text-[13px] font-bold text-[var(--color-text)] tabular-nums" aria-live="polite">
               {pageNumber}{numPages ? ` / ${numPages}` : ""}
             </span>
             <button onClick={() => setPageNumber((p) => (numPages ? Math.min(numPages, p + 1) : p + 1))}
@@ -475,7 +476,7 @@ export default function CitedPageViewer({
               <input value={findTag} onChange={(e) => setFindTag(e.target.value)}
                 aria-label="Find on this page"
                 placeholder="Find on this page"
-                className="w-full h-8 pl-8 pr-2 rounded-lg text-[12.5px] border border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none focus:border-[var(--color-border-strong)]" />
+                className="w-full h-8 pl-8 pr-2 rounded-lg text-[13px] border border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] " />
             </div>
             <button type="submit" disabled={locating || !findTag.trim()} className={`${tool} shrink-0`}>
               {locating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Crosshair className="w-3.5 h-3.5" />}
@@ -483,7 +484,7 @@ export default function CitedPageViewer({
             </button>
             {findApplied && (
               <button type="button" onClick={() => { setFindApplied(""); setFindTag(""); }}
-                className="h-8 px-1.5 text-[12.5px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] shrink-0">
+                className="h-8 px-1.5 text-[13px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] shrink-0">
                 Clear
               </button>
             )}
@@ -525,7 +526,7 @@ export default function CitedPageViewer({
               <p className="mt-1 text-[13px] text-rose-200 break-words">{error}</p>
             </div>
           ) : !url ? (
-            <div className="mt-16 flex items-center justify-center gap-2 text-[13.5px] text-[var(--color-ink-fg)] opacity-80" aria-busy="true">
+            <div className="mt-16 flex items-center justify-center gap-2 text-[14px] text-[var(--color-ink-fg)] opacity-80" aria-busy="true">
               <Loader2 className="w-5 h-5 animate-spin" /> Getting the file…
             </div>
           ) : (
@@ -538,7 +539,7 @@ export default function CitedPageViewer({
                 setPageNumber((p) => Math.min(p, n));
               }}
               onLoadError={(e) => setError(`Couldn't open the PDF: ${e.message}`)}
-              loading={<div className="mt-16 flex items-center justify-center gap-2 text-[13.5px] text-[var(--color-ink-fg)] opacity-80"><Loader2 className="w-5 h-5 animate-spin" /> Opening the PDF…</div>}
+              loading={<div className="mt-16 flex items-center justify-center gap-2 text-[14px] text-[var(--color-ink-fg)] opacity-80"><Loader2 className="w-5 h-5 animate-spin" /> Opening the PDF…</div>}
             >
               {/* The wrapper hugs the rendered page exactly, so a marker at
                   (0.42, 0.18) lands where it does on paper at any zoom. */}
@@ -548,8 +549,8 @@ export default function CitedPageViewer({
                   width={Math.round(baseWidth * zoom)}
                   customTextRenderer={textRenderer}
                   renderAnnotationLayer={false}
-                  className="shadow-2xl"
-                  loading={<div className="py-16 text-center text-[13.5px] text-[var(--color-ink-fg)] opacity-80"><Loader2 className="w-5 h-5 animate-spin inline mr-2" /> Loading page {pageNumber}…</div>}
+                  className="ui-float"
+                  loading={<div className="py-16 text-center text-[14px] text-[var(--color-ink-fg)] opacity-80"><Loader2 className="w-5 h-5 animate-spin inline mr-2" /> Loading page {pageNumber}…</div>}
                 />
                 {/* A marker is a HIGHLIGHTER SWIPE over the tag, not a vague
                     ring around a neighborhood: engineers mark up drawings by

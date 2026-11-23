@@ -8,17 +8,22 @@
 import React, { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Map as MapIcon, Plus, ImageIcon, Trash2 } from "lucide-react";
+import { Plus, ImageIcon, Trash2, ExternalLink } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { listPlotPlans, createPlotPlan, deletePlotPlan } from "@/lib/plotPlans";
 import { SignedPlotImage } from "@/components/plotPlans/SignedPlotImage";
 import { PageShell } from "@/components/ui/PageShell";
-import { PageHero, PageBody, Card, heroPrimary } from "@/components/ui/PageHero";
+import { PageHero, PageBody, heroPrimary } from "@/components/ui/PageHero";
 import { humanDate } from "@/components/documents/StatusTag";
 import { plural } from "@/components/admin/band";
 import { Button } from "@/components/ui/Button";
 import { Input, Field } from "@/components/ui/Field";
-import LoadingBlock from "@/components/ui/LoadingBlock";
+import { ErrorNote } from "@/components/ui/ErrorNote";
+import { SkeletonRows } from "@/components/ui/Skeleton";
+import MoreMenu from "@/components/ui/MoreMenu";
+import { btnIcon, btnQuiet, Problem } from "@/components/admin/kit";
+import { friendlyError } from "@/lib/friendlyError";
+import { transitionPush } from "@/lib/viewTransition";
 import FileThumb from "@/components/ui/FileThumb";
 import { useFileDrag } from "@/hooks/useFileDrag";
 import { tryUpload } from "@/lib/uploadRetry";
@@ -35,7 +40,7 @@ export default function PlotPlansPage() {
   const { showToast } = useToast();
   const router = useRouter();
   const [plans, setPlans] = useState<PlotPlan[] | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<unknown>(null);
   const [showCreate, setShowCreate] = useState(false);
 
   const isController = activeRole === "Admin" || activeRole === "DocCtrl";
@@ -43,30 +48,32 @@ export default function PlotPlansPage() {
   const refresh = useCallback(async () => {
     if (!activeOrgId) return;
     try { const data = await listPlotPlans(activeOrgId); setPlans(data); setLoadError(null); }
-    catch (e) { setLoadError((e as Error).message || "Couldn't load plot plans."); }
+    catch (e) { setLoadError(e ?? true); }
   }, [activeOrgId]);
 
   useEffect(() => { void (async () => { await refresh(); })(); }, [refresh]);
 
   const onDelete = async (p: PlotPlan) => {
     if (!(await appConfirm({
-      title: `Delete plot plan "${p.name}"?`,
-      message: "Markers are removed; assets are untouched.",
+      title: `Delete ${p.name}?`,
+      message: "Its markers go with it. The equipment itself is untouched.",
+      confirmLabel: "Delete",
       tone: "danger",
     }))) return;
     try { await deletePlotPlan(p.id); await refresh(); }
-    catch (e) { showToast({ type: "error", title: "Delete failed", message: (e as Error).message }); }
+    catch (e) { showToast({ type: "error", title: "Couldn't delete it", message: friendlyError(e) }); }
   };
 
   const markers = (plans ?? []).reduce((n, p) => n + p.markers.length, 0);
   const answer = !plans ? (loadError ? "Couldn't load plot plans." : "Plot plans")
     : plans.length === 0 ? "No plot plans yet."
-    : `${plural(plans.length, "plot plan")}.`;
+    : `${plural(plans.length, "plot plan")}, ${plural(markers, "marker")}.`;
   const sub = "Find equipment on the drawing. Each marker shows that item's state.";
-  const facts = plans && plans.length > 0 ? [
-    { label: "Markers", value: markers.toLocaleString() },
-    { label: "No image", value: plans.filter((p) => !p.imagePath).length.toLocaleString() },
+  const noImage = (plans ?? []).filter((p) => !p.imagePath).length;
+  const facts = plans && plans.length > 0 && noImage > 0 ? [
+    { label: "No drawing yet", value: noImage.toLocaleString(), tone: "warn" as const },
   ] : undefined;
+  const open = (p: PlotPlan) => transitionPush(router, `/plot-plans/${p.id}`);
 
   return (
     <PageShell width="work">
@@ -75,6 +82,7 @@ export default function PlotPlansPage() {
           title={answer}
           sub={sub}
           facts={facts}
+          factsHero="none"
           primary={isController ? (
             <button type="button" onClick={() => setShowCreate(true)} className={heroPrimary}>
               <Plus className="w-4 h-4" /> New plot plan
@@ -87,66 +95,60 @@ export default function PlotPlansPage() {
         </PageHero>
 
         <PageBody>
-        {loadError && !plans ? (
-          <Card>
-            <p role="alert" className="text-[15px] font-semibold text-[var(--state-overdue)]">
-              Couldn&apos;t load plot plans: {loadError}{" "}
-              <button type="button" onClick={() => void refresh()} className="font-normal text-[var(--color-accent-text)] hover:underline">Try again</button>
-            </p>
-          </Card>
+        {!!loadError && !plans ? (
+          <ErrorNote error={loadError} title="Couldn't load the plot plans." onRetry={() => void refresh()} />
         ) : !plans ? (
-          <Card><LoadingBlock what="plot plans" className="border-0 p-0" /></Card>
+          <SkeletonRows rows={4} cols={2} what="plot plans" />
         ) : plans.length === 0 ? (
-          <Card>
-            <div className="flex items-start gap-3">
-              <span className="ui-icon-tile" aria-hidden><MapIcon className="w-5 h-5" /></span>
-              <div>
-                <h2 className="font-display text-[17px] font-semibold text-[var(--color-heading)]">Start with one drawing</h2>
-                <p className="mt-0.5 text-[15px] text-[var(--color-text-muted)]">Upload a plot plan, P&amp;ID or unit layout, then place markers on its equipment.</p>
-              </div>
-            </div>
-          </Card>
+          <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-6 flex items-center gap-x-4 gap-y-3 flex-wrap">
+            <p className="flex-1 min-w-[16rem] text-[15px] text-[var(--color-text-muted)]">Upload a plot plan, P&amp;ID or unit layout, then place markers on its equipment.</p>
+            {isController && <button type="button" onClick={() => setShowCreate(true)} className={btnQuiet}><Plus className="w-4 h-4" /> Upload the first drawing</button>}
+          </div>
         ) : (
-          <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
-            <table className="w-full text-[15px]">
+          <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
+            <table className="w-full text-[15px] tabular-nums">
               <thead className="bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text-muted)] text-left max-sm:hidden">
                 <tr>
                   <th className="font-semibold px-4 h-10 w-[128px]"><span className="sr-only">Drawing</span></th>
                   <th className="font-semibold px-4">Plot plan</th>
                   <th className="font-semibold px-4 text-right w-28">Markers</th>
-                  <th className="font-semibold px-4 w-32 hidden md:table-cell">Added</th>
-                  <th className="w-14"><span className="sr-only">Actions</span></th>
+                  <th className="font-semibold px-4 w-44 hidden md:table-cell">Last change</th>
+                  <th className="w-14"><span className="sr-only">More</span></th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[var(--color-border)]">
-              {plans.map((p) => (
-                <tr key={p.id} className="hover:bg-[var(--color-surface-2)] cursor-pointer" onClick={() => router.push(`/plot-plans/${p.id}`)}>
+              {plans.map((p) => {
+                const changed = p.updatedAt && p.createdAt && p.updatedAt > p.createdAt ? `Changed ${humanDate(p.updatedAt)}` : `Added ${humanDate(p.createdAt)}${p.createdByName ? ` by ${p.createdByName}` : ""}`;
+                return (
+                <tr key={p.id} className="hover:bg-[var(--color-surface-2)] cursor-pointer" onClick={() => open(p)}>
                   <td className="pl-4 pr-2 py-2.5 w-[112px] sm:w-[128px]">
-                    <div className="w-24 aspect-video rounded border border-[var(--color-border)] bg-[var(--color-accent-soft)] text-[var(--color-main)] flex items-center justify-center overflow-hidden">
+                    <div className="w-24 aspect-video rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text-faint)] flex items-center justify-center overflow-hidden">
                       {p.imagePath ? (
                         <SignedPlotImage path={p.imagePath} alt="" className="w-full h-full object-cover" />
                       ) : (
-                        <ImageIcon className="w-5 h-5" />
+                        <ImageIcon aria-hidden className="w-5 h-5" />
                       )}
                     </div>
                   </td>
-                  <td className="px-4 py-2.5 max-sm:pl-1">
+                  <td className="px-4 py-2.5 max-sm:pl-1 min-w-0">
                     <Link href={`/plot-plans/${p.id}`} onClick={(e) => e.stopPropagation()} className="text-[16px] font-semibold text-[var(--color-text)] hover:text-[var(--color-accent-text)] hover:underline underline-offset-2">{p.name}</Link>
                     {p.description && <div className="text-[13px] text-[var(--color-text-muted)] truncate max-w-[60ch]">{p.description}</div>}
-                    <div className="sm:hidden mt-0.5 text-[13px] text-[var(--color-text-muted)] inline-flex items-center gap-1"><span className="ui-count !h-5 !text-[12px]">{p.markers.length.toLocaleString()}</span> {p.markers.length === 1 ? "marker" : "markers"}</div>
+                    {!p.imagePath && <div className="mt-0.5"><span className="ui-pill is-warn">No drawing yet</span></div>}
+                    <div className="sm:hidden mt-0.5 text-[13px] text-[var(--color-text-muted)]">{plural(p.markers.length, "marker")} · {changed}</div>
                   </td>
-                  <td className="px-4 py-2.5 text-right max-sm:hidden"><span className={`ui-count ${p.markers.length === 0 ? "!bg-[var(--color-surface-2)] !text-[var(--color-text-muted)]" : ""}`}>{p.markers.length.toLocaleString()}</span></td>
-                  <td className="px-4 py-2.5 text-[14px] hidden md:table-cell">{humanDate(p.createdAt)}</td>
+                  <td className={`px-4 py-2.5 text-right max-sm:hidden ${p.markers.length === 0 ? "text-[var(--color-text-faint)]" : "text-[var(--color-text)]"}`}>{p.markers.length.toLocaleString()}</td>
+                  <td className="px-4 py-2.5 text-[13px] text-[var(--color-text-muted)] hidden md:table-cell">{changed}</td>
                   <td className="pr-3 py-2.5 text-right">
-                    {isController && (
-                      <button type="button" onClick={(e) => { e.stopPropagation(); void onDelete(p); }} title="Delete" aria-label={`Delete ${p.name}`}
-                        className="inline-grid w-8 h-8 place-items-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--state-overdue)] hover:bg-[var(--color-surface-2)] transition-colors">
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    )}
+                    <span className="inline-flex" onClick={(e) => e.stopPropagation()}>
+                      <MoreMenu iconOnly label={`More for ${p.name}`} triggerClass={btnIcon} items={[
+                        { icon: <ExternalLink className="w-4 h-4" />, label: "Open", onClick: () => open(p) },
+                        ...(isController ? [{ icon: <Trash2 className="w-4 h-4" />, label: "Delete", tone: "bad" as const, line: true, onClick: () => void onDelete(p) }] : []),
+                      ]} />
+                    </span>
                   </td>
                 </tr>
-              ))}
+                );
+              })}
               </tbody>
             </table>
           </div>
@@ -208,20 +210,20 @@ function CreatePlotPlanModal({
       const plan = file ? await tryUpload(file.name, run, { onRetried: onCreated }) : await run();
       onCreated(plan);
     } catch (e) {
-      setError((e as Error).message || "Couldn't create the plot plan.");
+      setError(`Couldn't create the plot plan. ${friendlyError(e)}`);
       setBusy(false);
     }
   };
 
   return (
     <Modal onClose={onClose} size="sm">
-      <ModalHeader icon={MapIcon} title="New plot plan" onClose={onClose} />
+      <ModalHeader title="New plot plan" onClose={onClose} />
       <ModalBody className="space-y-4">
         <Field label="Name">
-          <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Unit 200 Plot Plan" />
+          <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Unit 200 plot plan" autoComplete="off" />
         </Field>
         <div>
-          <span className="block text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5">Background image</span>
+          <span className="block text-[14px] font-semibold text-[var(--color-text)] mb-1.5">Drawing</span>
           <label {...drag.bind} className={`flex flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-[var(--color-border-strong)] bg-[var(--color-surface-2)] p-6 cursor-pointer hover:border-[var(--color-text-muted)] transition-colors ${drag.ring}`}>
             {drag.over ? (
               <span className="text-[14px] font-semibold text-[var(--color-text)]">{drag.say}</span>
@@ -242,11 +244,11 @@ function CreatePlotPlanModal({
             <input type="file" accept="image/*" className="sr-only" onChange={(e) => { onPick(e.target.files?.[0] ?? null); e.target.value = ""; }} />
           </label>
         </div>
-        {error && <p role="alert" className="text-[14px] font-semibold text-[var(--state-overdue)]">{error}</p>}
+        {error && <Problem>{error}</Problem>}
       </ModalBody>
       <ModalFooter>
         <Button variant="secondary" onClick={onClose}>Cancel</Button>
-        <Button onClick={submit} disabled={!name.trim()} loading={busy}>Create</Button>
+        <Button variant={name.trim() ? "primary" : "secondary"} onClick={submit} disabled={!name.trim()} loading={busy}>Create</Button>
       </ModalFooter>
     </Modal>
   );
