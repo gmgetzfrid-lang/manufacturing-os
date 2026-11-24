@@ -11,117 +11,42 @@
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { supabase } from "@/lib/supabase";
 import { useRole } from "@/components/providers/RoleContext";
-import { phasesOfRow, projectDue, projectDueWords } from "@/lib/projectPhases";
-import { myProjectIds } from "@/lib/projects";
-import { dayKey } from "@/lib/scheduleTz";
+import { sharedLoad, lastLoaded } from "@/lib/warmLoads";
+import { homeLibrariesKey, homeProjectsKey, loadHomeLibraries, loadHomeProjects, type HomeLibRow, type HomeProjRow, type LastChange } from "@/lib/dashboard/widgetLoads";
 import { transitionPush, onTransitionClick } from "@/lib/viewTransition";
 import { SkeletonRows } from "@/components/ui/Skeleton";
 import { sheet, thead, th, rowHover, link, StatusTag, LateEdge, WorkBar, agoWords, SectionHead } from "./ui";
 import { useProjectProgress } from "./projectProgress";
 
-/** What changed last in a library: the document, who, when. */
-interface LastChange { label: string; rev: string | null; by: string | null; at: string }
-/** Counts are null when they couldn't be read. */
-interface LibRow { id: string; name: string; docs: number | null; out: number | null; last: LastChange | null }
-interface ProjRow {
-  id: string; name: string; owner: string | null; moc: string | null; lastActivity: string | null;
-  due: string | null; late: boolean; timezone: string | null;
-}
-
-async function headCount(build: () => PromiseLike<{ count: number | null; error: unknown }>): Promise<number | null> {
-  try { const r = await build(); return r.error ? null : r.count; } catch { return null; }
-}
+// The loads live in lib/dashboard/widgetLoads (sign-in starts them too).
+type LibRow = HomeLibRow;
+type ProjRow = HomeProjRow;
 
 const num = (n: number | null) => (n == null ? "–" : n.toLocaleString());
 
-/** The most recently changed document in each library, with who changed
- *  it (names read in one batch). Best effort: a failure leaves it blank. */
-async function lastChanges(orgId: string, libIds: string[], uid: string | null): Promise<Map<string, LastChange>> {
-  const out = new Map<string, LastChange>();
-  try {
-    const rows = await Promise.all(libIds.map(async (id) => {
-      const { data } = await supabase.from("documents")
-        .select("library_id, document_number, title, name, rev, revision, updated_at, updated_by")
-        .eq("org_id", orgId).eq("library_id", id).not("updated_at", "is", null)
-        .order("updated_at", { ascending: false }).limit(1);
-      return ((data ?? []) as Array<Record<string, unknown>>)[0] ?? null;
-    }));
-    const who = [...new Set(rows.map((r) => (r?.updated_by as string | null) ?? null).filter((x): x is string => !!x))];
-    const names = new Map<string, string>();
-    if (who.length) {
-      const { data } = await supabase.from("users").select("id, display_name, email").in("id", who);
-      for (const u of (data ?? []) as Array<{ id: string; display_name: string | null; email: string | null }>) {
-        names.set(u.id, u.id === uid ? "you" : u.display_name || (u.email ?? "").split("@")[0] || "");
-      }
-    }
-    rows.forEach((r, i) => {
-      if (!r?.updated_at) return;
-      const label = String(r.document_number || r.title || r.name || "A document");
-      const rev = (r.rev ?? r.revision ?? null) as string | null;
-      const by = r.updated_by ? names.get(String(r.updated_by)) || null : null;
-      out.set(libIds[i], { label, rev: rev ? String(rev) : null, by, at: String(r.updated_at) });
-    });
-  } catch { /* the column stays blank */ }
-  return out;
-}
-
 export default function HomeStrips() {
   const { activeOrgId, uid } = useRole();
-  const [libs, setLibs] = useState<LibRow[] | null>(null);
-  const [projects, setProjects] = useState<ProjRow[] | null>(null);
+  const libsKey = activeOrgId ? homeLibrariesKey(activeOrgId, uid ?? null) : null;
+  const projKey = activeOrgId ? homeProjectsKey(activeOrgId, uid ?? null) : null;
+  // This screen's answers, with the keys they were read for; until they
+  // come, the last ones read (Home opened again shows them at once).
+  const [gotLibs, setLibs] = useState<{ key: string; v: LibRow[] } | null>(null);
+  const [gotProj, setProjects] = useState<{ key: string; v: ProjRow[] } | null>(null);
+  const libs = (gotLibs && gotLibs.key === libsKey ? gotLibs.v : lastLoaded<LibRow[]>(libsKey)) ?? null;
+  const projects = (gotProj && gotProj.key === projKey ? gotProj.v : lastLoaded<ProjRow[]>(projKey)) ?? null;
 
   useEffect(() => {
-    if (!activeOrgId) return;
+    if (!activeOrgId || !libsKey || !projKey) return;
     let alive = true;
-    void (async () => {
-      try {
-        const { data } = await supabase.from("libraries").select("id, name").eq("org_id", activeOrgId).order("name").limit(12);
-        const rows = (data ?? []) as Array<{ id: string; name: string | null }>;
-        const [counted, last] = await Promise.all([
-          Promise.all(rows.map(async (l) => ({
-            id: l.id,
-            name: l.name ?? "Library",
-            docs: await headCount(() => supabase.from("documents").select("id", { count: "exact", head: true }).eq("org_id", activeOrgId).eq("library_id", l.id)),
-            out: await headCount(() => supabase.from("documents").select("id", { count: "exact", head: true }).eq("org_id", activeOrgId).eq("library_id", l.id).not("checked_out_by", "is", null)),
-          }))),
-          lastChanges(activeOrgId, rows.map((l) => l.id), uid ?? null),
-        ]);
-        const withLast: LibRow[] = counted.map((l) => ({ ...l, last: last.get(l.id) ?? null }));
-        // The library changed most recently first, so the busy ones are in sight.
-        withLast.sort((a, b) => (b.last?.at ?? "").localeCompare(a.last?.at ?? "") || ((b.docs ?? 0) > 0 ? 1 : 0) - ((a.docs ?? 0) > 0 ? 1 : 0));
-        if (alive) setLibs(withLast);
-      } catch { if (alive) setLibs([]); }
-    })();
-    void (async () => {
-      try {
-        // Only yours: the projects you own or are a member of.
-        const [{ data }, mine] = await Promise.all([
-          supabase.from("projects")
-            .select("id, name, owner_user_id, owner_user_name, moc_reference, last_activity_at, target_completion_date, timezone, phases, st_phases:shift_times->phases")
-            .eq("org_id", activeOrgId).eq("status", "active")
-            .order("last_activity_at", { ascending: false, nullsFirst: false }).limit(200),
-          uid ? myProjectIds(activeOrgId, uid) : Promise.resolve(new Set<string>()),
-        ]);
-        const now = Date.now();
-        const rows = ((data ?? []) as Array<{
-          id: string; name: string | null; owner_user_id: string | null; owner_user_name: string | null; moc_reference: string | null;
-          last_activity_at: string | null; target_completion_date: string | null; timezone?: string | null; phases?: unknown; st_phases?: unknown;
-        }>).filter((p) => mine.has(p.id) || (!!uid && p.owner_user_id === uid)).slice(0, 12).map((p) => {
-          const due = projectDue(phasesOfRow({ phases: p.phases, shift_times: p.st_phases != null ? { phases: p.st_phases } : null }), p.target_completion_date, dayKey(now, p.timezone || "America/Los_Angeles"));
-          return {
-            id: p.id, name: p.name ?? "Untitled project",
-            owner: p.owner_user_id && p.owner_user_id === uid ? "You" : p.owner_user_name,
-            moc: p.moc_reference, lastActivity: p.last_activity_at,
-            due: due ? projectDueWords(due) : null, late: due?.kind === "past target", timezone: p.timezone ?? null,
-          };
-        });
-        if (alive) setProjects(rows);
-      } catch { if (alive) setProjects([]); }
-    })();
+    const me = uid ?? null;
+    // Sign-in may have started these; a reader a moment ago shares its load.
+    void sharedLoad(libsKey, () => loadHomeLibraries(activeOrgId, me), { maxAgeMs: 1500 })
+      .then((v) => { if (alive) setLibs({ key: libsKey, v }); }, () => { if (alive) setLibs({ key: libsKey, v: [] }); });
+    void sharedLoad(projKey, () => loadHomeProjects(activeOrgId, me), { maxAgeMs: 1500 })
+      .then((v) => { if (alive) setProjects({ key: projKey, v }); }, () => { if (alive) setProjects({ key: projKey, v: [] }); });
     return () => { alive = false; };
-  }, [activeOrgId, uid]);
+  }, [activeOrgId, uid, libsKey, projKey]);
 
   // While both load: the shape of what's coming, in place.
   if (libs === null && projects === null) {

@@ -17,6 +17,7 @@ import { ArrowUp, ChevronRight, Folder, Library, Loader2 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { useRole } from "@/components/providers/RoleContext";
 import { isControllerRole } from "@/lib/permissions";
+import { loadDocTop, type DocLib } from "@/lib/dashboard/widgetLoads";
 import NodeCover from "@/components/documents/NodeCover";
 import { useFind } from "@/components/find/useFind";
 import FindPanel, { findMapState } from "@/components/find/FindPanel";
@@ -26,10 +27,10 @@ import { TrendChip, MiniBars, dayBuckets } from "../viz";
 import { StatusTag, rowBtn, link, humanDate, type StatusTone } from "@/components/cockpit/ui";
 import {
   useWidget, useSetting, useSessionState, useWidgetData, SearchField, Skeleton, Empty,
-  headCount, fetchRecentDates, weekSplit, sum,
+  weekSplit, sum,
 } from "../kit";
 
-interface Lib { id: string; name: string; color?: string | null; icon?: string | null; type?: string | null; cover_image_url?: string | null; cover_tint?: "none" | "brand" | "mono" | null; count?: number }
+type Lib = DocLib;
 interface FolderRow { id: string; name: string; parent_id: string | null; deleted_at?: string | null; visibility?: string | null; color?: string | null; icon?: string | null }
 interface DocRow { id: string; document_number: string | null; title: string | null; name: string | null; rev: string | null; status: string | null; updated_at: string | null; collection_id: string | null; library_id?: string; sheet_meta?: string | null }
 
@@ -86,23 +87,9 @@ export default function DocBrowserBody() {
   const searching = q.trim().length >= 2;
 
   // ── Top level: libraries ──────────────────────────────────────────
-  const { data: top, loading: topLoading } = useWidgetData(async (orgId) => {
-    let libs: Lib[] = [];
-    const rich = await supabase.from("libraries").select("id, name, color, icon, type, cover_image_url, cover_tint").eq("org_id", orgId).order("name");
-    if (!rich.error) libs = (rich.data ?? []) as Lib[];
-    else libs = ((await supabase.from("libraries").select("id, name").eq("org_id", orgId).order("name")).data ?? []) as Lib[];
-    const head = libs.slice(0, 24);
-    const [counted, totalDocs, newDates] = await Promise.all([
-      Promise.all(head.map(async (l) => ({
-        ...l,
-        count: await headCount(() => supabase.from("documents").select("id", { count: "exact", head: true })
-          .eq("org_id", orgId).eq("library_id", l.id) as unknown as Promise<{ count: number | null }>),
-      }))),
-      headCount(() => supabase.from("documents").select("id", { count: "exact", head: true }).eq("org_id", orgId) as unknown as Promise<{ count: number | null }>),
-      fetchRecentDates("documents", orgId, 14),
-    ]);
-    return { libs: [...counted, ...libs.slice(24)], totalDocs, newDates };
-  });
+  // Named: sign-in starts it, and Home opened again shows it at once
+  // (lib/dashboard/widgetLoads).
+  const { data: top, loading: topLoading } = useWidgetData((orgId) => loadDocTop(orgId), [], "docs.top");
 
   // ── Inside a library: this folder's subfolders + documents ────────
   const { data: here, refreshing } = useWidgetData(async (orgId) => {

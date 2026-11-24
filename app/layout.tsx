@@ -3,6 +3,7 @@ import localFont from 'next/font/local';
 import './globals.css';
 import { ThemeProvider, THEME_PREPAINT } from '@/components/providers/ThemeProvider';
 import ServiceWorkerManager from '@/components/pwa/ServiceWorkerManager';
+import TimingHost from '@/components/system/TimingHost';
 
 // Barlow is self-hosted (app/fonts, SIL Open Font License) through
 // next/font/local: no request to Google at build time or in the browser,
@@ -97,6 +98,8 @@ export default function RootLayout({
       <body className="antialiased" suppressHydrationWarning>
         <ThemeProvider>{children}</ThemeProvider>
         <ServiceWorkerManager />
+        {/* ?timing=1: each data request on the screen, timed (loads only when asked). */}
+        <TimingHost />
       </body>
     </html>
   );

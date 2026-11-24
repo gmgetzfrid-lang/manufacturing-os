@@ -13,6 +13,7 @@ import React, { createContext, useCallback, useContext, useEffect, useRef, useSt
 import { Search } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
+import { sharedLoad, lastLoaded } from "@/lib/warmLoads";
 import type { DashboardWidget } from "@/lib/dashboard/types";
 import { SkeletonRows } from "@/components/ui/Skeleton";
 
@@ -75,14 +76,24 @@ export function useSessionState<T>(key: string, initial: T): [T, (v: T | ((prev:
 
 /** Fetch for a widget body. Re-runs when the org/user changes, when the
  *  widget is refreshed, and when any of `deps` changes. Keeps showing the
- *  previous data while a refresh is in flight. */
+ *  previous data while a refresh is in flight.
+ *
+ *  `name` (optional) names the load, so it is shared and kept
+ *  (lib/warmLoads): readers of the same load at once share one request,
+ *  sign-in can start it before Home opens, and Home opened again shows the
+ *  last answer at once while it loads afresh. The account and workspace
+ *  are part of its key. */
 export function useWidgetData<T>(
   run: (orgId: string, uid: string | null) => Promise<T>,
   deps: unknown[] = [],
+  name?: string,
 ): { data: T | null; loading: boolean; refreshing: boolean } {
   const { activeOrgId, uid } = useRole();
   const { refreshKey, reportLoaded } = useWidget();
-  const [data, setData] = useState<T | null>(null);
+  const depKey = JSON.stringify(deps);
+  const key = name && activeOrgId ? widgetLoadKey(name, activeOrgId, uid, depKey) : null;
+  // The answer with the key it was loaded for (null: an unnamed load).
+  const [got, setGot] = useState<{ key: string | null; v: T } | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const { reportError } = useWidget();
@@ -91,13 +102,13 @@ export function useWidgetData<T>(
   const errRef = useRef(reportError);
   // Declared before the fetch effect, so it runs first in the same commit.
   useEffect(() => { runRef.current = run; reportRef.current = reportLoaded; errRef.current = reportError; });
-  const depKey = JSON.stringify(deps);
   useEffect(() => {
     let alive = true;
     if (!activeOrgId) return;
     void Promise.resolve().then(() => { if (alive) setRefreshing(true); });
-    runRef.current(activeOrgId, uid)
-      .then((d) => { if (alive) { setData(d); errRef.current?.(null); } })
+    const load = () => runRef.current(activeOrgId, uid);
+    (key ? sharedLoad(key, load, refreshKey > 0 ? { fresh: true } : { maxAgeMs: 1500 }) : load())
+      .then((d) => { if (alive) { setGot({ key, v: d }); errRef.current?.(null); } })
       // Keep what's on screen, and say the load failed (the frame shows it).
       .catch((e: unknown) => { if (alive) errRef.current?.(e instanceof Error ? e.message : String(e)); })
       .finally(() => {
@@ -107,8 +118,19 @@ export function useWidgetData<T>(
         reportRef.current();
       });
     return () => { alive = false; };
-  }, [activeOrgId, uid, refreshKey, depKey]);
+  // `key` is the workspace, the account and `deps`.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeOrgId, uid, refreshKey, depKey, key]);
+  // This load's own answer; else the last one kept for it; else (while new
+  // deps load) the previous answer stays on screen.
+  const kept = lastLoaded<T>(key);
+  const data = got && got.key === key ? got.v : kept !== undefined ? kept : got ? got.v : null;
   return { data, loading: loading && data === null, refreshing };
+}
+
+/** The key a named widget load is shared and kept under. */
+export function widgetLoadKey(name: string, orgId: string, uid: string | null, depKey = "[]"): string {
+  return `w:${name}:${orgId}|${uid ?? ""}|${depKey}`;
 }
 
 // ─── layout constants ─────────────────────────────────────────────

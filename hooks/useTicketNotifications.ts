@@ -1,8 +1,8 @@
-import { sharedLoad } from "@/lib/warmLoads";
+import { sharedLoad, lastLoaded } from "@/lib/warmLoads";
 import { useState, useEffect, useMemo, useId } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useRole } from '@/components/providers/RoleContext';
-import { Ticket } from '@/types/schema';
+import type { Role, Ticket } from '@/types/schema';
 import {
   listMyNotifications, markRead, markAllRead, markManyRead, DECISION_KINDS, type NotificationRow,
 } from '@/lib/inAppNotifications';
@@ -133,125 +133,168 @@ function emptySectionCounts(): SectionCounts {
   };
 }
 
+/** What the attention feed is built from: the tickets that may need me and
+ *  my unread notifications, with stale workflow alerts taken out. */
+export interface AttentionLoad { tickets: Ticket[]; notifs: NotificationRow[]; problems: string[] }
+
+/** One load per account, workspace and roles: the side menu, the bell and
+ *  the dashboard read the same one (lib/warmLoads), and sign-in starts it. */
+export const attentionKey = (orgId: string, uid: string, roles: readonly string[]) => `attn:${orgId}|${uid}|${roles.join(",")}`;
+
+/** Read the feed. Tickets and notifications are asked for together; the
+ *  live status of a ticket an alert is about is read only when the ticket
+ *  list can't tell it. */
+export async function loadAttention(orgId: string, uid: string, roles: Role[]): Promise<AttentionLoad> {
+  const problems: string[] = [];
+  const note = (e: { message?: string } | null | undefined) => { if (e?.message) problems.push(e.message); };
+
+  // 1) My tickets, scoped by role (same visibility rules as the portal).
+  // Management, engineers and controllers read every open ticket: then a
+  // ticket missing from the list is closed or gone.
+  const seesAllOpen = isManagementRole(roles) || isEngineerRole(roles) || roles.includes('DocCtrl');
+  const loadList = async (): Promise<{ list: Ticket[]; complete: boolean }> => {
+    if (seesAllOpen) {
+      const { data, error } = await supabase.from('tickets').select('*').eq('org_id', orgId).neq('status', 'CLOSED').order('last_modified', { ascending: false }).limit(OPEN_TICKET_CAP);
+      note(error);
+      const list = (data || []).map((r) => fromDbTicket(r as Record<string, unknown>));
+      return { list, complete: !error && list.length < OPEN_TICKET_CAP };
+    }
+    if (roles.includes('Drafter')) {
+      const [assigned, pool] = await Promise.all([
+        supabase.from('tickets').select('*').eq('org_id', orgId).eq('assigned_drafter_id', uid).order('last_modified', { ascending: false }).limit(OPEN_TICKET_CAP),
+        supabase.from('tickets').select('*').eq('org_id', orgId).eq('status', 'PENDING_ASSIGNMENT').order('last_modified', { ascending: false }).limit(OPEN_TICKET_CAP),
+      ]);
+      note(assigned.error); note(pool.error);
+      const map = new Map<string, Ticket>();
+      for (const row of [...(assigned.data || []), ...(pool.data || [])]) {
+        const t = fromDbTicket(row as Record<string, unknown>);
+        map.set(t.id!, t);
+      }
+      return { list: Array.from(map.values()), complete: false };
+    }
+    const { data, error } = await supabase.from('tickets').select('*').eq('org_id', orgId).eq('requester_id', uid).neq('status', 'CLOSED').order('last_modified', { ascending: false }).limit(OPEN_TICKET_CAP);
+    note(error);
+    return { list: (data || []).map((r) => fromDbTicket(r as Record<string, unknown>)), complete: false };
+  };
+
+  // 2) My unread in-app notifications (the bell's events), scoped to the
+  //    active workspace. Read alongside the tickets, not after them.
+  const [{ list, complete }, unread] = await Promise.all([
+    loadList(),
+    listMyNotifications({ onlyUnread: true, limit: 50, orgId })
+      .catch((e: Error) => { note(e); return [] as NotificationRow[]; }),
+  ]);
+  let n = unread;
+
+  // 3) Reconcile stale workflow alerts. A workflow notification (one that
+  //    carries metadata.action) means "this ticket entered state X —
+  //    someone must act". Once the ticket LEAVES state X (advanced,
+  //    reassigned, or closed) that alert is moot, but it lingers unread
+  //    until the recipient happens to open the ticket. We detect those —
+  //    the ticket's live status no longer matches the alert's recorded
+  //    status, or the ticket is no longer live in this workspace — and
+  //    mark them read so the bell, the sidebar badge, and the portal
+  //    can never disagree.
+  const workflowRows = n.filter(
+    (r) => r.resourceId
+      && r.metadata
+      && typeof r.metadata.status === 'string'
+      && r.metadata.action != null,
+  );
+  if (workflowRows.length > 0) {
+    // The ticket list already has the live status of the tickets in it.
+    // When it holds every open ticket, one missing from it is closed or
+    // gone: stale, unless the alert itself is about closing it. Only the
+    // rest are read.
+    const statusById = new Map<string, string>(list.filter((t) => t.id).map((t) => [t.id!, String(t.status)]));
+    const unknown = Array.from(new Set(workflowRows
+      .filter((r) => !statusById.has(r.resourceId as string) && (!complete || r.metadata!.status === 'CLOSED'))
+      .map((r) => r.resourceId as string)));
+    let liveErr: { message?: string } | null = null;
+    if (unknown.length > 0) {
+      const { data: liveRows, error } = await supabase
+        .from('tickets').select('id, status').eq('org_id', orgId).in('id', unknown);
+      liveErr = error;
+      // Without the live statuses nothing can be called stale: a failed
+      // read must never clear real alerts.
+      if (error) note(error);
+      for (const row of (liveRows || []) as Array<{ id: string; status: string }>) statusById.set(row.id, row.status);
+    }
+    const staleIds = liveErr ? [] : workflowRows
+      .filter((r) => statusById.get(r.resourceId as string) !== (r.metadata!.status as string))
+      .map((r) => r.id);
+    if (staleIds.length > 0) {
+      const staleSet = new Set(staleIds);
+      // Best-effort cleanup, in the background: the feed leaves them out now.
+      void markManyRead(staleIds).catch(() => { /* best-effort cleanup */ });
+      n = n.filter((r) => !staleSet.has(r.id));
+    }
+  }
+  return { tickets: list, notifs: n, problems };
+}
+
+// A change pushed by the database refreshes every reader of the feed with
+// one load: the readers that hear it within a moment share it.
+const refreshing = new Map<string, Promise<AttentionLoad>>();
+function refreshSoon(key: string, load: () => Promise<AttentionLoad>): Promise<AttentionLoad> {
+  let p = refreshing.get(key);
+  if (!p) {
+    p = new Promise((r) => setTimeout(r, 40)).then(() => sharedLoad(key, load, { fresh: true }));
+    refreshing.set(key, p);
+    const mine = p;
+    void mine.then(() => undefined, () => undefined).finally(() => { if (refreshing.get(key) === mine) refreshing.delete(key); });
+  }
+  return p;
+}
+
 export function useTicketNotifications() {
   const { roles, activeOrgId, uid } = useRole();
-  const [tickets, setTickets] = useState<Ticket[]>([]);
-  const [notifs, setNotifs] = useState<NotificationRow[]>([]);
-  const [loading, setLoading] = useState(true);
+  const key = uid && activeOrgId ? attentionKey(activeOrgId, uid, roles) : null;
+  // This reader's own latest answer, for the key it was loaded for.
+  const [got, setGot] = useState<{ key: string; v?: AttentionLoad; err?: string } | null>(null);
+  // The feed as last loaded (here or by another reader, or at sign-in):
+  // shown at once on a screen opened again, while this one loads afresh.
+  const kept = lastLoaded<AttentionLoad>(key);
+  const mine = got && got.key === key ? got : null;
+  const current: AttentionLoad | undefined = mine?.v ?? kept;
+  const tickets = useMemo(() => current?.tickets ?? [], [current]);
+  const notifs = useMemo(() => current?.notifs ?? [], [current]);
+  const loading = !!key && !mine && !kept;
   // Why the feed couldn't be read (null when it was): surfaces say so
   // instead of showing "nothing needs you".
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const loadError = mine?.err ?? (current?.problems.length ? current.problems[0] : null);
   // Unique per hook instance so multiple consumers (sidebar/bell/inbox) don't
   // collide on the same realtime channel name.
   const channelId = useId().replace(/[^a-z0-9]/gi, '');
 
   useEffect(() => {
+    if (!key || !uid || !activeOrgId) return;
     let alive = true;
-
-    if (!uid || !activeOrgId) {
-      void (async () => { if (alive) { setTickets([]); setNotifs([]); setLoading(false); } })();
-      return () => { alive = false; };
-    }
-
-    const fetchAll = async () => {
-      const problems: string[] = [];
-      const note = (e: { message?: string } | null | undefined) => { if (e?.message) problems.push(e.message); };
-      try {
-        // 1) My tickets, scoped by role (same visibility rules as the portal).
-        //    The side menu, the bell and the dashboard each mount this hook at
-        //    once: one load serves them all (lib/warmLoads, 1.5 s).
-        const loadList = async (): Promise<{ list: Ticket[]; errs: string[] }> => {
-          const errs: string[] = [];
-          const noteL = (e: { message?: string } | null | undefined) => { if (e?.message) errs.push(e.message); };
-          let list: Ticket[] = [];
-          if (isManagementRole(roles) || isEngineerRole(roles) || roles.includes('DocCtrl')) {
-            const { data, error } = await supabase.from('tickets').select('*').eq('org_id', activeOrgId).neq('status', 'CLOSED').order('last_modified', { ascending: false }).limit(OPEN_TICKET_CAP);
-            noteL(error);
-            list = (data || []).map((r) => fromDbTicket(r as Record<string, unknown>));
-          } else if (roles.includes('Drafter')) {
-            const [assigned, pool] = await Promise.all([
-              supabase.from('tickets').select('*').eq('org_id', activeOrgId).eq('assigned_drafter_id', uid).order('last_modified', { ascending: false }).limit(OPEN_TICKET_CAP),
-              supabase.from('tickets').select('*').eq('org_id', activeOrgId).eq('status', 'PENDING_ASSIGNMENT').order('last_modified', { ascending: false }).limit(OPEN_TICKET_CAP),
-            ]);
-            noteL(assigned.error); noteL(pool.error);
-            const map = new Map<string, Ticket>();
-            for (const row of [...(assigned.data || []), ...(pool.data || [])]) {
-              const t = fromDbTicket(row as Record<string, unknown>);
-              map.set(t.id!, t);
-            }
-            list = Array.from(map.values());
-          } else {
-            const { data, error } = await supabase.from('tickets').select('*').eq('org_id', activeOrgId).eq('requester_id', uid).neq('status', 'CLOSED').order('last_modified', { ascending: false }).limit(OPEN_TICKET_CAP);
-            noteL(error);
-            list = (data || []).map((r) => fromDbTicket(r as Record<string, unknown>));
-          }
-
-          return { list, errs };
-        };
-        const got = await sharedLoad(`tickets:${activeOrgId}|${uid}|${roles.join(",")}`, loadList, { maxAgeMs: 1500 });
-        const list = got.list;
-        got.errs.forEach((m) => note({ message: m }));
-
-        // 2) My unread in-app notifications (the bell's events), scoped to the
-        //    active workspace.
-        let n = await listMyNotifications({ onlyUnread: true, limit: 50, orgId: activeOrgId })
-          .catch((e: Error) => { note(e); return [] as NotificationRow[]; });
-
-        // 3) Reconcile stale workflow alerts. A workflow notification (one that
-        //    carries metadata.action) means "this ticket entered state X —
-        //    someone must act". Once the ticket LEAVES state X (advanced,
-        //    reassigned, or closed) that alert is moot, but it lingers unread
-        //    until the recipient happens to open the ticket. We detect those —
-        //    the ticket's live status no longer matches the alert's recorded
-        //    status, or the ticket is no longer live in this workspace — and
-        //    mark them read so the bell, the sidebar badge, and the portal
-        //    can never disagree.
-        const workflowRows = n.filter(
-          (r) => r.resourceId
-            && r.metadata
-            && typeof r.metadata.status === 'string'
-            && r.metadata.action != null,
-        );
-        if (workflowRows.length > 0) {
-          const refIds = Array.from(new Set(workflowRows.map((r) => r.resourceId as string)));
-          const { data: liveRows, error: liveErr } = await supabase
-            .from('tickets').select('id, status').eq('org_id', activeOrgId).in('id', refIds);
-          // Without the live statuses nothing can be called stale: a failed
-          // read must never clear real alerts.
-          if (liveErr) { note(liveErr); }
-          const statusById = new Map<string, string>();
-          for (const row of (liveRows || []) as Array<{ id: string; status: string }>) {
-            statusById.set(row.id, row.status);
-          }
-          const staleIds = liveErr ? [] : workflowRows
-            .filter((r) => statusById.get(r.resourceId as string) !== (r.metadata!.status as string))
-            .map((r) => r.id);
-          if (staleIds.length > 0) {
-            const staleSet = new Set(staleIds);
-            await markManyRead(staleIds).catch(() => { /* best-effort cleanup */ });
-            n = n.filter((r) => !staleSet.has(r.id));
-          }
-        }
-
-        if (alive) { setTickets(list); setNotifs(n); setLoading(false); setLoadError(problems.length ? problems[0] : null); }
-      } catch (e) {
+    const load = () => loadAttention(activeOrgId, uid, roles);
+    const take = (p: Promise<AttentionLoad>) => p
+      .then((v) => { if (alive) setGot({ key, v }); })
+      .catch((e: unknown) => {
         console.error('Attention feed fetch failed', e);
-        if (alive) { setLoading(false); setLoadError((e as Error)?.message || "It didn't load."); }
-      }
-    };
+        if (alive) setGot({ key, err: (e as Error)?.message || "It didn't load." });
+      });
 
-    void fetchAll();
+    // The side menu, the bell and the dashboard each mount this hook at
+    // once: one load serves them all (lib/warmLoads, 1.5 s), and sign-in
+    // may have started it already.
+    void take(sharedLoad(key, load, { maxAgeMs: 1500 }));
 
     const channel = supabase
       .channel(`attention-${activeOrgId}-${channelId}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'tickets', filter: `org_id=eq.${activeOrgId}` },
-        () => { if (alive) void fetchAll(); })
+        () => { if (alive) void take(refreshSoon(key, load)); })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'notifications', filter: `user_id=eq.${uid}` },
-        () => { if (alive) void fetchAll(); })
+        () => { if (alive) void take(refreshSoon(key, load)); })
       .subscribe();
 
     return () => { alive = false; supabase.removeChannel(channel); };
-  }, [roles, activeOrgId, uid, channelId]);
+  // `key` carries the roles, the workspace and the account.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key, channelId]);
 
   const { items, actionRequiredCount, unreadCount, sectionCounts } = useMemo(() => {
     const out: AttentionItem[] = [];

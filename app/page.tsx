@@ -13,7 +13,7 @@ import { rememberWorkspaceName } from "@/lib/deviceWorkspace";
 import { checkSignin, type SigninVerdict } from "@/lib/signinCheck";
 import { fetchMemberships, pickMembership, SignedOut, type MembershipAnswer } from "@/lib/membershipClient";
 import { writeMember } from "@/lib/memberCache";
-import { sharedLoad, forgetLoads, dashKey, inboxKey } from "@/lib/warmLoads";
+import { sharedLoad, forgetLoads, dashKey } from "@/lib/warmLoads";
 import { normalizeRoles, primaryRole } from "@/lib/roleCapabilities";
 import type { Role } from "@/types/schema";
 import React, { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
@@ -97,17 +97,29 @@ export default function LoginPage() {
   // someone, or by a paid new workspace.
   /** The workspace this device last used, when the account is still in it. */
   const lastOrg = () => { try { return window.localStorage.getItem("manufacturingos.activeOrgId"); } catch { return null; } };
-  /** Start the dashboard's own loads (its layout, what needs you) as soon as
-   *  the account and workspace are known; the dashboard picks them up
-   *  (lib/warmLoads) instead of starting again. */
+  /** Start Home's own loads as soon as the account and workspace are
+   *  known: its layout, what needs you, the deck, the setup checklist and
+   *  the widgets (lib/dashboard/homeLoads). Home picks them up
+   *  (lib/warmLoads) instead of starting again. Resolves when the first
+   *  screen's loads have answered. */
   const warm = (user: User | null, answer: MembershipAnswer | null): Promise<unknown> => {
     if (!user?.id) return Promise.resolve();
     const uid = user.id;
     const pick = answer ? pickMembership(answer, lastOrg()) : null;
-    return Promise.allSettled([
-      import("@/lib/dashboard/config").then((m) => sharedLoad(dashKey(uid), () => m.loadDashboardConfig(uid))),
-      ...(pick ? [import("@/lib/inbox").then((m) => sharedLoad(inboxKey(pick.orgId, uid), () => m.loadInbox(pick.orgId, uid, user.email ?? undefined)))] : []),
-    ]);
+    if (!pick || pick.status !== "active") return warmLayout(user);
+    const roles = normalizeRoles(pick.roles, pick.role as Role | undefined);
+    const head = primaryRole(roles);
+    // Never fails: Home loads for itself whatever didn't come in.
+    return import("@/lib/dashboard/homeLoads").then((m) => m.warmHome({
+      uid, orgId: pick.orgId, roles, email: user.email ?? null, isAdmin: head === "Admin" || head === "DocCtrl",
+    })).catch(() => undefined);
+  };
+  /** The account's Home layout needs only the account: asked for the moment
+   *  the password is accepted, alongside the workspace lookup. */
+  const warmLayout = (user: User | null): Promise<unknown> => {
+    if (!user?.id) return Promise.resolve();
+    const uid = user.id;
+    return import("@/lib/dashboard/config").then((m) => sharedLoad(dashKey(uid), () => m.loadDashboardConfig(uid))).catch(() => undefined);
   };
 
   const routeAuthedUser = useCallback(async (user: User) => {
@@ -124,7 +136,8 @@ export default function LoginPage() {
     const { data: { session } } = await supabase.auth.getSession();
     // The workspace lookup runs alongside the sign-in check, not after it;
     // its answer is used only when the check lets the account in.
-    const workspaces = fetchMemberships().then((a) => { void warm(user, a); return a; }).catch((e: unknown) => e);
+    void warmLayout(user).catch(() => undefined);
+    const workspaces = fetchMemberships().then((a) => { void warm(user, a).catch(() => undefined); return a; }).catch((e: unknown) => e);
     const verdict = await checkSignin(session?.access_token ?? null);
     const why = refusal(verdict);
     if (why) {
@@ -320,7 +333,9 @@ export default function LoginPage() {
       }
       // The workspace's sign-in rules decide what happens next; the
       // workspace lookup runs alongside, used only if they let the account in.
-      const workspaces = fetchMemberships().then((a) => { void warm(signedIn.user ?? null, a); return a; }).catch((e: unknown) => e);
+      // Home's layout needs only the account: asked for now, too.
+      void warmLayout(signedIn.user ?? null).catch(() => undefined);
+      const workspaces = fetchMemberships().then((a) => { void warm(signedIn.user ?? null, a).catch(() => undefined); return a; }).catch((e: unknown) => e);
       const verdict = await checkSignin(signedIn.session?.access_token ?? null);
       const why = refusal(verdict) ?? (verdict.action === "error" ? "Couldn't finish signing you in. Check your connection and try again." : null);
       if (why) {

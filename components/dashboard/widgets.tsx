@@ -33,7 +33,8 @@ import { useRole } from "@/components/providers/RoleContext";
 import DocThumb from "@/components/documents/DocThumb";
 import DocHoverPreview from "@/components/documents/DocHoverPreview";
 import { loadInbox, type InboxSnapshot } from "@/lib/inbox";
-import { sharedLoad, inboxKey } from "@/lib/warmLoads";
+import { sharedLoad, inboxKey, lastLoaded } from "@/lib/warmLoads";
+import { deckPillarsKey, loadDeckPillars, type DeckPillars } from "@/lib/dashboard/homeLoads";
 import { computeNudges } from "@/lib/nudges";
 import { resolveMarkupRequest } from "@/lib/markupRequests";
 import { useTicketNotifications } from "@/hooks/useTicketNotifications";
@@ -209,20 +210,24 @@ function useInboxSnapshot(): { snap: InboxSnapshot | null; loading: boolean; ref
   const { activeOrgId, uid, userEmail } = useRole();
   // The frame's ⟳ / timer refresh this too.
   const { refreshKey, reportLoaded } = useWidget();
-  const [snap, setSnap] = useState<InboxSnapshot | null>(null);
-  const [loading, setLoading] = useState(true);
+  const key = activeOrgId && uid ? inboxKey(activeOrgId, uid) : null;
+  // This widget's answer for the key it was read for; until then the last
+  // one read (Home opened again shows it at once while it loads afresh).
+  const [got, setGot] = useState<{ key: string; snap: InboxSnapshot } | null>(null);
+  const [done, setDone] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
+  const snap = (got && got.key === key ? got.snap : lastLoaded<InboxSnapshot>(key)) ?? null;
   useEffect(() => {
     let alive = true;
-    if (!activeOrgId || !uid) return;
+    if (!activeOrgId || !uid || !key) return;
     // The first load is the one sign-in started, when it did; a refresh is new.
-    sharedLoad(inboxKey(activeOrgId, uid), () => loadInbox(activeOrgId, uid, userEmail ?? undefined), { fresh: reloadKey > 0 || refreshKey > 0 })
-      .then((s) => { if (alive) { setSnap(s); setLoading(false); reportLoaded(); } })
-      .catch(() => { if (alive) { setLoading(false); reportLoaded(); } });
+    sharedLoad(key, () => loadInbox(activeOrgId, uid, userEmail ?? undefined), reloadKey > 0 || refreshKey > 0 ? { fresh: true } : { maxAgeMs: 1500 })
+      .then((s) => { if (alive) { setGot({ key, snap: s }); setDone(key); reportLoaded(); } })
+      .catch(() => { if (alive) { setDone(key); reportLoaded(); } });
     return () => { alive = false; };
-  }, [activeOrgId, uid, userEmail, reloadKey, refreshKey, reportLoaded]);
+  }, [activeOrgId, uid, userEmail, key, reloadKey, refreshKey, reportLoaded]);
   const refresh = useCallback(() => setReloadKey((k) => k + 1), []);
-  return { snap, loading, refresh };
+  return { snap, loading: !snap && done !== key, refresh };
 }
 
 // ── Needs You widget — the rich, filterable attention feed from the cockpit,
@@ -565,46 +570,44 @@ function CommandDeckBody() {
   const { count: attentionCount, actionRequiredCount, items: attentionItems, markRead } = useTicketNotifications();
   const { editing } = useWidget();
 
-  const [data, setData] = useState<InboxSnapshot | null>(null);
-  const [loading, setLoading] = useState(true);
+  // Personal inbox snapshot (left side of the deck) and the three tool
+  // counts: each the last answer read (shown at once on Home opened again,
+  // or the one sign-in started) until this deck's own load answers.
+  const key = uid && activeOrgId ? inboxKey(activeOrgId, uid) : null;
+  const pillarsKey = activeOrgId ? deckPillarsKey(activeOrgId, uid ?? null) : null;
+  const [got, setGot] = useState<{ key: string; snap: InboxSnapshot; at: number } | null>(null);
+  const [gotPillars, setGotPillars] = useState<{ key: string; v: DeckPillars } | null>(null);
+  const [settled, setSettled] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
-  const [lastLoadedAt, setLastLoadedAt] = useState<number | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
-  const [pillars, setPillars] = useState<PillarStats>({ openRequests: 0, lockedDocs: 0, activeProjects: 0, loaded: false });
+  const kept = lastLoaded<InboxSnapshot>(key);
+  const data = (got && got.key === key ? got.snap : kept) ?? null;
+  const lastLoadedAt = got && got.key === key ? got.at : null;
+  const loading = !data && settled !== key;
+  const pillarCounts = (gotPillars && gotPillars.key === pillarsKey ? gotPillars.v : lastLoaded<DeckPillars>(pillarsKey)) ?? null;
+  const pillars: PillarStats = pillarCounts ? { ...pillarCounts, loaded: true } : { openRequests: 0, lockedDocs: 0, activeProjects: 0, loaded: false };
 
   // Personal inbox snapshot (left side of the deck). Re-runs on reloadKey bump.
   useEffect(() => {
     let alive = true;
-    if (!uid || !activeOrgId) return;
+    if (!uid || !activeOrgId || !key) return;
     // The first load is the one sign-in started, when it did; a refresh is new.
-    sharedLoad(inboxKey(activeOrgId, uid), () => loadInbox(activeOrgId, uid, userEmail ?? undefined), { fresh: reloadKey > 0 })
-      .then((snap) => { if (alive) { setData(snap); setLastLoadedAt(Date.now()); } })
+    sharedLoad(key, () => loadInbox(activeOrgId, uid, userEmail ?? undefined), reloadKey > 0 ? { fresh: true } : { maxAgeMs: 1500 })
+      .then((snap) => { if (alive) setGot({ key, snap, at: Date.now() }); })
       .catch(() => { /* leave prior data; deck degrades to dashes */ })
-      .finally(() => { if (alive) { setLoading(false); setRefreshing(false); } });
+      .finally(() => { if (alive) { setSettled(key); setRefreshing(false); } });
     return () => { alive = false; };
-  }, [uid, activeOrgId, userEmail, reloadKey]);
+  }, [uid, activeOrgId, userEmail, key, reloadKey]);
 
   // Org-wide headline counts for the three pillars. Independent + best-effort —
   // a missing table/column degrades that one stat to 0, never blanks the deck.
   useEffect(() => {
-    if (!activeOrgId) return;
+    if (!activeOrgId || !pillarsKey) return;
     let alive = true;
-    void (async () => {
-      const head = async (build: () => Promise<{ count: number | null }>) => {
-        try { return (await build()).count ?? 0; } catch { return 0; }
-      };
-      const [openRequests, lockedDocs, activeProjects] = await Promise.all([
-        head(() => supabase.from("tickets").select("id", { count: "exact", head: true })
-          .eq("org_id", activeOrgId).not("status", "in", '("CLOSED","CANCELED")') as unknown as Promise<{ count: number | null }>),
-        head(() => supabase.from("documents").select("id", { count: "exact", head: true })
-          .eq("org_id", activeOrgId).not("checked_out_by", "is", null) as unknown as Promise<{ count: number | null }>),
-        head(() => supabase.from("projects").select("id", { count: "exact", head: true })
-          .eq("org_id", activeOrgId).eq("status", "active") as unknown as Promise<{ count: number | null }>),
-      ]);
-      if (alive) setPillars({ openRequests, lockedDocs, activeProjects, loaded: true });
-    })();
+    void sharedLoad(pillarsKey, () => loadDeckPillars(activeOrgId), reloadKey > 0 ? { fresh: true } : { maxAgeMs: 1500 })
+      .then((v) => { if (alive) setGotPillars({ key: pillarsKey, v }); }, () => undefined);
     return () => { alive = false; };
-  }, [activeOrgId, reloadKey]);
+  }, [activeOrgId, pillarsKey, reloadKey]);
 
   // First paint, before any data: the section's outline, quietly loading.
   if (loading && !data) {

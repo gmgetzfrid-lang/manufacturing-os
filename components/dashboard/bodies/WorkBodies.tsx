@@ -11,6 +11,7 @@ import { supabase } from "@/lib/supabase";
 import { phasesOfRow, projectDue, projectDueWords } from "@/lib/projectPhases";
 import { dayKey } from "@/lib/scheduleTz";
 import { useRole } from "@/components/providers/RoleContext";
+import { loadOpenRequests, type OpenTicketRow } from "@/lib/dashboard/widgetLoads";
 import DocThumb from "@/components/documents/DocThumb";
 import DocHoverPreview from "@/components/documents/DocHoverPreview";
 import { TrendChip, MiniBars, Sparkline, SegmentBar, dayBuckets, type Segment } from "../viz";
@@ -70,13 +71,7 @@ const STAGES: Array<{ key: string; label: string; statuses: string[] }> = [
   { key: "closing", label: "Closing out", statuses: ["PENDING_IFC", "FINAL_DRAFT", "PENDING_FINAL_APPROVAL"] },
 ];
 
-interface TicketRow {
-  id: string; ticket_id: string | null; title: string | null; status: string | null; priority: number | null;
-  created_at: string | null; updated_at: string | null;
-  requester_id: string | null; requester_name: string | null;
-  assigned_drafter_id: string | null; assigned_drafter_name: string | null;
-  assigned_engineer_id: string | null;
-}
+type TicketRow = OpenTicketRow;
 type ReqScope = "mine" | "assigned" | "unassigned" | "all";
 
 export function DraftingRequestsBody() {
@@ -88,16 +83,9 @@ export function DraftingRequestsBody() {
   const [q, setQ] = useState("");
   const dq = useDebounced(q.trim().toLowerCase(), 150);
 
-  const { data, loading } = useWidgetData(async (orgId) => {
-    const [rows, newDates] = await Promise.all([
-      supabase.from("tickets")
-        .select("id, ticket_id, title, status, priority, created_at, updated_at, requester_id, requester_name, assigned_drafter_id, assigned_drafter_name, assigned_engineer_id")
-        .eq("org_id", orgId).not("status", "in", '("CLOSED","CANCELED")')
-        .order("created_at", { ascending: false }).limit(500),
-      fetchRecentDates("tickets", orgId, 14),
-    ]);
-    return { rows: (rows.data ?? []) as TicketRow[], newDates };
-  });
+  // Named: sign-in starts it, and Home opened again shows it at once
+  // (lib/dashboard/widgetLoads).
+  const { data, loading } = useWidgetData((orgId) => loadOpenRequests(orgId), [], "requests.open");
 
   const rows = useMemo(() => data?.rows ?? [], [data]);
   const inScope = useMemo(() => rows.filter((t) => {

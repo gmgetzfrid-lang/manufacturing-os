@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import { loggedFetch } from "@/lib/requestLog";
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -119,7 +120,9 @@ const authOptions = {
 // bundles never call the setter, so client behavior is unchanged. `typeof`
 // keeps the exact inferred client type so every existing call site
 // type-checks identically to the pre-proxy export.
-const baseClient = createClient(url, anon, { auth: authOptions });
+// Every request goes through lib/requestLog: the same read asked twice at
+// once goes out once, and ?timing=1 lists each request with its time.
+const baseClient = createClient(url, anon, { auth: authOptions, global: { fetch: loggedFetch } });
 type SharedClient = typeof baseClient;
 let clientImpl: SharedClient = baseClient;
 

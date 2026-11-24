@@ -13,8 +13,9 @@
 
 import React from "react";
 import Link from "next/link";
-import { supabase } from "@/lib/supabase";
 import { useRole } from "@/components/providers/RoleContext";
+import { sharedLoad, lastLoaded } from "@/lib/warmLoads";
+import { setupCountsKey, loadSetupCounts, type SetupCounts } from "@/lib/dashboard/homeLoads";
 import { Check, ChevronRight, X } from "lucide-react";
 import { SectionHead, link } from "@/components/cockpit/ui";
 
@@ -46,45 +47,44 @@ function writeLocal(key: string, v: string) {
 }
 
 export default function SetupChecklist() {
-  const { activeOrgId, activeRole } = useRole();
-  const [steps, setSteps] = React.useState<Step[] | null>(null);
-  const [dismissed, setDismissed] = React.useState(true);
-  const [first, setFirst] = React.useState<First | null>(null);
+  const { activeOrgId, activeRole, uid } = useRole();
+  // Read on this device before the first paint (this list is never drawn
+  // on the server: it waits for the workspace), so it doesn't pop in late.
+  const [dismissed, setDismissed] = React.useState(() => typeof window === "undefined" || readLocal(DISMISS_KEY) === "1");
+  const [first, setFirst] = React.useState<First | null>(() => {
+    if (typeof window === "undefined" || !activeOrgId) return null;
+    const v = readLocal(`${FIRST_KEY}.${activeOrgId}`);
+    return FIRST.some((f) => f.key === v) ? (v as First) : null;
+  });
 
   const isAdmin = activeRole === "Admin" || activeRole === "DocCtrl";
 
-  React.useEffect(() => {
-    setDismissed(readLocal(DISMISS_KEY) === "1");
-  }, []);
   React.useEffect(() => {
     if (!activeOrgId) return;
     const v = readLocal(`${FIRST_KEY}.${activeOrgId}`);
     setFirst(FIRST.some((f) => f.key === v) ? (v as First) : null);
   }, [activeOrgId]);
 
+  // The live counts behind the ticks: shared with sign-in, which starts
+  // them (lib/dashboard/homeLoads), and kept, so Home opened again shows
+  // the list at once.
+  const countsKey = activeOrgId && isAdmin ? setupCountsKey(activeOrgId, uid ?? null) : null;
+  const [got, setGot] = React.useState<{ key: string; v: SetupCounts } | null>(null);
+  const counts = got && got.key === countsKey ? got.v : lastLoaded<SetupCounts>(countsKey);
   React.useEffect(() => {
-    if (!activeOrgId || !isAdmin) return;
+    if (!activeOrgId || !countsKey) return;
     let alive = true;
-    const run = async () => {
-      const countOf = async (table: string) => {
-        const { count } = await supabase.from(table).select("id", { count: "exact", head: true }).eq("org_id", activeOrgId);
-        return count ?? 0;
-      };
-      const [libs, members, assets, tickets, plots] = await Promise.all([
-        countOf("libraries"), countOf("org_members"), countOf("assets"), countOf("tickets"), countOf("plot_plans"),
-      ]).catch(() => [0, 0, 0, 0, 0]);
-      if (!alive) return;
-      setSteps([
-        { key: "library", label: "Create your first library", blurb: "Controlled documents live in libraries.", href: "/admin/libraries", done: libs > 0 },
-        { key: "team", label: "Add your team", blurb: "Drafters, engineers and document controllers.", href: "/admin/users", done: members > 1 },
-        { key: "scope", label: "Register the equipment", blurb: "Tags, so documents and markups can point at them.", href: "/admin/assets", done: assets > 0 },
-        { key: "plot", label: "Add a plot plan", blurb: "Find equipment on the site map.", href: "/plot-plans", done: plots > 0 },
-        { key: "request", label: "Raise the first drafting request", blurb: "Drafting and design work runs through requests.", href: "/requests", done: tickets > 0 },
-      ]);
-    };
-    void run();
+    void sharedLoad(countsKey, () => loadSetupCounts(activeOrgId), { maxAgeMs: 1500 })
+      .then((v) => { if (alive) setGot({ key: countsKey, v }); }, () => undefined);
     return () => { alive = false; };
-  }, [activeOrgId, isAdmin]);
+  }, [activeOrgId, countsKey]);
+  const steps: Step[] | null = React.useMemo(() => counts ? [
+    { key: "library", label: "Create your first library", blurb: "Controlled documents live in libraries.", href: "/admin/libraries", done: counts.libs > 0 },
+    { key: "team", label: "Add your team", blurb: "Drafters, engineers and document controllers.", href: "/admin/users", done: counts.members > 1 },
+    { key: "scope", label: "Register the equipment", blurb: "Tags, so documents and markups can point at them.", href: "/admin/assets", done: counts.assets > 0 },
+    { key: "plot", label: "Add a plot plan", blurb: "Find equipment on the site map.", href: "/plot-plans", done: counts.plots > 0 },
+    { key: "request", label: "Raise the first drafting request", blurb: "Drafting and design work runs through requests.", href: "/requests", done: counts.tickets > 0 },
+  ] : null, [counts]);
 
   if (!isAdmin || dismissed || !steps) return null;
   // Hide once the essentials (library + team + equipment) are done.

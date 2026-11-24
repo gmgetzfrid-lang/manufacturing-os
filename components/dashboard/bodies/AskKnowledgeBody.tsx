@@ -26,7 +26,8 @@ import { SkeletonText } from "@/components/ui/Skeleton";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
 import { askTurn, listThreads, type ChatThread } from "@/lib/chatClient";
-import { listKnowledgeLibraries, type KnowledgeAnswer, type KnowledgeCitation, type KnowledgeLibrary } from "@/lib/knowledge";
+import { type KnowledgeAnswer, type KnowledgeCitation, type KnowledgeLibrary } from "@/lib/knowledge";
+import { loadKnowledgeLibs } from "@/lib/dashboard/widgetLoads";
 import { SourcesMenu, AnswerMenu, SkillHint, useAnswerSkills } from "@/components/chat/AskControls";
 import {
   parseAnswerBlocks, structureAnswer, splitVerdict, extractAnswerMeta, quoteWindow, docDesignation, clauseFor,
@@ -99,8 +100,8 @@ export default function AskKnowledgeBody() {
   const [web, setWeb] = useSetting<boolean>("web", false);
 
   // A failed read throws: the frame says it failed instead of "no libraries".
-  const { data: libs } = useWidgetData(async (orgId) =>
-    (await listKnowledgeLibraries(orgId)).map((l) => ({ id: l.id, name: l.name })));
+  // Named: sign-in starts it, and Home opened again shows it at once.
+  const { data: libs } = useWidgetData((orgId) => loadKnowledgeLibs(orgId), [], "knowledge.libs");
   // Unset (or deleted) library → the first one, until the person picks.
   const lib = useMemo(() => {
     if (!libs || libs.length === 0) return null;

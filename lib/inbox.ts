@@ -217,7 +217,11 @@ export async function loadInbox(orgId: string, userId: string, userEmail?: strin
   const myOpenHolds: Array<DocumentHold & { __docLabel?: string | null; __libraryId?: string | null }> = holdsRes.status === "fulfilled"
     ? ((holdsRes.value.data || []) as Array<Record<string, unknown>>).map(rowToHold)
     : [];
-  if (myOpenHolds.length) {
+  // The follow-up lookups (which document each hold and markup request is
+  // on, which overdue tasks are really done) depend only on the first
+  // answers, not on each other: they run together.
+  const holdDocs = async () => {
+    if (!myOpenHolds.length) return;
     const ids = [...new Set(myOpenHolds.map((h) => h.documentId))];
     const { data: hd } = await supabase.from("documents").select("id, library_id, document_number, title, name").in("id", ids);
     const byId = new Map(((hd ?? []) as Array<Record<string, unknown>>).map((d) => [d.id as string, d]));
@@ -226,7 +230,7 @@ export async function loadInbox(orgId: string, userId: string, userEmail?: strin
       h.__libraryId = (d?.library_id as string | null) ?? null;
       h.__docLabel = (d?.document_number as string) || (d?.title as string) || (d?.name as string) || null;
     }
-  }
+  };
 
   const markupRequestsToMe = markupRes.status === "fulfilled"
     ? ((markupRes.value.data || []) as Array<Record<string, unknown>>).map((r) => ({
@@ -240,12 +244,13 @@ export async function loadInbox(orgId: string, userId: string, userEmail?: strin
         createdAt: String(r.created_at),
       }))
     : [];
-  if (markupRequestsToMe.length) {
+  const markupDocs = async () => {
+    if (!markupRequestsToMe.length) return;
     const ids = [...new Set(markupRequestsToMe.map((m) => m.documentId))];
     const { data: libs } = await supabase.from("documents").select("id, library_id").in("id", ids);
     const libOf = new Map(((libs ?? []) as Array<{ id: string; library_id: string | null }>).map((d) => [d.id, d.library_id]));
     for (const m of markupRequestsToMe) (m as { libraryId?: string | null }).libraryId = libOf.get(m.documentId) ?? null;
-  }
+  };
 
   const myProjectIds = new Set<string>(
     projectsRes.status === "fulfilled"
@@ -264,7 +269,8 @@ export async function loadInbox(orgId: string, userId: string, userEmail?: strin
   // nothing is asked of anyone, so it stays off these lists.
   const rolledUpDone = new Set<string>();
   const parentIds = mineAll.map((m) => m.id).filter((id): id is string => !!id);
-  if (parentIds.length) {
+  const rollUps = async () => {
+    if (!parentIds.length) return;
     const { data: kids } = await supabase.from("milestones").select("parent_id, status, cancelled_at").in("parent_id", parentIds.slice(0, 200));
     const byParent = new Map<string, Array<{ status: string; cancelled_at: string | null }>>();
     for (const k of (kids ?? []) as Array<{ parent_id: string; status: string; cancelled_at: string | null }>) {
@@ -272,7 +278,8 @@ export async function loadInbox(orgId: string, userId: string, userEmail?: strin
       byParent.set(k.parent_id, [...(byParent.get(k.parent_id) ?? []), k]);
     }
     for (const [pid, list] of byParent) if (list.length && list.every((k) => k.status === "completed")) rolledUpDone.add(pid);
-  }
+  };
+  await Promise.all([holdDocs(), markupDocs(), rollUps()]);
   const myMilestones = mineAll.filter((m) => !m.id || !rolledUpDone.has(m.id));
   const msTime = (m: Milestone) => new Date(String(m.plannedAt ?? "")).getTime();
   // Due within the next 7 days — the forward-looking "this week" list.

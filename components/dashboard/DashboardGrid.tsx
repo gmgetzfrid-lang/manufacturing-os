@@ -18,7 +18,7 @@
 // older version is shown, and edited, as one column in its own order.
 // On a phone the editor can't drag; it still removes and opens settings.
 
-import { sharedLoad, dashKey } from "@/lib/warmLoads";
+import { sharedLoad, dashKey, lastLoaded } from "@/lib/warmLoads";
 import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import SetupChecklist from "@/components/onboarding/SetupChecklist";
@@ -33,7 +33,7 @@ import { buildNeeds, needsFacts } from "@/components/cockpit/needsYou";
 import HomeStrips from "@/components/cockpit/HomeStrips";
 import type { DashboardConfig, DashboardWidget, WidgetType } from "@/lib/dashboard/types";
 import {
-  loadDashboardConfig, saveDashboardConfig, newWidgetId, GRID_COLS,
+  loadDashboardConfig, saveDashboardConfig, newWidgetId, GRID_COLS, localDashboardConfig,
 } from "@/lib/dashboard/config";
 import { moveElement, resizeElement, firstFreeSlot, bottomRow } from "@/lib/dashboard/layout";
 import { WIDGET_CATALOG } from "./widgets";
@@ -88,8 +88,24 @@ export default function DashboardGrid() {
   const needs = useMemo(() => buildNeeds(attnItems), [attnItems]);
   const facts = needsFacts(needs);
 
-  const [config, setConfig] = useState<DashboardConfig | null>(null);
-  const [loaded, setLoaded] = useState(false);
+  // The layout read for this visit; until it answers, the one last read
+  // (at sign-in, or Home opened before, or this device's copy), so Home
+  // opens with its widgets in place and changes only if the account's
+  // layout changed elsewhere.
+  const [ownConfig, setOwnConfig] = useState<DashboardConfig | null>(null);
+  const kept = useMemo(() => {
+    if (!uid || ownConfig) return null;
+    const cfg = lastLoaded<DashboardConfig>(dashKey(uid)) ?? localDashboardConfig(uid);
+    return cfg && cfg.widgets.length ? { ...cfg, widgets: asColumn(cfg.widgets) } : null;
+  }, [uid, ownConfig]);
+  const config = ownConfig ?? kept;
+  const loaded = !!config;
+  const keptRef = useRef<DashboardConfig | null>(null);
+  useEffect(() => { keptRef.current = kept; }, [kept]);
+  // Changes start from what's on screen, even while the read is on its way.
+  const setConfig = useCallback((next: DashboardConfig | null | ((prev: DashboardConfig | null) => DashboardConfig | null)) => {
+    setOwnConfig((prev) => (typeof next === "function" ? next(prev ?? keptRef.current) : next));
+  }, []);
   const [editing, setEditing] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [settingsWidget, setSettingsWidget] = useState<DashboardWidget | null>(null);
@@ -128,10 +144,14 @@ export default function DashboardGrid() {
     let alive = true;
     if (!uid) return;
     // The layout sign-in already asked for, when it did.
-    sharedLoad(dashKey(uid), () => loadDashboardConfig(uid)).then((cfg) => {
+    sharedLoad(dashKey(uid), () => loadDashboardConfig(uid), { maxAgeMs: 5000 }).then((cfg) => {
       // Shown, and edited, as one full-width column in its own order. The
       // stored layout only changes when the person changes something.
-      if (alive) { setConfig({ ...cfg, widgets: asColumn(cfg.widgets) }); setLoaded(true); }
+      if (alive) setConfig((prev) => {
+        const next = { ...cfg, widgets: asColumn(cfg.widgets) };
+        // The same layout as on screen: keep it (widgets don't re-mount).
+        return prev && JSON.stringify(prev) === JSON.stringify(next) ? prev : next;
+      });
     });
     return () => { alive = false; };
   }, [uid]);

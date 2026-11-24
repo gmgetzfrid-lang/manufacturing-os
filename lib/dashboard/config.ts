@@ -212,6 +212,11 @@ function readLocal(uid: string): DashboardConfig | null {
   }
 }
 
+/** The layout as last loaded on this device (no request), or null. */
+export function localDashboardConfig(uid: string): DashboardConfig | null {
+  return readLocal(uid);
+}
+
 function writeLocal(uid: string, config: DashboardConfig) {
   if (typeof window === "undefined") return;
   try {
