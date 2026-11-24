@@ -1849,7 +1849,9 @@ function standSay(o: { overall: ShiftReport["overall"]; gap: number; forecast?: 
     const text = pastPlan
       ? `${scope} is past its planned finish (${c.DT(ov.plannedFinish!)}), ${leftWords}: ${pct}.`
       : `${scope} is ${pct}: ${c.hrs(gap)} of work behind.`;
-    const key = ov.standing === "behind" && gap >= 0.5 ? `${gap} h` : slip != null && slip >= 0.5 ? `${slip} h` : leftWords;
+    // Past its planned finish, the number is how late the finish will be;
+    // otherwise the work behind. The number says which it is.
+    const key = pastPlan && slip != null && slip >= 0.5 ? `${slip} h late` : ov.standing === "behind" && gap >= 0.5 ? `${gap} h behind` : slip != null && slip >= 0.5 ? `${slip} h late` : leftWords;
     return { label: "BEHIND", tone: "rose", key, text: text + fcText, bad: true };
   }
   if (fc && slip != null && slip >= 0.5) {

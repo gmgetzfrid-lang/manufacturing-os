@@ -145,7 +145,9 @@ export function groupRows(rows: ExportStepRow[], flat?: boolean): Array<{ group?
 
 /** Done and plan bars say something only while one of them is short of
  *  100%: two full bars just repeat "100%" from the tiles. */
-export const barsShown = (b: { done: number; plan: number }) => b.done < 100 || b.plan < 100;
+/** Two bars are worth drawing only when they tell done and plan apart (10
+ *  points or more); two bars near the same length only repeat the numbers. */
+export const barsShown = (b: { done: number; plan: number }) => (b.done < 100 || b.plan < 100) && Math.abs(b.plan - b.done) >= 10;
 
 /** "38 on site: Schultz 12, Ancon 20, Brand 6": the head count in one line,
  *  from the counts entered (plant staff are not on the job and not counted).
@@ -343,8 +345,13 @@ function plainText(d: ExportDoc): string {
 
 // ── Email HTML (inline styles, tables only) ──────────────────────────
 
+/** "BEHIND" or "PLAN BY NOW" as a word in a sentence: "Behind", "Plan by now". */
+const sentence = (t: string) => (t === t.toUpperCase() ? t.charAt(0) + t.slice(1).toLowerCase() : t);
 const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
+// The app's type scale (docs/design-rules.md TY2, TY3): 12 caption, 14
+// body, 16 reading, 20 section, 26 key number; nothing smaller, and no
+// tiny capitals (TY8). Panels round at 8 px (SP3).
 const FONT = "font-family:Arial,Helvetica,sans-serif;";
 const INK = "#0f172a", MUTED = "#64748b", LINE = "#cbd5e1";
 const TONE: Record<Tone, { fg: string; bg: string; bd: string }> = {
@@ -357,25 +364,29 @@ const TONE: Record<Tone, { fg: string; bg: string; bd: string }> = {
 const SOLID: Record<Tone, string> = { rose: "#e11d48", amber: "#d97706", emerald: "#059669", slate: "#334155", muted: "#64748b" };
 
 const tagHtml = (t: ExportTag) =>
-  `<span style="${FONT}font-size:9px;font-weight:bold;text-transform:uppercase;letter-spacing:0.5px;color:${TONE[t.tone].fg};background-color:${TONE[t.tone].bg};border:1px solid ${TONE[t.tone].bd};padding:0 3px;">${esc(t.t)}</span>`;
+  `<span style="${FONT}font-size:12px;font-weight:600;color:${TONE[t.tone].fg};background-color:${TONE[t.tone].bg};border:1px solid ${TONE[t.tone].bd};padding:0 3px;">${esc(t.t)}</span>`;
 
 const td = (style: string, html: string, attrs = "") => `<td ${attrs}style="${FONT}${style}">${html}</td>`;
 
 function blockHtml(b: ExportBlock): string {
   switch (b.k) {
     case "stats":
+      // Under the status sentence (which has the key number), the rest is
+      // one line of facts, never a row of equal tiles (rule N6).
+      if (b.small) return `<p style="${FONT}font-size:14px;line-height:1.5;margin:2px 0 4px;color:${MUTED};">${b.items.map((x) =>
+        `${esc(sentence(x.label))} <b style="color:${x.tone === "rose" ? TONE.rose.fg : INK};white-space:nowrap;">${esc(x.value).replace(/ /g, "&nbsp;")}</b>`).join(" &middot; ")}</p>`;
       return `<table role="presentation" cellpadding="0" cellspacing="3" border="0" style="border-collapse:separate;margin:2px 0 4px -3px;"><tr>${b.items.map((x) => {
         const t = TONE[x.tone];
         // Narrow enough that four tiles fit a phone screen (375px). Under a
         // status sentence the tiles are quiet: the sentence has the answer.
         return td(`border:1px solid ${t.bd};background-color:${t.bg};padding:${b.small ? "3px 6px" : "4px 8px"};min-width:60px;`,
-          `<div style="${FONT}font-size:9px;font-weight:bold;text-transform:uppercase;letter-spacing:0.5px;color:${MUTED};white-space:nowrap;">${esc(x.label)}</div>` +
-          `<div style="${FONT}font-size:${b.small ? 13 : 17}px;font-weight:bold;color:${t.fg};white-space:nowrap;">${esc(x.value)}</div>`, `bgcolor="${t.bg}" `);
+          `<div style="${FONT}font-size:12px;font-weight:600;color:${MUTED};white-space:nowrap;">${esc(x.label)}</div>` +
+          `<div style="${FONT}font-size:${b.small ? 14 : 20}px;font-weight:bold;color:${t.fg};white-space:nowrap;">${esc(x.value)}</div>`, `bgcolor="${t.bg}" `);
       }).join("")}</tr></table>`;
     case "note":
       return `<p style="${FONT}font-size:12px;margin:3px 0;color:${b.tone ? TONE[b.tone].fg : INK};${b.tone ? "font-weight:bold;" : ""}">${esc(b.text)}</p>`;
     case "sub":
-      return `<p style="${FONT}font-size:11px;font-weight:bold;text-transform:uppercase;letter-spacing:0.5px;margin:8px 0 3px;color:${TONE[b.tone].fg};">${esc(b.title)} (${b.count})</p>`;
+      return `<p style="${FONT}font-size:12px;font-weight:600;margin:8px 0 3px;color:${TONE[b.tone].fg};">${esc(b.title)} (${b.count})</p>`;
     case "label":
       return `<p style="${FONT}font-size:12px;font-weight:bold;margin:10px 0 4px;color:${INK};">${esc(b.text)}</p>`;
     case "empty":
@@ -383,20 +394,20 @@ function blockHtml(b: ExportBlock): string {
     case "list":
       return `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">${b.items.map((x) =>
         `<tr>${td("font-size:12px;color:#059669;padding:1px 6px 1px 0;vertical-align:top;", "&#10003;")}${td(`font-size:12px;color:${INK};padding:1px 0;`,
-          `${esc(x.text)}${x.note ? ` <span style="color:${MUTED};font-size:11px;">${esc(x.note)}</span>` : ""}`)}</tr>`).join("")}</table>`;
+          `${esc(x.text)}${x.note ? ` <span style="color:${MUTED};font-size:12px;">${esc(x.note)}</span>` : ""}`)}</tr>`).join("")}</table>`;
     case "lines":
       return (b.title ? `<p style="${FONT}font-size:12px;font-weight:bold;margin:10px 0 3px;color:${b.tone ? TONE[b.tone].fg : INK};">${esc(b.title)}</p>` : "") +
         `<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;">${b.items.map((x) =>
-          `<tr>${td(`font-size:13px;color:${MUTED};padding:3px 6px 3px 2px;vertical-align:top;width:10px;`, "&bull;")}${td(`font-size:13px;color:${INK};padding:3px 0;vertical-align:top;line-height:1.4;`,
+          `<tr>${td(`font-size:14px;color:${MUTED};padding:3px 6px 3px 2px;vertical-align:top;width:10px;`, "&bull;")}${td(`font-size:14px;color:${INK};padding:3px 0;vertical-align:top;line-height:1.4;`,
             `<b style="color:${INK};">${esc(x.lead)}</b> - <span style="color:${x.tone ? (x.tone === "muted" ? MUTED : TONE[x.tone].fg) : INK};">${esc(x.text)}</span>` +
             (x.aside ? `<span style="color:${MUTED};"> · ${esc(x.aside)}</span>` : "") +
-            (x.note ? `<div style="${FONT}font-size:11px;font-style:italic;color:${MUTED};">“${esc(x.note)}”</div>` : ""))}</tr>`).join("")}</table>`;
+            (x.note ? `<div style="${FONT}font-size:12px;font-style:italic;color:${MUTED};">“${esc(x.note)}”</div>` : ""))}</tr>`).join("")}</table>`;
     case "bullets":
       return `<div style="${FONT}font-size:14px;font-weight:bold;color:${INK};border-bottom:2px solid ${b.tone ? SOLID[b.tone] : INK};padding-bottom:2px;margin-bottom:4px;">${esc(b.title)}</div>` +
         (b.lead ? `<p style="${FONT}font-size:12px;color:${MUTED};margin:0 0 4px;">${esc(b.lead)}</p>` : "") +
         `<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;">${b.items.map((x) =>
           `<tr>${td(`font-size:14px;color:${MUTED};padding:3px 6px 3px 2px;vertical-align:top;width:10px;`, "&bull;")}${td(`font-size:14px;color:${INK};padding:3px 0;vertical-align:top;line-height:1.4;`, esc(x))}</tr>`).join("")}</table>` +
-        (b.sources?.length ? `<p style="${FONT}font-size:10px;color:${MUTED};margin:4px 0 0;">From ${b.sources.map((x) => `<a href="${esc(x.url)}" style="color:${MUTED};">${esc(x.label)}</a>`).join(" · ")}</p>` : "");
+        (b.sources?.length ? `<p style="${FONT}font-size:12px;color:${MUTED};margin:4px 0 0;">From ${b.sources.map((x) => `<a href="${esc(x.url)}" style="color:${MUTED};">${esc(x.label)}</a>`).join(" · ")}</p>` : "");
     case "table": {
       // A column with nothing in it (no step started yet) isn't drawn.
       const keep = b.head.map((_, j) => j === 0 || b.rows.some((r) => cellText(r[j] ?? "") !== ""));
@@ -408,7 +419,7 @@ function blockHtml(b: ExportBlock): string {
         return n ? `<tr>${td(`font-size:12px;line-height:1.4;color:#475569;padding:0 8px 6px;text-align:left;vertical-align:top;`, esc(n), `colspan="${keep.filter(Boolean).length}" `)}</tr>` : "";
       };
       return `<table cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;border:1px solid ${LINE};">` +
-        `<tr>${b.head.map((h, j) => !keep[j] ? "" : td(`font-size:10px;font-weight:bold;text-transform:uppercase;letter-spacing:0.3px;color:${MUTED};background-color:#f8fafc;padding:5px 8px;border-bottom:1px solid ${LINE};text-align:${al(j)};white-space:nowrap;`, esc(h), `bgcolor="#f8fafc" `)).join("")}</tr>` +
+        `<tr>${b.head.map((h, j) => !keep[j] ? "" : td(`font-size:12px;font-weight:600;color:${MUTED};background-color:#f8fafc;padding:5px 8px;border-bottom:1px solid ${LINE};text-align:${al(j)};white-space:nowrap;`, esc(h), `bgcolor="#f8fafc" `)).join("")}</tr>` +
         b.rows.map((r, i) => {
           // A row that continues the task above has no line between them.
           const cont = cellText(r[0] ?? "") === "";
@@ -416,15 +427,15 @@ function blockHtml(b: ExportBlock): string {
             if (!keep[j]) return "";
             const o = typeof c === "string" ? { t: c } : c;
             const color = o.tone ? (o.tone === "muted" ? MUTED : TONE[o.tone].fg) : INK;
-            const note = "note" in o && o.note ? `<div style="${FONT}font-size:11px;font-style:italic;font-weight:normal;color:${MUTED};margin-top:1px;">“${esc(o.note)}”</div>` : "";
+            const note = "note" in o && o.note ? `<div style="${FONT}font-size:12px;font-style:italic;font-weight:normal;color:${MUTED};margin-top:1px;">“${esc(o.note)}”</div>` : "";
             // One step per line, its time / WO first, its comment under it.
             const lines = "lines" in o && o.lines?.length ? o.lines.map((x) =>
-              `<div style="${FONT}font-size:13px;font-weight:normal;color:${x.tone ? (x.tone === "muted" ? MUTED : TONE[x.tone].fg) : INK};margin-top:2px;">${x.lead ? `<span style="font-family:Consolas,Menlo,monospace;font-size:12px;color:#334155;">${esc(x.lead)}</span>&nbsp; ` : ""}${esc(x.t)}</div>` +
-              (x.note ? `<div style="${FONT}font-size:11px;font-style:italic;font-weight:normal;color:${MUTED};margin:1px 0 0 ${x.lead ? 12 : 0}px;">“${esc(x.note)}”</div>` : "")).join("") : "";
+              `<div style="${FONT}font-size:14px;font-weight:normal;color:${x.tone ? (x.tone === "muted" ? MUTED : TONE[x.tone].fg) : INK};margin-top:2px;">${x.lead ? `<span style="font-family:Consolas,Menlo,monospace;font-size:12px;color:#334155;">${esc(x.lead)}</span>&nbsp; ` : ""}${esc(x.t)}</div>` +
+              (x.note ? `<div style="${FONT}font-size:12px;font-style:italic;font-weight:normal;color:${MUTED};margin:1px 0 0 ${x.lead ? 12 : 0}px;">“${esc(x.note)}”</div>` : "")).join("") : "";
             const sub = "sub" in o && o.sub?.length ? o.sub.map((x) =>
-              `<div style="${FONT}font-size:11px;font-weight:normal;${x.italic ? "font-style:italic;" : ""}color:${x.tone ? (x.tone === "muted" ? MUTED : TONE[x.tone].fg) : MUTED};margin-top:2px;">${esc(x.t)}</div>`).join("") : "";
+              `<div style="${FONT}font-size:12px;font-weight:normal;${x.italic ? "font-style:italic;" : ""}color:${x.tone ? (x.tone === "muted" ? MUTED : TONE[x.tone].fg) : MUTED};margin-top:2px;">${esc(x.t)}</div>`).join("") : "";
             const nw = b.nowrap?.includes(j) ? "white-space:nowrap;" : "";
-            return td(`font-size:13px;color:${color};padding:5px 8px;${cont ? "" : "border-top:1px solid #e2e8f0;"}text-align:${al(j)};vertical-align:top;${nw}${o.bold ? "font-weight:bold;" : ""}`, esc(o.t) + lines + note + sub);
+            return td(`font-size:14px;color:${color};padding:5px 8px;${cont ? "" : "border-top:1px solid #e2e8f0;"}text-align:${al(j)};vertical-align:top;${nw}${o.bold ? "font-weight:bold;" : ""}`, esc(o.t) + lines + note + sub);
           }).join("")}</tr>` + noteRow(i);
         }).join("") +
         `</table>`;
@@ -433,21 +444,21 @@ function blockHtml(b: ExportBlock): string {
       // Left: the numbers and the two bars. Right: the bottom line.
       const bar = (label: string, pct: number, color: string) => {
         const w = Math.max(0, Math.min(100, Math.round(pct)));
-        return `<tr>${td(`font-size:10px;color:${MUTED};padding:1px 6px 1px 0;white-space:nowrap;width:34px;`, esc(label))}` +
+        return `<tr>${td(`font-size:12px;color:${MUTED};padding:1px 6px 1px 0;white-space:nowrap;width:34px;`, esc(label))}` +
           td("padding:1px 0;", `<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;"><tr>` +
             (w > 0 ? td(`background-color:${color};height:8px;font-size:1px;line-height:1px;`, "&nbsp;", `width="${w}%" bgcolor="${color}" `) : "") +
             (w < 100 ? td("background-color:#e2e8f0;height:8px;font-size:1px;line-height:1px;", "&nbsp;", `bgcolor="#e2e8f0" `) : "") +
             `</tr></table>`) +
-          td(`font-size:10px;color:${INK};font-weight:bold;padding:1px 0 1px 6px;white-space:nowrap;width:30px;text-align:right;`, `${w}%`) + `</tr>`;
+          td(`font-size:12px;color:${INK};font-weight:bold;padding:1px 0 1px 6px;white-space:nowrap;width:30px;text-align:right;`, `${w}%`) + `</tr>`;
       };
       const left = blockHtml({ k: "stats", items: b.stats, small: b.small }) + (b.bars && barsShown(b.bars)
         ? `<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;margin-top:4px;">` +
           bar("Done", b.bars.done, "#0f766e") + bar("Plan", b.bars.plan, "#94a3b8") +
-          `<tr>${td("", "")}${td(`font-size:9px;color:${MUTED};padding-top:1px;`, `${esc(b.bars.from)} → ${esc(b.bars.to)} · whole job`)}${td("", "")}</tr></table>`
+          `<tr>${td("", "")}${td(`font-size:12px;color:${MUTED};padding-top:1px;`, `${esc(b.bars.from)} → ${esc(b.bars.to)} · whole job`)}${td("", "")}</tr></table>`
         : "");
       // No lines: the numbers and bars take the whole width.
       if (!b.lines.length) return `<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;"><tr>${td("vertical-align:top;padding:0;", left)}</tr></table>`;
-      const right = `<div style="${FONT}font-size:10px;font-weight:bold;letter-spacing:1px;text-transform:uppercase;color:#4338ca;margin-bottom:3px;">${esc(b.title)}</div>` +
+      const right = `<div style="${FONT}font-size:12px;font-weight:600;color:#4338ca;margin-bottom:3px;">${esc(b.title)}</div>` +
         b.lines.map((l, i) => `<div style="${FONT}font-size:12px;line-height:1.4;margin-top:${i ? 3 : 0}px;color:${l.tone ? TONE[l.tone].fg : INK};">${l.label ? `<b>${esc(l.label)}:</b> ` : ""}${i === 0 && !l.label ? `<b>${esc(l.text)}</b>` : esc(l.text)}</div>`).join("");
       return `<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;"><tr>` +
         td("vertical-align:top;padding:0 10px 0 0;width:330px;", left, `width="330" `) +
@@ -466,7 +477,7 @@ function blockHtml(b: ExportBlock): string {
             ? `<tr>${td(`font-size:12px;line-height:1.4;color:${INK};padding:2px 0 4px;`, `<b>${esc(r.title)}</b>${r.text ? `<br><span style="color:#475569;">${esc(r.text)}</span>` : ""}`)}</tr>`
             // The value never wraps — non-breaking spaces too, for mail apps
             // that ignore nowrap on a phone. A note goes under the name.
-            : `<tr>${td(`font-size:12px;color:${INK};padding:3px 6px;border:1px solid #e2e8f0;`, `<b>${esc(r.title)}</b>${r.note ? `<div style="${FONT}font-size:11px;color:${MUTED};">${esc(r.note)}</div>` : ""}`)}${td(`font-size:12px;color:${MUTED};padding:3px 6px;border:1px solid #e2e8f0;text-align:right;white-space:nowrap;vertical-align:top;`, esc(r.value ?? "").replace(/ /g, "&nbsp;"))}</tr>`).join("") +
+            : `<tr>${td(`font-size:12px;color:${INK};padding:3px 6px;border:1px solid #e2e8f0;`, `<b>${esc(r.title)}</b>${r.note ? `<div style="${FONT}font-size:12px;color:${MUTED};">${esc(r.note)}</div>` : ""}`)}${td(`font-size:12px;color:${MUTED};padding:3px 6px;border:1px solid #e2e8f0;text-align:right;white-space:nowrap;vertical-align:top;`, esc(r.value ?? "").replace(/ /g, "&nbsp;"))}</tr>`).join("") +
           `</table>`, `width="${w}%" `)).join("") +
         `</tr></table>`;
     }
@@ -475,24 +486,24 @@ function blockHtml(b: ExportBlock): string {
       const hasWho = b.rows.some((r) => r.who);
       const hasWo = b.rows.some((r) => r.wo);
       const cols = (hasN ? 1 : 0) + 3 + (hasWho ? 1 : 0) + (hasWo ? 1 : 0);
-      const th = (h: string, align = "left") => td(`font-size:9px;font-weight:bold;text-transform:uppercase;color:${MUTED};background-color:#f8fafc;padding:4px 6px;border-bottom:1px solid ${LINE};text-align:${align};`, esc(h), `bgcolor="#f8fafc" `);
+      const th = (h: string, align = "left") => td(`font-size:12px;font-weight:bold;color:${MUTED};background-color:#f8fafc;padding:4px 6px;border-bottom:1px solid ${LINE};text-align:${align};`, esc(h), `bgcolor="#f8fafc" `);
       let html = `<table cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;border:1px solid ${LINE};">`;
       html += `<tr>${hasN ? th("#") : ""}${th(b.whenHead)}${th("Step")}${hasWho ? th("Who") : ""}${hasWo ? th("WO") : ""}${th(b.rightHead, "right")}</tr>`;
       for (const { group, rows } of groupRows(b.rows, b.flat)) {
         if (group) {
           html += `<tr>${td(`font-size:12px;color:${INK};background-color:#f1f5f9;padding:4px 6px;border-top:1px solid ${LINE};`,
-            `<b>${esc(group.title)}</b>${group.crumbs ? ` <span style="color:${MUTED};">· ${esc(group.crumbs)}</span>` : ""}${group.meta ? ` <span style="color:#475569;font-size:11px;">- ${esc(group.meta)}</span>` : ""}`,
+            `<b>${esc(group.title)}</b>${group.crumbs ? ` <span style="color:${MUTED};">· ${esc(group.crumbs)}</span>` : ""}${group.meta ? ` <span style="color:#475569;font-size:12px;">- ${esc(group.meta)}</span>` : ""}`,
             `colspan="${cols}" bgcolor="#f1f5f9" `)}</tr>`;
         }
         for (const r of rows) {
         const name = `${b.flat && r.group?.title ? `<span style="color:${MUTED};">${esc(r.group.title)} › </span>` : ""}<b>${esc(r.name)}</b>` +
           (r.tags?.length ? ` ${r.tags.map(tagHtml).join(" ")}` : "") +
-          (r.note ? `<div style="${FONT}font-size:11px;color:#475569;margin-top:1px;">${esc(r.note)}</div>` : "");
+          (r.note ? `<div style="${FONT}font-size:12px;color:#475569;margin-top:1px;">${esc(r.note)}</div>` : "");
         const cell = `font-size:12px;color:${INK};padding:3px 6px;border-top:1px solid #e2e8f0;vertical-align:top;`;
         html += `<tr>${hasN ? td(cell + "font-weight:bold;", r.n != null ? String(r.n) : "") : ""}` +
-          td(cell + "white-space:nowrap;font-size:11px;", esc(r.when)) + td(cell, name) +
-          (hasWho ? td(cell + "font-size:11px;color:#475569;", esc(r.who ?? "")) : "") +
-          (hasWo ? td(cell + "font-size:11px;color:#475569;white-space:nowrap;", esc(r.wo ?? "")) : "") +
+          td(cell + "white-space:nowrap;font-size:12px;", esc(r.when)) + td(cell, name) +
+          (hasWho ? td(cell + "font-size:12px;color:#475569;", esc(r.who ?? "")) : "") +
+          (hasWo ? td(cell + "font-size:12px;color:#475569;white-space:nowrap;", esc(r.wo ?? "")) : "") +
           td(cell + "text-align:right;white-space:nowrap;font-weight:bold;", esc(r.right)) + `</tr>`;
         }
       }
@@ -535,17 +546,17 @@ function mastheadHtml(d: ExportDoc, off: ReadonlySet<HeaderPart> = new Set()): s
   // (leadHtml, under this); without one, the verdict is a small box here.
   const status = d.status && !d.status.key && !off.has("status")
     ? td(`padding:6px 10px;background-color:${TONE[d.status.tone].bg};border:1px solid ${TONE[d.status.tone].bd};border-left:4px solid ${SOLID[d.status.tone]};text-align:right;white-space:nowrap;vertical-align:middle;`,
-      `<div style="${FONT}font-size:14px;font-weight:bold;color:${TONE[d.status.tone].fg};">${esc(d.status.label)}</div>` +
-      (d.status.detail ? `<div style="${FONT}font-size:10px;color:${TONE[d.status.tone].fg};">${esc(d.status.detail)}</div>` : ""), `bgcolor="${TONE[d.status.tone].bg}" `)
+      `<div style="${FONT}font-size:14px;font-weight:bold;color:${TONE[d.status.tone].fg};"><span style="color:${SOLID[d.status.tone]};">&#9679;</span>&nbsp;${esc(sentence(d.status.label))}</div>` +
+      (d.status.detail ? `<div style="${FONT}font-size:12px;color:${TONE[d.status.tone].fg};">${esc(d.status.detail)}</div>` : ""), `bgcolor="${TONE[d.status.tone].bg}" `)
     : "";
   const whenLine = [off.has("when") ? "" : d.when, off.has("asof") ? "" : `as of ${d.asOf}`].filter(Boolean).join(" · ");
-  const left = (off.has("kind") ? "" : `<div style="${FONT}font-size:10px;font-weight:bold;text-transform:uppercase;letter-spacing:1.5px;color:${MUTED};">${esc(d.kind)}</div>`) +
-    (off.has("project") ? "" : `<div style="${FONT}font-size:18px;font-weight:bold;color:${INK};">${esc(d.project)}</div>`) +
-    (whenLine ? `<div style="${FONT}font-size:11px;color:#334155;">${esc(whenLine)}</div>` : "");
+  const left = (off.has("kind") ? "" : `<div style="${FONT}font-size:12px;font-weight:600;color:${MUTED};">${esc(d.kind)}</div>`) +
+    (off.has("project") ? "" : `<div style="${FONT}font-size:20px;font-weight:bold;color:${INK};">${esc(d.project)}</div>`) +
+    (whenLine ? `<div style="${FONT}font-size:12px;color:#334155;">${esc(whenLine)}</div>` : "");
   const lead = leadHtml(d, off);
   if (!left && !status) return lead;
   return `<table cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;max-width:820px;"><tr>` +
-    (left ? td(`padding:8px 12px;background-color:#f8fafc;border-top:4px solid ${INK};border-bottom:1px solid ${LINE};border-left:1px solid ${LINE};`, left, `bgcolor="#f8fafc" `) : "") +
+    (left ? td(`padding:10px 14px;background-color:#f8fafc;border:1px solid ${LINE};border-radius:8px;`, left, `bgcolor="#f8fafc" `) : "") +
     status + `</tr></table>` + lead;
 }
 
@@ -558,12 +569,14 @@ function leadHtml(d: ExportDoc, off: ReadonlySet<HeaderPart>): string {
   const head = d.headcount && !off.has("headcount") ? d.headcount : "";
   if (!s && !head) return "";
   const t = s ? TONE[s.tone] : null;
+  // The verdict on white (rule S1: color never fills the box): a rule in
+  // its color down the left, the key number big, its word with a dot.
   const row = s && t
-    ? `<tr>${td(`padding:8px 12px;background-color:${t.bg};border:1px solid ${t.bd};border-left:4px solid ${SOLID[s.tone]};border-right:0;vertical-align:middle;white-space:nowrap;width:1%;`,
-      `<div style="${FONT}font-size:24px;font-weight:bold;color:${t.fg};white-space:nowrap;">${esc(s.key!).replace(/ /g, "&nbsp;")}</div>`, `bgcolor="${t.bg}" `)}` +
-      td(`padding:8px 12px 8px 4px;background-color:${t.bg};border:1px solid ${t.bd};border-left:0;vertical-align:middle;`,
-        `<div style="${FONT}font-size:10px;font-weight:bold;letter-spacing:1px;text-transform:uppercase;color:${t.fg};">${esc(s.label)}</div>` +
-        (s.detail ? `<div style="${FONT}font-size:14px;line-height:1.4;color:${INK};">${esc(s.detail)}</div>` : ""), `bgcolor="${t.bg}" `) + `</tr>`
+    ? `<tr>${td(`padding:10px 14px;background-color:#ffffff;border:1px solid ${LINE};border-left:4px solid ${SOLID[s.tone]};border-radius:8px 0 0 8px;border-right:0;vertical-align:middle;white-space:nowrap;width:1%;`,
+      `<div style="${FONT}font-size:26px;font-weight:bold;color:${t.fg};white-space:nowrap;">${esc(s.key!).replace(/ /g, "&nbsp;")}</div>`, `bgcolor="#ffffff" `)}` +
+      td(`padding:10px 14px 10px 6px;background-color:#ffffff;border:1px solid ${LINE};border-left:0;border-radius:0 8px 8px 0;vertical-align:middle;`,
+        `<div style="${FONT}font-size:14px;font-weight:bold;color:${t.fg};"><span style="color:${SOLID[s.tone]};">&#9679;</span>&nbsp;${esc(sentence(s.label))}</div>` +
+        (s.detail ? `<div style="${FONT}font-size:14px;line-height:1.45;color:${INK};margin-top:2px;">${esc(s.detail)}</div>` : ""), `bgcolor="#ffffff" `) + `</tr>`
     : "";
   const count = head ? `<tr>${td(`padding:${s ? 6 : 0}px 0 0;font-size:12px;color:#334155;`, esc(head), s ? `colspan="2" ` : "")}</tr>` : "";
   return `<table cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;max-width:820px;margin-top:8px;">${row}${count}</table>`;
@@ -581,7 +594,7 @@ export function headerHtml(d: ExportDoc, off: ReadonlySet<HeaderPart>): string {
   if (line || stats.length || bars) {
     html += `<table cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;max-width:820px;margin-top:${html ? 14 : 0}px;">` +
       (line ? `<tr>${td(`border-bottom:2px solid ${stand!.flag === "rose" ? SOLID.rose : INK};padding:0 0 3px;`,
-        `<span style="${FONT}font-size:15px;font-weight:bold;color:${INK};">${esc(stand!.title)}</span>` + (stand!.sub ? `<span style="${FONT}font-size:12px;color:${MUTED};">&nbsp;&nbsp;${esc(stand!.sub)}</span>` : ""))}</tr>` : "") +
+        `<span style="${FONT}font-size:16px;font-weight:bold;color:${INK};">${esc(stand!.title)}</span>` + (stand!.sub ? `<span style="${FONT}font-size:12px;color:${MUTED};">&nbsp;&nbsp;${esc(stand!.sub)}</span>` : ""))}</tr>` : "") +
       (stats.length || bars ? `<tr>${td("padding:6px 0 0;", blockHtml({ k: "overview", stats, bars, title: "", lines: [], small: !!d.status?.key || ov?.small }))}</tr>` : "") +
       `</table>`;
   }
@@ -615,10 +628,10 @@ function emailHtml(d: ExportDoc): string {
     // data-sec: lets a printed copy put a section on its own page (safety).
     html += `<table data-sec="${esc(s.id ?? "")}" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;max-width:820px;margin-top:18px;"><tr>` +
       td(`border-bottom:2px solid ${rule};padding:0 0 3px;`,
-        `<span style="${FONT}font-size:15px;font-weight:bold;color:${INK};">${esc(s.title)}</span>` +
+        `<span style="${FONT}font-size:16px;font-weight:bold;color:${INK};">${esc(s.title)}</span>` +
         (s.sub ? `<span style="${FONT}font-size:12px;color:${MUTED};">&nbsp;&nbsp;${esc(s.sub)}</span>` : "")) +
       `</tr><tr>${td("padding:6px 0 0;", s.blocks.map(blockHtml).join(""))}</tr></table>`;
   }
-  if (d.footer) html += `<p style="${FONT}font-size:10px;color:#94a3b8;margin-top:14px;max-width:820px;">${esc(d.footer)}</p>`;
+  if (d.footer) html += `<p style="${FONT}font-size:12px;color:#94a3b8;margin-top:14px;max-width:820px;">${esc(d.footer)}</p>`;
   return html + `</div>`;
 }
