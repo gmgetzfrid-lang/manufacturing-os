@@ -1,27 +1,29 @@
 "use client";
 
-// The page frame every screen shares. The header sits on the page itself,
-// with no colored band: a small muted kicker (where you are), the page's
+// The page frame every screen shares. The header has its own white
+// surface, from the top bar down to a hairline under its tabs (never a
+// colored band): a small muted kicker (where you are), the page's
 // answer as the title (what matters right now, e.g. "1 thing needs you."),
 // one short line under it, and the facts that back it up: ONE hero number
 // large, the others as small labeled values in a row. Zeros are muted, a
 // late or waiting value is in its state color (never a filled box). The one
 // filled action (the accent) sits on the right; secondary tools are quiet
 // buttons beside the kicker. Tabs, search and filters sit just under the
-// header. Below, sections are a heading and their content on a white
-// sheet, full width.
+// header, on the same white. Below, on the page color, sections are a
+// heading and their content on a white sheet, full width.
 
 import React from "react";
 import Link from "next/link";
 import { ChevronLeft } from "lucide-react";
 
-/** A secondary button: white, a hairline edge, text color. */
+/** A secondary button: white, a hairline edge, text color, a faint shadow. */
 export const heroQuiet =
-  "inline-flex items-center justify-center gap-1.5 whitespace-nowrap h-10 pointer-coarse:h-11 px-3.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-border-control)] disabled:opacity-50 disabled:cursor-not-allowed transition-colors";
+  "inline-flex items-center justify-center gap-1.5 whitespace-nowrap h-10 pointer-coarse:h-11 px-3.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] shadow-[var(--shadow-control)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-border-control)] active:shadow-none disabled:opacity-50 disabled:shadow-none disabled:cursor-not-allowed transition-[color,background-color,border-color,box-shadow]";
 
-/** The page's one main action: the only filled accent on the screen. */
+/** The page's one main action: the only filled accent on the screen,
+ *  top-lit so it reads as something to press. */
 export const heroPrimary =
-  "inline-flex items-center justify-center gap-2 whitespace-nowrap h-10 pointer-coarse:h-11 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[15px] font-semibold hover:bg-[var(--color-accent-hover)] disabled:opacity-50 disabled:cursor-not-allowed transition-colors";
+  "inline-flex items-center justify-center gap-2 whitespace-nowrap h-10 pointer-coarse:h-11 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] shadow-[var(--shadow-action)] text-[15px] font-semibold hover:bg-[var(--color-accent-hover)] active:shadow-none disabled:opacity-50 disabled:shadow-none disabled:cursor-not-allowed transition-[color,background-color,border-color,box-shadow]";
 
 /** A fact that backs up the answer. `hero` marks the one number that
  *  matters (shown large); otherwise the first fact that isn't zero is. */
@@ -100,7 +102,11 @@ export function PageHero({
   const backCls = "-ml-2 w-9 h-9 rounded-lg grid place-items-center shrink-0 text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[color-mix(in_srgb,var(--color-text)_7%,transparent)] transition-colors";
   return (
     <>
-      <header className={`page-head relative -mt-2 ${children ? "" : "mb-1"} ${className}`}>
+      {/* The header's own white surface: an empty layer behind it, spread
+          to the column's edges and up to the top bar (globals.css). */}
+      <div className="page-top">
+      <div aria-hidden className="page-top-sheet" />
+      <header className={`page-head relative -mt-2 ${className}`}>
         {(back || kicker || tools) && (
           <div className="flex flex-wrap items-center gap-x-2 gap-y-2 min-h-10 mb-1.5">
             {back && (back.href ? (
@@ -140,12 +146,13 @@ export function PageHero({
           {primary && <div className="max-sm:hidden shrink-0">{primary}</div>}
         </div>
       </header>
-      {children && <div className="mt-4">{children}</div>}
+      {children && <div className="page-top-kids relative mt-4">{children}</div>}
+      </div>
       {primary && (
         // On a phone the one action sits where a thumb reaches it (above the
         // staged tray when that shows: --staged-tray-h), clear of the home
         // indicator.
-        <div className="sm:hidden fixed inset-x-0 bottom-[var(--staged-tray-h,0px)] z-40 px-4 pt-3 pb-[calc(12px+env(safe-area-inset-bottom))] bg-[color-mix(in_srgb,var(--color-canvas)_94%,transparent)] border-t border-[var(--color-border)] [&>*]:w-full">
+        <div className="sm:hidden fixed inset-x-0 bottom-[var(--staged-tray-h,0px)] z-40 px-4 pt-3 pb-[calc(12px+env(safe-area-inset-bottom))] bg-[color-mix(in_srgb,var(--color-surface)_94%,transparent)] border-t border-[var(--color-border)] shadow-[0_-6px_16px_-10px_rgb(15_23_42/0.18)] [&>*]:w-full">
           {primary}
         </div>
       )}
@@ -179,7 +186,7 @@ export function Card({
   pad?: boolean;
   as?: "section" | "article" | "div";
 }) {
-  const sheet = `rounded-xl bg-[var(--color-surface)] border border-[var(--color-border)] ${pad ? "p-4 sm:p-5" : ""}`;
+  const sheet = `rounded-xl bg-[var(--color-surface)] border border-[var(--color-border)] shadow-[var(--shadow-card)] ${pad ? "p-4 sm:p-5" : ""}`;
   if (!label && !action) return <Tag className={`${sheet} ${className}`}>{children}</Tag>;
   const parts = className.split(/\s+/).filter(Boolean);
   const place = parts.filter((c) => PLACE.test(c)).join(" ");

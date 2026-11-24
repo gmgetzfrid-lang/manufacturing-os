@@ -1,25 +1,56 @@
 "use client";
 
-// TopBar — the thin strip on the paper above every page.
+// TopBar — the strip above every page, on its own white surface with a
+// hairline under it. It stays put while the page scrolls; once the page
+// has scrolled under it, it casts a soft shadow, so it reads as on top.
 //
-// Where you are is the page's own job now: every page opens on a dark band
-// whose small label says where you are (and its back arrow goes up a level),
-// so this strip doesn't repeat it. It keeps what is the same everywhere:
-// the menu (phone), search (⌘K), Inbox, density, theme and the bell.
+// Where you are is the page's own job: every page opens on a header whose
+// small label says where you are (and its back arrow goes up a level), so
+// this strip doesn't repeat it. It keeps what is the same everywhere: the
+// menu (phone), search (⌘K), Inbox, density, theme and the bell.
 
 import React from "react";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { Search, Command, Inbox, Menu } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import NotificationBell from "@/components/notifications/NotificationBell";
 import ThemeMenu from "@/components/navigation/ThemeMenu";
 import DensityToggle from "@/components/navigation/DensityToggle";
 
+/** True once the page under the bar has scrolled: the column's own
+ *  scroller, or a page's main area that scrolls by itself (a library),
+ *  that is, a scroller starting right under the bar and most of its width.
+ *  Side lists (the folder rail) and tables that scroll don't count. */
+function usePageScrolled(bar: React.RefObject<HTMLElement | null>): boolean {
+  const [scrolled, setScrolled] = React.useState(false);
+  // A new page starts at its top.
+  const pathname = usePathname();
+  const [path, setPath] = React.useState(pathname);
+  if (path !== pathname) { setPath(pathname); setScrolled(false); }
+  React.useEffect(() => {
+    const onScroll = (e: Event) => {
+      const el = e.target;
+      const b = bar.current?.getBoundingClientRect();
+      if (!(el instanceof HTMLElement) || !b) return;
+      const r = el.getBoundingClientRect();
+      if (Math.abs(r.top - b.bottom) > 2 || r.width < b.width * 0.6) return;
+      setScrolled(el.scrollTop > 0);
+    };
+    document.addEventListener("scroll", onScroll, { capture: true, passive: true });
+    return () => document.removeEventListener("scroll", onScroll, { capture: true });
+  }, [bar]);
+  return scrolled;
+}
+
 export default function TopBar({ onOpenMobileNav }: { onOpenMobileNav?: () => void } = {}) {
   const { uid } = useRole();
+  const bar = React.useRef<HTMLElement>(null);
+  const scrolled = usePageScrolled(bar);
 
   return (
-    <header className="vt-top shrink-0 h-14 sm:h-12 sm:mt-1 bg-[var(--color-canvas)] px-4 sm:px-6 lg:px-8 flex items-center gap-3 relative z-30">
+    <header ref={bar} data-scrolled={scrolled || undefined}
+      className={`vt-top shrink-0 h-14 sm:h-16 bg-[var(--color-surface)] border-b border-[var(--color-border)] px-4 sm:px-6 lg:px-8 flex items-center gap-3 relative z-30 transition-shadow duration-200 ${scrolled ? "shadow-[var(--shadow-bar)]" : ""}`}>
       {/* Hamburger — opens the off-canvas nav drawer (mobile only). */}
       <button
         onClick={onOpenMobileNav}

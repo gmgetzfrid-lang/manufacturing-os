@@ -86,8 +86,10 @@ export function themeVars(mode: ThemeMode, p: Palette): Record<string, string> {
   v["--viz-cat-2"] = chartColor(acc.fill);
   // Side menu: the deep shade (default), or light. The deep shade comes
   // from its own color when one is set; the app still sets its lightness.
-  // Its current item takes the page's color and joins the page.
-  const current = { "--side-current": n.canvas, "--side-current-text": mode === "dark" ? "#e8ebf0" : "#1f2733" };
+  // Its current item takes the white of the top bar and the page header
+  // beside it, and joins them (on a light menu, which is that white
+  // itself, it takes the page color so it still shows).
+  const current = { "--side-current": sideOf(p) === "deep" ? n.surface : n.canvas, "--side-current-text": mode === "dark" ? "#e8ebf0" : "#1f2733" };
   if (sideOf(p) === "deep") {
     const deep = deepFor(deepOf(p), mode);
     const [dl, , dh] = toOklch(deep);
@@ -123,8 +125,9 @@ function applyTheme(mode: ThemeMode, p: Palette) {
 
   let meta = document.querySelector('meta[name="theme-color"]');
   if (!meta) { meta = document.createElement("meta"); meta.setAttribute("name", "theme-color"); document.head.appendChild(meta); }
-  // The phone's browser bar matches the page, not a brand color.
-  meta.setAttribute("content", vars["--color-canvas"]);
+  // The phone's browser bar matches the top bar under it (the white
+  // surface), not a brand color.
+  meta.setAttribute("content", vars["--color-surface"]);
 }
 
 interface ThemeCtx {

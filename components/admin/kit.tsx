@@ -2,10 +2,12 @@
 // same everywhere: a ruled table on one white sheet, a quiet status (a dot
 // and a word), labeled form rows, and the button and link recipes.
 //
-// Buttons: ONE filled primary per screen (the accent); secondary is white
-// with a hairline edge; tertiary is a link; destructive is red words on a
-// secondary button (and always confirms). 40 px tall, 44 px on touch
-// screens, radius 8. Focus is the app-wide ring (globals.css).
+// Buttons: ONE filled primary per screen (the accent, top-lit: a light
+// top edge and a small shadow, so it reads as pressable); secondary is
+// white with a hairline edge on a faint shadow; tertiary is a link;
+// destructive is red words on a secondary button (and always confirms).
+// 40 px tall, 44 px on touch screens, radius 8. Focus is the app-wide
+// ring (globals.css). Sheets and tables: a hairline and a faint shadow.
 //
 // No "use client" here on purpose: the public pages are server pages and
 // import these class strings too (PageHero's live in a client module, where
@@ -16,19 +18,19 @@ import { explainError } from "@/lib/friendlyError";
 
 /** The page's one main action: filled with the accent. */
 export const btnPrimary =
-  "inline-flex items-center justify-center gap-2 whitespace-nowrap h-10 pointer-coarse:h-11 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[15px] font-semibold hover:bg-[var(--color-accent-hover)] disabled:opacity-50 disabled:cursor-not-allowed transition-colors";
+  "inline-flex items-center justify-center gap-2 whitespace-nowrap h-10 pointer-coarse:h-11 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] shadow-[var(--shadow-action)] text-[15px] font-semibold hover:bg-[var(--color-accent-hover)] active:shadow-none disabled:opacity-50 disabled:shadow-none disabled:cursor-not-allowed transition-[color,background-color,border-color,box-shadow]";
 
 /** A secondary button: white, a hairline edge, text color. */
 export const btnQuiet =
-  "inline-flex items-center justify-center gap-1.5 whitespace-nowrap h-10 pointer-coarse:h-11 px-3.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-border-control)] disabled:opacity-50 disabled:cursor-not-allowed transition-colors";
+  "inline-flex items-center justify-center gap-1.5 whitespace-nowrap h-10 pointer-coarse:h-11 px-3.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] shadow-[var(--shadow-control)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-border-control)] active:shadow-none disabled:opacity-50 disabled:shadow-none disabled:cursor-not-allowed transition-[color,background-color,border-color,box-shadow]";
 
 /** A small secondary button for a table row. */
 export const btnRow =
-  "inline-flex items-center justify-center gap-1.5 whitespace-nowrap shrink-0 h-8 pointer-coarse:h-10 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-border-control)] disabled:opacity-50 disabled:cursor-not-allowed transition-colors";
+  "inline-flex items-center justify-center gap-1.5 whitespace-nowrap shrink-0 h-8 pointer-coarse:h-10 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] shadow-[var(--shadow-control)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-border-control)] active:shadow-none disabled:opacity-50 disabled:shadow-none disabled:cursor-not-allowed transition-[color,background-color,border-color,box-shadow]";
 
 /** A destructive action: red words on a secondary button. Confirm first. */
 export const btnDanger =
-  "inline-flex items-center justify-center gap-1.5 whitespace-nowrap h-10 pointer-coarse:h-11 px-3.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--state-overdue-text)] hover:bg-[color-mix(in_srgb,var(--state-overdue)_6%,var(--color-surface))] hover:border-[color-mix(in_srgb,var(--state-overdue)_45%,var(--color-border-strong))] disabled:opacity-50 disabled:cursor-not-allowed transition-colors";
+  "inline-flex items-center justify-center gap-1.5 whitespace-nowrap h-10 pointer-coarse:h-11 px-3.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] shadow-[var(--shadow-control)] text-[14px] font-semibold text-[var(--state-overdue-text)] hover:bg-[color-mix(in_srgb,var(--state-overdue)_6%,var(--color-surface))] hover:border-[color-mix(in_srgb,var(--state-overdue)_45%,var(--color-border-strong))] active:shadow-none disabled:opacity-50 disabled:shadow-none disabled:cursor-not-allowed transition-[color,background-color,border-color,box-shadow]";
 
 /** A tertiary action: a link-styled button (no box). */
 export const btnLink =
@@ -59,11 +61,11 @@ export const label = "block text-[14px] font-semibold text-[var(--color-text)] m
 export const fieldError = "mt-1.5 flex items-start gap-1.5 text-[13px] font-semibold text-[var(--state-overdue-text)]";
 
 /** A white sheet: where data sits. */
-export const sheet = "rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]";
+export const sheet = "rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-card)]";
 
 /** The ruled table recipe. */
 export const tbl = {
-  wrap: "rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden",
+  wrap: "rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-card)] overflow-hidden",
   table: "w-full text-[14px] border-collapse tabular-nums",
   thead: "bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text-muted)] text-left",
   th: "font-semibold px-4 h-10 whitespace-nowrap",

@@ -61,11 +61,12 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  // The browser bar matches the page canvas (neutral), not a brand color;
-  // ThemeProvider keeps it in step with the workspace and light/dark mode.
+  // The browser bar matches the app's top bar (the white surface), not a
+  // brand color; ThemeProvider keeps it in step with the workspace and
+  // light/dark mode.
   themeColor: [
-    { media: '(prefers-color-scheme: light)', color: '#f4f5f8' },
-    { media: '(prefers-color-scheme: dark)', color: '#16181d' },
+    { media: '(prefers-color-scheme: light)', color: '#ffffff' },
+    { media: '(prefers-color-scheme: dark)', color: '#1b1e24' },
   ],
   colorScheme: 'light dark',
 };
