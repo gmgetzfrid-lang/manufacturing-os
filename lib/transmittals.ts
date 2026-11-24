@@ -123,21 +123,21 @@ export function renderTransmittalSheet(t: Transmittal, opts?: { portalUrl?: stri
   return `<!doctype html><html><head><meta charset="utf-8"><title>Transmittal ${esc(t.number)}</title>
 <style>
   * { box-sizing: border-box; }
-  body { font-family: -apple-system, Segoe UI, Roboto, sans-serif; color: #0f172a; margin: 0; padding: 32px; font-size: 12px; }
-  h1 { font-size: 22px; margin: 0; } .num { font-size: 14px; color: #ea580c; font-weight: 800; letter-spacing: .04em; }
-  h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: #475569; margin: 24px 0 8px; border-bottom: 2px solid #e2e8f0; padding-bottom: 4px; }
-  .head { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; border-bottom: 3px solid #ea580c; padding-bottom: 12px; }
-  .purpose { display: inline-block; margin-top: 6px; background: #fff7ed; border: 1px solid #fed7aa; color: #c2410c; font-weight: 800; font-size: 11px; padding: 4px 10px; border-radius: 999px; text-transform: uppercase; letter-spacing: .04em; }
+  body { font-family: -apple-system, Segoe UI, Roboto, sans-serif; color: #0f172a; margin: 0; padding: 32px; font-size: 14px; line-height: 1.45; }
+  h1 { font-size: 20px; line-height: 1.3; margin: 0; } .num { font-family: ui-monospace, Menlo, monospace; font-size: 14px; color: #1e3a8a; font-weight: 700; }
+  h2 { font-size: 16px; font-weight: 700; color: #0f172a; background: #f1f5f9; border-radius: 8px; padding: 8px 12px; margin: 24px 0 8px; }
+  .head { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; border-bottom: 1px solid #cbd5e1; padding-bottom: 12px; }
+  .purpose { display: inline-block; margin-top: 6px; background: #f1f5f9; border: 1px solid #cbd5e1; color: #0f172a; font-weight: 700; font-size: 14px; padding: 2px 10px; border-radius: 6px; }
   table { width: 100%; border-collapse: collapse; margin-top: 4px; } th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #e2e8f0; vertical-align: top; }
-  th { background: #f8fafc; font-size: 10px; text-transform: uppercase; letter-spacing: .04em; color: #64748b; }
+  th { background: #f8fafc; font-size: 12px; font-weight: 600; color: #64748b; border-bottom: 1px solid #cbd5e1; }
   .meta td { border: 0; padding: 3px 8px; } .meta .lbl { color: #64748b; font-weight: 700; width: 130px; }
   .mono { font-family: ui-monospace, Menlo, monospace; } .muted { color: #94a3b8; }
   .grid { display: flex; gap: 40px; flex-wrap: wrap; } .grid > div { flex: 1; min-width: 220px; }
   .notes { background: #fafafa; border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px 12px; color: #334155; white-space: pre-wrap; }
-  .sign { display: flex; gap: 32px; margin-top: 28px; } .sigbox { flex: 1; } .sigline { border-bottom: 1px solid #94a3b8; height: 36px; } .siglbl { font-size: 10px; color: #64748b; margin-top: 4px; }
+  .sign { display: flex; gap: 32px; margin-top: 28px; } .sigbox { flex: 1; } .sigline { border-bottom: 1px solid #94a3b8; height: 36px; } .siglbl { font-size: 12px; color: #64748b; margin-top: 4px; }
   .ack { margin-top: 24px; background: #ecfdf5; border: 1px solid #a7f3d0; color: #065f46; font-weight: 700; padding: 10px 12px; border-radius: 8px; }
   .toolbar { position: sticky; top: 0; background: #fff; padding-bottom: 10px; } .btn { background: #ea580c; color: #fff; border: 0; padding: 8px 14px; border-radius: 8px; font-weight: 700; cursor: pointer; }
-  .footer { margin-top: 28px; color: #94a3b8; font-size: 10px; border-top: 1px solid #e2e8f0; padding-top: 8px; }
+  .footer { margin-top: 28px; color: #64748b; font-size: 12px; border-top: 1px solid #e2e8f0; padding-top: 8px; }
   @media print { .toolbar { display: none; } body { padding: 0; } }
 </style></head><body>
   <div class="toolbar"><button class="btn" onclick="window.print()">Print / Save as PDF</button></div>
@@ -189,9 +189,9 @@ export function renderTransmittalSheet(t: Transmittal, opts?: { portalUrl?: stri
   <div style="margin-top:24px;display:flex;gap:16px;align-items:center;border:1px solid #e2e8f0;border-radius:10px;padding:12px 16px;background:#fafafa">
     ${opts.qrDataUrl ? `<img src="${opts.qrDataUrl}" alt="Portal QR" style="width:92px;height:92px" />` : ""}
     <div>
-      <div style="font-weight:800;font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#475569">Recipient portal - download &amp; acknowledge online</div>
-      <div class="mono" style="font-size:10px;color:#334155;margin-top:4px;word-break:break-all">${esc(opts.portalUrl)}</div>
-      <div style="font-size:10px;color:#94a3b8;margin-top:4px">Scan or open the link to download the transmitted files at their as-issued revisions and record receipt. The link is unique to this transmittal.</div>
+      <div style="font-weight:700;font-size:14px;color:#0f172a">Recipient portal: download and acknowledge online</div>
+      <div class="mono" style="font-size:12px;color:#334155;margin-top:4px;word-break:break-all">${esc(opts.portalUrl)}</div>
+      <div style="font-size:12px;color:#64748b;margin-top:4px">Scan or open the link to download the transmitted files at their as-issued revisions and record receipt. The link is unique to this transmittal.</div>
     </div>
   </div>` : ""}
 
@@ -239,18 +239,18 @@ export function renderTransmittalEmail(t: Transmittal, portalUrl: string): { sub
 
   const html = `<div style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#0f172a;font-size:14px;max-width:640px">
   <div style="border-bottom:3px solid #ea580c;padding-bottom:10px;margin-bottom:16px">
-    <div style="color:#ea580c;font-weight:800;font-size:12px;letter-spacing:.04em">TRANSMITTAL ${esc(t.number)}</div>
-    <div style="font-size:18px;font-weight:800">${esc(t.subject || "Document Transmittal")}</div>
-    ${t.purpose ? `<div style="display:inline-block;margin-top:6px;background:#fff7ed;border:1px solid #fed7aa;color:#c2410c;font-weight:800;font-size:11px;padding:3px 10px;border-radius:999px;text-transform:uppercase">${esc(t.purpose)}</div>` : ""}
+    <div style="color:#64748b;font-size:12px">Transmittal <span style="font-family:ui-monospace,Menlo,monospace;font-weight:700;color:#1e3a8a">${esc(t.number)}</span></div>
+    <div style="font-size:20px;line-height:1.3;font-weight:700">${esc(t.subject || "Document Transmittal")}</div>
+    ${t.purpose ? `<div style="display:inline-block;margin-top:6px;background-color:#f1f5f9;border:1px solid #cbd5e1;color:#0f172a;font-weight:700;font-size:14px;padding:2px 10px;border-radius:6px">${esc(t.purpose)}</div>` : ""}
   </div>
   <p>${esc(greeting)}</p>
   <p>You have been issued the following ${t.items?.length ?? 0} document(s):</p>
-  <table style="width:100%;border-collapse:collapse;font-size:13px">
+  <table style="width:100%;border-collapse:collapse;font-size:14px">
     <thead><tr>
-      <th style="text-align:left;padding:6px 8px;background:#f8fafc;font-size:10px;text-transform:uppercase;color:#64748b">#</th>
-      <th style="text-align:left;padding:6px 8px;background:#f8fafc;font-size:10px;text-transform:uppercase;color:#64748b">Number</th>
-      <th style="text-align:left;padding:6px 8px;background:#f8fafc;font-size:10px;text-transform:uppercase;color:#64748b">Title</th>
-      <th style="text-align:left;padding:6px 8px;background:#f8fafc;font-size:10px;text-transform:uppercase;color:#64748b">Rev</th>
+      <th style="text-align:left;padding:6px 8px;background-color:#f8fafc;font-size:12px;font-weight:600;color:#64748b;border-bottom:1px solid #cbd5e1">#</th>
+      <th style="text-align:left;padding:6px 8px;background-color:#f8fafc;font-size:12px;font-weight:600;color:#64748b;border-bottom:1px solid #cbd5e1">Number</th>
+      <th style="text-align:left;padding:6px 8px;background-color:#f8fafc;font-size:12px;font-weight:600;color:#64748b;border-bottom:1px solid #cbd5e1">Title</th>
+      <th style="text-align:left;padding:6px 8px;background-color:#f8fafc;font-size:12px;font-weight:600;color:#64748b;border-bottom:1px solid #cbd5e1">Rev</th>
     </tr></thead>
     <tbody>${docRowsHtml}</tbody>
   </table>

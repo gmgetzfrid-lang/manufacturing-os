@@ -626,12 +626,12 @@ export function renderAckReport(meta: { label: string; title?: string | null; re
   </tr>`;
   return `<!doctype html><html><head><meta charset="utf-8"><title>Acknowledgment record - ${esc(meta.label)}</title>
   <style>
-    body{font-family:ui-sans-serif,system-ui,Arial,sans-serif;color:#0f172a;margin:32px;font-size:13px}
-    h1{font-size:18px;margin:0 0 2px} .sub{color:#64748b;margin:0 0 16px}
+    body{font-family:ui-sans-serif,system-ui,Arial,sans-serif;color:#0f172a;margin:32px;font-size:14px;line-height:1.45}
+    h1{font-size:20px;line-height:1.3;margin:0 0 2px} .sub{color:#64748b;margin:0 0 16px}
     .kpi{display:inline-block;background:#f1f5f9;border:1px solid #e2e8f0;border-radius:10px;padding:8px 14px;margin:0 8px 16px 0;font-weight:700}
     table{border-collapse:collapse;width:100%;margin-top:8px} th,td{border:1px solid #e2e8f0;padding:6px 10px;text-align:left}
-    th{background:#f8fafc;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#475569}
-    .foot{margin-top:18px;color:#94a3b8;font-size:11px}
+    th{background:#f8fafc;font-size:12px;font-weight:600;color:#64748b;border-bottom:1px solid #cbd5e1}
+    .foot{margin-top:18px;color:#64748b;font-size:12px}
   </style></head><body>
   <h1>Read &amp; understood - acknowledgment record</h1>
   <p class="sub">${esc(meta.label)}${meta.title ? ` · ${esc(meta.title)}` : ""}${meta.revisionLabel ? ` · Rev ${esc(meta.revisionLabel)}` : ""}</p>

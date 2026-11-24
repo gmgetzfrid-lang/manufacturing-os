@@ -353,7 +353,12 @@ export function phaseStats(input: {
 
 // ─── The report (print, the screen's preview, email) ─────────────────────
 
-const NAVY = "#000A72", INK = "#0f172a", MUTED = "#64748b", RULE = "#e2e8f0", GREEN = "#0f766e", RED = "#b91c1c", AMBER = "#b45309";
+// The app's type scale (docs/design-rules.md TY2, TY3), as the emailed
+// update has it (lib/reportExport): 12 caption, 14 body, 16 a heading and a
+// tile's number, 20 the title; nothing smaller, no tiny capitals (TY8).
+// Each part's heading on a light band, tables' heads shaded: bold, the
+// bands and the rules carry it when a mail app drops sizes and colors.
+const INK = "#0f172a", MUTED = "#64748b", RULE = "#e2e8f0", LINE = "#cbd5e1", GREEN = "#0f766e", RED = "#b91c1c", AMBER = "#b45309";
 const FONT = "font-family:Lato,Calibri,Arial,sans-serif;";
 const esc = (s: string) => noEmDash(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 const money = (n: number) => `$${Math.round(n).toLocaleString("en-US")}`;
@@ -369,11 +374,15 @@ function bar(p: number, color: string, mark?: number): string {
 }
 
 function tile(label: string, value: string, sub: string, color = INK): string {
-  return `<td style="${FONT}border:1px solid ${RULE};padding:8px 10px;vertical-align:top;" width="20%"><div style="font-size:9.5px;font-weight:bold;letter-spacing:.08em;text-transform:uppercase;color:${MUTED};">${esc(label)}</div>` +
-    `<div style="font-size:19px;font-weight:bold;color:${color};margin-top:2px;">${esc(value)}</div><div style="font-size:11px;color:${MUTED};">${esc(sub)}</div></td>`;
+  return `<td style="${FONT}border:1px solid ${RULE};padding:8px 12px;vertical-align:top;" width="20%"><div style="font-size:12px;color:${MUTED};">${esc(label)}</div>` +
+    `<div style="font-size:16px;line-height:1.3;font-weight:bold;color:${color};margin-top:2px;">${esc(value)}</div><div style="font-size:12px;color:${MUTED};">${esc(sub)}</div></td>`;
 }
 
-const h2 = (t: string) => `<div style="${FONT}font-size:14px;font-weight:bold;color:${NAVY};margin:18px 0 6px;border-bottom:2px solid ${NAVY};padding-bottom:3px;">${esc(t)}</div>`;
+/** A part's heading on a light band (the emailed update's section band). */
+const h2 = (t: string) => `<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;margin:20px 0 8px;"><tr><td bgcolor="#f1f5f9" style="${FONT}font-size:16px;line-height:1.3;font-weight:bold;color:${INK};background-color:#f1f5f9;border-radius:8px;padding:8px 12px;">${esc(t)}</td></tr></table>`;
+/** A table's head row: sentence case, shaded. */
+const headRow = (cells: Array<{ t: string; right?: boolean; w?: string; pad?: string }>) =>
+  `<tr>${cells.map((c) => `<td bgcolor="#f8fafc"${c.w ? ` width="${c.w}"` : ""} style="${FONT}font-size:12px;font-weight:600;color:${MUTED};background-color:#f8fafc;padding:${c.pad ?? "4px 6px"};border-bottom:1px solid ${LINE};${c.right ? "text-align:right;" : ""}">${esc(c.t)}</td>`).join("")}</tr>`;
 
 const dayWords = (dayKey: string) => { const [y, m, d] = dayKey.split("-").map(Number); return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" }); };
 const dateTime = (t: number, tz: string) => `${fmtInTz(t, tz, { weekday: "short", month: "short", day: "numeric" })}, ${fmtInTz(t, tz, { hour: "numeric", minute: "2-digit", hour12: true })}`;
@@ -453,7 +462,7 @@ export function phaseSectionHtml(s: PhaseStats, tz: string, now: number,
   const chart = opts.chart !== false;
   const when = (t: number | null) => (t == null ? "-" : dateTime(t, tz));
   if (s.noSchedule && s.phase) {
-    return `<div style="${FONT}font-size:13px;color:${AMBER};margin-top:8px;padding:8px 10px;border:1px solid #fcd34d;background:#fffbeb;"><b>${esc(noScheduleWords(s.phase, now, tz))}.</b> Nothing to measure until its schedule is imported.</div>` + moneyHtml(s);
+    return `<div style="${FONT}font-size:14px;line-height:1.45;color:${AMBER};margin-top:8px;padding:8px 12px;border:1px solid #fcd34d;border-radius:6px;background-color:#fffbeb;"><b>${esc(noScheduleWords(s.phase, now, tz))}.</b> Nothing to measure until its schedule is imported.</div>` + moneyHtml(s);
   }
   const late = s.finishedAt != null && s.plannedFinish != null ? s.finishedAt - s.plannedFinish : null;
   const lateWords = late == null ? null : Math.abs(late) < 1_800_000 ? "on plan" : `${hoursDays(late / 3_600_000)} ${late > 0 ? "after" : "before"} plan`;
@@ -461,7 +470,7 @@ export function phaseSectionHtml(s: PhaseStats, tz: string, now: number,
   const left = s.budget - s.spent;
   const notAll = s.missing.length > 0;
   let html = "";
-  if (notAll) html += `<div style="${FONT}font-size:12.5px;color:${AMBER};margin-top:8px;padding:8px 10px;border:1px solid #fcd34d;background:#fffbeb;"><b>${esc(s.missing.map((p) => noScheduleWords(p, now, tz)).join("; "))}.</b> The project isn't done, and the figures below cover only the phases with a schedule.</div>`;
+  if (notAll) html += `<div style="${FONT}font-size:14px;line-height:1.45;color:${AMBER};margin-top:8px;padding:8px 12px;border:1px solid #fcd34d;border-radius:6px;background-color:#fffbeb;"><b>${esc(s.missing.map((p) => noScheduleWords(p, now, tz)).join("; "))}.</b> The project isn't done, and the figures below cover only the phases with a schedule.</div>`;
   html += `<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;margin-top:6px;"><tr>` +
     // The whole project in phases: how many phases are done, never one % across them.
     (!chart && s.phaseCount
@@ -474,29 +483,29 @@ export function phaseSectionHtml(s: PhaseStats, tz: string, now: number,
     tile("Budget", money(s.budget), `${money(s.spent)} spent · ${money(s.committed)} committed`) +
     tile(left >= 0 ? "Left" : "Over budget", money(Math.abs(left)), s.budget ? `${Math.round((s.spent / s.budget) * 100)}% of budget spent` : "no budget", left >= 0 ? GREEN : RED) +
     `</tr></table>`;
-  if (s.added.count) html += `<div style="${FONT}font-size:12px;color:${AMBER};margin-top:6px;"><b>Added after the plan:</b> ${s.added.count} (${s.added.steps} step${s.added.steps === 1 ? "" : "s"}), ${s.added.hours} h of work (discovery and added scope).</div>`;
+  if (s.added.count) html += `<div style="${FONT}font-size:14px;line-height:1.45;color:${AMBER};margin-top:8px;"><b>Added after the plan:</b> ${s.added.count} (${s.added.steps} step${s.added.steps === 1 ? "" : "s"}), ${s.added.hours} h of work (discovery and added scope).</div>`;
 
-  if (!chart) return html + `<div style="${FONT}font-size:11.5px;color:${MUTED};margin-top:6px;">Each phase is measured against its own plan below: the phases aren't one job, so their progress isn't drawn as one.</div>` + moneyHtml(s);
+  if (!chart) return html + `<div style="${FONT}font-size:12px;line-height:1.45;color:${MUTED};margin-top:6px;">Each phase is measured against its own plan below: the phases aren't one job, so their progress isn't drawn as one.</div>` + moneyHtml(s);
   if (s.shifts.length) {
     html += h2("Progress against the original plan, shift by shift");
-    html += `<div style="${FONT}font-size:11px;color:${MUTED};margin:0 0 6px;line-height:1.45;">${chartKey(s, tz).map(esc).join("<br>")}</div>`;
+    html += `<div style="${FONT}font-size:12px;color:${MUTED};margin:0 0 8px;line-height:1.45;">${chartKey(s, tz).map(esc).join("<br>")}</div>`;
     // A run of shifts that all say the same is one line: its days and how
     // many shifts, then the same bars and numbers once.
-    html += `<table cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;${FONT}font-size:11.5px;">` +
+    html += `<table cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;${FONT}font-size:12px;line-height:1.4;">` +
       shiftLines(s.shifts).map((line) => {
         const r = line.kind === "shift" ? line.row : line.rows[0];
         const red = behindAt(r);
         const doneColor = red ? RED : GREEN;
-        const planCell = r.plan != null ? bar(r.plan, "#94a3b8") : `<div style="font-size:10px;color:${MUTED};">plan done</div>`;
-        const doneCell = r.done != null ? bar(r.done, doneColor) : `<div style="font-size:10px;color:${MUTED};">to come</div>`;
-        const added = r.addedKnown > 0 ? `<div style="font-size:10px;color:${AMBER};">added ${hrs(r.addedDone ?? 0)} of ${hrs(r.addedKnown)}</div>` : "";
+        const planCell = r.plan != null ? bar(r.plan, "#94a3b8") : `<div style="font-size:12px;color:${MUTED};">plan done</div>`;
+        const doneCell = r.done != null ? bar(r.done, doneColor) : `<div style="font-size:12px;color:${MUTED};">to come</div>`;
+        const added = r.addedKnown > 0 ? `<div style="font-size:12px;color:${AMBER};">added ${hrs(r.addedDone ?? 0)} of ${hrs(r.addedKnown)}</div>` : "";
         const name = line.kind === "same"
-          ? `<b>${esc(runLabel(line.rows))}</b><div style="font-size:10px;color:${MUTED};">no change, ${line.rows.length} shifts</div>`
-          : `${esc(shiftLabel(r))}${r.planEnds && s.plannedFinish != null ? `<div style="font-size:10px;font-weight:bold;color:${NAVY};">plan finish ${esc(fmtInTz(s.plannedFinish, tz, { hour: "numeric", minute: "2-digit", hour12: true }))}</div>` : ""}${r.finishes && s.finishedAt != null ? `<div style="font-size:10px;font-weight:bold;color:${GREEN};">all done ${esc(fmtInTz(s.finishedAt, tz, { hour: "numeric", minute: "2-digit", hour12: true }))}</div>` : ""}${r.current ? `<div style="font-size:10px;color:${MUTED};">now</div>` : ""}`;
-        const shade = line.kind === "same" ? ` style="border-top:1px solid ${RULE};border-bottom:1px solid ${RULE};"` : r.kind === "night" ? ` style="background:#f8fafc;"` : "";
-        return `<tr${shade}><td style="padding:2px 6px 2px 0;white-space:nowrap;color:${INK};">${name}</td>` +
-          `<td style="padding:2px 0;">${planCell}<div style="height:2px;font-size:0;line-height:0;">&nbsp;</div>${doneCell}</td>` +
-          `<td style="padding:2px 0 2px 8px;white-space:nowrap;text-align:right;color:${MUTED};" width="22%">${r.plan != null ? `${r.plan}%` : "past plan"}${r.done != null ? ` / <b style="color:${doneColor};">${r.done}%</b>${r.plan == null && red ? ` <b style="color:${RED};">late</b>` : ""}` : ""}${added}</td></tr>`;
+          ? `<b>${esc(runLabel(line.rows))}</b><div style="font-size:12px;color:${MUTED};">no change, ${line.rows.length} shifts</div>`
+          : `${esc(shiftLabel(r))}${r.planEnds && s.plannedFinish != null ? `<div style="font-size:12px;font-weight:bold;color:${INK};">plan finish ${esc(fmtInTz(s.plannedFinish, tz, { hour: "numeric", minute: "2-digit", hour12: true }))}</div>` : ""}${r.finishes && s.finishedAt != null ? `<div style="font-size:12px;font-weight:bold;color:${GREEN};">all done ${esc(fmtInTz(s.finishedAt, tz, { hour: "numeric", minute: "2-digit", hour12: true }))}</div>` : ""}${r.current ? `<div style="font-size:12px;color:${MUTED};">now</div>` : ""}`;
+        const shade = line.kind === "same" ? ` style="border-top:1px solid ${RULE};border-bottom:1px solid ${RULE};"` : r.kind === "night" ? ` bgcolor="#f8fafc" style="background-color:#f8fafc;"` : "";
+        return `<tr${shade}><td style="padding:4px 8px 4px 0;white-space:nowrap;color:${INK};">${name}</td>` +
+          `<td style="padding:4px 0;">${planCell}<div style="height:2px;font-size:0;line-height:0;">&nbsp;</div>${doneCell}</td>` +
+          `<td style="padding:4px 0 4px 8px;white-space:nowrap;text-align:right;color:${MUTED};" width="22%">${r.plan != null ? `${r.plan}%` : "past plan"}${r.done != null ? ` / <b style="color:${doneColor};">${r.done}%</b>${r.plan == null && red ? ` <b style="color:${RED};">late</b>` : ""}` : ""}${added}</td></tr>`;
       }).join("") + `</table>`;
   }
   return html + slipHtml(s, tz) + moneyHtml(s);
@@ -524,11 +533,11 @@ function slipHtml(s: PhaseStats, tz: string): string {
   if (!s.shifts.length) return "";
   const words = slipWords(s, tz);
   const list = (title: string, xs: SlipStep[], right: (x: SlipStep) => string, more: number) =>
-    `<div style="${FONT}font-size:11.5px;font-weight:bold;color:${INK};margin:8px 0 2px;">${esc(title)}</div>` +
-    `<table cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;${FONT}font-size:11px;">${xs.map((x) => `<tr><td style="padding:2px 6px 2px 0;border-bottom:1px solid ${RULE};">${esc(stepLine(x))}</td><td style="padding:2px 0 2px 6px;border-bottom:1px solid ${RULE};text-align:right;white-space:nowrap;color:${MUTED};">${esc(right(x))}</td></tr>`).join("")}</table>` +
-    (more > 0 ? `<div style="${FONT}font-size:10.5px;color:${MUTED};">and ${more} more</div>` : "");
+    `<div style="${FONT}font-size:14px;font-weight:bold;color:${INK};margin:12px 0 4px;">${esc(title)}</div>` +
+    `<table cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;${FONT}font-size:12px;line-height:1.4;">${xs.map((x) => `<tr><td style="padding:4px 8px 4px 0;border-bottom:1px solid ${RULE};">${esc(stepLine(x))}</td><td style="padding:4px 0 4px 8px;border-bottom:1px solid ${RULE};text-align:right;white-space:nowrap;color:${MUTED};">${esc(right(x))}</td></tr>`).join("")}</table>` +
+    (more > 0 ? `<div style="${FONT}font-size:12px;color:${MUTED};margin-top:4px;">and ${more} more</div>` : "");
   let html = h2(s.finishedAt != null && s.plannedFinish != null && s.finishedAt > s.plannedFinish + 1_800_000 ? "Why it finished late" : "Where it slipped") +
-    `<div style="${FONT}font-size:12px;color:${INK};line-height:1.5;">${words.map(esc).join("<br>")}</div>`;
+    `<div style="${FONT}font-size:14px;color:${INK};line-height:1.5;">${words.map(esc).join("<br>")}</div>`;
   const at = sl.forGood ?? sl.first;
   if (at && sl.behind.length) html += list(`Furthest behind ${at.current ? "now, in" : "at the end of"} ${shiftLabel(at)}`, sl.behind.slice(0, 6), (x) => `${hrs(x.hoursBehind)} behind`, sl.behind.length - 6);
   if (sl.pastPlan.length && s.plannedFinish != null) html += list(`Still going when the plan said done (${dateTime(s.plannedFinish, tz)})`, sl.pastPlan.slice(0, 10), (x) => (x.finish != null ? `done ${dateTime(x.finish, tz)}` : "not done"), sl.pastPlan.length - 10);
@@ -538,12 +547,12 @@ function slipHtml(s: PhaseStats, tz: string): string {
 function moneyHtml(s: PhaseStats): string {
   if (!s.lines.length) return "";
   return h2("Money by budget line") +
-    `<table cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;${FONT}font-size:11.5px;">` +
-    `<tr style="color:${MUTED};font-size:10px;text-transform:uppercase;letter-spacing:.06em;"><td style="padding:4px 6px 4px 0;border-bottom:1px solid ${RULE};">Line</td><td style="padding:4px 6px;border-bottom:1px solid ${RULE};" width="34%">Spent of budget</td><td style="padding:4px 6px;text-align:right;border-bottom:1px solid ${RULE};">Budget</td><td style="padding:4px 6px;text-align:right;border-bottom:1px solid ${RULE};">Committed</td><td style="padding:4px 0 4px 6px;text-align:right;border-bottom:1px solid ${RULE};">Spent</td></tr>` +
+    `<table cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;${FONT}font-size:14px;">` +
+    headRow([{ t: "Line" }, { t: "Spent of budget", w: "34%" }, { t: "Budget", right: true }, { t: "Committed", right: true }, { t: "Spent", right: true }]) +
     s.lines.map((l) => {
       const over = l.budget > 0 && l.spent > l.budget;
-      return `<tr><td style="padding:4px 6px 4px 0;border-bottom:1px solid ${RULE};">${esc(l.name)}</td><td style="padding:4px 6px;border-bottom:1px solid ${RULE};">${bar(l.budget ? (l.spent / l.budget) * 100 : 0, over ? RED : GREEN)}</td>` +
-        `<td style="padding:4px 6px;text-align:right;border-bottom:1px solid ${RULE};">${money(l.budget)}</td><td style="padding:4px 6px;text-align:right;border-bottom:1px solid ${RULE};">${money(l.committed)}</td><td style="padding:4px 0 4px 6px;text-align:right;border-bottom:1px solid ${RULE};${over ? `color:${RED};font-weight:bold;` : ""}">${money(l.spent)}</td></tr>`;
+      return `<tr><td style="padding:4px 6px;border-bottom:1px solid ${RULE};">${esc(l.name)}</td><td style="padding:4px 6px;border-bottom:1px solid ${RULE};">${bar(l.budget ? (l.spent / l.budget) * 100 : 0, over ? RED : GREEN)}</td>` +
+        `<td style="padding:4px 6px;text-align:right;border-bottom:1px solid ${RULE};">${money(l.budget)}</td><td style="padding:4px 6px;text-align:right;border-bottom:1px solid ${RULE};">${money(l.committed)}</td><td style="padding:4px 6px;text-align:right;border-bottom:1px solid ${RULE};${over ? `color:${RED};font-weight:bold;` : ""}">${money(l.spent)}</td></tr>`;
     }).join("") + `</table>`;
 }
 
@@ -553,21 +562,21 @@ export function rollupHtml(all: PhaseStats, each: PhaseStats[], tz: string, now:
   const row = (s: PhaseStats, total = false) => {
     const left = s.budget - s.spent;
     const st = total ? `font-weight:bold;border-top:2px solid ${INK};` : `border-bottom:1px solid ${RULE};`;
-    const name = `<td style="padding:5px 6px 5px 0;${st}">${esc(s.phase ? s.phase.name : "Whole project")}${s.phase ? `<div style="font-size:10.5px;color:${MUTED};">${esc(phaseDates(s.phase))}</div>` : ""}</td>`;
+    const name = `<td style="padding:6px;${st}">${esc(s.phase ? s.phase.name : "Whole project")}${s.phase ? `<div style="font-size:12px;font-weight:normal;color:${MUTED};">${esc(phaseDates(s.phase))}</div>` : ""}</td>`;
     const money3 = `<td style="padding:5px 6px;text-align:right;${st}">${money(s.budget)}</td><td style="padding:5px 6px;text-align:right;${st}">${money(s.spent)}</td>` +
-      `<td style="padding:5px 0 5px 6px;text-align:right;${st}color:${left >= 0 ? GREEN : RED};">${left >= 0 ? money(left) : `-${money(-left)}`}</td>`;
+      `<td style="padding:5px 6px;text-align:right;${st}color:${left >= 0 ? GREEN : RED};">${left >= 0 ? money(left) : `-${money(-left)}`}</td>`;
     if (s.noSchedule && s.phase) {
-      return `<tr>${name}<td style="padding:5px 6px;${st}color:${AMBER};font-size:11px;" width="22%">${esc(noScheduleWords(s.phase, now, tz).replace(`${s.phase.name}: `, ""))}</td><td style="padding:5px 6px;text-align:right;${st}color:${MUTED};">-</td><td style="padding:5px 6px;text-align:right;${st}color:${AMBER};">not scheduled</td>${money3}</tr>`;
+      return `<tr>${name}<td style="padding:5px 6px;${st}color:${AMBER};font-size:12px;" width="22%">${esc(noScheduleWords(s.phase, now, tz).replace(`${s.phase.name}: `, ""))}</td><td style="padding:5px 6px;text-align:right;${st}color:${MUTED};">-</td><td style="padding:5px 6px;text-align:right;${st}color:${AMBER};">not scheduled</td>${money3}</tr>`;
     }
     if (!s.phase && s.missing.length) {
-      return `<tr>${name}<td style="padding:5px 6px;${st}color:${AMBER};font-size:11px;" width="22%">${s.phasesDone} of ${s.phasesDone + (each.length - s.phasesDone)} phases done · ${esc(s.missing.map((p) => p.name).join(", "))} not scheduled</td>` +
-        `<td style="padding:5px 6px;text-align:right;${st}">${s.done}/${s.steps}<div style="font-size:10px;font-weight:normal;color:${MUTED};">scheduled so far</div></td><td style="padding:5px 6px;text-align:right;${st}color:${AMBER};">not finished</td>${money3}</tr>`;
+      return `<tr>${name}<td style="padding:5px 6px;${st}color:${AMBER};font-size:12px;" width="22%">${s.phasesDone} of ${s.phasesDone + (each.length - s.phasesDone)} phases done · ${esc(s.missing.map((p) => p.name).join(", "))} not scheduled</td>` +
+        `<td style="padding:5px 6px;text-align:right;${st}">${s.done}/${s.steps}<div style="font-size:12px;font-weight:normal;color:${MUTED};">scheduled so far</div></td><td style="padding:5px 6px;text-align:right;${st}color:${AMBER};">not finished</td>${money3}</tr>`;
     }
-    return `<tr>${name}<td style="padding:5px 6px;${st}" width="22%">${bar(s.actualPct, s.actualPct + 0.05 >= s.plannedPct ? GREEN : RED, s.plannedPct)}<div style="font-size:10.5px;color:${MUTED};">${s.actualPct}% done · plan ${s.plannedPct}%</div></td>` +
+    return `<tr>${name}<td style="padding:5px 6px;${st}" width="22%">${bar(s.actualPct, s.actualPct + 0.05 >= s.plannedPct ? GREEN : RED, s.plannedPct)}<div style="font-size:12px;font-weight:normal;color:${MUTED};">${s.actualPct}% done · plan ${s.plannedPct}%</div></td>` +
       `<td style="padding:5px 6px;text-align:right;${st}">${s.done}/${s.steps}</td><td style="padding:5px 6px;text-align:right;${st}">${s.finishedAt != null ? `done ${d(s.finishedAt)}` : `plan ${d(s.plannedFinish)}`}</td>${money3}</tr>`;
   };
-  return h2("Phases") + `<table cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;${FONT}font-size:12px;">` +
-    `<tr style="color:${MUTED};font-size:10px;text-transform:uppercase;letter-spacing:.06em;"><td style="padding:4px 6px 4px 0;">Phase</td><td style="padding:4px 6px;">Progress</td><td style="padding:4px 6px;text-align:right;">Steps</td><td style="padding:4px 6px;text-align:right;">Finish</td><td style="padding:4px 6px;text-align:right;">Budget</td><td style="padding:4px 6px;text-align:right;">Spent</td><td style="padding:4px 0 4px 6px;text-align:right;">Left</td></tr>` +
+  return h2("Phases") + `<table cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;${FONT}font-size:14px;">` +
+    headRow([{ t: "Phase" }, { t: "Progress" }, { t: "Steps", right: true }, { t: "Finish", right: true }, { t: "Budget", right: true }, { t: "Spent", right: true }, { t: "Left", right: true }]) +
     each.map((s) => row(s)).join("") + row(all, true) + `</table>`;
 }
 
@@ -577,8 +586,8 @@ export function phaseReportHtml(input: { project: string; tz: string; now: numbe
   const title = picked?.phase ? `${picked.phase.name} phase report` : "Phase report";
   const sub = picked?.phase ? `${input.project} · ${phaseDates(picked.phase)} · ${picked.phase.share}% of the budget` : `${input.project} · ${each.length} phases`;
   let html = `<div style="${FONT}color:${INK};max-width:820px;">` +
-    `<div style="border-top:4px solid ${NAVY};padding:10px 0 4px;"><div style="font-size:10px;font-weight:bold;letter-spacing:.12em;text-transform:uppercase;color:${MUTED};">Phase report</div>` +
-    `<div style="font-size:20px;font-weight:bold;color:${NAVY};">${esc(title)}</div><div style="font-size:12px;color:${MUTED};">${esc(sub)} · as of ${esc(fmtInTz(now, tz, { month: "short", day: "numeric" }))} ${esc(fmtInTz(now, tz, { hour: "numeric", minute: "2-digit", hour12: true }))}</div></div>`;
+    `<div style="padding:0 0 4px;"><div style="font-size:12px;color:${MUTED};">Phase report</div>` +
+    `<div style="font-size:20px;line-height:1.3;font-weight:bold;color:${INK};margin-top:2px;">${esc(title)}</div><div style="font-size:12px;color:${MUTED};">${esc(sub)} · as of ${esc(fmtInTz(now, tz, { month: "short", day: "numeric" }))} ${esc(fmtInTz(now, tz, { hour: "numeric", minute: "2-digit", hour12: true }))}</div></div>`;
   if (picked?.phase) {
     html += phaseSectionHtml(picked, tz, now);
     html += rollupHtml(all, each, tz, now);

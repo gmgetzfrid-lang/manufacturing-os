@@ -10,6 +10,12 @@
 // Email clients keep very little CSS. Outlook ignores flexbox, margins on
 // most elements and background images; Gmail strips <style>. So layout is
 // tables and every style is inline. Pure, so it is unit-tested.
+//
+// The app's type scale (docs/design-rules.md TY2, TY3), as the emailed
+// shift update has it (lib/reportExport): 12 caption, 14 body, 16 reading
+// and a heading, 20 the verdict; nothing smaller, no tiny capitals (TY8).
+// Each part's heading on a light band and the verdict in a shaded box:
+// bold, shading and borders carry it when a paste drops sizes and colors.
 
 import {
   hasSource, parseAnswerBlocks, structureAnswer, splitVerdict, quoteWindow, extractCitationNumbers,
@@ -17,14 +23,20 @@ import {
 } from "@/lib/knowledgeText";
 import type { KnowledgeAnswer, KnowledgeCitation } from "@/lib/knowledge";
 
-const VERDICT_LABEL: Record<Verdict, { text: string; bg: string; ink: string }> = {
-  yes: { text: "YES", bg: "#15803d", ink: "#ffffff" },
-  conditional: { text: "YES, WITH CONDITIONS", bg: "#d97706", ink: "#ffffff" },
-  no: { text: "NO", bg: "#b91c1c", ink: "#ffffff" },
-  unsettled: { text: "NOT SETTLED", bg: "#475569", ink: "#ffffff" },
-  complies: { text: "COMPLIES", bg: "#15803d", ink: "#ffffff" },
-  fails: { text: "DOES NOT COMPLY", bg: "#b91c1c", ink: "#ffffff" },
-  undetermined: { text: "CAN'T DETERMINE", bg: "#475569", ink: "#ffffff" },
+/** The verdict: `text` as the plain text says it, `word` as the page says
+ *  it (sentence case), in its tone (the emailed update's tones). */
+const GOOD = { fg: "#065f46", bg: "#ecfdf5", edge: "#059669" };
+const WARN = { fg: "#92400e", bg: "#fffbeb", edge: "#d97706" };
+const BAD = { fg: "#9f1239", bg: "#fff1f2", edge: "#e11d48" };
+const OPEN = { fg: "#0f172a", bg: "#f1f5f9", edge: "#64748b" };
+const VERDICT_LABEL: Record<Verdict, { text: string; word: string; tone: typeof GOOD }> = {
+  yes: { text: "YES", word: "Yes", tone: GOOD },
+  conditional: { text: "YES, WITH CONDITIONS", word: "Yes, with conditions", tone: WARN },
+  no: { text: "NO", word: "No", tone: BAD },
+  unsettled: { text: "NOT SETTLED", word: "Not settled", tone: OPEN },
+  complies: { text: "COMPLIES", word: "Complies", tone: GOOD },
+  fails: { text: "DOES NOT COMPLY", word: "Does not comply", tone: BAD },
+  undetermined: { text: "CAN'T DETERMINE", word: "Can't determine", tone: OPEN },
 };
 
 const FONT = "font-family:'Segoe UI',Calibri,Arial,sans-serif";
@@ -39,15 +51,15 @@ const esc = (s: string) =>
 function inlineHtml(text: string): string {
   return esc(text)
     .replace(/\*\*((?:[^*]|\*(?!\*))+?)\*\*/g, "<b>$1</b>")
-    .replace(/`([^`]+)`/g, `<span style="font-family:Consolas,Menlo,monospace;background:#fff7ed;color:#9a3412;padding:0 4px;border:1px solid #fed7aa">$1</span>`)
+    .replace(/`([^`]+)`/g, `<span style="font-family:Consolas,Menlo,monospace;background-color:#fff7ed;color:#9a3412;padding:0 4px;border:1px solid #fed7aa;border-radius:6px">$1</span>`)
     .replace(/\(not from your library[^)]*\)/gi,
-      `<span style="background:#dbeafe;color:#1e40af;font-size:11px;font-weight:bold;padding:0 5px">NOT FROM YOUR LIBRARY</span>`)
+      `<span style="background-color:#dbeafe;color:#1e40af;font-size:12px;font-weight:bold;padding:0 6px;border-radius:6px">Not from your library</span>`)
     .replace(/(\[\d{1,3}\])+/g, (run) =>
-      `<sup style="color:#c2410c;font-weight:bold;font-size:11px">[${run.match(/\d{1,3}/g)!.join(", ")}]</sup>`);
+      `<sup style="color:#c2410c;font-weight:bold;font-size:12px">[${run.match(/\d{1,3}/g)!.join(", ")}]</sup>`);
 }
 
 /** A claim with no citation is marked on the page it's sent on, too. */
-const NO_SOURCE_HTML = ` <span style="background:#ffe4e6;color:#be123c;font-size:11px;font-weight:bold;padding:0 5px">NO SOURCE</span>`;
+const NO_SOURCE_HTML = ` <span style="background-color:#ffe4e6;color:#be123c;font-size:12px;font-weight:bold;padding:0 6px;border-radius:6px">No source</span>`;
 const claimHtml = (text: string) => inlineHtml(text) + (hasSource(text) ? "" : NO_SOURCE_HTML);
 const claimText = (text: string) => inlineText(text) + (hasSource(text) ? "" : " [NO SOURCE]");
 
@@ -56,19 +68,18 @@ function inlineText(text: string): string {
   return text.replace(/\*\*((?:[^*]|\*(?!\*))+?)\*\*/g, "$1").replace(/`([^`]+)`/g, "$1");
 }
 
-/** A section heading: a short orange rule and a small-caps label. */
+/** A section heading on a light band (the emailed update's section band). */
 const heading = (title: string) =>
-  `<tr><td style="padding:22px 0 8px"><table role="presentation" cellpadding="0" cellspacing="0"><tr>` +
-  `<td style="width:4px;background:#ea580c"></td>` +
-  `<td style="padding-left:8px;${FONT};font-size:12px;font-weight:bold;letter-spacing:1px;color:#334155">${esc(title.toUpperCase())}</td>` +
+  `<tr><td style="padding:20px 0 8px"><table role="presentation" cellpadding="0" cellspacing="0" width="100%"><tr>` +
+  `<td bgcolor="#f1f5f9" style="background-color:#f1f5f9;border-radius:8px;padding:8px 12px;${FONT};font-size:16px;font-weight:bold;color:${INK}">${esc(title)}</td>` +
   `</tr></table></td></tr>`;
 
 /** Numbered steps: a filled circle per step, the step beside it. */
-function stepsHtml(blocks: AnswerBlock[], color = "#ea580c"): string {
+function stepsHtml(blocks: AnswerBlock[], color = "#334155"): string {
   let n = 0;
   const rows = blocks.map((b) => {
     if (b.type === "label") {
-      return `<tr><td colspan="2" style="padding:8px 0 4px;${FONT};font-size:13px;font-weight:bold;color:${MUTED}">${inlineHtml(b.text)}</td></tr>`;
+      return `<tr><td colspan="2" style="padding:8px 0 4px;${FONT};font-size:14px;font-weight:bold;color:${MUTED}">${inlineHtml(b.text)}</td></tr>`;
     }
     n += 1;
     return `<tr><td valign="top" style="width:30px;padding:3px 0">` +
@@ -93,9 +104,9 @@ function calloutHtml(title: string, blocks: AnswerBlock[], tone: { bg: string; b
   const rows = blocks.filter((b) => b.type !== "label").map((b) =>
     `<tr><td valign="top" style="width:16px;padding:3px 0;${FONT};font-size:14px;color:${tone.ink}">&#8226;</td>` +
     `<td style="padding:3px 0 6px;${FONT};font-size:14px;line-height:1.5;color:${INK}">${claims ? claimHtml(b.text) : inlineHtml(b.text)}</td></tr>`);
-  return `<tr><td style="padding-top:16px"><table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="background:${tone.bg};border:1px solid ${tone.border};border-left:5px solid ${tone.ink}">` +
-    `<tr><td style="padding:12px 14px">` +
-    `<div style="${FONT};font-size:13px;font-weight:bold;letter-spacing:0.5px;color:${tone.ink};padding-bottom:6px">${esc(title)}</div>` +
+  return `<tr><td style="padding-top:16px"><table role="presentation" cellpadding="0" cellspacing="0" width="100%" bgcolor="${tone.bg}" style="border-collapse:separate;background-color:${tone.bg};border:1px solid ${tone.border};border-left:4px solid ${tone.ink};border-radius:8px">` +
+    `<tr><td style="padding:12px 16px">` +
+    `<div style="${FONT};font-size:16px;font-weight:bold;color:${tone.ink};padding-bottom:6px">${esc(title)}</div>` +
     `<table role="presentation" cellpadding="0" cellspacing="0" width="100%">${rows.join("")}</table>` +
     `</td></tr></table></td></tr>`;
 }
@@ -111,13 +122,13 @@ function proofCardHtml(c: KnowledgeCitation, strong: boolean): string {
     ? `${win.clippedStart ? "… " : ""}${esc(win.before)}<span style="background:#fde047;color:#0f172a;font-weight:bold;padding:0 2px">${esc(win.hit)}</span>${esc(win.after)}${win.clippedEnd ? " …" : ""}`
     : esc((c.quote ?? "").slice(0, 420)) + ((c.quote ?? "").length > 420 ? " …" : "");
   const accent = c.role === "decides" ? "#15803d" : c.role === "limits" ? "#d97706" : "#94a3b8";
-  return `<tr><td style="padding-bottom:10px"><table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="border:1px solid ${LINE};border-left:5px solid ${accent};background:#ffffff">` +
-    `<tr><td style="padding:10px 14px 4px;${FONT}">` +
-    `<span style="background:#0f172a;color:#ffffff;font-size:11px;font-weight:bold;padding:2px 7px">[${c.n}] ${esc(docName(c))} · p.${c.page}</span>` +
-    (c.section ? `<span style="color:${MUTED};font-size:11px;padding-left:8px">${esc(c.section)}</span>` : "") +
+  return `<tr><td style="padding-bottom:12px"><table role="presentation" cellpadding="0" cellspacing="0" width="100%" bgcolor="#ffffff" style="border-collapse:separate;border:1px solid ${LINE};border-left:4px solid ${accent};border-radius:8px;background-color:#ffffff">` +
+    `<tr><td style="padding:12px 16px 4px;${FONT}">` +
+    `<span style="font-family:Consolas,Menlo,monospace;background-color:#eef2ff;color:#1e3a8a;font-size:12px;font-weight:bold;padding:1px 6px;border-radius:6px">[${c.n}] ${esc(docName(c))} · p.${c.page}</span>` +
+    (c.section ? `<span style="color:${MUTED};font-size:12px;padding-left:8px">${esc(c.section)}</span>` : "") +
     `</td></tr>` +
-    (c.claim ? `<tr><td style="padding:4px 14px 2px;${FONT};font-size:${strong ? 15 : 14}px;font-weight:bold;color:${INK}">${esc(c.claim)}</td></tr>` : "") +
-    (c.quote ? `<tr><td style="padding:4px 14px 12px"><div style="${FONT};font-size:13px;line-height:1.55;color:#334155;background:#f8fafc;border-left:3px solid #cbd5e1;padding:8px 10px;font-style:italic">&ldquo;${quote}&rdquo;</div></td></tr>` : "") +
+    (c.claim ? `<tr><td style="padding:4px 16px 2px;${FONT};font-size:${strong ? 16 : 14}px;font-weight:bold;color:${INK}">${esc(c.claim)}</td></tr>` : "") +
+    (c.quote ? `<tr><td style="padding:4px 16px 12px"><div style="${FONT};font-size:14px;line-height:1.55;color:#334155;background-color:#f8fafc;border-left:3px solid #cbd5e1;border-radius:6px;padding:8px 12px;font-style:italic">&ldquo;${quote}&rdquo;</div></td></tr>` : "") +
     `</table></td></tr>`;
 }
 
@@ -174,15 +185,18 @@ export function buildAnswerExport(question: string, answer: KnowledgeAnswer): An
   const text: string[] = [];
 
   // Header + question
-  rows.push(`<tr><td style="padding-bottom:10px;${FONT};font-size:11px;letter-spacing:1px;color:${MUTED}">MANUFACTURING OS · ENGINEERING ANSWER</td></tr>`);
-  rows.push(`<tr><td style="padding-bottom:12px;${FONT};font-size:15px;color:${INK}"><span style="color:${MUTED}">Question:</span> <b>${esc(question)}</b></td></tr>`);
+  rows.push(`<tr><td style="padding-bottom:8px;${FONT};font-size:12px;color:${MUTED}">Engineering answer · Manufacturing OS</td></tr>`);
+  rows.push(`<tr><td style="padding-bottom:12px;${FONT};font-size:16px;line-height:1.45;color:${INK}"><span style="color:${MUTED}">Question:</span> <b>${esc(question)}</b></td></tr>`);
   text.push(`QUESTION: ${question}`, "");
 
   // Verdict banner + the answer
   const answerHtml = hero ? inlineHtml(hero.text) : inlineHtml(answer.answer);
-  rows.push(`<tr><td><table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="border:1px solid ${v?.bg ?? "#ea580c"}">` +
-    (v ? `<tr><td style="background:${v.bg};padding:10px 16px;${FONT};font-size:20px;font-weight:bold;letter-spacing:1px;color:${v.ink}">${v.text}</td></tr>` : "") +
-    `<tr><td style="background:#ffffff;padding:12px 16px;${FONT};font-size:16px;line-height:1.5;font-weight:600;color:${INK}">${answerHtml}</td></tr>` +
+  // The verdict in a shaded box, its word in its color, the answer under
+  // it; the verdict's color is the box's edge, never the whole card.
+  const tone = v?.tone ?? OPEN;
+  rows.push(`<tr><td><table role="presentation" cellpadding="0" cellspacing="0" width="100%" bgcolor="#ffffff" style="border-collapse:separate;background-color:#ffffff;border:1px solid ${LINE};border-left:4px solid ${tone.edge};border-radius:12px">` +
+    (v ? `<tr><td style="padding:12px 16px 0"><table role="presentation" cellpadding="0" cellspacing="0"><tr><td bgcolor="${tone.bg}" style="background-color:${tone.bg};border-radius:8px;padding:6px 12px;${FONT};font-size:20px;font-weight:bold;color:${tone.fg}">${esc(v.word)}</td></tr></table></td></tr>` : "") +
+    `<tr><td style="padding:12px 16px;${FONT};font-size:16px;line-height:1.5;font-weight:600;color:${INK}">${answerHtml}</td></tr>` +
     `</table></td></tr>`);
   if ((answer.answeringFor ?? []).length > 0) {
     rows.push(`<tr><td style="padding-top:6px;${FONT};font-size:12px;color:${MUTED}">Answering for: ${answer.answeringFor!.map(esc).join(" &middot; ")}</td></tr>`);
@@ -213,7 +227,7 @@ export function buildAnswerExport(question: string, answer: KnowledgeAnswer): An
   };
 
   if (parts.settle.length > 0) {
-    rows.push(calloutHtml("TO SETTLE THIS, I NEED", parts.settle, { bg: "#fffbeb", border: "#fde68a", ink: "#b45309" }));
+    rows.push(calloutHtml("To settle this, I need", parts.settle, { bg: "#fffbeb", border: "#fde68a", ink: "#b45309" }));
     listText("To settle this, I need", parts.settle, false, false);
   }
   if (parts.why.length > 0) {
@@ -223,7 +237,7 @@ export function buildAnswerExport(question: string, answer: KnowledgeAnswer): An
   }
   if (parts.trail.length > 0) {
     rows.push(heading("Engineering trail"));
-    rows.push(stepsHtml(parts.trail, "#334155"));
+    rows.push(stepsHtml(parts.trail, "#64748b"));
     listText("Engineering trail", parts.trail, true);
   }
   if (parts.before.length > 0) {
@@ -232,7 +246,7 @@ export function buildAnswerExport(question: string, answer: KnowledgeAnswer): An
     listText(compliance ? "Required corrections" : "Before you act", parts.before, false);
   }
   if (parts.dontMiss.length > 0) {
-    rows.push(calloutHtml("⚠ DON'T MISS", parts.dontMiss, { bg: "#fef2f2", border: "#fecaca", ink: "#b91c1c" }, true));
+    rows.push(calloutHtml("Don't miss", parts.dontMiss, { bg: "#fef2f2", border: "#fecaca", ink: "#b91c1c" }, true));
     listText("Don't miss", parts.dontMiss, false);
   }
   if (support.length > 0) {
@@ -256,10 +270,10 @@ export function buildAnswerExport(question: string, answer: KnowledgeAnswer): An
     rows.push(`<tr><td style="padding-bottom:8px;${FONT};font-size:12px;color:${MUTED}">A web page about a code is not the code - verify against the publication.</td></tr>`);
     text.push("FROM THE WEB - not your controlled documents; verify against the publication");
     for (const c of web) {
-      rows.push(`<tr><td style="padding-bottom:10px"><table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="border:1px solid ${LINE};border-left:5px solid #0284c7;background:#ffffff">` +
-        `<tr><td style="padding:10px 14px 4px;${FONT};font-size:14px;font-weight:bold;color:${INK}"><sup style="color:#0284c7">[${c.n}]</sup> ${esc(c.title ?? c.url ?? "")}</td></tr>` +
-        `<tr><td style="padding:0 14px 4px;${FONT};font-size:12px"><a href="${esc(c.url ?? "")}" style="color:#0369a1">${esc(c.url ?? "")}</a></td></tr>` +
-        (c.quote ? `<tr><td style="padding:4px 14px 12px"><div style="${FONT};font-size:13px;line-height:1.55;color:#334155;background:#f8fafc;border-left:3px solid #bae6fd;padding:8px 10px;font-style:italic">&ldquo;${esc(c.quote)}&rdquo;</div></td></tr>` : "") +
+      rows.push(`<tr><td style="padding-bottom:12px"><table role="presentation" cellpadding="0" cellspacing="0" width="100%" bgcolor="#ffffff" style="border-collapse:separate;border:1px solid ${LINE};border-left:4px solid #0284c7;border-radius:8px;background-color:#ffffff">` +
+        `<tr><td style="padding:12px 16px 4px;${FONT};font-size:14px;font-weight:bold;color:${INK}"><sup style="color:#0284c7;font-size:12px">[${c.n}]</sup> ${esc(c.title ?? c.url ?? "")}</td></tr>` +
+        `<tr><td style="padding:0 16px 4px;${FONT};font-size:12px"><a href="${esc(c.url ?? "")}" style="color:#0369a1">${esc(c.url ?? "")}</a></td></tr>` +
+        (c.quote ? `<tr><td style="padding:4px 16px 12px"><div style="${FONT};font-size:14px;line-height:1.55;color:#334155;background-color:#f8fafc;border-left:3px solid #bae6fd;border-radius:6px;padding:8px 12px;font-style:italic">&ldquo;${esc(c.quote)}&rdquo;</div></td></tr>` : "") +
         `</table></td></tr>`);
       text.push(`[${c.n}] ${c.title ?? c.url} - ${c.url}`);
       if (c.quote) text.push(`    "${c.quote.trim()}"`);
@@ -274,13 +288,13 @@ export function buildAnswerExport(question: string, answer: KnowledgeAnswer): An
     rows.push(heading("From past jobs"));
     text.push("FROM PAST JOBS - kept at the close-out reviews of earlier projects");
     for (const c of jobs) {
-      rows.push(`<tr><td style="padding-bottom:8px;${FONT};font-size:13px;line-height:1.55;color:#334155"><sup style="color:#c2410c">[${c.n}]</sup> ${esc(c.quote ?? c.title ?? "")}</td></tr>`);
+      rows.push(`<tr><td style="padding-bottom:8px;${FONT};font-size:14px;line-height:1.55;color:#334155"><sup style="color:#c2410c;font-size:12px">[${c.n}]</sup> ${esc(c.quote ?? c.title ?? "")}</td></tr>`);
       text.push(`[${c.n}] ${c.quote ?? c.title ?? ""}`);
     }
     text.push("");
   }
 
-  rows.push(`<tr><td style="padding-top:18px;border-top:1px solid ${LINE};${FONT};font-size:11px;color:#94a3b8">Answered from the indexed engineering standards, cited to the page. Verify on the cited pages before acting.</td></tr>`);
+  rows.push(`<tr><td style="padding-top:16px;border-top:1px solid ${LINE};${FONT};font-size:12px;color:${MUTED}">Answered from the indexed engineering standards, cited to the page. Verify on the cited pages before acting.</td></tr>`);
   text.push("Answered from the indexed engineering standards, cited to the page. Verify on the cited pages before acting.");
 
   const html = `<table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="max-width:720px;${FONT};color:${INK}">${rows.join("")}</table>`;

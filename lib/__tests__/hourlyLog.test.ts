@@ -145,7 +145,7 @@ describe("the files", () => {
     // No export date on it, no "Nothing logged".
     expect(text.join("\n")).not.toMatch(/Exported|Nothing logged/);
     // The meeting as a table: resource, meeting attendees, on site.
-    expect(text[0]).toMatch(/RESOURCE\s+MEETING ATTENDEES\s+ON SITE/);
+    expect(text[0]).toMatch(/Resource\s+Meeting attendees\s+On site/);
     expect(text[0]).toMatch(/Schultz\s+Mike Leonard\s+12/);
     expect(text[text.length - 1]).toContain("Night shift");
     expect(text.join("\n")).not.toMatch(/\u2014|\b1[3-9]:\d\d\b|\b2[0-3]:\d\d\b/);
@@ -163,7 +163,7 @@ describe("the files", () => {
     expect(doc).toContain('w:type="first"');
     expect(doc).toContain("<w:titlePg/>");
     // The meeting as its own table in the row: resource, meeting attendees, on site.
-    expect(doc).toContain("MEETING ATTENDEES");
+    expect(doc).toContain("Meeting attendees");
     expect(doc).toMatch(/Schultz<\/w:t>.*Mike Leonard<\/w:t>.*>12<\/w:t>/);
     expect(doc).toContain("<w:tblHeader/>");
     expect(doc).not.toContain("\u2014");

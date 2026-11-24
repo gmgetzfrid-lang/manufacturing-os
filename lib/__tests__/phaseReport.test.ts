@@ -118,10 +118,11 @@ describe("phaseStats", () => {
     const b = phaseStats({ milestones: ms, phases: P, phase: P[1], log, tz, now, total: 2000, lines, entries });
     const all = phaseStats({ milestones: ms, phases: P, phase: null, log, tz, now, total: 2000, lines, entries });
     const html = phaseReportHtml({ project: "T", tz, now, picked: null, all, each: [s, b] });
-    const whole = html.slice(html.indexOf("Whole project</div>"), html.indexOf("Transmix-1</div>"));
+    // Each part's heading is a band: its name, then the band's end.
+    const whole = html.slice(html.indexOf("Whole project</td></tr></table>"), html.indexOf("Transmix-1</td></tr></table>"));
     expect(whole).toContain("Each phase is measured against its own plan below");
     expect(whole).not.toContain("shift by shift");
-    expect(html.slice(html.indexOf("Transmix-1</div>"))).toContain("shift by shift");
+    expect(html.slice(html.indexOf("Transmix-1</td></tr></table>"))).toContain("shift by shift");
   });
   it("a phase with no schedule: not 0 of 0, and the whole project isn't done", () => {
     const only1 = ms.filter((x) => !["t2", "s3"].includes(x.id!)).map((x) => (x.id === "s2" ? { ...x, status: "completed", percentComplete: 100, actualAt: at("2026-11-02", "15:00") } as Milestone : x));

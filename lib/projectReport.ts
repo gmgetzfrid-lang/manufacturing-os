@@ -126,14 +126,14 @@ function renderReportHtml(d: ReportData): string {
   return `<!DOCTYPE html><html><head><meta charset="utf-8">
 <title>Project report - ${esc(p.name)}</title>
 <style>
-  body { font: 12px/1.5 -apple-system, "Segoe UI", Roboto, sans-serif; color: #111827; margin: 32px auto; max-width: 820px; padding: 0 24px; }
-  h1 { font-size: 20px; margin: 0 0 2px; } h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: #6b7280; margin: 22px 0 8px; border-bottom: 1px solid #e5e7eb; padding-bottom: 4px; }
+  body { font: 14px/1.5 -apple-system, "Segoe UI", Roboto, sans-serif; color: #111827; margin: 32px auto; max-width: 820px; padding: 0 24px; }
+  h1 { font-size: 20px; line-height: 1.3; margin: 0 0 2px; } h2 { font-size: 16px; font-weight: 700; color: #0f172a; background: #f1f5f9; border-radius: 8px; padding: 8px 12px; margin: 24px 0 8px; }
   .sub { color: #6b7280; margin-bottom: 4px; }
   table { border-collapse: collapse; width: 100%; } td, th { text-align: left; padding: 3px 10px 3px 0; vertical-align: top; }
   td.k { color: #6b7280; width: 180px; white-space: nowrap; }
   .num { font-variant-numeric: tabular-nums; }
   .flag { color: #b91c1c; font-weight: 700; } .ok { color: #047857; font-weight: 700; }
-  .muted { color: #9ca3af; } .badge { display: inline-block; border: 1px solid #d1d5db; border-radius: 4px; padding: 0 5px; font-size: 10px; text-transform: uppercase; letter-spacing: .05em; margin-left: 6px; }
+  .muted { color: #9ca3af; } .badge { display: inline-block; border: 1px solid #d1d5db; border-radius: 6px; padding: 0 6px; font-size: 12px; font-weight: 600; margin-left: 6px; }
   ul { margin: 4px 0; padding-left: 18px; }
   @media print { body { margin: 0 auto; } }
 </style></head><body>

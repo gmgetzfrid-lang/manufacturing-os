@@ -85,17 +85,17 @@ export function renderEvidenceHtml(data: EvidenceData): string {
   return `<!doctype html><html><head><meta charset="utf-8"><title>Evidence Pack - ${number}</title>
 <style>
   * { box-sizing: border-box; }
-  body { font-family: -apple-system, Segoe UI, Roboto, sans-serif; color: #0f172a; margin: 0; padding: 32px; font-size: 12px; }
-  h1 { font-size: 20px; margin: 0 0 2px; } h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: #475569; margin: 28px 0 8px; border-bottom: 2px solid #e2e8f0; padding-bottom: 4px; }
+  body { font-family: -apple-system, Segoe UI, Roboto, sans-serif; color: #0f172a; margin: 0; padding: 32px; font-size: 14px; line-height: 1.45; }
+  h1 { font-size: 20px; line-height: 1.3; margin: 0 0 2px; } h2 { font-size: 16px; font-weight: 700; color: #0f172a; background: #f1f5f9; border-radius: 8px; padding: 8px 12px; margin: 24px 0 8px; }
   .sub { color: #64748b; margin-bottom: 4px; } .meta { display: flex; gap: 18px; flex-wrap: wrap; color: #334155; margin-top: 8px; }
   .meta b { color: #0f172a; }
   table { width: 100%; border-collapse: collapse; margin-top: 4px; } th, td { text-align: left; padding: 5px 7px; border-bottom: 1px solid #e2e8f0; vertical-align: top; }
-  th { background: #f8fafc; font-size: 10px; text-transform: uppercase; letter-spacing: .04em; color: #64748b; }
-  .mono { font-family: ui-monospace, Menlo, monospace; } .small { font-size: 10px; color: #64748b; word-break: break-all; }
-  .narr td { background: #fafafa; color: #334155; font-size: 11px; border-bottom: 2px solid #e2e8f0; } .lbl { color: #64748b; font-weight: 700; }
+  th { background: #f8fafc; font-size: 12px; font-weight: 600; color: #64748b; border-bottom: 1px solid #cbd5e1; }
+  .mono { font-family: ui-monospace, Menlo, monospace; } .small { font-size: 12px; color: #64748b; word-break: break-all; }
+  .narr td { background: #fafafa; color: #334155; font-size: 12px; border-bottom: 2px solid #e2e8f0; } .lbl { color: #64748b; font-weight: 700; }
   .muted { color: #94a3b8; } .open { color: #b91c1c; font-weight: 700; } .sup { color: #b45309; } .empty { color: #94a3b8; font-style: italic; padding: 8px 0; }
   .toolbar { position: sticky; top: 0; background: #fff; padding-bottom: 10px; } .btn { background: #ea580c; color: #fff; border: 0; padding: 8px 14px; border-radius: 8px; font-weight: 700; cursor: pointer; }
-  .footer { margin-top: 28px; color: #94a3b8; font-size: 10px; border-top: 1px solid #e2e8f0; padding-top: 8px; }
+  .footer { margin-top: 28px; color: #64748b; font-size: 12px; border-top: 1px solid #e2e8f0; padding-top: 8px; }
   @media print { .toolbar { display: none; } body { padding: 0; } }
 </style></head><body>
   <div class="toolbar"><button class="btn" onclick="window.print()">Print / Save as PDF</button></div>
@@ -195,14 +195,14 @@ export function renderProjectEvidenceHtml(data: ProjectEvidence): string {
 
   return `<!doctype html><html><head><meta charset="utf-8"><title>Project Evidence Pack - ${name}</title>
 <style>
-  * { box-sizing: border-box; } body { font-family: -apple-system, Segoe UI, Roboto, sans-serif; color: #0f172a; margin: 0; padding: 32px; font-size: 12px; }
-  h1 { font-size: 20px; margin: 0 0 2px; } h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: #475569; margin: 28px 0 8px; border-bottom: 2px solid #e2e8f0; padding-bottom: 4px; }
+  * { box-sizing: border-box; } body { font-family: -apple-system, Segoe UI, Roboto, sans-serif; color: #0f172a; margin: 0; padding: 32px; font-size: 14px; line-height: 1.45; }
+  h1 { font-size: 20px; line-height: 1.3; margin: 0 0 2px; } h2 { font-size: 16px; font-weight: 700; color: #0f172a; background: #f1f5f9; border-radius: 8px; padding: 8px 12px; margin: 24px 0 8px; }
   .sub { color: #64748b; } .meta { display: flex; gap: 18px; flex-wrap: wrap; color: #334155; margin-top: 8px; } .meta b { color: #0f172a; }
   table { width: 100%; border-collapse: collapse; margin-top: 4px; } th, td { text-align: left; padding: 5px 7px; border-bottom: 1px solid #e2e8f0; vertical-align: top; }
-  th { background: #f8fafc; font-size: 10px; text-transform: uppercase; letter-spacing: .04em; color: #64748b; }
-  .mono { font-family: ui-monospace, Menlo, monospace; } .small { font-size: 10px; color: #64748b; word-break: break-all; } .empty { color: #94a3b8; font-style: italic; padding: 8px 0; }
+  th { background: #f8fafc; font-size: 12px; font-weight: 600; color: #64748b; border-bottom: 1px solid #cbd5e1; }
+  .mono { font-family: ui-monospace, Menlo, monospace; } .small { font-size: 12px; color: #64748b; word-break: break-all; } .empty { color: #94a3b8; font-style: italic; padding: 8px 0; }
   .toolbar { position: sticky; top: 0; background: #fff; padding-bottom: 10px; } .btn { background: #ea580c; color: #fff; border: 0; padding: 8px 14px; border-radius: 8px; font-weight: 700; cursor: pointer; }
-  .footer { margin-top: 28px; color: #94a3b8; font-size: 10px; border-top: 1px solid #e2e8f0; padding-top: 8px; }
+  .footer { margin-top: 28px; color: #64748b; font-size: 12px; border-top: 1px solid #e2e8f0; padding-top: 8px; }
   @media print { .toolbar { display: none; } body { padding: 0; } }
 </style></head><body>
   <div class="toolbar"><button class="btn" onclick="window.print()">Print / Save as PDF</button></div>

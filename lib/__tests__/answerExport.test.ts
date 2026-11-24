@@ -63,11 +63,11 @@ describe("buildAnswerExport", () => {
   const at = (needle: string) => { const i = exp.html.indexOf(needle); expect(i).toBeGreaterThan(-1); return i; };
 
   it("puts the verdict banner first and the deciding proof right under the answer", () => {
-    expect(at("DOES NOT COMPLY")).toBeLessThan(at("THE REQUIREMENT - QUOTED"));
-    expect(at("THE REQUIREMENT - QUOTED")).toBeLessThan(at("1S4 is seamless only"));
-    expect(at("1S4 is seamless only")).toBeLessThan(at("TO SETTLE THIS"));
-    expect(at("ENGINEERING TRAIL")).toBeLessThan(at("SUPPORTING PASSAGES"));
-    expect(at("SUPPORTING PASSAGES")).toBeLessThan(at("EP-5-2-1 · p.17"));
+    expect(at("Does not comply")).toBeLessThan(at("The requirement - quoted"));
+    expect(at("The requirement - quoted")).toBeLessThan(at("1S4 is seamless only"));
+    expect(at("1S4 is seamless only")).toBeLessThan(at("To settle this"));
+    expect(at("Engineering trail")).toBeLessThan(at("Supporting passages"));
+    expect(at("Supporting passages")).toBeLessThan(at("EP-5-2-1 · p.17"));
   });
 
   it("marks the deciding words and tags each quote with document and page", () => {
@@ -84,7 +84,7 @@ describe("buildAnswerExport", () => {
       "**Why:**",
       "- Fillet welds in a fitting transition can't be examined.",
     ].join("\n") });
-    expect(e.html.match(/NO SOURCE/g)).toHaveLength(1);
+    expect(e.html.match(/No source/g)).toHaveLength(1);
     expect(e.text).toContain("1. Fillet welds in a fitting transition can't be examined. [NO SOURCE]");
     expect(e.text).toContain("- The standard's basis document - explains why the rule exists.\n");
   });
@@ -92,6 +92,13 @@ describe("buildAnswerExport", () => {
   it("is table-based with inline styles only (what Outlook and Gmail keep)", () => {
     expect(exp.html.startsWith("<table")).toBe(true);
     expect(exp.html).not.toMatch(/<style|class=|display:flex/);
+  });
+
+  it("type on the app's scale, sentence case, no tiny capitals", () => {
+    const sizes = [...exp.html.matchAll(/font-size:(\d+(?:\.\d+)?)px/g)].map((m) => Number(m[1]));
+    expect(sizes.filter((x) => ![12, 14, 16, 20].includes(x))).toEqual([]);
+    expect(exp.html).not.toMatch(/letter-spacing|text-transform/);
+    expect(exp.html).not.toMatch(/>[A-Z][A-Z ,'-]{6,}</);
   });
 
   it("escapes HTML and renders markup, not raw asterisks", () => {
@@ -121,7 +128,8 @@ describe("web sources in the export", () => {
         { n: 2, url: "https://www.asme.org/x", title: "ASME - flange attachment", quote: "Slip-on flanges require straight pipe." },
       ],
     });
-    expect(e.html.indexOf("THE PROOF")).toBeLessThan(e.html.indexOf("FROM THE WEB"));
+    expect(e.html.indexOf("The proof")).toBeGreaterThan(-1);
+    expect(e.html.indexOf("The proof")).toBeLessThan(e.html.indexOf("From the web"));
     expect(e.html).toContain('href="https://www.asme.org/x"');
     expect(e.text).toContain('[2] ASME - flange attachment - https://www.asme.org/x');
     expect(e.text).toContain('"Slip-on flanges require straight pipe."');

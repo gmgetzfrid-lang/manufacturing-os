@@ -283,10 +283,13 @@ const TAG: Partial<Record<SheetKind, string>> = { pulled: "pulled ahead", try: "
 
 // Page sizes, in inches (letter portrait, .3in margins top and sides,
 // .25in at the foot).
-const P = { page: 10.28, head: 0.56, how: 0.2, th: 0.3, row: 0.3, row2: 0.44, groupMin: 0.36, addHead: 0.24, addRow: 0.3 };
+// Type on the app's scale (docs/design-rules.md TY2, TY3) in points: 9 pt
+// caption (12 px), 10.5 pt body, 15 pt the equipment tag, 19.5 pt the
+// shift; nothing smaller, no tiny capitals (TY8). Rows sized to hold it.
+const P = { page: 10.28, head: 0.56, how: 0.2, th: 0.32, row: 0.32, row2: 0.46, groupMin: 0.42, addHead: 0.26, addRow: 0.3 };
 const stepWidth = 0.29 * 7.9 - 0.12;
 const charW = (s: string, pt: number) => s.length * pt * 0.56 / 72;
-const lineH = (l: SheetLine) => (charW(l.name, 8.5) > stepWidth ? P.row2 : P.row);
+const lineH = (l: SheetLine) => (charW(l.name, 9) > stepWidth ? P.row2 : P.row);
 
 export const SHEET_CSS = `
 @page{size:letter portrait;margin:.3in .3in .25in}
@@ -297,35 +300,35 @@ body{margin:0;background:#fff;-webkit-print-color-adjust:exact;print-color-adjus
 .ss .pg{break-after:page;page-break-after:always}
 .ss .pg:last-child{break-after:auto;page-break-after:auto}
 .ss .top{height:${P.head - 0.06}in;margin-bottom:.06in;display:flex;justify-content:space-between;align-items:flex-end;gap:12px;border-bottom:2px solid #0f172a;padding-bottom:4px}
-.ss .top .s{font-size:17pt;font-weight:bold;white-space:nowrap}
+.ss .top .s{font-size:19.5pt;font-weight:bold;white-space:nowrap}
 .ss .top .p{font-size:9pt;color:#475569;text-align:right}
 .ss .top .p b{color:#0f172a}
-.ss .how{height:${P.how}in;font-size:8pt;color:#475569;overflow:hidden}
+.ss .how{height:${P.how}in;font-size:9pt;color:#475569;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 .ss table{width:100%;border-collapse:collapse;table-layout:fixed}
-.ss th{height:${P.th}in;font-size:7pt;text-transform:uppercase;letter-spacing:.2px;color:#334155;background:#f1f5f9;border:1px solid #94a3b8;padding:1px 3px;text-align:center;line-height:1.15}
+.ss th{height:${P.th}in;font-size:9pt;font-weight:bold;color:#334155;background:#f1f5f9;border:1px solid #94a3b8;padding:1px 3px;text-align:center;line-height:1.1}
 .ss th.l{text-align:left}
-.ss td{border:1px solid #94a3b8;padding:1px 4px;font-size:8.5pt;vertical-align:middle;line-height:1.12}
+.ss td{border:1px solid #94a3b8;padding:1px 4px;font-size:9pt;vertical-align:middle;line-height:1.12}
 .ss tr.last td{border-bottom:2px solid #0f172a}
 .ss td.wo{vertical-align:top;padding:2px 4px;border-bottom:2px solid #0f172a;overflow:hidden}
-.ss td.wo .tag{display:block;font-size:13pt;font-weight:bold;line-height:1}
+.ss td.wo .tag{display:block;font-size:15pt;font-weight:bold;line-height:1}
 .ss td.wo .tag.sm{font-size:10.5pt}
-.ss td.wo .eqn{font-size:7pt;color:#334155;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px}
-.ss td.wo .cont{font-size:7pt;color:#64748b;font-style:italic}
+.ss td.wo .eqn{font-size:9pt;color:#334155;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px}
+.ss td.wo .cont{font-size:9pt;color:#64748b;font-style:italic}
 .ss td.st{overflow:hidden}
-.ss td.st b{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;font-size:8.5pt}
-.ss td.st .cr{font-size:7pt;color:#475569}
-.ss td.st .k{font-size:6.5pt;font-weight:bold;text-transform:uppercase;letter-spacing:.3px;color:#475569;border:1px solid #94a3b8;border-radius:2px;padding:0 2px;margin-left:4px}
-.ss td.pl{font-size:7.5pt;color:#334155}
+.ss td.st b{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;font-size:9pt}
+.ss td.st .cr{font-size:9pt;color:#475569}
+.ss td.st .k{font-size:9pt;font-weight:bold;color:#475569;border:1px solid #94a3b8;border-radius:4px;padding:0 3px;margin-left:4px}
+.ss td.pl{font-size:9pt;color:#334155}
 .ss td.pl .late{color:#b91c1c;font-weight:bold}
-.ss td.pl .cp{display:block;font-size:6.5pt;font-weight:bold;color:#b91c1c;text-transform:uppercase}
+.ss td.pl .cp{display:block;font-size:9pt;font-weight:bold;color:#b91c1c}
 .ss tr.early td.st b,.ss tr.early td.pl{color:#64748b}
 .ss td.bx{text-align:center}
-.ss td.bx.on{background:#e2e8f0;color:#475569;font-size:7pt}
-.ss td.pc{text-align:right;vertical-align:bottom;font-size:7pt;color:#94a3b8;padding-bottom:2px}
-.ss tr.ah td{background:#f1f5f9;height:${P.addHead}in;font-size:8pt;color:#334155;border-top:2px solid #0f172a}
+.ss td.bx.on{background:#e2e8f0;color:#475569;font-size:9pt}
+.ss td.pc{text-align:right;vertical-align:bottom;font-size:9pt;color:#64748b;padding-bottom:2px}
+.ss tr.ah td{background:#f1f5f9;height:${P.addHead}in;font-size:9pt;color:#334155;border-top:2px solid #0f172a}
 .ss tr.ah b{color:#0f172a;margin-right:4px}
 .ss tr.add td{height:${P.addRow}in}
-.ss .none{font-size:10pt;color:#475569;padding:14px 0}
+.ss .none{font-size:10.5pt;color:#475569;padding:14px 0}
 `;
 
 const COLS = `<colgroup><col style="width:15%"><col style="width:29%"><col style="width:12%"><col style="width:8%"><col style="width:8%"><col style="width:8%"><col style="width:8%"><col style="width:12%"></colgroup>`;

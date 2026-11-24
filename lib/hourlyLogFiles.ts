@@ -51,7 +51,11 @@ export function entryParas(e: LogEntry): Array<{ text: string; style: "title" | 
   return out.map((p) => ({ ...p, text: noEmDash(p.text) }));
 }
 
-const kicker = (project: string) => `${project} · Hourly shift log`.toUpperCase();
+// On paper, the app's type scale (docs/design-rules.md TY2, TY3) in points:
+// 9 pt caption, 10.5 pt body, 15 pt the shift's heading (12, 14 and 20 px);
+// nothing smaller, no tiny capitals (TY8).
+const PT = { caption: 9, body: 10.5, title: 15 } as const;
+const kicker = (project: string) => `${project} · Hourly shift log`;
 const headingOf = (l: ShiftLog) => `${l.title} · ${l.date}`;
 const subOf = (l: ShiftLog) => `${l.window}${l.through ? ` · logged through ${l.through}` : ""}`;
 
@@ -279,20 +283,20 @@ export async function hourlyLogPdf(logs: ShiftLog[], o: LogFileOpts): Promise<Ui
     y = top;
   };
   const tableHead = () => {
-    text("TIME", left, y + 8, 7.5, fonts.b, GRAY);
-    text("WHAT HAPPENED", textX, y + 8, 7.5, fonts.b, GRAY);
-    y += 12;
+    text("Time", left, y + 9, PT.caption, fonts.b, GRAY);
+    text("What happened", textX, y + 9, PT.caption, fonts.b, GRAY);
+    y += 13;
     page.drawLine({ start: { x: left, y: H - y }, end: { x: right, y: H - y }, thickness: 0.75, color: RULE });
     y += 4;
   };
-  const style = { title: { f: fonts.b, s: 10, c: INK }, line: { f: fonts.r, s: 10, c: INK }, done: { f: fonts.r, s: 10, c: GREEN }, cont: { f: fonts.i, s: 9, c: GRAY }, muted: { f: fonts.i, s: 9.5, c: GRAY } };
+  const style = { title: { f: fonts.b, s: PT.body, c: INK }, line: { f: fonts.r, s: PT.body, c: INK }, done: { f: fonts.r, s: PT.body, c: GREEN }, cont: { f: fonts.i, s: PT.caption, c: GRAY }, muted: { f: fonts.i, s: PT.caption, c: GRAY } };
 
   for (const l of logs) {
     newPage(first);
-    text(kicker(o.project), left, y + 8, 7.5, fonts.b, GRAY);
-    y += 13;
-    for (const ln of wrap(safe(fonts.b)(headingOf(l)), fonts.b, 14, right - left)) { text(ln, left, y + 13, 14, fonts.b, INK); y += 18; }
-    for (const ln of wrap(safe(fonts.r)(subOf(l)), fonts.r, 9, right - left)) { text(ln, left, y + 9, 9, fonts.r, GRAY); y += 12; }
+    text(kicker(o.project), left, y + 9, PT.caption, fonts.r, GRAY);
+    y += 14;
+    for (const ln of wrap(safe(fonts.b)(headingOf(l)), fonts.b, PT.title, right - left)) { text(ln, left, y + 14, PT.title, fonts.b, INK); y += 19; }
+    for (const ln of wrap(safe(fonts.r)(subOf(l)), fonts.r, PT.caption, right - left)) { text(ln, left, y + 9, PT.caption, fonts.r, GRAY); y += 12; }
     y += 8;
     tableHead();
     for (const e of l.entries) {
@@ -326,24 +330,25 @@ export async function hourlyLogPdf(logs: ShiftLog[], o: LogFileOpts): Promise<Ui
           } });
         };
         items.push({ h: 3, draw: () => undefined });
-        row(["RESOURCE", "MEETING ATTENDEES", "ON SITE"], [fonts.b, fonts.b, fonts.b], 7, GRAY, true);
-        for (const r of m.rows) row([r.crew, r.attendees || "-", onSiteCell(r)], [fonts.b, fonts.r, r.plant ? fonts.r : fonts.b], 9.5, INK);
-        if (m.total != null) row(["Total on the job", "", String(m.total)], [fonts.b, fonts.r, fonts.b], 9.5, INK);
+        row(["Resource", "Meeting attendees", "On site"], [fonts.b, fonts.b, fonts.b], PT.caption, GRAY, true);
+        for (const r of m.rows) row([r.crew, r.attendees || "-", onSiteCell(r)], [fonts.b, fonts.r, r.plant ? fonts.r : fonts.b], PT.body, INK);
+        if (m.total != null) row(["Total on the job", "", String(m.total)], [fonts.b, fonts.r, fonts.b], PT.body, INK);
         if (m.safety) {
-          const ls = wrapRuns([{ t: "Safety topic: ", f: fonts.b }, { t: safe(fonts.r)(m.safety), f: fonts.r }], 9.5, textW - cp * 2);
+          const sz = PT.body;
+          const ls = wrapRuns([{ t: "Safety topic: ", f: fonts.b }, { t: safe(fonts.r)(m.safety), f: fonts.r }], sz, textW - cp * 2);
           ls.forEach((segs, j) => {
-            const h = 9.5 * 1.3 + (j === 0 ? 3 : 0) + (j === ls.length - 1 ? 3 : 0);
+            const h = sz * 1.3 + (j === 0 ? 3 : 0) + (j === ls.length - 1 ? 3 : 0);
             items.push({ h, draw: (at) => {
               let dx = textX + cp;
-              for (const g of segs) { text(g.t, dx, at + (j === 0 ? 3 : 0) + 9.5, 9.5, g.f, INK); dx += g.f.widthOfTextAtSize(g.t, 9.5); }
+              for (const g of segs) { text(g.t, dx, at + (j === 0 ? 3 : 0) + sz, sz, g.f, INK); dx += g.f.widthOfTextAtSize(g.t, sz); }
               if (j === ls.length - 1) page.drawLine({ start: { x: textX, y: H - at - h }, end: { x: right, y: H - at - h }, thickness: 0.4, color: RULE });
             } });
           });
         }
         for (const n of m.notes) {
-          wrap(safe(fonts.r)(n), fonts.r, 10, textW).forEach((ln, j) => {
-            const h = 10 * 1.32 + (j === 0 ? 3 : 0);
-            items.push({ h, draw: (at) => text(ln, textX, at + h - 10 * 0.32, 10, fonts.r, INK) });
+          wrap(safe(fonts.r)(n), fonts.r, PT.body, textW).forEach((ln, j) => {
+            const h = PT.body * 1.32 + (j === 0 ? 3 : 0);
+            items.push({ h, draw: (at) => text(ln, textX, at + h - PT.body * 0.32, PT.body, fonts.r, INK) });
           });
         }
       }
@@ -351,15 +356,15 @@ export async function hourlyLogPdf(logs: ShiftLog[], o: LogFileOpts): Promise<Ui
       const need = pad + items.slice(0, 3).reduce((a, x) => a + x.h, 0);
       const cont = () => {
         newPage(rest);
-        text(`${headingOf(l)} (continued)`, left, y + 9, 9, fonts.b, GRAY);
+        text(`${headingOf(l)} (continued)`, left, y + 9, PT.caption, fonts.b, GRAY);
         y += 15;
         tableHead();
       };
       if (y + need > bottom) cont();
       y += pad;
-      text(e.clock, left, y + 10, 10, fonts.b, e.kind === "break" ? GRAY : INK);
+      text(e.clock, left, y + 11, PT.body, fonts.b, e.kind === "break" ? GRAY : INK);
       for (const x of items) {
-        if (y + x.h > bottom) { cont(); y += pad; text(e.clock, left, y + 10, 10, fonts.b, GRAY); }
+        if (y + x.h > bottom) { cont(); y += pad; text(e.clock, left, y + 11, PT.body, fonts.b, GRAY); }
         x.draw(y);
         y += x.h;
       }
@@ -369,7 +374,7 @@ export async function hourlyLogPdf(logs: ShiftLog[], o: LogFileOpts): Promise<Ui
   }
   if (!logs.length) {
     newPage(first);
-    text(kicker(o.project), left, y + 8, 7.5, fonts.b, GRAY);
+    text(kicker(o.project), left, y + 9, PT.caption, fonts.r, GRAY);
     text("No entries yet.", left, y + 30, 12, fonts.r, INK);
   }
   // Page numbers, where the letterhead leaves the foot free.
@@ -379,8 +384,8 @@ export async function hourlyLogPdf(logs: ShiftLog[], o: LogFileOpts): Promise<Ui
     pages.forEach((pg, i) => {
       page = pg;
       const label = `Page ${i + 1} of ${pages.length}`;
-      text(`${o.project} · Hourly shift log`, left, at, 7.5, fonts.r, GRAY);
-      text(label, right - fonts.r.widthOfTextAtSize(label, 7.5), at, 7.5, fonts.r, GRAY);
+      text(`${o.project} · Hourly shift log`, left, at, PT.caption, fonts.r, GRAY);
+      text(label, right - fonts.r.widthOfTextAtSize(label, PT.caption), at, PT.caption, fonts.r, GRAY);
     });
   }
   return doc.save();
@@ -514,8 +519,8 @@ function layerXml(l: LhLayer, kind: "hdr" | "ftr", lh: Letterhead, c: DocxCtx): 
 }
 
 const pageNumberFooter = (o: LogFileOpts, contentW: number) =>
-  `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:ftr ${NS}><w:p><w:pPr><w:tabs><w:tab w:val="right" w:pos="${tw(contentW)}"/></w:tabs></w:pPr>${textRun(`${o.project} · Hourly shift log`, { color: "64748B", pt: 7.5 })}<w:r><w:tab/></w:r>${textRun("Page ", { color: "64748B", pt: 7.5 })}${["PAGE", "NUMPAGES"].map((f, i) =>
-    `${i ? textRun(" of ", { color: "64748B", pt: 7.5 }) : ""}<w:r>${rPr({ color: "64748B", pt: 7.5 })}<w:fldChar w:fldCharType="begin"/></w:r><w:r>${rPr({ color: "64748B", pt: 7.5 })}<w:instrText xml:space="preserve"> ${f} </w:instrText></w:r><w:r>${rPr({ color: "64748B", pt: 7.5 })}<w:fldChar w:fldCharType="separate"/></w:r>${textRun("1", { color: "64748B", pt: 7.5 })}<w:r>${rPr({ color: "64748B", pt: 7.5 })}<w:fldChar w:fldCharType="end"/></w:r>`).join("")}</w:p></w:ftr>`;
+  `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:ftr ${NS}><w:p><w:pPr><w:tabs><w:tab w:val="right" w:pos="${tw(contentW)}"/></w:tabs></w:pPr>${textRun(`${o.project} · Hourly shift log`, { color: "64748B", pt: PT.caption })}<w:r><w:tab/></w:r>${textRun("Page ", { color: "64748B", pt: PT.caption })}${["PAGE", "NUMPAGES"].map((f, i) =>
+    `${i ? textRun(" of ", { color: "64748B", pt: PT.caption }) : ""}<w:r>${rPr({ color: "64748B", pt: PT.caption })}<w:fldChar w:fldCharType="begin"/></w:r><w:r>${rPr({ color: "64748B", pt: PT.caption })}<w:instrText xml:space="preserve"> ${f} </w:instrText></w:r><w:r>${rPr({ color: "64748B", pt: PT.caption })}<w:fldChar w:fldCharType="separate"/></w:r>${textRun("1", { color: "64748B", pt: PT.caption })}<w:r>${rPr({ color: "64748B", pt: PT.caption })}<w:fldChar w:fldCharType="end"/></w:r>`).join("")}</w:p></w:ftr>`;
 
 /** The first font the letterhead's words use, for the log's own words. */
 function bodyFont(lh: Letterhead | null): string {
@@ -539,27 +544,27 @@ function meetingXml(m: MeetingParts, w: number): string {
   const cw = [w * 0.28, w * 0.46, w * 0.26];
   const p = (runs: string, right = false) => `<w:p><w:pPr><w:spacing w:before="0" w:after="0"/>${right ? '<w:jc w:val="right"/>' : ""}</w:pPr>${runs}</w:p>`;
   const tc = (i: number, inner: string, shade?: string, span?: number) => `<w:tc><w:tcPr><w:tcW w:w="${tw(span ? w : cw[i])}" w:type="dxa"/>${span ? `<w:gridSpan w:val="${span}"/>` : ""}${shade ? `<w:shd w:val="clear" w:color="auto" w:fill="${shade}"/>` : ""}</w:tcPr>${inner}</w:tc>`;
-  const head = { b: true, pt: 7, color: "64748B" } as const;
+  const head = { b: true, pt: PT.caption, color: "64748B" } as const;
   const tr = (cells: string) => `<w:tr><w:trPr><w:cantSplit/></w:trPr>${cells}</w:tr>`;
   const rows = [
-    tr(["RESOURCE", "MEETING ATTENDEES", "ON SITE"].map((t, i) => tc(i, p(textRun(t, head), i === 2), "F1F5F9")).join("")),
-    ...m.rows.map((r) => tr([tc(0, p(textRun(r.crew, { b: true, pt: 9.5 }))), tc(1, p(textRun(r.attendees || "-", { pt: 9.5 }))), tc(2, p(textRun(onSiteCell(r), { b: !r.plant, pt: 9.5 }), true))].join(""))),
-    ...(m.total != null ? [tr([tc(0, p(textRun("Total on the job", { b: true, pt: 9.5 }))), tc(1, p("")), tc(2, p(textRun(String(m.total), { b: true, pt: 9.5 }), true))].join(""))] : []),
-    ...(m.safety ? [tr(tc(0, p(`${textRun("Safety topic: ", { b: true, pt: 9.5 })}${textRun(m.safety, { pt: 9.5 })}`), undefined, 3))] : []),
+    tr(["Resource", "Meeting attendees", "On site"].map((t, i) => tc(i, p(textRun(t, head), i === 2), "F1F5F9")).join("")),
+    ...m.rows.map((r) => tr([tc(0, p(textRun(r.crew, { b: true, pt: PT.body }))), tc(1, p(textRun(r.attendees || "-", { pt: PT.body }))), tc(2, p(textRun(onSiteCell(r), { b: !r.plant, pt: PT.body }), true))].join(""))),
+    ...(m.total != null ? [tr([tc(0, p(textRun("Total on the job", { b: true, pt: PT.body }))), tc(1, p("")), tc(2, p(textRun(String(m.total), { b: true, pt: PT.body }), true))].join(""))] : []),
+    ...(m.safety ? [tr(tc(0, p(`${textRun("Safety topic: ", { b: true, pt: PT.body })}${textRun(m.safety, { pt: PT.body })}`), undefined, 3))] : []),
   ].join("");
   const border = (side: string) => `<w:${side} w:val="single" w:sz="4" w:space="0" w:color="E2E8F0"/>`;
   const table = `<w:tbl><w:tblPr><w:tblW w:w="${tw(w)}" w:type="dxa"/><w:tblBorders>${border("top")}${border("bottom")}${border("insideH")}</w:tblBorders><w:tblLayout w:type="fixed"/><w:tblCellMar><w:top w:w="30" w:type="dxa"/><w:left w:w="60" w:type="dxa"/><w:bottom w:w="30" w:type="dxa"/><w:right w:w="60" w:type="dxa"/></w:tblCellMar><w:tblLook w:val="0000"/></w:tblPr><w:tblGrid>${cw.map((x) => `<w:gridCol w:w="${tw(x)}"/>`).join("")}</w:tblGrid>${rows}</w:tbl>`;
   // A cell ends with a paragraph: the notes, or an empty one.
-  const notes = m.notes.map((n) => `<w:p><w:pPr><w:spacing w:before="40" w:after="0"/></w:pPr>${textRun(n, { pt: 10 })}</w:p>`).join("");
+  const notes = m.notes.map((n) => `<w:p><w:pPr><w:spacing w:before="40" w:after="0"/></w:pPr>${textRun(n, { pt: PT.body })}</w:p>`).join("");
   return `${table}${notes || '<w:p><w:pPr><w:spacing w:before="0" w:after="0"/></w:pPr></w:p>'}`;
 }
 
 function shiftXml(l: ShiftLog, o: LogFileOpts, contentW: number): string {
   const timeW = 0.95;
   const cellP = (t: string, st: Parameters<typeof rPr>[0], after = 20) => `<w:p><w:pPr><w:spacing w:before="0" w:after="${after}"/></w:pPr>${textRun(t, st)}</w:p>`;
-  const look = { title: { b: true, pt: 10 }, line: { pt: 10 }, done: { pt: 10, color: "047857" }, cont: { i: true, pt: 9, color: "64748B" }, muted: { i: true, pt: 9.5, color: "64748B" } } as const;
+  const look = { title: { b: true, pt: PT.body }, line: { pt: PT.body }, done: { pt: PT.body, color: "047857" }, cont: { i: true, pt: PT.caption, color: "64748B" }, muted: { i: true, pt: PT.caption, color: "64748B" } } as const;
   const cell = (w: number, inner: string, shade?: string) => `<w:tc><w:tcPr><w:tcW w:w="${tw(w)}" w:type="dxa"/>${shade ? `<w:shd w:val="clear" w:color="auto" w:fill="${shade}"/>` : ""}</w:tcPr>${inner}</w:tc>`;
-  const head = `<w:tr><w:trPr><w:cantSplit/><w:tblHeader/></w:trPr>${cell(timeW, cellP("TIME", { b: true, pt: 7.5, color: "64748B" }, 0), "F1F5F9")}${cell(contentW - timeW, cellP("WHAT HAPPENED", { b: true, pt: 7.5, color: "64748B" }, 0), "F1F5F9")}</w:tr>`;
+  const head = `<w:tr><w:trPr><w:cantSplit/><w:tblHeader/></w:trPr>${cell(timeW, cellP("Time", { b: true, pt: PT.caption, color: "64748B" }, 0), "F1F5F9")}${cell(contentW - timeW, cellP("What happened", { b: true, pt: PT.caption, color: "64748B" }, 0), "F1F5F9")}</w:tr>`;
   const rows = l.entries.map((e) => {
     const paras = entryParas(e);
     // A line's work order in bold, the rest plain.
@@ -568,13 +573,13 @@ function shiftXml(l: ShiftLog, o: LogFileOpts, contentW: number): string {
       : cellP(p.text, look[p.style]);
     const m = e.meeting && !meetingEmpty(e.meeting) ? e.meeting : null;
     const inner = m ? `${e.title ? cellP(e.title, look.title) : ""}${meetingXml(m, contentW - timeW - 0.15)}` : paras.map(para).join("");
-    return `<w:tr>${paras.length <= 6 && !m ? "<w:trPr><w:cantSplit/></w:trPr>" : ""}${cell(timeW, cellP(e.clock, { b: true, pt: 10, color: e.kind === "break" ? "64748B" : undefined }))}${cell(contentW - timeW, inner)}</w:tr>`;
+    return `<w:tr>${paras.length <= 6 && !m ? "<w:trPr><w:cantSplit/></w:trPr>" : ""}${cell(timeW, cellP(e.clock, { b: true, pt: PT.body, color: e.kind === "break" ? "64748B" : undefined }))}${cell(contentW - timeW, inner)}</w:tr>`;
   }).join("");
   const border = (side: string, sz: number, color: string) => `<w:${side} w:val="single" w:sz="${sz}" w:space="0" w:color="${color}"/>`;
   return [
-    `<w:p><w:pPr><w:spacing w:before="0" w:after="40"/></w:pPr>${textRun(kicker(o.project), { b: true, pt: 7.5, color: "64748B" })}</w:p>`,
-    `<w:p><w:pPr><w:keepNext/><w:spacing w:before="0" w:after="40"/></w:pPr>${textRun(headingOf(l), { b: true, pt: 14 })}</w:p>`,
-    `<w:p><w:pPr><w:keepNext/><w:spacing w:before="0" w:after="160"/></w:pPr>${textRun(subOf(l), { pt: 9, color: "64748B" })}</w:p>`,
+    `<w:p><w:pPr><w:spacing w:before="0" w:after="40"/></w:pPr>${textRun(kicker(o.project), { pt: PT.caption, color: "64748B" })}</w:p>`,
+    `<w:p><w:pPr><w:keepNext/><w:spacing w:before="0" w:after="40"/></w:pPr>${textRun(headingOf(l), { b: true, pt: PT.title })}</w:p>`,
+    `<w:p><w:pPr><w:keepNext/><w:spacing w:before="0" w:after="160"/></w:pPr>${textRun(subOf(l), { pt: PT.caption, color: "64748B" })}</w:p>`,
     `<w:tbl><w:tblPr><w:tblW w:w="${tw(contentW)}" w:type="dxa"/><w:tblBorders>${border("top", 6, "CBD5E1")}${border("bottom", 6, "CBD5E1")}${border("insideH", 4, "E2E8F0")}</w:tblBorders><w:tblLayout w:type="fixed"/><w:tblCellMar><w:top w:w="70" w:type="dxa"/><w:left w:w="90" w:type="dxa"/><w:bottom w:w="50" w:type="dxa"/><w:right w:w="90" w:type="dxa"/></w:tblCellMar><w:tblLook w:val="0000"/></w:tblPr><w:tblGrid><w:gridCol w:w="${tw(timeW)}"/><w:gridCol w:w="${tw(contentW - timeW)}"/></w:tblGrid>${head}${rows}</w:tbl>`,
   ].join("");
 }
@@ -625,7 +630,7 @@ export async function hourlyLogDocx(logs: ShiftLog[], o: LogFileOpts): Promise<U
   zip.file("_rels/.rels", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="${REL}/officeDocument" Target="word/document.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/></Relationships>`);
   zip.file("docProps/core.xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><dc:title>${xe(`${o.project} - Hourly shift log`)}</dc:title></cp:coreProperties>`);
   zip.file("word/document.xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document ${NS}><w:body>${body}${sect}</w:body></w:document>`);
-  zip.file("word/styles.xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles ${NS}><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="${font}" w:hAnsi="${font}" w:eastAsia="${font}" w:cs="${font}"/><w:color w:val="0F172A"/><w:sz w:val="20"/><w:szCs w:val="20"/><w:lang w:val="en-US"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/></w:style><w:style w:type="table" w:default="1" w:styleId="TableNormal"><w:name w:val="Normal Table"/><w:uiPriority w:val="99"/><w:semiHidden/><w:tblPr><w:tblInd w:w="0" w:type="dxa"/><w:tblCellMar><w:top w:w="0" w:type="dxa"/><w:left w:w="108" w:type="dxa"/><w:bottom w:w="0" w:type="dxa"/><w:right w:w="108" w:type="dxa"/></w:tblCellMar></w:tblPr></w:style></w:styles>`);
+  zip.file("word/styles.xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles ${NS}><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="${font}" w:hAnsi="${font}" w:eastAsia="${font}" w:cs="${font}"/><w:color w:val="0F172A"/><w:sz w:val="21"/><w:szCs w:val="21"/><w:lang w:val="en-US"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/></w:style><w:style w:type="table" w:default="1" w:styleId="TableNormal"><w:name w:val="Normal Table"/><w:uiPriority w:val="99"/><w:semiHidden/><w:tblPr><w:tblInd w:w="0" w:type="dxa"/><w:tblCellMar><w:top w:w="0" w:type="dxa"/><w:left w:w="108" w:type="dxa"/><w:bottom w:w="0" w:type="dxa"/><w:right w:w="108" w:type="dxa"/></w:tblCellMar></w:tblPr></w:style></w:styles>`);
   zip.file("word/settings.xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:settings ${NS}><w:defaultTabStop w:val="720"/><w:characterSpacingControl w:val="doNotCompress"/><w:compat><w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="15"/></w:compat></w:settings>`);
   for (const p of parts) {
     zip.file(`word/${p.part.name}`, p.xml);
