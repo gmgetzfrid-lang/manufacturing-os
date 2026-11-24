@@ -540,7 +540,7 @@ function GraphPageInner() {
       {/* The band: where you are, what the map holds, and the controls
           that steer it. The canvas below keeps its category colors. */}
       <div className="shrink-0 px-3 sm:px-4 pt-3 sm:pt-4">
-      <PageHero size="md" overlap={false} className="!mb-3 !pb-5"
+      <PageHero size="md" overlap={false} compactOnPhone className="!mb-3 !pb-5 max-sm:!mb-2 max-sm:!pb-2"
         kicker="Intelligence"
         title={graphAnswer}
         sub={graphSub}
@@ -548,8 +548,9 @@ function GraphPageInner() {
         factsHero="none"
       >
         <ViewTabs tabs={INTELLIGENCE_VIEWS} />
-      <div className="mt-4 flex items-center gap-2 flex-wrap">
-        <div className="relative max-sm:w-full">
+      {/* On a phone: the search and the path button share one row. */}
+      <div className="mt-4 max-sm:mt-2 flex items-center gap-2 flex-wrap">
+        <div className="relative max-sm:basis-0 max-sm:grow max-sm:min-w-[12rem]">
           <Search className={bandInputIcon} />
           <input
             value={rawQuery}
@@ -558,7 +559,7 @@ function GraphPageInner() {
             placeholder="Find E-22, or ask a question…"
             title="Type to light up matching nodes. Press Enter to search what your documents SAY."
             aria-label="Find on the graph, or ask a question"
-            className={`${bandInput} !pr-20 sm:w-80 max-sm:text-base`}
+            className={`${bandInput} ${rawQuery.trim().length > 2 ? "!pr-20" : rawQuery ? "!pr-10" : ""} sm:w-80 max-sm:text-base`}
           />
           {/* Enter searches the TEXT, not the labels. A label filter can never
               answer "any standards about pipe supports" — the answer lives in
@@ -581,8 +582,8 @@ function GraphPageInner() {
         <button onClick={() => { setPathMode((v) => !v); setPathEnds({ from: null, to: null }); }}
           title="Pick two things and see how they connect"
           aria-pressed={pathMode}
-          className={`${quietBtn} ${pathMode ? "!bg-[var(--color-surface-2)] ring-1 ring-[var(--color-text-muted)]" : ""}`}>
-          <Route className="w-3.5 h-3.5" /> Connection path
+          className={`${quietBtn} max-sm:!h-11 shrink-0 ${pathMode ? "!bg-[var(--color-surface-2)] ring-1 ring-[var(--color-text-muted)]" : ""}`}>
+          <Route className="w-3.5 h-3.5" /> <span className="max-sm:hidden">Connection path</span><span className="sm:hidden">Path</span>
         </button>
 
         {/* Pivot the whole map with one tap. */}
@@ -622,8 +623,9 @@ function GraphPageInner() {
       </PageHero>
       </div>
 
-      {/* Map */}
-      <div className="relative flex-1 min-h-0">
+      {/* Map. On a phone it never shrinks below most of the screen: if the
+          band above grows, the page scrolls instead of squeezing the map. */}
+      <div className="relative flex-1 min-h-0 max-sm:min-h-[max(22rem,calc(100dvh-15rem))]">
         {error ? (
           <div className="px-3 sm:px-4 pt-2"><ErrorNote title="Couldn't load the graph." next={error} onRetry={() => window.location.reload()} /></div>
         ) : !view ? (

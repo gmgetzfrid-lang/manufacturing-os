@@ -67,6 +67,7 @@ export function PageHero({
   factsHero = "auto",
   children,
   size = "lg",
+  compactOnPhone = false,
   className = "",
 }: {
   /** Where you are (e.g. "Documents / Drawings"). */
@@ -90,11 +91,17 @@ export function PageHero({
   children?: React.ReactNode;
   /** "md" for detail pages whose answer is long. */
   size?: "lg" | "md";
+  /** On a phone: the answer in one small line, no kicker, no short line,
+   *  no facts. For a page whose real content needs the screen (a map). */
+  compactOnPhone?: boolean;
   /** Kept for older callers; the header never overlaps content now. */
   overlap?: boolean;
   className?: string;
 }) {
-  const big = size === "lg" ? "text-[24px] sm:text-[26px]" : "text-[21px] sm:text-[24px]";
+  const big = compactOnPhone
+    ? "text-[17px] sm:text-[24px]"
+    : size === "lg" ? "text-[24px] sm:text-[26px]" : "text-[21px] sm:text-[24px]";
+  const phoneHide = compactOnPhone ? "max-sm:hidden" : "";
   const list = (facts ?? []).slice(0, 4);
   const hi = heroIndex(list, factsHero);
   const hero = hi >= 0 ? list[hi] : null;
@@ -108,7 +115,7 @@ export function PageHero({
       <div aria-hidden className="page-top-sheet" />
       <header className={`page-head relative -mt-2 ${className}`}>
         {(back || kicker || tools) && (
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-2 min-h-10 mb-1.5">
+          <div className={`flex flex-wrap items-center gap-x-2 gap-y-2 min-h-10 mb-1.5 ${compactOnPhone && !back && !tools ? "max-sm:hidden" : ""}`}>
             {back && (back.href ? (
               <Link href={back.href} aria-label={back.label} title={back.label} className={backCls}>
                 <ChevronLeft className="w-5 h-5" />
@@ -125,9 +132,9 @@ export function PageHero({
         <div className="flex flex-wrap items-end gap-x-6 gap-y-4">
           <div className="min-w-0 flex-1 basis-[300px]">
             <h1 className={`font-display ${big} leading-[1.2] font-semibold tracking-[-0.005em] text-[var(--color-text)] [overflow-wrap:anywhere]`}>{title}</h1>
-            {sub && <p className="mt-1.5 text-[15px] sm:text-[16px] leading-snug text-[var(--color-text-muted)] max-w-[72ch]">{sub}</p>}
+            {sub && <p className={`${phoneHide} mt-1.5 text-[15px] sm:text-[16px] leading-snug text-[var(--color-text-muted)] max-w-[72ch]`}>{sub}</p>}
             {list.length > 0 && (
-              <dl className="mt-4 flex flex-wrap items-end gap-x-7 gap-y-3">
+              <dl className={`${phoneHide} mt-4 flex flex-wrap items-end gap-x-7 gap-y-3`}>
                 {hero && (
                   <div className="min-w-0 sm:mr-2">
                     <dt className="text-[13px] text-[var(--color-text-muted)] truncate">{hero.label}</dt>
@@ -146,7 +153,7 @@ export function PageHero({
           {primary && <div className="max-sm:hidden shrink-0">{primary}</div>}
         </div>
       </header>
-      {children && <div className="page-top-kids relative mt-4">{children}</div>}
+      {children && <div className={`page-top-kids relative mt-4 ${compactOnPhone ? "max-sm:mt-2" : ""}`}>{children}</div>}
       </div>
       {primary && (
         // On a phone the one action sits where a thumb reaches it (above the

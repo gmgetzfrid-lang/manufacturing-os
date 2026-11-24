@@ -1133,7 +1133,7 @@ function GlobeLegend({ info, nodes, gapIds, onGaps, onPick }: {
   const unplacedDocs = info.get("__unplaced__")?.docs ?? 0;
   const order: GlobeKind[] = ["area", "category", "asset", "docgroup", "document", "project", "group"];
   return (
-    <div className="absolute top-14 left-3 z-10 w-56 rounded-xl border border-white/10 bg-slate-950/75 backdrop-blur p-2.5 text-[13px] text-slate-200 space-y-1.5">
+    <div className="absolute top-14 max-sm:top-[6.5rem] left-3 z-10 w-56 max-sm:w-48 rounded-xl border border-white/10 bg-slate-950/75 backdrop-blur p-2.5 text-[13px] text-slate-200 space-y-1.5">
       {site && <div className="text-[var(--color-text-faint)]">{site.equipment} equipment · {site.docs} documents</div>}
       <div className="space-y-0.5">
         {order.filter((k) => counts.get(k)).map((k) => (

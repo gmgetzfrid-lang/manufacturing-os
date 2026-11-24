@@ -115,8 +115,10 @@ export default function GraphControls({
   };
 
   return (
+    // On a phone the row leaves room for Insights on the left and wraps
+    // (3D's Estate/Web drops under) instead of running over it.
     <div className="absolute top-2 right-3 z-10 flex flex-col items-end gap-2 max-h-[calc(100%-1rem)]">
-      <div className="flex items-center gap-1.5">
+      <div className="flex items-center justify-end flex-wrap gap-1.5 max-sm:max-w-[calc(100vw-11.5rem)]">
         {/* 2D / 3D — the switch people will reach for first. */}
         <div className="inline-flex rounded-full border border-[var(--color-border-strong)] bg-[var(--color-surface)]/90 backdrop-blur p-0.5 shadow-sm">
           <button onClick={() => onChange({ mode: "map" })} title="The estate as a tree: units, equipment, documents. Same map as Documents › Graph"
@@ -153,7 +155,7 @@ export default function GraphControls({
             open ? "border-[var(--color-text)] text-[var(--color-text)] bg-[var(--color-surface)]"
                  : "border-[var(--color-border-strong)] text-[var(--color-text)] bg-[var(--color-surface)]/90 backdrop-blur"
           }`}>
-          <SlidersHorizontal className="w-3.5 h-3.5" /> Settings
+          <SlidersHorizontal className="w-3.5 h-3.5" /> <span className="max-sm:sr-only">Settings</span>
         </button>
       </div>
 
