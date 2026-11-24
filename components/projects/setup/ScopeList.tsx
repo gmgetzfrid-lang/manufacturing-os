@@ -98,7 +98,8 @@ export default function ScopeList({ projectId, canManage, noSchedule, actorEmail
     <section className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden" aria-labelledby="scope-title">
       {fileInput}
       <div className="px-5 pt-4 pb-3 flex flex-wrap items-start gap-x-4 gap-y-2">
-        <div className="min-w-0 flex-1">
+        {/* On a phone the button goes under the title, so neither squeezes. */}
+        <div className="min-w-0 flex-1 basis-full sm:basis-auto">
           <h2 id="scope-title" className="font-display text-section font-semibold text-[var(--color-text)]">Scope <span className="font-normal text-[var(--color-text-muted)] tabular-nums">· {scope.items.length} work orders</span></h2>
           <p className="text-caption text-[var(--color-text-muted)] break-words">From {scope.source.file}, tab {scope.source.sheet}{last ? `, imported ${when(last.at)}${last.by ? ` by ${last.by}` : ""}` : ""}</p>
         </div>
