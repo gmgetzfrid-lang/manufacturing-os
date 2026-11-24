@@ -126,7 +126,7 @@ export default function SkillLibraryPage() {
       <button type="button" role="switch" aria-checked={opts.enabled} onClick={() => void guard(opts.id, opts.onToggle)} disabled={busyId === opts.id}
         aria-label={`${opts.name}: ${opts.enabled ? "on" : "off"}`}
         title={opts.enabled ? "Turn off: it stops running" : "Turn on"}
-        className="inline-flex items-center gap-2 text-[14px] font-semibold text-[var(--color-text)] disabled:opacity-50">
+        className="inline-flex items-center gap-2 text-body font-medium text-[var(--color-text)] disabled:opacity-50">
         <span className={`relative inline-flex w-9 h-5 rounded-full transition-colors ${opts.enabled ? "bg-[var(--color-main)]" : "bg-[var(--color-border-strong)]"}`}>
           <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-[var(--color-surface)] shadow transition-transform ${opts.enabled ? "translate-x-4" : ""}`} />
         </span>
@@ -138,7 +138,7 @@ export default function SkillLibraryPage() {
 
   // Whose: built-in, or shared org-wide or private, as plain words.
   const whosePill = (r: { builtin_key: string | null; visibility: string; created_by: string | null; created_by_name: string | null }) => (
-    <span className="text-[14px] text-[var(--color-text-muted)]">{whose(r)}</span>
+    <span className="text-body text-[var(--color-text-muted)]">{whose(r)}</span>
   );
 
   // Share and delete, in one menu per row.
@@ -163,12 +163,12 @@ export default function SkillLibraryPage() {
   ) : null;
 
   const head = (
-    <thead className="bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text-muted)] text-left">
+    <thead className="bg-[var(--color-surface-2)] text-body text-[var(--color-text-muted)] text-left">
       <tr>
-        <th className="font-semibold px-4 h-10">Skill</th>
-        <th className="font-semibold px-4 hidden md:table-cell">Kind</th>
-        <th className="font-semibold px-4 hidden sm:table-cell">Whose</th>
-        <th className="font-semibold px-2 sm:px-4 w-14 sm:w-24">On</th>
+        <th className="font-medium px-4 h-10">Skill</th>
+        <th className="font-medium px-4 hidden md:table-cell">Kind</th>
+        <th className="font-medium px-4 hidden sm:table-cell">Whose</th>
+        <th className="font-medium px-2 sm:px-4 w-14 sm:w-24">On</th>
         <th className="px-1 sm:px-2 w-[72px] sm:w-20"><span className="sr-only">Actions</span></th>
       </tr>
     </thead>
@@ -195,7 +195,7 @@ export default function SkillLibraryPage() {
         <SkeletonRows rows={5} cols={3} what="the skill library" />
       ) : notInstalled ? (
         <Card>
-          <p className="text-[15px] text-[var(--color-text-muted)]">
+          <p className="text-reading text-[var(--color-text-muted)]">
             Run the connection-skills and reasoning-skills migrations on your database, then reload.
             The built-ins add themselves.
           </p>
@@ -206,21 +206,21 @@ export default function SkillLibraryPage() {
           <section>
             <div className="flex items-end gap-3 mb-3 min-h-9">
               <div className="min-w-0 flex-1">
-                <h2 className="flex items-baseline gap-2.5 font-display text-[20px] leading-tight font-semibold text-[var(--color-text)]">
+                <h2 className="flex items-baseline gap-2.5 font-display text-section leading-tight font-semibold text-[var(--color-text)]">
                   Reasoning skills
                   {rskills && rskills.length > 0 && <span className="ui-count">{rskills.filter((x) => x.enabled).length} on</span>}
                 </h2>
-                <p className="mt-0.5 text-[14px] text-[var(--color-text-muted)]">What the AI carries when it answers. Each names when it applies, so several can be on.</p>
+                <p className="mt-0.5 text-body text-[var(--color-text-muted)]">What the AI carries when it answers. Each names when it applies, so several can be on.</p>
               </div>
               {buildButton("reasoning")}
             </div>
             <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
               {rskills === null ? (
-                <p className="px-4 py-3 text-[15px] text-[var(--color-text-muted)]">Run the reasoning-skills migration to unlock this list.</p>
+                <p className="px-4 py-3 text-reading text-[var(--color-text-muted)]">Run the reasoning-skills migration to unlock this list.</p>
               ) : rskills.length === 0 ? (
-                <p className="px-4 py-3 text-[15px] text-[var(--color-text-muted)]">No reasoning skills yet. Build one: &ldquo;when someone asks X, always do Y&rdquo;.</p>
+                <p className="px-4 py-3 text-reading text-[var(--color-text-muted)]">No reasoning skills yet. Build one: &ldquo;when someone asks X, always do Y&rdquo;.</p>
               ) : (
-                <table className="w-full text-[15px]">
+                <table className="w-full text-body">
                   {head}
                   <tbody className="divide-y divide-[var(--color-border)]">
                     {rskills.map((r) => {
@@ -230,20 +230,20 @@ export default function SkillLibraryPage() {
                           <td className="px-4 py-3 min-w-0">
                             <div className="min-w-0">
                             <div className="min-w-0 flex-1">
-                            <div className={`font-semibold ${r.enabled ? "text-[var(--color-text)]" : ""}`}>{r.name}</div>
-                            {r.description && <p className="mt-0.5 text-[14px] text-[var(--color-text-muted)] line-clamp-2 max-w-[80ch]">{r.description}</p>}
+                            <div className={`font-medium ${r.enabled ? "text-[var(--color-text)]" : ""}`}>{r.name}</div>
+                            {r.description && <p className="mt-0.5 text-body text-[var(--color-text-muted)] line-clamp-2 max-w-[80ch]">{r.description}</p>}
                             <div className="sm:hidden mt-1">{whosePill(r)}</div>
                             {/* The pack itself, on demand. */}
                             <details className="group mt-1">
-                              <summary className="cursor-pointer list-none [&::-webkit-details-marker]:hidden inline-flex text-[14px] text-[var(--color-accent-text)] hover:underline">
+                              <summary className="cursor-pointer list-none [&::-webkit-details-marker]:hidden inline-flex text-body text-[var(--color-accent-text)] hover:underline">
                                 <span className="group-open:hidden">View the discipline</span><span className="hidden group-open:inline">Hide the discipline</span>
                               </summary>
-                              <pre className="mt-1.5 whitespace-pre-wrap text-[14px] leading-relaxed text-[var(--color-text-muted)] border-l-2 border-[var(--color-border-strong)] pl-3 max-h-48 overflow-y-auto font-sans">{r.instructions}</pre>
+                              <pre className="mt-1.5 whitespace-pre-wrap text-body leading-relaxed text-[var(--color-text-muted)] border-l-2 border-[var(--color-border-strong)] pl-3 max-h-48 overflow-y-auto font-sans">{r.instructions}</pre>
                             </details>
                             </div>
                             </div>
                           </td>
-                          <td className="px-4 py-3 hidden md:table-cell whitespace-nowrap text-[14px] text-[var(--color-text-muted)]">Answer discipline</td>
+                          <td className="px-4 py-3 hidden md:table-cell whitespace-nowrap text-body text-[var(--color-text-muted)]">Answer discipline</td>
                           <td className="px-4 py-3 hidden sm:table-cell">{whosePill(r)}</td>
                           <td className="px-2 sm:px-4 py-3">{toggleButton({ id: r.id, name: r.name, enabled: r.enabled, mayManage, onToggle: () => setAnswerSkillEnabled(r.id, !r.enabled) })}</td>
                           <td className="px-1 sm:px-2 py-2">{rowActions({
@@ -264,13 +264,13 @@ export default function SkillLibraryPage() {
           <section>
             <div className="flex items-end gap-3 mb-3 min-h-9">
               <div className="min-w-0 flex-1">
-                <h2 className="flex items-baseline gap-2.5 font-display text-[20px] leading-tight font-semibold text-[var(--color-text)]">
+                <h2 className="flex items-baseline gap-2.5 font-display text-section leading-tight font-semibold text-[var(--color-text)]">
                   Connection skills
                   {rules && rules.length > 0 && <span className="ui-count">{rules.filter((x) => x.enabled).length} on</span>}
                 </h2>
-                <p className="mt-0.5 text-[14px] text-[var(--color-text-muted)]">
+                <p className="mt-0.5 text-body text-[var(--color-text-muted)]">
                   Detectors that grow the org graph; they run with &ldquo;Find connections&rdquo; and findings wait for review.{" "}
-                  <Link href="/admin/proposed-links" className="font-semibold text-[var(--color-accent-text)] hover:underline underline-offset-2">
+                  <Link href="/admin/proposed-links" className="font-medium text-[var(--color-accent-text)] hover:underline underline-offset-2">
                     Review what they found
                   </Link>
                 </p>
@@ -279,11 +279,11 @@ export default function SkillLibraryPage() {
             </div>
             <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
               {rules === null ? (
-                <p className="px-4 py-3 text-[15px] text-[var(--color-text-muted)]">Run the connection-skills migration to unlock this list.</p>
+                <p className="px-4 py-3 text-reading text-[var(--color-text-muted)]">Run the connection-skills migration to unlock this list.</p>
               ) : rules.length === 0 ? (
-                <p className="px-4 py-3 text-[15px] text-[var(--color-text-muted)]">No connection skills yet. Describe your facility&apos;s numbering convention and your AI drafts the detector.</p>
+                <p className="px-4 py-3 text-reading text-[var(--color-text-muted)]">No connection skills yet. Describe your facility&apos;s numbering convention and your AI drafts the detector.</p>
               ) : (
-                <table className="w-full text-[15px]">
+                <table className="w-full text-body">
                   {head}
                   <tbody className="divide-y divide-[var(--color-border)]">
                     {rules.map((r) => {
@@ -294,23 +294,23 @@ export default function SkillLibraryPage() {
                           <td className="px-4 py-3 min-w-0">
                             <div className="min-w-0">
                             <div className="min-w-0 flex-1">
-                            <div className={`font-semibold ${r.enabled ? "text-[var(--color-text)]" : ""}`}>{r.name}</div>
-                            {r.description && <p className="mt-0.5 text-[14px] text-[var(--color-text-muted)] line-clamp-2 max-w-[80ch]">{r.description}</p>}
-                            <div className="sm:hidden mt-1 text-[13px] text-[var(--color-text-muted)]">{meta.label} · {whose(r)}</div>
+                            <div className={`font-medium ${r.enabled ? "text-[var(--color-text)]" : ""}`}>{r.name}</div>
+                            {r.description && <p className="mt-0.5 text-body text-[var(--color-text-muted)] line-clamp-2 max-w-[80ch]">{r.description}</p>}
+                            <div className="sm:hidden mt-1 text-body text-[var(--color-text-muted)]">{meta.label} · {whose(r)}</div>
                             {(r.config?.patterns?.length ?? 0) > 0 && (
                               <div className="mt-1.5 flex items-center gap-1 flex-wrap">
                                 {r.config.patterns!.slice(0, 3).map((pt) => (
-                                  <code key={pt} className="ui-tag !font-mono !text-[12px] !h-6 max-w-full truncate">{pt}</code>
+                                  <code key={pt} className="ui-tag !font-mono !text-caption !h-6 max-w-full truncate">{pt}</code>
                                 ))}
                                 {(r.config.patterns!.length > 3) && (
-                                  <span className="text-[13px] text-[var(--color-text-muted)]" title={r.config.patterns!.slice(3).join("\n")}>and {r.config.patterns!.length - 3} more</span>
+                                  <span className="text-body text-[var(--color-text-muted)]" title={r.config.patterns!.slice(3).join("\n")}>and {r.config.patterns!.length - 3} more</span>
                                 )}
                               </div>
                             )}
                             </div>
                             </div>
                           </td>
-                          <td className="px-4 py-3 hidden md:table-cell whitespace-nowrap text-[14px] text-[var(--color-text-muted)]">{meta.label}</td>
+                          <td className="px-4 py-3 hidden md:table-cell whitespace-nowrap text-body text-[var(--color-text-muted)]">{meta.label}</td>
                           <td className="px-4 py-3 hidden sm:table-cell">{whosePill(r)}</td>
                           <td className="px-2 sm:px-4 py-3">{toggleButton({ id: r.id, name: r.name, enabled: r.enabled, mayManage, onToggle: () => setLinkRuleEnabled(r.id, !r.enabled) })}</td>
                           <td className="px-1 sm:px-2 py-2">{rowActions({

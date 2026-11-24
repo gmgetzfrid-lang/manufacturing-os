@@ -18,10 +18,10 @@ import { tryUpload } from "@/lib/uploadRetry";
 import FileThumb from "@/components/ui/FileThumb";
 import { sayError } from "@/components/projects/sayError";
 
-const field = "h-9 w-full rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-[13px] text-[var(--color-text)]";
-const label = "block text-[13px] font-semibold text-[var(--color-text-muted)] mb-1";
-const primary = "inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[12px] font-semibold hover:bg-[var(--color-accent-hover)] disabled:opacity-50";
-const quiet = "inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-[var(--color-border-strong)] text-[12px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50";
+const field = "h-9 w-full rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-body text-[var(--color-text)]";
+const label = "block text-body font-medium text-[var(--color-text-muted)] mb-1";
+const primary = "inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-caption font-medium hover:bg-[var(--color-accent-hover)] disabled:opacity-50";
+const quiet = "inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-[var(--color-border-strong)] text-caption font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50";
 
 const dateOf = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : "");
 
@@ -47,27 +47,27 @@ export function AfeCard({ orgId, projectId, afe, linesTotal, cur, canManage, act
       <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
         <div>
           <div className={label}>AFE</div>
-          <div className="text-[15px] font-semibold text-[var(--color-text)]">{a.afeNumber || <span className="text-[var(--color-text-faint)] font-bold">No number</span>}</div>
+          <div className="text-reading font-medium text-[var(--color-text)]">{a.afeNumber || <span className="text-[var(--color-text-faint)] font-medium">No number</span>}</div>
         </div>
         <div>
           <div className={label}>Authorized</div>
-          <div className="text-[15px] font-semibold tabular-nums text-[var(--color-text)]">{a.authorized != null ? fmtMoney(a.authorized, cur) : <span className="text-[var(--color-text-faint)] font-bold">Not set</span>}</div>
+          <div className="text-reading font-medium tabular-nums text-[var(--color-text)]">{a.authorized != null ? fmtMoney(a.authorized, cur) : <span className="text-[var(--color-text-faint)] font-medium">Not set</span>}</div>
         </div>
         {a.chargeAccount && (
           <div>
             <div className={label}>Charge account</div>
-            <div className="text-[13px] font-display tabular-nums text-[var(--color-text)]">{a.chargeAccount}</div>
+            <div className="text-body font-display tabular-nums text-[var(--color-text)]">{a.chargeAccount}</div>
           </div>
         )}
         <div>
           <div className={label}>Budget lines</div>
-          <div className="text-[13px] tabular-nums text-[var(--color-text)]">
+          <div className="text-body tabular-nums text-[var(--color-text)]">
             <b>{fmtMoney(linesTotal, cur)}</b>
-            {left != null && Math.abs(left) >= 1 && <span className={left < 0 ? " text-[var(--state-overdue-text)] font-bold" : " text-[var(--color-text-muted)]"}>{left < 0 ? ` · ${fmtMoney(-left, cur)} more than authorized` : ` · ${fmtMoney(left, cur)} not on a line yet`}</span>}
+            {left != null && Math.abs(left) >= 1 && <span className={left < 0 ? " text-[var(--state-overdue-text)] font-medium" : " text-[var(--color-text-muted)]"}>{left < 0 ? ` · ${fmtMoney(-left, cur)} more than authorized` : ` · ${fmtMoney(left, cur)} not on a line yet`}</span>}
           </div>
         </div>
         <div className="ml-auto flex items-center gap-1.5">
-          {fileOf(a.docId) && <PreviewButton file={fileOf(a.docId)} label="See the AFE" className="!text-[12px] !px-2.5 !py-1.5 border border-[var(--color-border-strong)] !text-[var(--color-text)]" />}
+          {fileOf(a.docId) && <PreviewButton file={fileOf(a.docId)} label="See the AFE" className="!text-caption !px-2.5 !py-1.5 border border-[var(--color-border-strong)] !text-[var(--color-text)]" />}
           {canManage && !editing && <button type="button" onClick={() => setEditing(true)} className={quiet}><Pencil className="w-3.5 h-3.5" /> Edit AFE</button>}
         </div>
       </div>
@@ -78,15 +78,15 @@ export function AfeCard({ orgId, projectId, afe, linesTotal, cur, canManage, act
       )}
       {history && history.length > 0 && (
         <div>
-          <button type="button" onClick={() => setShowHistory((v) => !v)} className="inline-flex items-center gap-1 text-[13px] text-[var(--color-accent-text)] hover:underline">
+          <button type="button" onClick={() => setShowHistory((v) => !v)} className="inline-flex items-center gap-1 text-body text-[var(--color-accent-text)] hover:underline">
             <History className="w-3.5 h-3.5" /> {showHistory ? "Hide" : "Show"} AFE changes · {history.filter((h) => h.at).length}
           </button>
           {showHistory && (
-            <ol className="mt-1.5 rounded-lg border border-[var(--color-border)] divide-y divide-[var(--color-border)] text-[12px]">
+            <ol className="mt-1.5 rounded-lg border border-[var(--color-border)] divide-y divide-[var(--color-border)] text-caption">
               {history.map((h, i) => (
                 <li key={i} className="px-3 py-1.5 flex flex-wrap gap-x-2">
                   <span className="text-[var(--color-text-muted)] w-24 shrink-0">{h.at ? dateOf(h.at) : "Original"}</span>
-                  <span className="font-bold tabular-nums text-[var(--color-text)]">{h.authorized != null ? fmtMoney(h.authorized, cur) : "-"}</span>
+                  <span className="font-medium tabular-nums text-[var(--color-text)]">{h.authorized != null ? fmtMoney(h.authorized, cur) : "-"}</span>
                   {h.afeNumber && <span className="font-display tabular-nums text-[var(--color-text-muted)]">{h.afeNumber}</span>}
                   {h.note && <span className="text-[var(--color-text)]">· {h.note}</span>}
                   {h.by && <span className="text-[var(--color-text-faint)]">· {h.by}</span>}
@@ -152,13 +152,13 @@ export function AfeEditor({ orgId, projectId, afe, actor, cur, onCancel, onSaved
           {!file && <FileUp className="w-3.5 h-3.5" />} <span className="truncate">{drag.over ? drag.say : file ? `${file.name} · ${fileSize(file.size)}` : "Replace the AFE document"}</span>
           <input type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg" className="sr-only" onChange={(e) => { setFile(e.target.files?.[0] ?? null); e.target.value = ""; }} />
         </label>
-        {file && <button type="button" onClick={() => setFile(null)} className="text-[12px] text-[var(--color-text-muted)] underline">Keep the current one</button>}
-        <span className="text-[11px] text-[var(--color-text-faint)]">{file ? "The old document stays on file." : "Or drop it here. The old document stays on file."}</span>
+        {file && <button type="button" onClick={() => setFile(null)} className="text-caption text-[var(--color-text-muted)] underline">Keep the current one</button>}
+        <span className="text-caption text-[var(--color-text-faint)]">{file ? "The old document stays on file." : "Or drop it here. The old document stays on file."}</span>
       </div>
-      {err && <div role="alert" className="text-[12px] text-[var(--state-overdue-text)]">{err}</div>}
+      {err && <div role="alert" className="text-caption text-[var(--state-overdue-text)]">{err}</div>}
       <div className="flex gap-2">
         <button type="button" onClick={() => void save()} disabled={busy || !changed} className={quietSave ? quiet : primary}>{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} Save AFE</button>
-        <button type="button" onClick={onCancel} disabled={busy} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>
+        <button type="button" onClick={onCancel} disabled={busy} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>
       </div>
     </div>
   );
@@ -232,10 +232,10 @@ export function LineEditor({ orgId, projectId, account, parties, actor, onCancel
           <input id={`lw-${account.id}`} value={note} onChange={(e) => setNote(e.target.value)} className={field} placeholder="e.g. Revised quote after the scope walk" />
         </div>
       </div>
-      {err && <div className="text-[12px] text-[var(--state-overdue-text)]">{err}</div>}
+      {err && <div className="text-caption text-[var(--state-overdue-text)]">{err}</div>}
       <div className="flex gap-2">
         <button type="button" onClick={() => void save()} disabled={busy} className={primary}>{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} Save line</button>
-        <button type="button" onClick={onCancel} disabled={busy} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>
+        <button type="button" onClick={onCancel} disabled={busy} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>
       </div>
     </div>
   );
@@ -245,8 +245,8 @@ export function LineEditor({ orgId, projectId, account, parties, actor, onCancel
 export function BudgetHistory({ changes, cur }: { changes: BudgetChange[]; cur: string }) {
   if (!changes.length) return null;
   return (
-    <div className="text-[12px]">
-      <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-0.5">Budget changes</div>
+    <div className="text-caption">
+      <div className="text-body font-medium text-[var(--color-text-muted)] mb-0.5">Budget changes</div>
       <ol className="space-y-0.5">
         {changes.map((c, i) => (
           <li key={i} className="text-[var(--color-text)]">
@@ -282,7 +282,7 @@ export function EntryRevise({ orgId, projectId, entry, cur, actor, onDone, onCan
       <div className="flex-1 min-w-[12rem]"><label className={label} htmlFor={`ew-${entry.id}`}>Why</label><input id={`ew-${entry.id}`} value={note} onChange={(e) => setNote(e.target.value)} className={field} placeholder="e.g. Revised quote 11/02" /></div>
       <button type="button" onClick={() => void save()} disabled={busy} className={primary}>{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} Save</button>
       <button type="button" onClick={onCancel} disabled={busy} aria-label="Cancel" className="p-2 text-[var(--color-text-muted)] hover:text-[var(--color-text)]"><X className="w-4 h-4" /></button>
-      {err && <div className="w-full text-[12px] text-[var(--state-overdue-text)]">{err}</div>}
+      {err && <div className="w-full text-caption text-[var(--state-overdue-text)]">{err}</div>}
     </div>
   );
 }

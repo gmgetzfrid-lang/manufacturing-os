@@ -161,7 +161,7 @@ function Strips({ libs, projects, orgId }: { libs: LibRow[] | null; projects: Pr
   const both = !!libs?.length && !!projects?.length;
   const go = (href: string) => transitionPush(router, href);
   const outCell = (l: LibRow) => l.out == null ? <span className="text-[var(--color-text-faint)]">–</span>
-    : l.out > 0 ? <span className="font-semibold tabular-nums text-[var(--state-held-text)]">{num(l.out)}</span>
+    : l.out > 0 ? <span className="font-medium tabular-nums text-[var(--state-held-text)]">{num(l.out)}</span>
       : <span className="tabular-nums text-[var(--color-text-faint)]">0</span>;
   const docsCell = (l: LibRow) => l.docs == null ? <span className="text-[var(--color-text-faint)]">–</span>
     : <span className={`tabular-nums ${l.docs === 0 ? "text-[var(--color-text-faint)]" : "text-[var(--color-text)]"}`}>{num(l.docs)}</span>;
@@ -171,10 +171,10 @@ function Strips({ libs, projects, orgId }: { libs: LibRow[] | null; projects: Pr
       {!!libs?.length && (
         <section aria-label="Libraries" className="min-w-0">
           <SectionHead title="Libraries" count={libs.length > 1 ? libs.length : undefined}>
-            <Link href="/documents" className={`text-[14px] ${link}`}>All documents</Link>
+            <Link href="/documents" className={`text-body ${link}`}>All documents</Link>
           </SectionHead>
           <div className={`${sheet} @container`}>
-            <table className="hidden @[30rem]:table w-full text-[15px]">
+            <table className="hidden @[30rem]:table w-full text-body">
               <thead className={thead}>
                 <tr>
                   <th className={th}>Library</th>
@@ -188,12 +188,12 @@ function Strips({ libs, projects, orgId }: { libs: LibRow[] | null; projects: Pr
                   <tr key={l.id} className={rowHover} onClick={() => go(`/documents/${l.id}`)}>
                     <td className="px-4 py-2.5 max-w-0 w-[34%]">
                       <Link href={`/documents/${l.id}`} onClick={(e) => { e.stopPropagation(); onTransitionClick(e, () => router.push(`/documents/${l.id}`)); }}
-                        className="block truncate font-semibold text-[var(--color-text)] hover:text-[var(--color-accent-text)]">{l.name}</Link>
-                      <span className="@[44rem]:hidden block mt-0.5 text-[13px] truncate"><Changed last={l.last} /></span>
+                        className="block truncate font-medium text-[var(--color-text)] hover:text-[var(--color-accent-text)]">{l.name}</Link>
+                      <span className="@[44rem]:hidden block mt-0.5 text-body truncate"><Changed last={l.last} /></span>
                     </td>
                     <td className="px-4 py-2.5 text-right whitespace-nowrap">{docsCell(l)}</td>
                     <td className="px-4 py-2.5 text-right whitespace-nowrap">{outCell(l)}</td>
-                    <td className="hidden @[44rem]:table-cell px-4 py-2.5 max-w-0 text-[14px]"><div className="flex min-w-0"><Changed last={l.last} /></div></td>
+                    <td className="hidden @[44rem]:table-cell px-4 py-2.5 max-w-0 text-body"><div className="flex min-w-0"><Changed last={l.last} /></div></td>
                   </tr>
                 ))}
               </tbody>
@@ -203,12 +203,12 @@ function Strips({ libs, projects, orgId }: { libs: LibRow[] | null; projects: Pr
               {libs.map((l) => (
                 <li key={l.id}>
                   <Link href={`/documents/${l.id}`} onClick={(e) => onTransitionClick(e, () => router.push(`/documents/${l.id}`))} className="block px-4 py-3 hover:bg-[var(--color-surface-2)]">
-                    <span className="block truncate font-semibold text-[15px] text-[var(--color-text)]">{l.name}</span>
-                    <span className="mt-0.5 flex flex-wrap gap-x-4 text-[13px] text-[var(--color-text-muted)]">
+                    <span className="block truncate font-medium text-reading text-[var(--color-text)]">{l.name}</span>
+                    <span className="mt-0.5 flex flex-wrap gap-x-4 text-body text-[var(--color-text-muted)]">
                       <span>Documents {docsCell(l)}</span>
                       <span>Checked out {outCell(l)}</span>
                     </span>
-                    <span className="mt-0.5 flex min-w-0 text-[13px]"><Changed last={l.last} /></span>
+                    <span className="mt-0.5 flex min-w-0 text-body"><Changed last={l.last} /></span>
                   </Link>
                 </li>
               ))}
@@ -219,10 +219,10 @@ function Strips({ libs, projects, orgId }: { libs: LibRow[] | null; projects: Pr
       {!!projects?.length && (
         <section aria-label="Your projects" className="min-w-0">
           <SectionHead title={projects.length === 1 ? "Your project" : "Your projects"} count={projects.length > 1 ? projects.length : undefined}>
-            <Link href="/projects" className={`text-[14px] ${link}`}>All projects</Link>
+            <Link href="/projects" className={`text-body ${link}`}>All projects</Link>
           </SectionHead>
           <div className={`${sheet} @container`}>
-            <table className="hidden @[36rem]:table w-full text-[15px]">
+            <table className="hidden @[36rem]:table w-full text-body">
               <thead className={thead}>
                 <tr>
                   <th className={th}>Project</th>
@@ -238,9 +238,9 @@ function Strips({ libs, projects, orgId }: { libs: LibRow[] | null; projects: Pr
                     <td className="relative px-4 py-2.5 max-w-0 w-full">
                       {p.late && (progress.get(p.id)?.pct ?? 0) < 100 && <LateEdge />}
                       <Link href={`/projects/${p.id}`} onClick={(e) => { e.stopPropagation(); onTransitionClick(e, () => router.push(`/projects/${p.id}`)); }}
-                        className="block truncate font-semibold text-[var(--color-text)] hover:text-[var(--color-accent-text)]">{p.name}</Link>
+                        className="block truncate font-medium text-[var(--color-text)] hover:text-[var(--color-accent-text)]">{p.name}</Link>
                       {(progress.get(p.id) !== undefined || p.moc) && (
-                        <span className="mt-1 flex items-center gap-x-4 gap-y-1 flex-wrap text-[13px] text-[var(--color-text-muted)]">
+                        <span className="mt-1 flex items-center gap-x-4 gap-y-1 flex-wrap text-body text-[var(--color-text-muted)]">
                           {(() => {
                             const pr = progress.get(p.id);
                             if (pr) return <WorkBar pct={pr.pct} late={p.late && pr.pct < 100} width="w-28" title={`${pr.done} of ${pr.steps} steps done`} />;
@@ -253,7 +253,7 @@ function Strips({ libs, projects, orgId }: { libs: LibRow[] | null; projects: Pr
                     </td>
                     <td className="px-4 py-2.5 whitespace-nowrap"><ProjState p={p} pct={progress.get(p.id)?.pct} /></td>
                     <td className="hidden @[52rem]:table-cell px-4 py-2.5 text-[var(--color-text-muted)] whitespace-nowrap">{p.owner ?? "–"}</td>
-                    <td className={`px-4 py-2.5 whitespace-nowrap text-[14px] ${p.late && (progress.get(p.id)?.pct ?? 0) < 100 ? "font-semibold text-[var(--state-overdue-text)]" : "text-[var(--color-text)]"}`}>
+                    <td className={`px-4 py-2.5 whitespace-nowrap text-body ${p.late && (progress.get(p.id)?.pct ?? 0) < 100 ? "font-medium text-[var(--state-overdue-text)]" : "text-[var(--color-text)]"}`}>
                       {p.due ?? <span className="text-[var(--color-text-muted)]">–</span>}
                     </td>
                     <td className="hidden @[44rem]:table-cell px-4 py-2.5 text-[var(--color-text-muted)] whitespace-nowrap">{agoWords(p.lastActivity) || "–"}</td>
@@ -270,12 +270,12 @@ function Strips({ libs, projects, orgId }: { libs: LibRow[] | null; projects: Pr
                     {p.late && (pr?.pct ?? 0) < 100 && <LateEdge />}
                     <Link href={`/projects/${p.id}`} onClick={(e) => onTransitionClick(e, () => router.push(`/projects/${p.id}`))} className="block px-4 py-3 hover:bg-[var(--color-surface-2)]">
                       <span className="flex items-center gap-3">
-                        <span className="min-w-0 flex-1 truncate font-semibold text-[15px] text-[var(--color-text)]">{p.name}</span>
+                        <span className="min-w-0 flex-1 truncate font-medium text-reading text-[var(--color-text)]">{p.name}</span>
                         <ProjState p={p} pct={pr?.pct} />
                       </span>
-                      <span className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-[13px] text-[var(--color-text-muted)]">
+                      <span className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-body text-[var(--color-text-muted)]">
                         {pr && <WorkBar pct={pr.pct} late={p.late && pr.pct < 100} width="w-20" title={`${pr.done} of ${pr.steps} steps done`} />}
-                        {p.due && <span className={p.late && (pr?.pct ?? 0) < 100 ? "font-semibold text-[var(--state-overdue-text)]" : ""}>{p.due}</span>}
+                        {p.due && <span className={p.late && (pr?.pct ?? 0) < 100 ? "font-medium text-[var(--state-overdue-text)]" : ""}>{p.due}</span>}
                         {p.lastActivity && <span>Last activity {agoWords(p.lastActivity).replace(/^(Just now|Yesterday)$/, (m) => m.toLowerCase())}</span>}
                       </span>
                     </Link>

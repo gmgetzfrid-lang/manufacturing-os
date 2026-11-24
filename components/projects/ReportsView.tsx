@@ -452,11 +452,11 @@ export default function ReportsView(p: Props) {
   const today = dayKey(now, tz);
 
   // ── Pieces ──
-  const seg = (on: boolean) => `h-8 px-3 text-[13px] font-semibold ${on ? "bg-[var(--color-surface-2)] text-[var(--color-text)] ring-1 ring-inset ring-[var(--color-text)]" : "bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`;
+  const seg = (on: boolean) => `h-8 px-3 text-body font-medium ${on ? "bg-[var(--color-surface-2)] text-[var(--color-text)] ring-1 ring-inset ring-[var(--color-text)]" : "bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`;
   // A labeled line of choices (a function, not a component: its inputs keep focus).
   const row = (label: string, children: React.ReactNode) => (
     <div className="grid grid-cols-[88px_1fr] sm:grid-cols-[100px_1fr] items-center gap-2 min-h-9">
-      <span className="text-[12px] font-semibold text-[var(--color-text-muted)]">{label}</span>
+      <span className="text-caption font-medium text-[var(--color-text-muted)]">{label}</span>
       <div className="flex flex-wrap items-center gap-1.5 min-w-0">{children}</div>
     </div>
   );
@@ -468,8 +468,8 @@ export default function ReportsView(p: Props) {
         ))}
       </span>
       <input type="date" value={shift.dayKey} max={today} onChange={(e) => { if (e.target.value) setShiftPick({ dayKey: e.target.value, kind: shift.kind }); }} aria-label="Date"
-        className="h-8 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12px] text-[var(--color-text)]" />
-      {shiftPick && <button type="button" onClick={() => setShiftPick(null)} className="h-8 px-2.5 rounded-lg border border-[var(--color-border)] text-[12px] font-semibold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]">Current shift</button>}
+        className="h-8 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-caption text-[var(--color-text)]" />
+      {shiftPick && <button type="button" onClick={() => setShiftPick(null)} className="h-8 px-2.5 rounded-lg border border-[var(--color-border)] text-caption font-medium text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]">Current shift</button>}
     </>)
   );
   // What the hourly log and the time log cover: the whole project, some days, one shift.
@@ -484,11 +484,11 @@ export default function ReportsView(p: Props) {
       </>)}
       {cover === "range" && row("Days", <>
         <input type="date" value={days.from} max={days.to} onChange={(e) => { if (e.target.value) setRange({ from: e.target.value, to: days.to < e.target.value ? e.target.value : days.to }); }} aria-label="From"
-          className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12px] text-[var(--color-text)]" />
-        <span className="text-[12px] text-[var(--color-text-muted)]">to</span>
+          className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-caption text-[var(--color-text)]" />
+        <span className="text-caption text-[var(--color-text-muted)]">to</span>
         <input type="date" value={days.to} min={days.from} onChange={(e) => { if (e.target.value) setRange({ from: days.from > e.target.value ? e.target.value : days.from, to: e.target.value }); }} aria-label="To"
-          className="h-8 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12px] text-[var(--color-text)]" />
-        <span className="text-[12px] text-[var(--color-text-muted)]">day and night shifts</span>
+          className="h-8 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-caption text-[var(--color-text)]" />
+        <span className="text-caption text-[var(--color-text-muted)]">day and night shifts</span>
       </>)}
       {cover === "shift" && shiftRow}
     </>
@@ -497,16 +497,16 @@ export default function ReportsView(p: Props) {
   // to add one, right here: Setup opens at Printed reports, in place.
   const lhRow = sel !== "sheet" && sel !== "timelog" && !(sel === "hourly" && format === "xlsx") ? (
     lh ? row("Letterhead", <>
-      <label className="inline-flex items-center gap-2 text-[12px] cursor-pointer select-none">
+      <label className="inline-flex items-center gap-2 text-caption cursor-pointer select-none">
         <input type="checkbox" checked={useLh} onChange={(e) => setUseLh(e.target.checked)} className="w-4 h-4 accent-[var(--color-text)]" />
-        <span className="font-semibold">{lh.name || "Company letterhead"}</span>
+        <span className="font-medium">{lh.name || "Company letterhead"}</span>
       </label>
-    </>) : row("Letterhead", <span className="text-[12px] text-[var(--color-text-muted)]">
-      Plain pages, the app default.{p.canEdit && <> <button type="button" onClick={() => requestSetup("print")} className="font-semibold text-[var(--color-accent-text)] hover:underline">Add the company letterhead</button></>}
+    </>) : row("Letterhead", <span className="text-caption text-[var(--color-text-muted)]">
+      Plain pages, the app default.{p.canEdit && <> <button type="button" onClick={() => requestSetup("print")} className="font-medium text-[var(--color-accent-text)] hover:underline">Add the company letterhead</button></>}
     </span>)
   ) : null;
-  const primary = "inline-flex items-center gap-1.5 h-9 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[13px] font-bold hover:bg-[var(--color-accent-hover)] disabled:opacity-50";
-  const secondary = "inline-flex items-center gap-1.5 h-9 px-3.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50";
+  const primary = "inline-flex items-center gap-1.5 h-10 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-body font-medium hover:bg-[var(--color-accent-hover)] disabled:opacity-50";
+  const secondary = "inline-flex items-center gap-1.5 h-10 px-3.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50";
 
   const options = (
     <div className="space-y-2">
@@ -524,19 +524,19 @@ export default function ReportsView(p: Props) {
       {sel === "timelog" && (
         <>
           {coverRows}
-          {row("Format", <><span className="text-[12px] font-semibold">Excel</span></>)}
+          {row("Format", <><span className="text-caption font-medium">Excel</span></>)}
         </>
       )}
       {sel === "workorders" && (
         <>
           {row("Which", <>
             <select value={woShow} onChange={(e) => { const v = e.target.value as Show | "one"; setWoShow(v); setWoAlso([]); if (v === "one" && !woKey) setWoKey(orders[0]?.key ?? ""); }} aria-label="Which work orders"
-              className="h-8 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12px] text-[var(--color-text)]">
+              className="h-8 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-caption text-[var(--color-text)]">
               {SHOWS.map(([k, l]) => <option key={k} value={k}>{l} ({findOrders(orders, woQuery).filter((o) => showsOrder(o, k, p.marks) && passes(wc, o.owner, woUnits, woTypes)).length})</option>)}
               <option value="one">One work order</option>
             </select>
             {woShow !== "one" && woQuery.trim() && (
-              <span className="inline-flex items-center gap-1 h-7 px-2 rounded-full bg-[var(--color-surface-2)] text-[12px] font-semibold">“{woQuery.trim()}”
+              <span className="inline-flex items-center gap-1 h-8 px-2 rounded-full bg-[var(--color-surface-2)] text-caption font-medium">“{woQuery.trim()}”
                 <button type="button" onClick={() => { setWoQuery(""); setWoAlso([]); }} aria-label="Clear the search" className="text-[var(--color-text-muted)]"><X className="w-3.5 h-3.5" /></button>
               </span>
             )}
@@ -547,13 +547,13 @@ export default function ReportsView(p: Props) {
           {woShow === "one" && (
             row("Work order", <>
               <select value={woKey} onChange={(e) => setWoKey(e.target.value)} aria-label="Work order"
-                className="h-8 pointer-coarse:h-11 w-full max-w-[420px] rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12px] text-[var(--color-text)]">
+                className="h-8 pointer-coarse:h-11 w-full max-w-[420px] rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-caption text-[var(--color-text)]">
                 {orders.map((o) => <option key={o.key} value={o.key}>{o.wo ? `WO ${o.wo} · ` : ""}{o.owner.name}</option>)}
               </select>
             </>)
           )}
           {row("History", <>
-            <label className="inline-flex items-center gap-2 text-[12px] cursor-pointer select-none">
+            <label className="inline-flex items-center gap-2 text-caption cursor-pointer select-none">
               <input type="checkbox" checked={woHistory} onChange={(e) => setWoHistory(e.target.checked)} className="w-4 h-4 accent-[var(--color-text)]" />
               Every start, % update, hold and comment, with its time
             </label>
@@ -569,10 +569,10 @@ export default function ReportsView(p: Props) {
               ))}
             </span>
             <input type="date" value={sheetShift.dayKey} onChange={(e) => { if (e.target.value) setSheetPick({ dayKey: e.target.value, kind: sheetShift.kind }); }} aria-label="Date"
-              className="h-8 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12px] text-[var(--color-text)]" />
-            {sheetPick && <button type="button" onClick={() => setSheetPick(null)} className="h-8 px-2.5 rounded-lg border border-[var(--color-border)] text-[12px] font-semibold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]">Coming shift</button>}
+              className="h-8 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-caption text-[var(--color-text)]" />
+            {sheetPick && <button type="button" onClick={() => setSheetPick(null)} className="h-8 px-2.5 rounded-lg border border-[var(--color-border)] text-caption font-medium text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]">Coming shift</button>}
           </>)}
-          <div className="text-[12px] text-[var(--color-text-muted)] pl-0 sm:pl-[108px]">
+          <div className="text-caption text-[var(--color-text-muted)] pl-0 sm:pl-[108px]">
             {sheet ? `${sheet.count} job${sheet.count === 1 ? "" : "s"}: carried over, going, planned, pulled ahead at the turnover, and ready to start early. Print it at the shift's start meeting.` : null}
           </div>
         </>
@@ -604,7 +604,7 @@ export default function ReportsView(p: Props) {
       )}
       {/* What the job taught: kept for the next one before the project closes. */}
       {meeting === "closeout" && <button type="button" onClick={openFindingsReview} className={secondary}><Lightbulb className="w-4 h-4" /> Lessons &amp; findings</button>}
-      {msg && <span role="status" className={`text-[12px] font-semibold ${/^Not made|blocked/.test(msg) ? "text-[var(--state-overdue-text)]" : "text-[var(--state-released-text)]"}`}>{msg}</span>}
+      {msg && <span role="status" className={`text-caption font-medium ${/^Not made|blocked/.test(msg) ? "text-[var(--state-overdue-text)]" : "text-[var(--state-released-text)]"}`}>{msg}</span>}
     </div>
   );
 
@@ -612,11 +612,11 @@ export default function ReportsView(p: Props) {
   const detail = (
     <div className="min-w-0 space-y-4">
       <div>
-        <button type="button" onClick={() => setPhoneOpen(false)} className="sm:hidden mb-2 inline-flex items-center gap-1 text-[13px] text-[var(--color-accent-text)] hover:underline">
+        <button type="button" onClick={() => setPhoneOpen(false)} className="sm:hidden mb-2 inline-flex items-center gap-1 text-body text-[var(--color-accent-text)] hover:underline">
           <ChevronLeft className="w-4 h-4" /> Reports
         </button>
-        <h2 className="text-[15px] font-semibold text-[var(--color-text)]">{meta.name}</h2>
-        <p className="text-[13px] text-[var(--color-text-muted)] mt-0.5">{DESCRIBE[sel]}</p>
+        <h2 className="text-reading font-medium text-[var(--color-text)]">{meta.name}</h2>
+        <p className="text-body text-[var(--color-text-muted)] mt-0.5">{DESCRIBE[sel]}</p>
       </div>
       {sel === "schedule" ? (
         <ExecutionReportView milestones={p.milestones} shiftTimes={times} critical={p.critical} criticalSource={p.criticalSource} projectId={projectId} projectName={p.projectName} />
@@ -630,7 +630,7 @@ export default function ReportsView(p: Props) {
             {/* Closing the job (PSSR, turnover, punch, complete) is on its own tab. */}
             {sel === "closeout" && (
               <button type="button" onClick={() => window.dispatchEvent(new CustomEvent("project:tab", { detail: "closeout" }))}
-                className="text-left text-[14px] text-[var(--color-accent-text)] hover:underline">
+                className="text-left text-body text-[var(--color-accent-text)] hover:underline">
                 Close the project on Close-out
               </button>
             )}
@@ -638,11 +638,11 @@ export default function ReportsView(p: Props) {
             {actions}
             {madeHere.length > 0 && (
               <div>
-                <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-1">Made lately</div>
+                <div className="text-body font-medium text-[var(--color-text-muted)] mb-1">Made lately</div>
                 <ul className="divide-y divide-[var(--color-border)] border-y border-[var(--color-border)]">
                   {madeHere.map((m) => (
                     <li key={`${m.label}:${m.at}`}>
-                      <button type="button" onClick={() => again(m)} className="w-full text-left py-1.5 text-[12px] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+                      <button type="button" onClick={() => again(m)} className="w-full text-left py-1.5 text-caption text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
                         {meta.name} · {m.label} <span className="text-[var(--color-text-muted)]">· {fmtInTz(m.at, tz, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true })}</span>
                       </button>
                     </li>
@@ -666,16 +666,16 @@ export default function ReportsView(p: Props) {
         {[{ head: "Reports", sub: "filled in from the project", items: REPORTS.filter((r) => !r.form && (r.id !== "phase" || ph.phases.length > 0)) }, { head: "Forms", sub: "blank, filled in by hand", items: REPORTS.filter((r) => r.form) }].map((g) => (
           <div key={g.head} className="mb-2">
             <div className="px-4 pt-1 pb-1">
-              <div className="font-display text-[17px] font-semibold text-[var(--color-text)]">{g.head}</div>
-              <div className="text-[13px] text-[var(--color-text-muted)]">{upper(g.sub)}</div>
+              <div className="font-display text-section font-semibold text-[var(--color-text)]">{g.head}</div>
+              <div className="text-body text-[var(--color-text-muted)]">{upper(g.sub)}</div>
             </div>
             {g.items.map((r) => {
               const on = r.id === sel;
               return (
                 <button key={r.id} type="button" aria-current={on ? "page" : undefined} onClick={() => { setSel(r.id); setPhoneOpen(true); }}
                   className={`w-full text-left px-4 py-2 border-l-[3px] ${on ? "sm:border-[var(--color-main)] sm:bg-[var(--color-surface-2)] border-transparent" : "border-transparent hover:bg-[var(--color-surface-2)]"}`}>
-                  <span className="block text-[15px] font-semibold text-[var(--color-text)]">{r.name}</span>
-                  <span className="block text-[13px] text-[var(--color-text-muted)] leading-snug">{r.sub}</span>
+                  <span className="block text-reading font-medium text-[var(--color-text)]">{r.name}</span>
+                  <span className="block text-body text-[var(--color-text-muted)] leading-snug">{r.sub}</span>
                 </button>
               );
             })}
@@ -698,8 +698,8 @@ export default function ReportsView(p: Props) {
         <div role="dialog" aria-modal="true" aria-label={meta.name} className="fixed inset-0 z-[300] bg-[var(--color-bg,#f8fafc)] overflow-y-auto">
           <EscapeCloses onClose={() => setOnScreen(null)} />
           <div className="sticky top-0 z-10 flex items-center justify-between gap-2 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-2">
-            <b className="text-[14px]">{meta.name}</b>
-            <button type="button" onClick={() => setOnScreen(null)} aria-label="Close" className="inline-flex items-center gap-1 h-8 px-3 rounded-lg border border-[var(--color-border-strong)] text-[12px] font-bold"><X className="w-4 h-4" /> Close</button>
+            <b className="text-body">{meta.name}</b>
+            <button type="button" onClick={() => setOnScreen(null)} aria-label="Close" className="inline-flex items-center gap-1 h-8 px-3 rounded-lg border border-[var(--color-border-strong)] text-caption font-medium"><X className="w-4 h-4" /> Close</button>
           </div>
           <div className="max-w-[1400px] mx-auto p-3 sm:p-5">
             <ShiftReportView {...base} meetingFixed={meeting} presentOnOpen={onScreen === "present"} />
@@ -791,11 +791,11 @@ function DocView({ preview, busy, err, onFull, fill }: { preview: Preview; busy:
   const what = !preview ? "" : preview.kind === "pdf" ? `${preview.total} page${preview.total === 1 ? "" : "s"}${preview.total > preview.pages.length ? ` · ${busy ? "drawing" : "showing"} ${preview.pages.length}` : ""}`
     : preview.kind === "rows" ? `${preview.total} row${preview.total === 1 ? "" : "s"}${preview.total > preview.rows.length ? ` · first ${preview.rows.length} shown` : ""}`
       : preview.pages ? `${preview.pages} page${preview.pages === 1 ? "" : "s"}` : "Whole report";
-  const btn = "inline-flex items-center justify-center whitespace-nowrap shrink-0 h-8 min-w-8 px-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[12px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40";
+  const btn = "inline-flex items-center justify-center whitespace-nowrap shrink-0 h-8 min-w-8 px-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-caption font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40";
   return (
     <div className={`min-w-0 rounded-xl bg-slate-200/70 dark:bg-slate-800/60 flex flex-col ${fill ? "h-full" : "lg:sticky lg:top-4 lg:h-[calc(100vh-140px)] lg:min-h-[560px]"}`}>
       <div className="flex items-center gap-1.5 px-3 py-2 border-b border-slate-300/70 dark:border-slate-700">
-        <span className="min-w-0 text-[12px] font-semibold text-slate-700 dark:text-slate-200 mr-auto truncate">{busy && !preview ? "Getting it ready…" : what}{busy && preview ? " · updating" : ""}</span>
+        <span className="min-w-0 text-caption font-medium text-slate-700 dark:text-slate-200 mr-auto truncate">{busy && !preview ? "Getting it ready…" : what}{busy && preview ? " · updating" : ""}</span>
         {preview?.kind !== "rows" && (
           <>
             <button type="button" onClick={() => step(-1)} disabled={z === ZOOMS[0]} aria-label="Zoom out" className={btn}><Minus className="w-3.5 h-3.5" /></button>
@@ -808,9 +808,9 @@ function DocView({ preview, busy, err, onFull, fill }: { preview: Preview; busy:
       <div className={`min-h-0 p-3 sm:p-4 ${fill ? "flex-1 overflow-auto" : "lg:flex-1 lg:overflow-auto"}`}>
         <div ref={box} className="w-full">
           {err ? (
-            <div className="rounded-lg bg-[var(--color-surface)] p-6 text-[12px] text-[var(--state-overdue-text)]">Couldn&apos;t show it: {err}</div>
+            <div className="rounded-lg bg-[var(--color-surface)] p-6 text-caption text-[var(--state-overdue-text)]">Couldn&apos;t show it: {err}</div>
           ) : !preview ? (
-            <div className="mx-auto rounded-sm bg-white shadow flex items-center justify-center text-[12px] text-slate-500" style={{ width: W * fit, height: 1056 * fit }}>
+            <div className="mx-auto rounded-sm bg-white shadow flex items-center justify-center text-caption text-slate-500" style={{ width: W * fit, height: 1056 * fit }}>
               {busy ? <span className="inline-flex items-center gap-1.5"><Loader2 className="w-4 h-4 animate-spin" /> Getting it ready…</span> : "Pick what to put on it."}
             </div>
           ) : preview.kind === "pdf" ? (
@@ -822,8 +822,8 @@ function DocView({ preview, busy, err, onFull, fill }: { preview: Preview; busy:
             </div>
           ) : preview.kind === "rows" ? (
             <div className={`rounded-sm bg-white shadow overflow-auto ${busy ? "opacity-60" : ""}`} style={fill ? undefined : { maxHeight: "calc(100vh - 220px)" }}>
-              <table className="w-full border-collapse text-[11px] text-slate-900">
-                <thead><tr>{preview.head.map((x) => <th key={x} className="sticky top-0 bg-slate-100 border border-slate-300 px-1.5 py-1 text-left font-bold whitespace-nowrap">{x}</th>)}</tr></thead>
+              <table className="w-full border-collapse text-caption text-slate-900">
+                <thead><tr>{preview.head.map((x) => <th key={x} className="sticky top-0 bg-slate-100 border border-slate-300 px-1.5 py-1 text-left font-medium whitespace-nowrap">{x}</th>)}</tr></thead>
                 <tbody>
                   {preview.rows.length === 0 ? <tr><td colSpan={preview.head.length} className="px-2 py-4 text-center text-slate-500">Nothing in it yet.</td></tr>
                     : preview.rows.map((r, i) => <tr key={i}>{r.map((c, j) => <td key={j} className={`border border-slate-200 px-1.5 py-0.5 align-top ${c.length <= 24 ? "whitespace-nowrap" : "min-w-[220px]"}`}>{c}</td>)}</tr>)}
@@ -869,13 +869,13 @@ function FullView({ name, onClose, actions, options, children }: { name: string;
   return (
     <div role="dialog" aria-modal="true" aria-label={name} className="fixed inset-0 z-[300] flex flex-col bg-[var(--color-bg,#f8fafc)]">
       <div className="flex items-center gap-2 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-3 sm:px-4 py-2">
-        <b className="text-[14px] text-[var(--color-text)] mr-auto truncate">{name}</b>
+        <b className="text-body text-[var(--color-text)] mr-auto truncate">{name}</b>
         {options && (
-          <button type="button" onClick={() => setOpts((v) => !v)} aria-pressed={opts} className="lg:hidden inline-flex items-center gap-1 h-8 px-3 rounded-lg border border-[var(--color-border-strong)] text-[12px] font-bold text-[var(--color-text)]">
+          <button type="button" onClick={() => setOpts((v) => !v)} aria-pressed={opts} className="lg:hidden inline-flex items-center gap-1 h-8 px-3 rounded-lg border border-[var(--color-border-strong)] text-caption font-medium text-[var(--color-text)]">
             <SlidersHorizontal className="w-4 h-4" /> Options
           </button>
         )}
-        <button type="button" onClick={onClose} aria-label="Close" className="inline-flex items-center gap-1 h-8 px-3 rounded-lg border border-[var(--color-border-strong)] text-[12px] font-bold text-[var(--color-text)]"><X className="w-4 h-4" /> Close</button>
+        <button type="button" onClick={onClose} aria-label="Close" className="inline-flex items-center gap-1 h-8 px-3 rounded-lg border border-[var(--color-border-strong)] text-caption font-medium text-[var(--color-text)]"><X className="w-4 h-4" /> Close</button>
       </div>
       <div className="flex-1 min-h-0 flex flex-col lg:flex-row">
         <aside className={`${opts ? "block" : "hidden"} lg:block lg:w-[360px] shrink-0 max-h-[50vh] lg:max-h-none overflow-y-auto border-b lg:border-b-0 lg:border-r border-[var(--color-border)] bg-[var(--color-surface)] p-4 space-y-4`}>

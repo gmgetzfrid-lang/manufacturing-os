@@ -31,8 +31,8 @@ import { TimeChip } from "@/components/projects/DateTimePicker";
 import { cleanName, crewNames, renamed, setNames, totalOnSite, withName, withoutName, earlierMeetingLines, hasOwnRoster, meetingEmpty, onSiteCell, type MeetingParts } from "@/lib/shiftMeeting";
 import { sayError } from "@/components/projects/sayError";
 
-const inputCls = "rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 py-1 text-[12px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] ";
-const btn = "inline-flex items-center gap-1.5 h-7 px-3 rounded-lg text-[12px] font-bold disabled:opacity-60";
+const inputCls = "rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 py-1 text-caption text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] ";
+const btn = "inline-flex items-center gap-1.5 h-7 px-3 rounded-lg text-caption font-medium disabled:opacity-60";
 /** An inline editor's Save: quiet, the report's one orange button is Email / Print. */
 const saveBtn = `${btn} border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]`;
 const iconBtn = "shrink-0 p-1 rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]";
@@ -174,7 +174,7 @@ export function ShiftHourlyBox({ h, edit, print, tz, meetings }: {
             const m = said(r.slot);
             return (
               <tr key={r.slot.key} className="align-top">
-                <td className="w-16 pr-2 py-0.5 font-semibold whitespace-nowrap">{clocks[i]}</td>
+                <td className="w-16 pr-2 py-0.5 font-medium whitespace-nowrap">{clocks[i]}</td>
                 <td className="py-0.5">
                   {r.slot.kind === "overtime" ? <b>{r.slot.label}</b> : r.slot.kind === "break" ? <span className="text-slate-500">{breakLabel(r.slot)}</span> : m ? <>
                     <b>{m.title}</b>
@@ -207,13 +207,13 @@ export function ShiftHourlyBox({ h, edit, print, tz, meetings }: {
             const head = r.slot.key === "ot";
             const ot = h.overtime;
             return (
-              <li key={r.slot.key} className="flex items-start gap-2 px-3 py-1.5 text-[12px] leading-snug bg-[var(--color-surface-2)]">
-                <span className="w-[66px] shrink-0 font-bold text-[var(--color-text)] whitespace-nowrap tabular-nums">{clocks[i]}</span>
-                <span className="min-w-0 flex-1 font-bold text-[var(--color-text)]">{r.slot.label}</span>
+              <li key={r.slot.key} className="flex items-start gap-2 px-3 py-1.5 text-caption leading-snug bg-[var(--color-surface-2)]">
+                <span className="w-[66px] shrink-0 font-medium text-[var(--color-text)] whitespace-nowrap tabular-nums">{clocks[i]}</span>
+                <span className="min-w-0 flex-1 font-medium text-[var(--color-text)]">{r.slot.label}</span>
                 {head && edit && ot && otForm == null && (
                   <span className="flex items-center gap-1">
                     {ot.list.some((x) => x.until == null) && (
-                      <button type="button" onClick={() => setOtForm("send")} className="shrink-0 inline-flex items-center h-6 px-2 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-[11px] font-bold hover:bg-[var(--color-surface-2)]">Sent home</button>
+                      <button type="button" onClick={() => setOtForm("send")} className="shrink-0 inline-flex items-center h-6 px-2 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-caption font-medium hover:bg-[var(--color-surface-2)]">Sent home</button>
                     )}
                     <button type="button" onClick={() => setOtForm("edit")} aria-label="Change the overtime" className={iconBtn}><Pencil className="w-3.5 h-3.5" /></button>
                   </span>
@@ -226,10 +226,10 @@ export function ShiftHourlyBox({ h, edit, print, tz, meetings }: {
             // hour can still be typed into or have work added.
             const hr = r.hour;
             return (
-              <li key={r.slot.key} className="flex items-start gap-2 px-3 py-1 text-[12px] leading-snug bg-[var(--color-surface-2)]/60">
-                <span className="w-[66px] shrink-0 font-bold text-[var(--color-text-muted)] whitespace-nowrap tabular-nums">{clocks[i]}</span>
+              <li key={r.slot.key} className="flex items-start gap-2 px-3 py-1 text-caption leading-snug bg-[var(--color-surface-2)]/60">
+                <span className="w-[66px] shrink-0 font-medium text-[var(--color-text-muted)] whitespace-nowrap tabular-nums">{clocks[i]}</span>
                 <div className="min-w-0 flex-1">
-                  <span className="font-semibold text-[var(--color-text-muted)]">{breakLabel(r.slot)}</span>
+                  <span className="font-medium text-[var(--color-text-muted)]">{breakLabel(r.slot)}</span>
                   {hr && editing === hr.key && (
                     <HourForm init="" placeholder="What happened this hour" onDone={(t) => void setHour(hr, t)} onCancel={() => setEditing(null)} />
                   )}
@@ -240,12 +240,12 @@ export function ShiftHourlyBox({ h, edit, print, tz, meetings }: {
                       <>
                       <button type="button" onClick={() => h.onAddWork?.(hr.start)} aria-label={`Add discovery or added scope at ${clocks[i]}`}
                         title="Add discovery or added scope at this hour: it goes into the schedule"
-                        className="shrink-0 inline-flex items-center gap-0.5 h-7 px-2 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[12px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+                        className="shrink-0 inline-flex items-center gap-0.5 h-8 px-2 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-caption font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
                         <Plus className="w-3 h-3" /> Add work
                       </button>
                     <button type="button" onClick={() => newFinding({ at: hr.start })} aria-label={`Add a finding at ${clocks[i]}`}
                       title="A problem, a lesson, a material shortfall or missed scope, kept for the next job"
-                      className="shrink-0 inline-flex items-center gap-0.5 h-7 px-2 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[12px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+                      className="shrink-0 inline-flex items-center gap-0.5 h-8 px-2 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-caption font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
                       <Plus className="w-3 h-3" /> Finding
                     </button>
                       </>
@@ -262,11 +262,11 @@ export function ShiftHourlyBox({ h, edit, print, tz, meetings }: {
           }
           const note = m ? noteOf(m) : [];
           return (
-            <li key={r.slot.key} className={`grid grid-cols-[66px_minmax(0,1fr)_auto] max-sm:grid-cols-[minmax(0,1fr)_auto] items-start gap-x-2 gap-y-0.5 px-3 py-1.5 text-[12px] leading-snug ${isMeeting ? "bg-[var(--color-surface-2)]/30" : ""}`}>
-              <span className="font-bold text-[var(--color-text)] whitespace-nowrap tabular-nums">{clocks[i]}{isMeeting && <span className="sm:hidden font-bold"> {label}</span>}</span>
+            <li key={r.slot.key} className={`grid grid-cols-[66px_minmax(0,1fr)_auto] max-sm:grid-cols-[minmax(0,1fr)_auto] items-start gap-x-2 gap-y-0.5 px-3 py-1.5 text-caption leading-snug ${isMeeting ? "bg-[var(--color-surface-2)]/30" : ""}`}>
+              <span className="font-medium text-[var(--color-text)] whitespace-nowrap tabular-nums">{clocks[i]}{isMeeting && <span className="sm:hidden font-medium"> {label}</span>}</span>
               {/* On a phone the time and its buttons share a line; what happened gets the full width under them. */}
               <div className="min-w-0 max-sm:order-last max-sm:col-span-2">
-                {label && <div className={`font-bold text-[var(--color-text)] ${isMeeting ? "max-sm:hidden" : ""}`}>{label}</div>}
+                {label && <div className={`font-medium text-[var(--color-text)] ${isMeeting ? "max-sm:hidden" : ""}`}>{label}</div>}
                 {isMeeting && m && <MeetingBox m={m} edit={edit} />}
                 {isMeeting && !m && (said(r.slot)?.lines ?? []).map((x, j) => <div key={j} className="break-words text-[var(--color-text)]">{x}</div>)}
                 {editing === r.slot.key ? (
@@ -281,22 +281,22 @@ export function ShiftHourlyBox({ h, edit, print, tz, meetings }: {
                     (a time fixed, an entry moved or changed): say so, one tap to
                     bring it up to date (what they added stays). */}
                 {edit && r.typed && r.stale && editing !== r.slot.key && (
-                  <div role="status" className="mt-1 space-y-1 border-l-2 border-[var(--state-held)] pl-2 py-0.5 text-[12px] text-[var(--color-text)]">
-                    <div className="font-semibold text-[var(--state-held-text)]">Typed here, not on the work order now:</div>
+                  <div role="status" className="mt-1 space-y-1 border-l-2 border-[var(--state-held)] pl-2 py-0.5 text-caption text-[var(--color-text)]">
+                    <div className="font-medium text-[var(--state-held-text)]">Typed here, not on the work order now:</div>
                     {(r.mismatch ?? []).map((x) => (
                       <div key={x} className="flex items-start gap-2">
                         <span className="min-w-0 flex-1 break-words italic"><Line text={x} /></span>
-                        <button type="button" onClick={() => void dropLine(r, x)} className="shrink-0 inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--state-overdue)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Remove</button>
+                        <button type="button" onClick={() => void dropLine(r, x)} className="shrink-0 inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--state-overdue)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Remove</button>
                       </div>
                     ))}
-                    <button type="button" onClick={() => void keepHour(r)} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Keep as typed</button>
+                    <button type="button" onClick={() => void keepHour(r)} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Keep as typed</button>
                   </div>
                 )}
                 {/* A typed note: a mistake, or now put in as work (its own entry
                     says it) - deleted, the hour shows its entries again. */}
                 {edit && typed && editing !== r.slot.key && !isMeeting && (
                   <button type="button" onClick={() => void setHour(r.slot, null)} title="Delete what was typed here: the hour shows its entries"
-                    className="mt-0.5 inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--state-overdue)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">
+                    className="mt-0.5 inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--state-overdue)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">
                     <Trash2 className="w-3 h-3" /> Delete typed note
                   </button>
                 )}
@@ -306,12 +306,12 @@ export function ShiftHourlyBox({ h, edit, print, tz, meetings }: {
                 <>
                 <button type="button" onClick={() => h.onAddWork?.(r.slot.start)} aria-label={`Add discovery or added scope at ${clocks[i]}`}
                   title="Add discovery or added scope at this hour: it goes into the schedule"
-                  className="shrink-0 inline-flex items-center gap-0.5 h-7 px-2 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[12px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+                  className="shrink-0 inline-flex items-center gap-0.5 h-8 px-2 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-caption font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
                   <Plus className="w-3 h-3" /> Add work
                 </button>
                     <button type="button" onClick={() => newFinding({ at: r.slot.start })} aria-label={`Add a finding at ${clocks[i]}`}
                       title="A problem, a lesson, a material shortfall or missed scope, kept for the next job"
-                      className="shrink-0 inline-flex items-center gap-0.5 h-7 px-2 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[12px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+                      className="shrink-0 inline-flex items-center gap-0.5 h-8 px-2 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-caption font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
                       <Plus className="w-3 h-3" /> Finding
                     </button>
                 </>
@@ -341,18 +341,18 @@ export function ShiftHourlyBox({ h, edit, print, tz, meetings }: {
           ? <HoldOverForm ot={h.overtime} adding={otForm === "new"} onDone={() => setOtForm(null)} onError={setMsg} />
           : !h.overtime.list.length && (
             <button type="button" onClick={() => setOtForm("new")}
-              className="inline-flex items-center gap-1 h-9 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+              className="inline-flex items-center gap-1 h-10 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
               <Plus className="w-3.5 h-3.5" /> Hold a crew over (overtime)
             </button>
           ))}
       {removed.length > 0 && (
-        <div className="text-[12px] text-[var(--color-text-muted)]">
+        <div className="text-caption text-[var(--color-text-muted)]">
           Taken off the log: {removed.map((x, i) => (
             <span key={x.key}>{i > 0 ? ", " : ""}{titleOf(x) || "Hour"}{edit && <button type="button" onClick={() => void setOff(x, false)} className="ml-1 text-[var(--color-accent-text)] hover:underline">Put back</button>}</span>
           ))}
         </div>
       )}
-      {msg && <div role="alert" className="text-[12px] font-semibold text-[var(--state-overdue-text)]">{msg}</div>}
+      {msg && <div role="alert" className="text-caption font-medium text-[var(--state-overdue-text)]">{msg}</div>}
     </div>
   );
 }
@@ -360,7 +360,7 @@ export function ShiftHourlyBox({ h, edit, print, tz, meetings }: {
 type OtCtx = NonNullable<HourlyCtx["overtime"]>;
 /** "21:30" in plant time. */
 const hmOf = (ms: number, tz: string) => new Date(ms).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: tz });
-const selCls = "h-7 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1.5 text-[12px] text-[var(--color-text)]";
+const selCls = "h-7 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1.5 text-caption text-[var(--color-text)]";
 
 /** A crew held over: which crew, how many, who or why, sent home when
  *  (or still on), and who takes over after. */
@@ -372,7 +372,7 @@ function HoldCost({ ot, crew, hands, until }: { ot: OtCtx; crew: string; hands: 
   const co = companyOf(crew, s.manpower);
   if (co === "Kern Energy") return null;
   const sheet = s.rateSheets[co] ?? null, plan = s.staffing[co] ?? null;
-  if (!sheet || !Object.keys(sheet.crafts).length) return <span className="basis-full text-[11px] text-[var(--color-text-muted)]">No rate sheet for {co}: <button type="button" onClick={() => openContractor(co)} className="text-[var(--color-accent-text)] hover:underline">add it</button> to see what this costs.</span>;
+  if (!sheet || !Object.keys(sheet.crafts).length) return <span className="basis-full text-caption text-[var(--color-text-muted)]">No rate sheet for {co}: <button type="button" onClick={() => openContractor(co)} className="text-[var(--color-accent-text)] hover:underline">add it</button> to see what this costs.</span>;
   const paid = paidHoursOf(sheet, ot.shiftHours ?? 12);
   const mix = (ot.shiftKey && plan?.byCraft?.[ot.shiftKey]) || {};
   const hours = until != null ? Math.max(0, (until - ot.shiftEnd) / 3_600_000) : null;
@@ -380,7 +380,7 @@ function HoldCost({ ot, crew, hands, until }: { ot: OtCtx; crew: string; hands: 
   if (perHour == null) return null;
   const m = (n: number) => `$${Math.round(n).toLocaleString("en-US")}`;
   return (
-    <span className="basis-full text-[12px] text-[var(--color-text)]" data-hold-cost>
+    <span className="basis-full text-caption text-[var(--color-text)]" data-hold-cost>
       {hours != null && hours > 0 ? <><b>{m(holdCost(sheet, mix, plan?.crafts, paid, hands, hours) ?? perHour * hours)}</b> for {hands} hands, {Math.round(hours * 10) / 10} h past the shift</> : <><b>{m(perHour)}</b> for each hour {hands} hands stay past the shift</>}
       {" "}at {co}&apos;s rates. <button type="button" onClick={() => openContractor(co)} className="text-[var(--color-accent-text)] hover:underline">{co}&apos;s cost to date</button>
     </span>
@@ -408,8 +408,8 @@ function HoldOverForm({ ot, adding, onDone, onError }: { ot: OtCtx; adding: bool
     try { await ot.save(() => out); onError(null); onDone(); } catch (e) { setErr(sayError(e)); } finally { setBusy(false); }
   };
   return (
-    <div className="rounded-lg border border-[var(--color-border)] p-2 space-y-2 text-[12px]">
-      <div className="font-bold text-[var(--color-text)]">Crew held over past the end of the shift</div>
+    <div className="rounded-lg border border-[var(--color-border)] p-2 space-y-2 text-caption">
+      <div className="font-medium text-[var(--color-text)]">Crew held over past the end of the shift</div>
       {rows.map((x, i) => (
         <div key={x.id} className="flex flex-wrap items-center gap-1.5">
           <select value={x.crew} onChange={(e) => set(i, { crew: e.target.value })} aria-label="Crew held over" className={`${selCls} max-w-[12rem]`}>
@@ -419,9 +419,9 @@ function HoldOverForm({ ot, adding, onDone, onError }: { ot: OtCtx; adding: bool
           <input value={x.hands} onChange={(e) => set(i, { hands: e.target.value.replace(/[^0-9]/g, "").slice(0, 3) })} inputMode="numeric" placeholder="Hands" aria-label="How many held over" className={`${inputCls} h-7 pointer-coarse:h-11 w-16`} />
           <input value={x.note} onChange={(e) => set(i, { note: e.target.value })} placeholder="Who or why (Exchanger hands only)" aria-label="Who or why" className={`${inputCls} h-7 pointer-coarse:h-11 flex-1 min-w-[10rem]`} />
           <span className="inline-flex items-center gap-1">
-            <span className="text-[11px] text-[var(--color-text-muted)]">Sent home</span>
+            <span className="text-caption text-[var(--color-text-muted)]">Sent home</span>
             <TimeChip value={x.until} onChange={(v) => set(i, { until: v })} tz={ot.tz} label="Sent home at" />
-            {x.until && <button type="button" onClick={() => set(i, { until: "" })} className="text-[11px] text-[var(--color-text-muted)] hover:underline">Still on</button>}
+            {x.until && <button type="button" onClick={() => set(i, { until: "" })} className="text-caption text-[var(--color-text-muted)] hover:underline">Still on</button>}
           </span>
           <select value={x.takeover} onChange={(e) => set(i, { takeover: e.target.value })} aria-label="Takes over after" className={`${selCls} max-w-[15rem]`}>
             <option value="">No one takes over</option>
@@ -431,11 +431,11 @@ function HoldOverForm({ ot, adding, onDone, onError }: { ot: OtCtx; adding: bool
           <HoldCost ot={ot} crew={x.crew} hands={Number(x.hands) || 0} until={x.until ? timeAfter(ot.shiftEnd, x.until, ot.tz, timeOnDay, dayKey) : null} />
         </div>
       ))}
-      <button type="button" onClick={() => setRows([...rows, blank()])} className="text-[13px] text-[var(--color-accent-text)] hover:underline">+ Another crew</button>
-      {err && <div role="alert" className="text-[12px] font-semibold text-[var(--state-overdue-text)]">{err}</div>}
+      <button type="button" onClick={() => setRows([...rows, blank()])} className="text-body text-[var(--color-accent-text)] hover:underline">+ Another crew</button>
+      {err && <div role="alert" className="text-caption font-medium text-[var(--state-overdue-text)]">{err}</div>}
       <div className="flex items-center gap-2">
         <button type="button" disabled={busy} onClick={() => void save()} className={saveBtn}>Save</button>
-        <button type="button" onClick={onDone} className="text-[12px] text-[var(--color-text-muted)] hover:underline">Cancel</button>
+        <button type="button" onClick={onDone} className="text-caption text-[var(--color-text-muted)] hover:underline">Cancel</button>
       </div>
     </div>
   );
@@ -455,7 +455,7 @@ function SentHomeForm({ ot, onDone, onError }: { ot: OtCtx; onDone: () => void; 
     } catch (e) { setErr(sayError(e)); }
   };
   return (
-    <div className="rounded-lg border border-[var(--color-border)] p-2 flex flex-wrap items-center gap-1.5 text-[12px]">
+    <div className="rounded-lg border border-[var(--color-border)] p-2 flex flex-wrap items-center gap-1.5 text-caption">
       <b className="text-[var(--color-text)]">Sent home at</b>
       <TimeChip value={at} onChange={setAt} tz={ot.tz} label="Sent home at" />
       <select value={takeover} onChange={(e) => setTakeover(e.target.value)} aria-label="Takes over after" className={`${selCls} max-w-[14rem]`}>
@@ -463,8 +463,8 @@ function SentHomeForm({ ot, onDone, onError }: { ot: OtCtx; onDone: () => void; 
         {ot.crews.map((c) => <option key={c} value={c}>{c} takes over</option>)}
       </select>
       <button type="button" onClick={() => void save()} className={saveBtn}>Save</button>
-      <button type="button" onClick={onDone} className="text-[12px] text-[var(--color-text-muted)] hover:underline">Cancel</button>
-      {err && <div role="alert" className="w-full text-[12px] font-semibold text-[var(--state-overdue-text)]">{err}</div>}
+      <button type="button" onClick={onDone} className="text-caption text-[var(--color-text-muted)] hover:underline">Cancel</button>
+      {err && <div role="alert" className="w-full text-caption font-medium text-[var(--state-overdue-text)]">{err}</div>}
     </div>
   );
 }
@@ -476,10 +476,10 @@ function MeetingTable({ p }: { p: MeetingParts }) {
     <>
       {p.rows.length > 0 && (
         <table className="w-full border-collapse my-[2pt]">
-          <thead><tr className="text-[7pt] text-slate-500 text-left"><th className="font-bold pr-2">Resource</th><th className="font-bold pr-2">Meeting attendees</th><th className="font-bold text-right">On site</th></tr></thead>
+          <thead><tr className="text-[7pt] text-slate-500 text-left"><th className="font-medium pr-2">Resource</th><th className="font-medium pr-2">Meeting attendees</th><th className="font-medium text-right">On site</th></tr></thead>
           <tbody>
-            {p.rows.map((x) => <tr key={x.crew} className="border-t border-slate-200"><td className="font-semibold pr-2">{x.crew}</td><td className="pr-2">{x.attendees || "-"}</td><td className={`text-right ${x.plant ? "" : "font-semibold"}`}>{onSiteCell(x)}</td></tr>)}
-            {p.total != null && <tr className="border-t border-slate-300"><td className="font-bold pr-2">Total on the job</td><td /><td className="text-right font-bold">{p.total}</td></tr>}
+            {p.rows.map((x) => <tr key={x.crew} className="border-t border-slate-200"><td className="font-medium pr-2">{x.crew}</td><td className="pr-2">{x.attendees || "-"}</td><td className={`text-right ${x.plant ? "" : "font-medium"}`}>{onSiteCell(x)}</td></tr>)}
+            {p.total != null && <tr className="border-t border-slate-300"><td className="font-medium pr-2">Total on the job</td><td /><td className="text-right font-medium">{p.total}</td></tr>}
           </tbody>
         </table>
       )}
@@ -491,7 +491,7 @@ function MeetingTable({ p }: { p: MeetingParts }) {
 
 /** A line with its work order in bold. */
 function Line({ text }: { text: string }) {
-  return <>{boldRuns(text).map((r, i) => (r.b ? <b key={i} className="font-bold">{r.t}</b> : <React.Fragment key={i}>{r.t}</React.Fragment>))}</>;
+  return <>{boldRuns(text).map((r, i) => (r.b ? <b key={i} className="font-medium">{r.t}</b> : <React.Fragment key={i}>{r.t}</React.Fragment>))}</>;
 }
 
 /** An hour's lines, one item each: what started, finished or was held
@@ -540,24 +540,24 @@ export function MeetingBox({ m, edit }: { m: MeetingCtx; edit: boolean }) {
     <div className="mt-1 space-y-1">
       {/* Carried from the last same shift until someone changes or checks it. */}
       {m.carried ? (
-        <div role="status" className="flex flex-wrap items-center gap-x-2 gap-y-1 border-l-2 border-[var(--state-held)] pl-2 py-0.5 text-[12px] text-[var(--state-held-text)]">
+        <div role="status" className="flex flex-wrap items-center gap-x-2 gap-y-1 border-l-2 border-[var(--state-held)] pl-2 py-0.5 text-caption text-[var(--state-held-text)]">
           <AlertTriangle className="w-3.5 h-3.5 shrink-0" aria-hidden />
           <span className="min-w-0 flex-1"><b>Not updated for this shift.</b> Same people and head counts as {m.carried.label}{edit ? ": change anyone who's different." : "."}</span>
           {edit && (
             <button type="button" onClick={() => void save(own).catch(() => undefined)}
-              className="shrink-0 inline-flex items-center gap-1 h-7 px-2.5 rounded-lg bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-border)] text-[12px] font-semibold shadow-[0_1px_2px_rgb(11_18_32/0.08)]">
+              className="shrink-0 inline-flex items-center gap-1 h-8 px-2.5 rounded-lg bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-border)] text-caption font-medium shadow-[0_1px_2px_rgb(11_18_32/0.08)]">
               <Check className="w-3.5 h-3.5" /> Looks right
             </button>
           )}
         </div>
       ) : edit && entered ? (
-        <div className="inline-flex items-center gap-1 text-[11px] font-semibold text-[var(--state-released-text)]"><Check className="w-3.5 h-3.5" aria-hidden /> Updated for this shift</div>
+        <div className="inline-flex items-center gap-1 text-caption font-medium text-[var(--state-released-text)]"><Check className="w-3.5 h-3.5" aria-hidden /> Updated for this shift</div>
       ) : null}
       <div className="rounded-lg bg-[var(--color-surface-2)]/60">
-        <div className={`${grid} px-2 py-1 text-[13px] font-semibold text-[var(--color-text-muted)]`}>
+        <div className={`${grid} px-2 py-1 text-body font-medium text-[var(--color-text-muted)]`}>
           <span className="max-sm:hidden">Resource</span><span>Meeting attendees</span><span className="w-[6.5rem] text-right" title="Everyone on site from the resource. Split gives direct (on the tools) and indirect (supervision, safety, hole and fire watch, QC, tool room).">On site</span>
         </div>
-        {list.length === 0 && <div className="px-2 py-1 text-[12px] italic text-[var(--color-text-muted)]">No crews on the plan{edit ? ". Add a company below." : ""}</div>}
+        {list.length === 0 && <div className="px-2 py-1 text-caption italic text-[var(--color-text-muted)]">No crews on the plan{edit ? ". Add a company below." : ""}</div>}
         {list.map((crew) => (
           <CrewRow key={crew} grid={grid} crew={crew} value={crews[crew]} known={m.known?.[crew]} edit={edit} plan={plans.get(crew) ?? null}
             onNames={(f) => setCrew(crew, (c) => setNames(c, f))}
@@ -569,13 +569,13 @@ export function MeetingBox({ m, edit }: { m: MeetingCtx; edit: boolean }) {
         {(edit || (total != null && list.length > 1)) && (
           <div className={`${grid} items-center px-2 py-1 border-t border-[var(--color-border)]`}>
             <span className="min-w-0 sm:col-span-2">{edit && <AddCompany onAdd={(name) => void setCrew(cleanName(name), (c) => c ?? {}).catch(() => undefined)} />}</span>
-            <span className="text-right text-[12px] tabular-nums whitespace-nowrap">{total != null && <><span className="text-[11px] font-bold text-[var(--color-text-muted)]">Total on the job </span><b>{total}</b></>}</span>
+            <span className="text-right text-caption tabular-nums whitespace-nowrap">{total != null && <><span className="text-caption font-medium text-[var(--color-text-muted)]">Total on the job </span><b>{total}</b></>}</span>
           </div>
         )}
       </div>
       <SafetyTopic value={m.record?.meeting?.safety} topics={m.topics} edit={edit}
         onSave={(t) => void save((r) => ({ ...r, meeting: { ...(r.meeting ?? {}), safety: t || undefined } })).catch(() => undefined)} />
-      {msg && <div role="alert" className="text-[12px] font-semibold text-[var(--state-overdue-text)]">{msg}</div>}
+      {msg && <div role="alert" className="text-caption font-medium text-[var(--state-overdue-text)]">{msg}</div>}
     </div>
   );
 }
@@ -612,7 +612,7 @@ function CrewRow({ grid, crew, value, known, edit, plan, onNames, onCount, onTot
   return (
     <div className={`${grid} items-start px-2 py-1 border-t border-[var(--color-border)]`}>
       <div className="min-w-0 flex flex-wrap items-center gap-1 pt-0.5 max-sm:col-start-1 max-sm:row-start-1">
-        <b className="text-[12px] text-[var(--color-text)] break-words">{crew}</b>
+        <b className="text-caption text-[var(--color-text)] break-words">{crew}</b>
         {edit && onRemove && (
           <button type="button" onClick={onRemove} aria-label={`Take ${crew} off the meeting`} title="Take this company off the meeting"
             className="shrink-0 p-0.5 rounded text-[var(--color-text-faint)] hover:text-[var(--state-overdue-text)]"><XIcon className="w-3 h-3" /></button>
@@ -651,7 +651,7 @@ function NamePill({ name, edit, listId, onRename, onRemove }: { name: string; ed
     return <NameInput init={name} listId={listId} label={`Change ${name}`} onDone={(v) => { if (v && v !== name) onRename(v); }} onClose={() => setEditing(false)} />;
   }
   return (
-    <span className={`inline-flex items-center max-w-full h-6 rounded-full border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] text-[12px] text-[var(--color-text)] ${edit ? "pl-2 pr-0.5" : "px-2"}`}>
+    <span className={`inline-flex items-center max-w-full h-6 rounded-full border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] text-caption text-[var(--color-text)] ${edit ? "pl-2 pr-0.5" : "px-2"}`}>
       <span className="min-w-0 truncate">{name}</span>
       {edit && (
         <>
@@ -689,7 +689,7 @@ function NameInput({ init, listId, label, keepOpen, onDone, onClose }: {
         if (e.key === "Escape") { done.current = true; onClose(); }
       }}
       onBlur={() => { if (!done.current) finish(true); }}
-      className="h-6 pointer-coarse:h-11 w-36 max-w-full rounded-full border border-[var(--color-accent-ring)] bg-[var(--color-surface)] px-2 text-[12px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)]" />
+      className="h-6 pointer-coarse:h-11 w-36 max-w-full rounded-full border border-[var(--color-accent-ring)] bg-[var(--color-surface)] px-2 text-caption text-[var(--color-text)] placeholder:text-[var(--color-text-faint)]" />
   );
 }
 
@@ -698,13 +698,13 @@ function NameInput({ init, listId, label, keepOpen, onDone, onClose }: {
 function PlanBeside({ plan, count, edit, onSame }: { plan: { company: string; heads: number; direct: number; indirect: number; across: number }; count: number | null; edit: boolean; onSame: () => void }) {
   const diff = count == null || plan.across > 1 ? null : count - plan.heads;
   return (
-    <span className="basis-full flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px] text-[var(--color-text-muted)]" data-plan-beside={plan.company}>
+    <span className="basis-full flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-caption text-[var(--color-text-muted)]" data-plan-beside={plan.company}>
       <button type="button" onClick={() => openContractor(plan.company)} className="hover:underline" title={`${plan.company}'s staffing plan in Costs, Contractors`}>
         Plan {plan.heads} ({plan.direct} + {plan.indirect}){plan.across > 1 ? ` across ${plan.across} ${plan.company} crews` : ""}
       </button>
       {diff != null && diff !== 0 && <b className={diff < 0 ? "text-[var(--state-held-text)]" : "text-[var(--state-overdue-text)]"}>{diff < 0 ? `${-diff} short` : `${diff} over`}</b>}
       {edit && plan.across === 1 && count !== plan.heads && (
-        <button type="button" onClick={onSame} className="h-5 px-1.5 rounded border border-[var(--color-border-strong)] text-[11px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">Same as plan</button>
+        <button type="button" onClick={onSame} className="h-5 px-1.5 rounded border border-[var(--color-border-strong)] text-caption font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">Same as plan</button>
       )}
     </span>
   );
@@ -726,8 +726,8 @@ function HeadCount({ crew, value, plant, edit, onSave, onTotal, onPlant }: {
   const [splitOpen, setSplitOpen] = useState(false);
   if (!edit) {
     return (
-      <span className={`block text-right text-[12px] tabular-nums whitespace-nowrap ${plant ? "text-[var(--color-text-muted)]" : "w-[6.5rem] text-[var(--color-text)]"}`}>
-        {plant ? "Plant staff" : n.total == null ? "-" : n.split ? <><b>{n.total}</b> <span className="text-[11px] text-[var(--color-text-muted)]">({n.direct} + {n.indirect})</span></> : <b>{n.total}</b>}
+      <span className={`block text-right text-caption tabular-nums whitespace-nowrap ${plant ? "text-[var(--color-text-muted)]" : "w-[6.5rem] text-[var(--color-text)]"}`}>
+        {plant ? "Plant staff" : n.total == null ? "-" : n.split ? <><b>{n.total}</b> <span className="text-caption text-[var(--color-text-muted)]">({n.direct} + {n.indirect})</span></> : <b>{n.total}</b>}
       </span>
     );
   }
@@ -735,7 +735,7 @@ function HeadCount({ crew, value, plant, edit, onSave, onTotal, onPlant }: {
   if (plant) {
     return (
       <button type="button" onClick={() => onPlant(false)} aria-pressed title="Plant staff: not on the job, not counted. Tap to count them."
-        className="block h-7 px-2 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] text-[11px] font-semibold text-[var(--color-text-muted)] whitespace-nowrap">
+        className="block h-7 px-2 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] text-caption font-medium text-[var(--color-text-muted)] whitespace-nowrap">
         Plant staff
       </button>
     );
@@ -764,7 +764,7 @@ function HeadCount({ crew, value, plant, edit, onSave, onTotal, onPlant }: {
       onFocus={(e) => e.target.select()}
       onChange={(e) => { const x = e.target.value.replace(/[^0-9]/g, "").slice(0, 4); setTyped((t) => ({ ...t, [k]: x })); }} onBlur={k === "t" ? commitTotal : commit}
       onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
-      className={`${inputCls} block ${wide ? "w-16" : "w-12"} h-8 pointer-coarse:h-11 text-right font-display tabular-nums text-[13px]`} />
+      className={`${inputCls} block ${wide ? "w-16" : "w-12"} h-8 pointer-coarse:h-11 text-right font-display tabular-nums text-body`} />
   );
   const link = "text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)] hover:underline";
   return (
@@ -772,7 +772,7 @@ function HeadCount({ crew, value, plant, edit, onSave, onTotal, onPlant }: {
       {split ? (
         <span className="flex items-center gap-1">{box("d", was.d, "direct hands")}{box("i", was.i, "indirect hands")}</span>
       ) : box("t", was.t, "on site", true)}
-      <span className="text-[11px] text-[var(--color-text-muted)] whitespace-nowrap">
+      <span className="text-caption text-[var(--color-text-muted)] whitespace-nowrap">
         {split
           ? <>{n.total != null && <>= <b className="text-[var(--color-text)]">{n.total}</b> on site · </>}<button type="button" onClick={() => { setSplitOpen(false); if (n.split) onTotal(n.total); }} title="One number for everyone on site" className={link}>One total</button></>
           : <button type="button" onClick={() => setSplitOpen(true)} title="Direct (on the tools) and indirect (supervision, safety, watch, QC, tool room)" className={link}>Split</button>}
@@ -792,19 +792,19 @@ function SafetyTopic({ value, topics, edit, onSave }: { value?: string; topics?:
   const commit = (x: string) => { setEditing(false); if (cleanName(x) !== t) onSave(cleanName(x)); };
   const picks = (topics ?? []).filter((x) => x !== t);
   return (
-    <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 px-2 py-1 rounded-md border border-dashed border-[var(--color-border)] text-[12px]">
-      <span className="shrink-0 text-[12px] font-semibold text-[var(--color-text)] dark:text-[var(--color-text)]">Safety topic</span>
+    <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 px-2 py-1 rounded-md border border-dashed border-[var(--color-border)] text-caption">
+      <span className="shrink-0 text-caption font-medium text-[var(--color-text)] dark:text-[var(--color-text)]">Safety topic</span>
       {editing ? (
         <span className="flex-1 min-w-[12rem] flex items-center gap-1.5">
           <input autoFocus value={v} onChange={(e) => setV(e.target.value)} aria-label="Safety topic" placeholder="What the meeting talked through"
             onKeyDown={(e) => { if (e.key === "Enter") commit(v); if (e.key === "Escape") setEditing(false); }}
             className={`${inputCls} flex-1 min-w-0 h-7 pointer-coarse:h-11`} />
           <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => commit(v)} className={`${saveBtn} h-7`}>Save</button>
-          <button type="button" onClick={() => setEditing(false)} className="text-[11px] text-[var(--color-text-muted)] hover:underline">Cancel</button>
+          <button type="button" onClick={() => setEditing(false)} className="text-caption text-[var(--color-text-muted)] hover:underline">Cancel</button>
         </span>
       ) : t ? (
         <>
-          <span className="min-w-0 break-words font-semibold text-[var(--color-text)]">{t}</span>
+          <span className="min-w-0 break-words font-medium text-[var(--color-text)]">{t}</span>
           {edit && (
             <span className="inline-flex items-center">
               <button type="button" onClick={open} aria-label="Edit the safety topic" className="p-1 rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><Pencil className="w-3 h-3" /></button>
@@ -813,16 +813,16 @@ function SafetyTopic({ value, topics, edit, onSave }: { value?: string; topics?:
           )}
         </>
       ) : edit ? (
-        <button type="button" onClick={open} aria-label="Add the safety topic" className="inline-flex items-center gap-0.5 h-7 px-2 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[12px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+        <button type="button" onClick={open} aria-label="Add the safety topic" className="inline-flex items-center gap-0.5 h-8 px-2 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-caption font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
           <Plus className="w-3 h-3" /> Add
         </button>
       ) : <span className="text-[var(--color-text-faint)]">-</span>}
       {edit && !t && picks.length > 0 && (
         <span className="basis-full flex flex-wrap items-center gap-1">
-          <span className="text-[11px] text-[var(--color-text-muted)]">From the report:</span>
+          <span className="text-caption text-[var(--color-text-muted)]">From the report:</span>
           {picks.map((x) => (
             <button key={x} type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => commit(x)}
-              className="max-w-full truncate h-6 px-2 rounded-full border border-[var(--color-border)] dark:border-[var(--color-border)] bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] text-[11px] font-semibold text-[var(--color-text)] dark:text-[var(--color-text)] hover:border-[var(--color-main)]">
+              className="max-w-full truncate h-6 px-2 rounded-full border border-[var(--color-border)] dark:border-[var(--color-border)] bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] text-caption font-medium text-[var(--color-text)] dark:text-[var(--color-text)] hover:border-[var(--color-main)]">
               {x}
             </button>
           ))}
@@ -840,7 +840,7 @@ function HourForm({ init, placeholder, onDone, onCancel }: { init: string; place
         className={`${inputCls} w-full resize-y`} />
       <div className="flex items-center gap-2">
         <button type="button" onClick={() => onDone(text)} className={saveBtn}>Save</button>
-        <button type="button" onClick={onCancel} className="text-[12px] text-[var(--color-text-muted)] hover:underline">Cancel</button>
+        <button type="button" onClick={onCancel} className="text-caption text-[var(--color-text-muted)] hover:underline">Cancel</button>
       </div>
     </div>
   );

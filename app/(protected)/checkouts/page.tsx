@@ -304,7 +304,7 @@ export default function CheckoutsPage() {
         ) : filtered.length === 0 ? (
           <Card>
             <div className="flex flex-wrap items-center gap-x-4 gap-y-3">
-              <p className="flex-1 min-w-[14rem] text-[15px] text-[var(--color-text)]">
+              <p className="flex-1 min-w-[14rem] text-reading text-[var(--color-text)]">
                 {rows.length === 0 ? "No one has a document checked out." : "No checkouts match these filters."}
               </p>
               {rows.length > 0 && (
@@ -328,14 +328,14 @@ function ProjectGroup({ project, items }: { project: Project | null; items: Chec
   return (
     <section className="min-w-0">
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 mb-2.5">
-        <h2 className="font-display text-[20px] leading-tight font-semibold text-[var(--color-heading)] min-w-0 self-center">
+        <h2 className="font-display text-section leading-tight font-semibold text-[var(--color-heading)] min-w-0 self-center">
           {project ? (
             <Link href={`/projects/${project.id}`} className="hover:text-[var(--color-accent-text)] hover:underline underline-offset-4">
               {project.name}
             </Link>
           ) : "Ad-hoc checkouts"}
         </h2>
-        <span className="text-[14px] text-[var(--color-text-muted)] inline-flex items-center gap-1.5">
+        <span className="text-body text-[var(--color-text-muted)] inline-flex items-center gap-1.5">
           {project ? (
             <>
               {project.ownerUserName && <span>{project.ownerUserName}</span>}
@@ -346,7 +346,7 @@ function ProjectGroup({ project, items }: { project: Project | null; items: Chec
             <span>Release on their own after 24 hours</span>
           )}
         </span>
-        <span className="ml-auto self-center text-[14px] text-[var(--color-text-muted)] tabular-nums">
+        <span className="ml-auto self-center text-body text-[var(--color-text-muted)] tabular-nums">
           {items.length.toLocaleString()} file{items.length === 1 ? "" : "s"}
         </span>
       </div>
@@ -362,16 +362,16 @@ const MODE_LABEL: Record<string, string> = { view: "View", markup: "Markup", edi
 function CheckoutsTable({ items, showProject }: { items: CheckoutWithContext[]; showProject?: boolean }) {
   return (
     <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
-      <table className="w-full text-[14px]">
-        <thead className="text-[13px] text-[var(--color-text-muted)] text-left max-sm:hidden border-b border-[var(--color-border)]">
+      <table className="w-full text-body">
+        <thead className="text-body text-[var(--color-text-muted)] text-left max-sm:hidden border-b border-[var(--color-border)]">
           <tr>
-            <th className="font-semibold px-4 h-10">Document</th>
-            <th className="font-semibold px-4 hidden lg:table-cell">Library</th>
-            <th className="font-semibold px-4">Checked out by</th>
-            <th className="font-semibold px-4 hidden md:table-cell">Kind</th>
-            <th className="font-semibold px-4">Since</th>
-            <th className="font-semibold px-4">Release</th>
-            {showProject && <th className="font-semibold px-4 hidden xl:table-cell">Project</th>}
+            <th className="font-medium px-4 h-10">Document</th>
+            <th className="font-medium px-4 hidden lg:table-cell">Library</th>
+            <th className="font-medium px-4">Checked out by</th>
+            <th className="font-medium px-4 hidden md:table-cell">Kind</th>
+            <th className="font-medium px-4">Since</th>
+            <th className="font-medium px-4">Release</th>
+            {showProject && <th className="font-medium px-4 hidden xl:table-cell">Project</th>}
             <th className="w-12"><span className="sr-only">Open</span></th>
           </tr>
         </thead>
@@ -404,15 +404,15 @@ function CheckoutRow({ row, showProject }: { row: CheckoutWithContext; showProje
     <tr onClick={open} className="cursor-pointer hover:bg-[var(--color-surface-2)] transition-colors max-sm:block max-sm:relative">
       <td className="px-4 py-3 relative max-sm:block max-sm:pr-14">
         {isStale && <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] bg-[var(--state-overdue)]" />}
-        <Link href={href} className="ui-id text-[16px]">
+        <Link href={href} className="ui-id text-reading">
           {row.docNumber || "-"}
         </Link>
         {sub && (
-          <div className="text-[13px] text-[var(--color-text-muted)] truncate max-w-[42ch]" title={why ? `Why: ${why}` : undefined}>{sub}</div>
+          <div className="text-body text-[var(--color-text-muted)] truncate max-w-[42ch]" title={why ? `Why: ${why}` : undefined}>{sub}</div>
         )}
         {/* Phone: who, since and release under the document. */}
-        <div className="sm:hidden mt-1 flex flex-wrap gap-x-3 text-[13px] text-[var(--color-text-muted)]">
-          <span className="font-semibold text-[var(--color-text)]">{row.userName}</span>
+        <div className="sm:hidden mt-1 flex flex-wrap gap-x-3 text-body text-[var(--color-text-muted)]">
+          <span className="font-medium text-[var(--color-text)]">{row.userName}</span>
           <span>{MODE_LABEL[row.mode] ?? row.mode}</span>
           <span>Since {formatRelative(row.startedAt)}</span>
           {release}
@@ -423,7 +423,7 @@ function CheckoutRow({ row, showProject }: { row: CheckoutWithContext; showProje
           ? <Link href={`/documents/${row.libraryId}`} className="ui-tag !font-sans" title={`Open ${row.libraryName}`}>{row.libraryName}</Link>
           : <span className="text-[var(--color-text-muted)]">-</span>}
       </td>
-      <td className="px-4 py-3 font-semibold text-[var(--color-text)] max-sm:hidden whitespace-nowrap">{row.userName}</td>
+      <td className="px-4 py-3 font-medium text-[var(--color-text)] max-sm:hidden whitespace-nowrap">{row.userName}</td>
       <td className="px-4 py-3 hidden md:table-cell text-[var(--color-text)]">{MODE_LABEL[row.mode] ?? row.mode}</td>
       <td className="px-4 py-3 whitespace-nowrap max-sm:hidden">{formatRelative(row.startedAt)}</td>
       <td className="px-4 py-3 whitespace-nowrap max-sm:hidden">{release}</td>
@@ -483,10 +483,10 @@ function ConsolidationPanel({
   return (
     <section className="min-w-0">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mb-2.5 min-h-8">
-        <h2 className="font-display text-[20px] leading-tight font-semibold text-[var(--color-heading)]">
+        <h2 className="font-display text-section leading-tight font-semibold text-[var(--color-heading)]">
           Checkouts that overlap
         </h2>
-        <span className="text-[14px] text-[var(--color-text-muted)] inline-flex items-center gap-3">
+        <span className="text-body text-[var(--color-text-muted)] inline-flex items-center gap-3">
           {assetCount > 0 && <span className="inline-flex items-center gap-1.5"><span className="ui-count is-warn">{assetCount}</span> on the same equipment</span>}
           {scopeCount > 0 && <span className="inline-flex items-center gap-1.5"><span className="ui-count is-warn">{scopeCount}</span> in the same unit or system</span>}
         </span>
@@ -494,7 +494,7 @@ function ConsolidationPanel({
           type="button"
           onClick={onToggle}
           aria-expanded={isOpen}
-          className="ml-auto inline-flex items-center gap-1.5 h-10 pointer-coarse:h-11 px-3.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
+          className="ml-auto inline-flex items-center gap-1.5 h-10 pointer-coarse:h-11 px-3.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
         >
           {isOpen ? "Hide" : "Show"}
           <ChevronDown className={`ui-chevron w-4 h-4 text-[var(--color-text-muted)] ${isOpen ? "rotate-180" : ""}`} />
@@ -540,7 +540,7 @@ function OverlapCard({
   return (
     <div className="px-4 sm:px-5 py-3">
       <div className="flex items-center gap-2">
-        <div className="text-[15px] text-[var(--color-text)] inline-flex items-center gap-1.5 flex-1 min-w-0">
+        <div className="text-reading text-[var(--color-text)] inline-flex items-center gap-1.5 flex-1 min-w-0">
           {heading}
           <span className="text-[var(--color-text-muted)] font-normal">, {involved.length} checkout{involved.length === 1 ? "" : "s"}</span>
         </div>
@@ -549,7 +549,7 @@ function OverlapCard({
             onClick={doNudge}
             disabled={nudging || nudged}
             title="Send everyone here an in-app heads-up to coordinate"
-            className={`shrink-0 inline-flex items-center gap-1.5 h-10 pointer-coarse:h-11 px-3.5 rounded-lg text-[14px] font-semibold transition-colors ${
+            className={`shrink-0 inline-flex items-center gap-1.5 h-10 pointer-coarse:h-11 px-3.5 rounded-lg text-body font-semibold transition-colors ${
               nudged ? "text-[var(--color-text)]"
                      : "border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-60"
             }`}
@@ -560,11 +560,11 @@ function OverlapCard({
       </div>
       <div className="mt-1.5 space-y-1">
         {involved.map((c) => (
-          <div key={c.id} className="flex items-center gap-2 text-[14px] text-[var(--color-text)]">
+          <div key={c.id} className="flex items-center gap-2 text-body text-[var(--color-text)]">
             <Lock className="w-3 h-3 text-[var(--color-text-faint)] shrink-0" />
             {c.libraryId && c.documentId
-              ? <Link href={`/documents/${c.libraryId}?doc=${c.documentId}`} className="ui-id text-[15px] shrink-0">{c.docNumber || "-"}</Link>
-              : <span className="ui-id text-[15px] shrink-0">{c.docNumber || "-"}</span>}
+              ? <Link href={`/documents/${c.libraryId}?doc=${c.documentId}`} className="ui-id text-reading shrink-0">{c.docNumber || "-"}</Link>
+              : <span className="ui-id text-reading shrink-0">{c.docNumber || "-"}</span>}
             <span className="truncate flex-1 min-w-0">{c.docTitle || "(untitled)"}</span>
             <span className="text-[var(--color-text-muted)]">{c.userName || c.userId.slice(0, 8)}</span>
             {c.libraryId && c.documentId && (

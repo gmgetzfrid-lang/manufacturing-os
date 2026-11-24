@@ -165,7 +165,7 @@ export default function StatusControl({ status, onPick, disabled, onDisabledClic
         className={
           variant === "dot"
             ? `inline-flex items-center justify-center rounded-full border ${dotSize} ${meta.dot} opacity-90`
-            : `inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[12px] font-semibold ${meta.pill} opacity-90`
+            : `inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-caption font-medium ${meta.pill} opacity-90`
         }
       >
         {variant === "dot"
@@ -185,7 +185,7 @@ export default function StatusControl({ status, onPick, disabled, onDisabledClic
         className={
           variant === "dot"
             ? `relative inline-flex items-center justify-center rounded-full border ${dotSize} ${meta.dot} after:absolute after:-inset-1.5 pointer-coarse:after:-inset-3 after:content-[''] ${disabled ? `opacity-70 ${onDisabledClick ? "cursor-pointer" : "cursor-default"}` : "cursor-pointer hover:scale-110 transition-transform"}`
-            : `inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[12px] font-semibold ${meta.pill} ${disabled ? `opacity-70 ${onDisabledClick ? "cursor-pointer" : "cursor-default"}` : "cursor-pointer hover:brightness-95"}`
+            : `inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-caption font-medium ${meta.pill} ${disabled ? `opacity-70 ${onDisabledClick ? "cursor-pointer" : "cursor-default"}` : "cursor-pointer hover:brightness-95"}`
         }
       >
         {busy
@@ -208,9 +208,9 @@ export default function StatusControl({ status, onPick, disabled, onDisabledClic
             {pctStep ? (
               <div className="p-3">
                 <div className="flex items-center justify-between gap-2 mb-2">
-                  <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">How far along?</span>
+                  <span className="text-body font-medium text-[var(--color-text-muted)]">How far along?</span>
                   <span className="inline-flex items-center gap-1">
-                    <button onClick={() => setPctStep(false)} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Back</button>
+                    <button onClick={() => setPctStep(false)} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Back</button>
                     <button type="button" onClick={() => setOpen(false)} aria-label="Close" className="-mr-1.5 w-8 h-8 inline-flex items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
                   </span>
                 </div>
@@ -230,29 +230,29 @@ export default function StatusControl({ status, onPick, disabled, onDisabledClic
                 />}
               </div>
             ) : reasonFor ? (
-              <div className="p-3 space-y-2.5 text-[12px]">
+              <div className="p-3 space-y-2.5 text-caption">
                 <div className="flex items-center justify-between gap-2">
-                  <span className="text-[15px] font-bold text-[var(--color-text)]">{STATUS_META[reasonFor].label}</span>
+                  <span className="text-reading font-medium text-[var(--color-text)]">{STATUS_META[reasonFor].label}</span>
                   <button type="button" onClick={() => setOpen(false)} aria-label="Close" className="-mr-1.5 w-8 h-8 inline-flex items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
                 </div>
                 <div>
-                  <div className="mb-1"><span className="text-[13px] font-semibold text-[var(--color-text-muted)]">{askFor(reasonFor)}</span> <span className="text-[12px] text-[var(--color-text-muted)]">(required)</span></div>
+                  <div className="mb-1"><span className="text-body font-medium text-[var(--color-text-muted)]">{askFor(reasonFor)}</span> <span className="text-caption text-[var(--color-text-muted)]">(required)</span></div>
                   <input
                     autoFocus
                     value={reason}
                     onChange={(e) => { setReason(e.target.value); setWhyMsg(null); }}
                     onKeyDown={(e) => { if (e.key === "Enter") commit(); }}
                     placeholder={reasonFor === "on_hold" ? "waiting on parts…" : reasonFor === "blocked" ? "what's blocking it…" : reasonFor === "completed" ? "what got done…" : "why…"}
-                    className="w-full h-9 pointer-coarse:h-11 text-[13px] px-2.5 border border-[var(--color-border-strong)] rounded-lg bg-[var(--color-surface)]"
+                    className="w-full h-9 pointer-coarse:h-11 text-body px-2.5 border border-[var(--color-border-strong)] rounded-lg bg-[var(--color-surface)]"
                   />
                 </div>
                 {choices.length > 0 && clockCtx && <WhenFields choices={choices} idx={whenIdx} setIdx={(i) => { setWhenIdx(i); setWhyMsg(null); }} clock={when} setClock={(v) => { setWhen(v); setWhyMsg(null); }} tz={clockCtx.tz} times={clockCtx.times} other={otherDay} setOther={(d) => { setOtherDay(d); setWhyMsg(null); }} />}
-                {whyMsg && <div className="font-semibold text-[var(--state-overdue-text)]">{whyMsg}</div>}
+                {whyMsg && <div className="font-medium text-[var(--state-overdue-text)]">{whyMsg}</div>}
                 <div className="flex items-center justify-end gap-1.5">
-                  <button onClick={() => setReasonFor(null)} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Back</button>
+                  <button onClick={() => setReasonFor(null)} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Back</button>
                   <button
                     onClick={commit}
-                    className="h-9 px-3.5 text-[13px] font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] rounded-lg transition-colors"
+                    className="h-9 px-3.5 text-body font-medium text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] rounded-lg transition-colors"
                   >
                     {reasonFor === "completed" ? "Mark done" : `Set ${STATUS_META[reasonFor].label}`}{when ? ` at ${when}` : ""}
                   </button>
@@ -266,7 +266,7 @@ export default function StatusControl({ status, onPick, disabled, onDisabledClic
                   <button
                     key={s}
                     onClick={() => choose(s)}
-                    className={`w-full flex items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-[var(--color-surface-2)] transition-colors ${s === status ? "font-bold text-[var(--color-text)] bg-[var(--color-surface-2)]" : "font-medium text-[var(--color-text)]"}`}
+                    className={`w-full flex items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-[var(--color-surface-2)] transition-colors ${s === status ? "font-medium text-[var(--color-text)] bg-[var(--color-surface-2)]" : "font-medium text-[var(--color-text)]"}`}
                   >
                     <span className={`w-3 h-3 rounded-full border ${m.dot} inline-flex items-center justify-center`}>
                       {s === "completed" && <CircleCheck className="w-2 h-2 text-white" />}

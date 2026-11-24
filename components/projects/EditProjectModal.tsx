@@ -32,7 +32,7 @@ function localDay(v: unknown): string {
 
 const inputCls = "mt-1 w-full h-9 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-sm ";
 const areaCls = "mt-1 w-full rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 py-2 text-sm resize-y ";
-const labelCls = "text-[12px] font-semibold text-[var(--color-text-muted)]";
+const labelCls = "text-caption font-medium text-[var(--color-text-muted)]";
 
 export default function EditProjectModal({ project, actorUserId, actorEmail, actorRole, onClose, onSaved }: {
   project: Project;
@@ -163,25 +163,25 @@ export default function EditProjectModal({ project, actorUserId, actorEmail, act
       <div className="relative w-full max-w-lg max-h-[85dvh] overflow-y-auto bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-2xl animate-in fade-in zoom-in-95 duration-150">
         <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center gap-2">
           <Pencil className="w-4 h-4 text-[var(--color-text-muted)]" />
-          <span className="text-sm font-semibold text-[var(--color-text)]">Edit project</span>
+          <span className="text-sm font-medium text-[var(--color-text)]">Edit project</span>
           <button onClick={onClose} aria-label="Close" className="ml-auto p-1 rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
         </div>
         <div className="p-5 space-y-3">
           <label className="block">
-            <span className="text-[12px] font-semibold text-[var(--color-text-muted)]">Name</span>
+            <span className="text-caption font-medium text-[var(--color-text-muted)]">Name</span>
             <input value={name} onChange={(e) => setName(e.target.value)} className="mt-1 w-full h-9 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-sm" />
           </label>
           <label className="block">
-            <span className="text-[12px] font-semibold text-[var(--color-text-muted)]">Description</span>
+            <span className="text-caption font-medium text-[var(--color-text-muted)]">Description</span>
             <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={3} className="mt-1 w-full rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 py-2 text-sm resize-y" />
           </label>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <label className="block">
-              <span className="text-[12px] font-semibold text-[var(--color-text-muted)]">MOC reference</span>
+              <span className="text-caption font-medium text-[var(--color-text-muted)]">MOC reference</span>
               <input value={moc} onChange={(e) => setMoc(e.target.value)} className="mt-1 w-full h-9 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-sm font-display tabular-nums" />
             </label>
             <label className="block">
-              <span className="text-[12px] font-semibold text-[var(--color-text-muted)]">Target completion</span>
+              <span className="text-caption font-medium text-[var(--color-text-muted)]">Target completion</span>
               <input type="date" value={target} onChange={(e) => setTarget(e.target.value)} className="mt-1 w-full h-9 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-sm [color-scheme:light] dark:[color-scheme:dark]" />
             </label>
             <label className="block">
@@ -230,8 +230,8 @@ export default function EditProjectModal({ project, actorUserId, actorEmail, act
                 {sowDoc ? (
                   <div className="mt-1 flex items-center gap-2 rounded-lg border border-[var(--state-released)] bg-[var(--state-released)]/[0.06] px-2.5 py-2 text-sm">
                     <FileText className="w-4 h-4 text-[var(--state-released-text)] shrink-0" />
-                    <span className="font-bold text-[var(--color-text)] truncate">{sowDoc.label}</span>
-                    <button type="button" onClick={() => setSowDoc(null)} className="ml-auto inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--state-overdue)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Change</button>
+                    <span className="font-medium text-[var(--color-text)] truncate">{sowDoc.label}</span>
+                    <button type="button" onClick={() => setSowDoc(null)} className="ml-auto inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--state-overdue)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Change</button>
                   </div>
                 ) : (
                   <div className="mt-1">
@@ -245,34 +245,34 @@ export default function EditProjectModal({ project, actorUserId, actorEmail, act
                         {sowResults.map((d) => (
                           <li key={d.id}>
                             <button type="button" onClick={() => { setSowDoc(d); setSowQuery(""); setSowResults([]); }}
-                              className="w-full px-3 py-2 text-left text-xs font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center gap-2">
+                              className="w-full px-3 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center gap-2">
                               <FileText className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> {d.label}
                             </button>
                           </li>
                         ))}
                       </ul>
                     )}
-                    <div className="mt-1 text-[11px] text-[var(--color-text-faint)]">From document control. Upload it there first if it isn&apos;t in yet.</div>
+                    <div className="mt-1 text-caption text-[var(--color-text-faint)]">From document control. Upload it there first if it isn&apos;t in yet.</div>
                   </div>
                 )}
               </div>
             </>
           )}
           {wizardLoaded === "loading" && (
-            <div role="status" className="text-[12px] text-[var(--color-text-muted)] inline-flex items-center gap-1.5"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading purpose, goals and the Summary of Work…</div>
+            <div role="status" className="text-caption text-[var(--color-text-muted)] inline-flex items-center gap-1.5"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading purpose, goals and the Summary of Work…</div>
           )}
           {wizardLoaded === "missing" && (
-            <div className="text-[11px] text-[var(--color-text-faint)]">Purpose, goals, success criteria, job size and the Summary of Work need the database update 20261013_project_controls_program.sql.</div>
+            <div className="text-caption text-[var(--color-text-faint)]">Purpose, goals, success criteria, job size and the Summary of Work need the database update 20261013_project_controls_program.sql.</div>
           )}
           <div>
-            <span className="text-[12px] font-semibold text-[var(--color-text-muted)]">Plant timezone</span>
+            <span className="text-caption font-medium text-[var(--color-text-muted)]">Plant timezone</span>
             <TimeZoneSelect value={timezone} onChange={setTimezone} className="mt-1" />
-            <div className="mt-1 text-[11px] text-[var(--color-text-faint)]">
+            <div className="mt-1 text-caption text-[var(--color-text-faint)]">
               Everyone on the project sees and enters dates, days and shifts in this zone.
               {originalTz === DEFAULT_SCHEDULE_TZ && !tzChanged && " Currently UTC: pick the plant's zone so evening work lands on the right day."}
             </div>
             {tzChanged && (
-              <label className="mt-2 flex items-start gap-2 border-l-2 border-[var(--state-held)] pl-3 py-1 text-[11px] text-[var(--state-held-text)]">
+              <label className="mt-2 flex items-start gap-2 border-l-2 border-[var(--state-held)] pl-3 py-1 text-caption text-[var(--state-held-text)]">
                 <input type="checkbox" checked={keepWallClock} onChange={(e) => setKeepWallClock(e.target.checked)} className="mt-0.5" />
                 <span>
                   <b>Keep the schedule&apos;s times as written:</b> a task at 8:00 ({tzLabel(originalTz)}) becomes 8:00 ({tzLabel(timezone)}).
@@ -282,7 +282,7 @@ export default function EditProjectModal({ project, actorUserId, actorEmail, act
             )}
           </div>
           <div>
-            <span className="text-[12px] font-semibold text-[var(--color-text-muted)]">Visibility</span>
+            <span className="text-caption font-medium text-[var(--color-text-muted)]">Visibility</span>
             <div className="mt-1 inline-flex items-center rounded-xl border border-[var(--color-border)] p-0.5 gap-0.5">
               {([
                 { v: "public" as const, label: "Public", Icon: Globe },
@@ -301,14 +301,14 @@ export default function EditProjectModal({ project, actorUserId, actorEmail, act
               ))}
             </div>
             {visibility === "private" && (
-              <div className="mt-1 text-[11px] text-[var(--color-text-faint)]">Only members, the owner, and Document Control can see private projects.</div>
+              <div className="mt-1 text-caption text-[var(--color-text-faint)]">Only members, the owner, and Document Control can see private projects.</div>
             )}
           </div>
-          {error && <div role="alert" className="border-l-2 border-[var(--state-overdue)] pl-3 py-1 text-xs font-bold text-[var(--state-overdue-text)]">{error}</div>}
+          {error && <div role="alert" className="border-l-2 border-[var(--state-overdue)] pl-3 py-1 text-xs font-medium text-[var(--state-overdue-text)]">{error}</div>}
         </div>
         <div className="px-5 py-3.5 border-t border-[var(--color-border)] flex items-center justify-end gap-2">
-          <button onClick={onClose} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>
-          <button onClick={() => void save()} disabled={busy} className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-semibold hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
+          <button onClick={onClose} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>
+          <button onClick={() => void save()} disabled={busy} className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-medium hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
             {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />} Save changes
           </button>
         </div>

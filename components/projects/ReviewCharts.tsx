@@ -81,8 +81,8 @@ export function LateHours({ bars, late, onPick }: { bars: LateBar[]; late: numbe
       <ul className="space-y-2.5" aria-label={`Where the ${late} h went`}>
         {bars.map((b, i) => (
           <li key={i} className="grid grid-cols-[minmax(0,1fr)_auto] sm:grid-cols-[150px_minmax(0,1fr)_64px] items-center gap-x-3 gap-y-1">
-            <span className="text-[13px] font-semibold text-[var(--color-text)] truncate" title={b.line}>{b.label}</span>
-            <span className="sm:order-last text-right text-[13px] font-semibold tabular-nums text-[var(--color-text)]">{b.hours} h</span>
+            <span className="text-body font-medium text-[var(--color-text)] truncate" title={b.line}>{b.label}</span>
+            <span className="sm:order-last text-right text-body font-medium tabular-nums text-[var(--color-text)]">{b.hours} h</span>
             <div className="col-span-2 sm:col-span-1 flex gap-[2px] h-4" style={{ width: `${Math.max(3, (b.hours / max) * 100)}%` }}>
               {b.segs.map((x, k) => {
                 const tip = `${b.label}: ${x.hours} h, ${x.title}`;
@@ -94,12 +94,12 @@ export function LateHours({ bars, late, onPick }: { bars: LateBar[]; late: numbe
           </li>
         ))}
       </ul>
-      <ul className="mt-3 flex flex-col gap-1.5 text-[13px]" data-late-legend>
+      <ul className="mt-3 flex flex-col gap-1.5 text-body" data-late-legend>
         {[...legend.values()].map((e, i) => (
           <li key={i} className="flex items-start gap-2 min-w-0">
-            <span aria-hidden className="mt-[5px] w-2.5 h-2.5 rounded-[3px] shrink-0" style={{ background: color(e.key) }} />
+            <span aria-hidden className="mt-[5px] w-2.5 h-2.5 rounded-md shrink-0" style={{ background: color(e.key) }} />
             {e.key ? <button type="button" onClick={() => onPick(e.key!)} className="min-w-0 text-left text-[var(--color-text)] hover:underline">{e.title}</button> : <span className="min-w-0 text-[var(--color-text-muted)]">{e.title}</span>}
-            <span className="ml-auto pl-2 shrink-0 tabular-nums font-semibold text-[var(--color-text)]">{e.hours} h</span>
+            <span className="ml-auto pl-2 shrink-0 tabular-nums font-medium text-[var(--color-text)]">{e.hours} h</span>
           </li>
         ))}
       </ul>
@@ -202,7 +202,7 @@ export function LoadChart({ load: L, tz }: { load: PartyLoad; tz: string }) {
         </svg>
       )}
       {cur && hover != null && (
-        <div className="pointer-events-none absolute top-1 z-10 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1.5 text-[12px] shadow-sm text-[var(--color-text)]"
+        <div className="pointer-events-none absolute top-1 z-10 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1.5 text-caption shadow-sm text-[var(--color-text)]"
           style={{ left: Math.min(Math.max(0, sc.x(hover) + 10), Math.max(0, w - 210)), width: 200 }}>
           <b className="block">{at(hover, tz)}</b>
           <span className="block">Ready: {cur.open} · Being worked: {cur.working}</span>
@@ -211,7 +211,7 @@ export function LoadChart({ load: L, tz }: { load: PartyLoad; tz: string }) {
           <span className="block text-[var(--color-text-muted)]">Planned at once: {n}</span>
         </div>
       )}
-      <ul className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-[12px] text-[var(--color-text-muted)]">
+      <ul className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-caption text-[var(--color-text-muted)]">
         {/* The lines are named at their ends on a wide chart; on a narrow one, here. */}
         {!ends && <>
           <li className="inline-flex items-center gap-1.5"><span aria-hidden className="w-4 h-0.5 rounded-full" style={{ background: OPEN }} />Ready (open)</li>
@@ -240,7 +240,7 @@ export function LoadStrip({ load: L, jobs, held, tz }: { load: PartyLoad; jobs: 
           const after = held.filter((h) => h.by === j.id);
           const tip = `${jobName(j)}: ready ${at(j.ready, tz)}${j.start != null ? `, started ${at(j.start, tz)}` : ""}${j.partyH ? `. Waited for ${P} ${j.partyH} h` : ""}${j.nobodyH ? `. Nobody on it ${j.nobodyH} h` : ""}${j.laterH ? `. Plan said later ${j.laterH} h` : ""}.`;
           return (
-            <li key={j.id} className="text-[12px]">
+            <li key={j.id} className="text-caption">
               <div className="flex items-baseline gap-2 min-w-0">
                 <b className="min-w-0 truncate text-[var(--color-text)]" title={jobName(j)}>{jobName(j)}</b>
                 <span className="ml-auto shrink-0 tabular-nums text-[var(--color-text)]">{j.partyH ? `waited ${j.partyH} h` : ""}{j.partyH && j.nobodyH ? " · " : ""}{j.nobodyH ? `nobody on it ${j.nobodyH} h` : ""}</span>
@@ -255,7 +255,7 @@ export function LoadStrip({ load: L, jobs, held, tz }: { load: PartyLoad; jobs: 
           );
         })}
       </ul>
-      <ul className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[12px] text-[var(--color-text-muted)]">
+      <ul className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-caption text-[var(--color-text-muted)]">
         <li className="inline-flex items-center gap-1.5"><span aria-hidden className="w-4 h-2 rounded-[2px]" style={{ background: WAIT, opacity: 0.85 }} />Waited for {P}</li>
         <li className="inline-flex items-center gap-1.5"><span aria-hidden className="w-4 h-2 rounded-[2px]" style={{ background: NOBODY }} />Nobody on it</li>
         <li className="inline-flex items-center gap-1.5"><span aria-hidden className="w-4 h-2 rounded-[2px]" style={{ background: LATER }} />Ready before its planned start</li>
@@ -272,11 +272,11 @@ export function IdleBars({ groups }: { groups: Array<{ party: string; step: stri
     <ul className="space-y-2" data-idle-bars>
       {groups.map((g, i) => (
         <li key={i} title={`${g.party}, ${g.step}: ${g.jobs.length} job${g.jobs.length === 1 ? "" : "s"}, ${g.hours} h`}>
-          <div className="flex items-baseline gap-2 text-[12px] min-w-0">
+          <div className="flex items-baseline gap-2 text-caption min-w-0">
             <span className="min-w-0 truncate text-[var(--color-text)]"><b>{g.party}</b> · {g.step} <span className="text-[var(--color-text-muted)]">({g.jobs.length} job{g.jobs.length === 1 ? "" : "s"})</span></span>
-            <span className="ml-auto shrink-0 tabular-nums font-semibold text-[var(--color-text)]">{g.hours} h</span>
+            <span className="ml-auto shrink-0 tabular-nums font-medium text-[var(--color-text)]">{g.hours} h</span>
           </div>
-          <div className="mt-0.5 h-2.5 rounded-[4px]" style={{ width: `${Math.max(2, (g.hours / max) * 100)}%`, background: NOBODY }} />
+          <div className="mt-0.5 h-2.5 rounded-md" style={{ width: `${Math.max(2, (g.hours / max) * 100)}%`, background: NOBODY }} />
         </li>
       ))}
     </ul>

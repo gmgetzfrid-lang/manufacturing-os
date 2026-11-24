@@ -43,9 +43,6 @@ const KIND_GROUPS: Array<{ key: string; label: string; match: (k: string) => boo
   { key: "locks", label: "Checkouts and holds", match: (k) => k.includes("checkout") || k.includes("lock") || k.includes("hold") || k.includes("conflict") },
 ];
 
-/** A filter chip while it is the filter: a quiet edge in the current
- *  color, never a fill. */
-const tagOn = "!bg-[var(--color-surface)] !border-[var(--color-current)] !text-[var(--color-text)]";
 
 function groupOf(kind: string): string {
   const k = kind.toLowerCase();
@@ -77,11 +74,11 @@ export function AttentionFeed({ items, counts, filter, onFilter, onMarkRead, onM
           const on = filter === t.key;
           return (
             <button key={t.key} type="button" role="tab" aria-selected={on} onClick={() => onFilter(t.key)}
-              className={`inline-flex items-center gap-1.5 h-10 pointer-coarse:h-11 border-b-2 text-[15px] transition-colors ${on
-                ? "border-[var(--color-current)] font-semibold text-[var(--color-text)]"
+              className={`inline-flex items-center gap-1.5 h-10 pointer-coarse:h-11 border-b-2 text-reading transition-colors ${on
+                ? "border-[var(--color-current)] font-medium text-[var(--color-text)]"
                 : "border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
               {t.label}
-              <span className={`text-[13px] font-normal tabular-nums ${t.n === 0 ? "text-[var(--color-text-faint)]" : "text-[var(--color-text-muted)]"}`}>{t.n}</span>
+              <span className={`text-body font-normal tabular-nums ${t.n === 0 ? "text-[var(--color-text-faint)]" : "text-[var(--color-text-muted)]"}`}>{t.n}</span>
             </button>
           );
         })}
@@ -101,12 +98,12 @@ export function AttentionFeed({ items, counts, filter, onFilter, onMarkRead, onM
   // What it's about: one tap narrows the list to that kind, again shows all.
   const kinds = groupCounts.filter((g) => g.n > 0 || g.key === group);
   const chips = counts.all > 0 && kinds.length > 1 ? (
-    <div role="group" aria-label="About" className={`flex flex-wrap items-center gap-1.5 ${plain ? "px-4 py-2.5 border-b border-[var(--color-border)]" : "mb-3"}`}>
-      <button type="button" aria-pressed={group === "all"} onClick={() => setGroup("all")} className={`ui-tag ${group === "all" ? tagOn : ""}`}>Everything</button>
+    <div role="group" aria-label="About" className={`flex flex-wrap max-sm:flex-nowrap max-sm:overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden items-center gap-1.5 ${plain ? "px-4 py-2.5 border-b border-[var(--color-border)]" : "mb-3"}`}>
+      <button type="button" aria-pressed={group === "all"} onClick={() => setGroup("all")} className="ui-chip">Everything</button>
       {kinds.map((g) => {
         const on = group === g.key;
         return (
-          <button key={g.key} type="button" aria-pressed={on} onClick={() => setGroup(on ? "all" : g.key)} className={`ui-tag ${on ? tagOn : ""}`}>
+          <button key={g.key} type="button" aria-pressed={on} onClick={() => setGroup(on ? "all" : g.key)} className="ui-chip">
             {g.label} <span className="font-sans font-normal tabular-nums text-[var(--color-text-muted)]">{g.n}</span>
           </button>
         );
@@ -115,11 +112,11 @@ export function AttentionFeed({ items, counts, filter, onFilter, onMarkRead, onM
   ) : null;
 
   const body = counts.all === 0 ? (
-    <p className="px-4 py-4 text-[15px] text-[var(--color-text-muted)]">Nothing needs you right now.</p>
+    <p className="px-4 py-4 text-reading text-[var(--color-text-muted)]">Nothing needs you right now.</p>
   ) : rows.length === 0 ? (
-    <p className="px-4 py-4 text-[15px] text-[var(--color-text-muted)]">
+    <p className="px-4 py-4 text-reading text-[var(--color-text-muted)]">
       Nothing here.{" "}
-      <button type="button" onClick={() => { onFilter("all"); setGroup("all"); }} className="font-semibold text-[var(--color-accent-text)] hover:underline underline-offset-2">Show everything</button>
+      <button type="button" onClick={() => { onFilter("all"); setGroup("all"); }} className="font-medium text-[var(--color-accent-text)] hover:underline underline-offset-2">Show everything</button>
     </p>
   ) : (
     <>
@@ -128,7 +125,7 @@ export function AttentionFeed({ items, counts, filter, onFilter, onMarkRead, onM
         onMarkRead={(r) => { if (r.notificationId) onMarkRead(r.notificationId); }} />
       {rows.length > visibleCount && (
         <div className="border-t border-[var(--color-border)] px-4 py-2.5">
-          <button type="button" onClick={() => setVisibleCount((v) => v + 30)} className="text-[14px] font-semibold text-[var(--color-accent-text)] hover:underline underline-offset-2">
+          <button type="button" onClick={() => setVisibleCount((v) => v + 30)} className="text-body font-medium text-[var(--color-accent-text)] hover:underline underline-offset-2">
             Show {Math.min(30, rows.length - visibleCount)} more ({rows.length - visibleCount} not shown)
           </button>
         </div>

@@ -228,7 +228,7 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
         </div>
       )}
       {notice && (
-        <div role="status" className="mt-2 flex items-center gap-2 text-[14px] font-semibold text-[var(--color-text)]">
+        <div role="status" className="mt-2 flex items-center gap-2 text-body font-medium text-[var(--color-text)]">
           <Check className="w-4 h-4 shrink-0 text-[var(--state-released)]" /> <span className="min-w-0 flex-1">{notice}</span>
           <button onClick={() => setNotice(null)} aria-label="Dismiss" className="shrink-0 p-1 text-[var(--color-text-faint)] hover:text-[var(--color-text)]"><X className="w-3.5 h-3.5" /></button>
         </div>
@@ -240,7 +240,7 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
         <Card label={`${phaseMoney.phase.name} · ${phaseMoney.phase.share}% of the ${basis?.authorized != null ? "AFE" : "budget"}`}>
           <MoneyRow items={[["Phase budget", fmtMoney(phaseMoney.s.budget, cur)], ["Committed", fmtMoney(phaseMoney.s.committed, cur)], ["Spent", fmtMoney(phaseMoney.s.spent, cur)],
             [phaseMoney.s.budget - phaseMoney.s.spent >= 0 ? "Left" : "Over", fmtMoney(Math.abs(phaseMoney.s.budget - phaseMoney.s.spent), cur), phaseMoney.s.budget - phaseMoney.s.spent >= 0 ? undefined : "bad"]]} />
-          <div className="mt-2 text-[12px] text-[var(--color-text-muted)]">Lines kept for {phaseMoney.phase.name} count whole; every other line counts its {phaseMoney.phase.share}% share. Spending counts where it was booked, else by its date. The totals below are the whole project.</div>
+          <div className="mt-2 text-caption text-[var(--color-text-muted)]">Lines kept for {phaseMoney.phase.name} count whole; every other line counts its {phaseMoney.phase.share}% share. Spending counts where it was booked, else by its date. The totals below are the whole project.</div>
         </Card>
       )}
       {phaseMoney && phaseMoney.s.lines.length > 0 && <LinesChart rows={phaseMoney.s.lines} cur={cur} />}
@@ -259,8 +259,8 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
         {/* ── Burn bar: spent (solid) + committed (ghost) vs budget ── */}
         {rollup.budget > 0 && (
           <div className="mt-3 pt-3 border-t border-[var(--color-border)]">
-            <div className="flex items-center justify-between gap-2 flex-wrap text-[13px] text-[var(--color-text-muted)] mb-1.5">
-              <span className="font-semibold">Budget burn (estimated from quotes × schedule progress)</span>
+            <div className="flex items-center justify-between gap-2 flex-wrap text-body text-[var(--color-text-muted)] mb-1.5">
+              <span className="font-medium">Budget burn (estimated from quotes × schedule progress)</span>
               <span className="tabular-nums">{fmtMoney(outlook.estimatedToDate, cur)} est. to date · {fmtMoney(rollup.committed, cur)} quoted · {fmtMoney(rollup.budget, cur)} budget</span>
             </div>
             <div className="relative h-2.5 rounded-full bg-[var(--color-accent-soft)] overflow-hidden">
@@ -281,7 +281,7 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
       )}
 
       {mixedCurrency && (
-        <p className="px-1 text-[13px] font-bold text-[var(--state-held-text)]">
+        <p className="px-1 text-body font-medium text-[var(--state-held-text)]">
           Accounts use mixed currencies ({rollup.currencies.join(", ")}). The totals above add raw numbers. Keep one currency per project.
         </p>
       )}
@@ -322,7 +322,7 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
         </HelpTooltip></>}
         action={canManage && !importing && accounts.length > 0 ? (
           <button onClick={() => setShowDrop((v) => !v)}
-            className="inline-flex items-center gap-1.5 h-9 px-3 rounded-lg border border-[var(--color-border-strong)] text-[13px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
+            className="inline-flex items-center gap-1.5 h-10 px-3 rounded-lg border border-[var(--color-border-strong)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
             <FileUp className="w-3.5 h-3.5" /> Read a revised AFE or budget sheet
           </button>
         ) : undefined}>
@@ -358,7 +358,7 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
                       onCancel={() => setEditingLine(null)}
                       onSaved={(msg) => { setEditingLine(null); setNotice(msg); void refresh(); }} />
                   ) : (
-                    <button onClick={() => setEditingLine(account.id)} className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-[var(--color-border-strong)] text-[12px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">Change the budget with a reason</button>
+                    <button onClick={() => setEditingLine(account.id)} className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-[var(--color-border-strong)] text-caption font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">Change the budget with a reason</button>
                   )}
                 </div>
               )}
@@ -376,7 +376,7 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
       {/* ── Parties ── */}
       <Card pad={false} className="overflow-hidden">
         <button onClick={() => setShowParties((v) => !v)} aria-expanded={showParties} className="w-full px-4 sm:px-5 py-3.5 flex items-center gap-2 text-left hover:bg-[var(--color-surface-2)]/40 transition-colors">
-          <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Contractors &amp; vendors <span className="font-normal tabular-nums">{parties.length}</span></span>
+          <span className="text-body font-medium text-[var(--color-text-muted)]">Contractors &amp; vendors <span className="font-normal tabular-nums">{parties.length}</span></span>
           <span className="flex-1" />
           <ChevronRight className={`w-4 h-4 text-[var(--color-text-faint)] ui-chevron${(showParties) ? " rotate-90" : ""}`} />
         </button>
@@ -405,8 +405,8 @@ export function OutlookCard({ outlook: o, rollup, cur, authorized, onQuotes }: {
   const vsAuth = authorized != null ? o.forecast - authorized : null;
   return (
     <Card label="Where this job lands">
-      <p className="-mt-1 mb-2 text-[12px] text-[var(--color-text-muted)]">From awarded quotes and schedule progress, no invoices needed.</p>
-      <ul className="text-[13px] text-[var(--color-text)] space-y-1.5">
+      <p className="-mt-1 mb-2 text-caption text-[var(--color-text-muted)]">From awarded quotes and schedule progress, no invoices needed.</p>
+      <ul className="text-body text-[var(--color-text)] space-y-1.5">
         <li>
           {o.quoted > 0
             ? <>Awarded quotes plus the budget for unquoted lines put the finish at <b className="tabular-nums">{fmtMoney(o.forecast, cur)}</b>
@@ -433,7 +433,7 @@ export function OutlookCard({ outlook: o, rollup, cur, authorized, onQuotes }: {
           </li>
         )}
         {o.quoted > 0 && unquoted > 0 && (
-          <li className="text-[12px] text-[var(--color-text-muted)]">
+          <li className="text-caption text-[var(--color-text-muted)]">
             {unquoted} budget line{unquoted === 1 ? " has" : "s have"} no awarded quote, so {unquoted === 1 ? "it's" : "they're"} forecast at budget.
           </li>
         )}
@@ -451,17 +451,17 @@ function BasisLine({ basis, budget, spent, cur, onOpen }: {
   const auth = basis.authorized;
   const gap = auth != null ? auth - budget : null;
   return (
-    <div className="mt-3 pt-3 border-t border-[var(--color-border)] flex items-center gap-x-3 gap-y-1 flex-wrap text-[12px] text-[var(--color-text-muted)]">
+    <div className="mt-3 pt-3 border-t border-[var(--color-border)] flex items-center gap-x-3 gap-y-1 flex-wrap text-caption text-[var(--color-text-muted)]">
       <FileCheck2 className="w-4 h-4 text-[var(--color-text-muted)]" />
-      {basis.afeNumber && <span className="font-semibold text-[var(--color-text)]">{basis.afeNumber}</span>}
-      {auth != null && <span><span className="font-semibold tabular-nums text-[var(--color-text)]">{fmtMoney(auth, cur)}</span> authorized</span>}
+      {basis.afeNumber && <span className="font-medium text-[var(--color-text)]">{basis.afeNumber}</span>}
+      {auth != null && <span><span className="font-medium tabular-nums text-[var(--color-text)]">{fmtMoney(auth, cur)}</span> authorized</span>}
       {auth != null && gap != null && Math.abs(gap) >= 1 && (
-        <span className={gap < 0 ? "font-bold text-[var(--state-overdue-text)]" : ""}>
+        <span className={gap < 0 ? "font-medium text-[var(--state-overdue-text)]" : ""}>
           budget lines {gap < 0 ? "exceed" : "leave"} {fmtMoney(Math.abs(gap), cur)} {gap < 0 ? "over the authorization" : "unallocated"}
         </span>
       )}
       {auth != null && auth > 0 && (
-        <span className={spent > auth ? "font-bold text-[var(--state-overdue-text)]" : ""}>
+        <span className={spent > auth ? "font-medium text-[var(--state-overdue-text)]" : ""}>
           {Math.round((spent / auth) * 100)}% of authorization spent
         </span>
       )}
@@ -479,9 +479,9 @@ function MoneyRow({ items }: { items: Array<[label: string, value: string, tone?
     <dl className="grid grid-cols-2 lg:grid-cols-4 gap-x-6 gap-y-3">
       {items.map(([k, v, tone, sub]) => (
         <div key={k} className="min-w-0">
-          <dt className="text-[12px] text-[var(--color-text-muted)]">{k}</dt>
-          <dd className={`text-[15px] font-semibold tabular-nums truncate ${tone === "bad" ? "text-[var(--state-overdue-text)]" : tone === "good" ? "text-[var(--state-released-text)]" : "text-[var(--color-text)]"}`}>{v}</dd>
-          {sub && <dd className="text-[12px] text-[var(--color-text-muted)]">{sub}</dd>}
+          <dt className="text-caption text-[var(--color-text-muted)]">{k}</dt>
+          <dd className={`text-reading font-medium tabular-nums truncate ${tone === "bad" ? "text-[var(--state-overdue-text)]" : tone === "good" ? "text-[var(--state-released-text)]" : "text-[var(--color-text)]"}`}>{v}</dd>
+          {sub && <dd className="text-caption text-[var(--color-text-muted)]">{sub}</dd>}
         </div>
       ))}
     </dl>
@@ -513,14 +513,14 @@ function AccountDetail({ orgId, projectId, actor, rollup: r, entries, parties, m
       {canManage && (
         <div className="flex items-end gap-3 flex-wrap pt-2">
           <label className="block">
-            <span className="text-[13px] font-semibold text-[var(--color-text-muted)]" title="Earned value = budget × the pinned task's % complete">Pin to schedule task (for EV)</span>
+            <span className="text-body font-medium text-[var(--color-text-muted)]" title="Earned value = budget × the pinned task's % complete">Pin to schedule task (for EV)</span>
             <select value={pinDraft} onChange={(e) => void savePin(e.target.value)}
               className="mt-0.5 h-8 pointer-coarse:h-11 w-64 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs">
               <option value="">Not pinned</option>
               {milestones.map((m) => <option key={m.id} value={m.id}>{m.name} ({m.pct}%)</option>)}
             </select>
           </label>
-          <div className="text-[11px] text-[var(--color-text-muted)] pb-1.5">
+          <div className="text-caption text-[var(--color-text-muted)] pb-1.5">
             Committed {fmtMoney(r.committed, cur)} · Actual {fmtMoney(r.actual, cur)}{r.adjustments !== 0 ? ` · Adjustments ${fmtMoney(r.adjustments, cur)}` : ""}
           </div>
         </div>
@@ -531,25 +531,25 @@ function AccountDetail({ orgId, projectId, actor, rollup: r, entries, parties, m
       {canManage && <EntryForm orgId={orgId} projectId={projectId} accountId={a.id} defaultParty={a.partyId} parties={parties} actor={actor} onDone={onChanged} setErr={setErr} />}
 
       {entries.length === 0 ? (
-        <div className="text-[11px] italic text-[var(--color-text-faint)]">No entries yet. Enter the awarded quote or PO (Quote / PO), then invoices as actuals.</div>
+        <div className="text-caption italic text-[var(--color-text-faint)]">No entries yet. Enter the awarded quote or PO (Quote / PO), then invoices as actuals.</div>
       ) : (
         <ul className="rounded-xl border border-[var(--color-border)] divide-y divide-[var(--color-border)] overflow-hidden">
           {entries.map((e) => (
             <li key={e.id} className={`px-3 py-2 flex flex-wrap items-center gap-2 text-xs ${e.status === "void" ? "opacity-50" : ""}`}>
-              <span className={`shrink-0 text-[11px] font-semibold px-1.5 py-0.5 rounded border ${
+              <span className={`shrink-0 text-caption font-semibold px-1.5 py-0.5 rounded border ${
                 e.entryType === "commitment" ? "text-[var(--color-text)] dark:text-[var(--color-text)] border-[var(--color-border-strong)] bg-[var(--color-surface-2)]"
                 : e.entryType === "actual" ? "text-[var(--color-text)] dark:text-[var(--color-text)] border-[var(--color-border-strong)] bg-[var(--color-surface-2)]"
                 : "text-[var(--state-held-text)] border-[var(--state-held)] bg-[var(--state-held)]"}`}>
                 {e.entryType}
               </span>
-              <span className={`font-semibold tabular-nums ${e.status === "void" ? "line-through" : ""} text-[var(--color-text)]`}>{fmtMoney(e.amount, cur)}</span>
+              <span className={`font-medium tabular-nums ${e.status === "void" ? "line-through" : ""} text-[var(--color-text)]`}>{fmtMoney(e.amount, cur)}</span>
               <span className="text-[var(--color-text-muted)] truncate">
                 {e.entryDate ? new Date(e.entryDate).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "-"}
                 {e.reference ? ` · ${e.reference}` : ""}
                 {e.description ? ` · ${e.description}` : ""}
                 {e.createdByName ? ` · ${e.createdByName}` : ""}
               </span>
-              {e.status === "void" && <span className="text-[11px] font-semibold text-[var(--color-text-faint)]">VOID</span>}
+              {e.status === "void" && <span className="text-caption font-medium text-[var(--color-text-faint)]">VOID</span>}
               {canManage && e.status !== "void" && (
                 <button
                   onClick={async () => {
@@ -560,7 +560,7 @@ function AccountDetail({ orgId, projectId, actor, rollup: r, entries, parties, m
                     if (!res.ok) setErr(res.error ?? "Couldn't void the entry."); else onChanged();
                   }}
                   disabled={busy === e.id}
-                  className="ml-auto shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-bold text-[var(--color-text-faint)] hover:text-[var(--state-overdue-text)] hover:bg-[var(--state-overdue)] transition-colors"
+                  className="ml-auto shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-caption font-medium text-[var(--color-text-faint)] hover:text-[var(--state-overdue-text)] hover:bg-[var(--state-overdue)] transition-colors"
                   title="Void (financial records are never deleted)"
                 >
                   <Ban className="w-3 h-3" /> Void
@@ -568,7 +568,7 @@ function AccountDetail({ orgId, projectId, actor, rollup: r, entries, parties, m
               )}
               {canManage && e.status !== "void" && revising !== e.id && (
                 <button onClick={() => setRevising(e.id)} title="A revised quote, PO or invoice: the old amount stays on the record, struck through"
-                  className="shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+                  className="shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-caption font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
                   Change amount
                 </button>
               )}
@@ -621,7 +621,7 @@ function EntryForm({ orgId, projectId, accountId, defaultParty, parties, actor, 
       <div className="inline-flex items-center rounded-lg border border-[var(--color-border)] p-0.5 gap-0.5">
         {ENTRY_TYPES.map((t) => (
           <button key={t.v} onClick={() => setType(t.v)} title={t.hint}
-            className={`px-2 py-1 rounded-md text-[11px] font-semibold transition-colors ${type === t.v ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30" : "text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"}`}>
+            className={`px-2 py-1 rounded-md text-caption font-medium transition-colors ${type === t.v ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30" : "text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"}`}>
             {t.label}
           </button>
         ))}
@@ -641,7 +641,7 @@ function EntryForm({ orgId, projectId, accountId, defaultParty, parties, actor, 
       <input value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="Description"
         className="h-8 pointer-coarse:h-11 flex-1 min-w-32 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
       <button onClick={() => void submit()} disabled={saving}
-        className="h-8 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-semibold hover:bg-[var(--color-accent-hover)] disabled:opacity-50 transition-colors">
+        className="h-8 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-caption font-medium hover:bg-[var(--color-accent-hover)] disabled:opacity-50 transition-colors">
         {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />} Post
       </button>
     </div>
@@ -705,25 +705,25 @@ function PartiesPanel({ orgId, projectId, actor, parties, canManage, onChanged }
           ) : (
             <li key={p.id} className={`rounded-xl border border-[var(--color-border)] px-3 py-2 ${p.status === "inactive" ? "opacity-60" : ""}`}>
               <div className="flex items-center gap-2">
-                <span className="text-xs font-bold text-[var(--color-text)] truncate">{p.name}</span>
-                {p.kind && <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">{p.kind}</span>}
-                {p.status === "inactive" && <span className="text-[11px] font-bold text-[var(--color-text-faint)]">inactive</span>}
+                <span className="text-xs font-medium text-[var(--color-text)] truncate">{p.name}</span>
+                {p.kind && <span className="text-body font-medium text-[var(--color-text-muted)]">{p.kind}</span>}
+                {p.status === "inactive" && <span className="text-caption font-medium text-[var(--color-text-faint)]">inactive</span>}
                 {canManage && (
                   <span className="ml-auto flex items-center gap-1 shrink-0">
                     <button onClick={() => setEditing(p.id)} title="Change the name, kind, trade or contact"
-                      className="inline-flex items-center gap-1 px-1.5 py-1 rounded text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+                      className="inline-flex items-center gap-1 px-1.5 py-1 rounded text-caption font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
                       <Pencil className="w-3 h-3" /> Edit
                     </button>
                     <button onClick={() => void setStatus(p, p.status === "inactive" ? "active" : "inactive")} disabled={busyId === p.id}
                       title={p.status === "inactive" ? "Put them back on the job's pick lists" : "Off the job: they stay on everything already recorded, but aren't offered for new entries"}
-                      className="inline-flex items-center gap-1 px-1.5 py-1 rounded text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">
+                      className="inline-flex items-center gap-1 px-1.5 py-1 rounded text-caption font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">
                       {busyId === p.id ? <Loader2 className="w-3 h-3 animate-spin" /> : p.status === "inactive" ? <RotateCcw className="w-3 h-3" /> : <Ban className="w-3 h-3" />}
                       {p.status === "inactive" ? "Reactivate" : "Deactivate"}
                     </button>
                   </span>
                 )}
               </div>
-              <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5">
+              <div className="text-caption text-[var(--color-text-muted)] mt-0.5">
                 {[p.trade, p.contractValue != null ? `contract ${fmtMoney(p.contractValue)}` : null, p.contactName, p.contactEmail].filter(Boolean).join(" · ") || "-"}
               </div>
             </li>
@@ -740,10 +740,10 @@ function PartiesPanel({ orgId, projectId, actor, parties, canManage, onChanged }
           </select>
           <input value={trade} onChange={(e) => setTrade(e.target.value)} placeholder="Trade (piping, E&I…)" className="h-8 pointer-coarse:h-11 w-36 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
           <input value={contract} onChange={(e) => setContract(e.target.value)} placeholder="Contract value" inputMode="decimal" className="h-8 pointer-coarse:h-11 w-32 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs font-display tabular-nums" />
-          <button onClick={() => void add()} disabled={saving} className="h-8 inline-flex items-center gap-1 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-[11px] font-semibold hover:bg-[var(--color-surface-2)] disabled:opacity-50">
+          <button onClick={() => void add()} disabled={saving} className="h-8 inline-flex items-center gap-1 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-caption font-medium hover:bg-[var(--color-surface-2)] disabled:opacity-50">
             {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />} Add
           </button>
-          {error && <span className="text-[11px] font-bold text-[var(--state-overdue-text)]">{error}</span>}
+          {error && <span className="text-caption font-medium text-[var(--state-overdue-text)]">{error}</span>}
         </div>
       )}
     </div>
@@ -764,7 +764,7 @@ function PartyEditor({ orgId, projectId, actor, party, onCancel, onSaved }: {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const field = "h-8 w-full rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs";
-  const label = "text-[13px] font-semibold text-[var(--color-text-muted)]";
+  const label = "text-body font-medium text-[var(--color-text-muted)]";
 
   const save = async () => {
     if (!name.trim()) { setError("Name is required."); return; }
@@ -807,10 +807,10 @@ function PartyEditor({ orgId, projectId, actor, party, onCancel, onSaved }: {
           <input value={contactEmail} onChange={(e) => setContactEmail(e.target.value)} type="email" inputMode="email" placeholder="name@company.com" className={`mt-0.5 ${field}`} /></label>
       </div>
       <div className="flex items-center gap-2">
-        {error && <span className="text-[11px] font-bold text-[var(--state-overdue-text)]">{error}</span>}
+        {error && <span className="text-caption font-medium text-[var(--state-overdue-text)]">{error}</span>}
         <span className="ml-auto flex items-center gap-2">
-          <button onClick={onCancel} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>
-          <button onClick={() => void save()} disabled={saving} className="h-8 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-semibold hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
+          <button onClick={onCancel} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>
+          <button onClick={() => void save()} disabled={saving} className="h-8 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-caption font-medium hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
             {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />} Save
           </button>
         </span>

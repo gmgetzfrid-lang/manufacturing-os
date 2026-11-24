@@ -456,7 +456,7 @@ export default function KnowledgeLibraryPage() {
           ) : (
             <Card>
               <div className="flex flex-wrap items-center gap-x-4 gap-y-3">
-                <p className="flex-1 text-[15px] text-[var(--color-text-muted)]">It may have been deleted.</p>
+                <p className="flex-1 text-reading text-[var(--color-text-muted)]">It may have been deleted.</p>
                 <Button variant="secondary" onClick={() => router.push("/knowledge")}>Go to Knowledge</Button>
               </div>
             </Card>
@@ -512,10 +512,10 @@ export default function KnowledgeLibraryPage() {
         ) : undefined}
       >
         {links.length > 0 && (
-          <div className="flex items-center gap-x-3 gap-y-1 flex-wrap text-[14px] text-[var(--color-text-muted)]">
+          <div className="flex items-center gap-x-3 gap-y-1 flex-wrap text-body text-[var(--color-text-muted)]">
             <span>Also searches</span>
             {links.map((l) => (
-              <Link key={l.id} href={`/knowledge/${l.linkedLibraryId}`} title={`Open ${l.linkedLibraryName}, a reference library`} className="font-semibold text-[var(--color-accent-text)] hover:underline underline-offset-2">
+              <Link key={l.id} href={`/knowledge/${l.linkedLibraryId}`} title={`Open ${l.linkedLibraryName}, a reference library`} className="font-medium text-[var(--color-accent-text)] hover:underline underline-offset-2">
                 {l.linkedLibraryName} <span className="font-normal text-[var(--color-text-muted)]">(reference)</span>
               </Link>
             ))}
@@ -527,10 +527,10 @@ export default function KnowledgeLibraryPage() {
       <PageBody>
       {loadError && <ErrorNote compact title="Couldn't refresh the library." next={loadError} onRetry={() => void refresh()} />}
       {removing && (
-        <div role="status" className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3 text-[14px]">
+        <div role="status" className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3 text-body">
           <div className="flex items-center gap-2">
             <Loader2 aria-hidden className="w-4 h-4 animate-spin text-[var(--color-text-muted)] shrink-0" />
-            <span className="font-semibold">{removing.label}</span>
+            <span className="font-medium">{removing.label}</span>
             <span className="text-[var(--color-text-muted)] ml-auto">{removing.done} of {removing.total} documents removed</span>
           </div>
           {removing.total > 0 && (
@@ -563,7 +563,7 @@ export default function KnowledgeLibraryPage() {
       <section>
         {/* ── Documents ──────────────────────────────────────────────────── */}
         <div className="flex items-end gap-3 mb-3 min-h-8">
-          <h2 className="flex items-baseline gap-2.5 font-display text-[20px] leading-tight font-semibold text-[var(--color-text)]">
+          <h2 className="flex items-baseline gap-2.5 font-display text-section leading-tight font-semibold text-[var(--color-text)]">
             Documents
             {docs.length > 0 && <span className="ui-count">{docs.length.toLocaleString()}</span>}
           </h2>
@@ -575,14 +575,14 @@ export default function KnowledgeLibraryPage() {
           onDrop={onDrop}
           className={`rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 sm:p-5 ${docsDrag.over ? docsDrag.ring : ""}`}
         >
-          {docsDrag.over && <p className="mb-2 text-center text-[15px] font-semibold text-[var(--color-text)]">{docsDrag.say}: PDFs and whole folders</p>}
+          {docsDrag.over && <p className="mb-2 text-center text-reading font-medium text-[var(--color-text)]">{docsDrag.say}: PDFs and whole folders</p>}
           {activeOrgId && (
             <SourcesPanel orgId={activeOrgId} libraryId={libraryId}
               isController={isController} onChanged={() => void refresh()} />
           )}
           <div className="flex items-center gap-2 flex-wrap mb-3">
             <button onClick={() => setDocsOpen((v) => !v)} aria-expanded={docsOpen}
-              className="flex items-center gap-1.5 text-[15px] font-semibold text-[var(--color-text)] hover:underline mr-auto">
+              className="flex items-center gap-1.5 text-reading font-medium text-[var(--color-text)] hover:underline mr-auto">
               <ChevronRight aria-hidden className={`ui-chevron w-4 h-4 text-[var(--color-text-muted)] ${docsOpen ? "rotate-90" : ""}`} />
               <span className="inline-flex items-center gap-1.5 flex-wrap tabular-nums">
                 {readyDocs.toLocaleString()} of {docs.length.toLocaleString()} indexed
@@ -613,7 +613,7 @@ export default function KnowledgeLibraryPage() {
                     showToast({ type: "error", title: friendlyError(e) });
                   }
                 }}
-                className="inline-flex items-center gap-1.5 h-8 pointer-coarse:h-10 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
+                className="inline-flex items-center gap-1.5 h-8 pointer-coarse:h-10 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
               >
                 <RefreshCw aria-hidden className="w-3.5 h-3.5" /> Re-index all
               </button>
@@ -642,7 +642,7 @@ export default function KnowledgeLibraryPage() {
                     showToast({ type: "error", title: friendlyError(e) });
                   }
                 }}
-                className="inline-flex items-center gap-1.5 h-8 pointer-coarse:h-10 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
+                className="inline-flex items-center gap-1.5 h-8 pointer-coarse:h-10 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
               >
                 <ImageIcon aria-hidden className="w-3.5 h-3.5" /> Read figures
               </button>
@@ -675,47 +675,47 @@ export default function KnowledgeLibraryPage() {
           </div>
 
           {uploadState && (
-            <div className="mb-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2.5 flex items-center gap-2 text-[14px]">
+            <div className="mb-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2.5 flex items-center gap-2 text-body">
               <Loader2 className="w-4 h-4 animate-spin text-[var(--color-text-muted)] shrink-0" />
-              <span className="font-semibold truncate">{uploadState.name}</span>
+              <span className="font-medium truncate">{uploadState.name}</span>
               <span className="text-[var(--color-text-muted)] shrink-0 ml-auto">{uploadState.phase}</span>
             </div>
           )}
           {failedUploads.length > 0 && (
             <ul className="mb-2 space-y-1">
               {failedUploads.map(({ file, error }) => (
-                <li key={`${file.name}-${file.size}-${file.lastModified}`} className="relative flex items-center gap-2 pl-4 py-0.5 text-[14px]">
+                <li key={`${file.name}-${file.size}-${file.lastModified}`} className="relative flex items-center gap-2 pl-4 py-0.5 text-body">
                   <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] rounded-full bg-[var(--state-overdue)]" />
-                  <span className="min-w-0 flex-1 truncate"><span className="font-semibold text-[var(--color-text)]">{file.name}</span> <span className="text-[var(--color-text-muted)]">({(file.size / 1024 / 1024).toFixed(1)} MB)</span> <span className="text-[var(--state-overdue-text)] font-semibold">didn&apos;t upload.</span> <span className="text-[var(--color-text-muted)]">{error}</span></span>
-                  <button type="button" onClick={() => void retryUpload(file)} disabled={uploadState !== null} className="shrink-0 text-[14px] font-semibold text-[var(--color-accent-text)] hover:underline underline-offset-2">Try again</button>
+                  <span className="min-w-0 flex-1 truncate"><span className="font-medium text-[var(--color-text)]">{file.name}</span> <span className="text-[var(--color-text-muted)]">({(file.size / 1024 / 1024).toFixed(1)} MB)</span> <span className="text-[var(--state-overdue-text)] font-medium">didn&apos;t upload.</span> <span className="text-[var(--color-text-muted)]">{error}</span></span>
+                  <button type="button" onClick={() => void retryUpload(file)} disabled={uploadState !== null} className="shrink-0 text-body font-medium text-[var(--color-accent-text)] hover:underline underline-offset-2">Try again</button>
                   <button type="button" onClick={() => setFailedUploads((fs) => fs.filter((f) => f.file !== file))} aria-label={`Dismiss ${file.name}`} title="Dismiss" className={btnIcon}>×</button>
                 </li>
               ))}
             </ul>
           )}
           {autoIndexing && (
-            <div role="status" className="mb-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-2.5 text-[14px]">
+            <div role="status" className="mb-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-2.5 text-body">
               <div className="flex items-center gap-2">
                 <Loader2 aria-hidden className="w-4 h-4 animate-spin text-[var(--color-text-muted)] shrink-0" />
-                <span className="font-semibold truncate">Indexing {autoIndexing.name}</span>
+                <span className="font-medium truncate">Indexing {autoIndexing.name}</span>
                 <span className="text-[var(--color-text-muted)] shrink-0 ml-auto">
                   {autoIndexing.remaining} in queue. Keeps going anywhere in the app.
                 </span>
               </div>
               {(autoIndexing.visionPages ?? 0) > 0 && (
-                <div className="mt-1 flex items-center gap-1.5 text-[13px] text-[var(--color-text-muted)]">
+                <div className="mt-1 flex items-center gap-1.5 text-body text-[var(--color-text-muted)]">
                   <Eye className="w-3.5 h-3.5 text-[var(--color-text-muted)] shrink-0" />
-                  <span className="font-semibold text-[var(--color-text)]">{autoIndexing.visionPages}</span> page(s) had no text
+                  <span className="font-medium text-[var(--color-text)]">{autoIndexing.visionPages}</span> page(s) had no text
                   layer, so AI vision read them (billed to your key, slower per page).
                 </div>
               )}
               {autoIndexing.visionSkipReason && (
-                <div className="mt-1 flex items-start gap-1.5 text-[13px] text-[var(--color-text)] font-semibold">
+                <div className="mt-1 flex items-start gap-1.5 text-body text-[var(--color-text)] font-medium">
                   <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5 text-[var(--state-held)]" /> {autoIndexing.visionSkipReason}
                 </div>
               )}
               {autoIndexing.waiting && (
-                <div role="status" className="mt-1 flex items-start gap-1.5 text-[13px] text-[var(--color-text)] font-semibold">
+                <div role="status" className="mt-1 flex items-start gap-1.5 text-body text-[var(--color-text)] font-medium">
                   <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5 text-[var(--state-held)]" /> {autoIndexing.waiting}
                 </div>
               )}
@@ -723,7 +723,7 @@ export default function KnowledgeLibraryPage() {
           )}
 
           {!docsOpen && docs.length > 0 ? null : docs.length === 0 && !uploadState ? (
-            <div className="rounded-lg border border-dashed border-[var(--color-border-strong)] p-6 text-center text-[15px] text-[var(--color-text-muted)]">
+            <div className="rounded-lg border border-dashed border-[var(--color-border-strong)] p-6 text-center text-reading text-[var(--color-text-muted)]">
               {isController ? "Drag PDFs or whole folders here, or use Add PDFs above." : "No documents yet. Admin or Doc Control can add PDFs."}
             </div>
           ) : (
@@ -735,7 +735,7 @@ export default function KnowledgeLibraryPage() {
                   aria-label="Search documents"
                   placeholder={`e.g. EP 5-2-3 or piping specs (${docs.length.toLocaleString()} documents)`}
                   autoComplete="off" enterKeyHint="search"
-                  className="w-full h-10 pointer-coarse:h-11 pl-9 pr-3 rounded-lg border border-[var(--color-border-control)] bg-[var(--color-surface)] text-[15px] max-sm:text-[16px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)]" />
+                  className="w-full h-10 pointer-coarse:h-11 pl-9 pr-3 rounded-lg border border-[var(--color-border-control)] bg-[var(--color-surface)] text-reading text-[var(--color-text)] placeholder:text-[var(--color-text-faint)]" />
               </div>
               <div className={bandSeg} role="group" aria-label="Show">
                 {([
@@ -748,15 +748,15 @@ export default function KnowledgeLibraryPage() {
                 ))}
               </div>
               <select aria-label="Sort documents" value={docSort} onChange={(e) => setDocSort(e.target.value as typeof docSort)}
-                className="h-10 pointer-coarse:h-11 px-3 rounded-lg border border-[var(--color-border-control)] bg-[var(--color-surface)] text-[14px] max-sm:text-[16px] font-semibold text-[var(--color-text)]">
+                className="h-10 pointer-coarse:h-11 px-3 rounded-lg border border-[var(--color-border-control)] bg-[var(--color-surface)] text-body max-sm:text-reading font-medium text-[var(--color-text)]">
                 <option value="name">Sort: number</option>
                 <option value="pages">Sort: most pages</option>
                 <option value="problems">Sort: problems first</option>
               </select>
             </div>
             {isController && selected.size > 0 && (
-              <div className="mb-2 flex items-center gap-3 text-[14px]">
-                <span className="font-semibold text-[var(--color-text)] tabular-nums">{selected.size} selected</span>
+              <div className="mb-2 flex items-center gap-3 text-body">
+                <span className="font-medium text-[var(--color-text)] tabular-nums">{selected.size} selected</span>
                 <Button size="sm" variant="danger" onClick={() => void removeDocs([...selected])} disabled={removing !== null}>
                   <Trash2 className="w-3.5 h-3.5" /> Remove {selected.size}
                 </Button>
@@ -764,15 +764,15 @@ export default function KnowledgeLibraryPage() {
               </div>
             )}
             {shownDocs.length === 0 && (
-              <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 p-4 text-[14px] text-[var(--color-text-muted)]">
+              <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 p-4 text-body text-[var(--color-text-muted)]">
                 No document matches{docQuery ? ` "${docQuery}"` : ""}{docFilter !== "all" ? " in this filter" : ""}.
-                <button type="button" onClick={() => { setDocQuery(""); setDocFilter("all"); }} className="font-semibold text-[var(--color-accent-text)] hover:underline underline-offset-2">Show all</button>
+                <button type="button" onClick={() => { setDocQuery(""); setDocFilter("all"); }} className="font-medium text-[var(--color-accent-text)] hover:underline underline-offset-2">Show all</button>
               </div>
             )}
             {shownDocs.length > 0 && (
             <div className="-mx-4 sm:-mx-5 border-y border-[var(--color-border)]">
-            <table className="w-full text-[14px]">
-              <thead className="bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text-muted)] text-left">
+            <table className="w-full text-body">
+              <thead className="bg-[var(--color-surface-2)] text-body text-[var(--color-text-muted)] text-left">
                 <tr>
                   {isController && (
                     <th className="pl-4 sm:pl-5 w-8 h-10">
@@ -784,9 +784,9 @@ export default function KnowledgeLibraryPage() {
                       )}
                     </th>
                   )}
-                  <th className={`font-semibold h-10 ${isController ? "px-3" : "px-4 sm:px-5"}`}>Document</th>
-                  <th className="font-semibold px-3 text-right hidden sm:table-cell">Pages</th>
-                  <th className="font-semibold px-3 hidden md:table-cell">Status</th>
+                  <th className={`font-medium h-10 ${isController ? "px-3" : "px-4 sm:px-5"}`}>Document</th>
+                  <th className="font-medium px-3 text-right hidden sm:table-cell">Pages</th>
+                  <th className="font-medium px-3 hidden md:table-cell">Status</th>
                   <th className="px-2 w-20"><span className="sr-only">Actions</span></th>
                 </tr>
               </thead>
@@ -825,8 +825,8 @@ export default function KnowledgeLibraryPage() {
                     {bad && !isController && <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] bg-[var(--state-overdue)]" />}
                     <div className="min-w-0">
                     <div className="min-w-0 flex-1">
-                    <div className="ui-id text-[16px] break-words">{doc.name.replace(/\.pdf$/i, "")}</div>
-                    <div className="mt-0.5 flex items-center gap-x-3 gap-y-1 flex-wrap text-[13px] text-[var(--color-text-muted)]">
+                    <div className="ui-id text-reading break-words">{doc.name.replace(/\.pdf$/i, "")}</div>
+                    <div className="mt-0.5 flex items-center gap-x-3 gap-y-1 flex-wrap text-body text-[var(--color-text-muted)]">
                       {doc.sourceDocumentId && (
                         <span title="Mirrors a controlled document, kept current by the source sync">
                           From Doc Control{doc.sourceRev ? <>, Rev <span className="ui-id">{doc.sourceRev}</span></> : ""}
@@ -845,7 +845,7 @@ export default function KnowledgeLibraryPage() {
                     </div>
                     </div>
                   </td>
-                  <td className="px-3 py-3 text-right font-display tabular-nums font-semibold text-[15px] text-[var(--color-text)] hidden sm:table-cell whitespace-nowrap">{doc.pageCount ?? "?"}</td>
+                  <td className="px-3 py-3 text-right font-display tabular-nums font-semibold text-reading text-[var(--color-text)] hidden sm:table-cell whitespace-nowrap">{doc.pageCount ?? "?"}</td>
                   <td className="px-3 py-3 hidden md:table-cell whitespace-nowrap">{statusTag}</td>
                   <td className="px-2 py-2 whitespace-nowrap text-right">
                     {reindexing === doc.id ? (
@@ -866,7 +866,7 @@ export default function KnowledgeLibraryPage() {
             )}
             {shownDocs.length > docLimit && (
               <button onClick={() => setDocLimit((n) => n + 500)}
-                className="mt-2 w-full h-9 text-left text-[14px] text-[var(--color-accent-text)] hover:underline">
+                className="mt-2 w-full h-9 text-left text-body text-[var(--color-accent-text)] hover:underline">
                 {docLimit.toLocaleString()} of {shownDocs.length.toLocaleString()} shown. Show {Math.min(500, shownDocs.length - docLimit).toLocaleString()} more
               </button>
             )}
@@ -961,10 +961,10 @@ function AskEntry({ orgId, libraryId, libraryName, readyDocs, docsTotal }: {
     <section>
       <div className="flex items-end gap-x-3 gap-y-1 flex-wrap mb-2.5 min-h-8">
         <div className="min-w-0 flex-1 basis-[16rem]">
-          <h2 className="font-display text-[20px] leading-tight font-semibold text-[var(--color-text)]">
+          <h2 className="font-display text-section leading-tight font-semibold text-[var(--color-text)]">
             Ask this library
           </h2>
-          <div className="mt-0.5 text-[14px] text-[var(--color-text-muted)]">
+          <div className="mt-0.5 text-body text-[var(--color-text-muted)]">
             Answers come only from the indexed documents, cited to the page.
             {instructionCount > 0 && (
               <Link href="/admin/ai-instructions" className="ml-1.5 text-[var(--color-accent-text)] hover:underline underline-offset-2">
@@ -973,7 +973,7 @@ function AskEntry({ orgId, libraryId, libraryName, readyDocs, docsTotal }: {
             )}
           </div>
         </div>
-        <Link href={askHref} className="text-[14px] font-semibold text-[var(--color-accent-text)] hover:underline underline-offset-2">
+        <Link href={askHref} className="text-body font-medium text-[var(--color-accent-text)] hover:underline underline-offset-2">
           All conversations
         </Link>
       </div>
@@ -989,7 +989,7 @@ function AskEntry({ orgId, libraryId, libraryName, readyDocs, docsTotal }: {
           enterKeyHint="send"
           onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); ask(); } }}
           placeholder={readyDocs === 0 ? "Asking unlocks when the first document is indexed" : "e.g. What piping spec should I use for 150 class sour gas?"}
-          className="ui-field-bare block w-full resize-none bg-transparent px-4 pt-3 pb-1 text-[16px] leading-6 text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] disabled:opacity-60 [field-sizing:content] min-h-[3.5rem] max-h-[40vh] overflow-y-auto" />
+          className="ui-field-bare block w-full resize-none bg-transparent px-4 pt-3 pb-1 text-reading leading-6 text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] disabled:opacity-60 [field-sizing:content] min-h-[3.5rem] max-h-[40vh] overflow-y-auto" />
         <div className="px-4 pb-1"><SkillHint skills={skills} picked={picked} question={q} answerMode={mode} /></div>
         <div className="flex flex-wrap items-center gap-1.5 px-2 pb-2">
           <SourcesMenu scope="library" libraryId={libraryId} libraries={[]} fixedLibrary={libraryName} webOn={web} onToggleWeb={() => setWeb((v) => !v)} />
@@ -1001,7 +1001,7 @@ function AskEntry({ orgId, libraryId, libraryName, readyDocs, docsTotal }: {
         </div>
       </form>
       {readyDocs === 0 && (
-        <p className="mt-3 text-[14px] text-[var(--color-text-muted)]">
+        <p className="mt-3 text-body text-[var(--color-text-muted)]">
           <span className="ui-pill is-warn mr-2">{docsTotal > 0 ? "Indexing" : "Nothing indexed"}</span>
           {docsTotal > 0
             ? "Documents are indexing below. Asking unlocks as soon as the first one finishes."
@@ -1013,7 +1013,7 @@ function AskEntry({ orgId, libraryId, libraryName, readyDocs, docsTotal }: {
       )}
       {recent && recent.length > 0 && (
         <div className="mt-4">
-          <div className="text-[14px] font-semibold text-[var(--color-text)] mb-1.5 flex items-baseline gap-2">
+          <div className="text-body font-medium text-[var(--color-text)] mb-1.5 flex items-baseline gap-2">
             Recent conversations <span className="ui-count">{recent.length}</span>
           </div>
           <ul className="divide-y divide-[var(--color-border)] border-t border-[var(--color-border)] -mx-4 sm:-mx-5">
@@ -1025,8 +1025,8 @@ function AskEntry({ orgId, libraryId, libraryName, readyDocs, docsTotal }: {
                     {t.scope === "internet" ? <Globe className="w-4 h-4" /> : t.scope === "tools" ? <Bot className="w-4 h-4" /> : <MessageSquare className="w-4 h-4" />}
                   </span>
                   <span className="min-w-0 flex-1">
-                    <span className="block text-[15px] font-semibold text-[var(--color-text)] group-hover:text-[var(--color-accent-text)] truncate">{t.title || "Untitled"}</span>
-                    <span className="flex gap-3 text-[13px] text-[var(--color-text-muted)]">
+                    <span className="block text-reading font-medium text-[var(--color-text)] group-hover:text-[var(--color-accent-text)] truncate">{t.title || "Untitled"}</span>
+                    <span className="flex gap-3 text-body text-[var(--color-text-muted)]">
                       <span>{(t.createdByName ?? "Someone").split("@")[0]}</span>
                       <span>{new Date(t.lastMessageAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}, {new Date(t.lastMessageAt).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}</span>
                       {t.settledAt && <span className="ui-pill is-good">Settled</span>}

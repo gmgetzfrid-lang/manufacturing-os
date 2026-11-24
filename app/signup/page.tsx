@@ -49,18 +49,18 @@ function SignupForm() {
   const ready = !!company.trim() && !!name.trim() && /\S+@\S+\.\S+/.test(email);
 
   return (
-    <AuthCard sheet="New workspace"
+    <AuthCard
       wide
       title="Start a workspace."
       sub="For a company new here. Pay first, then add your people."
       footer={<>
-        <p className="text-[14px] text-[var(--color-text-muted)]">Your company already uses it? Your workspace admin adds your account. <Link href="/" className={link}>Sign in</Link></p>
+        <p className="text-body text-[var(--color-text-muted)]">Your company already uses it? Your workspace admin adds your account. <Link href="/" className={link}>Sign in</Link></p>
       </>}
     >
       {(error || canceled) && (
         <div role="alert" className="mb-5 flex items-start gap-2 text-[var(--state-overdue-text)]">
           <AlertCircle aria-hidden className="w-4 h-4 shrink-0 mt-0.5" />
-          <p className="text-[14px] font-semibold">{error ?? "The payment was canceled. Nothing was made."}</p>
+          <p className="text-body font-medium">{error ?? "The payment was canceled. Nothing was made."}</p>
         </div>
       )}
       <form onSubmit={submit}>
@@ -93,16 +93,16 @@ function SignupForm() {
                     <span aria-hidden className={`w-4 h-4 shrink-0 rounded-full border-2 grid place-items-center ${on ? "border-[var(--color-current)]" : "border-[var(--color-border-control)]"}`}>
                       {on && <span className="w-2 h-2 rounded-full bg-[var(--color-current)]" />}
                     </span>
-                    <span className="flex-1 text-[15px] font-semibold text-[var(--color-text)]">{p.name}</span>
-                    <span className="text-[15px] font-semibold tabular-nums text-[var(--color-text)]">{p.price} <span className="text-[13px] font-normal text-[var(--color-text-muted)]">{p.per}</span></span>
+                    <span className="flex-1 text-reading font-medium text-[var(--color-text)]">{p.name}</span>
+                    <span className="text-reading font-medium tabular-nums text-[var(--color-text)]">{p.price} <span className="text-body font-normal text-[var(--color-text-muted)]">{p.per}</span></span>
                   </span>
-                  <span className="block mt-1 pl-[26px] text-[13px] text-[var(--color-text-muted)]">{p.what}</span>
+                  <span className="block mt-1 pl-[26px] text-body text-[var(--color-text-muted)]">{p.what}</span>
                 </label>
               );
             })}
           </div>
         </fieldset>
-        <p className="mt-5 text-[14px] text-[var(--color-text-muted)]">You become the workspace&apos;s admin. After paying you set your password, then add your people. Nobody can make their own account.</p>
+        <p className="mt-5 text-body text-[var(--color-text-muted)]">You become the workspace&apos;s admin. After paying you set your password, then add your people. Nobody can make their own account.</p>
         <Button type="submit" variant={ready ? "primary" : "secondary"} loading={busy} className={`mt-6 ${authBtn} sm:!w-auto sm:px-6`}>
           {busy ? "Opening payment" : <>Continue to payment <ArrowRight aria-hidden className="w-5 h-5" /></>}
         </Button>

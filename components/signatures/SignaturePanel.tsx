@@ -81,9 +81,9 @@ export default function SignaturePanel({
   return (
     <section className={`min-w-0 ${className}`} aria-labelledby={`sig-${resourceId}`}>
       <div className="flex flex-wrap items-end gap-x-3 gap-y-2 mb-2.5 min-h-8">
-        <h2 id={`sig-${resourceId}`} className="font-display text-[19px] leading-tight font-semibold text-[var(--color-text)]">Signatures</h2>
+        <h2 id={`sig-${resourceId}`} className="font-display text-section leading-tight font-semibold text-[var(--color-text)]">Signatures</h2>
         {sigs && rows.length > 0 && (
-          <span className="text-[14px] text-[var(--color-text-muted)] tabular-nums">
+          <span className="text-body text-[var(--color-text-muted)] tabular-nums">
             {signedCount} signed{waitingCount > 0 ? `, ${waitingCount} waiting` : ""}
           </span>
         )}
@@ -101,24 +101,24 @@ export default function SignaturePanel({
 
       <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
         {!sigs ? (
-          <p aria-busy="true" className="px-4 py-4 text-[14px] text-[var(--color-text-muted)]">Loading signatures…</p>
+          <p aria-busy="true" className="px-4 py-4 text-body text-[var(--color-text-muted)]">Loading signatures…</p>
         ) : failed ? (
-          <p role="alert" className="px-4 py-4 text-[14px] text-[var(--state-overdue)]">
-            <span className="font-semibold">Couldn&apos;t load the signatures.</span>{" "}
+          <p role="alert" className="px-4 py-4 text-body text-[var(--state-overdue)]">
+            <span className="font-medium">Couldn&apos;t load the signatures.</span>{" "}
             <button type="button" onClick={() => void load()} className="text-[var(--color-accent-text)] hover:underline underline-offset-2">Try again</button>
           </p>
         ) : rows.length === 0 ? (
-          <p className="px-4 py-4 text-[14px] text-[var(--color-text-muted)]">
+          <p className="px-4 py-4 text-body text-[var(--color-text-muted)]">
             No signatures yet.{canSign ? " Sign records your name, role and the time." : ""}
           </p>
         ) : (
-          <table className="w-full text-[15px]">
-            <thead className="bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text-muted)] text-left max-sm:hidden">
+          <table className="w-full text-body">
+            <thead className="bg-[var(--color-surface-2)] text-body text-[var(--color-text-muted)] text-left max-sm:hidden">
               <tr>
-                <th className="font-semibold px-4 h-10">Signer</th>
-                <th className="font-semibold px-4">Role</th>
-                <th className="font-semibold px-4">Status</th>
-                <th className="font-semibold px-4 text-right">Signed</th>
+                <th className="font-medium px-4 h-10">Signer</th>
+                <th className="font-medium px-4">Role</th>
+                <th className="font-medium px-4">Status</th>
+                <th className="font-medium px-4 text-right">Signed</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[var(--color-border)]">
@@ -131,12 +131,12 @@ export default function SignaturePanel({
                   <tr key={r.key} title={r.sig?.statement}>
                     <td className="px-4 py-3 min-w-0">
                       <div className="flex items-center gap-3">
-                        <span className="min-w-0 flex-1 truncate font-semibold text-[var(--color-text)]">
+                        <span className="min-w-0 flex-1 truncate font-medium text-[var(--color-text)]">
                           {r.name}{r.you && <span className="font-normal text-[var(--color-text-muted)]"> (you)</span>}
                         </span>
                         <span className="sm:hidden shrink-0">{tag}</span>
                       </div>
-                      <div className="sm:hidden text-[13px] text-[var(--color-text-muted)]">
+                      <div className="sm:hidden text-body text-[var(--color-text-muted)]">
                         {[r.role, when || "Not signed yet"].filter(Boolean).join(", ")}
                       </div>
                     </td>

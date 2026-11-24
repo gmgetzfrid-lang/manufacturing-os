@@ -37,7 +37,7 @@ function DeleteSafetyModalBody({
       <ModalHeader title={`Delete ${libraryName}?`} onClose={isLoading ? undefined : onClose} />
       <form onSubmit={(e) => { e.preventDefault(); if (isMatch && !isLoading) void onConfirm(); }}>
         <ModalBody className="space-y-4">
-          <p className="text-[15px] text-[var(--color-text)]">
+          <p className="text-reading text-[var(--color-text)]">
             This deletes the library&apos;s setup for good. Documents still in it are left without a library, so move them first.
           </p>
           <Field label={<>Type <span className="font-mono select-all">{libraryName}</span> to confirm</>}>
@@ -45,7 +45,7 @@ function DeleteSafetyModalBody({
           </Field>
         </ModalBody>
         <ModalFooter>
-          {!isMatch && <span className="mr-auto text-[13px] text-[var(--color-text-muted)]">Type the name to turn on Delete.</span>}
+          {!isMatch && <span className="mr-auto text-body text-[var(--color-text-muted)]">Type the name to turn on Delete.</span>}
           <Button type="button" variant="secondary" onClick={onClose} disabled={isLoading}>Cancel</Button>
           <Button type="submit" variant="danger" loading={isLoading} disabled={!isMatch}>Delete library</Button>
         </ModalFooter>

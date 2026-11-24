@@ -533,7 +533,7 @@ function GraphPageInner() {
     { label: "Links", value: view.edges.length.toLocaleString() },
     { label: "Proposed", value: view.ghosts.length.toLocaleString(), tone: view.ghosts.length > 0 ? "warn" as const : undefined },
   ] : undefined;
-  const quietBtn = "inline-flex items-center gap-1.5 h-9 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors";
+  const quietBtn = "inline-flex items-center gap-1.5 h-10 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors";
 
   return (
     <div className="h-full min-h-0 flex flex-col">
@@ -567,7 +567,7 @@ function GraphPageInner() {
           {rawQuery.trim().length > 2 && (
             <button onClick={() => void runAsk()} disabled={asking}
               title="Search what your documents say"
-              className="absolute right-9 top-1/2 -translate-y-1/2 inline-flex items-center gap-1 text-[14px] text-[var(--color-accent-text)] hover:underline underline-offset-2 disabled:opacity-50">
+              className="absolute right-9 top-1/2 -translate-y-1/2 inline-flex items-center gap-1 text-body text-[var(--color-accent-text)] hover:underline underline-offset-2 disabled:opacity-50">
               {asking ? <Loader2 className="w-3 h-3 animate-spin" /> : <>Ask <CornerDownLeft className="w-3 h-3" /></>}
             </button>
           )}
@@ -608,14 +608,14 @@ function GraphPageInner() {
         )}
 
         {view && !layered && (view.foldedTotal > 0 || openHubs.size > 0) && (
-          <span className="inline-flex items-center gap-2 text-[14px] text-[var(--color-text-muted)]">
+          <span className="inline-flex items-center gap-2 text-body text-[var(--color-text-muted)]">
             {view.foldedTotal > 0 && <span>{view.foldedTotal} documents folded into {view.folded.size} hub{view.folded.size === 1 ? "" : "s"}. Click a hub to open it.</span>}
             {openHubs.size > 0 && <button type="button" onClick={() => setOpenHubs(new Set())} className={`${quietBtn} !h-8`}>Fold again</button>}
             {view.foldedTotal > 0 && <button type="button" onClick={() => patchSettings({ foldLeaves: false })} className={`${quietBtn} !h-8`}>Unfold all</button>}
           </span>
         )}
         {view && (
-          <span className="text-[14px] text-[var(--color-text-muted)] ml-auto tabular-nums max-sm:hidden">
+          <span className="text-body text-[var(--color-text-muted)] ml-auto tabular-nums max-sm:hidden">
             {view.nodes.length} nodes, {view.edges.length} links
           </span>
         )}
@@ -642,7 +642,7 @@ function GraphPageInner() {
             ) : settings.mode === "3d" ? (
               <Suspense fallback={
                 <div className="absolute inset-0 flex items-center justify-center bg-[#0b1020]">
-                  <div className="text-[13px] font-semibold text-[var(--color-text-faint)]">Loading the 3D engine…</div>
+                  <div className="text-body font-medium text-[var(--color-text-faint)]">Loading the 3D engine…</div>
                 </div>
               }>
                 <OrgGraph3D
@@ -693,7 +693,7 @@ function GraphPageInner() {
             <div className="absolute top-2 left-3 flex flex-col items-start gap-2 max-h-[calc(100%-1rem)] z-10">
               <button onClick={() => setInsightsOpen((v) => !v)}
                 aria-expanded={insightsOpen}
-                className={`inline-flex items-center gap-1.5 h-9 pointer-coarse:h-11 px-3 rounded-lg border text-[14px] font-semibold bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] ${
+                className={`inline-flex items-center gap-1.5 h-9 pointer-coarse:h-11 px-3 rounded-lg border text-body font-semibold bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] ${
                   insightsOpen ? "border-[var(--color-text-muted)]" : "border-[var(--color-border-strong)]"
                 }`}>
                 <Lightbulb aria-hidden className="w-4 h-4 text-[var(--color-text-muted)]" /> Insights
@@ -715,7 +715,7 @@ function GraphPageInner() {
                       <button key={t.key}
                         onClick={() => { setInsightTab(t.key); if (t.key === "orphans") patchSettings({ hideUnlinked: false }); }}
                         aria-pressed={insightTab === t.key}
-                        className={`flex-1 inline-flex items-center justify-center gap-1 px-2 py-2 text-[13px] font-semibold ${
+                        className={`flex-1 inline-flex items-center justify-center gap-1 px-2 py-2 text-body font-semibold ${
                           insightTab === t.key ? "text-[var(--color-text)] border-b-2 border-[var(--color-current)]" : "text-[var(--color-text-muted)] border-b-2 border-transparent hover:text-[var(--color-text)]"
                         }`}>
                         {t.label} <span className="ui-count">{t.count}</span>
@@ -726,24 +726,24 @@ function GraphPageInner() {
                   <div className="overflow-y-auto max-h-72 p-1.5 space-y-0.5">
                     {insightTab === "orphans" && (
                       insights.orphans.length === 0 ? (
-                        <div className="text-[13px] text-[var(--color-text-muted)] p-2">
+                        <div className="text-body text-[var(--color-text-muted)] p-2">
                           No orphans - everything shown is tied into the web.
                         </div>
                       ) : (
                         <>
-                          <div className="text-[13px] text-[var(--color-text-muted)] px-1.5 pb-1">
+                          <div className="text-body text-[var(--color-text-muted)] px-1.5 pb-1">
                             Floating with no equipment, unit, project or link - no context yet.
                           </div>
                           {insights.orphans.slice(0, 100).map((n) => (
                             <button key={n.id} onClick={() => spotlight([n.id], n)}
                               className="w-full flex items-center gap-1.5 px-1.5 py-1 rounded-lg hover:bg-[var(--color-surface-2)] text-left">
                               <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: NODE_COLORS[n.type] }} />
-                              <span className="flex-1 min-w-0 text-[13px] font-semibold text-[var(--color-text)] truncate">{n.label}</span>
+                              <span className="flex-1 min-w-0 text-body font-medium text-[var(--color-text)] truncate">{n.label}</span>
                               <ArrowUpRight className="w-3 h-3 text-[var(--color-text-faint)] shrink-0" />
                             </button>
                           ))}
                           {insights.orphans.length > 100 && (
-                            <div className="text-[13px] text-[var(--color-text-faint)] px-1.5 py-1">…and {insights.orphans.length - 100} more</div>
+                            <div className="text-body text-[var(--color-text-faint)] px-1.5 py-1">…and {insights.orphans.length - 100} more</div>
                           )}
                         </>
                       )
@@ -751,18 +751,18 @@ function GraphPageInner() {
 
                     {insightTab === "hubs" && (
                       insights.hubs.length === 0 ? (
-                        <div className="text-[13px] text-[var(--color-text-muted)] p-2">Hubs appear once nodes collect 3+ connections.</div>
+                        <div className="text-body text-[var(--color-text-muted)] p-2">Hubs appear once nodes collect 3+ connections.</div>
                       ) : (
                         <>
-                          <div className="text-[13px] text-[var(--color-text-muted)] px-1.5 pb-1">
+                          <div className="text-body text-[var(--color-text-muted)] px-1.5 pb-1">
                             The most-referenced nodes. Touch one and the blast radius is wide.
                           </div>
                           {insights.hubs.map((h) => (
                             <button key={h.node.id} onClick={() => spotlight([h.node.id], h.node)}
                               className="w-full flex items-center gap-1.5 px-1.5 py-1 rounded-lg hover:bg-[var(--color-surface-2)] text-left">
                               <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: NODE_COLORS[h.node.type] }} />
-                              <span className="flex-1 min-w-0 text-[13px] font-semibold text-[var(--color-text)] truncate">{h.node.label}</span>
-                              <span className="shrink-0 ui-count !h-5 !text-[12px]">{h.degree}</span>
+                              <span className="flex-1 min-w-0 text-body font-medium text-[var(--color-text)] truncate">{h.node.label}</span>
+                              <span className="shrink-0 ui-count !h-5 !text-caption">{h.degree}</span>
                             </button>
                           ))}
                         </>
@@ -771,12 +771,12 @@ function GraphPageInner() {
 
                     {insightTab === "bridges" && (
                       insights.bridges.length === 0 ? (
-                        <div className="text-[13px] text-[var(--color-text-muted)] p-2">
+                        <div className="text-body text-[var(--color-text-muted)] p-2">
                           No single-thread bridges - every big neighbourhood has redundant connections.
                         </div>
                       ) : (
                         <>
-                          <div className="text-[13px] text-[var(--color-text-muted)] px-1.5 pb-1">
+                          <div className="text-body text-[var(--color-text-muted)] px-1.5 pb-1">
                             One thin line holding two clusters together. Click to light it up.
                           </div>
                           {insights.bridges.map((b) => (
@@ -784,12 +784,12 @@ function GraphPageInner() {
                               className="w-full px-1.5 py-1.5 rounded-lg hover:bg-[var(--color-surface-2)] text-left">
                               <div className="flex items-center gap-1.5 min-w-0">
                                 <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: NODE_COLORS[b.a.type] }} />
-                                <span className="text-[13px] font-semibold text-[var(--color-text)] truncate">{b.a.label}</span>
-                                <span className="text-[13px] text-[var(--state-held)] font-semibold shrink-0">↔</span>
+                                <span className="text-body font-medium text-[var(--color-text)] truncate">{b.a.label}</span>
+                                <span className="text-body text-[var(--state-held)] font-medium shrink-0">↔</span>
                                 <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: NODE_COLORS[b.b.type] }} />
-                                <span className="text-[13px] font-semibold text-[var(--color-text)] truncate">{b.b.label}</span>
+                                <span className="text-body font-medium text-[var(--color-text)] truncate">{b.b.label}</span>
                               </div>
-                              <div className="text-[13px] text-[var(--color-text-faint)] mt-0.5">
+                              <div className="text-body text-[var(--color-text-faint)] mt-0.5">
                                 Only link between clusters of {b.sideA} and {b.sideB} nodes
                               </div>
                             </button>
@@ -807,40 +807,40 @@ function GraphPageInner() {
               <div className="absolute bottom-3 right-3 w-72 max-w-[calc(100%-1.5rem)] rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]/97 backdrop-blur shadow-2xl p-3 space-y-2 z-10">
                 <div className="flex items-center gap-1.5">
                   <Route className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
-                  <span className="text-[13px] font-semibold text-[var(--color-text)] flex-1">Connection path</span>
+                  <span className="text-body font-medium text-[var(--color-text)] flex-1">Connection path</span>
                   <button onClick={() => { setPathMode(false); setPathEnds({ from: null, to: null }); }}
                     aria-label="Close" className="text-[var(--color-text-faint)] hover:text-[var(--color-text)]">
                     <X className="w-3.5 h-3.5" />
                   </button>
                 </div>
                 {!pathEnds.from ? (
-                  <div className="text-[13px] text-[var(--color-text-muted)]">Click the first node on the map.</div>
+                  <div className="text-body text-[var(--color-text-muted)]">Click the first node on the map.</div>
                 ) : !pathEnds.to ? (
-                  <div className="text-[13px] text-[var(--color-text-muted)]">
+                  <div className="text-body text-[var(--color-text-muted)]">
                     From <b className="text-[var(--color-text)]">{pathEnds.from.label}</b> - now click the second node.
                   </div>
                 ) : path && path.ids.length === 0 ? (
-                  <div className="text-[13px] text-[var(--state-held)]">
+                  <div className="text-body text-[var(--state-held)]">
                     Nothing connects <b>{pathEnds.from.label}</b> and <b>{pathEnds.to.label}</b> within 8 hops in this view.
                     Try turning filters back on.
                   </div>
                 ) : (
                   <div className="space-y-1">
-                    <div className="text-[13px] text-[var(--color-text-muted)]">
+                    <div className="text-body text-[var(--color-text-muted)]">
                       {(path?.hops.length ?? 1) - 1} hop{(path?.hops.length ?? 2) - 1 === 1 ? "" : "s"} apart
                     </div>
                     {path?.hops.map((h, i) => (
                       <div key={h.node.id} className="flex items-center gap-1.5">
                         <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: NODE_COLORS[h.node.type] }} />
-                        <span className="flex-1 min-w-0 text-[13px] font-semibold text-[var(--color-text)] truncate">{h.node.label}</span>
-                        {i > 0 && <span className="shrink-0 text-[13px] text-[var(--color-text-muted)]">{h.via}</span>}
+                        <span className="flex-1 min-w-0 text-body font-medium text-[var(--color-text)] truncate">{h.node.label}</span>
+                        {i > 0 && <span className="shrink-0 text-body text-[var(--color-text-muted)]">{h.via}</span>}
                       </div>
                     ))}
                   </div>
                 )}
                 {pathEnds.from && (
                   <button onClick={() => setPathEnds({ from: null, to: null })}
-                    className="text-[13px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
+                    className="text-body font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
                     Start over
                   </button>
                 )}
@@ -849,7 +849,7 @@ function GraphPageInner() {
 
             {/* Hints + truncation */}
             <div className="absolute bottom-2 inset-x-3 text-center space-y-1 pointer-events-none">
-              <div className="text-[13px] text-[var(--color-text-muted)] max-md:hidden">
+              <div className="text-body text-[var(--color-text-muted)] max-md:hidden">
                 {settings.mode === "3d"
                   ? "Drag to orbit, shift-drag or right-drag to pan, scroll to zoom, double-click to open."
                   : settings.mode === "map"
@@ -857,7 +857,7 @@ function GraphPageInner() {
                     : "Scroll or pinch to zoom, drag to pan, drag a node to move it, double-click to open."}
               </div>
               {(graph?.truncations ?? []).map((t) => (
-                <div key={t} className="inline-flex items-center gap-1 text-[13px] text-[var(--state-held)]">
+                <div key={t} className="inline-flex items-center gap-1 text-body text-[var(--state-held)]">
                   <Info className="w-3 h-3" /> {t}
                 </div>
               ))}
@@ -865,7 +865,7 @@ function GraphPageInner() {
 
             {view.ghosts.length > 0 && (
               <Link href="/admin/proposed-links"
-                className="absolute bottom-3 left-3 inline-flex items-center gap-1 text-[13px] font-semibold text-[var(--state-held)] bg-[var(--color-surface)]/95 border border-[var(--color-border)] rounded-full px-2 py-1 hover:bg-[var(--color-surface-2)] z-10">
+                className="absolute bottom-3 left-3 inline-flex items-center gap-1 text-body font-medium text-[var(--state-held)] bg-[var(--color-surface)]/95 border border-[var(--color-border)] rounded-full px-2 py-1 hover:bg-[var(--color-surface-2)] z-10">
                 <Sparkles className="w-3 h-3" />
                 {view.ghosts.length} dashed connection{view.ghosts.length === 1 ? "" : "s"} awaiting review
               </Link>
@@ -879,8 +879,8 @@ function GraphPageInner() {
                 <div className="flex items-start gap-2 p-3 pb-2 shrink-0">
                   <Quote className="w-3.5 h-3.5 mt-0.5 text-[var(--color-text-muted)] shrink-0" />
                   <div className="flex-1 min-w-0">
-                    <div className="text-[14px] font-semibold text-[var(--color-text)] break-words">{answer.question}</div>
-                    <div className="text-[13px] text-[var(--color-text-faint)] mt-0.5">
+                    <div className="text-body font-medium text-[var(--color-text)] break-words">{answer.question}</div>
+                    <div className="text-body text-[var(--color-text-faint)] mt-0.5">
                       {answer.hits.length > 0
                         ? `${answer.hits.length} passage${answer.hits.length === 1 ? "" : "s"} · ${answer.nodeIds.length} node${answer.nodeIds.length === 1 ? "" : "s"} lit up`
                         : "No matches"}
@@ -892,7 +892,7 @@ function GraphPageInner() {
 
                 <div className="flex-1 overflow-y-auto px-3 pb-3 space-y-1.5 min-h-0">
                   {answer.note && (
-                    <div className="text-[13px] text-[var(--color-text-muted)] leading-snug bg-[var(--color-surface-2)] rounded-lg px-2 py-1.5">
+                    <div className="text-body text-[var(--color-text-muted)] leading-snug bg-[var(--color-surface-2)] rounded-lg px-2 py-1.5">
                       {answer.note}
                     </div>
                   )}
@@ -906,7 +906,7 @@ function GraphPageInner() {
                             const n = view?.nodes.find((x) => x.id === `asset:${a.assetId}`);
                             if (n) { handleSelect(n); setHighlight({ ids: [n.id], nonce: Date.now() }); }
                           }}
-                          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full border border-[var(--color-border-strong)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+                          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full border border-[var(--color-border-strong)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
                           <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: NODE_COLORS.asset }} />
                           {a.tag}
                           <span className="text-[var(--color-text-faint)]">{a.count}</span>
@@ -918,16 +918,16 @@ function GraphPageInner() {
                   {answer.hits.map((h, i) => (
                     <div key={`${h.knowledgeDocumentId}-${h.page}-${i}`}
                       className="rounded-lg bg-[var(--color-surface-2)] px-2 py-1.5">
-                      <div className="flex items-center gap-1 text-[13px] font-semibold text-[var(--color-text)]">
+                      <div className="flex items-center gap-1 text-body font-medium text-[var(--color-text)]">
                         <span className="truncate">{h.documentName}</span>
                         <span className="ml-auto shrink-0 text-[var(--color-text-faint)]">p.{h.page}</span>
                       </div>
                       {/* ts_headline marks the terms; render as text, never HTML. */}
-                      <div className="text-[13px] text-[var(--color-text-muted)] leading-snug mt-0.5">
+                      <div className="text-body text-[var(--color-text-muted)] leading-snug mt-0.5">
                         {h.snippet.replace(/<\/?b>/g, "")}
                       </div>
                       <Link href={`/knowledge/${h.libraryId}?doc=${h.knowledgeDocumentId}&page=${h.page}`}
-                        className="inline-flex items-center gap-1 text-[13px] font-semibold text-[var(--color-accent-text)] hover:text-[var(--color-accent-hover)] mt-1">
+                        className="inline-flex items-center gap-1 text-body font-medium text-[var(--color-accent-text)] hover:text-[var(--color-accent-hover)] mt-1">
                         Open at page {h.page} <ArrowUpRight className="w-3 h-3" />
                       </Link>
                     </div>
@@ -945,30 +945,30 @@ function GraphPageInner() {
               <div className="absolute bottom-3 right-3 w-72 max-w-[calc(100%-1.5rem)] rounded-xl border border-[color-mix(in_srgb,var(--state-released)_35%,transparent)] bg-[var(--color-surface)]/97 backdrop-blur shadow-2xl p-3 space-y-2 z-10">
                 <div className="flex items-center gap-1.5">
                   <Link2 className="w-3.5 h-3.5 text-[var(--state-released)]" />
-                  <span className="text-[13px] font-semibold text-[var(--color-text)] flex-1">Draw a connection</span>
+                  <span className="text-body font-medium text-[var(--color-text)] flex-1">Draw a connection</span>
                   <button onClick={() => setConnect(null)} aria-label="Done connecting"
                     className="text-[var(--color-text-faint)] hover:text-[var(--color-text)]">
                     <X className="w-3.5 h-3.5" />
                   </button>
                 </div>
                 {connect.done && (
-                  <div className="text-[13px] font-semibold text-[var(--state-released)]">
+                  <div className="text-body font-medium text-[var(--state-released)]">
                     Connected {connect.done.a} ↔ {connect.done.b} ✓
                   </div>
                 )}
                 {connect.error && (
-                  <div className="text-[13px] text-[var(--state-overdue)] leading-snug">{connect.error}</div>
+                  <div className="text-body text-[var(--state-overdue)] leading-snug">{connect.error}</div>
                 )}
                 {connect.status === "saving" ? (
-                  <div className="flex items-center gap-1.5 text-[13px] text-[var(--color-text-muted)]">
+                  <div className="flex items-center gap-1.5 text-body text-[var(--color-text-muted)]">
                     <Loader2 className="w-3 h-3 animate-spin" /> Writing the link…
                   </div>
                 ) : (
-                  <div className="text-[13px] text-[var(--color-text-muted)]">
+                  <div className="text-body text-[var(--color-text-muted)]">
                     From <b className="text-[var(--color-text)]">{connect.from.label}</b> - click the node to connect it to.
                   </div>
                 )}
-                <div className="text-[13px] text-[var(--color-text-faint)]">
+                <div className="text-body text-[var(--color-text-faint)]">
                   Document ↔ document or document ↔ equipment makes a LINK. Equipment ↔ equipment or
                   unit ↔ unit makes a FLOW - the first feeds the second, drawn on the Process lens.
                 </div>

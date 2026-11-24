@@ -171,7 +171,7 @@ export default function FindMap({ orgId, unit: unitProp, assetId, docs, candidat
           {options.map((o) => (
             <button key={o} type="button" role="radio" aria-checked={scope === o} onClick={() => pick(o)}
               title={o === "here" ? (folderProp ? `What is in ${folderProp.name}` : "Every library and its top folders") : o === "unit" ? `Everything in unit ${unitProp}` : "Every unit on the site"}
-              className={`h-8 pointer-coarse:h-10 px-2.5 rounded-md text-[13px] font-semibold whitespace-nowrap transition-colors ${scope === o ? "bg-[var(--color-surface)] text-[var(--color-text)] ring-1 ring-[var(--color-border-strong)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
+              className={`h-8 pointer-coarse:h-10 px-2.5 rounded-md text-body font-medium whitespace-nowrap transition-colors ${scope === o ? "bg-[var(--color-surface)] text-[var(--color-text)] ring-1 ring-[var(--color-border-strong)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
               {o === "here" ? (folderProp ? "This folder" : "Libraries") : o === "unit" ? `Unit ${unitProp}` : "Whole site"}
             </button>
           ))}
@@ -180,7 +180,7 @@ export default function FindMap({ orgId, unit: unitProp, assetId, docs, candidat
       {openDoc && <DocInPlace docId={openDoc} onClose={() => setOpenDoc(null)} />}
       {folderMap ? (
         folderMap.tree.length <= 1 ? (
-          <div className="absolute inset-0 grid place-items-center p-4 text-center text-[13px] text-[var(--color-text-muted)]">
+          <div className="absolute inset-0 grid place-items-center p-4 text-center text-body text-[var(--color-text-muted)]">
             {folder!.loading ? <span role="status" className="inline-flex items-center gap-2"><Loader2 aria-hidden className="w-4 h-4 animate-spin" />Loading the files</span> : `Nothing is filed in ${folder!.name} yet.`}
           </div>
         ) : (
@@ -188,7 +188,7 @@ export default function FindMap({ orgId, unit: unitProp, assetId, docs, candidat
             <EstateMap nodes={folderMap.nodes} edges={[]} tree={folderMap.tree} fileNames={folderMap.fileNames} rootUp={rootUp} query="" selectedId={selected?.id ?? null}
               highlightIds={NONE} flyTo={null} compact crumbsClassName={crumbsCls} onSelect={(n) => { setSelected(n); if (n) act(n); }} onOpen={act} />
             {folder!.loading && (
-              <div role="status" className="absolute bottom-2 left-2 z-20 inline-flex items-center gap-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1 text-[13px] text-[var(--color-text-muted)]">
+              <div role="status" className="absolute bottom-2 left-2 z-20 inline-flex items-center gap-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1 text-body text-[var(--color-text-muted)]">
                 <Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading the files
               </div>
             )}
@@ -196,15 +196,15 @@ export default function FindMap({ orgId, unit: unitProp, assetId, docs, candidat
         )
       ) : libsMap ? (
         libsMap.tree.length <= 1 ? (
-          <div className="absolute inset-0 grid place-items-center p-4 text-center text-[13px] text-[var(--color-text-muted)]">No libraries yet.</div>
+          <div className="absolute inset-0 grid place-items-center p-4 text-center text-body text-[var(--color-text-muted)]">No libraries yet.</div>
         ) : (
           <EstateMap key={libsMap.rootId} nodes={libsMap.nodes} edges={[]} tree={libsMap.tree} depth={2} query="" selectedId={selected?.id ?? null}
             highlightIds={NONE} flyTo={null} compact crumbsClassName={crumbsCls} onSelect={(n) => { setSelected(n); if (n) act(n); }} onOpen={act} />
         )
       ) : !graph ? (
-        <div role="status" className="absolute inset-0 grid place-items-center text-[13px] text-[var(--color-text-muted)]"><span className="inline-flex items-center gap-2"><Loader2 aria-hidden className="w-4 h-4 animate-spin" />Loading the site map</span></div>
+        <div role="status" className="absolute inset-0 grid place-items-center text-body text-[var(--color-text-muted)]"><span className="inline-flex items-center gap-2"><Loader2 aria-hidden className="w-4 h-4 animate-spin" />Loading the site map</span></div>
       ) : graph.nodes.length === 0 ? (
-        <div className="absolute inset-0 grid place-items-center p-4 text-center text-[13px] text-[var(--color-text-muted)]">No equipment in the registry yet, so there is nothing to map.</div>
+        <div className="absolute inset-0 grid place-items-center p-4 text-center text-body text-[var(--color-text-muted)]">No equipment in the registry yet, so there is nothing to map.</div>
       ) : (
         <EstateMap nodes={graph.nodes} edges={graph.edges} query="" selectedId={selected?.id ?? null} highlightIds={highlight}
           flyTo={flyTo} enter={enter} compact crumbsClassName={crumbsCls}

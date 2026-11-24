@@ -32,16 +32,16 @@ export function HourlyLogExport({ formats, what, letterhead, onExport, label = "
     <span className="relative inline-flex">
       <button type="button" onClick={() => { setOpen((v) => !v); setMsg(null); }} aria-expanded={open} disabled={!!busy}
         title="Save the hourly shift log as a file"
-        className="inline-flex items-center gap-1.5 h-9 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-60">
+        className="inline-flex items-center gap-1.5 h-10 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-60">
         <Download className="w-3.5 h-3.5" /> {busy ? "Exporting…" : label}
       </button>
       {open && (
         <>
           <span className="fixed inset-0 z-[40]" onClick={() => setOpen(false)} aria-hidden />
-          <span className="absolute right-0 top-full mt-1 z-[41] w-64 max-w-[calc(100vw-2rem)] rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] shadow-lg p-1.5 flex flex-col text-[12px]">
-            <span className="px-2 pt-1 pb-1.5 text-[11px] text-[var(--color-text-muted)] leading-snug">{what}. Save as:</span>
+          <span className="absolute right-0 top-full mt-1 z-[41] w-64 max-w-[calc(100vw-2rem)] rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] shadow-lg p-1.5 flex flex-col text-caption">
+            <span className="px-2 pt-1 pb-1.5 text-caption text-[var(--color-text-muted)] leading-snug">{what}. Save as:</span>
             {formats.map((f) => (
-              <button key={f} type="button" onClick={() => void go(f)} className="text-left px-2 py-1.5 rounded hover:bg-[var(--color-surface-2)] font-semibold">
+              <button key={f} type="button" onClick={() => void go(f)} className="text-left px-2 py-1.5 rounded hover:bg-[var(--color-surface-2)] font-medium">
                 {NAMES[f]}
                 {f !== "xlsx" && letterhead && <span className="ml-1.5 font-normal text-[var(--color-text-muted)]">on the letterhead</span>}
               </button>
@@ -49,7 +49,7 @@ export function HourlyLogExport({ formats, what, letterhead, onExport, label = "
           </span>
         </>
       )}
-      {msg && !open && <span role="status" className="absolute right-0 top-full mt-1 z-[39] whitespace-nowrap rounded bg-[var(--color-surface)] border border-[var(--color-border)] px-2 py-0.5 text-[11px] font-semibold text-[var(--color-text-muted)] shadow-sm">{msg}</span>}
+      {msg && !open && <span role="status" className="absolute right-0 top-full mt-1 z-[39] whitespace-nowrap rounded bg-[var(--color-surface)] border border-[var(--color-border)] px-2 py-0.5 text-caption font-medium text-[var(--color-text-muted)] shadow-sm">{msg}</span>}
     </span>
   );
 }

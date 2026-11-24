@@ -15,15 +15,16 @@
 import React from "react";
 import Link from "next/link";
 import { ChevronLeft } from "lucide-react";
+import { CountUp } from "@/components/ui/CountUp";
 
 /** A secondary button: white, a hairline edge, text color, a faint shadow. */
 export const heroQuiet =
-  "inline-flex items-center justify-center gap-1.5 whitespace-nowrap h-10 pointer-coarse:h-11 px-3.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] shadow-[var(--shadow-control)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-border-control)] active:shadow-none disabled:opacity-50 disabled:shadow-none disabled:cursor-not-allowed transition-[color,background-color,border-color,box-shadow]";
+  "ui-quiet ui-press inline-flex items-center justify-center gap-1.5 whitespace-nowrap h-10 pointer-coarse:h-11 px-3.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] shadow-[var(--shadow-control)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-border-control)] active:shadow-none disabled:opacity-50 disabled:shadow-none disabled:cursor-not-allowed transition-[color,background-color,border-color,box-shadow,transform]";
 
 /** The page's one main action: the only filled accent on the screen,
  *  top-lit so it reads as something to press. */
 export const heroPrimary =
-  "inline-flex items-center justify-center gap-2 whitespace-nowrap h-10 pointer-coarse:h-11 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] shadow-[var(--shadow-action)] text-[15px] font-semibold hover:bg-[var(--color-accent-hover)] active:shadow-none disabled:opacity-50 disabled:shadow-none disabled:cursor-not-allowed transition-[color,background-color,border-color,box-shadow]";
+  "ui-press inline-flex items-center justify-center gap-2 whitespace-nowrap h-10 pointer-coarse:h-11 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] shadow-[var(--shadow-action)] text-reading font-medium hover:bg-[var(--color-accent-hover)] active:shadow-none disabled:opacity-50 disabled:shadow-none disabled:cursor-not-allowed transition-[color,background-color,border-color,box-shadow,transform]";
 
 /** A fact that backs up the answer. `hero` marks the one number that
  *  matters (shown large); otherwise the first fact that isn't zero is. */
@@ -99,7 +100,7 @@ export function PageHero({
   className?: string;
 }) {
   const big = compactOnPhone
-    ? "text-[17px] sm:text-[24px]"
+    ? "text-section sm:text-[24px]"
     : size === "lg" ? "text-[24px] sm:text-[26px]" : "text-[21px] sm:text-[24px]";
   const phoneHide = compactOnPhone ? "max-sm:hidden" : "";
   const list = (facts ?? []).slice(0, 4);
@@ -125,26 +126,26 @@ export function PageHero({
                 <ChevronLeft className="w-5 h-5" />
               </button>
             ))}
-            <div className="min-w-0 flex-1 truncate text-[14px] text-[var(--color-text-muted)]">{kicker}</div>
-            {tools && <div className="flex flex-wrap items-center gap-2 min-w-0 max-w-full">{tools}</div>}
+            <div className="min-w-0 flex-1 truncate text-body text-[var(--color-text-muted)]">{kicker}</div>
+            {tools && <div className="page-tools flex flex-wrap items-center gap-1 min-w-0 max-w-full">{tools}</div>}
           </div>
         )}
         <div className="flex flex-wrap items-end gap-x-6 gap-y-4">
           <div className="min-w-0 flex-1 basis-[300px]">
             <h1 className={`font-display ${big} leading-[1.2] font-semibold tracking-[-0.005em] text-[var(--color-text)] [overflow-wrap:anywhere]`}>{title}</h1>
-            {sub && <p className={`${phoneHide} mt-1.5 text-[15px] sm:text-[16px] leading-snug text-[var(--color-text-muted)] max-w-[72ch]`}>{sub}</p>}
+            {sub && <p className={`${phoneHide} mt-1.5 text-reading leading-snug text-[var(--color-text-muted)] max-w-[72ch]`}>{sub}</p>}
             {list.length > 0 && (
               <dl className={`${phoneHide} mt-4 flex flex-wrap items-end gap-x-7 gap-y-3`}>
                 {hero && (
                   <div className="min-w-0 sm:mr-2">
-                    <dt className="text-[13px] text-[var(--color-text-muted)] truncate">{hero.label}</dt>
-                    <dd className={`mt-0.5 font-display text-[34px] sm:text-[42px] leading-[1.05] font-bold tabular-nums whitespace-nowrap ${factColor(hero)}`}>{hero.value}</dd>
+                    <dt className="text-body text-[var(--color-text-muted)] truncate">{hero.label}</dt>
+                    <dd className={`mt-0.5 font-display text-[34px] sm:text-[42px] leading-[1.05] font-bold tabular-nums whitespace-nowrap ${factColor(hero)}`}><CountUp value={hero.value} /></dd>
                   </div>
                 )}
                 {rest.map((f, i) => (
                   <div key={i} className="min-w-0 sm:pb-1">
-                    <dt className="text-[13px] text-[var(--color-text-muted)] truncate">{f.label}</dt>
-                    <dd className={`mt-0.5 font-display text-[20px] leading-tight font-semibold tabular-nums whitespace-nowrap ${factColor(f)}`}>{f.value}</dd>
+                    <dt className="text-body text-[var(--color-text-muted)] truncate">{f.label}</dt>
+                    <dd className={`mt-0.5 font-display text-section leading-tight font-semibold tabular-nums whitespace-nowrap ${factColor(f)}`}><CountUp value={f.value} /></dd>
                   </div>
                 ))}
               </dl>
@@ -169,7 +170,7 @@ export function PageHero({
 
 /** The page's content under the header. */
 export function PageBody({ children, className = "" }: { children: React.ReactNode; className?: string }) {
-  return <div className={`mt-6 space-y-8 ${className}`}>{children}</div>;
+  return <div className={`page-body mt-6 space-y-8 ${className}`}>{children}</div>;
 }
 
 // Classes that place a section in a grid stay on the outer element; the
@@ -201,7 +202,7 @@ export function Card({
   return (
     <Tag className={`min-w-0 ${place}`}>
       <div className="flex flex-wrap items-end gap-x-3 gap-y-2 mb-3 min-h-8">
-        {label && <h2 className="font-display text-[20px] leading-tight font-semibold text-[var(--color-text)] [&_svg]:inline [&_svg]:align-[-2px]">{label}</h2>}
+        {label && <h2 className="font-display text-section leading-tight font-semibold text-[var(--color-text)] [&_svg]:inline [&_svg]:align-[-2px]">{label}</h2>}
         <div className="flex-1" />
         {action}
       </div>
@@ -240,9 +241,9 @@ export function StepLine({ steps, onDark = false }: {
                 style={filled ? { background: fg } : { border: `2px solid ${s.state === "now" ? "var(--color-current)" : line}` }} />
               {!last && <span className="flex-1 h-px" style={{ background: filled && steps[i + 1]?.state !== "next" ? fg : line }} />}
             </div>
-            <div className="mt-2.5 pr-3 text-[14px] font-semibold truncate text-[var(--color-text)]">{s.label}</div>
+            <div className="mt-2.5 pr-3 text-body font-medium truncate text-[var(--color-text)]">{s.label}</div>
             {s.note && (
-              <div className={`pr-3 text-[13px] mt-0.5 tabular-nums ${s.tone === "bad" ? "text-[var(--state-overdue-text)] font-semibold" : "text-[var(--color-text-muted)]"}`}>{s.note}</div>
+              <div className={`pr-3 text-body mt-0.5 tabular-nums ${s.tone === "bad" ? "text-[var(--state-overdue-text)] font-medium" : "text-[var(--color-text-muted)]"}`}>{s.note}</div>
             )}
           </li>
         );

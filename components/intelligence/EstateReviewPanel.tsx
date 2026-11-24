@@ -99,9 +99,9 @@ export default function EstateReviewPanel() {
   const Node = ({ id }: { id: string }) => {
     const l = L(id);
     const name = l.href
-      ? <Link href={l.href} className="font-semibold text-[var(--color-text)] hover:text-[var(--color-accent-text)]">{l.label}</Link>
-      : <span className="font-semibold text-[var(--color-text)]">{l.label}</span>;
-    return <span className="min-w-0">{name}{l.sub ? <span className="text-[14px] text-[var(--color-text-muted)]"> ({l.sub})</span> : null}</span>;
+      ? <Link href={l.href} className="font-medium text-[var(--color-text)] hover:text-[var(--color-accent-text)]">{l.label}</Link>
+      : <span className="font-medium text-[var(--color-text)]">{l.label}</span>;
+    return <span className="min-w-0">{name}{l.sub ? <span className="text-body text-[var(--color-text-muted)]"> ({l.sub})</span> : null}</span>;
   };
   const sure = (e: EstateEdge) => e.tier === "strong" ? <Pill tone="brand">Likely</Pill>
     : e.tier === "inferred" ? <Pill tone="warn">A guess</Pill>
@@ -110,7 +110,7 @@ export default function EstateReviewPanel() {
   return (
     <Section
       label={<span className="inline-flex items-center gap-2">Links waiting for you{rows && rows.length > 0 && <span className="ui-count is-warn font-sans">{rows.length}</span>}
-        <span className="font-sans font-normal text-[14px] leading-snug"><HelpTooltip>
+        <span className="font-sans font-normal text-body leading-snug"><HelpTooltip>
           Only what is proven links by itself: a unit&apos;s number and name together (&ldquo;20 - Crude&rdquo;), a drawing number, a folder under a linked folder. A name on its own is asked here.
           <span className="block mt-1.5"><b>Belongs to</b>: it is that unit&apos;s own. <b>Applies to</b>: a standard or reference filed elsewhere that covers it.</span>
         </HelpTooltip></span>
@@ -121,13 +121,13 @@ export default function EstateReviewPanel() {
         </button>
       ) : undefined}
     >
-      {note && <p role="status" className="mb-2.5 text-[14px] text-[var(--color-text-muted)] max-w-[90ch]">{note}</p>}
+      {note && <p role="status" className="mb-2.5 text-body text-[var(--color-text-muted)] max-w-[90ch]">{note}</p>}
       {rows === null ? (
         <SkeletonRows rows={3} cols={2} what="the links" />
       ) : rows.length === 0 ? (
         <div className={`${sheet} px-4 py-4 flex flex-wrap items-center gap-x-3 gap-y-1`}>
           <Pill tone="good">Nothing waiting</Pill>
-          <span className="text-[14px] text-[var(--color-text-muted)]">Check again after teaching aliases or adding units to the codebook.</span>
+          <span className="text-body text-[var(--color-text-muted)]">Check again after teaching aliases or adding units to the codebook.</span>
         </div>
       ) : (
         <div className={tbl.wrap}>
@@ -150,20 +150,20 @@ export default function EstateReviewPanel() {
                         <span aria-hidden className="ui-icon-tile is-sm"><I className="w-4 h-4" /></span>
                         <div className="min-w-0 flex flex-wrap items-baseline gap-x-1.5">
                           <Node id={e.a} />
-                          <span className="text-[14px] text-[var(--color-text-muted)]">{e.type === "belongs_to_unit" ? "and" : TYPE_LABEL[e.type] ?? e.type}</span>
+                          <span className="text-body text-[var(--color-text-muted)]">{e.type === "belongs_to_unit" ? "and" : TYPE_LABEL[e.type] ?? e.type}</span>
                           <Node id={e.b} />
                         </div>
                       </div>
-                      {e.summary && <div className="lg:hidden pl-[26px] mt-0.5 text-[14px] text-[var(--color-text-muted)] line-clamp-2">{e.summary}</div>}
+                      {e.summary && <div className="lg:hidden pl-[26px] mt-0.5 text-body text-[var(--color-text-muted)] line-clamp-2">{e.summary}</div>}
                     </td>
-                    <td className={`${tbl.td} align-top max-lg:hidden text-[14px] text-[var(--color-text-muted)] max-w-[44ch]`}>{e.summary || "-"}</td>
+                    <td className={`${tbl.td} align-top max-lg:hidden text-body text-[var(--color-text-muted)] max-w-[44ch]`}>{e.summary || "-"}</td>
                     <td className={`${tbl.td} max-md:py-1 align-top whitespace-nowrap`}>
                       <div className="flex items-center gap-2 max-md:pl-[26px]">
                         {sure(e)}
-                        <span className="md:hidden text-[13px] text-[var(--color-text-muted)]">{HOW[e.origin] ?? e.origin}</span>
+                        <span className="md:hidden text-body text-[var(--color-text-muted)]">{HOW[e.origin] ?? e.origin}</span>
                       </div>
-                      <div className="max-md:hidden mt-0.5 text-[13px] text-[var(--color-text-muted)]">{HOW[e.origin] ?? e.origin}</div>
-                      {e.createdByName && <div className="max-md:hidden text-[13px] text-[var(--color-text-muted)]">Run by {e.createdByName}</div>}
+                      <div className="max-md:hidden mt-0.5 text-body text-[var(--color-text-muted)]">{HOW[e.origin] ?? e.origin}</div>
+                      {e.createdByName && <div className="max-md:hidden text-body text-[var(--color-text-muted)]">Run by {e.createdByName}</div>}
                     </td>
                     {canDecide && (
                       <td className={`${tbl.td} max-md:py-1 align-top`}>

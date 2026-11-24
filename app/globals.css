@@ -40,8 +40,17 @@
   --radius-chip: 6px;
   --radius-control: 8px;
   --radius-panel: 12px;
+  /* Tailwind's own radii fold into the three: small things 6, controls
+     8, anything panel-sized 12. (Only rounded-xs, 2 px, stays, for thin
+     bars and markers.) */
+  --radius: 6px;
+  --radius-sm: 6px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
   --radius-2xl: 12px;
   --radius-3xl: 12px;
+  --radius-4xl: 12px;
 
   /* ── Color: 60 / 30 / 10 ─────────────────────────────────────────
      60 neutral: the page (canvas, about 4% of the brand hue), white
@@ -425,7 +434,7 @@ body {
 }
 .ui-tag {
   display: inline-flex; align-items: center; gap: 0.25rem; height: 1.625rem; padding: 0 0.5rem;
-  border-radius: var(--radius-chip); font-family: var(--font-display); font-size: 13px; font-weight: 600; white-space: nowrap;
+  border-radius: var(--radius-chip); font-family: var(--font-display); font-size: var(--text-caption); font-weight: 500; letter-spacing: 0.01em; white-space: nowrap;
   background: var(--color-surface-2); color: var(--color-text);
   border: 1px solid var(--color-border);
   transition: background-color .12s, color .12s, border-color .12s;
@@ -437,7 +446,7 @@ button.ui-tag:hover, a.ui-tag:hover { background: var(--color-surface); color: v
 a.ui-id:hover, button.ui-id:hover { color: var(--color-accent-text); text-decoration: underline; text-underline-offset: 3px; }
 .ui-pill {
   display: inline-flex; align-items: center; gap: 0.375rem; height: auto; min-height: 1.25rem; padding: 0; border-radius: 0;
-  font-size: 13px; font-weight: 600; white-space: nowrap; background: none; box-shadow: none;
+  font-size: var(--text-body); font-weight: 500; white-space: nowrap; background: none; box-shadow: none;
   color: var(--color-text);
 }
 .ui-pill::before { content: ""; width: 7px; height: 7px; border-radius: 999px; flex-shrink: 0; background: var(--color-current); }
@@ -754,9 +763,9 @@ html[data-density="compact"] tbody tr {
    px only on touch screens, in the shared control recipes
    (the pointer-coarse variant). */
 @media (max-width: 639px) {
-  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="file"]):not([class*="text-lg"]):not([class*="text-xl"]):not([class*="text-[17"]):not([class*="text-[18"]):not([class*="text-[19"]):not([class*="text-[2"]):not([class*="text-[3"]):not([class*="text-[4"]),
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="file"]):not([class*="text-lg"]):not([class*="text-xl"]):not([class*="text-section"]):not([class*="text-title"]):not([class*="text-hero"]):not([class*="text-[2"]):not([class*="text-[3"]):not([class*="text-[4"]),
   select:not([class*="text-lg"]):not([class*="text-xl"]),
-  textarea:not([class*="text-lg"]):not([class*="text-xl"]):not([class*="text-[17"]):not([class*="text-[18"]):not([class*="text-[2"]) {
+  textarea:not([class*="text-lg"]):not([class*="text-xl"]):not([class*="text-section"]):not([class*="text-title"]):not([class*="text-[2"]) {
     font-size: 16px;
   }
 }
@@ -909,3 +918,98 @@ html.vt-on .vt-top { view-transition-name: top-bar; }
   .bp-camera, .bp-draw, .bp-fade, .bp-grid, .bp-level, .bp-border, .bp-zones, .bp-rise, .bp-intro, .tb-rule, .tb-ink { animation: none !important; }
   .bp-flow path { animation: none !important; opacity: .6; }
 }
+
+/* ── Life: subtle motion across the app ─────────────────────────────
+   Orientation, not decoration: 150 to 320 ms, ease-out, nothing loops
+   except a skeleton. All of it stops for reduced motion. */
+
+/* The current tab's underline slides (components/ui/TabGlide). */
+.tab-glide { position: relative; }
+.tab-glide-bar {
+  position: absolute; left: 0; bottom: 0; height: 2px; width: 0; border-radius: 2px;
+  background: var(--color-current); opacity: 0; pointer-events: none; will-change: transform, width;
+  transition: transform .28s var(--ease-fluid), width .28s var(--ease-fluid), opacity .15s ease;
+}
+.tab-glide[data-glide] > [aria-current="page"], .tab-glide[data-glide] > [aria-selected="true"] { border-bottom-color: transparent !important; }
+
+@media (prefers-reduced-motion: reduce) {
+  .tab-glide-bar { transition: none; }
+}
+
+/* Sections settle in when a page opens or its data arrives (PageBody). */
+.page-body > * { animation: settle .34s var(--ease-fluid) both; }
+.page-body > :nth-child(2) { animation-delay: 45ms; }
+.page-body > :nth-child(3) { animation-delay: 90ms; }
+.page-body > :nth-child(4) { animation-delay: 135ms; }
+.page-body > :nth-child(n+5) { animation-delay: 170ms; }
+@keyframes settle { from { opacity: 0; transform: translateY(6px); } }
+
+/* Rows arrive one after another, the first dozen only (tables and lists
+   marked .ui-stagger). Rows added later (a filter, a new item) do too. */
+.ui-stagger > * { animation: row-in .26s var(--ease-fluid) both; }
+.ui-stagger > :nth-child(2) { animation-delay: 20ms; } .ui-stagger > :nth-child(3) { animation-delay: 40ms; }
+.ui-stagger > :nth-child(4) { animation-delay: 60ms; } .ui-stagger > :nth-child(5) { animation-delay: 80ms; }
+.ui-stagger > :nth-child(6) { animation-delay: 100ms; } .ui-stagger > :nth-child(7) { animation-delay: 120ms; }
+.ui-stagger > :nth-child(8) { animation-delay: 140ms; } .ui-stagger > :nth-child(9) { animation-delay: 160ms; }
+.ui-stagger > :nth-child(10) { animation-delay: 180ms; } .ui-stagger > :nth-child(n+11) { animation-delay: 200ms; }
+@keyframes row-in { from { opacity: 0; transform: translateY(4px); } }
+
+/* Something opened in place (a section, a disclosure) slides down into
+   view rather than popping. */
+.ui-reveal { animation: reveal .22s var(--ease-fluid) both; }
+@keyframes reveal { from { opacity: 0; transform: translateY(-4px); } }
+
+/* A press answers: buttons give a little under the finger. */
+.ui-press { transition-property: color, background-color, border-color, box-shadow, transform; }
+.ui-press:active:not(:disabled) { transform: scale(0.98); }
+
+/* A done check draws itself (Button's done state, finished steps). */
+.ui-check-draw path, .ui-check-draw polyline { stroke-dasharray: 30; stroke-dashoffset: 0; animation: check-draw .38s var(--ease-fluid) both; }
+@keyframes check-draw { from { stroke-dashoffset: 30; } }
+
+/* A count that changes (the bell, a menu badge) gives a small pop. */
+.ui-badge { animation: pop .24s var(--ease-spring) both; }
+
+/* The side menu's current marker glides to the new item on navigation
+   (it gets its own view-transition name while one runs). */
+html.vt-on .side-marker { view-transition-name: side-marker; }
+::view-transition-group(side-marker) { animation-duration: .3s; animation-timing-function: var(--ease-fluid); }
+
+@media (prefers-reduced-motion: reduce) {
+  .page-body > *, .ui-stagger > *, .ui-reveal, .ui-check-draw path, .ui-check-draw polyline, .ui-badge { animation: none !important; }
+  .ui-press:active:not(:disabled) { transform: none; }
+}
+
+/* A page header's secondary tools are quiet: no box until you point at
+   one (a soft fill), so the one main action is the only button-shaped
+   thing in the header. Applies to the quiet recipe (.ui-quiet) only. */
+.page-tools .ui-quiet {
+  border-color: transparent; box-shadow: none; background-color: transparent;
+}
+.page-tools .ui-quiet:hover, .page-tools .ui-quiet[aria-expanded="true"] {
+  background-color: var(--color-surface-2); border-color: transparent;
+}
+
+/* A filter chip: a pill you press to narrow a list. Pressed shows in the
+   "where you are" color, tinted, never a solid fill. */
+.ui-chip {
+  display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px; flex-shrink: 0;
+  border-radius: 999px; border: 1px solid var(--color-border-strong); background: var(--color-surface);
+  color: var(--color-text-muted); font-family: var(--font-sans); font-size: var(--text-body); font-weight: 500;
+  white-space: nowrap; cursor: pointer;
+  transition: background-color .15s var(--ease-out-quick), color .15s var(--ease-out-quick), border-color .15s var(--ease-out-quick), transform .15s var(--ease-out-quick);
+}
+.ui-chip:hover { color: var(--color-text); border-color: var(--color-border-control); }
+.ui-chip:active { transform: scale(0.97); }
+.ui-chip[aria-pressed="true"] {
+  color: var(--color-text);
+  background: color-mix(in srgb, var(--color-current) 9%, var(--color-surface));
+  border-color: color-mix(in srgb, var(--color-current) 50%, transparent);
+}
+@media (pointer: coarse) { .ui-chip { height: 36px; } }
+@media (prefers-reduced-motion: reduce) { .ui-chip:active { transform: none; } }
+
+/* An empty state's icon draws itself in, like the sheet at sign-in. */
+.ui-draw-icon :is(path, line, polyline, rect, circle, ellipse) { stroke-dasharray: 120; stroke-dashoffset: 0; animation: icon-draw .9s var(--ease-fluid) .1s both; }
+@keyframes icon-draw { from { stroke-dashoffset: 120; } }
+@media (prefers-reduced-motion: reduce) { .ui-draw-icon :is(path, line, polyline, rect, circle, ellipse) { animation: none; } }

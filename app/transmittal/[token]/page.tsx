@@ -133,12 +133,12 @@ export default function TransmittalPortal({ params }: { params: Promise<{ token:
       kicker={<span className="inline-flex flex-wrap items-baseline gap-x-2">Transmittal <CopyId value={data.number} label="transmittal number" />{data.purpose ? <span>{data.purpose}</span> : null}</span>}
       title={acknowledged ? "Received. It's on the record." : `${n} document${n === 1 ? "" : "s"} for you.`}
       sub={<>
-        {data.subject || "Document transmittal"}. From <b className="font-semibold text-[var(--color-text)]">{from}</b>{data.issuedAt ? `, issued ${when(data.issuedAt)}` : ""}.
+        {data.subject || "Document transmittal"}. From <b className="font-medium text-[var(--color-text)]">{from}</b>{data.issuedAt ? `, issued ${when(data.issuedAt)}` : ""}.
         {to ? <> To {to}.</> : null}
       </>}
     >
         {msg && (msg.tone === "ok" ? (
-          <p role="status" className="flex items-center gap-2 text-[15px] text-[var(--color-text)]">
+          <p role="status" className="flex items-center gap-2 text-reading text-[var(--color-text)]">
             <CheckCircle2 aria-hidden className="w-5 h-5 text-[var(--state-released)]" /> {msg.text}
           </p>
         ) : (
@@ -146,17 +146,17 @@ export default function TransmittalPortal({ params }: { params: Promise<{ token:
         ))}
 
         {/* Document list with downloads */}
-        <Card label={<>Documents <span className="font-sans text-[14px] font-normal tabular-nums text-[var(--color-text-muted)]">{n}</span></>} pad={false} className="overflow-hidden">
+        <Card label={<>Documents <span className="font-sans text-body font-normal tabular-nums text-[var(--color-text-muted)]">{n}</span></>} pad={false} className="overflow-hidden">
           <ul className="divide-y divide-[var(--color-border)]">
             {data.items.map((i) => (
               <li key={i.documentId} className="px-4 sm:px-5 py-3 flex items-center gap-3">
                 <FileText aria-hidden className="w-4 h-4 text-[var(--color-text-faint)] shrink-0 max-sm:hidden" />
                 <div className="min-w-0 flex-1">
-                  <div className="text-[15px] flex items-baseline gap-2 min-w-0">
+                  <div className="text-reading flex items-baseline gap-2 min-w-0">
                     <CopyId value={i.number} label="document number" />
-                    {i.rev && <span className="shrink-0 text-[13px] text-[var(--color-text-muted)]">Rev <span className="ui-id text-[var(--color-text)]">{i.rev}</span></span>}
+                    {i.rev && <span className="shrink-0 text-body text-[var(--color-text-muted)]">Rev <span className="ui-id text-[var(--color-text)]">{i.rev}</span></span>}
                   </div>
-                  {i.title && i.title !== i.number && <div className="text-[13px] text-[var(--color-text-muted)] truncate">{i.title}</div>}
+                  {i.title && i.title !== i.number && <div className="text-body text-[var(--color-text-muted)] truncate">{i.title}</div>}
                 </div>
                 <Button variant="secondary" size="sm" onClick={() => void download(i.documentId)} loading={downloading === i.documentId} className="shrink-0">
                   {downloading !== i.documentId && <Download className="w-4 h-4" />} Download
@@ -164,29 +164,29 @@ export default function TransmittalPortal({ params }: { params: Promise<{ token:
               </li>
             ))}
           </ul>
-          <div className="px-4 sm:px-5 py-3 border-t border-[var(--color-border)] text-[13px] text-[var(--color-text-muted)]">Files download at the revision issued here. A newer revision is not part of this record.</div>
+          <div className="px-4 sm:px-5 py-3 border-t border-[var(--color-border)] text-body text-[var(--color-text-muted)]">Files download at the revision issued here. A newer revision is not part of this record.</div>
         </Card>
 
         {data.notes && (
           <Card label="Notes from the issuer">
-            <div className="text-[14px] text-[var(--color-text)] whitespace-pre-wrap">{data.notes}</div>
+            <div className="text-body text-[var(--color-text)] whitespace-pre-wrap">{data.notes}</div>
           </Card>
         )}
 
         {/* Acknowledgment */}
         {acknowledged ? (
           <Card>
-            <div className="flex items-center gap-2 text-[15px] font-semibold text-[var(--color-text)]">
+            <div className="flex items-center gap-2 text-reading font-medium text-[var(--color-text)]">
               <CheckCircle2 aria-hidden className="w-5 h-5 text-[var(--state-released)]" /> Receipt recorded
             </div>
-            <div className="text-[14px] text-[var(--color-text-muted)] mt-1">
-              {data.acknowledgedByName ? <>By <b className="font-semibold text-[var(--color-text)]">{data.acknowledgedByName}</b></> : "Recorded"}
+            <div className="text-body text-[var(--color-text-muted)] mt-1">
+              {data.acknowledgedByName ? <>By <b className="font-medium text-[var(--color-text)]">{data.acknowledgedByName}</b></> : "Recorded"}
               {data.acknowledgedAt ? <>, {when(data.acknowledgedAt, true)}</> : null}. It&apos;s kept on the record.
             </div>
           </Card>
         ) : (
           <Card label="Confirm you received them">
-            <p className="text-[14px] text-[var(--color-text-muted)] mb-4">
+            <p className="text-body text-[var(--color-text-muted)] mb-4">
               This tells {data.orgName ?? "the issuer"} you got these documents at the revisions above. Your name and the time are recorded.
             </p>
             <form onSubmit={(e) => { e.preventDefault(); void acknowledge(); }} className="grid gap-4 sm:grid-cols-2">
@@ -202,13 +202,13 @@ export default function TransmittalPortal({ params }: { params: Promise<{ token:
               </label>
               <div className="sm:col-span-2 flex flex-wrap items-center gap-3">
                 <Button type="submit" loading={ackBusy} disabled={!ackName.trim()}>Confirm receipt</Button>
-                {!ackName.trim() && <span className="text-[13px] text-[var(--color-text-muted)]">Enter your name to confirm.</span>}
+                {!ackName.trim() && <span className="text-body text-[var(--color-text-muted)]">Enter your name to confirm.</span>}
               </div>
             </form>
           </Card>
         )}
 
-        <p className="px-1 text-[13px] text-[var(--color-text-muted)]">
+        <p className="px-1 text-body text-[var(--color-text-muted)]">
           Downloads and the receipt are logged. Only people with this link can see it.
         </p>
     </Shell>

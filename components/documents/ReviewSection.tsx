@@ -169,29 +169,29 @@ export default function ReviewSection({ doc, orgId, canManage, uid, userName, on
     } finally { setBusy(false); }
   };
 
-  const inp = "text-[13px] rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1.5 outline-none focus:border-[var(--color-border-strong)]";
+  const inp = "text-body rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1.5 outline-none focus:border-[var(--color-border-strong)]";
 
   return (
     <div className="pt-3 border-t border-[var(--color-border)] first:border-t-0 first:pt-0 space-y-2.5">
       <div className="flex items-center gap-2">
         <CalendarClock className="w-4 h-4 text-[var(--color-text-muted)]" />
-        <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Review cycle</span>
+        <span className="text-body font-medium text-[var(--color-text-muted)]">Review cycle</span>
         <div className="ml-auto"><ReviewPill nextReviewDate={nextDate} leadDays={leadDays} /></div>
       </div>
 
       {loading ? (
-        <div className="flex items-center gap-2 text-[13px] text-[var(--color-text-muted)]"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading…</div>
+        <div className="flex items-center gap-2 text-body text-[var(--color-text-muted)]"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading…</div>
       ) : (
         <>
           {/* Owner */}
           <div className="flex items-center gap-2 pb-2 border-b border-[var(--color-border)]">
             <User2 className="w-3.5 h-3.5 text-[var(--color-text-muted)] shrink-0" />
-            <span className="text-[13px] text-[var(--color-text)] min-w-0 truncate">
-              Owner: <span className="font-bold">{effOwner?.name || (effOwner?.userId ? "Assigned" : "Admin / DocCtrl")}</span>
+            <span className="text-body text-[var(--color-text)] min-w-0 truncate">
+              Owner: <span className="font-medium">{effOwner?.name || (effOwner?.userId ? "Assigned" : "Admin / DocCtrl")}</span>
               {effOwner?.source && effOwner.source !== "document" && <span className="text-[var(--color-text-muted)]"> · from {effOwner.source === "collection" ? "folder" : "library"}</span>}
             </span>
             {canManage && !ownerPicking && (
-              <button onClick={() => setOwnerPicking(true)} className="ml-auto shrink-0 text-[13px] text-[var(--color-accent-text)] hover:underline">{effOwner?.userId ? "Reassign" : "Assign"}</button>
+              <button onClick={() => setOwnerPicking(true)} className="ml-auto shrink-0 text-body text-[var(--color-accent-text)] hover:underline">{effOwner?.userId ? "Reassign" : "Assign"}</button>
             )}
           </div>
           {canManage && ownerPicking && (
@@ -200,39 +200,39 @@ export default function ReviewSection({ doc, orgId, canManage, uid, userName, on
               {ownerHits.length > 0 && (
                 <div className="rounded-lg border border-[var(--color-border)] max-h-28 overflow-y-auto">
                   {ownerHits.map((u) => (
-                    <button key={u.uid} onClick={() => void assignOwner(u)} className="w-full text-left px-2 py-1 text-[13px] hover:bg-[var(--color-surface-2)] flex items-center gap-1.5"><Plus className="w-3 h-3" /> {u.name || u.email}</button>
+                    <button key={u.uid} onClick={() => void assignOwner(u)} className="w-full text-left px-2 py-1 text-body hover:bg-[var(--color-surface-2)] flex items-center gap-1.5"><Plus className="w-3 h-3" /> {u.name || u.email}</button>
                   ))}
                 </div>
               )}
               <div className="flex items-center gap-2">
-                {effOwner?.source === "document" && <button onClick={() => void assignOwner(null)} className="text-[13px] text-[var(--state-overdue)] hover:underline">Clear (inherit)</button>}
-                <button onClick={() => { setOwnerPicking(false); setOwnerQuery(""); }} className="text-[13px] text-[var(--color-text-muted)] hover:underline ml-auto">Cancel</button>
+                {effOwner?.source === "document" && <button onClick={() => void assignOwner(null)} className="text-body text-[var(--state-overdue)] hover:underline">Clear (inherit)</button>}
+                <button onClick={() => { setOwnerPicking(false); setOwnerQuery(""); }} className="text-body text-[var(--color-text-muted)] hover:underline ml-auto">Cancel</button>
               </div>
             </div>
           )}
 
-          <div className="text-[13px] text-[var(--color-text)]">
+          <div className="text-body text-[var(--color-text)]">
             {eff
               ? <>{describeInterval(eff)} · <span className="text-[var(--color-text-muted)]">from {source === "document" ? "this document" : source === "collection" ? "this folder" : "the library"}</span></>
               : <span className="text-[var(--color-text-muted)]">No review cycle set.</span>}
           </div>
           {lastReviewed && (
-            <div className="text-[13px] text-[var(--color-text-muted)] flex items-center gap-1"><CheckCircle2 className="w-3 h-3 text-[var(--state-released)]" /> Last reviewed {lastReviewed.slice(0, 10)}</div>
+            <div className="text-body text-[var(--color-text-muted)] flex items-center gap-1"><CheckCircle2 className="w-3 h-3 text-[var(--state-released)]" /> Last reviewed {lastReviewed.slice(0, 10)}</div>
           )}
 
           {canManage && mode === "view" && (
             <div className="flex items-center gap-2 pt-1">
               {eff && (
-                <button onClick={() => setMode("review")} className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] text-[13px] font-bold"><CheckCircle2 className="w-3.5 h-3.5" /> Mark reviewed</button>
+                <button onClick={() => setMode("review")} className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] text-body font-medium"><CheckCircle2 className="w-3.5 h-3.5" /> Mark reviewed</button>
               )}
-              <button onClick={beginEdit} className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-[var(--color-border)] text-[var(--color-text)] text-[13px] font-bold hover:bg-[var(--color-surface-2)]"><Pencil className="w-3.5 h-3.5" /> {eff ? "Edit cycle" : "Set cycle"}</button>
+              <button onClick={beginEdit} className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-[var(--color-border)] text-[var(--color-text)] text-body font-medium hover:bg-[var(--color-surface-2)]"><Pencil className="w-3.5 h-3.5" /> {eff ? "Edit cycle" : "Set cycle"}</button>
             </div>
           )}
 
           {/* Mark reviewed form */}
           {canManage && mode === "review" && (
             <div className="space-y-2 pt-1 border-t border-[var(--color-border)]">
-              <div className="text-[13px] font-bold text-[var(--color-text-muted)]">Certify this document is current &amp; accurate (resets the clock, no new revision).</div>
+              <div className="text-body font-medium text-[var(--color-text-muted)]">Certify this document is current &amp; accurate (resets the clock, no new revision).</div>
               <select value={outcome} onChange={(e) => setOutcome(e.target.value as typeof outcome)} className={`${inp} w-full`}>
                 <option value="no_change">No change: still valid</option>
                 <option value="minor">Minor edit made</option>
@@ -240,8 +240,8 @@ export default function ReviewSection({ doc, orgId, canManage, uid, userName, on
               </select>
               <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Note (optional)" className={`${inp} w-full`} />
               <div className="flex justify-end gap-2">
-                <button onClick={() => setMode("view")} className="px-2.5 py-1.5 rounded-lg text-[13px] font-bold text-[var(--color-text-muted)]">Cancel</button>
-                <button onClick={() => void doReview()} disabled={busy} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] text-[13px] font-bold disabled:opacity-50">{busy && <Loader2 className="w-3.5 h-3.5 animate-spin" />} Confirm review</button>
+                <button onClick={() => setMode("view")} className="px-2.5 py-1.5 rounded-lg text-body font-medium text-[var(--color-text-muted)]">Cancel</button>
+                <button onClick={() => void doReview()} disabled={busy} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] text-body font-medium disabled:opacity-50">{busy && <Loader2 className="w-3.5 h-3.5 animate-spin" />} Confirm review</button>
               </div>
             </div>
           )}
@@ -252,40 +252,40 @@ export default function ReviewSection({ doc, orgId, canManage, uid, userName, on
               <div className="flex gap-1">
                 {(["document", "collection", "library"] as Level[]).map((lv) => (
                   <button key={lv} onClick={() => setScope(lv)} disabled={lv === "collection" && !doc.collectionId}
-                    className={`flex-1 px-2 py-1 rounded-lg text-[13px] font-bold disabled:opacity-30 ${scope === lv ? "bg-[var(--color-surface)] text-[var(--color-text)] ring-1 ring-[var(--color-text-muted)] shadow-sm" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"}`}>
+                    className={`flex-1 px-2 py-1 rounded-lg text-body font-medium disabled:opacity-30 ${scope === lv ? "bg-[var(--color-surface)] text-[var(--color-text)] ring-1 ring-[var(--color-text-muted)] shadow-sm" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"}`}>
                     {lv === "document" ? "This doc" : lv === "collection" ? "This folder" : "Library"}
                   </button>
                 ))}
               </div>
-              <label className="flex items-center gap-2 text-[13px] text-[var(--color-text)]">
+              <label className="flex items-center gap-2 text-body text-[var(--color-text)]">
                 <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} /> Require periodic review
               </label>
               {enabled && (
                 <>
                   <div className="flex items-center gap-2">
-                    <span className="text-[13px] text-[var(--color-text-muted)]">Every</span>
+                    <span className="text-body text-[var(--color-text-muted)]">Every</span>
                     <input type="number" min={1} value={count} onChange={(e) => setCount(Math.max(1, parseInt(e.target.value) || 1))} className={`${inp} w-16`} />
                     <select value={unit} onChange={(e) => setUnit(e.target.value as typeof unit)} className={inp}>
                       <option value="days">days</option><option value="months">months</option><option value="years">years</option>
                     </select>
                   </div>
                   <div className="flex items-center gap-2">
-                    <span className="text-[13px] text-[var(--color-text-muted)]">Warn</span>
+                    <span className="text-body text-[var(--color-text-muted)]">Warn</span>
                     <input type="number" min={0} value={lead} onChange={(e) => setLead(Math.max(0, parseInt(e.target.value) || 0))} className={`${inp} w-16`} />
-                    <span className="text-[13px] text-[var(--color-text-muted)]">days before due</span>
+                    <span className="text-body text-[var(--color-text-muted)]">days before due</span>
                   </div>
                   <div className="space-y-1">
-                    <div className="text-[13px] font-bold text-[var(--color-text-muted)]">Notify (besides Admin/DocCtrl)</div>
+                    <div className="text-body font-medium text-[var(--color-text-muted)]">Notify (besides Admin/DocCtrl)</div>
                     <div className="flex flex-wrap gap-1">
                       {reviewers.map((r) => (
-                        <span key={r.uid} className="inline-flex items-center gap-1 rounded-full bg-[var(--color-surface-2)] px-2 py-0.5 text-[13px] text-[var(--color-text)]">{r.name || r.email}<button onClick={() => setReviewers((p) => p.filter((x) => x.uid !== r.uid))}><X className="w-3 h-3" /></button></span>
+                        <span key={r.uid} className="inline-flex items-center gap-1 rounded-full bg-[var(--color-surface-2)] px-2 py-0.5 text-body text-[var(--color-text)]">{r.name || r.email}<button onClick={() => setReviewers((p) => p.filter((x) => x.uid !== r.uid))}><X className="w-3 h-3" /></button></span>
                       ))}
                     </div>
                     <input value={userQuery} onChange={(e) => setUserQuery(e.target.value)} placeholder="Search people…" className={`${inp} w-full`} />
                     {userHits.length > 0 && (
                       <div className="rounded-lg border border-[var(--color-border)] max-h-28 overflow-y-auto">
                         {userHits.filter((u) => !reviewers.some((r) => r.uid === u.uid)).map((u) => (
-                          <button key={u.uid} onClick={() => { setReviewers((p) => [...p, u]); setUserQuery(""); setUserHits([]); }} className="w-full text-left px-2 py-1 text-[13px] hover:bg-[var(--color-surface-2)] flex items-center gap-1.5"><Plus className="w-3 h-3" /> {u.name || u.email}</button>
+                          <button key={u.uid} onClick={() => { setReviewers((p) => [...p, u]); setUserQuery(""); setUserHits([]); }} className="w-full text-left px-2 py-1 text-body hover:bg-[var(--color-surface-2)] flex items-center gap-1.5"><Plus className="w-3 h-3" /> {u.name || u.email}</button>
                         ))}
                       </div>
                     )}
@@ -293,10 +293,10 @@ export default function ReviewSection({ doc, orgId, canManage, uid, userName, on
                 </>
               )}
               <div className="flex justify-between gap-2 pt-1">
-                <button onClick={() => void clearPolicy()} disabled={busy} className="px-2.5 py-1.5 rounded-lg text-[13px] font-bold text-[var(--state-overdue)] hover:bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] disabled:opacity-50">Remove cycle</button>
+                <button onClick={() => void clearPolicy()} disabled={busy} className="px-2.5 py-1.5 rounded-lg text-body font-medium text-[var(--state-overdue)] hover:bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] disabled:opacity-50">Remove cycle</button>
                 <div className="flex gap-2">
-                  <button onClick={() => setMode("view")} className="px-2.5 py-1.5 rounded-lg text-[13px] font-bold text-[var(--color-text-muted)]">Cancel</button>
-                  <button onClick={() => void saveEdit()} disabled={busy} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] text-[13px] font-bold disabled:opacity-50">{busy && <Loader2 className="w-3.5 h-3.5 animate-spin" />} Save</button>
+                  <button onClick={() => setMode("view")} className="px-2.5 py-1.5 rounded-lg text-body font-medium text-[var(--color-text-muted)]">Cancel</button>
+                  <button onClick={() => void saveEdit()} disabled={busy} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] text-body font-medium disabled:opacity-50">{busy && <Loader2 className="w-3.5 h-3.5 animate-spin" />} Save</button>
                 </div>
               </div>
             </div>
@@ -305,8 +305,8 @@ export default function ReviewSection({ doc, orgId, canManage, uid, userName, on
           {events.length > 0 && mode === "view" && (
             <div className="pt-1 border-t border-[var(--color-border)] space-y-1">
               {events.map((e) => (
-                <div key={e.id} className="text-[13px] text-[var(--color-text-muted)] flex items-center gap-1.5">
-                  <span className="font-bold text-[var(--color-text)] capitalize">{e.action}</span>
+                <div key={e.id} className="text-body text-[var(--color-text-muted)] flex items-center gap-1.5">
+                  <span className="font-medium text-[var(--color-text)] capitalize">{e.action}</span>
                   <span>{e.performed_at.slice(0, 10)}</span>
                   {e.performed_by_name && <span>· {e.performed_by_name}</span>}
                   {e.outcome && e.outcome !== "no_change" && <span>· {e.outcome.replace("_", " ")}</span>}

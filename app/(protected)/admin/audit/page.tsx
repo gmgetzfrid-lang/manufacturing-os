@@ -295,9 +295,9 @@ export default function AuditLogPage() {
             <ErrorNote error={error} title="The audit log didn't load." onRetry={() => void fetchRows()} />
           ) : filtered.length === 0 ? (
             <div className={`${tbl.wrap} px-4 py-8 text-center`}>
-              <p className="text-[15px] text-[var(--color-text)]">No events match{range !== "all" ? " in this window" : ""}.</p>
+              <p className="text-reading text-[var(--color-text)]">No events match{range !== "all" ? " in this window" : ""}.</p>
               {(range !== "all" || actionFilter !== "ALL" || resourceFilter !== "ALL" || libraryFilter !== "ALL" || userQuery) && (
-                <button type="button" className={`${link} mt-1.5 font-semibold`}
+                <button type="button" className={`${link} mt-1.5 font-medium`}
                   onClick={() => { setRange("all"); setActionFilter("ALL"); setResourceFilter("ALL"); setLibraryFilter("ALL"); setUserQuery(""); }}>
                   Show every event
                 </button>
@@ -380,15 +380,15 @@ function AuditRowItem({ row, docMeta, open, onToggle, onFilterAction, onFilterRe
     return null;
   })();
   const itemLabel = docMeta
-    ? <><span className="ui-id text-[16px]">{docMeta.documentNumber ?? ""}</span>{docMeta.title && docMeta.title !== docMeta.documentNumber && <span className="text-[var(--color-text-muted)]"> {docMeta.title}</span>}</>
+    ? <><span className="ui-id text-reading">{docMeta.documentNumber ?? ""}</span>{docMeta.title && docMeta.title !== docMeta.documentNumber && <span className="text-[var(--color-text-muted)]"> {docMeta.title}</span>}</>
     : <span className="text-[var(--color-text-muted)] capitalize">{row.resourceType}</span>;
   void Icon; // the action reads as words; color only for deletes and holds
-  const actionCls = `text-[14px] font-semibold ${style.tone === "bad" ? "text-[var(--state-overdue-text)]" : style.tone === "warn" ? "text-[var(--state-held-text)]" : "text-[var(--color-text)]"}`;
+  const actionCls = `text-body font-medium ${style.tone === "bad" ? "text-[var(--state-overdue-text)]" : style.tone === "warn" ? "text-[var(--state-held-text)]" : "text-[var(--color-text)]"}`;
 
   return (
     <>
       <tr className={`${tbl.tr} max-md:grid max-md:grid-cols-[minmax(0,1fr)_auto] max-md:py-1.5`}>
-        <td className={`${tbl.td} relative max-md:hidden whitespace-nowrap text-[14px] text-[var(--color-text-muted)]`}>
+        <td className={`${tbl.td} relative max-md:hidden whitespace-nowrap text-body text-[var(--color-text-muted)]`}>
           {style.tone === "bad" && <RowEdge tone="bad" />}
           <time dateTime={row.timestamp} title={shortDateTime(row.timestamp)}>{formatTime(row.timestamp)}</time>
         </td>
@@ -401,7 +401,7 @@ function AuditRowItem({ row, docMeta, open, onToggle, onFilterAction, onFilterRe
               {prettyAction(row.action)}
             </button>
           ) : <span className={actionCls}>{prettyAction(row.action)}</span>}
-          <span className="md:hidden ml-2 text-[13px] text-[var(--color-text-muted)]">{formatTime(row.timestamp)}</span>
+          <span className="md:hidden ml-2 text-body text-[var(--color-text-muted)]">{formatTime(row.timestamp)}</span>
         </td>
         <td className={`${tbl.td} max-md:col-span-2 max-md:row-start-2 max-md:py-0.5 min-w-0`}>
           <span className="inline-flex items-center gap-2 min-w-0 max-w-[48ch]">
@@ -414,12 +414,12 @@ function AuditRowItem({ row, docMeta, open, onToggle, onFilterAction, onFilterRe
               : <span className="truncate">{itemLabel}</span>}
           </span>
         </td>
-        <td className={`${tbl.td} max-md:col-span-2 max-md:row-start-3 max-md:pt-0.5 text-[14px] text-[var(--color-text-muted)]`}>
+        <td className={`${tbl.td} max-md:col-span-2 max-md:row-start-3 max-md:pt-0.5 text-body text-[var(--color-text-muted)]`}>
           <span className="inline-flex flex-wrap items-center gap-1.5">
             {row.userEmail && onFilterUser
               ? <button type="button" onClick={() => onFilterUser(row.userEmail!)} title={`Show only ${row.userEmail}`} className="text-[var(--color-text)] hover:text-[var(--color-accent-text)] hover:underline underline-offset-2">{row.userEmail}</button>
               : <span className="text-[var(--color-text)]">{row.userEmail || row.userId}</span>}
-            {row.userRole ? <span className="text-[13px] text-[var(--color-text-muted)]">{row.userRole}</span> : null}
+            {row.userRole ? <span className="text-body text-[var(--color-text-muted)]">{row.userRole}</span> : null}
           </span>
         </td>
         <td className={`${tbl.td} max-md:col-start-2 max-md:row-start-1 max-md:py-1 text-right`}>
@@ -433,7 +433,7 @@ function AuditRowItem({ row, docMeta, open, onToggle, onFilterAction, onFilterRe
       {open && hasDetails && (
         <tr className="bg-[var(--color-surface-2)]">
           <td colSpan={5} className="px-4 py-3">
-            <pre className="text-[13px] text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] rounded-md p-3 overflow-x-auto font-mono">
+            <pre className="text-body text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] rounded-md p-3 overflow-x-auto font-mono">
               {JSON.stringify(row.details, null, 2)}
             </pre>
           </td>

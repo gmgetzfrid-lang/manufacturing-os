@@ -80,8 +80,8 @@ export default function AccessRecertModal({ libraryId, orgId, name, uid, userNam
         <div className="px-5 py-3 border-b border-[var(--color-border)] flex items-center gap-3">
           <KeyRound className="w-5 h-5 text-[var(--color-text-muted)]" />
           <div className="flex-1 min-w-0">
-            <div className="text-sm font-bold text-[var(--color-text)]">Access recertification</div>
-            <div className="text-[13px] text-[var(--color-text-muted)] truncate">Review &amp; attest who has access to {name || "this library"}</div>
+            <div className="text-sm font-medium text-[var(--color-text)]">Access recertification</div>
+            <div className="text-body text-[var(--color-text-muted)] truncate">Review &amp; attest who has access to {name || "this library"}</div>
           </div>
           <button aria-label="Close" onClick={onClose} className="p-1.5 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"><X className="w-4 h-4" /></button>
         </div>
@@ -91,11 +91,11 @@ export default function AccessRecertModal({ libraryId, orgId, name, uid, userNam
         ) : (
           <div className="p-5 space-y-4 overflow-y-auto">
             {/* Status */}
-            <div className="flex items-center gap-2 text-[13px]">
+            <div className="flex items-center gap-2 text-body">
               {lastAt
                 ? <span className="inline-flex items-center gap-1 text-[var(--state-released)]"><CheckCircle2 className="w-3.5 h-3.5" /> Last recertified {humanDate(lastAt)}</span>
                 : <span className="text-[var(--color-text-muted)]">Never recertified</span>}
-              {nextDate && <span className={`ml-auto inline-flex items-center gap-1 font-bold ${status === "overdue" ? "text-[var(--state-overdue)]" : status === "due_soon" ? "text-[var(--state-held)]" : "text-[var(--color-text-muted)]"}`}>
+              {nextDate && <span className={`ml-auto inline-flex items-center gap-1 font-medium ${status === "overdue" ? "text-[var(--state-overdue)]" : status === "due_soon" ? "text-[var(--state-held)]" : "text-[var(--color-text-muted)]"}`}>
                 {status === "overdue" ? `Overdue ${Math.abs(days ?? 0)}d` : status === "due_soon" ? `Due in ${days}d` : `Next ${humanDate(nextDate)}`}
               </span>}
             </div>
@@ -107,40 +107,40 @@ export default function AccessRecertModal({ libraryId, orgId, name, uid, userNam
               </label>
               {enabled && (
                 <div className="flex items-center gap-2">
-                  <span className="text-[13px] text-[var(--color-text-muted)]">Every</span>
+                  <span className="text-body text-[var(--color-text-muted)]">Every</span>
                   <input type="number" min={1} value={months} onChange={(e) => setMonths(Math.max(1, parseInt(e.target.value) || 1))} className={`${inp} w-20`} />
-                  <span className="text-[13px] text-[var(--color-text-muted)]">months</span>
-                  <button onClick={() => void savePolicy()} disabled={busy} className="ml-auto px-3 py-1.5 rounded-lg bg-[var(--color-accent)] text-white text-[13px] font-bold disabled:opacity-50">Save cadence</button>
+                  <span className="text-body text-[var(--color-text-muted)]">months</span>
+                  <button onClick={() => void savePolicy()} disabled={busy} className="ml-auto px-3 py-1.5 rounded-lg bg-[var(--color-accent)] text-white text-body font-medium disabled:opacity-50">Save cadence</button>
                 </div>
               )}
-              {existing && <button onClick={() => void clearPolicy()} disabled={busy} className="text-[13px] text-[var(--state-overdue)] hover:underline">Remove cadence</button>}
+              {existing && <button onClick={() => void clearPolicy()} disabled={busy} className="text-body text-[var(--state-overdue)] hover:underline">Remove cadence</button>}
             </div>
 
             {/* Access list */}
             <div>
-              <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5">Current access · {grants.length}</div>
+              <div className="text-body font-medium text-[var(--color-text-muted)] mb-1.5">Current access · {grants.length}</div>
               {grants.length === 0 ? (
-                <div className="text-[13px] text-[var(--color-text-muted)]">No explicit grants on this library (inherited / default access only).</div>
+                <div className="text-body text-[var(--color-text-muted)]">No explicit grants on this library (inherited / default access only).</div>
               ) : (
                 <div className="rounded-lg border border-[var(--color-border)] max-h-52 overflow-y-auto divide-y divide-[var(--color-border)]">
                   {grants.map((g, i) => (
-                    <div key={i} className="flex items-center gap-2 px-2.5 py-1.5 text-[13px]">
-                      <span className="text-[13px] font-semibold text-[var(--color-text-faint)] w-10 shrink-0">{g.subjectType}</span>
+                    <div key={i} className="flex items-center gap-2 px-2.5 py-1.5 text-body">
+                      <span className="text-body font-medium text-[var(--color-text-faint)] w-10 shrink-0">{g.subjectType}</span>
                       <span className="text-[var(--color-text)] min-w-0 truncate">{g.subjectName}</span>
-                      <span className="ml-auto text-[13px] text-[var(--color-text-muted)] truncate">{g.actions.join(", ")}</span>
+                      <span className="ml-auto text-body text-[var(--color-text-muted)] truncate">{g.actions.join(", ")}</span>
                     </div>
                   ))}
                 </div>
               )}
-              <div className="text-[13px] text-[var(--color-text-muted)] mt-1 flex items-center gap-1"><ShieldAlert className="w-3 h-3" /> To remove access, use the library&apos;s Permissions panel, then attest below.</div>
+              <div className="text-body text-[var(--color-text-muted)] mt-1 flex items-center gap-1"><ShieldAlert className="w-3 h-3" /> To remove access, use the library&apos;s Permissions panel, then attest below.</div>
             </div>
 
             {/* Attest */}
             <div className="space-y-2 pt-1 border-t border-[var(--color-border)]">
               <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Note (optional): e.g. removed 2 contractors" className={`${inp} w-full`} />
               <div className="flex justify-end gap-2">
-                <button onClick={onClose} className="px-3 py-2 rounded-lg text-[13px] font-bold text-[var(--color-text-muted)]">Close</button>
-                <button onClick={() => void recertify()} disabled={busy} className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-xs font-bold disabled:opacity-50">{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />} Recertify - access reviewed</button>
+                <button onClick={onClose} className="px-3 py-2 rounded-lg text-body font-medium text-[var(--color-text-muted)]">Close</button>
+                <button onClick={() => void recertify()} disabled={busy} className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-xs font-medium disabled:opacity-50">{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />} Recertify - access reviewed</button>
               </div>
             </div>
           </div>

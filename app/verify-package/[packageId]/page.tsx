@@ -65,19 +65,19 @@ export default function VerifyPackagePage() {
         {loading ? (
           <div className="text-white/90">
             <Loader2 className="w-14 h-14 mx-auto animate-spin mb-4" />
-            <div className="text-[13px] font-semibold ">Checking pack…</div>
+            <div className="text-body font-medium ">Checking pack…</div>
           </div>
         ) : error ? (
           <div className="text-white/90">
             <ShieldQuestion className="w-16 h-16 mx-auto mb-4 opacity-80" />
             <h1 className="text-[34px] leading-[1.05] tracking-[-0.02em] font-bold mb-3">Can&apos;t verify this code</h1>
-            <p className="text-[15px] opacity-90">{error}</p>
-            <p className="text-[13px] opacity-70 mt-4">
+            <p className="text-reading opacity-90">{error}</p>
+            <p className="text-body opacity-70 mt-4">
               If this QR came from a printed pack, contact Document Control before working from it.
             </p>
             <button
               onClick={() => void check()}
-              className="mt-6 inline-flex items-center gap-2 h-11 px-4 rounded-lg bg-white/15 hover:bg-white/25 text-[15px] font-semibold"
+              className="mt-6 inline-flex items-center gap-2 h-11 px-4 rounded-lg bg-white/15 hover:bg-white/25 text-reading font-medium"
             >
               <RefreshCw className="w-4 h-4" /> Try again
             </button>
@@ -92,7 +92,7 @@ export default function VerifyPackagePage() {
             <h1 className="text-[40px] font-bold text-white leading-[1.03] tracking-[-0.03em] mb-3">
               {result.allFresh ? "Pack is current" : "Pack is out of date"}
             </h1>
-            <p className="text-white/90 text-[15px] font-semibold mb-6">
+            <p className="text-white/90 text-reading font-medium mb-6">
               {result.allFresh
                 ? "Every sheet in this pack is still the current revision."
                 : `${result.staleCount} of ${result.sheetCount} sheet${result.sheetCount === 1 ? "" : "s"} changed since this pack was printed. Get the new sheets before starting work.`}
@@ -101,14 +101,14 @@ export default function VerifyPackagePage() {
 
             <div className="bg-[var(--color-surface)] rounded-xl ui-float p-5 text-left space-y-3">
               <div>
-                <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">Work package</div>
-                <div className="text-[15px] font-semibold text-[var(--color-text)]">{result.name}</div>
+                <div className="text-body font-medium text-[var(--color-text-muted)]">Work package</div>
+                <div className="text-reading font-medium text-[var(--color-text)]">{result.name}</div>
               </div>
               <div className="pt-2 border-t border-[var(--color-border)] max-h-72 overflow-y-auto space-y-1.5">
                 {result.sheets.map((s, i) => (
                   <div key={i} className="flex items-center justify-between gap-2 text-xs">
                     <span className="truncate text-[var(--color-text)]">{s.label}</span>
-                    <span className={`shrink-0 font-semibold ${s.fresh ? "text-[var(--state-released-text)]" : "text-[var(--state-overdue-text)]"}`}>
+                    <span className={`shrink-0 font-medium ${s.fresh ? "text-[var(--state-released-text)]" : "text-[var(--state-overdue-text)]"}`}>
                       {s.retired
                         ? "Retired"
                         : s.fresh
@@ -118,23 +118,23 @@ export default function VerifyPackagePage() {
                   </div>
                 ))}
                 {result.sheets.length === 0 && (
-                  <div className="text-[13px] text-[var(--color-text-muted)]">This package has no sheets.</div>
+                  <div className="text-body text-[var(--color-text-muted)]">This package has no sheets.</div>
                 )}
               </div>
               {!result.allFresh && (
-                <div className="pt-2 border-t border-[var(--color-border)] text-[13px] text-[var(--color-text)] leading-relaxed">
+                <div className="pt-2 border-t border-[var(--color-border)] text-body text-[var(--color-text)] leading-relaxed">
                   Do not work from the outdated sheets. Ask the package owner or Document Control
                   for a re-printed pack. The out-of-date sheets are marked above.
                 </div>
               )}
             </div>
 
-            <div className="mt-5 text-[12px] text-white/70">
+            <div className="mt-5 text-caption text-white/70">
               Checked {new Date(result.checkedAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })} by document control.
             </div>
             <button
               onClick={() => void check()}
-              className="mt-3 inline-flex items-center gap-1.5 h-11 px-4 rounded-lg bg-white/15 hover:bg-white/25 text-white text-[15px] font-semibold"
+              className="mt-3 inline-flex items-center gap-1.5 h-11 px-4 rounded-lg bg-white/15 hover:bg-white/25 text-white text-reading font-medium"
             >
               <RefreshCw className="w-4 h-4" /> Check again
             </button>

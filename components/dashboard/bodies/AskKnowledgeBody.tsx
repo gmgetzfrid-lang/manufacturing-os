@@ -76,12 +76,12 @@ function Inline({ text, onCite }: { text: string; onCite: (n: number) => void })
         if (cite) {
           return cite[1].split(/\s*,\s*/).map((n) => (
             <button key={`${i}-${n}`} type="button" onClick={() => onCite(Number(n))}
-              className="align-super mx-px px-1 rounded bg-[var(--color-surface-2)] text-[var(--color-accent-text)] text-[13px] font-semibold hover:bg-[var(--color-accent)] hover:text-[var(--color-accent-fg)] transition-colors">
+              className="align-super mx-px px-1 rounded bg-[var(--color-surface-2)] text-[var(--color-accent-text)] text-body font-medium hover:bg-[var(--color-accent)] hover:text-[var(--color-accent-fg)] transition-colors">
               {n}
             </button>
           ));
         }
-        if (p.startsWith("**") && p.endsWith("**")) return <b key={i} className="font-semibold text-[var(--color-text)]">{p.slice(2, -2)}</b>;
+        if (p.startsWith("**") && p.endsWith("**")) return <b key={i} className="font-medium text-[var(--color-text)]">{p.slice(2, -2)}</b>;
         return <React.Fragment key={i}>{p.replace(/\s*\[image \d+\]/gi, "")}</React.Fragment>;
       })}
     </>
@@ -270,7 +270,7 @@ export default function AskKnowledgeBody() {
           placeholder={threadId ? "Ask a follow-up" : lib ? `Ask ${lib.name}` : "Loading libraries"}
           aria-label="Your question"
           enterKeyHint="send"
-          className="ui-field-bare flex-1 min-w-0 min-h-9 max-h-40 resize-none overflow-y-auto [field-sizing:content] bg-transparent py-1.5 text-[15px] leading-6 text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] outline-none disabled:opacity-60" />
+          className="ui-field-bare flex-1 min-w-0 min-h-9 max-h-40 resize-none overflow-y-auto [field-sizing:content] bg-transparent py-1.5 text-reading leading-6 text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] outline-none disabled:opacity-60" />
         {busy ? (
           // While the answer comes, the same spot stops it.
           // Its own element (key): reusing the Ask button's node would turn
@@ -294,8 +294,8 @@ export default function AskKnowledgeBody() {
         {/* Working */}
         {busy && (
           <div className="border-t border-[var(--color-border)] pt-3">
-            <div className="text-[15px] font-semibold text-[var(--color-text)] truncate">{last?.question}</div>
-            <div role="status" className="mt-2 flex items-center gap-2 text-[13px] text-[var(--color-text-muted)]">
+            <div className="text-reading font-medium text-[var(--color-text)] truncate">{last?.question}</div>
+            <div role="status" className="mt-2 flex items-center gap-2 text-body text-[var(--color-text-muted)]">
               <Loader2 aria-hidden className="w-3 h-3 motion-safe:animate-spin shrink-0" />
               {status ?? "Reading the library"}
             </div>
@@ -306,31 +306,31 @@ export default function AskKnowledgeBody() {
         {/* The answer */}
         {!busy && last && (
           <div className="border-t border-[var(--color-border)] pt-3">
-            <div className="flex items-start gap-1.5 text-[13px] text-[var(--color-text-muted)]">
+            <div className="flex items-start gap-1.5 text-body text-[var(--color-text-muted)]">
               <CornerDownRight className="w-3 h-3 mt-0.5 shrink-0" />
-              <span className="font-semibold line-clamp-2">{last.question}</span>
+              <span className="font-medium line-clamp-2">{last.question}</span>
             </div>
             {last.error ? (
-              <div role="alert" className="mt-2 flex flex-wrap items-start gap-x-2 gap-y-1 text-[14px]">
+              <div role="alert" className="mt-2 flex flex-wrap items-start gap-x-2 gap-y-1 text-body">
                 <AlertTriangle aria-hidden className="w-4 h-4 shrink-0 mt-0.5 text-[var(--state-overdue)]" />
                 <span className="min-w-0 flex-1 text-[var(--color-text)]">{last.error}</span>
                 <button type="button" onClick={() => { const question = last.question; setTurns((t) => t.slice(0, -1)); void ask(question); }}
-                  className="font-semibold text-[var(--color-accent-text)] hover:underline underline-offset-2">Try again</button>
+                  className="font-medium text-[var(--color-accent-text)] hover:underline underline-offset-2">Try again</button>
               </div>
             ) : parts && (
               <>
                 {parts.v?.verdict && (
                   <StatusTag tone={VERDICT[parts.v.verdict].tone} className="mt-2">{VERDICT[parts.v.verdict].label}</StatusTag>
                 )}
-                <p className="mt-1.5 text-[15px] leading-relaxed text-[var(--color-text)]">
+                <p className="mt-1.5 text-reading leading-relaxed text-[var(--color-text)]">
                   <Inline text={capFirst(parts.v?.text ?? parts.p.hero ?? last.answer?.answer?.slice(0, 400) ?? "")} onCite={(n) => openCite(citeByN(n))} />
                 </p>
                 {parts.p.settle.length > 0 && (
                   <div className="mt-2 border-l-2 border-[var(--state-held)] pl-2.5">
-                    <div className="text-[13px] font-semibold text-[var(--state-held-text)]">To settle this</div>
+                    <div className="text-body font-medium text-[var(--state-held-text)]">To settle this</div>
                     <ul className="mt-0.5 space-y-0.5">
                       {parts.p.settle.slice(0, 2).map((b, i) => (
-                        <li key={i} className="text-[13px] text-[var(--color-text)]"><Inline text={b.text} onCite={(n) => openCite(citeByN(n))} /></li>
+                        <li key={i} className="text-body text-[var(--color-text)]"><Inline text={b.text} onCite={(n) => openCite(citeByN(n))} /></li>
                       ))}
                     </ul>
                   </div>
@@ -338,20 +338,20 @@ export default function AskKnowledgeBody() {
                 {expanded && parts.p.why.length > 0 && (
                   <ul className="mt-2 space-y-1 list-disc pl-4">
                     {parts.p.why.slice(0, 5).map((b, i) => (
-                      <li key={i} className="text-[14px] text-[var(--color-text)]"><Inline text={b.text} onCite={(n) => openCite(citeByN(n))} /></li>
+                      <li key={i} className="text-body text-[var(--color-text)]"><Inline text={b.text} onCite={(n) => openCite(citeByN(n))} /></li>
                     ))}
                   </ul>
                 )}
                 {proof.length > 0 && (
                   <div className="mt-2.5 space-y-1.5">
-                    <div className="text-[13px] font-semibold text-[var(--color-text-faint)]">The proof</div>
+                    <div className="text-body font-medium text-[var(--color-text-faint)]">The proof</div>
                     {proof.map((c) => {
                       const win = c.quote ? (c.highlight ? quoteWindow(c.quote, c.highlight) : null) : null;
                       const clause = c.quote ? clauseFor(c.quote, c.highlight, c.section) : null;
                       return (
                         <button key={c.n} type="button" onClick={() => openCite(c)}
                           className="w-full text-left rounded-lg border border-[var(--color-border)] hover:border-[var(--color-border-control)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] px-2.5 py-1.5 transition-colors">
-                          <div className="flex items-center gap-1.5 text-[13px] font-semibold text-[var(--color-text-muted)]">
+                          <div className="flex items-center gap-1.5 text-body font-medium text-[var(--color-text-muted)]">
                             <span className="px-1 rounded bg-[var(--color-surface-2)] text-[var(--color-text)]">{c.n}</span>
                             <FileText className="w-3 h-3" />
                             <span className="truncate">
@@ -361,9 +361,9 @@ export default function AskKnowledgeBody() {
                             {c.role === "decides" && <span className="ml-auto shrink-0 text-[var(--state-released-text)]">decides</span>}
                             {c.role === "limits" && <span className="ml-auto shrink-0 text-[var(--state-held-text)]">limits</span>}
                           </div>
-                          <div className="mt-0.5 text-[13px] leading-snug text-[var(--color-text-muted)] line-clamp-3">
+                          <div className="mt-0.5 text-body leading-snug text-[var(--color-text-muted)] line-clamp-3">
                             {win ? (
-                              <>{win.clippedStart ? "… " : ""}{win.before}<mark className="rounded px-0.5 bg-[color-mix(in_srgb,var(--state-held)_22%,transparent)] text-[var(--color-text)] font-semibold">{win.hit}</mark>{win.after}{win.clippedEnd ? " …" : ""}</>
+                              <>{win.clippedStart ? "… " : ""}{win.before}<mark className="rounded px-0.5 bg-[color-mix(in_srgb,var(--state-held)_22%,transparent)] text-[var(--color-text)] font-medium">{win.hit}</mark>{win.after}{win.clippedEnd ? " …" : ""}</>
                             ) : (c.quote ?? c.claim ?? "Open the page")}
                           </div>
                         </button>
@@ -373,8 +373,8 @@ export default function AskKnowledgeBody() {
                 )}
                 {/* The library asking YOU something back — answer it in the box above. */}
                 {parts.followup && (
-                  <div className="mt-2 text-[13px] rounded-lg border border-dashed border-[var(--color-border-strong)] px-2.5 py-1.5 text-[var(--color-text)]">
-                    <span className="font-semibold text-[var(--color-text)]">One question for you: </span>{parts.followup.question}
+                  <div className="mt-2 text-body rounded-lg border border-dashed border-[var(--color-border-strong)] px-2.5 py-1.5 text-[var(--color-text)]">
+                    <span className="font-medium text-[var(--color-text)]">One question for you: </span>{parts.followup.question}
                     {parts.followup.options.length > 0 ? (
                       <span className="mt-1 flex flex-wrap gap-1">
                         {parts.followup.options.slice(0, 4).map((o) => (
@@ -385,7 +385,7 @@ export default function AskKnowledgeBody() {
                         ))}
                       </span>
                     ) : (
-                      <span className="block text-[13px] text-[var(--color-text-muted)] mt-0.5">Answer it in the box above. It continues this conversation.</span>
+                      <span className="block text-body text-[var(--color-text-muted)] mt-0.5">Answer it in the box above. It continues this conversation.</span>
                     )}
                   </div>
                 )}
@@ -400,7 +400,7 @@ export default function AskKnowledgeBody() {
                 className={rowBtn}>
                 <RotateCcw className="w-3.5 h-3.5" /> New question
               </button>
-              {turns.length > 1 && <span className="text-[13px] text-[var(--color-text-faint)]">{turns.length} questions in this conversation</span>}
+              {turns.length > 1 && <span className="text-body text-[var(--color-text-faint)]">{turns.length} questions in this conversation</span>}
             </div>
           </div>
         )}
@@ -409,15 +409,15 @@ export default function AskKnowledgeBody() {
         {!busy && !last && (
           (recent ?? []).length > 0 ? (
             <div>
-              <div className="text-[13px] font-semibold text-[var(--color-text-faint)] mb-1">Your recent questions</div>
+              <div className="text-body font-medium text-[var(--color-text-faint)] mb-1">Your recent questions</div>
               <ul className="space-y-0.5">
                 {(recent ?? []).map((t) => (
                   <li key={t.id}>
                     <Link href={`/assistant?thread=${t.id}&library=${t.libraryId ?? lib?.id ?? ""}`}
                       className="group flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-[var(--color-surface-2)]">
                       <MessageSquare className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" />
-                      <span className="flex-1 min-w-0 truncate text-[14px] font-semibold text-[var(--color-text)] group-hover:text-[var(--color-text)]">{t.title || "Untitled"}</span>
-                      <span className="shrink-0 text-[13px] text-[var(--color-text-faint)] tabular-nums">{timeAgo(t.lastMessageAt)}</span>
+                      <span className="flex-1 min-w-0 truncate text-body font-medium text-[var(--color-text)] group-hover:text-[var(--color-text)]">{t.title || "Untitled"}</span>
+                      <span className="shrink-0 text-body text-[var(--color-text-faint)] tabular-nums">{timeAgo(t.lastMessageAt)}</span>
                     </Link>
                   </li>
                 ))}

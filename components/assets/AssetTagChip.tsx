@@ -222,7 +222,7 @@ function PhotoTagChip({
               disabled={creating}
               title={hasPhotos ? `See ${photoCount} photo${photoCount === 1 ? "" : "s"} of ${tag}` : `Add photos to ${tag}`}
               aria-label={hasPhotos ? `See ${photoCount} photo${photoCount === 1 ? "" : "s"} of ${tag}` : `Add photos to ${tag}`}
-              className={`${seg} px-1.5 border-l border-[color-mix(in_srgb,var(--color-main)_22%,transparent)] font-sans text-[12px] font-bold`}
+              className={`${seg} px-1.5 border-l border-[color-mix(in_srgb,var(--color-main)_22%,transparent)] font-sans text-caption font-medium`}
             >
               <Camera className="w-3 h-3" aria-hidden />
               {hasPhotos ? photoCount : <Plus className="w-2.5 h-2.5 -ml-0.5" aria-hidden />}
@@ -273,8 +273,8 @@ function PhotoTagChip({
         <Tag className="w-3.5 h-3.5" />
       </span>
       <div className="text-left">
-        <div className="ui-id text-[15px]">{tag}</div>
-        <div className="text-[13px] text-[var(--color-text-muted)]">{type}</div>
+        <div className="ui-id text-reading">{tag}</div>
+        <div className="text-body text-[var(--color-text-muted)]">{type}</div>
       </div>
       {hasPhotos && (
         <span className="ml-2 ui-count gap-1">

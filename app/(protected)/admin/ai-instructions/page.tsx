@@ -158,8 +158,8 @@ function AiInstructionsInner() {
         <SkeletonRows rows={3} cols={2} what="AI instructions" />
       ) : rows.length === 0 ? (
         <div className={`${sheet} px-5 py-8 text-center`}>
-          <p className="text-[15px] text-[var(--color-text)]">For example: &ldquo;Equipment descriptions use the P&amp;ID service name, not the vendor model.&rdquo;</p>
-          {canWrite && <button type="button" onClick={openNew} className={`${link} mt-1.5 font-semibold`}>Teach the first rule</button>}
+          <p className="text-reading text-[var(--color-text)]">For example: &ldquo;Equipment descriptions use the P&amp;ID service name, not the vendor model.&rdquo;</p>
+          {canWrite && <button type="button" onClick={openNew} className={`${link} mt-1.5 font-medium`}>Teach the first rule</button>}
         </div>
       ) : (
         <>
@@ -190,9 +190,9 @@ function AiInstructionsInner() {
                 <tr key={r.id} className={`${tbl.tr} max-sm:grid max-sm:grid-cols-[minmax(0,1fr)_auto]`}>
                   <td className={`${tbl.td} max-sm:col-span-2 max-sm:pb-0`}>
                     <div className="min-w-0">
-                      <div className={`font-semibold ${r.enabled ? "text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>{r.title}</div>
-                      <div className="text-[14px] text-[var(--color-text-muted)] line-clamp-2 max-w-[80ch]" title={r.body}>{r.body}</div>
-                      <div className="md:hidden mt-0.5 text-[13px] text-[var(--color-text-muted)]">{SCOPE_LABELS[r.scope]}</div>
+                      <div className={`font-medium ${r.enabled ? "text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>{r.title}</div>
+                      <div className="text-body text-[var(--color-text-muted)] line-clamp-2 max-w-[80ch]" title={r.body}>{r.body}</div>
+                      <div className="md:hidden mt-0.5 text-body text-[var(--color-text-muted)]">{SCOPE_LABELS[r.scope]}</div>
                     </div>
                   </td>
                   <td className={`${tbl.td} max-md:hidden whitespace-nowrap`}>
@@ -200,7 +200,7 @@ function AiInstructionsInner() {
                   </td>
                   <td className={`${tbl.td} max-lg:hidden whitespace-nowrap text-[var(--color-text-muted)]`}>
                     {shortDate(r.updated_at || r.created_at)}
-                    {r.created_by_name && <div className="text-[13px]">Taught by {r.created_by_name}</div>}
+                    {r.created_by_name && <div className="text-body">Taught by {r.created_by_name}</div>}
                   </td>
                   <td className={`${tbl.td} whitespace-nowrap max-sm:col-start-1 max-sm:row-start-2 max-sm:pt-1`}>
                     {r.enabled ? <StatusTag tone="good" colored={false}>Followed</StatusTag> : <StatusTag tone="none">Off</StatusTag>}
@@ -248,7 +248,7 @@ function AiInstructionsInner() {
               <textarea id="ai-body" value={editing.body ?? ""} onChange={(e) => setEditing({ ...editing, body: e.target.value })}
                 rows={5} maxLength={1500}
                 placeholder="Equipment descriptions always use the P&ID service name, never the vendor model name."
-                className={`${fieldBox} w-full text-[15px] max-sm:text-[16px] py-2 resize-y`} />
+                className={`${fieldBox} w-full text-reading py-2 resize-y`} />
             </div>
             {error && (
               <Problem>{error}</Problem>

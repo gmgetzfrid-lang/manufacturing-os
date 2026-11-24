@@ -143,13 +143,13 @@ export default function TransitionInPanel({ orgId, projectId, intakeCollectionId
     return <SkeletonRows rows={3} cols={1} what="the intake" sheet={false} />;
   }
   // Nothing to transition: stay out of the way, unless the read failed.
-  if (candidates.length === 0) return msg ? <Card><div role="alert" className="text-[13px] font-bold text-[var(--state-overdue-text)]">{msg}</div></Card> : null;
+  if (candidates.length === 0) return msg ? <Card><div role="alert" className="text-body font-medium text-[var(--state-overdue-text)]">{msg}</div></Card> : null;
 
   return (
     <div className="rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] p-4 sm:p-5 space-y-3">
       <div className="flex items-center gap-2 flex-wrap">
-        <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Transition in</span>
-        <span className="text-[13px] text-[var(--color-text-muted)]">
+        <span className="text-body font-medium text-[var(--color-text-muted)]">Transition in</span>
+        <span className="text-body text-[var(--color-text-muted)]">
           {candidates.length} sheet{candidates.length === 1 ? "" : "s"} in intake ·{" "}
           <b className="text-[var(--state-released-text)]">{cleanCount} clean</b>
           {flaggedCount > 0 && <> · <b className="text-[var(--state-held-text)]">{flaggedCount} need review</b></>}
@@ -160,11 +160,11 @@ export default function TransitionInPanel({ orgId, projectId, intakeCollectionId
         </button>
       </div>
 
-      {msg && <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)]/50 px-3 py-2 text-xs font-bold text-[var(--color-text)]">{msg}</div>}
+      {msg && <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)]/50 px-3 py-2 text-xs font-medium text-[var(--color-text)]">{msg}</div>}
 
       {canManage && (
         <div className="flex items-center gap-2 flex-wrap rounded-xl border border-[var(--color-border-strong)] bg-[var(--color-surface-2)]/40 p-2.5">
-          <span className="text-[11px] font-bold text-[var(--color-text-muted)]">Adopt into</span>
+          <span className="text-caption font-medium text-[var(--color-text-muted)]">Adopt into</span>
           <select value={destLib} onChange={(e) => setDestLib(e.target.value)} className="h-7 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs">
             <option value="">Library…</option>
             {libs.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
@@ -174,7 +174,7 @@ export default function TransitionInPanel({ orgId, projectId, intakeCollectionId
             {cols.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
           </select>
           <button onClick={() => void adoptAllClean()} disabled={busy === "bulk" || cleanCount === 0 || !destLib}
-            className="ml-auto inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-semibold hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
+            className="ml-auto inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-medium hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
             {busy === "bulk" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ShieldCheck className="w-3.5 h-3.5" />}
             Adopt {cleanCount} clean
           </button>
@@ -189,22 +189,22 @@ export default function TransitionInPanel({ orgId, projectId, intakeCollectionId
             <li key={c.docId} className={`rounded-xl border px-2.5 py-1.5 ${!impact ? "border-[var(--color-border)]" : impact.clean ? "border-[var(--state-released)] bg-[var(--state-released)]/[0.04]" : "border-[var(--state-held)] bg-[var(--state-held)]/[0.05]"}`}>
               <button onClick={() => setOpen(expanded ? null : c.docId)} className="w-full flex items-center gap-2 text-left">
                 <ChevronRight className={`w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0 ui-chevron${(expanded) ? " rotate-90" : ""}`} />
-                <span className="text-[14px] font-bold text-[var(--color-text)] truncate">{c.label}</span>
+                <span className="text-body font-medium text-[var(--color-text)] truncate">{c.label}</span>
                 <span className="text-xs text-[var(--color-text-muted)] shrink-0">Rev {c.rev ?? "-"}{c.company ? ` · ${c.company}` : ""}</span>
                 <span className="ml-auto flex items-center gap-1.5 shrink-0">
                   {!impact && <Loader2 className="w-3 h-3 animate-spin text-[var(--color-text-faint)]" />}
                   {impact?.matchedAssets.length ? (
-                    <span className="inline-flex items-center gap-0.5 text-[11px] font-bold text-[var(--color-text)] dark:text-[var(--color-text)]" title={`Equipment in the registry: ${impact.matchedAssets.map((a) => a.tag).join(", ")}`}>
+                    <span className="inline-flex items-center gap-0.5 text-caption font-medium text-[var(--color-text)] dark:text-[var(--color-text)]" title={`Equipment in the registry: ${impact.matchedAssets.map((a) => a.tag).join(", ")}`}>
                       <Cable className="w-3 h-3" /> {impact.matchedAssets.length}
                     </span>
                   ) : null}
                   {impact?.numberCollision && (
-                    <span className="inline-flex items-center gap-0.5 text-[11px] font-semibold text-[var(--state-overdue-text)]"><ShieldAlert className="w-3 h-3" /> number collision</span>
+                    <span className="inline-flex items-center gap-0.5 text-caption font-medium text-[var(--state-overdue-text)]"><ShieldAlert className="w-3 h-3" /> number collision</span>
                   )}
                   {impact && impact.overlapDocs.length > 0 && (
-                    <span className="inline-flex items-center gap-0.5 text-[11px] font-bold text-[var(--state-held-text)]"><Layers className="w-3 h-3" /> {impact.overlapDocs.length} overlap{impact.overlapDocs.length === 1 ? "" : "s"}</span>
+                    <span className="inline-flex items-center gap-0.5 text-caption font-medium text-[var(--state-held-text)]"><Layers className="w-3 h-3" /> {impact.overlapDocs.length} overlap{impact.overlapDocs.length === 1 ? "" : "s"}</span>
                   )}
-                  {impact?.clean && <span className="text-[11px] font-bold text-[var(--state-released-text)]">clean</span>}
+                  {impact?.clean && <span className="text-caption font-medium text-[var(--state-released-text)]">clean</span>}
                 </span>
               </button>
 
@@ -248,12 +248,12 @@ export default function TransitionInPanel({ orgId, projectId, intakeCollectionId
                       />
                       <button onClick={() => void adoptOne(c)} disabled={busy === c.docId || !destLib}
                         title={!destLib ? "Pick the destination library above" : undefined}
-                        className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">
+                        className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">
                         {busy === c.docId ? <Loader2 className="w-3 h-3 animate-spin" /> : <ArrowRightCircle className="w-3 h-3" />} Adopt
                       </button>
                       {!impact.clean && onFlagCollision && (
                         <button onClick={() => onFlagCollision(c, impact)}
-                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-[var(--state-held)] text-[var(--state-held-text)] text-[11px] font-semibold hover:bg-[var(--state-held)]">
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-[var(--state-held)] text-[var(--state-held-text)] text-caption font-medium hover:bg-[var(--state-held)]">
                           <ShieldAlert className="w-3 h-3" /> Flag to drafting
                         </button>
                       )}

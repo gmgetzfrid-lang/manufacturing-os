@@ -148,8 +148,8 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
           <div className="flex items-center">
             <BookOpen className="w-5 h-5 mr-3 text-[var(--color-text-muted)]" />
             <div>
-              <h2 className="text-[15px] font-semibold text-[var(--color-text)]">Binder management</h2>
-              <p className="text-[13px] text-[var(--color-text-muted)] font-medium">Manage Document Sets & P&ID Packs</p>
+              <h2 className="text-reading font-medium text-[var(--color-text)]">Binder management</h2>
+              <p className="text-body text-[var(--color-text-muted)] font-medium">Manage Document Sets & P&ID Packs</p>
             </div>
           </div>
           <button aria-label="Close" onClick={onClose}><X className="w-5 h-5 text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)]" /></button>
@@ -162,7 +162,7 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
             <div className="p-4 border-b border-[var(--color-border)]">
               <button 
                 onClick={() => setMode('create')}
-                className="w-full py-2 bg-[var(--color-accent)] text-[var(--color-accent-fg)] rounded-lg text-[13px] font-bold hover:bg-[var(--color-accent-hover)] flex items-center justify-center"
+                className="w-full py-2 bg-[var(--color-accent)] text-[var(--color-accent-fg)] rounded-lg text-body font-medium hover:bg-[var(--color-accent-hover)] flex items-center justify-center"
               >
                 <Plus className="w-3 h-3 mr-2" /> New Binder
               </button>
@@ -170,7 +170,7 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
             
             <div className="flex-1 overflow-y-auto p-2 space-y-1">
               {loading && (
-                <div className="p-3 text-[13px] text-[var(--color-text-faint)]">Loading binders...</div>
+                <div className="p-3 text-body text-[var(--color-text-faint)]">Loading binders...</div>
               )}
               {sets.map(set => (
                 <div 
@@ -179,10 +179,10 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
                   className={`p-3 rounded-lg cursor-pointer border transition-all ${activeSet?.id === set.id ? 'bg-[var(--color-surface)] border-[var(--color-main)]/30 shadow-sm ring-1 ring-[var(--color-main)]/20' : 'bg-transparent border-transparent hover:bg-[var(--color-surface-2)]'}`}
                 >
                   <div className="flex items-center justify-between mb-1">
-                    <span className="font-bold text-sm text-[var(--color-text)] truncate">{set.title}</span>
-                    <span className="text-[13px] bg-slate-200 px-1.5 rounded text-[var(--color-text-muted)]">Rev {set.currentSetRev}</span>
+                    <span className="font-medium text-sm text-[var(--color-text)] truncate">{set.title}</span>
+                    <span className="text-body bg-slate-200 px-1.5 rounded text-[var(--color-text-muted)]">Rev {set.currentSetRev}</span>
                   </div>
-                  <div className="flex items-center text-[13px] text-[var(--color-text-faint)]">
+                  <div className="flex items-center text-body text-[var(--color-text-faint)]">
                     <Layers className="w-3 h-3 mr-1" /> {set.sheetCount || 0} Sheets
                   </div>
                 </div>
@@ -197,8 +197,8 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
             {mode === 'create' && (
               <div className="flex flex-col items-center justify-center h-full p-10">
                 <div className="w-full max-w-sm">
-                  <h3 className="text-[14px] font-bold text-[var(--color-text)] mb-4">Create a new document set</h3>
-                  <label className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-1 block">Set Title</label>
+                  <h3 className="text-body font-medium text-[var(--color-text)] mb-4">Create a new document set</h3>
+                  <label className="text-body font-medium text-[var(--color-text-muted)] mb-1 block">Set Title</label>
                   <input 
                     value={inputValue}
                     onChange={(e) => setInputValue(e.target.value)}
@@ -207,8 +207,8 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
                     autoFocus
                   />
                   <div className="flex space-x-2">
-                    <button onClick={() => setMode('list')} className="flex-1 py-3 border rounded-lg font-bold text-sm text-[var(--color-text-muted)]">Cancel</button>
-                    <button onClick={handleCreateSet} className="flex-1 py-3 bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)] rounded-lg font-bold text-sm">Create</button>
+                    <button onClick={() => setMode('list')} className="flex-1 py-3 border rounded-lg font-medium text-sm text-[var(--color-text-muted)]">Cancel</button>
+                    <button onClick={handleCreateSet} className="flex-1 py-3 bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)] rounded-lg font-medium text-sm">Create</button>
                   </div>
                 </div>
               </div>
@@ -219,7 +219,7 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
               <div className="flex flex-col h-full">
                 {/* TOOLBAR */}
                 <div className="h-14 border-b border-[var(--color-border)] flex items-center justify-between px-6 shrink-0">
-                  <h3 className="font-bold text-[var(--color-text)]">{activeSet.title} <span className="text-[var(--color-text-faint)] font-normal ml-2">Table of Contents</span></h3>
+                  <h3 className="font-medium text-[var(--color-text)]">{activeSet.title} <span className="text-[var(--color-text-faint)] font-normal ml-2">Table of Contents</span></h3>
                   <div className="relative group">
                     <div className="flex items-center border border-[var(--color-border)] rounded-lg px-3 py-1.5 bg-[var(--color-surface-2)] focus-within:bg-[var(--color-surface)] focus-within:ring-2 ring-[var(--color-accent-ring)] transition-all">
                       <Search className="w-4 h-4 text-[var(--color-text-faint)] mr-2" />
@@ -236,8 +236,8 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
                         {searchResults.map(res => (
                           <div key={res.id} onClick={() => addToSet(res)} className="p-2 hover:bg-[var(--color-surface-2)] rounded cursor-pointer flex justify-between items-center group">
                             <div className="flex flex-col truncate">
-                              <span className="text-[13px] font-bold text-[var(--color-text)]">{res.documentNumber}</span>
-                              <span className="text-[13px] text-[var(--color-text-faint)] truncate w-48">{res.title}</span>
+                              <span className="text-body font-medium text-[var(--color-text)]">{res.documentNumber}</span>
+                              <span className="text-body text-[var(--color-text-faint)] truncate w-48">{res.title}</span>
                             </div>
                             <Plus className="w-4 h-4 text-[var(--color-text-faint)] group-hover:text-[var(--color-text-muted)]" />
                           </div>
@@ -254,13 +254,13 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
                   ) : setDocs.length === 0 ? (
                     <div className="text-center p-10 border-2 border-dashed border-[var(--color-border)] rounded-xl">
                       <Layers className="w-12 h-12 text-[var(--color-text-faint)] mx-auto mb-3" />
-                      <p className="text-[var(--color-text-muted)] font-bold">Binder is Empty</p>
-                      <p className="text-[var(--color-text-faint)] text-[13px]">Search documents above to add them to this set.</p>
+                      <p className="text-[var(--color-text-muted)] font-medium">Binder is Empty</p>
+                      <p className="text-[var(--color-text-faint)] text-body">Search documents above to add them to this set.</p>
                     </div>
                   ) : (
                     <div className="overflow-x-auto">
                     <table className="w-full min-w-[560px] text-left">
-                      <thead className="text-[13px] font-semibold text-[var(--color-text-faint)] border-b border-[var(--color-border)]">
+                      <thead className="text-body font-medium text-[var(--color-text-faint)] border-b border-[var(--color-border)]">
                         <tr>
                           <th className="px-4 py-2 w-16">Seq</th>
                           <th className="px-4 py-2">Document</th>
@@ -273,21 +273,21 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
                         {setDocs.map((doc, idx) => (
                           <tr key={doc.id} className="bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] transition-colors">
                             <td className="px-4 py-3">
-                              <div className="w-8 h-8 rounded bg-[var(--color-surface-2)] flex items-center justify-center font-display font-semibold tabular-nums text-[var(--color-text-muted)] text-[13px] border border-[var(--color-border)]">
+                              <div className="w-8 h-8 rounded bg-[var(--color-surface-2)] flex items-center justify-center font-display font-semibold tabular-nums text-[var(--color-text-muted)] text-body border border-[var(--color-border)]">
                                 {idx + 1}
                               </div>
                             </td>
                             <td className="px-4 py-3">
                               <div className="flex flex-col">
-                                <span className="text-sm font-bold text-[var(--color-text)]">{doc.documentNumber}</span>
-                                <span className="text-[13px] text-[var(--color-text-muted)]">{doc.title}</span>
+                                <span className="text-sm font-medium text-[var(--color-text)]">{doc.documentNumber}</span>
+                                <span className="text-body text-[var(--color-text-muted)]">{doc.title}</span>
                               </div>
                             </td>
                             <td className="px-4 py-3">
-                              <span className="bg-[var(--color-surface-2)] text-[var(--color-text)] px-2 py-0.5 rounded text-[13px] font-bold border border-[var(--color-border)]">{doc.rev}</span>
+                              <span className="bg-[var(--color-surface-2)] text-[var(--color-text)] px-2 py-0.5 rounded text-body font-medium border border-[var(--color-border)]">{doc.rev}</span>
                             </td>
                             <td className="px-4 py-3">
-                              {doc.status === 'Locked' ? <span className="text-[var(--state-overdue)] text-xs font-bold flex items-center"><AlertCircle className="w-3 h-3 mr-1" /> Locked</span> : <span className="text-[var(--state-released)] text-xs font-bold flex items-center"><CheckCircle2 className="w-3 h-3 mr-1" /> Active</span>}
+                              {doc.status === 'Locked' ? <span className="text-[var(--state-overdue)] text-xs font-medium flex items-center"><AlertCircle className="w-3 h-3 mr-1" /> Locked</span> : <span className="text-[var(--state-released)] text-xs font-medium flex items-center"><CheckCircle2 className="w-3 h-3 mr-1" /> Active</span>}
                             </td>
                             <td className="px-4 py-3 text-right">
                               <button onClick={() => removeFromSet(doc)} className="p-2 text-[var(--color-text-faint)] hover:text-[var(--state-overdue)] transition-colors"><Trash2 className="w-4 h-4" /></button>

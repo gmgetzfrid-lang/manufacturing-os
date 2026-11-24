@@ -141,12 +141,12 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
     body: (
       <ul className={sub}>
         {audit.missingInSeries.slice(0, 25).map((m) => (
-          <li key={m.ref} className="px-3 py-1.5 text-[14px] flex items-baseline gap-3">
+          <li key={m.ref} className="px-3 py-1.5 text-body flex items-baseline gap-3">
             <span className="font-display font-semibold tabular-nums text-[var(--color-text)] shrink-0">{m.ref}</span>
             <span className="min-w-0 truncate text-[var(--color-text-muted)]" title={m.referencedBy.join("; ")}>{m.count}× from {m.referencedBy.join("; ")}</span>
           </li>
         ))}
-        {audit.missingInSeries.length > 25 && <li className="px-3 py-1.5 text-[13px] text-[var(--color-text-muted)]">And {audit.missingInSeries.length - 25} more</li>}
+        {audit.missingInSeries.length > 25 && <li className="px-3 py-1.5 text-body text-[var(--color-text-muted)]">And {audit.missingInSeries.length - 25} more</li>}
       </ul>
     ),
   });
@@ -154,13 +154,13 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
     key: "scope", label: `Connectors that leave this set, to ${audit.outOfScope.length} other series`, count: outOfScopeRefs, tone: "none", open: showScope, toggle: () => setShowScope((v) => !v),
     body: (
       <>
-        <p className="mb-1.5 text-[13px] text-[var(--color-text-muted)]">Not broken: the set ends at its battery limits. Load a series and its connectors join the audit.</p>
+        <p className="mb-1.5 text-body text-[var(--color-text-muted)]">Not broken: the set ends at its battery limits. Load a series and its connectors join the audit.</p>
         <ul className={sub}>
           {audit.outOfScope.slice(0, 20).map((o) => (
-            <li key={o.series} className="px-3 py-1.5 text-[14px] grid grid-cols-[minmax(0,9rem)_1fr_auto] gap-3 items-baseline">
+            <li key={o.series} className="px-3 py-1.5 text-body grid grid-cols-[minmax(0,9rem)_1fr_auto] gap-3 items-baseline">
               <span className="min-w-0">
                 <span className="block font-display font-semibold tabular-nums text-[var(--color-text)] truncate" title={o.series}>{o.series}</span>
-                {o.unitName && <span className="block text-[13px] text-[var(--color-text-muted)] truncate" title={o.unitName}>{o.unitName}</span>}
+                {o.unitName && <span className="block text-body text-[var(--color-text-muted)] truncate" title={o.unitName}>{o.unitName}</span>}
               </span>
               <span className="min-w-0 truncate text-[var(--color-text-muted)]" title={o.refs.join(", ")}>{o.refs.slice(0, 6).join(", ")}{o.refs.length > 6 ? `, +${o.refs.length - 6}` : ""}</span>
               <span className="font-display font-semibold tabular-nums text-[var(--color-text)]">{o.count}×</span>
@@ -174,10 +174,10 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
     key: "oneway", label: "One-way connectors inside this set", count: audit.oneWay.length, tone: "warn", open: showOneWay, toggle: () => setShowOneWay((v) => !v),
     body: (
       <>
-        <p className="mb-1.5 text-[13px] text-[var(--color-text-muted)]">Both sheets are loaded but the reference runs one way. Some continuation notes are; drafting misses hide here.</p>
+        <p className="mb-1.5 text-body text-[var(--color-text-muted)]">Both sheets are loaded but the reference runs one way. Some continuation notes are; drafting misses hide here.</p>
         <ul className={sub}>
           {audit.oneWay.slice(0, 25).map((o, i) => (
-            <li key={i} className="px-3 py-1.5 text-[14px] flex items-center gap-2">
+            <li key={i} className="px-3 py-1.5 text-body flex items-center gap-2">
               <span className="font-display font-semibold tabular-nums truncate flex-1" title={o.from}>{o.from}</span>
               <ArrowRight className="w-3.5 h-3.5 shrink-0 text-[var(--color-text-muted)]" />
               <span className="font-display font-semibold tabular-nums truncate flex-1" title={o.to}>{o.to}</span>
@@ -192,14 +192,14 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
     key: "opc", label: "Connector boxes missing on their continuation sheet", count: intel.opcUnreturned!.length, tone: "warn", open: showOpc, toggle: () => setShowOpc((v) => !v),
     body: (
       <>
-        <p className="mb-1.5 text-[13px] text-[var(--color-text-muted)]">The numbered box should reappear on the sheet it points to. Box numbers come from AI-read sheets, so a misread can show up here too.</p>
+        <p className="mb-1.5 text-body text-[var(--color-text-muted)]">The numbered box should reappear on the sheet it points to. Box numbers come from AI-read sheets, so a misread can show up here too.</p>
         <ul className={sub}>
           {intel.opcUnreturned!.map((o, i) => (
-            <li key={i} className="px-3 py-1.5 text-[14px] flex items-start gap-3">
+            <li key={i} className="px-3 py-1.5 text-body flex items-start gap-3">
               <span className="shrink-0 font-display font-semibold tabular-nums px-1.5 rounded border border-[var(--color-border-strong)]">{o.box}</span>
               <span className="min-w-0">
                 <span className="font-display font-semibold tabular-nums">{o.from}</span> <span className="text-[var(--color-text-muted)]">to</span> <span className="font-display font-semibold tabular-nums">{o.to}</span>
-                <span className="block truncate text-[13px] text-[var(--color-text-muted)]" title={o.line}>{o.line}</span>
+                <span className="block truncate text-body text-[var(--color-text-muted)]" title={o.line}>{o.line}</span>
               </span>
             </li>
           ))}
@@ -211,14 +211,14 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
     key: "noref", label: "Connectors with no drawing number", count: intel.opcNoRef!.length, tone: "bad", open: showNoRef, toggle: () => setShowNoRef((v) => !v),
     body: (
       <>
-        <p className="mb-1.5 text-[13px] text-[var(--color-text-muted)]">An off-page connector must say which drawing it continues on. These carry a box and a stream but no drawing number: a drafting defect to fix on the sheet.</p>
+        <p className="mb-1.5 text-body text-[var(--color-text-muted)]">An off-page connector must say which drawing it continues on. These carry a box and a stream but no drawing number: a drafting defect to fix on the sheet.</p>
         <ul className={sub}>
           {intel.opcNoRef!.map((o, i) => (
-            <li key={i} className="px-3 py-1.5 text-[14px] flex items-start gap-3">
+            <li key={i} className="px-3 py-1.5 text-body flex items-start gap-3">
               <span className="shrink-0 font-display font-semibold tabular-nums px-1.5 rounded border border-[var(--color-border-strong)]">{o.box}</span>
               <span className="min-w-0">
                 <span className="font-display font-semibold tabular-nums">{o.sheet}</span> <span className="text-[var(--color-text-muted)]">page {o.page}</span>
-                <span className="block truncate text-[13px] text-[var(--color-text-muted)]" title={o.line}>{o.line}</span>
+                <span className="block truncate text-body text-[var(--color-text-muted)]" title={o.line}>{o.line}</span>
               </span>
             </li>
           ))}
@@ -231,14 +231,14 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
     body: (
       <>
         <div className="max-h-80 overflow-y-auto rounded-md border border-[var(--color-border)] bg-[var(--color-surface)]">
-          <table className="w-full text-[14px]">
+          <table className="w-full text-body">
             <thead className={`${tbl.thead} sticky top-0`}>
               <tr>
-                <th className="font-semibold px-3 h-9">Document</th>
-                <th className="font-semibold px-3 text-right max-sm:hidden">Pages</th>
-                <th className="font-semibold px-3 text-right max-sm:hidden">Text</th>
-                <th className="font-semibold px-3 text-right">Tags</th>
-                <th className="font-semibold px-3">How read</th>
+                <th className="font-medium px-3 h-9">Document</th>
+                <th className="font-medium px-3 text-right max-sm:hidden">Pages</th>
+                <th className="font-medium px-3 text-right max-sm:hidden">Text</th>
+                <th className="font-medium px-3 text-right">Tags</th>
+                <th className="font-medium px-3">How read</th>
               </tr>
             </thead>
             <tbody className={tbl.tbody}>
@@ -253,18 +253,18 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
                 return (
                   <tr key={sh.id}>
                     <td className="px-3 py-1.5 max-w-0 w-1/2">
-                      <div className="truncate font-semibold" title={sh.error ?? sh.name}>{sh.name}</div>
+                      <div className="truncate font-medium" title={sh.error ?? sh.name}>{sh.name}</div>
                       {(sh.gapPages?.length ?? 0) > 0 && sh.status === "ready" && (
                         // The exact pages the index knows nothing about.
                         // Without this line, a skipped page surfaces days
                         // later as "X-35 is not in the tag index" on a
                         // trace, with no visible reason anywhere.
-                        <div className="truncate text-[13px] font-semibold text-[var(--state-overdue)]"
+                        <div className="truncate text-body font-medium text-[var(--state-overdue)]"
                           title={`No tags from page ${sh.gapPages!.join(", ")}: AI reading did not finish. Rebuild the index and keep this tab open until it does.`}>
                           {sh.gapPages!.length} page{sh.gapPages!.length === 1 ? "" : "s"} unread: {sh.gapPages!.slice(0, 8).join(", ")}{sh.gapPages!.length > 8 ? "…" : ""}
                         </div>
                       )}
-                      {sh.declared && <div className="truncate font-display tabular-nums text-[13px] text-[var(--color-text-muted)]" title="Read from this sheet's own title block">Title block: {sh.declared}</div>}
+                      {sh.declared && <div className="truncate font-display tabular-nums text-body text-[var(--color-text-muted)]" title="Read from this sheet's own title block">Title block: {sh.declared}</div>}
                     </td>
                     <td className="px-3 py-1.5 text-right tabular-nums text-[var(--color-text-muted)] max-sm:hidden">{sh.pagesIndexed}{sh.pages ? `/${sh.pages}` : ""}</td>
                     <td className="px-3 py-1.5 text-right tabular-nums text-[var(--color-text-muted)] max-sm:hidden">{sh.chars >= 1000 ? `${Math.round(sh.chars / 1000)}k` : sh.chars}</td>
@@ -276,7 +276,7 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
             </tbody>
           </table>
         </div>
-        <p className="mt-1.5 text-[13px] text-[var(--color-text-muted)]">
+        <p className="mt-1.5 text-body text-[var(--color-text-muted)]">
           Text, no tags on an AutoCAD export usually means SHX fonts. Turn on reading every page with AI vision in Library AI setup and rebuild.
         </p>
       </>
@@ -287,7 +287,7 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
     <Section
      
       label={<span className="inline-flex items-center gap-2">{isDrawingSet ? "Drawing intelligence" : "What indexing got out of these documents"}
-        {isDrawingSet && <span className="font-sans font-normal text-[14px] leading-snug"><HelpTooltip>Counted from every sheet&apos;s extracted tags, not guessed by AI: the equipment census, the cross-reference audit and the register export.</HelpTooltip></span>}
+        {isDrawingSet && <span className="font-sans font-normal text-body leading-snug"><HelpTooltip>Counted from every sheet&apos;s extracted tags, not guessed by AI: the equipment census, the cross-reference audit and the register export.</HelpTooltip></span>}
       </span>}
       action={(census.totalDistinct > 0 || isController) ? (
         <div className="flex items-center gap-2">
@@ -316,7 +316,7 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
           <Cells cells={[
             { label: "Sheets", value: intel.sheetCount.toLocaleString() },
             { label: "Equipment tags", value: census.totalDistinct.toLocaleString() },
-            { label: "References resolved", value: <>{audit.resolved.toLocaleString()}<span className="text-[var(--color-text-muted)] font-medium text-[18px]"> of {audit.totalRefs.toLocaleString()}</span></> },
+            { label: "References resolved", value: <>{audit.resolved.toLocaleString()}<span className="text-[var(--color-text-muted)] font-medium text-section"> of {audit.totalRefs.toLocaleString()}</span></> },
             audit.missingInSeries.length > 0
               ? { label: "Missing sheets", value: audit.missingInSeries.length.toLocaleString(), tone: "bad" as const }
               : { label: "Point to other units", value: outOfScopeRefs.toLocaleString(), hint: audit.outOfScope.length ? audit.outOfScope.slice(0, 3).map((o) => o.series).join(", ") : undefined },
@@ -337,13 +337,13 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
 
         {census.totalDistinct > 0 && (
           <div className="border-t border-[var(--color-border)]">
-            <table className="w-full text-[14px]">
+            <table className="w-full text-body">
               <thead className={tbl.thead}>
                 <tr>
-                  <th className="font-semibold px-4 sm:px-5 h-10 w-20">Prefix</th>
-                  <th className="font-semibold px-4">Equipment type</th>
-                  <th className="font-semibold px-4 max-md:hidden">Examples</th>
-                  <th className="font-semibold px-4 sm:px-5 text-right">Tags</th>
+                  <th className="font-medium px-4 sm:px-5 h-10 w-20">Prefix</th>
+                  <th className="font-medium px-4">Equipment type</th>
+                  <th className="font-medium px-4 max-md:hidden">Examples</th>
+                  <th className="font-medium px-4 sm:px-5 text-right">Tags</th>
                 </tr>
               </thead>
               <tbody className={tbl.tbody}>
@@ -351,27 +351,27 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
                   <tr key={c.prefix}>
                     <td className="px-4 sm:px-5 py-2 font-display font-semibold tabular-nums text-[var(--color-text)]">{c.prefix}-</td>
                     <td className="px-4 py-2">
-                      {c.known ? <span className="font-semibold text-[var(--color-text)]">{c.label}</span> : <StatusTag tone="warn">{c.label}</StatusTag>}
+                      {c.known ? <span className="font-medium text-[var(--color-text)]">{c.label}</span> : <StatusTag tone="warn">{c.label}</StatusTag>}
                     </td>
                     <td className="px-4 py-2 max-md:hidden font-display tabular-nums text-[var(--color-text-muted)] truncate max-w-0 w-1/2" title={c.sample.join(", ")}>
                       {c.sample.slice(0, 3).join(", ")}{c.distinctTags > 3 ? ", …" : ""}
                     </td>
-                    <td className="px-4 sm:px-5 py-2 text-right font-display text-[16px] font-semibold tabular-nums text-[var(--color-text)]">{c.distinctTags}</td>
+                    <td className="px-4 sm:px-5 py-2 text-right font-display text-reading font-semibold tabular-nums text-[var(--color-text)]">{c.distinctTags}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
-            {census.categories.length > 10 && <p className="px-4 sm:px-5 py-2 border-t border-[var(--color-border)] text-[13px] text-[var(--color-text-muted)]">Top 10 of {census.categories.length} types. The register export has every tag.</p>}
+            {census.categories.length > 10 && <p className="px-4 sm:px-5 py-2 border-t border-[var(--color-border)] text-body text-[var(--color-text-muted)]">Top 10 of {census.categories.length} types. The register export has every tag.</p>}
           </div>
         )}
 
         {checks.length > 0 && (
           <div className="border-t border-[var(--color-border)]">
-            <table className="w-full text-[14px]">
+            <table className="w-full text-body">
               <thead className={tbl.thead}>
                 <tr>
-                  <th className="font-semibold px-4 sm:px-5 h-10">Check</th>
-                  <th className="font-semibold px-4 sm:px-5 text-right">Found</th>
+                  <th className="font-medium px-4 sm:px-5 h-10">Check</th>
+                  <th className="font-medium px-4 sm:px-5 text-right">Found</th>
                 </tr>
               </thead>
               <tbody className={tbl.tbody}>
@@ -380,14 +380,14 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
                     <tr className={`${tbl.tr} cursor-pointer`} onClick={c.toggle}>
                       <td className="px-4 sm:px-5 py-2.5 relative">
                         {c.tone !== "none" && <span aria-hidden className="absolute left-0 inset-y-0 w-[3px]" style={{ background: c.tone === "bad" ? "var(--state-overdue)" : "var(--state-held)" }} />}
-                        <button type="button" aria-expanded={c.open} onClick={(e) => { e.stopPropagation(); c.toggle(); }} className="inline-flex items-center gap-1.5 text-left font-semibold text-[var(--color-text)] hover:text-[var(--color-accent-text)]">
+                        <button type="button" aria-expanded={c.open} onClick={(e) => { e.stopPropagation(); c.toggle(); }} className="inline-flex items-center gap-1.5 text-left font-medium text-[var(--color-text)] hover:text-[var(--color-accent-text)]">
                           <ChevronRight className={`w-4 h-4 shrink-0 text-[var(--color-text-muted)] ui-chevron${(c.open) ? " rotate-90" : ""}`} />
                           {c.label}
                         </button>
                       </td>
                       <td className="px-4 sm:px-5 py-2.5 text-right">
                         {c.tone === "none"
-                          ? <span className="font-display text-[16px] font-semibold tabular-nums text-[var(--color-text)]">{c.count.toLocaleString()}</span>
+                          ? <span className="font-display text-reading font-semibold tabular-nums text-[var(--color-text)]">{c.count.toLocaleString()}</span>
                           : <StatusTag tone={c.tone}>{c.count.toLocaleString()}</StatusTag>}
                       </td>
                     </tr>

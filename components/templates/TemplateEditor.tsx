@@ -179,11 +179,11 @@ export default function TemplateEditor({ orgId, template, onClose, onSaved }: {
         onClick={(e) => e.stopPropagation()}>
         <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center justify-between sticky top-0 bg-[var(--color-surface)] rounded-t-xl z-10">
           <div>
-            <div className="text-[14px] font-semibold text-[var(--color-text)]">Output docs</div>
+            <div className="text-body font-medium text-[var(--color-text)]">Output docs</div>
             <h2 className="mt-1 font-display text-[24px] leading-tight font-semibold text-[var(--color-text)]">
               {template ? (template.name || "Edit template") : "New output template."}
             </h2>
-            <p className="text-[13px] text-[var(--color-text-muted)] mt-1">
+            <p className="text-body text-[var(--color-text-muted)] mt-1">
               Your file sets all the formatting. The AI only writes the words that go in the blanks.
             </p>
           </div>
@@ -193,11 +193,11 @@ export default function TemplateEditor({ orgId, template, onClose, onSaved }: {
         <div className="p-5 space-y-5">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <label className="block">
-              <span className="block text-[14px] font-semibold text-[var(--color-text)] mb-1.5">Name</span>
+              <span className="block text-body font-medium text-[var(--color-text)] mb-1.5">Name</span>
               <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Scope of Work" />
             </label>
             <label className="block">
-              <span className="block text-[14px] font-semibold text-[var(--color-text)] mb-1.5">Makes</span>
+              <span className="block text-body font-medium text-[var(--color-text)] mb-1.5">Makes</span>
               <Select value={mode} onChange={(e) => setMode(e.target.value as OutputTemplate["mode"])}>
                 <option value="per_row">Row: one document per spreadsheet row</option>
                 <option value="summary">Summary: one document covering all rows</option>
@@ -206,46 +206,46 @@ export default function TemplateEditor({ orgId, template, onClose, onSaved }: {
             </label>
           </div>
           <label className="block">
-            <span className="block text-[14px] font-semibold text-[var(--color-text)] mb-1.5">Description</span>
+            <span className="block text-body font-medium text-[var(--color-text)] mb-1.5">Description</span>
             <Input value={description} onChange={(e) => setDescription(e.target.value)}
               placeholder="Issued to contractors for turnaround work orders" />
           </label>
 
           {/* ── Blank template ─────────────────────────────────────────── */}
           <div {...templateDrag.bind} className={`rounded-xl border border-[var(--color-border)] p-3.5 ${templateDrag.ring}`}>
-            <div className="text-[14px] font-semibold text-[var(--color-text)] mb-1.5">
+            <div className="text-body font-medium text-[var(--color-text)] mb-1.5">
               Blank template: it sets all the formatting
-              {templateDrag.over && <span className="normal-case tracking-normal font-bold text-[var(--color-text)]"> · {templateDrag.say}</span>}
+              {templateDrag.over && <span className="normal-case tracking-normal font-medium text-[var(--color-text)]"> · {templateDrag.say}</span>}
             </div>
             <div className="flex items-center gap-2 flex-wrap">
               <label className="inline-flex">
                 <input type="file" accept=".docx,.xlsx" hidden disabled={busy !== null}
                   onChange={(e) => { void onTemplatePicked(e.target.files?.[0] ?? null); e.target.value = ""; }} />
-                <span className="inline-flex items-center gap-1.5 h-10 pointer-coarse:h-11 px-3.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] cursor-pointer">
+                <span className="inline-flex items-center gap-1.5 h-10 pointer-coarse:h-11 px-3.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] cursor-pointer">
                   {busy === "template" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
                   {templateFile ? "Replace file" : "Upload or drop .docx / .xlsx"}
                 </span>
               </label>
               {templateFile && (
-                <span className="inline-flex items-center gap-1.5 text-[13px] font-bold text-[var(--color-text)]">
+                <span className="inline-flex items-center gap-1.5 text-body font-medium text-[var(--color-text)]">
                   {pickedFiles[templateFile.key]
                     ? <><FileThumb file={pickedFiles[templateFile.key]} size={32} /> {templateFile.name} <span className="font-normal text-[var(--color-text-muted)]">{(pickedFiles[templateFile.key].size / 1024).toFixed(0)} KB</span></>
                     : <><FileText className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> {templateFile.name}</>}
-                  <span className="text-[13px] font-semibold px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] border border-[var(--color-border)] text-[var(--color-text-muted)]">
+                  <span className="text-body font-medium px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] border border-[var(--color-border)] text-[var(--color-text-muted)]">
                     {KIND_LABEL[kind]}
                   </span>
                 </span>
               )}
             </div>
             {analysisNote && (
-              <div className={`mt-2 border-l-[3px] pl-3 py-1 text-[14px] flex items-start gap-2 text-[var(--color-text)] ${
+              <div className={`mt-2 border-l-[3px] pl-3 py-1 text-body flex items-start gap-2 text-[var(--color-text)] ${
                 placeholders.length > 0 ? "border-[var(--state-released)]" : "border-[var(--state-held)]"}`}>
                 {placeholders.length > 0 ? <Sparkles className="w-3.5 h-3.5 shrink-0 mt-px" /> : <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-px" />}
                 <span>{analysisNote}</span>
               </div>
             )}
             {loops.length > 0 && (
-              <p className="mt-1.5 text-[13px] text-[var(--color-text-muted)]">
+              <p className="mt-1.5 text-body text-[var(--color-text-muted)]">
                 Repeating blocks detected: {loops.map((l) => `{#${l}}`).join(", ")}. These fill from
                 the data rows automatically.
               </p>
@@ -255,14 +255,14 @@ export default function TemplateEditor({ orgId, template, onClose, onSaved }: {
           {/* ── Fill points ────────────────────────────────────────────── */}
           {placeholders.length > 0 && (
             <div className="rounded-xl border border-[var(--color-border)] p-3.5">
-              <div className="text-[14px] font-semibold text-[var(--color-text)] mb-2">
+              <div className="text-body font-medium text-[var(--color-text)] mb-2">
                 Fill points: what goes in each blank
               </div>
               <ul className="space-y-2">
                 {placeholders.map((p) => (
                   <li key={p.tag} className="rounded-lg border border-[var(--color-border)] p-2.5">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <code className="text-[11px] font-mono font-semibold text-[var(--color-text)]">{`{${p.tag}}`}</code>
+                      <code className="text-caption font-mono font-medium text-[var(--color-text)]">{`{${p.tag}}`}</code>
                       <div className="ml-auto inline-flex rounded-lg border border-[var(--color-border)] p-0.5">
                         {([
                           ["data", Database, "From data"],
@@ -270,7 +270,7 @@ export default function TemplateEditor({ orgId, template, onClose, onSaved }: {
                           ["static", Type, "Fixed text"],
                         ] as const).map(([k, Icon, label]) => (
                           <button key={k} type="button" onClick={() => updatePlaceholder(p.tag, { kind: k })}
-                            className={`inline-flex items-center gap-1 px-2 py-1 rounded-md text-[13px] font-semibold transition-colors ${
+                            className={`inline-flex items-center gap-1 px-2 py-1 rounded-md text-body font-semibold transition-colors ${
                               p.kind === k ? "bg-[var(--color-surface)] text-[var(--color-text)] ring-1 ring-[var(--color-text-muted)] shadow-sm" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
                             <Icon className="w-3 h-3" /> {label}
                           </button>
@@ -278,17 +278,17 @@ export default function TemplateEditor({ orgId, template, onClose, onSaved }: {
                       </div>
                     </div>
                     {p.kind === "ai" && (
-                      <Input className="mt-1.5 text-[13px]" value={p.guidance ?? ""}
+                      <Input className="mt-1.5 text-body" value={p.guidance ?? ""}
                         onChange={(e) => updatePlaceholder(p.tag, { guidance: e.target.value })}
                         placeholder="What should the AI write here? e.g. 'Two paragraphs describing the work, referencing the equipment tag.'" />
                     )}
                     {p.kind === "static" && (
-                      <Input className="mt-1.5 text-[13px]" value={p.value ?? ""}
+                      <Input className="mt-1.5 text-body" value={p.value ?? ""}
                         onChange={(e) => updatePlaceholder(p.tag, { value: e.target.value })}
                         placeholder="Fixed text used in every document" />
                     )}
                     {p.kind === "data" && (
-                      <p className="mt-1 text-[13px] text-[var(--color-text-muted)]">
+                      <p className="mt-1 text-body text-[var(--color-text-muted)]">
                         Filled from the spreadsheet - the column is matched automatically at generate
                         time (you can correct it there).
                       </p>
@@ -301,24 +301,24 @@ export default function TemplateEditor({ orgId, template, onClose, onSaved }: {
 
           {/* ── Examples ───────────────────────────────────────────────── */}
           <div {...exampleDrag.bind} className={`rounded-xl border border-[var(--color-border)] p-3.5 ${exampleDrag.ring}`}>
-            <div className="text-[14px] font-semibold text-[var(--color-text)] mb-1.5">
+            <div className="text-body font-medium text-[var(--color-text)] mb-1.5">
               Example documents: the voice to copy
-              {exampleDrag.over && <span className="normal-case tracking-normal font-bold text-[var(--color-text)]"> · {exampleDrag.say}</span>}
+              {exampleDrag.over && <span className="normal-case tracking-normal font-medium text-[var(--color-text)]"> · {exampleDrag.say}</span>}
             </div>
-            <p className="text-[13px] text-[var(--color-text-muted)] mb-2">
+            <p className="text-body text-[var(--color-text-muted)] mb-2">
               One or two finished documents. The AI copies their phrasing and level of detail, never their formatting.
             </p>
             <div className="flex items-center gap-2 flex-wrap">
               <label className="inline-flex">
                 <input type="file" accept=".docx" hidden disabled={busy !== null}
                   onChange={(e) => { void onExamplePicked(e.target.files?.[0] ?? null); e.target.value = ""; }} />
-                <span className="inline-flex items-center gap-1.5 h-10 pointer-coarse:h-11 px-3.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] cursor-pointer">
+                <span className="inline-flex items-center gap-1.5 h-10 pointer-coarse:h-11 px-3.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] cursor-pointer">
                   {busy === "example" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
                   Add example
                 </span>
               </label>
               {examples.map((ex) => (
-                <span key={ex.key} className="inline-flex items-center gap-1.5 text-[13px] font-bold px-2 py-1 rounded-lg bg-[var(--color-surface-2)] border border-[var(--color-border)]">
+                <span key={ex.key} className="inline-flex items-center gap-1.5 text-body font-medium px-2 py-1 rounded-lg bg-[var(--color-surface-2)] border border-[var(--color-border)]">
                   {pickedFiles[ex.key] ? <FileThumb file={pickedFiles[ex.key]} size={28} /> : <FileText className="w-3 h-3" />} {ex.name}
                   {pickedFiles[ex.key] && <span className="font-normal text-[var(--color-text-muted)]">{(pickedFiles[ex.key].size / 1024).toFixed(0)} KB</span>}
                   <button onClick={() => setExamples((prev) => prev.filter((p) => p.key !== ex.key))} aria-label={`Remove ${ex.name}`}
@@ -328,24 +328,24 @@ export default function TemplateEditor({ orgId, template, onClose, onSaved }: {
             </div>
           </div>
           {uploadError && (
-            <p role="alert" className="-mt-2 flex flex-wrap items-center gap-x-2 text-[13px] font-semibold text-[var(--state-overdue-text)]">
+            <p role="alert" className="-mt-2 flex flex-wrap items-center gap-x-2 text-body font-medium text-[var(--state-overdue-text)]">
               {uploadError.file.name} didn&apos;t upload. {friendlyError(uploadError.msg)}
               <button type="button" disabled={busy !== null} onClick={() => void (uploadError.which === "template" ? onTemplatePicked(uploadError.file) : onExamplePicked(uploadError.file))} className="text-[var(--color-accent-text)] hover:underline underline-offset-2">Try again</button>
             </p>
           )}
 
           <label className="block">
-            <span className="block text-[14px] font-semibold text-[var(--color-text)] mb-1.5">Standing instructions</span>
+            <span className="block text-body font-medium text-[var(--color-text)] mb-1.5">Standing instructions</span>
             <Textarea rows={3} value={instructions} onChange={(e) => setInstructions(e.target.value)}
-              className="text-[13px]"
+              className="text-body"
               placeholder="e.g. Written for contractors - never assume tools or scaffolding are provided. Always name the unit and equipment tag in the first sentence. Use our abbreviations (T/A, PSV, MOC)." />
           </label>
 
           <label className="block">
-            <span className="block text-[14px] font-semibold text-[var(--color-text)] mb-1.5">File naming</span>
+            <span className="block text-body font-medium text-[var(--color-text)] mb-1.5">File naming</span>
             <Input value={filenamePattern} onChange={(e) => setFilenamePattern(e.target.value)}
               placeholder="SOW-{wo_number}-{unit}" className="text-xs font-mono" />
-            <span className="block mt-1 text-[13px] text-[var(--color-text-muted)]">
+            <span className="block mt-1 text-body text-[var(--color-text-muted)]">
               Use any fill point in braces. Blank = the template name plus a number.
             </span>
           </label>

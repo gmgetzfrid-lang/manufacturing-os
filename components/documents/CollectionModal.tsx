@@ -308,10 +308,10 @@ export default function CollectionModal({
               <ListChecks className={`w-5 h-5 ${scope === "org" ? "text-[var(--color-text-muted)]" : "text-[var(--color-text-muted)]"}`} />
             </div>
             <div className="min-w-0">
-              <div className="text-sm font-semibold text-[var(--color-text)] truncate">
+              <div className="text-sm font-medium text-[var(--color-text)] truncate">
                 {mode === "create" ? "New Collection" : (collection?.name ?? "Collection")}
               </div>
-              <div className="text-[13px] text-[var(--color-text-muted)] truncate">
+              <div className="text-body text-[var(--color-text-muted)] truncate">
                 {scope === "org" ? "Visible to everyone in your org" : "Personal: only you can see this"}
               </div>
             </div>
@@ -352,17 +352,17 @@ export default function CollectionModal({
                     <Field label="Visibility">
                       <div className="flex bg-[var(--color-surface-2)] p-1 rounded-lg w-fit">
                         {isAdmin && (
-                          <button onClick={() => setScope("org")} className={`px-3 py-1.5 text-[13px] font-bold rounded-md ${scope === "org" ? "bg-[var(--color-surface)] shadow text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>
+                          <button onClick={() => setScope("org")} className={`px-3 py-1.5 text-body font-medium rounded-md ${scope === "org" ? "bg-[var(--color-surface)] shadow text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>
                             Org-wide
                           </button>
                         )}
-                        <button onClick={() => setScope("user")} className={`px-3 py-1.5 text-[13px] font-bold rounded-md flex items-center gap-1 ${scope === "user" ? "bg-[var(--color-surface)] shadow text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>
+                        <button onClick={() => setScope("user")} className={`px-3 py-1.5 text-body font-medium rounded-md flex items-center gap-1 ${scope === "user" ? "bg-[var(--color-surface)] shadow text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>
                           <UserIcon className="w-3 h-3" /> Personal
                         </button>
                       </div>
                     </Field>
                   )}
-                  <label className="flex items-center gap-2 text-[13px]">
+                  <label className="flex items-center gap-2 text-body">
                     <input type="checkbox" checked={pinned} onChange={(e) => setPinned(e.target.checked)} />
                     <Pin className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> Pin to top of library
                   </label>
@@ -373,7 +373,7 @@ export default function CollectionModal({
               {(mode === "view" || mode === "edit") && collection && (
                 <div className="p-6">
                   {mode === "view" && (
-                    <div className="mb-3 inline-flex items-center gap-1.5 text-[13px] font-bold text-[var(--color-text-muted)] bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1">
+                    <div className="mb-3 inline-flex items-center gap-1.5 text-body font-medium text-[var(--color-text-muted)] bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1">
                       <Folder className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> {folderLabel(collection.folder_id)}
                     </div>
                   )}
@@ -382,26 +382,26 @@ export default function CollectionModal({
                   )}
 
                   <div className="flex items-center justify-between mb-2 gap-2">
-                    <div className="text-[13px] font-semibold text-[var(--color-text-muted)] shrink-0">
+                    <div className="text-body font-medium text-[var(--color-text-muted)] shrink-0">
                       Documents ({itemsHydrated.length})
                     </div>
                     {mode === "edit" && (
                       <div className="flex items-center gap-3">
-                        <button onClick={() => void sortBySheet()} disabled={busy || itemsHydrated.length < 2} className="inline-flex items-center gap-1 text-[13px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] disabled:opacity-40" title="Reorder the book by sheet number, the book opens in this order">
+                        <button onClick={() => void sortBySheet()} disabled={busy || itemsHydrated.length < 2} className="inline-flex items-center gap-1 text-body font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] disabled:opacity-40" title="Reorder the book by sheet number, the book opens in this order">
                           <ArrowUpDown className="w-3 h-3" /> Sort by Sheet #
                         </button>
-                        <button onClick={() => setShowPicker(true)} className="inline-flex items-center gap-1 text-[13px] font-bold text-[var(--color-accent-text)] hover:text-[var(--color-accent-hover)]">
+                        <button onClick={() => setShowPicker(true)} className="inline-flex items-center gap-1 text-body font-medium text-[var(--color-accent-text)] hover:text-[var(--color-accent-hover)]">
                           <Plus className="w-3 h-3" /> Add documents
                         </button>
                       </div>
                     )}
                   </div>
                   {mode === "edit" && itemsHydrated.length > 1 && (
-                    <div className="text-[13px] text-[var(--color-text-faint)] mb-1.5 -mt-1">Drag rows to set the page order (or use the arrows).</div>
+                    <div className="text-body text-[var(--color-text-faint)] mb-1.5 -mt-1">Drag rows to set the page order (or use the arrows).</div>
                   )}
 
                   {itemsHydrated.length === 0 ? (
-                    <div className="text-center text-[13px] text-[var(--color-text-faint)] italic py-8 border border-dashed border-[var(--color-border)] rounded-lg">
+                    <div className="text-center text-body text-[var(--color-text-faint)] italic py-8 border border-dashed border-[var(--color-border)] rounded-lg">
                       No documents in this collection yet.
                       {mode === "edit" && <> Click <b>Add documents</b> to pick some.</>}
                     </div>
@@ -418,20 +418,20 @@ export default function CollectionModal({
                           className={`bg-[var(--color-surface-2)] border rounded-lg px-3 py-2 flex items-center gap-2 transition-all ${dragItemIdx === idx ? "opacity-40 border-[var(--color-border-strong)]" : (hoverItemIdx === idx && dragItemIdx !== null ? "border-[var(--color-border-strong)] ring-1 ring-[var(--color-border-strong)]" : "border-[var(--color-border)]")} ${mode === "edit" ? "cursor-grab active:cursor-grabbing" : ""}`}
                         >
                           {mode === "edit" && <GripVertical className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" />}
-                          <span className="text-[13px] font-display tabular-nums text-[var(--color-text-faint)] w-5 text-right">{idx + 1}.</span>
+                          <span className="text-body font-display tabular-nums text-[var(--color-text-faint)] w-5 text-right">{idx + 1}.</span>
                           <FileText className="w-3.5 h-3.5 text-[var(--color-text-muted)] shrink-0" />
                           <div className="flex-1 min-w-0">
                             {doc ? (
                               <>
-                                <div className="text-[13px] font-bold text-[var(--color-text)] truncate">{doc.documentNumber}</div>
-                                <div className="text-[13px] text-[var(--color-text-muted)] truncate">{doc.title}</div>
+                                <div className="text-body font-medium text-[var(--color-text)] truncate">{doc.documentNumber}</div>
+                                <div className="text-body text-[var(--color-text-muted)] truncate">{doc.title}</div>
                               </>
                             ) : (
-                              <div className="text-[13px] text-[var(--color-text-faint)] italic">(Document removed or no longer accessible)</div>
+                              <div className="text-body text-[var(--color-text-faint)] italic">(Document removed or no longer accessible)</div>
                             )}
                           </div>
                           {doc?.rev && (
-                            <span className="text-[13px] font-bold text-[var(--color-text-muted)] shrink-0">Rev {doc.rev}</span>
+                            <span className="text-body font-medium text-[var(--color-text-muted)] shrink-0">Rev {doc.rev}</span>
                           )}
                           {mode === "edit" && (
                             <div className="flex items-center gap-0.5 shrink-0">
@@ -458,7 +458,7 @@ export default function CollectionModal({
                 <div className="fixed inset-0 z-[310] bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)] animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
                   <div className="w-full max-w-lg bg-[var(--color-surface)] rounded-lg shadow-2xl border border-[var(--color-border)] overflow-hidden flex flex-col max-h-[80vh] animate-in fade-in zoom-in-95">
                     <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center justify-between">
-                      <div className="text-sm font-semibold text-[var(--color-text)]">Add documents</div>
+                      <div className="text-sm font-medium text-[var(--color-text)]">Add documents</div>
                       <button aria-label="Close" onClick={() => setShowPicker(false)} className="p-1.5 rounded text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
                         <X className="w-3.5 h-3.5" />
                       </button>
@@ -466,12 +466,12 @@ export default function CollectionModal({
                     <div className="px-4 py-2 border-b border-[var(--color-border)]">
                       <div className="flex items-center gap-2 bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-lg px-2 py-1.5">
                         <Search className="w-3.5 h-3.5 text-[var(--color-text-faint)]" />
-                        <input value={pickerSearch} onChange={(e) => setPickerSearch(e.target.value)} placeholder="Search document #, title…" className="flex-1 bg-transparent text-[13px] outline-none" />
+                        <input value={pickerSearch} onChange={(e) => setPickerSearch(e.target.value)} placeholder="Search document #, title…" className="flex-1 bg-transparent text-body outline-none" />
                       </div>
                     </div>
                     <div className="flex-1 overflow-y-auto p-2">
                       {availableDocs.length === 0 ? (
-                        <div className="text-center text-[13px] text-[var(--color-text-faint)] py-8">No matches.</div>
+                        <div className="text-center text-body text-[var(--color-text-faint)] py-8">No matches.</div>
                       ) : (
                         availableDocs.map((d) => (
                           <button
@@ -482,17 +482,17 @@ export default function CollectionModal({
                           >
                             <FileText className="w-3.5 h-3.5 text-[var(--color-text-muted)] shrink-0" />
                             <div className="flex-1 min-w-0">
-                              <div className="text-[13px] font-bold text-[var(--color-text)] truncate">{d.documentNumber}</div>
-                              <div className="text-[13px] text-[var(--color-text-muted)] truncate">{d.title}</div>
+                              <div className="text-body font-medium text-[var(--color-text)] truncate">{d.documentNumber}</div>
+                              <div className="text-body text-[var(--color-text-muted)] truncate">{d.title}</div>
                             </div>
-                            {d.rev && <span className="text-[13px] text-[var(--color-text-faint)]">Rev {d.rev}</span>}
+                            {d.rev && <span className="text-body text-[var(--color-text-faint)]">Rev {d.rev}</span>}
                             <Plus className="w-3.5 h-3.5 text-[var(--color-text-faint)]" />
                           </button>
                         ))
                       )}
                     </div>
                     <div className="px-4 py-2 border-t border-[var(--color-border)] bg-[var(--color-surface-2)] text-right">
-                      <button onClick={() => setShowPicker(false)} className="text-[13px] font-bold text-[var(--color-text)] px-3 py-1.5 rounded hover:bg-[var(--color-surface-2)]">Done</button>
+                      <button onClick={() => setShowPicker(false)} className="text-body font-medium text-[var(--color-text)] px-3 py-1.5 rounded hover:bg-[var(--color-surface-2)]">Done</button>
                     </div>
                   </div>
                 </div>
@@ -502,7 +502,7 @@ export default function CollectionModal({
         </div>
 
         {error && (
-          <div className="mx-5 my-2 text-[13px] flex items-start gap-2 shrink-0 border-l-2 border-[var(--state-overdue)] pl-3 text-[var(--state-overdue)]">
+          <div className="mx-5 my-2 text-body flex items-start gap-2 shrink-0 border-l-2 border-[var(--state-overdue)] pl-3 text-[var(--state-overdue)]">
             <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" /> {error}
           </div>
         )}
@@ -511,13 +511,13 @@ export default function CollectionModal({
         <div className="px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-between shrink-0">
           <div>
             {mode === "view" && canEdit && collection && (
-              <button onClick={onDelete} disabled={busy} className="text-[13px] font-bold text-[var(--state-overdue)] hover:text-[var(--state-overdue)] inline-flex items-center gap-1">
+              <button onClick={onDelete} disabled={busy} className="text-body font-medium text-[var(--state-overdue)] hover:text-[var(--state-overdue)] inline-flex items-center gap-1">
                 <Trash2 className="w-3 h-3" /> Delete collection
               </button>
             )}
           </div>
           <div className="flex items-center gap-2">
-            <button onClick={onClose} className="px-3 py-2 rounded-lg text-[13px] font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]">
+            <button onClick={onClose} className="px-3 py-2 rounded-lg text-body font-medium text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]">
               {mode === "view" ? "Close" : "Cancel"}
             </button>
             {mode === "view" && onOpenAsBook && items.length > 0 && (
@@ -527,18 +527,18 @@ export default function CollectionModal({
                   onClose();
                 }}
                 title="Open every document in this collection as a single book in the multi-doc viewer."
-                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-[13px] font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] shadow"
+                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-body font-medium text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] shadow"
               >
                 <BookOpen className="w-3.5 h-3.5" /> Open as Book
               </button>
             )}
             {mode === "view" && canEdit && (
-              <button onClick={() => setMode("edit")} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-[13px] font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] shadow">
+              <button onClick={() => setMode("edit")} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-body font-medium text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] shadow">
                 <Edit3 className="w-3.5 h-3.5" /> Edit
               </button>
             )}
             {(mode === "create" || mode === "edit") && (
-              <button onClick={save} disabled={busy || !name.trim()} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-[13px] font-semibold bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] disabled:opacity-50 shadow">
+              <button onClick={save} disabled={busy || !name.trim()} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-body font-medium bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] disabled:opacity-50 shadow">
                 {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
                 {mode === "create" ? "Create" : "Save"}
               </button>
@@ -557,8 +557,8 @@ export default function CollectionModal({
 function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
     <div>
-      <label className="text-[13px] font-semibold text-[var(--color-text)] ">{label}</label>
-      {hint && <div className="text-[13px] text-[var(--color-text-muted)] mt-0.5">{hint}</div>}
+      <label className="text-body font-medium text-[var(--color-text)] ">{label}</label>
+      {hint && <div className="text-body text-[var(--color-text-muted)] mt-0.5">{hint}</div>}
       <div className="mt-1">{children}</div>
     </div>
   );

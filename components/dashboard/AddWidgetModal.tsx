@@ -39,7 +39,7 @@ export default function AddWidgetModal({ open, onClose, existingTypes, isAdmin, 
         <div className="px-6 py-4 border-b border-[var(--color-border)] flex items-center gap-3">
           <div className="min-w-0 flex-1">
             <h2 className="font-display text-section font-semibold text-[var(--color-text)]">Add a widget</h2>
-            <p className="mt-0.5 text-[14px] text-[var(--color-text-muted)]">It goes at the bottom of your Home.</p>
+            <p className="mt-0.5 text-body text-[var(--color-text-muted)]">It goes at the bottom of your Home.</p>
           </div>
           <button type="button" onClick={onClose} aria-label="Close" className="w-9 h-9 pointer-coarse:w-11 pointer-coarse:h-11 grid place-items-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><X className="w-5 h-5" /></button>
         </div>
@@ -47,7 +47,7 @@ export default function AddWidgetModal({ open, onClose, existingTypes, isAdmin, 
           <label className="ui-field-box flex items-center gap-2 rounded-lg border border-[var(--color-border-control)] px-3 h-10 pointer-coarse:h-11">
             <Search aria-hidden className="w-4 h-4 text-[var(--color-text-muted)]" />
             <input autoFocus type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Find a widget" aria-label="Find a widget"
-              className="ui-field-bare flex-1 bg-transparent text-[15px] text-[var(--color-text)] outline-none placeholder:text-[var(--color-text-faint)]" />
+              className="ui-field-bare flex-1 bg-transparent text-reading text-[var(--color-text)] outline-none placeholder:text-[var(--color-text-faint)]" />
           </label>
         </div>
 
@@ -57,7 +57,7 @@ export default function AddWidgetModal({ open, onClose, existingTypes, isAdmin, 
             if (list.length === 0) return null;
             return (
               <section key={cat}>
-                <h3 className="pb-1.5 border-b border-[var(--color-border)] text-[15px] font-semibold text-[var(--color-text)]">{cat}</h3>
+                <h3 className="pb-1.5 border-b border-[var(--color-border)] text-reading font-medium text-[var(--color-text)]">{cat}</h3>
                 <div className="grid grid-cols-1 sm:grid-cols-2 sm:gap-x-6 divide-y divide-[var(--color-border)] sm:divide-y-0">
                   {list.map((m) => {
                     const n = count(m.type);
@@ -70,16 +70,16 @@ export default function AddWidgetModal({ open, onClose, existingTypes, isAdmin, 
                           blocked ? "opacity-60 cursor-default" : "hover:bg-[var(--color-surface-2)]"}`}>
                         <Icon aria-hidden className="w-[18px] h-[18px] shrink-0 text-[var(--color-text-muted)]" />
                         <div className="min-w-0 flex-1">
-                          <div className="text-[15px] font-semibold text-[var(--color-text)]">{m.title}{m.isNew && <span className="ml-1.5 text-[13px] font-normal text-[var(--color-text-muted)]">New</span>}</div>
-                          <div className="text-[13px] text-[var(--color-text-muted)] line-clamp-2">{m.description}</div>
-                          {n > 0 && m.multi && <div className="text-[13px] text-[var(--color-text)] mt-0.5">{n} on your Home. Select to add another.</div>}
+                          <div className="text-reading font-medium text-[var(--color-text)]">{m.title}{m.isNew && <span className="ml-1.5 text-body font-normal text-[var(--color-text-muted)]">New</span>}</div>
+                          <div className="text-body text-[var(--color-text-muted)] line-clamp-2">{m.description}</div>
+                          {n > 0 && m.multi && <div className="text-body text-[var(--color-text)] mt-0.5">{n} on your Home. Select to add another.</div>}
                         </div>
                         {blocked ? (
-                          <span className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-[var(--color-text)] shrink-0"><span aria-hidden className="w-2 h-2 rounded-full bg-[var(--state-released)]" /> Added</span>
+                          <span className="inline-flex items-center gap-1.5 text-body font-medium text-[var(--color-text)] shrink-0"><span aria-hidden className="w-2 h-2 rounded-full bg-[var(--state-released)]" /> Added</span>
                         ) : justAdded === m.type ? (
-                          <span className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-[var(--color-text)] shrink-0"><Check className="w-4 h-4 text-[var(--state-released)]" /> Added</span>
+                          <span className="inline-flex items-center gap-1.5 text-body font-medium text-[var(--color-text)] shrink-0"><Check className="w-4 h-4 text-[var(--state-released)]" /> Added</span>
                         ) : (
-                          <span className="inline-flex items-center justify-center gap-1 h-8 px-2.5 rounded-lg border border-[var(--color-border-strong)] text-[13px] font-semibold text-[var(--color-text)] shrink-0"><Plus className="w-3.5 h-3.5" /> Add</span>
+                          <span className="inline-flex items-center justify-center gap-1 h-8 px-2.5 rounded-lg border border-[var(--color-border-strong)] text-body font-medium text-[var(--color-text)] shrink-0"><Plus className="w-3.5 h-3.5" /> Add</span>
                         )}
                       </button>
                     );
@@ -88,7 +88,7 @@ export default function AddWidgetModal({ open, onClose, existingTypes, isAdmin, 
               </section>
             );
           })}
-          {entries.length === 0 && <p className="text-[15px] text-[var(--color-text-muted)]">No widget matches “{q}”.</p>}
+          {entries.length === 0 && <p className="text-reading text-[var(--color-text-muted)]">No widget matches “{q}”.</p>}
         </div>
 
         <div className="px-6 py-3 border-t border-[var(--color-border)] flex justify-end">

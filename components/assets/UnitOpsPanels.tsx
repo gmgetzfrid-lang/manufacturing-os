@@ -69,12 +69,12 @@ export function CategorizeBanner({ orgId, userId, assets, types, book, onDone }:
       <div className={`${sheet} px-4 sm:px-5 py-4`}>
       {result ? (
         <div className="space-y-1">
-          <div className="flex items-center gap-2 text-[14px] font-semibold text-[var(--color-text)]">
+          <div className="flex items-center gap-2 text-body font-medium text-[var(--color-text)]">
             <CheckCircle2 aria-hidden className="w-4 h-4 text-[var(--state-released)]" />
             {(() => { const t = [`${result.categorized} sorted by type`, result.filedToUnits > 0 ? `${result.filedToUnits} filed to their operating area from site codes` : "", result.createdTypes > 0 ? `${result.createdTypes} new categor${result.createdTypes === 1 ? "y" : "ies"} made from your codebook` : "", result.failed > 0 ? `${result.failed} failed` : ""].filter(Boolean).join(", "); return `${t}.`; })()}
           </div>
           {result.unmatched.length > 0 && (
-            <div className="text-[14px] text-[var(--color-text-muted)]">
+            <div className="text-body text-[var(--color-text-muted)]">
               No codebook prefix matched <span className="font-display font-semibold tabular-nums text-[var(--color-text)]">{result.unmatched.slice(0, 8).join(", ")}{result.unmatched.length > 8 ? ` and ${result.unmatched.length - 8} more` : ""}</span>.
               {" "}Teach the prefix in the <Link href="/admin/codebook" className="text-[var(--color-accent-text)] hover:underline underline-offset-2">Site Codebook</Link> and run again. That fixes every future asset too.
             </div>
@@ -83,13 +83,13 @@ export function CategorizeBanner({ orgId, userId, assets, types, book, onDone }:
       ) : (
         <div className="flex items-center gap-3 flex-wrap">
           <div className="flex-1 min-w-[14rem]">
-            <div className="text-[15px] font-semibold text-[var(--color-text)]">
+            <div className="text-reading font-medium text-[var(--color-text)]">
               {uncategorized > 0
                 ? `${uncategorized.toLocaleString()} piece${uncategorized === 1 ? "" : "s"} of equipment have no type yet.`
                 : `${plan.unitAssignments.length.toLocaleString()} piece${plan.unitAssignments.length === 1 ? "" : "s"} not filed to an operating area.`}
               {uncategorized > 0 && plan.unitAssignments.length > 0 ? ` ${plan.unitAssignments.length.toLocaleString()} not filed to an area.` : ""}
             </div>
-            <div className="text-[14px] text-[var(--color-text-muted)]">
+            <div className="text-body text-[var(--color-text-muted)]">
               {plan.assignments.length > 0
                 ? <>Your Site Codebook&apos;s prefixes sort {plan.assignments.length} of them{plan.typesToCreate.length > 0 ? `, making ${plan.typesToCreate.slice(0, 4).join(", ")}${plan.typesToCreate.length > 4 ? ` and ${plan.typesToCreate.length - 4} more` : ""}` : ""}.</>
                 : <>None of your Site Codebook&apos;s prefixes match these tags. Add the prefixes in the <Link href="/admin/codebook" className="text-[var(--color-accent-text)] hover:underline underline-offset-2">Site Codebook</Link>.</>}
@@ -184,9 +184,9 @@ export function FlowPanel({ orgId, userId, userName, isAdmin, unitCode, unitAsse
   return (
     <section id="area-flow-panel" className="min-w-0">
       <div className="flex items-end gap-x-3 gap-y-2 flex-wrap mb-3 min-h-8">
-        <h2 className="font-display text-[20px] leading-tight font-semibold text-[var(--color-text)]">Process flows</h2>
+        <h2 className="font-display text-section leading-tight font-semibold text-[var(--color-text)]">Process flows</h2>
         {flows !== null && (
-          <span className="text-[14px] text-[var(--color-text-muted)] tabular-nums">
+          <span className="text-body text-[var(--color-text-muted)] tabular-nums">
             {confirmed.length} confirmed{proposed.length > 0 ? `, ${proposed.length} proposed` : ""}
           </span>
         )}
@@ -201,25 +201,25 @@ export function FlowPanel({ orgId, userId, userName, isAdmin, unitCode, unitAsse
       <div className={`${sheet} p-4 sm:p-5`}>
 
       {flows === null ? (
-        <div className="text-[13px] text-[var(--color-text-muted)]">
+        <div className="text-body text-[var(--color-text-muted)]">
           Process flows aren&apos;t installed yet. Run the process-flows migration to map what feeds what.
         </div>
       ) : (
         <>
           {loadError && <ErrorNote compact className="mb-2" title="Couldn't load the flows." next={loadError} onRetry={() => void refresh()} />}
-          {note && <p role="status" className={`text-[14px] mb-2 ${note.startsWith("Couldn't") ? "text-[var(--state-overdue-text)]" : "text-[var(--color-text-muted)]"}`}>{note}</p>}
+          {note && <p role="status" className={`text-body mb-2 ${note.startsWith("Couldn't") ? "text-[var(--state-overdue-text)]" : "text-[var(--color-text-muted)]"}`}>{note}</p>}
           {proposed.length > 0 && (
             <div className="mb-3">
               <div className="mb-1"><StatusTag tone="warn">Proposed by the AI. Confirm or reject each.</StatusTag></div>
               <ul className="divide-y divide-[var(--color-border)]">
               {proposed.map((f) => (
                 <li key={f.id} className="flex items-center gap-2 py-1.5">
-                  <span className="text-[14px] font-display font-semibold tabular-nums text-[var(--color-text)]">{endpointLabel(f.from_kind, f.from_ref)}</span>
+                  <span className="text-body font-display font-semibold tabular-nums text-[var(--color-text)]">{endpointLabel(f.from_kind, f.from_ref)}</span>
                   <ArrowRight aria-hidden className="w-3.5 h-3.5 text-[var(--color-text-muted)] shrink-0" />
-                  <span className="text-[14px] font-display font-semibold tabular-nums text-[var(--color-text)]">{endpointLabel(f.to_kind, f.to_ref)}</span>
-                  {f.label && <span className="text-[13px] text-[var(--color-text-muted)] italic truncate">“{f.label}”</span>}
+                  <span className="text-body font-display font-semibold tabular-nums text-[var(--color-text)]">{endpointLabel(f.to_kind, f.to_ref)}</span>
+                  {f.label && <span className="text-body text-[var(--color-text-muted)] italic truncate">“{f.label}”</span>}
                   {f.evidence?.docName && (
-                    <span className="text-[13px] text-[var(--color-text-faint)] truncate hidden sm:inline">
+                    <span className="text-body text-[var(--color-text-faint)] truncate hidden sm:inline">
                       from {f.evidence.docName}{f.source_page ? ` p.${f.source_page}` : ""}
                     </span>
                   )}
@@ -242,17 +242,17 @@ export function FlowPanel({ orgId, userId, userName, isAdmin, unitCode, unitAsse
             </div>
           )}
           {confirmed.length === 0 && proposed.length === 0 ? (
-            <div className="text-[14px] text-[var(--color-text-muted)]">
+            <div className="text-body text-[var(--color-text-muted)]">
               Nothing mapped yet. Draw flows on the <Link href="/graph" className="text-[var(--color-accent-text)] hover:underline underline-offset-2">graph</Link> (connect two pieces of equipment: the first feeds the second){isAdmin ? ", or point the reader at a process flow diagram." : "."}
             </div>
           ) : (
             <ul className="divide-y divide-[var(--color-border)] -my-1.5">
               {confirmed.map((f) => (
                 <li key={f.id} className="group flex items-center gap-2 py-1.5">
-                  <span className="text-[14px] font-display font-semibold tabular-nums text-[var(--color-text)]">{endpointLabel(f.from_kind, f.from_ref)}</span>
+                  <span className="text-body font-display font-semibold tabular-nums text-[var(--color-text)]">{endpointLabel(f.from_kind, f.from_ref)}</span>
                   <ArrowRight aria-hidden className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
-                  <span className="text-[14px] font-display font-semibold tabular-nums text-[var(--color-text)]">{endpointLabel(f.to_kind, f.to_ref)}</span>
-                  {f.label && <span className="text-[14px] text-[var(--color-text-muted)] truncate">{f.label}</span>}
+                  <span className="text-body font-display font-semibold tabular-nums text-[var(--color-text)]">{endpointLabel(f.to_kind, f.to_ref)}</span>
+                  {f.label && <span className="text-body text-[var(--color-text-muted)] truncate">{f.label}</span>}
                   <span className="flex-1" />
                   {isAdmin && (
                     <button onClick={() => void remove(f)} disabled={busyId === f.id}
@@ -469,14 +469,14 @@ function ReadFlowsModal({ orgId, onClose, onDone }: {
           className="w-full flex items-center gap-2 px-2.5 py-2 rounded-lg border border-[var(--color-border)] hover:border-[var(--color-border-strong)] text-left disabled:opacity-50">
           <FileText className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" />
           <span className="flex-1 min-w-0">
-            <span className="block text-[13px] font-bold text-[var(--color-text)] truncate">{d.name}</span>
-            <span className="block text-[13px] text-[var(--color-text-faint)]">
+            <span className="block text-body font-medium text-[var(--color-text)] truncate">{d.name}</span>
+            <span className="block text-body text-[var(--color-text-faint)]">
               {d.pageCount ? `${d.pageCount} page${d.pageCount === 1 ? "" : "s"}` : "page count pending"}
             </span>
           </span>
           {runningId === kid
-            ? <span className="inline-flex items-center gap-1 text-[13px] font-semibold text-[var(--color-text)] shrink-0"><Loader2 className="w-3 h-3 animate-spin" /> Reading…</span>
-            : <span className="text-[13px] font-semibold text-[var(--color-text)] shrink-0">Read{pages.length > 0 ? ` p.${pages[0]}${pages.length > 1 ? "…" : ""}` : ""}</span>}
+            ? <span className="inline-flex items-center gap-1 text-body font-medium text-[var(--color-text)] shrink-0"><Loader2 className="w-3 h-3 animate-spin" /> Reading…</span>
+            : <span className="text-body font-medium text-[var(--color-text)] shrink-0">Read{pages.length > 0 ? ` p.${pages[0]}${pages.length > 1 ? "…" : ""}` : ""}</span>}
         </button>
       );
     }
@@ -488,26 +488,26 @@ function ReadFlowsModal({ orgId, onClose, onDone }: {
         className="w-full flex items-center gap-2 px-2.5 py-2 rounded-lg border border-dashed border-[var(--color-border)] opacity-80">
         <FileText className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" />
         <span className="flex-1 min-w-0">
-          <span className="block text-[13px] font-bold text-[var(--color-text-muted)] truncate">{d.name}</span>
-          <span className="block text-[13px] text-[var(--color-text-faint)] truncate">{meta.hint}</span>
+          <span className="block text-body font-medium text-[var(--color-text-muted)] truncate">{d.name}</span>
+          <span className="block text-body text-[var(--color-text-faint)] truncate">{meta.hint}</span>
         </span>
         {d.state === "indexing" ? (
-          <span className="inline-flex items-center gap-1 text-[13px] font-semibold text-[var(--color-text)] shrink-0">
+          <span className="inline-flex items-center gap-1 text-body font-medium text-[var(--color-text)] shrink-0">
             <Loader2 className="w-3 h-3 animate-spin" /> Indexing…
           </span>
         ) : d.state === "pending_sync" && model?.canSync ? (
           <button type="button" onClick={() => void syncAll()} disabled={syncing}
-            className="text-[13px] font-semibold px-2 py-1 rounded-md border border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] dark:hover:bg-[var(--color-surface-2)] disabled:opacity-50 shrink-0">
+            className="text-body font-medium px-2 py-1 rounded-md border border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] dark:hover:bg-[var(--color-surface-2)] disabled:opacity-50 shrink-0">
             {syncing ? "Syncing…" : "Sync now"}
           </button>
         ) : d.state === "unwatched" && model?.canSync && container ? (
           <button type="button" onClick={() => requestLink(container)} disabled={linkingKey !== null}
             title={`Connect “${container.name}” to an AI knowledge library`}
-            className="text-[13px] font-semibold px-2 py-1 rounded-md border border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 shrink-0">
+            className="text-body font-medium px-2 py-1 rounded-md border border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 shrink-0">
             {linkingKey === container.id ? "Linking…" : "Link to AI"}
           </button>
         ) : (
-          <span className={`text-[13px] font-semibold px-1.5 py-0.5 rounded shrink-0 ${
+          <span className={`text-body font-semibold px-1.5 py-0.5 rounded shrink-0 ${
             d.state === "pending_sync"
               ? "bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] text-[var(--color-text)] dark:text-[var(--color-text)]"
               : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"
@@ -521,15 +521,15 @@ function ReadFlowsModal({ orgId, onClose, onDone }: {
 
   const renderFolder = (f: DcFolderNode, depth: number) => (
     <div key={f.id} className={depth > 0 ? "ml-3 pl-2 border-l border-[var(--color-border)]/60" : ""}>
-      <div className="flex items-center gap-1.5 px-1 py-1 text-[13px] font-semibold text-[var(--color-text)]">
+      <div className="flex items-center gap-1.5 px-1 py-1 text-body font-medium text-[var(--color-text)]">
         <FolderOpen className="w-3.5 h-3.5 shrink-0 text-[var(--color-text-muted)]" />
         {f.name}
-        <span className="text-[13px] font-bold text-[var(--color-text-muted)]">· {f.totalDocs}</span>
-        {!f.watched && <span className="text-[13px] font-bold text-[var(--state-held)]">Not linked to AI</span>}
+        <span className="text-body font-medium text-[var(--color-text-muted)]">· {f.totalDocs}</span>
+        {!f.watched && <span className="text-body font-medium text-[var(--state-held)]">Not linked to AI</span>}
         {!f.watched && model?.canSync && (
           <button type="button" disabled={linkingKey !== null}
             onClick={() => requestLink({ type: "folder", id: f.id, name: f.name })}
-            className="text-[13px] font-semibold px-1.5 py-0.5 rounded border border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">
+            className="text-body font-medium px-1.5 py-0.5 rounded border border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">
             {linkingKey === f.id ? "Linking…" : "Link now"}
           </button>
         )}
@@ -550,15 +550,15 @@ function ReadFlowsModal({ orgId, onClose, onDone }: {
         <div className="flex items-center gap-2 px-4 py-3 border-b border-[var(--color-border)] shrink-0">
           <ScanSearch className="w-4 h-4 text-[var(--color-text-muted)]" />
           <div className="flex-1">
-            <div className="text-sm font-semibold text-[var(--color-text)]">Read flows from a document</div>
-            <div className="text-[13px] text-[var(--color-text-muted)]">
+            <div className="text-sm font-medium text-[var(--color-text)]">Read flows from a document</div>
+            <div className="text-body text-[var(--color-text-muted)]">
               Your libraries and folders as filed. Each file says whether the AI can read it.
             </div>
           </div>
           {model?.canSync && model.knowledgeLibraries.length > 0 && (
             <button type="button" onClick={() => void syncAll()} disabled={syncing}
               title="Reconcile all knowledge libraries with document control now"
-              className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg border border-[var(--color-border-strong)] text-[13px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-border-strong)] disabled:opacity-50 shrink-0">
+              className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg border border-[var(--color-border-strong)] text-body font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-border-strong)] disabled:opacity-50 shrink-0">
               <RefreshCw className={`w-3 h-3 ${syncing ? "animate-spin" : ""}`} /> Sync
             </button>
           )}
@@ -589,38 +589,38 @@ function ReadFlowsModal({ orgId, onClose, onDone }: {
           <div className="flex items-center gap-2">
             <input value={pagesRaw} onChange={(e) => setPagesRaw(e.target.value)}
               placeholder="Pages (optional): 1-4 or 2,5,9, up to 6 per read"
-              className="flex-1 px-2.5 py-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-[13px] font-display tabular-nums" />
+              className="flex-1 px-2.5 py-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-body font-display tabular-nums" />
             {pages.length > 0 && (
-              <span className="text-[13px] font-semibold text-[var(--color-text)] shrink-0">reads p. {pages.join(", ")}</span>
+              <span className="text-body font-medium text-[var(--color-text)] shrink-0">reads p. {pages.join(", ")}</span>
             )}
           </div>
           {/* Multiple AI libraries → the link needs a destination. One click
               picks it; the linking + sync happen right here. */}
           {linking && (
-            <div className="border-l-2 border-[var(--color-border-strong)] pl-2.5 text-[13px] text-[var(--color-text)]">
-              <div className="font-semibold mb-1">Link &ldquo;{linking.name}&rdquo; to which AI knowledge library?</div>
+            <div className="border-l-2 border-[var(--color-border-strong)] pl-2.5 text-body text-[var(--color-text)]">
+              <div className="font-medium mb-1">Link &ldquo;{linking.name}&rdquo; to which AI knowledge library?</div>
               <div className="flex items-center gap-1.5 flex-wrap">
                 {(model?.knowledgeLibraries ?? []).map((kl) => (
                   <button key={kl.id} type="button" disabled={linkingKey !== null}
                     onClick={() => void doLink(kl.id, linking)}
-                    className="px-2.5 py-1 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">
+                    className="px-2.5 py-1 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">
                     {linkingKey !== null ? "Linking…" : kl.name}
                   </button>
                 ))}
                 <button type="button" onClick={() => setLinking(null)} disabled={linkingKey !== null}
-                  className="px-2 py-1 text-[13px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
+                  className="px-2 py-1 text-body font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
                   Cancel
                 </button>
               </div>
             </div>
           )}
           {syncNote && (
-            <p role="status" className="border-l-2 border-[var(--state-released)] pl-2.5 text-[13px] font-bold text-[var(--state-released)]">
+            <p role="status" className="border-l-2 border-[var(--state-released)] pl-2.5 text-body font-medium text-[var(--state-released)]">
               {syncNote}
             </p>
           )}
           {error && (
-            <p role="alert" className="flex items-start gap-2 border-l-2 border-[var(--state-overdue)] pl-2.5 text-[13px] text-[var(--state-overdue)]">
+            <p role="alert" className="flex items-start gap-2 border-l-2 border-[var(--state-overdue)] pl-2.5 text-body text-[var(--state-overdue)]">
               <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" /> {error}
             </p>
           )}
@@ -632,7 +632,7 @@ function ReadFlowsModal({ orgId, onClose, onDone }: {
           ) : loadError ? (
             <ErrorNote compact title="Couldn't load the libraries." next={loadError} onRetry={() => void load()} />
           ) : viewTree.length === 0 && viewUploads.length === 0 ? (
-            <div className="text-center text-[13px] text-[var(--color-text-muted)] py-6">
+            <div className="text-center text-body text-[var(--color-text-muted)] py-6">
               {q ? "No documents match that search." : "No documents yet. Upload PDFs in Documents or a knowledge library."}
             </div>
           ) : (
@@ -641,16 +641,16 @@ function ReadFlowsModal({ orgId, onClose, onDone }: {
                 <div key={l.id}>
                   <div className="flex items-center gap-2 mb-1.5">
                     <BookOpen className="w-3.5 h-3.5 shrink-0 text-[var(--color-text-muted)]" />
-                    <span className="text-[13px] font-semibold text-[var(--color-text)]">{l.name}</span>
-                    <span className="text-[13px] text-[var(--color-text-muted)] tabular-nums">
+                    <span className="text-body font-medium text-[var(--color-text)]">{l.name}</span>
+                    <span className="text-body text-[var(--color-text-muted)] tabular-nums">
                       {l.totalDocs} doc{l.totalDocs === 1 ? "" : "s"}
                     </span>
-                    {!l.watched && <span className="text-[13px] font-bold text-[var(--state-held)]">Not linked to AI</span>}
+                    {!l.watched && <span className="text-body font-medium text-[var(--state-held)]">Not linked to AI</span>}
                     {!l.watched && model?.canSync && (
                       <button type="button" disabled={linkingKey !== null}
                         onClick={() => requestLink({ type: "library", id: l.id, name: l.name })}
                         title="Watch this whole library: every folder, now and later"
-                        className="text-[13px] font-semibold px-1.5 py-0.5 rounded border border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">
+                        className="text-body font-medium px-1.5 py-0.5 rounded border border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">
                         {linkingKey === l.id ? "Linking…" : "Link whole library"}
                       </button>
                     )}
@@ -667,7 +667,7 @@ function ReadFlowsModal({ orgId, onClose, onDone }: {
                 <div key={g.knowledgeLibraryId}>
                   <div className="flex items-center gap-2 mb-1.5">
                     <BookOpen className="w-3.5 h-3.5 text-[var(--color-text-muted)] shrink-0" />
-                    <span className="text-[13px] font-semibold text-[var(--color-text)]">Uploaded directly · {g.knowledgeLibraryName}</span>
+                    <span className="text-body font-medium text-[var(--color-text)]">Uploaded directly · {g.knowledgeLibraryName}</span>
                   </div>
                   <div className="space-y-1">
                     {g.docs.map((d) => docRow({
@@ -682,8 +682,8 @@ function ReadFlowsModal({ orgId, onClose, onDone }: {
         </div>
 
         {/* The PFD isn't anywhere yet? The door is one click away, not a maze. */}
-        <div className="px-3 py-2.5 border-t border-[var(--color-border)] text-[13px] text-[var(--color-text-muted)] shrink-0">
-          Don&apos;t see your PFD book at all? <Link href="/knowledge" className="font-semibold text-[var(--color-accent-text)] hover:text-[var(--color-accent-hover)] underline">Upload it to a knowledge library</Link> or file it in Documents inside a linked folder.
+        <div className="px-3 py-2.5 border-t border-[var(--color-border)] text-body text-[var(--color-text-muted)] shrink-0">
+          Don&apos;t see your PFD book at all? <Link href="/knowledge" className="font-medium text-[var(--color-accent-text)] hover:text-[var(--color-accent-hover)] underline">Upload it to a knowledge library</Link> or file it in Documents inside a linked folder.
         </div>
       </div>
     </div>

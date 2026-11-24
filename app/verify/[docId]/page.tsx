@@ -70,19 +70,19 @@ export default function VerifyPage() {
         {loading ? (
           <div className="text-white/90">
             <Loader2 className="w-14 h-14 mx-auto animate-spin mb-4" />
-            <div className="text-[13px] font-semibold ">Checking revision…</div>
+            <div className="text-body font-medium ">Checking revision…</div>
           </div>
         ) : error ? (
           <div className="text-white/90">
             <ShieldQuestion className="w-16 h-16 mx-auto mb-4 opacity-80" />
             <h1 className="text-[34px] leading-[1.05] tracking-[-0.02em] font-bold mb-3">Can&apos;t verify this code</h1>
-            <p className="text-[15px] opacity-90">{error}</p>
-            <p className="text-[13px] opacity-70 mt-4">
+            <p className="text-reading opacity-90">{error}</p>
+            <p className="text-body opacity-70 mt-4">
               If this QR came from a printed drawing, contact Document Control before using the print.
             </p>
             <button
               onClick={() => void check()}
-              className="mt-6 inline-flex items-center gap-2 h-11 px-4 rounded-lg bg-white/15 hover:bg-white/25 text-[15px] font-semibold"
+              className="mt-6 inline-flex items-center gap-2 h-11 px-4 rounded-lg bg-white/15 hover:bg-white/25 text-reading font-medium"
             >
               <RefreshCw className="w-4 h-4" /> Try again
             </button>
@@ -100,7 +100,7 @@ export default function VerifyPage() {
             <h1 className="text-[40px] font-bold text-white leading-[1.03] tracking-[-0.03em] mb-3">
               {result.notYetEffective ? "Not in effect yet" : result.isCurrent ? "Current" : "Do not use"}
             </h1>
-            <p className="text-white/90 text-[15px] font-semibold mb-6">
+            <p className="text-white/90 text-reading font-medium mb-6">
               {result.notYetEffective
                 ? `This is the latest revision, but it comes into force ${result.effectiveDate ? new Date(result.effectiveDate).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "later"}. Until then, keep working to the prior in-force revision.`
                 : result.isCurrent
@@ -113,38 +113,38 @@ export default function VerifyPage() {
             {/* The facts card */}
             <div className="bg-[var(--color-surface)] rounded-xl ui-float p-5 text-left space-y-3">
               <div>
-                <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">Document</div>
-                <div className="text-[15px] font-semibold text-[var(--color-text)]">{result.docNumber ?? "-"}</div>
-                {result.title && <div className="text-[13px] text-[var(--color-text-muted)] mt-0.5">{result.title}</div>}
+                <div className="text-body font-medium text-[var(--color-text-muted)]">Document</div>
+                <div className="text-reading font-medium text-[var(--color-text)]">{result.docNumber ?? "-"}</div>
+                {result.title && <div className="text-body text-[var(--color-text-muted)] mt-0.5">{result.title}</div>}
               </div>
               <div className="grid grid-cols-2 gap-3 pt-2 border-t border-[var(--color-border)]">
                 <div>
-                  <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">This print</div>
-                  <div className={`text-[15px] font-semibold ${result.isCurrent ? "text-[var(--state-released-text)]" : "text-[var(--state-overdue-text)]"}`}>
+                  <div className="text-body font-medium text-[var(--color-text-muted)]">This print</div>
+                  <div className={`text-reading font-medium ${result.isCurrent ? "text-[var(--state-released-text)]" : "text-[var(--state-overdue-text)]"}`}>
                     Rev {result.printedRev ?? "?"}
                   </div>
-                  <div className="text-[12px] text-[var(--color-text-muted)]">issued {fmt(result.printedAt)}</div>
+                  <div className="text-caption text-[var(--color-text-muted)]">issued {fmt(result.printedAt)}</div>
                 </div>
                 <div>
-                  <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">Current</div>
-                  <div className="text-[15px] font-semibold text-[var(--color-text)]">Rev {result.currentRev ?? "?"}</div>
-                  <div className="text-[12px] text-[var(--color-text-muted)]">issued {fmt(result.currentIssuedAt)}</div>
+                  <div className="text-body font-medium text-[var(--color-text-muted)]">Current</div>
+                  <div className="text-reading font-medium text-[var(--color-text)]">Rev {result.currentRev ?? "?"}</div>
+                  <div className="text-caption text-[var(--color-text-muted)]">issued {fmt(result.currentIssuedAt)}</div>
                 </div>
               </div>
               {!result.isCurrent && (
-                <div className="pt-2 border-t border-[var(--color-border)] text-[13px] text-[var(--color-text)] leading-relaxed">
+                <div className="pt-2 border-t border-[var(--color-border)] text-body text-[var(--color-text)] leading-relaxed">
                   Get the current revision from Document Control before performing any work
                   from this drawing. Mark this print &ldquo;SUPERSEDED&rdquo; or destroy it.
                 </div>
               )}
             </div>
 
-            <div className="mt-5 text-[12px] text-white/70">
+            <div className="mt-5 text-caption text-white/70">
               Checked {new Date(result.checkedAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })} by document control.
             </div>
             <button
               onClick={() => void check()}
-              className="mt-3 inline-flex items-center gap-1.5 h-11 px-4 rounded-lg bg-white/15 hover:bg-white/25 text-white text-[15px] font-semibold"
+              className="mt-3 inline-flex items-center gap-1.5 h-11 px-4 rounded-lg bg-white/15 hover:bg-white/25 text-white text-reading font-medium"
             >
               <RefreshCw className="w-4 h-4" /> Check again
             </button>

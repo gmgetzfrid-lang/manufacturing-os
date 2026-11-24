@@ -44,7 +44,7 @@ export default function ProtectedError({
         <PageBody>
           <Card>
             <details>
-              <summary className="cursor-pointer text-[13px] font-semibold text-[var(--color-text-muted)]">Developer details</summary>
+              <summary className="cursor-pointer text-body font-medium text-[var(--color-text-muted)]">Developer details</summary>
               <pre className="mt-2 overflow-auto text-xs leading-relaxed text-[var(--color-text)]">
                 {error?.stack ?? String(error)}
                 {error?.digest ? `\n\ndigest: ${error.digest}` : ''}

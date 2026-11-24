@@ -73,7 +73,7 @@ export type ScheduleMode = "plan" | "today" | "work" | "reports";
 const NO_PHASES: ProjectPhase[] = [];
 
 // A quiet button on a white card; the one orange action is heroPrimary.
-const QUIET = "inline-flex items-center justify-center gap-1.5 h-9 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors";
+const QUIET = "inline-flex items-center justify-center gap-1.5 h-10 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors";
 // The Plan list: this many rows, then "Show N more".
 const ROW_STEP = 60;
 
@@ -400,7 +400,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
   const setupNotice = setupMissing.length > 0 ? <SetupNotice missing={setupMissing} canManage={!!canManage} /> : null;
   // Right after Clear schedule or Reset progress: put it back.
   const undoRow = undoable && canEdit ? (
-    <div role="status" className="flex items-center gap-2 flex-wrap py-2.5 text-[13px] text-[var(--color-text)]">
+    <div role="status" className="flex items-center gap-2 flex-wrap py-2.5 text-body text-[var(--color-text)]">
       <span aria-hidden className="w-2 h-2 rounded-full bg-[var(--state-held)] shrink-0" />
       <span className="flex-1 min-w-48">
         {undoable.kind === "clear"
@@ -411,7 +411,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
       <button onClick={() => void onUndo()} disabled={undoing} className={QUIET}>
         {undoing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RotateCcw className="w-3.5 h-3.5" />} Undo
       </button>
-      <button onClick={() => setUndoable(null)} disabled={undoing} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Dismiss</button>
+      <button onClick={() => setUndoable(null)} disabled={undoing} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Dismiss</button>
     </div>
   ) : null;
 
@@ -446,7 +446,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
         // behind the thing you were working in.
         <div className="ui-float ui-float-in fixed bottom-4 max-sm:bottom-[calc(6rem+env(safe-area-inset-bottom))] left-1/2 -translate-x-1/2 z-[400] w-[min(36rem,92vw)] flex items-start gap-3 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl px-4 py-3">
           <ErrorNote compact className="flex-1" title={error} next="" />
-          <button onClick={() => setError(null)} className="shrink-0 -my-1 inline-flex items-center justify-center h-8 pointer-coarse:h-11 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">Dismiss</button>
+          <button onClick={() => setError(null)} className="shrink-0 -my-1 inline-flex items-center justify-center h-8 pointer-coarse:h-11 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">Dismiss</button>
         </div>
       )}
 
@@ -475,14 +475,14 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
           <div className="divide-y divide-[var(--color-border)]">
             <div className="flex items-center gap-x-3 gap-y-2 flex-wrap pb-3 first:pt-0">
               <div className="min-w-0 flex-1 basis-56">
-                <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">Schedule</div>
-                <div className="mt-0.5 text-[13px] text-[var(--color-text-muted)]">
+                <div className="text-body font-medium text-[var(--color-text-muted)]">Schedule</div>
+                <div className="mt-0.5 text-body text-[var(--color-text-muted)]">
                   {`${milestones.length} task${milestones.length === 1 ? "" : "s"}: phases, tasks, steps. `}
                   {/* Which clock the schedule runs on. Every date and time below is the
                       plant's; a project without a zone still reads as UTC, so say so. */}
                   {tz === DEFAULT_SCHEDULE_TZ ? (
                     <span>Times are in <b className="text-[var(--color-text)]">UTC</b>, the app default.{" "}
-                      {canManage ? <button type="button" onClick={() => requestSetup("timezone")} className="font-semibold text-[var(--color-accent-text)] hover:underline">Set the plant time zone</button> : "The project owner sets the plant time zone"} so days and shifts line up for everyone.</span>
+                      {canManage ? <button type="button" onClick={() => requestSetup("timezone")} className="font-medium text-[var(--color-accent-text)] hover:underline">Set the plant time zone</button> : "The project owner sets the plant time zone"} so days and shifts line up for everyone.</span>
                   ) : (
                     <span className="inline-flex items-center gap-1"><Clock className="w-3.5 h-3.5 shrink-0" /> Plant time, {tzLabel(tz)}.</span>
                   )}
@@ -617,7 +617,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
       {/* Planning view — the schedule as an editable list, on its own card:
           search and filters as a quiet row, then the rows. */}
       {!loading && milestones.length > 0 && view === "planning" && (
-        <Card pad={false} label={<>Tasks <span className="ml-1 text-[15px] font-normal tabular-nums text-[var(--color-text-muted)]">{visible.length}</span></>}
+        <Card pad={false} label={<>Tasks <span className="ml-1 text-reading font-normal tabular-nums text-[var(--color-text-muted)]">{visible.length}</span></>}
           action={
             <HelpTooltip>
               <b>Imported rows</b> are read-only milestones from your scheduling tool (P6 / MS Project). They still count toward the earned-value rollup. More › Hide imported rows takes them off this list; they still count.
@@ -657,7 +657,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
           )}
 
           {visible.length === 0 ? (
-            <div className="px-5 py-10 text-center text-[13px] text-[var(--color-text-muted)]">
+            <div className="px-5 py-10 text-center text-body text-[var(--color-text-muted)]">
               {planFilterOn ? "No tasks match the current search/filter." : <>No tasks here yet.{canEdit && " Add task puts the first one in."}</>}
             </div>
           ) : (
@@ -678,7 +678,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
                   <button type="button" onClick={() => setRowLimit(Infinity)} className={QUIET}>
                     Show all {planningRows.length}
                   </button>
-                  <span className="text-[13px] text-[var(--color-text-muted)]">{Math.min(rowLimit, planningRows.length)} of {planningRows.length} shown</span>
+                  <span className="text-body text-[var(--color-text-muted)]">{Math.min(rowLimit, planningRows.length)} of {planningRows.length} shown</span>
                 </div>
               )}
             </div>
@@ -844,7 +844,7 @@ function PctBar({ f }: { f: PlanFacts }) {
       <span className="relative h-2 w-14 rounded-full bg-[var(--color-accent-soft)] overflow-hidden" role="progressbar" aria-valuenow={f.pct} aria-valuemin={0} aria-valuemax={100} aria-label="% complete">
         <span className="absolute inset-y-0 left-0 rounded-full bg-[var(--color-main)]" style={{ width: `${Math.min(100, Math.max(0, f.pct))}%` }} />
       </span>
-      <span className="font-display text-[14px] font-semibold tabular-nums text-[var(--color-text)] w-9">{f.pct}%</span>
+      <span className="font-display text-body font-semibold tabular-nums text-[var(--color-text)] w-9">{f.pct}%</span>
     </span>
   );
 }
@@ -856,12 +856,12 @@ function FinishNote({ f, fmtDay }: { f: PlanFacts; fmtDay: (d: Date) => string }
   if (f.actual) {
     const late = f.slipDays > 0;
     return (
-      <div className={`text-[13px] whitespace-nowrap ${late ? "text-[var(--state-overdue)] font-semibold" : "text-[var(--color-text-muted)]"}`}>
+      <div className={`text-body whitespace-nowrap ${late ? "text-[var(--state-overdue)] font-medium" : "text-[var(--color-text-muted)]"}`}>
         Done {fmtDay(f.actual)}, {Math.abs(f.slipDays)}d {late ? "late" : "early"}
       </div>
     );
   }
-  if (f.overdue) return <div className="text-[13px] font-semibold whitespace-nowrap text-[var(--state-overdue)]">{f.lateDays > 0 ? `${f.lateDays}d late` : "Late"}</div>;
+  if (f.overdue) return <div className="text-body font-medium whitespace-nowrap text-[var(--state-overdue)]">{f.lateDays > 0 ? `${f.lateDays}d late` : "Late"}</div>;
   return null;
 }
 
@@ -874,7 +874,7 @@ function RowActions({ m, f, busy, onSetStatus, onDelete }: {
     <div className="flex items-center justify-end gap-1.5">
       {!f.isParent && f.status !== "completed" && (
         <button type="button" onClick={() => onSetStatus(m.id!, "completed")} disabled={busy} title="Mark it done"
-          className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">
+          className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">
           <Check className="w-3.5 h-3.5" /> Done
         </button>
       )}
@@ -909,7 +909,7 @@ function RowMenu({ name, current, onPick, onDelete, disabled }: {
     window.addEventListener("scroll", away, true);
     return () => { window.removeEventListener("keydown", esc); window.removeEventListener("scroll", away, true); };
   }, [open]);
-  const item = "w-full flex items-center gap-2 text-left text-[14px] font-semibold px-3 min-h-10 hover:bg-[var(--color-surface-2)] transition-colors";
+  const item = "w-full flex items-center gap-2 text-left text-body font-medium px-3 min-h-10 hover:bg-[var(--color-surface-2)] transition-colors";
   return (
     <>
       <button ref={btnRef} type="button" onClick={toggle} disabled={disabled} aria-haspopup="menu" aria-expanded={open} aria-label={`More for ${name}`} title={current ? "Status, delete" : "Delete"}
@@ -922,7 +922,7 @@ function RowMenu({ name, current, onPick, onDelete, disabled }: {
           <div role="menu" className="fixed z-[200] w-56 bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] rounded-lg shadow-lg py-1" style={pos}>
             {current ? (
               <>
-                <div className="px-3 pt-1.5 pb-1 text-[13px] text-[var(--color-text-muted)]">Set status</div>
+                <div className="px-3 pt-1.5 pb-1 text-body text-[var(--color-text-muted)]">Set status</div>
                 {STATUS_OPTIONS.map((s) => (
                   <button key={s} type="button" role="menuitemradio" aria-checked={s === current} onClick={() => { setOpen(false); if (s !== current) onPick(s); }}
                     className={`${item} ${s === current ? "bg-[var(--color-surface-2)]" : ""}`}>
@@ -932,7 +932,7 @@ function RowMenu({ name, current, onPick, onDelete, disabled }: {
                 ))}
               </>
             ) : (
-              <div className="px-3 py-2 text-[13px] text-[var(--color-text-muted)]">Its status rolls up from its steps.</div>
+              <div className="px-3 py-2 text-body text-[var(--color-text-muted)]">Its status rolls up from its steps.</div>
             )}
             <div className="my-1 h-px bg-[var(--color-border)]" />
             <button type="button" role="menuitem" onClick={() => { setOpen(false); onDelete(); }} className={`${item} text-[var(--state-overdue)]`}>
@@ -953,25 +953,25 @@ function RowDetails({ m, f, fmtWhen, fmtDay }: { m: Milestone; f: PlanFacts; fmt
   const facts: Array<[string, React.ReactNode]> = [
     ["Planned start", f.start ? fmtWhen(f.start) : "-"],
     ["Planned finish", fmtWhen(f.finish)],
-    ...(f.actual ? [["Finished", <span key="a" className={f.slipDays > 0 ? "text-[var(--state-overdue)] font-semibold" : ""}>{fmtWhen(f.actual)}</span>] as [string, React.ReactNode]] : []),
+    ...(f.actual ? [["Finished", <span key="a" className={f.slipDays > 0 ? "text-[var(--state-overdue)] font-medium" : ""}>{fmtWhen(f.actual)}</span>] as [string, React.ReactNode]] : []),
     ...(typeof m.durationHours === "number" && m.durationHours > 0 ? [["Hours of work", <span key="h" className="font-display tabular-nums">{m.durationHours} h</span>] as [string, React.ReactNode]] : []),
     ...(m.workOrderRef ? [["Work order", <span key="w" className="ui-id">WO {m.workOrderRef}</span>] as [string, React.ReactNode]] : []),
     ...(f.crew ? [["Crew", f.crew] as [string, React.ReactNode]] : []),
     ...(m.location ? [["Location", m.location] as [string, React.ReactNode]] : []),
     ...(m.linkedRevisionLabel ? [["Linked ref", <span key="l" className="font-display tabular-nums">{m.linkedRevisionLabel}</span>] as [string, React.ReactNode]] : []),
-    ...(f.baseline ? [["Against baseline", <span key="b" className={f.driftDays > 0 ? "text-[var(--state-overdue)] font-semibold" : ""}>{f.driftDays === 0 ? `On it (${fmtDay(f.baseline)})` : `${Math.abs(f.driftDays)}d ${f.driftDays > 0 ? "later" : "earlier"} than ${fmtDay(f.baseline)}`}</span>] as [string, React.ReactNode]] : []),
+    ...(f.baseline ? [["Against baseline", <span key="b" className={f.driftDays > 0 ? "text-[var(--state-overdue)] font-medium" : ""}>{f.driftDays === 0 ? `On it (${fmtDay(f.baseline)})` : `${Math.abs(f.driftDays)}d ${f.driftDays > 0 ? "later" : "earlier"} than ${fmtDay(f.baseline)}`}</span>] as [string, React.ReactNode]] : []),
     ...(m.wbs ? [["WBS", <span key="s" className="font-display tabular-nums">{m.wbs}</span>] as [string, React.ReactNode]] : []),
     ["Source", f.imported ? "Imported schedule" : "Added by hand"],
   ];
   return (
     <div className="space-y-3">
-      {found && <div className="text-[14px] text-[var(--color-text)]"><DiscoveryTag m={m} tz={tz} className="mr-2" />{found.what}</div>}
-      {m.description?.trim() && <p className="max-w-3xl text-[14px] text-[var(--color-text)] whitespace-pre-wrap">{m.description.trim()}</p>}
+      {found && <div className="text-body text-[var(--color-text)]"><DiscoveryTag m={m} tz={tz} className="mr-2" />{found.what}</div>}
+      {m.description?.trim() && <p className="max-w-3xl text-body text-[var(--color-text)] whitespace-pre-wrap">{m.description.trim()}</p>}
       <dl className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-x-6 gap-y-2.5">
         {facts.map(([k, v]) => (
           <div key={k} className="min-w-0">
-            <dt className="text-[13px] text-[var(--color-text-muted)]">{k}</dt>
-            <dd className="text-[14px] text-[var(--color-text)] break-words">{v}</dd>
+            <dt className="text-body text-[var(--color-text-muted)]">{k}</dt>
+            <dd className="text-body text-[var(--color-text)] break-words">{v}</dd>
           </div>
         ))}
       </dl>
@@ -1014,7 +1014,7 @@ function PlanTable({ rows, progress, freshId, canEdit, busy, onSetStatus, onDele
   // The WO tag filters the list to that work order.
   const name = (m: Milestone, f: PlanFacts) => (
     <span className="min-w-0 flex-1 break-words">
-      {m.wbs && <span className="mr-1.5 font-display tabular-nums text-[13px] text-[var(--color-text-muted)]">{m.wbs}</span>}
+      {m.wbs && <span className="mr-1.5 font-display tabular-nums text-body text-[var(--color-text-muted)]">{m.wbs}</span>}
       <span className={`text-[var(--color-text)] ${f.isParent ? "font-semibold" : ""}`}>{m.name}</span>
       {m.workOrderRef && (
         <FilterTag value={m.workOrderRef} on={query === m.workOrderRef} onPick={onQuery} title={`Show only WO ${m.workOrderRef}`} className="ml-1.5 !h-[1.375rem] !px-1.5 align-middle !text-[var(--color-heading)]">
@@ -1031,16 +1031,16 @@ function PlanTable({ rows, progress, freshId, canEdit, busy, onSetStatus, onDele
   return (
     <>
       {/* Desk: a ruled table. */}
-      <table className="max-sm:hidden w-full text-[14px]">
-        <thead className="bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text-muted)] text-left">
+      <table className="max-sm:hidden w-full text-body">
+        <thead className="bg-[var(--color-surface-2)] text-body text-[var(--color-text-muted)] text-left">
           <tr className="border-b border-[var(--color-border)]">
-            <th scope="col" className="font-semibold pl-4 sm:pl-5 pr-4 h-10">Task</th>
-            <th scope="col" className="font-semibold px-3 w-[128px]">Status</th>
-            <th scope="col" className="font-semibold px-3 w-[120px]">Progress</th>
-            <th scope="col" className="font-semibold px-3 w-[84px]">Start</th>
-            <th scope="col" className="font-semibold px-3 w-[120px]">Finish</th>
-            <th scope="col" className="font-semibold px-3 w-[180px] hidden lg:table-cell">Crew</th>
-            {canEdit && <th scope="col" className="font-semibold pl-3 pr-4 sm:pr-5 w-[124px]"><span className="sr-only">Actions</span></th>}
+            <th scope="col" className="font-medium pl-4 sm:pl-5 pr-4 h-10">Task</th>
+            <th scope="col" className="font-medium px-3 w-[128px]">Status</th>
+            <th scope="col" className="font-medium px-3 w-[120px]">Progress</th>
+            <th scope="col" className="font-medium px-3 w-[84px]">Start</th>
+            <th scope="col" className="font-medium px-3 w-[120px]">Finish</th>
+            <th scope="col" className="font-medium px-3 w-[180px] hidden lg:table-cell">Crew</th>
+            {canEdit && <th scope="col" className="font-medium pl-3 pr-4 sm:pr-5 w-[124px]"><span className="sr-only">Actions</span></th>}
           </tr>
         </thead>
         <tbody>
@@ -1088,12 +1088,12 @@ function PlanTable({ rows, progress, freshId, canEdit, busy, onSetStatus, onDele
             <li key={key} id={m.id ? `ms-row-m-${m.id}` : undefined} className={`relative ${m.id && m.id === freshId ? "bg-[var(--color-surface-2)]" : ""}`}>
               {edgeOf(f)}
               <div onClick={(e) => rowClick(e, key)} className="pr-3 py-2.5 cursor-pointer active:bg-[var(--color-surface-2)]" style={{ paddingLeft: 14 + Math.min(depth, 4) * 10 }}>
-                <div className="flex items-start gap-2 min-w-0 text-[15px] leading-6">
+                <div className="flex items-start gap-2 min-w-0 text-reading leading-6">
                   {chevron(key, m.name, isOpen)}
                   {name(m, f)}
                   <span className="shrink-0"><StatusTag status={f.status} /></span>
                 </div>
-                <div className="mt-1 pl-6 flex items-center gap-x-3 text-[13px] text-[var(--color-text-muted)]">
+                <div className="mt-1 pl-6 flex items-center gap-x-3 text-body text-[var(--color-text-muted)]">
                   <span className="shrink-0"><PctBar f={f} /></span>
                   <span className={`shrink-0 font-display tabular-nums ${f.overdue ? "text-[var(--state-overdue)] font-semibold" : ""}`}>
                     {f.start && fmtDay(f.start) !== fmtDay(f.finish) ? `${fmtDay(f.start)} to ${fmtDay(f.finish)}` : fmtDay(f.finish)}
@@ -1190,12 +1190,12 @@ function AddMilestoneForm({
     finally { setBusy(false); }
   };
 
-  const inp = "h-9 text-[13px] border border-[var(--color-border-strong)] rounded-lg px-2.5 bg-[var(--color-surface)]";
-  const lbl = "block text-[13px] font-semibold text-[var(--color-text-muted)] mb-1";
+  const inp = "h-9 text-body border border-[var(--color-border-strong)] rounded-lg px-2.5 bg-[var(--color-surface)]";
+  const lbl = "block text-body font-medium text-[var(--color-text-muted)] mb-1";
 
   return (
     <form onSubmit={submit} className="px-4 sm:px-5 py-4 bg-[var(--color-surface-2)]/60 border-b border-[var(--color-border)] space-y-3">
-      <div className="font-display text-[17px] font-semibold text-[var(--color-text)]">Add a task</div>
+      <div className="font-display text-section font-semibold text-[var(--color-text)]">Add a task</div>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
         <label className="col-span-2">
           <span className={lbl}>Step</span>
@@ -1235,14 +1235,14 @@ function AddMilestoneForm({
         <textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Optional notes" rows={1} className={`${inp} h-auto min-h-9 py-1.5 md:col-span-3 resize-y`} />
       </div>
       {finishFromHours && !finishAt && (
-        <div className="text-[13px] text-[var(--color-text-muted)]">Finish will be set to <b>{fmtInTz(finishFromHours, tz, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</b> (start + {hours} h).</div>
+        <div className="text-body text-[var(--color-text-muted)]">Finish will be set to <b>{fmtInTz(finishFromHours, tz, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</b> (start + {hours} h).</div>
       )}
       {error && (
-        <div role="alert" className="text-[13px] font-semibold text-[var(--state-overdue)]">{error}</div>
+        <div role="alert" className="text-body font-medium text-[var(--state-overdue)]">{error}</div>
       )}
       <div className="flex items-center justify-end gap-2">
         <button type="button" onClick={onCancel} className={QUIET}>Cancel</button>
-        <button type="submit" disabled={busy || !name.trim() || !startAt} className={quiet ? QUIET : "inline-flex items-center gap-1.5 h-9 px-4 rounded-md text-[14px] font-semibold disabled:opacity-40 transition-colors text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)]"}>
+        <button type="submit" disabled={busy || !name.trim() || !startAt} className={quiet ? QUIET : "inline-flex items-center gap-1.5 h-10 px-4 rounded-md text-body font-medium disabled:opacity-40 transition-colors text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)]"}>
           {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />} Add to schedule
         </button>
       </div>

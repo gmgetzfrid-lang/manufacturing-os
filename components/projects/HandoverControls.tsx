@@ -34,7 +34,7 @@ export function TryControl({ kind, decision, suggestions, crews, disabled, onCha
   return (
     <div className="flex flex-wrap items-center gap-2 pb-1 print:hidden">
       {/* A plain checkbox: marked, the step goes on the other crew's list. */}
-      <label className={`shrink-0 whitespace-nowrap inline-flex items-center gap-1.5 min-h-8 pointer-coarse:min-h-11 text-[13px] cursor-pointer select-none ${disabled ? "opacity-60 cursor-not-allowed" : ""} ${on ? "font-semibold text-[var(--color-text)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}
+      <label className={`shrink-0 whitespace-nowrap inline-flex items-center gap-1.5 min-h-8 pointer-coarse:min-h-11 text-body cursor-pointer select-none ${disabled ? "opacity-60 cursor-not-allowed" : ""} ${on ? "font-medium text-[var(--color-text)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}
         title={on ? "Untick to take it off the list" : undefined}>
         <input type="checkbox" disabled={disabled} checked={on} className="w-4 h-4 accent-[var(--color-current)]"
           onChange={() => onChange({ ...decision, tryIt: !on, crew: !on ? decision?.crew ?? suggestions[0]?.crew ?? null : decision?.crew })} />
@@ -43,7 +43,7 @@ export function TryControl({ kind, decision, suggestions, crews, disabled, onCha
       {on && (
         <>
           <select disabled={disabled} value={decision?.crew ?? ""} onChange={(e) => onChange({ ...decision, tryIt: true, crew: e.target.value || null })}
-            aria-label="Which crew" className="h-8 pointer-coarse:h-11 w-full sm:w-auto max-w-full sm:max-w-[260px] rounded-lg border border-[var(--color-border-control)] bg-[var(--color-surface)] px-2 text-[13px] max-sm:text-[16px] text-[var(--color-text)]">
+            aria-label="Which crew" className="h-8 pointer-coarse:h-11 w-full sm:w-auto max-w-full sm:max-w-[260px] rounded-lg border border-[var(--color-border-control)] bg-[var(--color-surface)] px-2 text-body max-sm:text-reading text-[var(--color-text)]">
             <option value="">{inherit ? `${inherit} (crew for extra work)` : "No crew named"}</option>
             {suggestions.length > 0 && (
               <optgroup label={`On the ${kind} shift`}>
@@ -55,7 +55,7 @@ export function TryControl({ kind, decision, suggestions, crews, disabled, onCha
           <input disabled={disabled} value={note} onChange={(e) => setNote(e.target.value)} maxLength={200}
             onBlur={() => { if (saved !== note) onChange({ ...decision, tryIt: true, note }); }}
             aria-label="Note for the other crew (optional)"
-            placeholder="Note (optional)" className="h-8 pointer-coarse:h-11 w-full sm:w-52 rounded-lg border border-[var(--color-border-control)] bg-[var(--color-surface)] px-2.5 text-[13px] max-sm:text-[16px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)]" />
+            placeholder="Note (optional)" className="h-8 pointer-coarse:h-11 w-full sm:w-52 rounded-lg border border-[var(--color-border-control)] bg-[var(--color-surface)] px-2.5 text-body max-sm:text-reading text-[var(--color-text)] placeholder:text-[var(--color-text-faint)]" />
         </>
       )}
     </div>
@@ -83,9 +83,9 @@ export function ShipBar({ shippedAt, shippedBy, tries, canShip, busy, err, onShi
   ) : null;
   if (shippedAt) {
     return (
-      <div role="status" className="px-4 sm:px-5 py-2 border-b border-[var(--color-border)] flex flex-wrap items-center gap-x-3 gap-y-2 text-[14px] text-[var(--color-text)] print:hidden">
+      <div role="status" className="px-4 sm:px-5 py-2 border-b border-[var(--color-border)] flex flex-wrap items-center gap-x-3 gap-y-2 text-body text-[var(--color-text)] print:hidden">
         <Lock aria-hidden className="w-4 h-4 shrink-0 text-[var(--state-released)]" />
-        <span className="flex-1 min-w-[200px]"><b className="font-semibold">Locked</b> {when(shippedAt)}{shippedBy ? ` by ${shippedBy}` : ""}{tries ? `, ${tries} step${tries === 1 ? "" : "s"} asked to try` : ""}. It can&apos;t be changed.</span>
+        <span className="flex-1 min-w-[200px]"><b className="font-medium">Locked</b> {when(shippedAt)}{shippedBy ? ` by ${shippedBy}` : ""}{tries ? `, ${tries} step${tries === 1 ? "" : "s"} asked to try` : ""}. It can&apos;t be changed.</span>
         {canShip && (
           <Button size="sm" variant="secondary" loading={busy}
             onClick={() => { void appConfirm({ message: `Unlock the ${label} report? It can be changed again until it's locked.`, confirmLabel: "Unlock" }).then((ok) => { if (ok) onUnship(); }); }}>
@@ -101,11 +101,11 @@ export function ShipBar({ shippedAt, shippedBy, tries, canShip, busy, err, onShi
   // report is waiting to be locked, with the late edge.
   if (endedAt) {
     return (
-      <div className="relative px-4 sm:px-5 py-2 border-b border-[var(--color-border)] flex flex-wrap items-center gap-x-3 gap-y-2 text-[14px] text-[var(--color-text)] print:hidden">
+      <div className="relative px-4 sm:px-5 py-2 border-b border-[var(--color-border)] flex flex-wrap items-center gap-x-3 gap-y-2 text-body text-[var(--color-text)] print:hidden">
         <span aria-hidden className="absolute left-0 top-0 bottom-0 w-[3px] bg-[var(--state-held)]" />
         <Unlock aria-hidden className="w-4 h-4 shrink-0 text-[var(--state-held)]" />
         <span className="flex-1 min-w-[200px]">
-          <b className="font-semibold">Lock the {label} report.</b> The shift ended {when(endedAt)} and its report is still open for changes{tries ? ` (${tries} asked to try)` : ""}.
+          <b className="font-medium">Lock the {label} report.</b> The shift ended {when(endedAt)} and its report is still open for changes{tries ? ` (${tries} asked to try)` : ""}.
           {canShip ? " Locking it keeps anyone from changing the wrong day's report." : " Someone who can edit the schedule locks it."}
         </span>
         {canShip && (
@@ -118,14 +118,14 @@ export function ShipBar({ shippedAt, shippedBy, tries, canShip, busy, err, onShi
     );
   }
   return (
-    <div className="px-4 sm:px-5 py-2 border-b border-[var(--color-border)] flex flex-wrap items-center gap-x-3 gap-y-2 text-[14px] text-[var(--color-text-muted)] print:hidden">
+    <div className="px-4 sm:px-5 py-2 border-b border-[var(--color-border)] flex flex-wrap items-center gap-x-3 gap-y-2 text-body text-[var(--color-text-muted)] print:hidden">
       <Unlock aria-hidden className="w-4 h-4 shrink-0" />
       <span className="flex-1 min-w-[200px]">Open for changes{tries ? ` (${tries} asked to try)` : ""}. Lock it when the turnover is done.</span>
       {canShip ? (
         <Button size="sm" variant="secondary" loading={busy} onClick={onShip}>
           <Lock className="w-4 h-4" /> Lock report
         </Button>
-      ) : <span className="text-[13px]">Only someone who can edit the schedule can lock it.</span>}
+      ) : <span className="text-body">Only someone who can edit the schedule can lock it.</span>}
       {problem}
     </div>
   );

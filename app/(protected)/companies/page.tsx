@@ -139,7 +139,7 @@ export default function CompaniesPage() {
       ) : shown.length === 0 ? (
         error != null ? null : (
           <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-10 text-center">
-            <p className="text-[15px] text-[var(--color-text)]">
+            <p className="text-reading text-[var(--color-text)]">
               {companies.length === 0
                 ? "Add the contractors and vendors you work with; their record fills in as projects run."
                 : "No companies match."}
@@ -153,19 +153,19 @@ export default function CompaniesPage() {
         )
       ) : (
         <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
-          <table className="w-full text-[14px] max-sm:hidden">
-            <thead className="bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text-muted)] text-left">
+          <table className="w-full text-body max-sm:hidden">
+            <thead className="bg-[var(--color-surface-2)] text-body text-[var(--color-text-muted)] text-left">
               <tr>
-                <th className="font-semibold px-4 h-10 w-full">Company and last on record</th>
-                <th className="font-semibold px-4 h-10 hidden md:table-cell whitespace-nowrap">Kind</th>
-                <th className="font-semibold px-4 h-10 whitespace-nowrap">Score</th>
+                <th className="font-medium px-4 h-10 w-full">Company and last on record</th>
+                <th className="font-medium px-4 h-10 hidden md:table-cell whitespace-nowrap">Kind</th>
+                <th className="font-medium px-4 h-10 whitespace-nowrap">Score</th>
                 {DIMENSIONS.map(([key, label]) => (
-                  <th key={key} className="font-semibold px-3 h-10 hidden lg:table-cell text-right whitespace-nowrap">{label}</th>
+                  <th key={key} className="font-medium px-3 h-10 hidden lg:table-cell text-right whitespace-nowrap">{label}</th>
                 ))}
-                <th className="font-semibold px-4 h-10 hidden xl:table-cell text-right whitespace-nowrap">Jobs</th>
-                <th className="font-semibold px-4 h-10 hidden xl:table-cell text-right whitespace-nowrap">Bids won</th>
-                <th className="font-semibold px-4 h-10 hidden 2xl:table-cell text-right whitespace-nowrap">Change orders</th>
-                <th className="font-semibold px-4 h-10 hidden 2xl:table-cell whitespace-nowrap">Contact</th>
+                <th className="font-medium px-4 h-10 hidden xl:table-cell text-right whitespace-nowrap">Jobs</th>
+                <th className="font-medium px-4 h-10 hidden xl:table-cell text-right whitespace-nowrap">Bids won</th>
+                <th className="font-medium px-4 h-10 hidden 2xl:table-cell text-right whitespace-nowrap">Change orders</th>
+                <th className="font-medium px-4 h-10 hidden 2xl:table-cell whitespace-nowrap">Contact</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[var(--color-border)]">
@@ -184,7 +184,7 @@ export default function CompaniesPage() {
             ))}
           </ul>
           {shown.length > limit && (
-            <div className="flex items-center justify-between gap-3 px-4 py-2.5 border-t border-[var(--color-border)] text-[13px]">
+            <div className="flex items-center justify-between gap-3 px-4 py-2.5 border-t border-[var(--color-border)] text-body">
               <span className="text-[var(--color-text-muted)] tabular-nums">{limit} of {shown.length} shown</span>
               <button type="button" onClick={() => setLimit((n) => n + 40)} className={heroQuiet}>
                 Show {Math.min(40, shown.length - limit)} more
@@ -240,7 +240,7 @@ function lastOnRecord(c: Company, profile: CompanyProfileData | null): string | 
 function ScoreCell({ profile, failed }: { profile: CompanyProfileData | null; failed?: boolean }) {
   if (!profile) {
     return failed
-      ? <span className="text-[13px] text-[var(--color-text-muted)]" title="Open the company to try again">Couldn&apos;t gather</span>
+      ? <span className="text-body text-[var(--color-text-muted)]" title="Open the company to try again">Couldn&apos;t gather</span>
       : <Skeleton className="w-20 h-4" />;
   }
   const sc = profile.scorecard;
@@ -260,11 +260,11 @@ function CompanyRow({ company: c, profile, failed, onOpen, onLink, onKind, onTra
     <tr onClick={(e) => { if ((e.target as HTMLElement).closest("a,button")) return; onOpen(); }} className="cursor-pointer hover:bg-[var(--color-surface-2)]">
       <td className="px-4 py-3 max-w-0">
         <div className="flex items-center gap-2 min-w-0">
-          <Link href={`/companies/${c.id}`} onClick={onLink} className="truncate text-[15px] font-semibold text-[var(--color-text)] hover:text-[var(--color-accent-text)]">{c.name}</Link>
+          <Link href={`/companies/${c.id}`} onClick={onLink} className="truncate text-reading font-medium text-[var(--color-text)] hover:text-[var(--color-accent-text)]">{c.name}</Link>
           {blocked && <StatusTag tone="bad" className="shrink-0">Do not use</StatusTag>}
           {c.status === "inactive" && <StatusTag className="shrink-0">Inactive</StatusTag>}
         </div>
-        <div className="mt-0.5 flex items-center gap-1.5 min-w-0 text-[13px] text-[var(--color-text-muted)]">
+        <div className="mt-0.5 flex items-center gap-1.5 min-w-0 text-body text-[var(--color-text-muted)]">
           {c.trade && (onTrade
             ? <button type="button" onClick={onTrade} title={`Find every ${c.trade} company`} className="shrink-0 hover:text-[var(--color-accent-text)] hover:underline underline-offset-2">{c.trade}</button>
             : <span className="shrink-0">{c.trade}</span>)}
@@ -283,10 +283,10 @@ function CompanyRow({ company: c, profile, failed, onOpen, onLink, onKind, onTra
         return (
           <td key={key} className="px-3 py-3 hidden lg:table-cell text-right whitespace-nowrap" title={d?.detail}>
             {d?.score != null
-              ? <ScoreFigure score={d.score} className="text-[15px]" />
+              ? <ScoreFigure score={d.score} className="text-reading" />
               : <span className="text-[var(--color-text-faint)]">{profile ? "None" : ""}</span>}
             {key === "safety" && (f.recordables > 0 || f.stopWorks > 0) && (
-              <div className="text-[13px] font-semibold text-[var(--state-overdue-text)]">
+              <div className="text-body font-medium text-[var(--state-overdue-text)]">
                 {f.recordables > 0 ? plural(f.recordables, "recordable") : plural(f.stopWorks, "stop work", "stop works")}
               </div>
             )}
@@ -298,7 +298,7 @@ function CompanyRow({ company: c, profile, failed, onOpen, onLink, onKind, onTra
       <td className="px-4 py-3 hidden 2xl:table-cell text-right tabular-nums whitespace-nowrap">{profile ? (f.coCount > 0 ? <>{f.coCount} <span className="text-[var(--color-text-muted)]">{fmtMoney(f.coAmount)}</span></> : <span className="text-[var(--color-text-faint)]">None</span>) : ""}</td>
       <td className="px-4 py-3 hidden 2xl:table-cell whitespace-nowrap">
         {c.contactName || c.contactEmail
-          ? <><div>{c.contactName || c.contactEmail}</div>{c.contactName && c.contactEmail && <div className="text-[13px] text-[var(--color-text-muted)]">{c.contactEmail}</div>}</>
+          ? <><div>{c.contactName || c.contactEmail}</div>{c.contactName && c.contactEmail && <div className="text-body text-[var(--color-text-muted)]">{c.contactEmail}</div>}</>
           : <span className="text-[var(--color-text-faint)]">None</span>}
       </td>
     </tr>
@@ -315,15 +315,15 @@ function CompanyItem({ company: c, profile, failed, onLink }: { company: Company
     <li className="relative">
       <Link href={`/companies/${c.id}`} onClick={onLink} className="block px-4 py-3 active:bg-[var(--color-surface-2)]">
         <div className="flex items-start justify-between gap-3">
-          <span className="min-w-0 font-semibold text-[15px] text-[var(--color-text)] truncate">{c.name}</span>
+          <span className="min-w-0 font-medium text-reading text-[var(--color-text)] truncate">{c.name}</span>
           <ScoreCell profile={profile} failed={failed} />
         </div>
-        <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-[13px] text-[var(--color-text-muted)]">
+        <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-body text-[var(--color-text-muted)]">
           <span>{COMPANY_KIND_LABEL[c.kind]}</span>
           {c.trade && <><span aria-hidden>·</span><span>{c.trade}</span></>}
           {profile && f.jobs > 0 && <><span aria-hidden>·</span><span>{plural(f.jobs, "job")}</span></>}
         </div>
-        {last && <p className="mt-0.5 text-[13px] text-[var(--color-text-muted)] truncate">{last}</p>}
+        {last && <p className="mt-0.5 text-body text-[var(--color-text-muted)] truncate">{last}</p>}
         {(blocked || f.recordables > 0) && (
           <div className="mt-1 flex flex-wrap items-center gap-x-3">
             {blocked && <StatusTag tone="bad">Do not use</StatusTag>}

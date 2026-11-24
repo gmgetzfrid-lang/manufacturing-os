@@ -18,23 +18,23 @@ import { explainError } from "@/lib/friendlyError";
 
 /** The page's one main action: filled with the accent. */
 export const btnPrimary =
-  "inline-flex items-center justify-center gap-2 whitespace-nowrap h-10 pointer-coarse:h-11 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] shadow-[var(--shadow-action)] text-[15px] font-semibold hover:bg-[var(--color-accent-hover)] active:shadow-none disabled:opacity-50 disabled:shadow-none disabled:cursor-not-allowed transition-[color,background-color,border-color,box-shadow]";
+  "ui-press inline-flex items-center justify-center gap-2 whitespace-nowrap h-10 pointer-coarse:h-11 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] shadow-[var(--shadow-action)] text-reading font-medium hover:bg-[var(--color-accent-hover)] active:shadow-none disabled:opacity-50 disabled:shadow-none disabled:cursor-not-allowed transition-[color,background-color,border-color,box-shadow,transform]";
 
 /** A secondary button: white, a hairline edge, text color. */
 export const btnQuiet =
-  "inline-flex items-center justify-center gap-1.5 whitespace-nowrap h-10 pointer-coarse:h-11 px-3.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] shadow-[var(--shadow-control)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-border-control)] active:shadow-none disabled:opacity-50 disabled:shadow-none disabled:cursor-not-allowed transition-[color,background-color,border-color,box-shadow]";
+  "ui-quiet ui-press inline-flex items-center justify-center gap-1.5 whitespace-nowrap h-10 pointer-coarse:h-11 px-3.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] shadow-[var(--shadow-control)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-border-control)] active:shadow-none disabled:opacity-50 disabled:shadow-none disabled:cursor-not-allowed transition-[color,background-color,border-color,box-shadow,transform]";
 
 /** A small secondary button for a table row. */
 export const btnRow =
-  "inline-flex items-center justify-center gap-1.5 whitespace-nowrap shrink-0 h-8 pointer-coarse:h-10 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] shadow-[var(--shadow-control)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-border-control)] active:shadow-none disabled:opacity-50 disabled:shadow-none disabled:cursor-not-allowed transition-[color,background-color,border-color,box-shadow]";
+  "ui-press inline-flex items-center justify-center gap-1.5 whitespace-nowrap shrink-0 h-8 pointer-coarse:h-10 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] shadow-[var(--shadow-control)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-border-control)] active:shadow-none disabled:opacity-50 disabled:shadow-none disabled:cursor-not-allowed transition-[color,background-color,border-color,box-shadow,transform]";
 
 /** A destructive action: red words on a secondary button. Confirm first. */
 export const btnDanger =
-  "inline-flex items-center justify-center gap-1.5 whitespace-nowrap h-10 pointer-coarse:h-11 px-3.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] shadow-[var(--shadow-control)] text-[14px] font-semibold text-[var(--state-overdue-text)] hover:bg-[color-mix(in_srgb,var(--state-overdue)_6%,var(--color-surface))] hover:border-[color-mix(in_srgb,var(--state-overdue)_45%,var(--color-border-strong))] active:shadow-none disabled:opacity-50 disabled:shadow-none disabled:cursor-not-allowed transition-[color,background-color,border-color,box-shadow]";
+  "ui-press inline-flex items-center justify-center gap-1.5 whitespace-nowrap h-10 pointer-coarse:h-11 px-3.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] shadow-[var(--shadow-control)] text-body font-medium text-[var(--state-overdue-text)] hover:bg-[color-mix(in_srgb,var(--state-overdue)_6%,var(--color-surface))] hover:border-[color-mix(in_srgb,var(--state-overdue)_45%,var(--color-border-strong))] active:shadow-none disabled:opacity-50 disabled:shadow-none disabled:cursor-not-allowed transition-[color,background-color,border-color,box-shadow,transform]";
 
 /** A tertiary action: a link-styled button (no box). */
 export const btnLink =
-  "inline-flex items-center gap-1.5 whitespace-nowrap min-h-8 pointer-coarse:min-h-11 text-[14px] font-semibold text-[var(--color-accent-text)] hover:underline underline-offset-2 disabled:opacity-50 disabled:cursor-not-allowed disabled:no-underline";
+  "inline-flex items-center gap-1.5 whitespace-nowrap min-h-8 pointer-coarse:min-h-11 text-body font-medium text-[var(--color-accent-text)] hover:underline underline-offset-2 disabled:opacity-50 disabled:cursor-not-allowed disabled:no-underline";
 
 /** An icon-only button with a visible hover fill. Give it an aria-label
  *  and a title (the tooltip). */
@@ -52,13 +52,13 @@ export const fieldBox =
 
 /** A full-width text field on a white sheet: 40 px (44 on touch), 16 px
  *  text on a phone. */
-export const field = `w-full h-10 pointer-coarse:h-11 text-[15px] max-sm:text-[16px] ${fieldBox}`;
+export const field = `w-full h-10 pointer-coarse:h-11 text-reading ${fieldBox}`;
 
 /** A form label, above its field: 14px, sentence case. */
-export const label = "block text-[14px] font-semibold text-[var(--color-text)] mb-1.5";
+export const label = "block text-body font-medium text-[var(--color-text)] mb-1.5";
 
 /** The line under a field that says what's wrong and how to fix it. */
-export const fieldError = "mt-1.5 flex items-start gap-1.5 text-[13px] font-semibold text-[var(--state-overdue-text)]";
+export const fieldError = "mt-1.5 flex items-start gap-1.5 text-body font-medium text-[var(--state-overdue-text)]";
 
 /** A white sheet: where data sits. */
 export const sheet = "rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-card)]";
@@ -66,14 +66,14 @@ export const sheet = "rounded-xl border border-[var(--color-border)] bg-[var(--c
 /** The ruled table recipe. */
 export const tbl = {
   wrap: "rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-card)] overflow-hidden",
-  table: "w-full text-[14px] border-collapse tabular-nums",
-  thead: "bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text-muted)] text-left",
-  th: "font-semibold px-4 h-10 whitespace-nowrap",
-  tbody: "divide-y divide-[var(--color-border)]",
+  table: "w-full text-body border-collapse tabular-nums",
+  thead: "bg-[var(--color-surface-2)] text-body text-[var(--color-text-muted)] text-left",
+  th: "font-medium px-4 h-10 whitespace-nowrap",
+  tbody: "ui-stagger divide-y divide-[var(--color-border)]",
   tr: "hover:bg-[var(--color-surface-2)] transition-colors",
   td: "px-4 py-3 align-middle",
   /** A sheet's footer row: "40 of 120 shown · Show more". */
-  foot: "px-4 py-3 border-t border-[var(--color-border)] flex items-center justify-between gap-3 text-[14px]",
+  foot: "px-4 py-3 border-t border-[var(--color-border)] flex items-center justify-between gap-3 text-body",
 };
 
 export type Tone = "bad" | "warn" | "good" | "none";
@@ -99,7 +99,7 @@ export function StatusTag({ tone = "none", colored, children, className = "" }: 
 }) {
   const wordColored = colored ?? (tone === "bad" || tone === "warn");
   return (
-    <span className={`inline-flex items-center gap-1.5 text-[13px] font-semibold whitespace-nowrap ${className}`}
+    <span className={`inline-flex items-center gap-1.5 text-body font-medium whitespace-nowrap ${className}`}
       style={{ color: wordColored && tone !== "none" ? TONE_TEXT[tone] : tone === "none" ? "var(--color-text-muted)" : "var(--color-text)" }}>
       <span aria-hidden className="w-[7px] h-[7px] rounded-full shrink-0" style={{ background: TONE_VAR[tone] }} />
       {children}
@@ -152,9 +152,9 @@ export function FormRow({ label: text, hint, htmlFor, children, className = "" }
      <div className="grid grid-cols-1 @xl:grid-cols-[minmax(180px,260px)_1fr] gap-x-8 gap-y-2 px-4 sm:px-5 py-4">
       <div className="min-w-0 @xl:pt-2">
         {htmlFor
-          ? <label htmlFor={htmlFor} className="block text-[14px] font-semibold text-[var(--color-text)]">{text}</label>
-          : <div className="text-[14px] font-semibold text-[var(--color-text)]">{text}</div>}
-        {hint && <p className="mt-0.5 text-[13px] leading-snug text-[var(--color-text-muted)]">{hint}</p>}
+          ? <label htmlFor={htmlFor} className="block text-body font-medium text-[var(--color-text)]">{text}</label>
+          : <div className="text-body font-medium text-[var(--color-text)]">{text}</div>}
+        {hint && <p className="mt-0.5 text-body leading-snug text-[var(--color-text-muted)]">{hint}</p>}
       </div>
       <div className="min-w-0">{children}</div>
      </div>
@@ -170,8 +170,8 @@ export function Problem({ children, error, retry, className = "" }: {
 }) {
   const said = children ?? (error !== undefined ? (() => { const f = explainError(error); return `${f.message} ${f.next}`; })() : null);
   return (
-    <p role="alert" className={`flex flex-wrap items-baseline gap-x-2 gap-y-1 text-[14px] text-[var(--state-overdue-text)] ${className}`}>
-      <span className="font-semibold">{said}</span>
+    <p role="alert" className={`flex flex-wrap items-baseline gap-x-2 gap-y-1 text-body text-[var(--state-overdue-text)] ${className}`}>
+      <span className="font-medium">{said}</span>
       {retry && <button type="button" onClick={retry} className={link}>Try again</button>}
     </p>
   );
@@ -190,7 +190,7 @@ export function Section({ label: text, icon, count, action, children, className 
   return (
     <section className={`min-w-0 ${className}`} aria-labelledby={id}>
       <div className="flex flex-wrap items-end gap-x-3 gap-y-2 mb-3 min-h-8">
-        <h2 id={id} className="font-display text-[20px] leading-tight font-semibold text-[var(--color-text)] inline-flex items-center gap-2 [&_svg]:inline [&_svg]:align-[-2px]">
+        <h2 id={id} className="font-display text-section leading-tight font-semibold text-[var(--color-text)] inline-flex items-center gap-2 [&_svg]:inline [&_svg]:align-[-2px]">
           {icon && <IconTile icon={icon} />}
           {text}
           {count !== undefined && count > 0 && <span className="ui-count">{count.toLocaleString()}</span>}

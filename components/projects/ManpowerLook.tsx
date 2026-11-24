@@ -90,12 +90,12 @@ export default function ManpowerLook({ shifts, records, settings, steps, tz, now
   // Still reading the shift records: say so, never a blank space.
   if (!data) return <LoadingBlock what="the head counts" rows={2} />;
   const { counts, sum, est, wos, addedMH, rate, order } = data;
-  const head = "text-[12px] font-bold text-[var(--color-text)]";
+  const head = "text-caption font-medium text-[var(--color-text)]";
   if (sum.counted === 0) {
     return (
       <div className="space-y-1">
         <div className={head}>Manpower</div>
-        <p className="text-[12px] text-[var(--color-text-muted)]">No head counts were entered at the shift meetings{shifts.some((r) => r.start <= now) ? "" : " yet"}. Enter each crew&apos;s direct and indirect on Shift › Meeting; they show here shift by shift against the bid.</p>
+        <p className="text-caption text-[var(--color-text-muted)]">No head counts were entered at the shift meetings{shifts.some((r) => r.start <= now) ? "" : " yet"}. Enter each crew&apos;s direct and indirect on Shift › Meeting; they show here shift by shift against the bid.</p>
       </div>
     );
   }
@@ -133,7 +133,7 @@ export default function ManpowerLook({ shifts, records, settings, steps, tz, now
     <div className="space-y-3">
       <div>
         <div className={head}>Manpower, as counted at the shift meetings</div>
-        <p className="mt-0.5 text-[12px] leading-snug text-[var(--color-text-muted)]">
+        <p className="mt-0.5 text-caption leading-snug text-[var(--color-text-muted)]">
           Counted on {sum.counted} of {plural(sum.shifts, "shift")}{sum.carried > 0 ? `; ${sum.carried} of those carried over from the shift before, not checked` : ""}. Man-hours are the count times the shift&apos;s hours: who left early or came late isn&apos;t seen.
         </p>
       </div>
@@ -148,7 +148,7 @@ export default function ManpowerLook({ shifts, records, settings, steps, tz, now
       </div>
 
       <div>
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-[var(--color-text-muted)]">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-caption text-[var(--color-text-muted)]">
           {shown.map((co) => <span key={co} className="inline-flex items-center gap-1"><span className={`inline-block w-2.5 h-2.5 rounded-sm ${colorOf(co)}`} />{co}</span>)}
           {hasOther && <span className="inline-flex items-center gap-1"><span className={`inline-block w-2.5 h-2.5 rounded-sm ${OTHER}`} />{OTHER_NAME}</span>}
           {anyBid && <span className="inline-flex items-center gap-1"><span className="inline-block w-0.5 h-3 bg-[var(--color-text)]" />bid</span>}
@@ -158,7 +158,7 @@ export default function ManpowerLook({ shifts, records, settings, steps, tz, now
           {rows.map((r) => {
             if (r.kind === "gap") {
               return (
-                <div key={r.from.key} className="grid grid-cols-[116px_minmax(0,1fr)] gap-2 py-1 text-[12px] text-[var(--color-text-muted)]">
+                <div key={r.from.key} className="grid grid-cols-[116px_minmax(0,1fr)] gap-2 py-1 text-caption text-[var(--color-text-muted)]">
                   <span className="pl-1 leading-tight">{labelOf(r.from)}{r.n > 1 && <span className="block">to {labelOf(r.to)}</span>}</span>
                   <span className="italic self-center">{r.n > 1 ? `${r.n} shifts not counted` : "Not counted"}</span>
                 </div>
@@ -173,10 +173,10 @@ export default function ManpowerLook({ shifts, records, settings, steps, tz, now
             return (
               <div key={c.key} className={c.kind === "night" ? "bg-[var(--color-surface-2)]/50" : ""}>
                 <button type="button" onClick={() => setOpen(isOpen ? null : c.key)} aria-expanded={isOpen}
-                  className="w-full grid grid-cols-[116px_minmax(0,1fr)_auto] gap-2 items-center py-1 text-left text-[12px]">
+                  className="w-full grid grid-cols-[116px_minmax(0,1fr)_auto] gap-2 items-center py-1 text-left text-caption">
                   <span className="text-[var(--color-text)] leading-tight pl-1 inline-flex items-start gap-0.5">
                     <ChevronRight className={`w-3.5 h-3.5 mt-px shrink-0 ui-chevron${(isOpen) ? " rotate-90" : ""}`} />
-                    <span>{labelOf(c)}{c.carried && <span className="block text-[11px] text-[var(--state-held-text)]">carried, not checked</span>}</span>
+                    <span>{labelOf(c)}{c.carried && <span className="block text-caption text-[var(--state-held-text)]">carried, not checked</span>}</span>
                   </span>
                   <span className="relative h-3">
                     <span className={`absolute inset-y-0 left-0 flex gap-[2px] ${c.carried ? "opacity-50" : ""}`} style={{ width: `${(total / max) * 100}%` }}>
@@ -189,7 +189,7 @@ export default function ManpowerLook({ shifts, records, settings, steps, tz, now
                   </span>
                 </button>
                 {isOpen && (
-                  <ul className="pb-1.5 pl-6 pr-1 space-y-0.5 text-[12px] text-[var(--color-text-muted)]">
+                  <ul className="pb-1.5 pl-6 pr-1 space-y-0.5 text-caption text-[var(--color-text-muted)]">
                     {c.companies.map((x) => {
                       const b = settings?.bids?.[x.company]?.[c.kind];
                       return (
@@ -216,7 +216,7 @@ export default function ManpowerLook({ shifts, records, settings, steps, tz, now
             const r = rate.get(x.company);
             const rateSet = settings?.bids?.[x.company]?.rate;
             return (
-              <li key={x.company} className="py-1.5 text-[12px] leading-snug">
+              <li key={x.company} className="py-1.5 text-caption leading-snug">
                 <div>
                   <span className={`inline-block w-2.5 h-2.5 rounded-sm mr-1.5 ${colorOf(x.company)}`} />
                   <b className="text-[var(--color-text)]">{x.company}</b>
@@ -237,7 +237,7 @@ export default function ManpowerLook({ shifts, records, settings, steps, tz, now
         </ul>
       </div>
 
-      <div className="text-[12px] leading-snug">
+      <div className="text-caption leading-snug">
         <div className={head}>Safety exposure</div>
         <div className="text-[var(--color-text-muted)]">
           {n0(sum.totalMH)} counted man-hours. {plural(sum.incidents.recordable, "recordable")}, {sum.incidents.firstAid} first aid, {sum.incidents.nearMiss} near miss{sum.incidents.nearMiss === 1 ? "" : "es"} written on these shifts.
@@ -248,23 +248,23 @@ export default function ManpowerLook({ shifts, records, settings, steps, tz, now
       {wos.length > 0 && (
         <div>
           <div className={head}>Man-hours by work order (estimated)</div>
-          <p className="mt-0.5 text-[12px] leading-snug text-[var(--color-text-muted)]">
+          <p className="mt-0.5 text-caption leading-snug text-[var(--color-text-muted)]">
             Nobody counts by job: each shift, a company&apos;s direct hours are shared over its work going then, by hours going (holds left out).
             {addedMH > 0 && <> Added work took about {n0(addedMH)} direct man-hours.</>}
             {est.untiedMH > 0 && <> {n0(est.untiedMH)} direct man-hours were counted with none of that company&apos;s work going.</>}
           </p>
-          <ul className="mt-1 divide-y divide-[var(--color-border)]/60 text-[12px]">
+          <ul className="mt-1 divide-y divide-[var(--color-border)]/60 text-caption">
             {(allWos ? wos : wos.slice(0, 10)).map((w) => (
               <li key={w.key} className="flex items-baseline gap-2 py-1">
-                <span className="flex-1 min-w-0 break-words text-[var(--color-text)]">{w.label}{w.added && <span className="ml-1.5 text-[11px] font-bold text-[var(--state-held-text)]">added</span>}</span>
+                <span className="flex-1 min-w-0 break-words text-[var(--color-text)]">{w.label}{w.added && <span className="ml-1.5 text-caption font-medium text-[var(--state-held-text)]">added</span>}</span>
                 <span className="tabular-nums text-[var(--color-text-muted)]">{n0(w.mh)} h</span>
               </li>
             ))}
           </ul>
-          {wos.length > 10 && <button type="button" onClick={() => setAllWos(!allWos)} className="mt-1 text-[13px] text-[var(--color-accent-text)] hover:underline">{allWos ? "Show the top 10" : `Show all ${wos.length}`}</button>}
+          {wos.length > 10 && <button type="button" onClick={() => setAllWos(!allWos)} className="mt-1 text-body text-[var(--color-accent-text)] hover:underline">{allWos ? "Show the top 10" : `Show all ${wos.length}`}</button>}
         </div>
       )}
-      {rate.size > 0 && <p className="text-[11px] leading-snug text-[var(--color-text-muted)]">Man-hours per planned hour compare companies and jobs, not a crew rate: the schedule&apos;s hours are clock time, not man-hours. Only finished steps worked wholly on counted shifts are in it.</p>}
+      {rate.size > 0 && <p className="text-caption leading-snug text-[var(--color-text-muted)]">Man-hours per planned hour compare companies and jobs, not a crew rate: the schedule&apos;s hours are clock time, not man-hours. Only finished steps worked wholly on counted shifts are in it.</p>}
     </div>
   );
 }
@@ -272,9 +272,9 @@ export default function ManpowerLook({ shifts, records, settings, steps, tz, now
 function MiniTile({ k, v, s }: { k: string; v: string; s: string }) {
   return (
     <div className="min-w-0">
-      <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">{k}</div>
-      <div className="mt-0.5 text-[14px] font-bold truncate text-[var(--color-text)]">{v}</div>
-      <div className="text-[11px] leading-snug text-[var(--color-text-muted)]">{s}</div>
+      <div className="text-body font-medium text-[var(--color-text-muted)]">{k}</div>
+      <div className="mt-0.5 text-body font-medium truncate text-[var(--color-text)]">{v}</div>
+      <div className="text-caption leading-snug text-[var(--color-text-muted)]">{s}</div>
     </div>
   );
 }

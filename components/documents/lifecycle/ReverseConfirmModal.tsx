@@ -93,8 +93,8 @@ export default function ReverseConfirmModal({
           <div className="flex items-center gap-2">
             <Undo2 className="w-5 h-5 text-[var(--color-text)]" />
             <div>
-              <h2 className="font-semibold text-[var(--color-text)]">Reverse {description.opName}</h2>
-              <div className="text-[13px] text-[var(--color-text-muted)] mt-0.5">
+              <h2 className="font-medium text-[var(--color-text)]">Reverse {description.opName}</h2>
+              <div className="text-body text-[var(--color-text-muted)] mt-0.5">
                 Originally: {event.summary} · {formatWhen(event.timestamp)}
               </div>
             </div>
@@ -106,11 +106,11 @@ export default function ReverseConfirmModal({
 
         <div className="p-5 space-y-3">
           {/* What will happen */}
-          <div className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-lg p-3 text-[13px]">
+          <div className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-lg p-3 text-body">
             <div className="flex items-start gap-2">
               <Info className="w-3.5 h-3.5 mt-0.5 shrink-0 text-[var(--color-text-muted)]" />
               <div>
-                <div className="font-bold text-[var(--color-text)] mb-1">What this will do</div>
+                <div className="font-medium text-[var(--color-text)] mb-1">What this will do</div>
                 <ul className="list-disc ml-4 space-y-0.5 text-[var(--color-text)]">
                   {description.steps.map((s, i) => <li key={i}>{s}</li>)}
                 </ul>
@@ -119,14 +119,14 @@ export default function ReverseConfirmModal({
           </div>
 
           {/* Compensating-action note */}
-          <div className="text-[13px] text-[var(--color-text-muted)]">
+          <div className="text-body text-[var(--color-text-muted)]">
             We never hard-delete - newly-created docs are parked under <b>Superseded</b> so the audit trail stays intact.
             If derivative work happened on them, it&apos;s preserved under that status.
           </div>
 
           {/* Reason */}
           <label className="block">
-            <span className="text-[13px] font-semibold text-[var(--color-text)] ">Reason for reversal *</span>
+            <span className="text-body font-medium text-[var(--color-text)] ">Reason for reversal *</span>
             <textarea
               value={reason}
               onChange={(e) => setReason(e.target.value)}
@@ -139,8 +139,8 @@ export default function ReverseConfirmModal({
 
           {/* Result (after reversal completes) */}
           {result && (
-            <div className="bg-[color-mix(in_srgb,var(--state-released)_10%,transparent)] border border-[color-mix(in_srgb,var(--state-released)_35%,transparent)] rounded-lg p-3 text-[13px] space-y-1">
-              <div className="font-bold text-[var(--state-released)] inline-flex items-center gap-1">
+            <div className="bg-[color-mix(in_srgb,var(--state-released)_10%,transparent)] border border-[color-mix(in_srgb,var(--state-released)_35%,transparent)] rounded-lg p-3 text-body space-y-1">
+              <div className="font-medium text-[var(--state-released)] inline-flex items-center gap-1">
                 <Check className="w-3.5 h-3.5" /> Reversal complete
               </div>
               <div className="text-[var(--state-released)]">
@@ -150,7 +150,7 @@ export default function ReverseConfirmModal({
               </div>
               {result.warnings.length > 0 && (
                 <div className="pt-2 border-t border-[color-mix(in_srgb,var(--state-released)_35%,transparent)]">
-                  <div className="font-bold text-[var(--state-held)] inline-flex items-center gap-1">
+                  <div className="font-medium text-[var(--state-held)] inline-flex items-center gap-1">
                     <AlertTriangle className="w-3.5 h-3.5" /> Heads up
                   </div>
                   <ul className="list-disc ml-4 mt-1 text-[var(--state-held)] space-y-0.5">
@@ -162,7 +162,7 @@ export default function ReverseConfirmModal({
           )}
 
           {error && (
-            <div className="flex items-start gap-2 text-[13px] border-l-2 border-[var(--state-overdue)] pl-3 text-[var(--state-overdue)]">
+            <div className="flex items-start gap-2 text-body border-l-2 border-[var(--state-overdue)] pl-3 text-[var(--state-overdue)]">
               <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" /> {error}
             </div>
           )}
@@ -170,7 +170,7 @@ export default function ReverseConfirmModal({
 
         <div className="px-5 py-3 border-t border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center justify-end gap-2">
           {result ? (
-            <button onClick={onSuccess} className="text-sm font-bold bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] px-3 py-1.5 rounded">
+            <button onClick={onSuccess} className="text-sm font-medium bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] px-3 py-1.5 rounded">
               Done
             </button>
           ) : (
@@ -181,7 +181,7 @@ export default function ReverseConfirmModal({
               <button
                 onClick={submit}
                 disabled={busy || !valid}
-                className="inline-flex items-center gap-1.5 text-sm font-bold bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] px-3 py-1.5 rounded disabled:opacity-40"
+                className="inline-flex items-center gap-1.5 text-sm font-medium bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] px-3 py-1.5 rounded disabled:opacity-40"
               >
                 {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Undo2 className="w-3.5 h-3.5" />}
                 Confirm Reverse

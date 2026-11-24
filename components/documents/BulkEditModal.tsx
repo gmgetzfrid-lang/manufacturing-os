@@ -99,8 +99,8 @@ export default function BulkEditModal({
         <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center gap-3">
           <div className="p-2 rounded-lg bg-[var(--color-surface-2)] text-[var(--color-text)]"><Pencil className="w-5 h-5" /></div>
           <div className="flex-1">
-            <div className="text-sm font-semibold text-[var(--color-text)]">Bulk edit · {docs.length} document{docs.length === 1 ? "" : "s"}</div>
-            <div className="text-[13px] text-[var(--color-text-muted)]">Apply one change to every selected row. Each insert is independent, a single failure doesn&apos;t roll back the rest.</div>
+            <div className="text-sm font-medium text-[var(--color-text)]">Bulk edit · {docs.length} document{docs.length === 1 ? "" : "s"}</div>
+            <div className="text-body text-[var(--color-text-muted)]">Apply one change to every selected row. Each insert is independent, a single failure doesn&apos;t roll back the rest.</div>
           </div>
           <button aria-label="Close" onClick={onClose} disabled={busy} className="p-2 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-faint)] hover:text-[var(--color-text)]">
             <X className="w-4 h-4" />
@@ -109,7 +109,7 @@ export default function BulkEditModal({
 
         <div className="px-5 py-4 space-y-4">
           <div>
-            <label className="text-[13px] font-semibold text-[var(--color-text)] mb-1.5 block">Field to change</label>
+            <label className="text-body font-medium text-[var(--color-text)] mb-1.5 block">Field to change</label>
             <select
               value={target.kind === "custom" ? `custom:${target.def.key}` : target.kind}
               onChange={(e) => {
@@ -139,7 +139,7 @@ export default function BulkEditModal({
           </div>
 
           <div>
-            <label className="text-[13px] font-semibold text-[var(--color-text)] mb-1.5 block">New value</label>
+            <label className="text-body font-medium text-[var(--color-text)] mb-1.5 block">New value</label>
             {target.kind === "status" ? (
               <select
                 value={newValue} onChange={(e) => setNewValue(e.target.value)}
@@ -169,13 +169,13 @@ export default function BulkEditModal({
 
           {results && (
             <div className="space-y-2">
-              <div className="rounded-lg bg-[color-mix(in_srgb,var(--state-released)_10%,transparent)] border border-[color-mix(in_srgb,var(--state-released)_35%,transparent)] p-3 text-[13px] text-[var(--state-released)] flex items-start gap-2">
+              <div className="rounded-lg bg-[color-mix(in_srgb,var(--state-released)_10%,transparent)] border border-[color-mix(in_srgb,var(--state-released)_35%,transparent)] p-3 text-body text-[var(--state-released)] flex items-start gap-2">
                 <CheckCircle2 className="w-4 h-4 mt-0.5 shrink-0" />
                 Applied to <b>{results.ok}</b> document{results.ok === 1 ? "" : "s"}.
               </div>
               {results.failed.length > 0 && (
-                <div className="text-[13px] border-l-2 border-[var(--state-overdue)] pl-3 text-[var(--state-overdue)]">
-                  <div className="font-bold flex items-center gap-1.5 mb-1"><AlertTriangle className="w-4 h-4" /> {results.failed.length} failed</div>
+                <div className="text-body border-l-2 border-[var(--state-overdue)] pl-3 text-[var(--state-overdue)]">
+                  <div className="font-medium flex items-center gap-1.5 mb-1"><AlertTriangle className="w-4 h-4" /> {results.failed.length} failed</div>
                   <ul className="ml-5 list-disc space-y-0.5">
                     {results.failed.slice(0, 5).map((f, i) => (
                       <li key={i}><span className="font-display tabular-nums">{f.doc}</span> - {f.reason}</li>
@@ -189,14 +189,14 @@ export default function BulkEditModal({
         </div>
 
         <div className="px-5 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-end gap-2">
-          <button onClick={onClose} disabled={busy} className="px-3 py-2 rounded-lg text-[13px] font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]">
+          <button onClick={onClose} disabled={busy} className="px-3 py-2 rounded-lg text-body font-medium text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]">
             {results ? "Close" : "Cancel"}
           </button>
           {!results && (
             <button
               onClick={apply}
               disabled={busy || !newValue}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-[13px] font-bold disabled:opacity-50"
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-body font-medium disabled:opacity-50"
             >
               {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Pencil className="w-3.5 h-3.5" />}
               {busy ? "Applying…" : `Apply to ${docs.length}`}

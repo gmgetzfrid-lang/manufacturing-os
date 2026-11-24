@@ -87,11 +87,11 @@ export default function AnswerTestsPanel({ orgId, libraryId }: { orgId: string; 
     <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4 sm:p-5">
       <div className="flex items-center gap-3 flex-wrap">
         <button onClick={() => setOpen((v) => !v)} aria-expanded={open} className="flex-1 min-w-0 text-left">
-          <div className="font-display text-[17px] font-semibold text-[var(--color-heading)] flex items-center gap-2">
+          <div className="font-display text-section font-semibold text-[var(--color-heading)] flex items-center gap-2">
             
             Answer tests {cases.length > 0 && <span className="ui-count font-sans">{cases.length}</span>} <ChevronRight className={`w-3.5 h-3.5 ui-chevron${(open) ? " rotate-90" : ""}`} />
           </div>
-          <div className="text-[13px] text-[var(--color-text-muted)]">
+          <div className="text-body text-[var(--color-text-muted)]">
             {cases.length === 0
               ? "No tests yet. Under any answer, “Make this a test case” marks what a right answer must do."
               : shownRun
@@ -100,15 +100,15 @@ export default function AnswerTestsPanel({ orgId, libraryId }: { orgId: string; 
           </div>
         </button>
         {running ? (
-          <button onClick={() => { stopper.current.stopped = true; }} className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--color-border)] px-3 py-1.5 text-[13px] font-bold">
+          <button onClick={() => { stopper.current.stopped = true; }} className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--color-border)] px-3 py-1.5 text-body font-medium">
             <Square className="w-3.5 h-3.5" /> Stop
           </button>
         ) : cases.length > 0 && (
           <div className="flex items-center gap-1.5">
-            <label className="text-[13px] text-[var(--color-text-muted)] flex items-center gap-1" title="The run stops when it has spent this much on your key">
-              up to $<input value={cap} onChange={(e) => setCap(e.target.value.replace(/[^0-9.]/g, ""))} className="w-10 rounded border border-[var(--color-border)] bg-transparent px-1 py-0.5 text-[13px]" />
+            <label className="text-body text-[var(--color-text-muted)] flex items-center gap-1" title="The run stops when it has spent this much on your key">
+              up to $<input value={cap} onChange={(e) => setCap(e.target.value.replace(/[^0-9.]/g, ""))} className="w-10 rounded border border-[var(--color-border)] bg-transparent px-1 py-0.5 text-body" />
             </label>
-            <button onClick={() => void run()} className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 py-1.5 text-[13px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+            <button onClick={() => void run()} className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 py-1.5 text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
               <Play className="w-3.5 h-3.5" /> Run tests
             </button>
           </div>
@@ -120,7 +120,7 @@ export default function AnswerTestsPanel({ orgId, libraryId }: { orgId: string; 
           <div className="h-1.5 rounded-full bg-[var(--color-surface-2)] overflow-hidden">
             <div className="h-full bg-[var(--color-text-muted)] transition-all" style={{ width: `${running.total ? (running.done / running.total) * 100 : 0}%` }} />
           </div>
-          <div className="mt-1 text-[13px] text-[var(--color-text-muted)]">
+          <div className="mt-1 text-body text-[var(--color-text-muted)]">
             <Loader2 className="w-3 h-3 animate-spin inline mr-1" />
             Asking test {Math.min(running.done + 1, running.total)} of {running.total} (each is a full question, about a minute) · {running.run.passed} passed, {running.run.failed} failed so far · ${Number(running.run.cost_usd).toFixed(2)} of ${Number(running.run.cost_cap_usd).toFixed(2)}
           </div>
@@ -128,12 +128,12 @@ export default function AnswerTestsPanel({ orgId, libraryId }: { orgId: string; 
       )}
 
       {regressions.length > 0 && (
-        <div role="alert" className="mt-3 border-l-2 border-[var(--state-overdue)] pl-3 text-[13px] text-[var(--state-overdue)] flex gap-2">
+        <div role="alert" className="mt-3 border-l-2 border-[var(--state-overdue)] pl-3 text-body text-[var(--state-overdue)] flex gap-2">
           <AlertTriangle className="w-4 h-4 shrink-0" />
           <span><b>Regression:</b> {regressions.length} critical test{regressions.length === 1 ? "" : "s"} passed on the baseline run and fail{regressions.length === 1 ? "s" : ""} now. Don&apos;t promote this version until they pass.</span>
         </div>
       )}
-      {error && <p role="alert" className="mt-2 text-[14px] font-semibold text-[var(--state-overdue-text)]">{error}</p>}
+      {error && <p role="alert" className="mt-2 text-body font-medium text-[var(--state-overdue-text)]">{error}</p>}
 
       {open && (
         <div className="mt-4 space-y-3">
@@ -142,13 +142,13 @@ export default function AnswerTestsPanel({ orgId, libraryId }: { orgId: string; 
               <AnswerTestEditor initial={editing} onSave={save} onCancel={() => setEditing(null)} />
             </div>
           ) : (
-            <button onClick={() => setEditing({ question: "", expect: {}, tags: [] })} className="inline-flex items-center gap-1 text-[13px] font-bold text-[var(--color-accent-text)] hover:underline">
+            <button onClick={() => setEditing({ question: "", expect: {}, tags: [] })} className="inline-flex items-center gap-1 text-body font-medium text-[var(--color-accent-text)] hover:underline">
               <Plus className="w-3.5 h-3.5" /> Add a test
             </button>
           )}
 
           {state.runs.length > 0 && (
-            <div className="flex items-center gap-2 flex-wrap text-[13px] text-[var(--color-text-muted)]">
+            <div className="flex items-center gap-2 flex-wrap text-body text-[var(--color-text-muted)]">
               <span>Showing run</span>
               <select value={state.runId ?? ""} onChange={(e) => void load(e.target.value)} className="rounded border border-[var(--color-border)] bg-transparent px-1.5 py-0.5">
                 {state.runs.map((r) => (
@@ -156,7 +156,7 @@ export default function AnswerTestsPanel({ orgId, libraryId }: { orgId: string; 
                 ))}
               </select>
               {shownRun && !shownRun.is_baseline && shownRun.status !== "running" && (
-                <button onClick={() => void setAnswerTestBaseline(orgId, shownRun.id).then(() => load(shownRun.id), (e: unknown) => setError(`Not kept as the baseline: ${friendlyError(e)}`))} className="inline-flex items-center gap-1 font-bold text-[var(--color-accent-text)] hover:underline">
+                <button onClick={() => void setAnswerTestBaseline(orgId, shownRun.id).then(() => load(shownRun.id), (e: unknown) => setError(`Not kept as the baseline: ${friendlyError(e)}`))} className="inline-flex items-center gap-1 font-medium text-[var(--color-accent-text)] hover:underline">
                   <Flag className="w-3 h-3" /> Keep as baseline
                 </button>
               )}
@@ -176,15 +176,15 @@ export default function AnswerTestsPanel({ orgId, libraryId }: { orgId: string; 
                     {r ? (r.pass ? <CheckCircle2 className="w-4 h-4 text-[var(--state-released)] shrink-0 mt-0.5" /> : <XCircle className="w-4 h-4 text-[var(--state-overdue)] shrink-0 mt-0.5" />)
                       : <span className="w-4 h-4 rounded-full border border-[var(--color-border)] shrink-0 mt-0.5" />}
                     <button onClick={() => setExpanded(isOpen ? null : c.id)} className="flex-1 min-w-0 text-left">
-                      <div className="text-[13px] text-[var(--color-text)]">
+                      <div className="text-body text-[var(--color-text)]">
                         {c.question}
-                        {c.tags.includes("critical") && <span className="ml-1.5 rounded bg-[color-mix(in_srgb,var(--state-held)_12%,transparent)] px-1 text-[13px] font-semibold text-[var(--state-held)]">critical</span>}
-                        {before === true && r?.pass === false && <span className="ml-1.5 text-[13px] font-bold text-[var(--state-overdue)]">was passing</span>}
-                        {before === false && r?.pass === true && <span className="ml-1.5 text-[13px] font-bold text-[var(--state-released)]">now passing</span>}
+                        {c.tags.includes("critical") && <span className="ml-1.5 rounded bg-[color-mix(in_srgb,var(--state-held)_12%,transparent)] px-1 text-body font-medium text-[var(--state-held)]">critical</span>}
+                        {before === true && r?.pass === false && <span className="ml-1.5 text-body font-medium text-[var(--state-overdue)]">was passing</span>}
+                        {before === false && r?.pass === true && <span className="ml-1.5 text-body font-medium text-[var(--state-released)]">now passing</span>}
                       </div>
-                      {r?.error && <div className="text-[13px] text-[var(--state-overdue)]">Couldn&apos;t run: {r.error}</div>}
+                      {r?.error && <div className="text-body text-[var(--state-overdue)]">Couldn&apos;t run: {r.error}</div>}
                       {!r?.error && failing.length > 0 && (
-                        <div className="text-[13px] text-[var(--state-overdue)]">{[...new Set(failing.map((k) => CHECK_LABEL[k.code] ?? k.code))].join(" · ")}</div>
+                        <div className="text-body text-[var(--state-overdue)]">{[...new Set(failing.map((k) => CHECK_LABEL[k.code] ?? k.code))].join(" · ")}</div>
                       )}
                     </button>
                     <button aria-label="Run this test" title="Run this test" disabled={!!running} onClick={() => void run([c.id])} className="p-1 text-[var(--color-text-muted)] hover:text-[var(--color-accent-hover)] disabled:opacity-40"><Play className="w-3.5 h-3.5" /></button>
@@ -195,15 +195,15 @@ export default function AnswerTestsPanel({ orgId, libraryId }: { orgId: string; 
                     <div className="mt-2 ml-6 space-y-2">
                       <ul className="space-y-0.5">
                         {r.checks.map((k, i) => (
-                          <li key={i} className={`text-[13px] ${k.pass ? "text-[var(--color-text-muted)]" : "text-[var(--state-overdue)] font-bold"}`}>
+                          <li key={i} className={`text-body ${k.pass ? "text-[var(--color-text-muted)]" : "text-[var(--state-overdue)] font-medium"}`}>
                             {k.pass ? "✓" : "✗"} {CHECK_LABEL[k.code] ?? k.code}: <span className="font-normal">{k.detail}</span>
                           </li>
                         ))}
                       </ul>
                       {r.answer && (
-                        <details className="text-[13px]">
+                        <details className="text-body">
                           <summary className="cursor-pointer text-[var(--color-text-muted)]">The answer it gave</summary>
-                          <pre className="mt-1 whitespace-pre-wrap rounded-lg bg-[var(--color-surface-2)] p-2 text-[13px] text-[var(--color-text)]">{r.answer}</pre>
+                          <pre className="mt-1 whitespace-pre-wrap rounded-lg bg-[var(--color-surface-2)] p-2 text-body text-[var(--color-text)]">{r.answer}</pre>
                         </details>
                       )}
                     </div>

@@ -27,8 +27,8 @@ export function useProjectFileHome(orgId: string, projectId: string): { home: Pr
   return { home, setHome };
 }
 
-const btn = "min-h-9 py-1.5 text-left inline-flex items-center gap-1.5 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[12px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50";
-const pri = "min-h-9 py-1.5 text-left inline-flex items-center gap-1.5 px-3.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[12px] font-semibold disabled:opacity-50";
+const btn = "min-h-9 py-1.5 text-left inline-flex items-center gap-1.5 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-caption font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50";
+const pri = "min-h-9 py-1.5 text-left inline-flex items-center gap-1.5 px-3.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-caption font-medium disabled:opacity-50";
 
 export default function ProjectFilePlace({ orgId, projectId, uid, canManage, home, onChange, what = "files" }: {
   orgId: string; projectId: string; uid: string; canManage: boolean;
@@ -122,22 +122,22 @@ export default function ProjectFilePlace({ orgId, projectId, uid, canManage, hom
     finally { setBusy(null); }
   };
 
-  if (!home) return <div role="status" className="text-[12px] text-[var(--color-text-muted)] inline-flex items-center gap-1.5"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Checking where this project&rsquo;s files go…</div>;
+  if (!home) return <div role="status" className="text-caption text-[var(--color-text-muted)] inline-flex items-center gap-1.5"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Checking where this project&rsquo;s files go…</div>;
   const movable = strays.filter((s) => s.sameLibrary), stuck = strays.filter((s) => !s.sameLibrary);
 
   return (
     <div data-file-place className="space-y-2">
       {!open && (
         home.place ? (
-          <div className="flex items-start gap-2 text-[12px]">
+          <div className="flex items-start gap-2 text-caption">
             <MapPin className="w-3.5 h-3.5 mt-0.5 shrink-0 text-[var(--color-text-muted)]" />
             <span className="min-w-0 flex-1 text-[var(--color-text-muted)]">Saved in <b className="text-[var(--color-text)] break-words">{home.words}</b></span>
             {canManage && <button type="button" onClick={start} className="shrink-0 text-[var(--color-accent-text)] hover:underline">Change</button>}
           </div>
         ) : (
-          <div className="border-l-2 border-[var(--state-held)] pl-3 py-1 flex items-center gap-2 flex-wrap text-[12px] text-[var(--state-held-text)]">
+          <div className="border-l-2 border-[var(--state-held)] pl-3 py-1 flex items-center gap-2 flex-wrap text-caption text-[var(--state-held-text)]">
             <span className="min-w-0 flex-1 basis-48"><b>Pick where this project&rsquo;s {what === "files" ? "files" : `files (${what})`} go.</b> Asked once; nothing is filed until you choose.</span>
-            {canManage ? <button type="button" onClick={start} className={pri}>Pick a place</button> : <span className="font-bold">The project&rsquo;s owner picks it.</span>}
+            {canManage ? <button type="button" onClick={start} className={pri}>Pick a place</button> : <span className="font-medium">The project&rsquo;s owner picks it.</span>}
           </div>
         )
       )}
@@ -145,26 +145,26 @@ export default function ProjectFilePlace({ orgId, projectId, uid, canManage, hom
       {open && (
         <div className="rounded-xl border border-[var(--color-border-strong)] bg-[var(--color-surface)] p-3 space-y-3" data-file-place-picker>
           <div>
-            <div className="text-[12px] font-semibold text-[var(--color-text-faint)] mb-1.5">1 · Library</div>
+            <div className="text-caption font-medium text-[var(--color-text-faint)] mb-1.5">1 · Library</div>
             <div className="flex flex-wrap gap-1.5">
               {home.libraries.map((l) => (
                 <button key={l.id} type="button" aria-pressed={lib === l.id} onClick={() => pickLib(l.id)}
-                  className={`h-9 inline-flex items-center gap-1.5 px-3 rounded-lg border text-[12px] font-bold transition-colors ${lib === l.id ? "border-[var(--color-text)] bg-[var(--color-surface-2)] text-[var(--color-text)]" : "border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
+                  className={`h-10 inline-flex items-center gap-1.5 px-3 rounded-lg border text-caption font-medium transition-colors ${lib === l.id ? "border-[var(--color-text)] bg-[var(--color-surface-2)] text-[var(--color-text)]" : "border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
                   <LibraryIcon className="w-3.5 h-3.5" /> {l.name}
                 </button>
               ))}
-              {home.libraries.length === 0 && <span className="text-[12px] text-[var(--color-text-muted)]">No libraries yet. Make one in Documents first.</span>}
+              {home.libraries.length === 0 && <span className="text-caption text-[var(--color-text-muted)]">No libraries yet. Make one in Documents first.</span>}
             </div>
           </div>
 
           {lib && (
             <div>
-              <div className="text-[12px] font-semibold text-[var(--color-text-faint)] mb-1.5">2 · Folder</div>
-              {busy === "folders" || !folders ? <div className="text-[12px] text-[var(--color-text-muted)] inline-flex items-center gap-1.5"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Reading the folders</div> : (
+              <div className="text-caption font-medium text-[var(--color-text-faint)] mb-1.5">2 · Folder</div>
+              {busy === "folders" || !folders ? <div className="text-caption text-[var(--color-text-muted)] inline-flex items-center gap-1.5"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Reading the folders</div> : (
                 <ul ref={listRef} className="max-h-56 overflow-y-auto rounded-lg border border-[var(--color-border)] divide-y divide-[var(--color-border)]" role="listbox" aria-label="Folder">
                   <li>
                     <button type="button" role="option" aria-selected={folder === null} onClick={() => setFolder(null)}
-                      className={`w-full flex items-center gap-2 px-2.5 py-2 text-left text-[12px] ${folder === null ? "bg-[var(--color-surface-2)] font-bold" : "hover:bg-[var(--color-surface-2)]"}`}>
+                      className={`w-full flex items-center gap-2 px-2.5 py-2 text-left text-caption ${folder === null ? "bg-[var(--color-surface-2)] font-medium" : "hover:bg-[var(--color-surface-2)]"}`}>
                       <LibraryIcon className="w-3.5 h-3.5 shrink-0 text-[var(--color-text-muted)]" /> <span className="flex-1">Top level of {libName}</span>
                       {folder === null && <Check className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />}
                     </button>
@@ -173,7 +173,7 @@ export default function ProjectFilePlace({ orgId, projectId, uid, canManage, hom
                     <li key={f.id}>
                       <button type="button" role="option" aria-selected={folder === f.id} onClick={() => setFolder(f.id)}
                         style={{ paddingLeft: `${10 + Math.max(0, f.pathNames.length - 1) * 16}px` }}
-                        className={`w-full flex items-center gap-2 pr-2.5 py-2 text-left text-[12px] ${folder === f.id ? "bg-[var(--color-surface-2)] font-bold" : "hover:bg-[var(--color-surface-2)]"}`}>
+                        className={`w-full flex items-center gap-2 pr-2.5 py-2 text-left text-caption ${folder === f.id ? "bg-[var(--color-surface-2)] font-medium" : "hover:bg-[var(--color-surface-2)]"}`}>
                         <Folder className="w-3.5 h-3.5 shrink-0 text-[var(--color-text-muted)]" /> <span className="flex-1 break-words">{f.name}</span>
                         {folder === f.id && <Check className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />}
                       </button>
@@ -185,7 +185,7 @@ export default function ProjectFilePlace({ orgId, projectId, uid, canManage, hom
                 <FolderPlus className="w-4 h-4 shrink-0 text-[var(--color-text-muted)]" />
                 <input value={newName} onChange={(e) => setNewName(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void create(); }}
                   aria-label="New folder name" placeholder="New folder name"
-                  className="h-9 flex-1 min-w-40 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-base sm:text-[12px]" />
+                  className="h-9 flex-1 min-w-40 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-base sm:text-caption" />
                 <button type="button" onClick={() => void create()} disabled={!newName.trim() || busy !== null} className={btn}>
                   {busy === "create" ? <Loader2 className="w-3.5 h-3.5 shrink-0 animate-spin" /> : <FolderPlus className="w-3.5 h-3.5 shrink-0" />} Make folder {picked ? `in ${picked.name}` : "at the top"}
                 </button>
@@ -193,7 +193,7 @@ export default function ProjectFilePlace({ orgId, projectId, uid, canManage, hom
             </div>
           )}
 
-          {err && <div className="text-[12px] font-bold text-[var(--state-overdue-text)]">{err}</div>}
+          {err && <div className="text-caption font-medium text-[var(--state-overdue-text)]">{err}</div>}
           <div className="flex items-center gap-2 flex-wrap">
             <button type="button" onClick={() => void save()} disabled={!lib || !folders || busy !== null} className={pri}>
               {busy === "save" ? <Loader2 className="w-4 h-4 shrink-0 animate-spin" /> : <Check className="w-4 h-4 shrink-0" />} {lib ? `Files go to ${here}` : "Pick a library"}
@@ -203,11 +203,11 @@ export default function ProjectFilePlace({ orgId, projectId, uid, canManage, hom
         </div>
       )}
 
-      {!open && err && <div className="text-[12px] font-bold text-[var(--state-overdue-text)]">{err}</div>}
-      {!open && moved != null && moved > 0 && <div className="text-[12px] font-bold text-[var(--state-released-text)]">{moved} file{moved === 1 ? "" : "s"} moved to {home.words}.</div>}
+      {!open && err && <div className="text-caption font-medium text-[var(--state-overdue-text)]">{err}</div>}
+      {!open && moved != null && moved > 0 && <div className="text-caption font-medium text-[var(--state-released-text)]">{moved} file{moved === 1 ? "" : "s"} moved to {home.words}.</div>}
       {!open && strays.length > 0 && (
-        <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)]/50 px-3 py-2 text-[12px] space-y-1.5" data-file-strays>
-          <div className="font-bold text-[var(--color-text)]">{strays.length} file{strays.length === 1 ? "" : "s"} from this project {strays.length === 1 ? "is" : "are"} filed somewhere else</div>
+        <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)]/50 px-3 py-2 text-caption space-y-1.5" data-file-strays>
+          <div className="font-medium text-[var(--color-text)]">{strays.length} file{strays.length === 1 ? "" : "s"} from this project {strays.length === 1 ? "is" : "are"} filed somewhere else</div>
           <ul className="space-y-0.5 text-[var(--color-text-muted)]">
             {strays.map((s) => <li key={s.id} className="break-words"><b className="text-[var(--color-text)]">{s.number}</b> in {s.libraryName}</li>)}
           </ul>

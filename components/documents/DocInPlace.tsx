@@ -78,7 +78,7 @@ export default function DocInPlace({ docId, onClose }: { docId: string; onClose:
           {!cur ? <><Loader2 className="w-4 h-4 animate-spin" /> Opening…</>
             : <>
               <span>{cur.doc ? "This document has no file to show yet." : "This document can't be opened: it was removed, or it isn't yours to see."}</span>
-              <button type="button" onClick={onClose} className="h-8 px-3 rounded-lg border border-[var(--color-border-strong)] text-[13px] font-bold hover:bg-[var(--color-surface-2)]">Close</button>
+              <button type="button" onClick={onClose} className="h-8 px-3 rounded-lg border border-[var(--color-border-strong)] text-body font-medium hover:bg-[var(--color-surface-2)]">Close</button>
             </>}
         </div>
       </div>

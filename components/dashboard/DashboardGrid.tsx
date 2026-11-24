@@ -325,7 +325,7 @@ export default function DashboardGrid() {
         : lead ? <Link href={lead.link} className={heroPrimary}>{attnCount === 1 ? "Open it" : "Open the first one"}</Link> : undefined}
     >
       {(editing || saveErr) && (
-        <div className="space-y-1.5 text-[14px]">
+        <div className="space-y-1.5 text-body">
           {editing && (
             <p className="text-[var(--color-text-muted)]">
               {isMobile
@@ -334,7 +334,7 @@ export default function DashboardGrid() {
                 : "Drag a widget to move it, its bottom corner to change its height. Changes save as you go."}
             </p>
           )}
-          {saveErr && <p role="alert" className="font-semibold text-[var(--state-held-text)]">Your layout is saved on this device only, so it won&apos;t follow you to another one. {friendlyError(saveErr)}</p>}
+          {saveErr && <p role="alert" className="font-medium text-[var(--state-held-text)]">Your layout is saved on this device only, so it won&apos;t follow you to another one. {friendlyError(saveErr)}</p>}
         </div>
       )}
     </PageHero>
@@ -424,7 +424,7 @@ export default function DashboardGrid() {
             className="min-w-0 h-24 rounded-lg border-2 border-dashed border-[var(--color-border-strong)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface)] transition-colors flex flex-col items-center justify-center gap-1"
           >
             <Plus className="w-5 h-5" />
-            <span className="text-[14px] font-semibold">Add widget</span>
+            <span className="text-body font-medium">Add widget</span>
           </button>
         </div>
       ) : (
@@ -497,14 +497,14 @@ export default function DashboardGrid() {
 
                 {/* Live height while resizing. */}
                 {isResizingThis && (
-                  <div className="absolute top-2 left-1/2 -translate-x-1/2 z-30 px-2 py-0.5 rounded-md bg-[var(--color-text)] text-[var(--color-surface)] text-[13px] font-semibold tabular-nums pointer-events-none">
+                  <div className="absolute top-2 left-1/2 -translate-x-1/2 z-30 px-2 py-0.5 rounded-md bg-[var(--color-text)] text-[var(--color-surface)] text-body font-medium tabular-nums pointer-events-none">
                     {liveH} rows tall
                   </div>
                 )}
 
                 {/* Drag hint (idle). */}
                 {!isDragging && !isResizingThis && (
-                  <div className="absolute top-2 left-1/2 -translate-x-1/2 z-10 px-2 py-0.5 rounded-md bg-[var(--color-text)] text-[var(--color-surface)] text-[13px] font-semibold inline-flex items-center gap-1 opacity-0 group-hover/tile:opacity-100 transition-opacity pointer-events-none">
+                  <div className="absolute top-2 left-1/2 -translate-x-1/2 z-10 px-2 py-0.5 rounded-md bg-[var(--color-text)] text-[var(--color-surface)] text-body font-medium inline-flex items-center gap-1 opacity-0 group-hover/tile:opacity-100 transition-opacity pointer-events-none">
                     <Move className="w-3.5 h-3.5" /> Drag to move
                   </div>
                 )}
@@ -520,7 +520,7 @@ export default function DashboardGrid() {
             className="min-w-0 rounded-lg border-2 border-dashed border-[var(--color-border-strong)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface)] transition-colors flex items-center justify-center gap-2"
           >
             <Plus className="w-5 h-5" />
-            <span className="text-[14px] font-semibold">Add widget</span>
+            <span className="text-body font-medium">Add widget</span>
           </button>
         </div>
       )}

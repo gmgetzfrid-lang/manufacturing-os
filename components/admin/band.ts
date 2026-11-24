@@ -6,7 +6,7 @@
 /** A search box under the header (leave room on the left for an icon).
  *  16 px text on a phone, 44 px tall on touch screens. */
 export const bandInput =
-  "w-full h-10 pointer-coarse:h-11 pl-10 pr-3 rounded-lg border border-[var(--color-border-control)] bg-[var(--color-surface)] text-[var(--color-text)] text-[15px] max-sm:text-[16px] placeholder:text-[var(--color-text-faint)] transition-colors";
+  "w-full h-10 pointer-coarse:h-11 pl-10 pr-3 rounded-lg border border-[var(--color-border-control)] bg-[var(--color-surface)] text-[var(--color-text)] text-reading placeholder:text-[var(--color-text-faint)] transition-colors";
 
 /** The icon inside a header search box. */
 export const bandInputIcon =
@@ -14,7 +14,7 @@ export const bandInputIcon =
 
 /** A select in the header row. */
 export const bandSelect =
-  "h-10 pointer-coarse:h-11 px-3 rounded-lg border border-[var(--color-border-control)] bg-[var(--color-surface)] text-[var(--color-text)] text-[14px] max-sm:text-[16px] font-semibold [&_option]:bg-[var(--color-surface)] [&_option]:text-[var(--color-text)]";
+  "h-10 pointer-coarse:h-11 px-3 rounded-lg border border-[var(--color-border-control)] bg-[var(--color-surface)] text-[var(--color-text)] text-body max-sm:text-reading font-medium [&_option]:bg-[var(--color-surface)] [&_option]:text-[var(--color-text)]";
 
 /** A row of toggles in the header (wrapper). */
 export const bandSeg =
@@ -23,7 +23,7 @@ export const bandSeg =
 /** One toggle in a header row. The one you're on is a white raised
  *  segment with text color. */
 export function bandSegItem(on: boolean): string {
-  return `shrink-0 whitespace-nowrap inline-flex items-center gap-1.5 h-8 pointer-coarse:h-10 px-3 rounded-md text-[14px] font-semibold transition-colors ${
+  return `shrink-0 whitespace-nowrap inline-flex items-center gap-1.5 h-8 pointer-coarse:h-10 px-3 rounded-md text-body font-semibold transition-colors ${
     on ? "bg-[var(--color-surface)] text-[var(--color-text)] ring-1 ring-[var(--color-border-strong)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
   }`;
 }

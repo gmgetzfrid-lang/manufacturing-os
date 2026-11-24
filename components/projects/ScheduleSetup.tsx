@@ -70,18 +70,18 @@ export function SetupNotice({ missing, canManage }: { missing: SetupItem[]; canM
   return (
     <div role="alert" className="flex flex-wrap items-center gap-x-3 gap-y-1.5 py-2.5">
       <span aria-hidden className="w-2 h-2 rounded-full bg-[var(--state-overdue)] shrink-0" />
-      <div className="flex-1 min-w-[220px] text-[13px] leading-snug text-[var(--color-text)]">
+      <div className="flex-1 min-w-[220px] text-body leading-snug text-[var(--color-text)]">
         <b className="text-[var(--state-overdue-text)]">Finish setting up this schedule: the reports can&apos;t be trusted yet.</b>{" "}
         Missing: {missing.map((i) => i.label.toLowerCase()).join(" and ")}.
-        <span className="block text-[12px] text-[var(--color-text-muted)]">{missing[0].why}</span>
+        <span className="block text-caption text-[var(--color-text-muted)]">{missing[0].why}</span>
       </div>
       {canManage ? (
         <button type="button" onClick={() => window.dispatchEvent(new CustomEvent(OPEN_SETUP_EVENT, { detail: missing[0].id }))}
-          className="shrink-0 inline-flex items-center gap-1.5 h-9 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] text-[13px] font-semibold">
+          className="shrink-0 inline-flex items-center gap-1.5 h-10 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] text-body font-medium">
           <Settings2 className="w-4 h-4" /> Finish setup
         </button>
       ) : (
-        <span className="shrink-0 text-[12px] font-semibold text-[var(--color-text-muted)]">Ask the project owner to finish setup.</span>
+        <span className="shrink-0 text-caption font-medium text-[var(--color-text-muted)]">Ask the project owner to finish setup.</span>
       )}
     </div>
   );
@@ -172,18 +172,18 @@ export function ScheduleSetup(p: Props) {
     <>
       {missing.length > 0 && !onMissing ? (
         <div role="alert" className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-l-2 border-[var(--state-overdue)] pl-3 py-1">
-          <div className="flex-1 min-w-[220px] text-[13px] leading-snug text-[var(--state-overdue-text)]">
+          <div className="flex-1 min-w-[220px] text-body leading-snug text-[var(--state-overdue-text)]">
             <b>Finish setting up this schedule: the reports can&apos;t be trusted yet.</b>{" "}
             Missing: {missing.map((i) => i.label.toLowerCase()).join(" and ")}.
-            <span className="block text-[12px] text-[var(--color-text-muted)]">{missing[0].why}</span>
+            <span className="block text-caption text-[var(--color-text-muted)]">{missing[0].why}</span>
           </div>
           {p.canManage ? (
             <button onClick={() => setOpen(missing[0].id)}
-              className="shrink-0 inline-flex items-center gap-1.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] text-[12px] font-bold px-3 py-1.5">
+              className="shrink-0 inline-flex items-center gap-1.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] text-caption font-medium px-3 py-1.5">
               <Settings2 className="w-4 h-4" /> Finish setup
             </button>
           ) : (
-            <span className="shrink-0 text-[12px] font-semibold text-[var(--color-text-muted)]">Ask the project owner to finish setup.</span>
+            <span className="shrink-0 text-caption font-medium text-[var(--color-text-muted)]">Ask the project owner to finish setup.</span>
           )}
         </div>
       ) : null}
@@ -200,7 +200,7 @@ export function ScheduleSetupButton(p: Props) {
   return (
     <>
       <button onClick={() => setOpen(true)} title="Project type, unit & equipment, time zone, shift times, night shifts, critical path, baseline, staffing plans, roles & responsibilities, printed reports"
-        className="inline-flex items-center gap-1.5 h-9 px-3 rounded-md text-[13px] font-semibold transition-colors text-[var(--color-text)] border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)]">
+        className="inline-flex items-center gap-1.5 h-10 px-3 rounded-md text-body font-medium transition-colors text-[var(--color-text)] border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)]">
         <Settings2 className="w-3.5 h-3.5" /> Setup{todo ? <span className="text-[var(--state-held-text)]">{` · ${todo} to do`}</span> : <Check className="w-3.5 h-3.5 text-[var(--state-released-text)]" />}
       </button>
       {open && <SetupWizard {...p} items={items} start={items.find((i) => !i.done && !i.extra)?.id ?? "timezone"} critical={critical} onClose={() => setOpen(false)} />}
@@ -212,9 +212,9 @@ export function ScheduleSetupButton(p: Props) {
 function stepNote(i: SetupItem): { text: string; tone: string } | null {
   if (i.checking) return { text: "checking…", tone: "text-[var(--color-text-faint)]" };
   if (i.done) return null;
-  return i.required ? { text: "needed", tone: "text-[var(--state-overdue-text)] font-semibold" }
+  return i.required ? { text: "needed", tone: "text-[var(--state-overdue-text)] font-medium" }
     : i.extra ? { text: "optional", tone: "text-[var(--color-text-faint)]" }
-      : { text: "advised", tone: "text-[var(--state-held-text)] font-semibold" };
+      : { text: "advised", tone: "text-[var(--state-held-text)] font-medium" };
 }
 
 /** The setup steps joined by one line, so they read as one path. They can be
@@ -226,7 +226,7 @@ function SetupPath({ items, at, onPick }: { items: SetupItem[]; at: SetupItemId;
   const dot = (i: SetupItem, n: number, small = false) => {
     const on = i.id === at;
     return (
-      <span aria-hidden className={`relative z-10 ${small ? "w-5 h-5 text-[12px]" : "w-6 h-6 text-[11px]"} rounded-full flex items-center justify-center font-semibold shrink-0 ${
+      <span aria-hidden className={`relative z-10 ${small ? "w-5 h-5 text-caption" : "w-6 h-6 text-caption"} rounded-full flex items-center justify-center font-semibold shrink-0 ${
         i.done ? `bg-[var(--color-text)] text-[var(--color-surface)] ${on ? "ring-2 ring-offset-2 ring-offset-[var(--color-surface)] ring-[var(--color-text)]" : ""}`
           : on ? "border-2 border-[var(--color-text)] bg-[var(--color-surface)] text-[var(--color-text)]"
             : "border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text-faint)]"}`}>
@@ -240,7 +240,7 @@ function SetupPath({ items, at, onPick }: { items: SetupItem[]; at: SetupItemId;
   return (
     <>
       <nav aria-label="Setup steps" className="sm:hidden px-4 pt-3 pb-3.5 border-b border-[var(--color-border)]">
-        <p className="text-[12px] font-bold text-[var(--color-text)]">Step {idx + 1} of {items.length}: {items[idx]?.label}</p>
+        <p className="text-caption font-medium text-[var(--color-text)]">Step {idx + 1} of {items.length}: {items[idx]?.label}</p>
         <ol className="mt-2.5 flex items-center">
           {items.map((i, n) => (
             <li key={i.id} className="relative flex-1 flex justify-center" aria-current={i.id === at ? "step" : undefined}>
@@ -262,8 +262,8 @@ function SetupPath({ items, at, onPick }: { items: SetupItem[]; at: SetupItemId;
                   className="relative w-full flex items-start gap-2.5 rounded-lg px-2 py-2 text-left hover:bg-[var(--color-surface-2)]">
                   {dot(i, n)}
                   <span className="min-w-0 pt-0.5">
-                    <span className={`block text-[13px] leading-tight ${on ? "font-bold text-[var(--color-text)]" : i.done ? "text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>{i.label}</span>
-                    {note && <span className={`block text-[12px] leading-tight mt-0.5 ${note.tone}`}>{note.text}</span>}
+                    <span className={`block text-body leading-tight ${on ? "font-medium text-[var(--color-text)]" : i.done ? "text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>{i.label}</span>
+                    {note && <span className={`block text-caption leading-tight mt-0.5 ${note.tone}`}>{note.text}</span>}
                   </span>
                 </button>
               </li>
@@ -300,12 +300,12 @@ function SetupWizard({ items: given, start, critical, onClose: close, ...rest }:
           <div className="flex-1 min-w-0 p-4 sm:p-5 space-y-3">
             <div>
               <div className="flex items-center gap-2">
-                <h3 className="text-[14px] font-bold text-[var(--color-text)]">{item.label}</h3>
-                {item.checking ? <span className="text-[12px] font-semibold text-[var(--color-text-faint)]">checking…</span> : item.done
-                  ? <span className="text-[12px] font-semibold text-[var(--state-released-text)]">✓ set</span>
-                  : <span className={`text-[12px] font-semibold ${item.required ? "text-[var(--state-overdue-text)]" : item.extra ? "text-[var(--color-text-faint)]" : "text-[var(--state-held-text)]"}`}>{item.required ? "needed" : item.extra ? "optional" : "advised"}</span>}
+                <h3 className="text-body font-medium text-[var(--color-text)]">{item.label}</h3>
+                {item.checking ? <span className="text-caption font-medium text-[var(--color-text-faint)]">checking…</span> : item.done
+                  ? <span className="text-caption font-medium text-[var(--state-released-text)]">✓ set</span>
+                  : <span className={`text-caption font-medium ${item.required ? "text-[var(--state-overdue-text)]" : item.extra ? "text-[var(--color-text-faint)]" : "text-[var(--state-held-text)]"}`}>{item.required ? "needed" : item.extra ? "optional" : "advised"}</span>}
               </div>
-              <p className="text-[12px] text-[var(--color-text-muted)] mt-0.5">{item.why}</p>
+              <p className="text-caption text-[var(--color-text-muted)] mt-0.5">{item.why}</p>
             </div>
             {at === "type" && <TypeStep {...p} onSaved={() => go(1)} />}
             {at === "equipment" && <EquipmentStep projectId={p.projectId} projectName={p.projectName} milestones={p.milestones} canManage={p.canManage} userId={p.userId} />}
@@ -323,16 +323,16 @@ function SetupWizard({ items: given, start, critical, onClose: close, ...rest }:
       </ModalBody>
       <ModalFooter>
         <div className="flex items-center w-full gap-2">
-          <button onClick={() => go(-1)} disabled={idx === 0} className="inline-flex items-center gap-1 h-9 text-[13px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-2 disabled:opacity-30">
+          <button onClick={() => go(-1)} disabled={idx === 0} className="inline-flex items-center gap-1 h-9 text-body text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-2 disabled:opacity-30">
             <ChevronLeft className="w-4 h-4" /> Back
           </button>
-          <span className="flex-1 text-center text-[12px] text-[var(--color-text-muted)]">{counted.filter((i) => i.done).length} of {counted.length} set</span>
+          <span className="flex-1 text-center text-caption text-[var(--color-text-muted)]">{counted.filter((i) => i.done).length} of {counted.length} set</span>
           {idx < items.length - 1 ? (
-            <button onClick={() => go(1)} className="inline-flex items-center gap-1 h-9 text-[13px] px-2 text-[var(--color-accent-text)] hover:underline">
+            <button onClick={() => go(1)} className="inline-flex items-center gap-1 h-9 text-body px-2 text-[var(--color-accent-text)] hover:underline">
               {item.done ? "Next" : "Skip for now"} <ChevronRight className="w-4 h-4" />
             </button>
           ) : (
-            <button onClick={onClose} className="h-9 text-[13px] font-semibold px-3 rounded-[10px] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-border)]">
+            <button onClick={onClose} className="h-9 text-body font-medium px-3 rounded-lg bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-border)]">
               {allDone ? "All set: close" : "Close"}
             </button>
           )}
@@ -342,14 +342,14 @@ function SetupWizard({ items: given, start, critical, onClose: close, ...rest }:
   );
 }
 
-const btn = "inline-flex items-center gap-1.5 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-[12px] font-bold px-3.5 py-2 shadow-sm disabled:opacity-50";
-const field = "h-9 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[13px] text-[var(--color-text)]";
+const btn = "inline-flex items-center gap-1.5 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-caption font-medium px-3.5 py-2 shadow-sm disabled:opacity-50";
+const field = "h-9 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-body text-[var(--color-text)]";
 
 function Msg({ err }: { err: string | null }) {
-  return err ? <div className="text-[12px] text-[var(--state-overdue-text)]">{err}</div> : null;
+  return err ? <div className="text-caption text-[var(--state-overdue-text)]">{err}</div> : null;
 }
 function NoRights() {
-  return <div className="text-[12px] text-[var(--color-text-muted)]">Only the project owner or an admin can change this.</div>;
+  return <div className="text-caption text-[var(--color-text-muted)]">Only the project owner or an admin can change this.</div>;
 }
 
 /** Setup › Project type: the word the app says for the project, and its
@@ -370,8 +370,8 @@ function TypeStep({ projectId, projectName, canManage, onSaved }: Props & { onSa
     catch (e) { setErr(sayError(e)); }
     finally { setBusy(false); }
   };
-  if (!canManage) return <div className="text-[13px]">This project is a <b>{typeWord(now)}</b> ({now.short}).</div>;
-  const pill = (on: boolean) => `h-9 px-3.5 rounded-full border text-[13px] font-bold ${on ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30 border-transparent" : "border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`;
+  if (!canManage) return <div className="text-body">This project is a <b>{typeWord(now)}</b> ({now.short}).</div>;
+  const pill = (on: boolean) => `h-9 px-3.5 rounded-full border text-body font-medium ${on ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30 border-transparent" : "border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`;
   const w = typeWord({ word: t.word.trim() || "project", short: t.short });
   return (
     <div className="space-y-3">
@@ -383,16 +383,16 @@ function TypeStep({ projectId, projectName, canManage, onSaved }: Props & { onSa
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
         {other && (
-          <label className="space-y-1"><span className="block text-[13px] font-semibold text-[var(--color-text-muted)]">Its word</span>
+          <label className="space-y-1"><span className="block text-body font-medium text-[var(--color-text-muted)]">Its word</span>
             <input value={t.word} onChange={(e) => setT({ word: e.target.value, short: t.short })} placeholder="e.g. Tie-in" maxLength={40} className={`${field} w-full`} /></label>
         )}
-        <label className="space-y-1"><span className="block text-[13px] font-semibold text-[var(--color-text-muted)]">Short form</span>
+        <label className="space-y-1"><span className="block text-body font-medium text-[var(--color-text-muted)]">Short form</span>
           <input value={t.short} onChange={(e) => setT({ word: t.word, short: e.target.value })} placeholder={t.word || "e.g. TA"} maxLength={16} className={`${field} w-full`} /></label>
       </div>
-      <div className="border-l-2 border-[var(--color-border-strong)] pl-3 py-0.5 text-[12px] text-[var(--color-text-muted)]">
+      <div className="border-l-2 border-[var(--color-border-strong)] pl-3 py-0.5 text-caption text-[var(--color-text-muted)]">
         Shows as: &ldquo;2 h of work · task finish unchanged · <b className="text-[var(--color-text)]">{w}</b> finish unchanged&rdquo; · safety topic &ldquo;<b className="text-[var(--color-text)]">{t.word.trim() || "Project"}</b> · Transmix-1&rdquo; · &ldquo;e.g. <b className="text-[var(--color-text)]">{t.short.trim() || t.word.trim() || "Project"}</b> manager&rdquo;
       </div>
-      {!set && <p className="text-[12px] text-[var(--color-text-muted)]">Read from the project&apos;s name for now. If it&apos;s right, just confirm.</p>}
+      {!set && <p className="text-caption text-[var(--color-text-muted)]">Read from the project&apos;s name for now. If it&apos;s right, just confirm.</p>}
       <Msg err={err} />
       <button onClick={() => void save()} disabled={busy || !t.word.trim() || same} className={btn}>
         {busy && <Loader2 className="w-4 h-4 animate-spin" />} {same ? "Saved" : set ? "Save project type" : "This is right: confirm"}
@@ -417,17 +417,17 @@ function TimeZoneStep({ projectId, timezone, canManage, userId, done, onSaved }:
     } catch (e) { setErr(sayError(e)); }
     finally { setBusy(false); }
   };
-  if (!canManage) return done ? <div className="text-[13px]">Plant time: <b>{tzLabel(timezone!)}</b></div> : <NoRights />;
+  if (!canManage) return done ? <div className="text-body">Plant time: <b>{tzLabel(timezone!)}</b></div> : <NoRights />;
   return (
     <div className="space-y-2.5">
       <label className="block space-y-1">
-        <span className="block text-[13px] font-semibold text-[var(--color-text-muted)]">The plant&apos;s time zone</span>
+        <span className="block text-body font-medium text-[var(--color-text-muted)]">The plant&apos;s time zone</span>
         <select value={tz} onChange={(e) => setTz(e.target.value)} className={`${field} w-full`}>
           <optgroup label="US">{US_ZONES.map((z) => <option key={z} value={z}>{tzLabel(z)}</option>)}</optgroup>
           <optgroup label="All">{all.filter((z) => !US_ZONES.includes(z)).map((z) => <option key={z} value={z}>{z}</option>)}</optgroup>
         </select>
       </label>
-      <p className="text-[12px] text-[var(--color-text-muted)]">Times on the schedule stay as written: 8:00 AM stays 8:00 AM.</p>
+      <p className="text-caption text-[var(--color-text-muted)]">Times on the schedule stay as written: 8:00 AM stays 8:00 AM.</p>
       <Msg err={err} />
       <button onClick={() => void save()} disabled={busy || (done && tz === timezone)} className={btn}>
         {busy && <Loader2 className="w-4 h-4 animate-spin" />} {done && tz === timezone ? "Saved" : timezone && tz === timezone ? "Confirm" : "Save time zone"}
@@ -454,15 +454,15 @@ function ShiftsStep({ projectId, canManage, done, checking, onSaved }: Props & {
   return (
     <div className="space-y-2.5">
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-        <label className="space-y-1"><span className="block text-[13px] font-semibold text-[var(--color-text-muted)]">Day shift starts</span>
+        <label className="space-y-1"><span className="block text-body font-medium text-[var(--color-text-muted)]">Day shift starts</span>
           <input type="time" disabled={!canManage} value={t.dayStart} onChange={(e) => setDraft({ ...t, dayStart: e.target.value })} className={`${field} w-full`} /></label>
-        <label className="space-y-1"><span className="block text-[13px] font-semibold text-[var(--color-text-muted)]">Night shift starts</span>
+        <label className="space-y-1"><span className="block text-body font-medium text-[var(--color-text-muted)]">Night shift starts</span>
           <input type="time" disabled={!canManage} value={t.nightStart} onChange={(e) => setDraft({ ...t, nightStart: e.target.value })} className={`${field} w-full`} /></label>
-        <label className="space-y-1"><span className="block text-[13px] font-semibold text-[var(--color-text-muted)]">Turnover meeting</span>
+        <label className="space-y-1"><span className="block text-body font-medium text-[var(--color-text-muted)]">Turnover meeting</span>
           <span className="flex items-center gap-1.5"><input type="number" min={0} max={180} step={5} disabled={!canManage} value={meetingLeadMin(t)} onChange={(e) => setDraft({ ...t, meetingBefore: Number(e.target.value) })} className={`${field} w-20`} />
-            <span className="text-[12px] text-[var(--color-text-muted)]">min before</span></span></label>
+            <span className="text-caption text-[var(--color-text-muted)]">min before</span></span></label>
       </div>
-      {!done && !draft && <p className="text-[12px] text-[var(--color-text-muted)]">These are filled in with what the app is using now. If they&apos;re right, just confirm.</p>}
+      {!done && !draft && <p className="text-caption text-[var(--color-text-muted)]">These are filled in with what the app is using now. If they&apos;re right, just confirm.</p>}
       <Msg err={err} />
       {canManage && (
         <button onClick={() => void save()} disabled={busy || (done && !draft) || (checking && !draft)} className={btn}>
@@ -593,12 +593,12 @@ function NightStep({ projectId, milestones: given, canManage, done, onSaved }: P
 
   return (
     <div className="space-y-3">
-      <p className="text-[13px] leading-relaxed text-[var(--color-text)]">
+      <p className="text-body leading-relaxed text-[var(--color-text)]">
         <b>Every job works days.</b> These jobs also have work the schedule puts in night hours. For each: keep it on <b>days only</b> (its night hours wait for the day crew), or run it <b>days and nights</b>. The shifts shown here change as you choose.
       </p>
 
       {stale.length > 0 && (
-        <div role="alert" className="border-l-2 border-[var(--state-held)] pl-3 py-0.5 text-[12px] text-[var(--state-held-text)]">
+        <div role="alert" className="border-l-2 border-[var(--state-held)] pl-3 py-0.5 text-caption text-[var(--state-held-text)]">
           <b>Saved for crews that aren&apos;t on this schedule:</b> {stale.join(", ")}. They put nothing on nights. Set the jobs below and Save: these names are dropped then.
         </div>
       )}
@@ -606,9 +606,9 @@ function NightStep({ projectId, milestones: given, canManage, done, onSaved }: P
       <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-3">
         {/* Jobs */}
         <div className="space-y-2 min-w-0">
-          <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">Jobs with night hours</div>
+          <div className="text-body font-medium text-[var(--color-text-muted)]">Jobs with night hours</div>
           <div className={`border-y border-[var(--color-border)] divide-y divide-[var(--color-border)] ${fileMode ? "opacity-50 pointer-events-none" : ""}`}>
-            {jobs.length === 0 && <div className="px-3 py-3 text-[13px] text-[var(--color-text-muted)]">{milestones.length ? "Nothing on the schedule is in night hours: it's all day work." : "No steps yet. Import the schedule first."}</div>}
+            {jobs.length === 0 && <div className="px-3 py-3 text-body text-[var(--color-text-muted)]">{milestones.length ? "Nothing on the schedule is in night hours: it's all day work." : "No steps yet. Import the schedule first."}</div>}
             {jobs.map((j) => {
               const mode = modeOf(j);
               const p = picks.get(j.id);
@@ -616,19 +616,19 @@ function NightStep({ projectId, milestones: given, canManage, done, onSaved }: P
                 <div key={j.id} className="py-2.5 space-y-2">
                   <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
                     <div className="min-w-[160px] flex-1">
-                      <div className="text-[14px] font-bold text-[var(--color-text)]" title={j.crumbs}>{j.name}</div>
-                      <div className="text-[12px] text-[var(--color-text-muted)]">
+                      <div className="text-body font-medium text-[var(--color-text)]" title={j.crumbs}>{j.name}</div>
+                      <div className="text-caption text-[var(--color-text-muted)]">
                         {j.crews.map(crewName).join(", ")} · <span className="text-[var(--color-text)] dark:text-[var(--color-text)]">{j.nightSteps} of {j.steps} step{j.steps === 1 ? "" : "s"} in night hours</span>
                       </div>
                     </div>
-                    <div className="inline-flex rounded-[10px] bg-[var(--color-surface-2)] p-0.5 gap-0.5 text-[12px] font-bold" role="radiogroup" aria-label={`${j.name}: shifts`}>
+                    <div className="inline-flex rounded-lg bg-[var(--color-surface-2)] p-0.5 gap-0.5 text-caption font-medium" role="radiogroup" aria-label={`${j.name}: shifts`}>
                       <button type="button" role="radio" aria-checked={mode === "day"} disabled={!canManage} onClick={() => setJob(j.id, null)} className={seg(mode === "day")}>Days only</button>
                       <button type="button" role="radio" aria-checked={mode !== "day"} disabled={!canManage} onClick={() => { if (mode !== "all") setJob(j.id, new Set(["*"])); }} title="All its crews on nights (tap a crew below to leave one on days)" className={seg(mode !== "day")}>Days and nights</button>
                     </div>
                   </div>
                   {mode !== "day" && j.crews.length > 1 && (
                     <div className="space-y-1">
-                      <div className="text-[12px] text-[var(--color-text-muted)]">On nights:</div>
+                      <div className="text-caption text-[var(--color-text-muted)]">On nights:</div>
                       <div className="flex flex-wrap gap-1.5">
                         {j.crews.map((c) => {
                           const on = mode === "all" || [...(p ?? [])].some((x) => x.trim().toLowerCase() === c.trim().toLowerCase());
@@ -640,7 +640,7 @@ function NightStep({ projectId, milestones: given, canManage, done, onSaved }: P
                                 if (has != null) cur.delete(has); else cur.add(c);
                                 setJob(j.id, cur.size === 0 ? null : j.crews.every((x) => [...cur].some((y) => y.trim().toLowerCase() === x.trim().toLowerCase())) ? new Set(["*"]) : cur);
                               }}
-                              className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[12px] font-semibold ${on ? "bg-[var(--color-text)] border-[var(--color-text)] text-[var(--color-surface)]" : "bg-[var(--color-surface)] border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
+                              className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-caption font-medium ${on ? "bg-[var(--color-text)] border-[var(--color-text)] text-[var(--color-surface)]" : "bg-[var(--color-surface)] border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
                               {on ? <Moon className="w-3 h-3" aria-hidden /> : null}{crewName(c)}
                             </button>
                           );
@@ -652,7 +652,7 @@ function NightStep({ projectId, milestones: given, canManage, done, onSaved }: P
               );
             })}
           </div>
-          <label className="flex items-start gap-2 text-[12px] text-[var(--color-text-muted)] cursor-pointer">
+          <label className="flex items-start gap-2 text-caption text-[var(--color-text-muted)] cursor-pointer">
             <input type="checkbox" className="mt-0.5 accent-[var(--color-text)]" disabled={!canManage} checked={fileMode} onChange={(e) => { setFileMode(e.target.checked); setSavedNow(false); setTouched(true); }} />
             <span>Skip this: anything the schedule file puts in night hours is night work.</span>
           </label>
@@ -661,10 +661,10 @@ function NightStep({ projectId, milestones: given, canManage, done, onSaved }: P
         {/* The shifts as they'll come out — kept in view while the jobs scroll. */}
         <div className="order-first xl:order-none space-y-2 min-w-0 xl:sticky xl:top-0 xl:self-start xl:max-h-[calc(100vh-220px)] xl:overflow-y-auto">
           <div className="flex items-center gap-2">
-            <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">The shifts</span>
+            <span className="text-body font-medium text-[var(--color-text-muted)]">The shifts</span>
             <span className="ml-auto inline-flex items-center gap-1">
               <button type="button" onClick={() => setOffset((o) => o - 3)} className="w-8 h-8 inline-flex items-center justify-center rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)]" aria-label="Earlier days"><ChevronLeft className="w-4 h-4" /></button>
-              {offset !== 0 && <button type="button" onClick={() => setOffset(0)} className="px-2.5 h-8 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[12px] font-semibold hover:bg-[var(--color-surface-2)]">Back</button>}
+              {offset !== 0 && <button type="button" onClick={() => setOffset(0)} className="px-2.5 h-8 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-caption font-medium hover:bg-[var(--color-surface-2)]">Back</button>}
               <button type="button" onClick={() => setOffset((o) => o + 3)} className="w-8 h-8 inline-flex items-center justify-center rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)]" aria-label="Later days"><ChevronRight className="w-4 h-4" /></button>
             </span>
           </div>
@@ -675,17 +675,17 @@ function NightStep({ projectId, milestones: given, canManage, done, onSaved }: P
               const night = b === "night";
               return (
                 <div className="min-w-0 sm:first:pr-4 sm:last:pl-4">
-                  <div className="py-1 flex items-center gap-1.5 text-[12px] font-bold text-[var(--color-text)]">
+                  <div className="py-1 flex items-center gap-1.5 text-caption font-medium text-[var(--color-text)]">
                     {night ? <Moon className="w-3.5 h-3.5" aria-hidden /> : <Sun className="w-3.5 h-3.5" aria-hidden />}{night ? "Night" : "Day"}
-                    <span className="font-semibold opacity-80">{clockF.format(w.start)}</span>
-                    <span className="ml-auto font-semibold opacity-80">{list.reduce((n, x) => n + x.steps, 0)} step{list.reduce((n, x) => n + x.steps, 0) === 1 ? "" : "s"}</span>
+                    <span className="font-medium opacity-80">{clockF.format(w.start)}</span>
+                    <span className="ml-auto font-medium opacity-80">{list.reduce((n, x) => n + x.steps, 0)} step{list.reduce((n, x) => n + x.steps, 0) === 1 ? "" : "s"}</span>
                   </div>
-                  {list.length === 0 ? <div className="pb-1.5 text-[12px] text-[var(--color-text-muted)]">No work.</div> : (
+                  {list.length === 0 ? <div className="pb-1.5 text-caption text-[var(--color-text-muted)]">No work.</div> : (
                     <ul className="pb-1.5 space-y-0.5">
                       {list.map((x) => (
-                        <li key={x.name} className="grid grid-cols-[1fr_auto] gap-2 text-[12px]">
+                        <li key={x.name} className="grid grid-cols-[1fr_auto] gap-2 text-caption">
                           <span className="min-w-0 truncate"><b>{x.name}</b> <span className="text-[var(--color-text-muted)]">{[...x.crews].join(", ")}</span></span>
-                          <span className="text-[11px] text-[var(--color-text-muted)] tabular-nums">{x.steps}</span>
+                          <span className="text-caption text-[var(--color-text-muted)] tabular-nums">{x.steps}</span>
                         </li>
                       ))}
                     </ul>
@@ -695,21 +695,21 @@ function NightStep({ projectId, milestones: given, canManage, done, onSaved }: P
             };
             return (
               <div key={k} className="border-t border-[var(--color-border)] pt-2">
-                <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">{dayF.format(dw.start)}</div>
+                <div className="text-body font-medium text-[var(--color-text-muted)]">{dayF.format(dw.start)}</div>
                 <div className="mt-1 grid grid-cols-1 sm:grid-cols-2 sm:divide-x divide-[var(--color-border)]">{band("day", dw)}{band("night", nw)}</div>
               </div>
             );
           })}
           {waiting.length > 0 && (
             <details className="border-l-2 border-[var(--state-held)]">
-              <summary className="cursor-pointer px-3 py-1.5 text-[12px] font-bold text-[var(--state-held-text)]">
+              <summary className="cursor-pointer px-3 py-1.5 text-caption font-medium text-[var(--state-held-text)]">
                 {waiting.length} step{waiting.length === 1 ? "" : "s"} in night hours on days-only jobs: they wait for the day shift
               </summary>
               <ul className="px-3 pb-2 space-y-0.5">
                 {waiting.sort((a, b) => startMsOf(a.m) - startMsOf(b.m)).map(({ m }) => (
-                  <li key={m.id} className="grid grid-cols-[1fr_auto] gap-2 text-[12px]">
+                  <li key={m.id} className="grid grid-cols-[1fr_auto] gap-2 text-caption">
                     <span className="min-w-0 truncate text-[var(--color-text)]"><b>{short(jobOf(m)?.name ?? "")}</b> · {m.name} · {crewName(m.responsibleParty?.trim() ?? "")}</span>
-                    <span className="font-display tabular-nums text-[11px] text-[var(--color-text-muted)]">{dayF.format(startMsOf(m)).split(",")[0]} {clockF.format(startMsOf(m))}</span>
+                    <span className="font-display tabular-nums text-caption text-[var(--color-text-muted)]">{dayF.format(startMsOf(m)).split(",")[0]} {clockF.format(startMsOf(m))}</span>
                   </li>
                 ))}
               </ul>
@@ -719,7 +719,7 @@ function NightStep({ projectId, milestones: given, canManage, done, onSaved }: P
       </div>
 
       {/* The whole choice, in a line */}
-      <div className="border-t border-[var(--color-border)] pt-3 text-[13px] text-[var(--color-text)]">
+      <div className="border-t border-[var(--color-border)] pt-3 text-body text-[var(--color-text)]">
         <b>Days and nights:</b> {fileMode ? "whatever the schedule file puts in night hours." : onJobs.length === 0 ? "none: every job works days only." : onJobs.map((j) => {
           const p = picks.get(j.id)!;
           return `${short(j.name)}${p.has("*") ? "" : ` (${[...p].map(crewName).join(", ")} on nights)`}`;
@@ -727,14 +727,14 @@ function NightStep({ projectId, milestones: given, canManage, done, onSaved }: P
       </div>
 
       <div className="border-t border-[var(--color-border)]">
-        <button type="button" onClick={() => setShowHelpers((v) => !v)} aria-expanded={showHelpers} className="w-full flex items-center gap-1.5 py-2.5 text-left text-[12px] font-bold text-[var(--color-text)]">
+        <button type="button" onClick={() => setShowHelpers((v) => !v)} aria-expanded={showHelpers} className="w-full flex items-center gap-1.5 py-2.5 text-left text-caption font-medium text-[var(--color-text)]">
           <ChevronRight className={`w-3.5 h-3.5 transition-transform ${showHelpers ? "rotate-90" : ""}`} />
-          Extra hands for work pulled forward <span className="font-normal text-[12px] text-[var(--color-text-muted)]">- optional{chosen ? `: ${chosen.crew ?? "crew not set"}, ${chosen.hands} × ${chosen.hours} h` : ""}</span>
+          Extra hands for work pulled forward <span className="font-normal text-caption text-[var(--color-text-muted)]">- optional{chosen ? `: ${chosen.crew ?? "crew not set"}, ${chosen.hands} × ${chosen.hours} h` : ""}</span>
         </button>
         {showHelpers && (
           <div className="pl-5 pb-2.5 space-y-1.5">
-            <div className="text-[12px] text-[var(--color-text-muted)]">The crew you keep for extra work the turnover pulls forward (&ldquo;Add work for the night shift&rdquo;), and its usual size. Changeable on each turnover.</div>
-            <div className="flex flex-wrap items-center gap-2 text-[12px]">
+            <div className="text-caption text-[var(--color-text-muted)]">The crew you keep for extra work the turnover pulls forward (&ldquo;Add work for the night shift&rdquo;), and its usual size. Changeable on each turnover.</div>
+            <div className="flex flex-wrap items-center gap-2 text-caption">
               <select disabled={!canManage} value={helpers.crew ?? ""} onChange={(e) => setHelpers({ ...helpers, crew: e.target.value || null })} aria-label="Crew for extra work" className={`${field} max-w-[240px]`}>
                 <option value="">Not set</option>
                 {crews.map((c) => <option key={c} value={c}>{c}</option>)}
@@ -743,7 +743,7 @@ function NightStep({ projectId, milestones: given, canManage, done, onSaved }: P
               <span className="text-[var(--color-text-muted)]">hands ×</span>
               <input type="number" min={0} max={24} step={0.5} disabled={!canManage} value={helpers.hours} onChange={(e) => setHelpers({ ...helpers, hours: Math.max(0, Math.min(24, Number(e.target.value) || 0)) })} aria-label="Hours each" className={`${field} w-16`} />
               <span className="text-[var(--color-text-muted)]">h</span>
-              {chosen && canManage && <button type="button" onClick={() => setEdited(null)} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Clear</button>}
+              {chosen && canManage && <button type="button" onClick={() => setEdited(null)} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Clear</button>}
             </div>
           </div>
         )}
@@ -754,7 +754,7 @@ function NightStep({ projectId, milestones: given, canManage, done, onSaved }: P
           <button onClick={() => void save()} disabled={busy || !loaded || (done && same)} className={btn}>
             {(busy || !loaded) && <Loader2 className="w-4 h-4 animate-spin" />} {!loaded ? "Reading your saved night setup…" : done && same ? "Saved" : "Save"}
           </button>
-          {savedNow && <span className="text-[12px] font-semibold text-[var(--state-released-text)]">Saved. The calendar, the turnover and the shift sheet follow it now.</span>}
+          {savedNow && <span className="text-caption font-medium text-[var(--state-released-text)]">Saved. The calendar, the turnover and the shift sheet follow it now.</span>}
         </div>
       ) : <NoRights />}
     </div>
@@ -788,14 +788,14 @@ function CriticalStep({ projectId, milestones, canManage, critical, onSaved }: P
         <label key={o.value} className="flex items-start gap-2.5 px-1 py-2.5 cursor-pointer hover:bg-[var(--color-surface-2)]">
           <input type="radio" name="crit" disabled={!canManage} checked={pick === o.value} onChange={() => setPick(o.value)} className="mt-1 accent-[var(--color-text)]" />
           <span className="flex-1 min-w-0">
-            <span className="block text-[13px] font-bold text-[var(--color-text)]">{o.label}</span>
-            <span className="block text-[12px] text-[var(--color-text-muted)]">{o.hint}</span>
+            <span className="block text-body font-medium text-[var(--color-text)]">{o.label}</span>
+            <span className="block text-caption text-[var(--color-text-muted)]">{o.hint}</span>
           </span>
-          <span className="shrink-0 text-[12px] font-display tabular-nums text-[var(--color-text-muted)]">{counts.of[o.value]} of {counts.steps} open steps</span>
+          <span className="shrink-0 text-caption font-display tabular-nums text-[var(--color-text-muted)]">{counts.of[o.value]} of {counts.steps} open steps</span>
         </label>
       ))}
       </div>
-      <p className="text-[12px] text-[var(--color-text-muted)]">Mark any task Critical or Not critical on its card afterwards: that wins over this.</p>
+      <p className="text-caption text-[var(--color-text-muted)]">Mark any task Critical or Not critical on its card afterwards: that wins over this.</p>
       <Msg err={err} />
       {canManage ? (
         <button onClick={() => void save()} disabled={busy || !loaded || critical === pick} className={btn}>
@@ -814,13 +814,13 @@ function BaselineStep({ milestones, canEdit, done, onSetBaseline }: Props & { do
     return t.length ? new Date(Math.max(...t)) : null;
   }, [milestones]);
   if (done) {
-    return <div className="text-[13px] text-[var(--color-text)]">Progress is measured against the plan captured {when ? <b>{when.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}</b> : "earlier"}. Re-baseline (Plan, then More) only if the plan was formally changed.</div>;
+    return <div className="text-body text-[var(--color-text)]">Progress is measured against the plan captured {when ? <b>{when.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}</b> : "earlier"}. Re-baseline (Plan, then More) only if the plan was formally changed.</div>;
   }
   if (!canEdit) return <NoRights />;
-  if (milestones.length === 0) return <div className="text-[12px] text-[var(--color-text-muted)]">Import the schedule first, then capture it here.</div>;
+  if (milestones.length === 0) return <div className="text-caption text-[var(--color-text-muted)]">Import the schedule first, then capture it here.</div>;
   return (
     <div className="space-y-2.5">
-      <p className="text-[12px] text-[var(--color-text)]">Capture the plan as it stands now. From then on, a step moved later still counts as late against it.</p>
+      <p className="text-caption text-[var(--color-text)]">Capture the plan as it stands now. From then on, a step moved later still counts as late against it.</p>
       <Msg err={err} />
       <button disabled={busy} className={btn} onClick={async () => {
         setBusy(true); setErr(null);

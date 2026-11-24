@@ -215,8 +215,8 @@ export default function AdminTeamsPage() {
             {teams.length === 0 ? (
               !creating && (
                 <div className={`${sheet} px-4 py-8 text-center`}>
-                  <p className="text-[15px] text-[var(--color-text)]">A team gets access together, and can own a library.</p>
-                  <button type="button" onClick={() => setCreating(true)} className={`${link} mt-1.5 font-semibold`}>Make the first team</button>
+                  <p className="text-reading text-[var(--color-text)]">A team gets access together, and can own a library.</p>
+                  <button type="button" onClick={() => setCreating(true)} className={`${link} mt-1.5 font-medium`}>Make the first team</button>
                 </div>
               )
             ) : (
@@ -239,12 +239,12 @@ export default function AdminTeamsPage() {
                           <td className={`${tbl.td} relative`}>
                             {on && <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] bg-[var(--color-current)]" />}
                             <button type="button" onClick={(e) => { e.stopPropagation(); void openTeam(t); }} aria-current={on ? "true" : undefined}
-                              className="inline-flex items-center gap-2.5 text-left font-semibold text-[var(--color-text)] hover:underline underline-offset-2">
+                              className="inline-flex items-center gap-2.5 text-left font-medium text-[var(--color-text)] hover:underline underline-offset-2">
                               {/* The team's own color, as a dot. */}
                               <span aria-hidden className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: t.color ?? "var(--color-text-faint)" }} />
                               {t.name}
                             </button>
-                            <span className="sm:hidden ml-2 text-[13px] text-[var(--color-text-muted)]">{plural(t.memberCount ?? 0, "person", "people")}</span>
+                            <span className="sm:hidden ml-2 text-body text-[var(--color-text-muted)]">{plural(t.memberCount ?? 0, "person", "people")}</span>
                           </td>
                           <td className={`${tbl.td} max-sm:hidden text-right ${(t.memberCount ?? 0) === 0 ? "text-[var(--color-text-faint)]" : ""}`}>{t.memberCount ?? 0}</td>
                           <td className={`${tbl.td} max-md:hidden`}>{nameOf(t.supervisorUserId) ?? <span className="text-[var(--color-text-faint)]">Not set</span>}</td>
@@ -264,15 +264,15 @@ export default function AdminTeamsPage() {
           </Section>
 
           {!selected ? (
-            teams.length > 0 && <p className="text-[15px] text-[var(--color-text-muted)]">Pick a team to set its supervisor, libraries and people.</p>
+            teams.length > 0 && <p className="text-reading text-[var(--color-text-muted)]">Pick a team to set its supervisor, libraries and people.</p>
           ) : (
             <section className="min-w-0" aria-label={`Team ${selected.name}`}>
               <div className="flex flex-wrap items-center gap-3 mb-2.5">
                 <span aria-hidden className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: selected.color ?? "var(--color-text-faint)" }} />
                 <input key={selected.id} defaultValue={selected.name} aria-label="Team name" title="Rename the team" onBlur={(e) => { if (e.target.value.trim() && e.target.value !== selected.name) { void rename(selected, e.target.value.trim()); } }}
                   onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
-                  className="font-display text-[20px] font-semibold text-[var(--color-text)] bg-transparent min-w-0 flex-1 rounded-md px-1.5 -ml-1.5 h-10 border border-transparent hover:border-[var(--color-border-strong)] focus:bg-[var(--color-surface)]" />
-                <span className="text-[14px] text-[var(--color-text-muted)] tabular-nums">{plural(teamMemberIds.length, "person", "people")} in this team</span>
+                  className="font-display text-section font-semibold text-[var(--color-text)] bg-transparent min-w-0 flex-1 rounded-md px-1.5 -ml-1.5 h-10 border border-transparent hover:border-[var(--color-border-strong)] focus:bg-[var(--color-surface)]" />
+                <span className="text-body text-[var(--color-text-muted)] tabular-nums">{plural(teamMemberIds.length, "person", "people")} in this team</span>
               </div>
               <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,38fr)_minmax(0,62fr)] gap-6 items-start">
                 <div className={sheet}>
@@ -296,7 +296,7 @@ export default function AdminTeamsPage() {
                           </button>
                         );
                       })}
-                      {libraries.length === 0 && <span className="text-[14px] text-[var(--color-text-muted)]">No libraries yet.</span>}
+                      {libraries.length === 0 && <span className="text-body text-[var(--color-text-muted)]">No libraries yet.</span>}
                     </div>
                   </FormRow>
                 </div>
@@ -314,14 +314,14 @@ export default function AdminTeamsPage() {
                       const inTeam = teamMemberIds.includes(m.uid);
                       return (
                         <button key={m.uid} type="button" role="checkbox" onClick={() => toggleMember(m.uid)} aria-checked={inTeam} className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-[var(--color-surface-2)] text-left">
-                          <span aria-hidden className={`w-5 h-5 rounded-[5px] grid place-items-center shrink-0 border ${inTeam ? "border-[var(--color-text)] text-[var(--color-text)]" : "border-[var(--color-border-control)]"} bg-[var(--color-surface)]`}>
+                          <span aria-hidden className={`w-5 h-5 rounded-md grid place-items-center shrink-0 border ${inTeam ? "border-[var(--color-text)] text-[var(--color-text)]" : "border-[var(--color-border-control)]"} bg-[var(--color-surface)]`}>
                             {inTeam && <Check className="w-3.5 h-3.5" strokeWidth={3} />}
                           </span>
                           <span className="min-w-0 flex-1">
-                            <span className="block font-semibold text-[var(--color-text)] truncate">{m.display_name || m.email || m.uid}</span>
-                            <span className="block text-[13px] text-[var(--color-text-muted)] truncate">{m.email}</span>
+                            <span className="block font-medium text-[var(--color-text)] truncate">{m.display_name || m.email || m.uid}</span>
+                            <span className="block text-body text-[var(--color-text-muted)] truncate">{m.email}</span>
                           </span>
-                          {m.role && <span className="text-[13px] text-[var(--color-text-muted)] shrink-0">{m.role}</span>}
+                          {m.role && <span className="text-body text-[var(--color-text-muted)] shrink-0">{m.role}</span>}
                         </button>
                       );
                     })}

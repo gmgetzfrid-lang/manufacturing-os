@@ -60,7 +60,7 @@ export function findMapState(f: FindState): { assetId: string | null; docs: Find
 
 // The unit a piece of equipment is on, as a small graphite badge (filled
 // when it is the one picked). No separate color: the unit is its code.
-const UNIT_CLS = "shrink-0 min-w-8 h-8 px-1 rounded-md grid place-items-center font-display text-[13px] font-semibold tabular-nums";
+const UNIT_CLS = "shrink-0 min-w-8 h-8 px-1 rounded-md grid place-items-center font-display text-body font-semibold tabular-nums";
 
 function UnitDot({ e, on }: { e: Pick<FindEquip, "unitCode">; on?: boolean }) {
   return (
@@ -86,7 +86,7 @@ function Snippet({ text }: { text: string }) {
 function Section({ title, count, children }: { title: string; count?: number; children: React.ReactNode }) {
   return (
     <section>
-      <h3 className="flex items-baseline gap-2 pb-1.5 border-b border-[var(--color-border-strong)] text-[15px] font-semibold text-[var(--color-text)]">
+      <h3 className="flex items-baseline gap-2 pb-1.5 border-b border-[var(--color-border-strong)] text-reading font-medium text-[var(--color-text)]">
         {title}
         {count != null && <span className="font-display font-normal tabular-nums text-[var(--color-text-muted)]">{count}</span>}
       </h3>
@@ -95,7 +95,7 @@ function Section({ title, count, children }: { title: string; count?: number; ch
   );
 }
 
-const openBtn = "shrink-0 inline-flex items-center justify-center h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-text-faint)] transition-colors";
+const openBtn = "shrink-0 inline-flex items-center justify-center h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-text-faint)] transition-colors";
 
 /** A document found: Open shows it right here, over the page, and closing
  *  it leaves the search as it was. Folder goes to where it is filed. */
@@ -107,13 +107,13 @@ function DocRow({ d, line, compact, onOpen }: { d: FindDoc; line?: React.ReactNo
     <li className="flex items-center gap-3 py-2.5 min-w-0" onPointerEnter={warm} onFocusCapture={warm}>
       {!compact && <DocThumb documentId={d.id} width={30} />}
       <button type="button" onClick={onOpen} data-find-doc={d.id} className="min-w-0 flex-1 text-left group">
-        <span className="block font-display text-[15px] font-semibold tabular-nums text-[var(--color-text)] break-words group-hover:text-[var(--color-accent-text)]">{docLabel(d)}</span>
-        <span className="block text-[13px] text-[var(--color-text-muted)] truncate">{[docMeta(d), d.folderName ?? (d.title && d.title !== d.number ? d.title : "")].filter(Boolean).join(", ")}</span>
-        {line && <span className="block text-[13px] text-[var(--color-text)] mt-0.5">{line}</span>}
+        <span className="block font-display text-reading font-semibold tabular-nums text-[var(--color-text)] break-words group-hover:text-[var(--color-accent-text)]">{docLabel(d)}</span>
+        <span className="block text-body text-[var(--color-text-muted)] truncate">{[docMeta(d), d.folderName ?? (d.title && d.title !== d.number ? d.title : "")].filter(Boolean).join(", ")}</span>
+        {line && <span className="block text-body text-[var(--color-text)] mt-0.5">{line}</span>}
       </button>
       <button type="button" onClick={onOpen} className={openBtn} aria-label={`Open ${docLabel(d)}`}>Open</button>
       <Link href={docHref(d)} data-find-doc-folder={d.id} title={`Go to ${d.folderName ?? "where it is filed"}`}
-        className="shrink-0 inline-flex items-center gap-1 text-[13px] text-[var(--color-accent-text)] hover:underline underline-offset-2">
+        className="shrink-0 inline-flex items-center gap-1 text-body text-[var(--color-accent-text)] hover:underline underline-offset-2">
         <Folder className="w-3.5 h-3.5" /> Folder
       </Link>
     </li>
@@ -130,11 +130,11 @@ function EquipRow({ e, on, onPick }: { e: FindEquip; on: boolean; onPick: () => 
         <UnitDot e={e} on={on} />
         <span className="min-w-0 flex-1">
           <span className="flex items-baseline gap-3">
-            <span className="min-w-0 flex-1 font-display text-[15px] font-semibold tabular-nums text-[var(--color-text)] break-words">{e.tag}{e.code && !e.tag.includes(e.code) ? `, ${e.code}` : ""}</span>
-            <span className="shrink-0 text-[13px] text-[var(--color-text-muted)] whitespace-nowrap">{plural(e.docIds.length, "document")}</span>
+            <span className="min-w-0 flex-1 font-display text-reading font-semibold tabular-nums text-[var(--color-text)] break-words">{e.tag}{e.code && !e.tag.includes(e.code) ? `, ${e.code}` : ""}</span>
+            <span className="shrink-0 text-body text-[var(--color-text-muted)] whitespace-nowrap">{plural(e.docIds.length, "document")}</span>
           </span>
-          <span className="block text-[14px] text-[var(--color-text)] break-words">{e.unitLabel ?? (e.unitCode ? `Unit ${e.unitCode}` : "No unit set")}</span>
-          <span className="block text-[13px] text-[var(--color-text-muted)] break-words">{[e.description, e.typeName].filter(Boolean).join(", ") || "No description"}</span>
+          <span className="block text-body text-[var(--color-text)] break-words">{e.unitLabel ?? (e.unitCode ? `Unit ${e.unitCode}` : "No unit set")}</span>
+          <span className="block text-body text-[var(--color-text-muted)] break-words">{[e.description, e.typeName].filter(Boolean).join(", ") || "No description"}</span>
         </span>
       </button>
     </li>
@@ -174,27 +174,27 @@ export default function FindPanel({ orgId, f, unit, compact, onOpenFolder, onOpe
         {/* ── Results ───────────────────────────────────────────── */}
         <div className="min-w-0 space-y-5">
           {!quick && f.loading && (
-            <div className="flex items-center gap-2 text-[14px] text-[var(--color-text-muted)] py-3"><Loader2 className="w-4 h-4 animate-spin" /> Searching…</div>
+            <div className="flex items-center gap-2 text-body text-[var(--color-text-muted)] py-3"><Loader2 className="w-4 h-4 animate-spin" /> Searching…</div>
           )}
           {f.failed && (
-            <p role="alert" className="border-l-[3px] border-[var(--state-overdue)] pl-3 text-[14px] text-[var(--state-overdue)]">
+            <p role="alert" className="border-l-[3px] border-[var(--state-overdue)] pl-3 text-body text-[var(--state-overdue)]">
               Part of the search didn&apos;t answer, so some results may be missing. Change the search to try again.
             </p>
           )}
           {nothing && !f.failed && (
-            <p className="py-2 text-[15px] text-[var(--color-text-muted)]">
+            <p className="py-2 text-reading text-[var(--color-text-muted)]">
               Nothing matches “{f.q}”. Try the equipment ID (like 5530.29), a drawing number, or a few words from the drawing.
             </p>
           )}
 
           {ask && (
             <section data-find-ask className="border-l-[3px] border-[var(--color-text)] pl-3">
-              <h3 className="text-[15px] font-semibold text-[var(--color-text)]">{ask}</h3>
+              <h3 className="text-reading font-medium text-[var(--color-text)]">{ask}</h3>
               <ul className="mt-1 divide-y divide-[var(--color-border)]">
                 {f.exact.map((e) => <EquipRow key={e.id} e={e} on={picked?.id === e.id} onPick={() => f.pick(e.id)} />)}
               </ul>
               {f.pickedByFolder && picked && (
-                <p className="mt-1 text-[13px] text-[var(--color-text-muted)]">{`You're in a ${picked.unitLabel ?? `unit ${picked.unitCode}`} folder, so that one is picked. Select another to switch.`}</p>
+                <p className="mt-1 text-body text-[var(--color-text-muted)]">{`You're in a ${picked.unitLabel ?? `unit ${picked.unitCode}`} folder, so that one is picked. Select another to switch.`}</p>
               )}
             </section>
           )}
@@ -202,10 +202,10 @@ export default function FindPanel({ orgId, f, unit, compact, onOpenFolder, onOpe
           {picked && (
             <Section title={`${equipLabel(picked)}, ${picked.unitLabel ?? (picked.unitCode ? `Unit ${picked.unitCode}` : "no unit")}: its documents`} count={pickedDocs.length}>
               {!ask && [picked.description, picked.typeName].some(Boolean) && (
-                <li className="py-2 text-[13px] text-[var(--color-text-muted)]">{[picked.description, picked.typeName].filter(Boolean).join(", ")}</li>
+                <li className="py-2 text-body text-[var(--color-text-muted)]">{[picked.description, picked.typeName].filter(Boolean).join(", ")}</li>
               )}
               {pickedDocs.length === 0 ? (
-                <li className="py-2.5 text-[14px] text-[var(--color-text-muted)]">No documents are tagged with {equipLabel(picked)} yet.</li>
+                <li className="py-2.5 text-body text-[var(--color-text-muted)]">No documents are tagged with {equipLabel(picked)} yet.</li>
               ) : pickedDocs.map((d) => {
                 const also = f.detail?.onSheet[d.id] ?? [];
                 return <DocRow key={d.id} d={d} compact={compact} onOpen={() => setOpenId(d.id)} line={<>
@@ -218,8 +218,8 @@ export default function FindPanel({ orgId, f, unit, compact, onOpenFolder, onOpe
                   <Link href={`/projects/${w.projectId}`} data-find-wo={w.id} className="flex items-center gap-3 py-2.5 group">
                     <Wrench className="w-4 h-4 shrink-0 text-[var(--color-text-muted)]" />
                     <span className="min-w-0 flex-1">
-                      <span className="block text-[15px] font-semibold text-[var(--color-text)] truncate group-hover:text-[var(--color-accent-text)]">{w.wo ? <><span className="font-display tabular-nums">Work order {w.wo}</span>, </> : ""}{w.name}</span>
-                      <span className="block text-[13px] text-[var(--color-text-muted)] truncate">{w.projectName}{w.total ? `, ${w.done} of ${w.total} steps done` : ""}</span>
+                      <span className="block text-reading font-medium text-[var(--color-text)] truncate group-hover:text-[var(--color-accent-text)]">{w.wo ? <><span className="font-display tabular-nums">Work order {w.wo}</span>, </> : ""}{w.name}</span>
+                      <span className="block text-body text-[var(--color-text-muted)] truncate">{w.projectName}{w.total ? `, ${w.done} of ${w.total} steps done` : ""}</span>
                     </span>
                     <span className={openBtn}>Open</span>
                   </Link>
@@ -240,7 +240,7 @@ export default function FindPanel({ orgId, f, unit, compact, onOpenFolder, onOpe
                 <DocRow key={d.id} d={d} compact={compact} onOpen={() => setOpenId(d.id)} line={why(d)} />
               ))}
               {moreDocs.length > (compact ? 6 : 15) && (
-                <li className="py-2.5 text-[13px] text-[var(--color-text-muted)]">Showing {compact ? 6 : 15} of {moreDocs.length}. Add a word to the search to narrow it.</li>
+                <li className="py-2.5 text-body text-[var(--color-text-muted)]">Showing {compact ? 6 : 15} of {moreDocs.length}. Add a word to the search to narrow it.</li>
               )}
             </Section>
           )}
@@ -252,7 +252,7 @@ export default function FindPanel({ orgId, f, unit, compact, onOpenFolder, onOpe
                   <button type="button" onClick={() => onOpenFolder(fo)}
                     className="w-full text-left flex items-center gap-3 py-2.5 group">
                     <Folder className="w-4 h-4 shrink-0 text-[var(--color-text-muted)]" fill="currentColor" fillOpacity={0.2} />
-                    <span className="min-w-0 flex-1 text-[15px] font-semibold text-[var(--color-text)] truncate group-hover:text-[var(--color-accent-text)]">{fo.name}{fo.parentName ? <span className="font-normal text-[var(--color-text-muted)]"> in {fo.parentName}</span> : null}</span>
+                    <span className="min-w-0 flex-1 text-reading font-medium text-[var(--color-text)] truncate group-hover:text-[var(--color-accent-text)]">{fo.name}{fo.parentName ? <span className="font-normal text-[var(--color-text-muted)]"> in {fo.parentName}</span> : null}</span>
                   </button>
                 </li>
               ))}
@@ -260,11 +260,11 @@ export default function FindPanel({ orgId, f, unit, compact, onOpenFolder, onOpe
           )}
 
           {f.deepLoading && quick && (
-            <div className="flex items-center gap-2 text-[14px] text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin" /> Reading the tags on the sheets and the words inside the documents…</div>
+            <div className="flex items-center gap-2 text-body text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin" /> Reading the tags on the sheets and the words inside the documents…</div>
           )}
 
           {!quick && !f.loading && (
-            <div className="flex items-center gap-2 text-[14px] text-[var(--color-text-muted)] py-2"><Search className="w-4 h-4" /> Type a tag (E-22), an equipment ID (5530.29), a drawing number, or words from the drawing.</div>
+            <div className="flex items-center gap-2 text-body text-[var(--color-text-muted)] py-2"><Search className="w-4 h-4" /> Type a tag (E-22), an equipment ID (5530.29), a drawing number, or words from the drawing.</div>
           )}
         </div>
 

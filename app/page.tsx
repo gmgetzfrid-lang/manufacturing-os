@@ -353,22 +353,22 @@ export default function LoginPage() {
         : error ? "Not signed in"
         : "Ready to sign in"}
       footer={<>
-        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 text-[14px]">
+        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 text-body">
           <p className="text-[var(--color-text-muted)]">
             New company?{" "}
             <Link href="/signup" className={link}>Start a workspace</Link>
           </p>
           <Link href="/about" className={link}>About Manufacturing OS</Link>
         </div>
-        <p className="text-[13px] text-[var(--color-text-muted)]">Your workspace admin adds your account. Forgot your password? Ask them to reset it. Company accounts reset through Microsoft.</p>
-        <p className="text-[13px] text-[var(--color-text-muted)]">Authorized use only.</p>
+        <p className="text-body text-[var(--color-text-muted)]">Your workspace admin adds your account. Forgot your password? Ask them to reset it. Company accounts reset through Microsoft.</p>
+        <p className="text-body text-[var(--color-text-muted)]">Authorized use only.</p>
       </>}
     >
             {/* A problem sits where it happened: right above the doors it's about. */}
             {error && (
               <div role="alert" className="mb-5 flex items-start gap-2 text-[var(--state-overdue-text)]">
                 <AlertCircle aria-hidden className="w-4 h-4 shrink-0 mt-0.5" />
-                <p className="text-[14px] font-semibold">{error}</p>
+                <p className="text-body font-medium">{error}</p>
               </div>
             )}
 
@@ -381,7 +381,7 @@ export default function LoginPage() {
 
             <div className="flex items-center gap-3 my-6" aria-hidden>
               <div className="h-px bg-[var(--color-border)] flex-1" />
-              <span className="text-[13px] text-[var(--color-text-muted)]">or with a password</span>
+              <span className="text-body text-[var(--color-text-muted)]">or with a password</span>
               <div className="h-px bg-[var(--color-border)] flex-1" />
             </div>
 
@@ -431,7 +431,7 @@ export default function LoginPage() {
                 onChange={(e) => setKeepSignedIn(e.target.checked)}
                 className="w-4 h-4 rounded cursor-pointer accent-[var(--color-text)]"
               />
-              <span className="text-[14px] text-[var(--color-text-muted)]">Keep me signed in on this device</span>
+              <span className="text-body text-[var(--color-text-muted)]">Keep me signed in on this device</span>
             </label>
     </AuthCard>
   );

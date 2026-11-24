@@ -189,7 +189,7 @@ export default function GenerateModal({ orgId, template, onClose, onGenerated }:
         onClick={(e) => e.stopPropagation()}>
         <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center justify-between sticky top-0 bg-[var(--color-surface)] rounded-t-xl z-10">
           <div>
-            <div className="text-[13px] font-semibold text-[var(--color-text-muted)] inline-flex items-center gap-1.5"><Sparkles className="w-3.5 h-3.5" /> Generate documents</div>
+            <div className="text-body font-medium text-[var(--color-text-muted)] inline-flex items-center gap-1.5"><Sparkles className="w-3.5 h-3.5" /> Generate documents</div>
             <h2 className="mt-1 font-display text-[24px] leading-tight font-semibold text-[var(--color-text)]">{template.name}</h2>
           </div>
           <button onClick={onClose} aria-label="Close" title="Close" className="w-9 h-9 pointer-coarse:w-11 pointer-coarse:h-11 grid place-items-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
@@ -199,20 +199,20 @@ export default function GenerateModal({ orgId, template, onClose, onGenerated }:
           <StepPath steps={["Add your data", "Check the wording", "Make the files"]} current={docs.length === 0 ? 0 : 1} />
           {/* ── 1. Data ─────────────────────────────────────────────────── */}
           <div {...dataDrag.bind} className={`rounded-xl border border-[var(--color-border)] p-3.5 ${dataDrag.ring}`}>
-            <div className="text-[14px] font-semibold text-[var(--color-text)] mb-2">
-              1 · Data {dataDrag.over && <span className="normal-case tracking-normal font-bold text-[var(--color-text)]"> · {dataDrag.say}</span>}
+            <div className="text-body font-medium text-[var(--color-text)] mb-2">
+              1 · Data {dataDrag.over && <span className="normal-case tracking-normal font-medium text-[var(--color-text)]"> · {dataDrag.say}</span>}
             </div>
             <div className="flex items-center gap-2 flex-wrap">
               <label className="inline-flex">
                 <input type="file" accept=".xlsx,.xls,.csv" hidden disabled={busy !== null}
                   onChange={(e) => { void onFilePicked(e.target.files?.[0] ?? null); e.target.value = ""; }} />
-                <span className="inline-flex items-center gap-1.5 h-10 pointer-coarse:h-11 px-3.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] cursor-pointer">
+                <span className="inline-flex items-center gap-1.5 h-10 pointer-coarse:h-11 px-3.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] cursor-pointer">
                   {busy === "upload" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
                   {source ? "Replace spreadsheet" : "Upload or drop a spreadsheet (.xlsx / .csv)"}
                 </span>
               </label>
               {picked ? (
-                <span className="inline-flex items-center gap-2 text-[13px] font-bold text-[var(--color-text)] min-w-0">
+                <span className="inline-flex items-center gap-2 text-body font-medium text-[var(--color-text)] min-w-0">
                   <FileThumb file={picked} size={32} />
                   <span className="min-w-0 flex flex-col leading-tight">
                     <span className="truncate">{picked.name}</span>
@@ -223,7 +223,7 @@ export default function GenerateModal({ orgId, template, onClose, onGenerated }:
                   </span>
                 </span>
               ) : source && (
-                <span className="inline-flex items-center gap-1.5 text-[13px] font-bold text-[var(--color-text)]">
+                <span className="inline-flex items-center gap-1.5 text-body font-medium text-[var(--color-text)]">
                   <Table2 className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> {source.name}
                   {rowCount !== null && (
                     <span className="text-[var(--color-text-muted)] font-normal">· {rowCount} rows</span>
@@ -232,14 +232,14 @@ export default function GenerateModal({ orgId, template, onClose, onGenerated }:
               )}
             </div>
             {uploadError && picked && (
-              <p role="alert" className="mt-2 flex flex-wrap items-center gap-x-2 text-[13px] font-semibold text-[var(--state-overdue-text)]">
+              <p role="alert" className="mt-2 flex flex-wrap items-center gap-x-2 text-body font-medium text-[var(--state-overdue-text)]">
                 The spreadsheet didn&apos;t upload. {friendlyError(uploadError)}
                 <button type="button" onClick={() => void onFilePicked(picked)} disabled={busy !== null} className="text-[var(--color-accent-text)] hover:underline underline-offset-2">Try again</button>
               </p>
             )}
             {sheetNames.length > 1 && (
               <label className="block mt-2">
-                <span className="block text-[14px] font-semibold text-[var(--color-text)] mb-1.5">Sheet</span>
+                <span className="block text-body font-medium text-[var(--color-text)] mb-1.5">Sheet</span>
                 <Select value={sheet} onChange={(e) => setSheet(e.target.value)}>
                   {sheetNames.map((s) => <option key={s} value={s}>{s}</option>)}
                 </Select>
@@ -248,11 +248,11 @@ export default function GenerateModal({ orgId, template, onClose, onGenerated }:
             {template.mode === "both" && (
               <div className="mt-2 inline-flex rounded-xl border border-[var(--color-border)] p-0.5">
                 <button onClick={() => setMode("per_row")}
-                  className={`px-3 py-1.5 rounded-[10px] text-[13px] font-semibold ${mode === "per_row" ? "bg-[var(--color-surface)] text-[var(--color-text)] ring-1 ring-[var(--color-text-muted)] shadow-sm" : "text-[var(--color-text-muted)]"}`}>
+                  className={`px-3 py-1.5 rounded-lg text-body font-medium ${mode === "per_row" ? "bg-[var(--color-surface)] text-[var(--color-text)] ring-1 ring-[var(--color-text-muted)] shadow-sm" : "text-[var(--color-text-muted)]"}`}>
                   One per row
                 </button>
                 <button onClick={() => setMode("summary")}
-                  className={`px-3 py-1.5 rounded-[10px] text-[13px] font-semibold ${mode === "summary" ? "bg-[var(--color-surface)] text-[var(--color-text)] ring-1 ring-[var(--color-text-muted)] shadow-sm" : "text-[var(--color-text-muted)]"}`}>
+                  className={`px-3 py-1.5 rounded-lg text-body font-medium ${mode === "summary" ? "bg-[var(--color-surface)] text-[var(--color-text)] ring-1 ring-[var(--color-text-muted)] shadow-sm" : "text-[var(--color-text-muted)]"}`}>
                   One summary document
                 </button>
               </div>
@@ -270,15 +270,15 @@ export default function GenerateModal({ orgId, template, onClose, onGenerated }:
             <div className="border-l-[3px] border-[var(--state-held)] pl-3.5 py-1">
               <div className="flex items-start gap-2 mb-2">
                 <AlertTriangle aria-hidden className="w-4 h-4 text-[var(--state-held)] shrink-0 mt-0.5" />
-                <div className="text-[14px] text-[var(--color-text)]">
+                <div className="text-body text-[var(--color-text)]">
                   <b>This template needs a few values your sheet doesn&apos;t obviously have.</b> Point each
                   one at the right column. The choice is remembered for next time.
                 </div>
               </div>
               <ul className="space-y-1.5">
                 {mapping.missing.map((m) => (
-                  <li key={m.tag} className="flex items-center gap-2 text-[13px]">
-                    <code className="font-mono font-semibold text-[var(--color-text)] w-40 truncate">{`{${m.tag}}`}</code>
+                  <li key={m.tag} className="flex items-center gap-2 text-body">
+                    <code className="font-mono font-medium text-[var(--color-text)] w-40 truncate">{`{${m.tag}}`}</code>
                     <Select className="flex-1"
                       value={mapping.columnMap[m.tag] ?? ""}
                       onChange={(e) => setMapping((prev) => prev && ({
@@ -303,11 +303,11 @@ export default function GenerateModal({ orgId, template, onClose, onGenerated }:
           {docs.length > 0 && (
             <div className="rounded-xl border border-[var(--color-border)] p-3.5">
               <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
-                <div className="text-[14px] font-semibold text-[var(--color-text)]">
+                <div className="text-body font-medium text-[var(--color-text)]">
                   2 · Check: {docs.length} document{docs.length === 1 ? "" : "s"} drafted
                 </div>
                 {cost > 0 && (
-                  <span className="text-[13px] text-[var(--color-text-muted)]">
+                  <span className="text-body text-[var(--color-text-muted)]">
                     drafting cost ≈ ${cost.toFixed(2)} on your key
                   </span>
                 )}
@@ -319,32 +319,32 @@ export default function GenerateModal({ orgId, template, onClose, onGenerated }:
                       className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-[var(--color-surface-2)] rounded-lg">
                       <ChevronRight className={`w-3.5 h-3.5 shrink-0 ui-chevron${(expanded === i) ? " rotate-90" : ""}`} />
                       <FileText className="w-3.5 h-3.5 text-[var(--color-text-muted)] shrink-0" />
-                      <span className="text-[13px] font-bold text-[var(--color-text)] truncate">{d.filename}</span>
+                      <span className="text-body font-medium text-[var(--color-text)] truncate">{d.filename}</span>
                       {d.sourceRow && (
-                        <span className="ml-auto text-[13px] text-[var(--color-text-muted)] shrink-0">row {d.sourceRow}</span>
+                        <span className="ml-auto text-body text-[var(--color-text-muted)] shrink-0">row {d.sourceRow}</span>
                       )}
                     </button>
                     {expanded === i && (
                       <div className="px-3 pb-3 space-y-2 border-t border-[var(--color-border)] pt-2">
                         <label className="block">
-                          <span className="block text-[14px] font-semibold text-[var(--color-text)] mb-1.5">File name</span>
+                          <span className="block text-body font-medium text-[var(--color-text)] mb-1.5">File name</span>
                           <Input value={d.filename} onChange={(e) => updateFilename(i, e.target.value)} className="text-xs font-mono" />
                         </label>
                         {Object.entries(d.values).map(([tag, value]) => (
                           <label key={tag} className="block">
-                            <span className="text-[14px] font-semibold text-[var(--color-text)] mb-1.5 flex items-center gap-1.5">
+                            <span className="text-body font-medium text-[var(--color-text)] mb-1.5 flex items-center gap-1.5">
                               {tag}
                               {aiTags.has(tag) && (
-                                <span className="inline-flex items-center gap-0.5 text-[13px] px-1 py-0.5 rounded bg-[var(--color-surface-2)] border border-[var(--color-border)] dark:border-[var(--color-border)] text-[var(--color-text)] dark:text-[var(--color-text)]">
+                                <span className="inline-flex items-center gap-0.5 text-body px-1 py-0.5 rounded bg-[var(--color-surface-2)] border border-[var(--color-border)] dark:border-[var(--color-border)] text-[var(--color-text)] dark:text-[var(--color-text)]">
                                   <Sparkles className="w-2.5 h-2.5" /> AI
                                 </span>
                               )}
                             </span>
                             {value.length > 80 || aiTags.has(tag) ? (
                               <Textarea rows={Math.min(8, Math.max(2, Math.ceil(value.length / 90)))}
-                                value={value} onChange={(e) => updateValue(i, tag, e.target.value)} className="text-[13px]" />
+                                value={value} onChange={(e) => updateValue(i, tag, e.target.value)} className="text-body" />
                             ) : (
-                              <Input value={value} onChange={(e) => updateValue(i, tag, e.target.value)} className="text-[13px]" />
+                              <Input value={value} onChange={(e) => updateValue(i, tag, e.target.value)} className="text-body" />
                             )}
                           </label>
                         ))}
@@ -366,17 +366,17 @@ export default function GenerateModal({ orgId, template, onClose, onGenerated }:
           {/* ── 3. Generate ────────────────────────────────────────────── */}
           {docs.length > 0 && (
             <div className="rounded-xl border border-[var(--color-border)] p-3.5 space-y-2.5">
-              <div className="text-[14px] font-semibold text-[var(--color-text)]">
+              <div className="text-body font-medium text-[var(--color-text)]">
                 3 · Generate
               </div>
-              <p className="text-[13px] text-[var(--color-text-muted)]">
+              <p className="text-body text-[var(--color-text-muted)]">
                 Renders into <b>{template.templateFileName ?? "your template"}</b>. Fonts, colours,
                 tables and headers stay as they are.
               </p>
               {libraries.length > 0 && (
-                <div className="flex items-center gap-2 flex-wrap text-[13px]">
-                  <span className="font-bold text-[var(--color-text)]">File into document control:</span>
-                  <Select value={fileInto} onChange={(e) => setFileInto(e.target.value)} className="!w-56 text-[13px]">
+                <div className="flex items-center gap-2 flex-wrap text-body">
+                  <span className="font-medium text-[var(--color-text)]">File into document control:</span>
+                  <Select value={fileInto} onChange={(e) => setFileInto(e.target.value)} className="!w-56 text-body">
                     <option value="">- download only -</option>
                     {libraries.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
                   </Select>
@@ -384,7 +384,7 @@ export default function GenerateModal({ orgId, template, onClose, onGenerated }:
                 </div>
               )}
               {filing && (
-                <div className="text-[13px] font-bold text-[var(--color-text)] inline-flex items-center gap-1.5">
+                <div className="text-body font-medium text-[var(--color-text)] inline-flex items-center gap-1.5">
                   <Loader2 className="w-3.5 h-3.5 animate-spin" /> Filing {filing.done} of {filing.total}
                 </div>
               )}

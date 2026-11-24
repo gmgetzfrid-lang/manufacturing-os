@@ -17,14 +17,14 @@ export default function StepPath({ steps, current, onPick, className = "", onDar
 }) {
   return (
     <div className={className}>
-      <p className={`sm:hidden text-[12.5px] font-bold ${onDark ? "text-white" : "text-[var(--color-text)]"}`}>
+      <p className={`sm:hidden text-[12.5px] font-medium ${onDark ? "text-white" : "text-[var(--color-text)]"}`}>
         Step {Math.min(current + 1, steps.length)} of {steps.length}: {steps[current] ?? ""}
       </p>
       <ol className="flex items-start" aria-label="Steps">
         {steps.map((label, i) => {
           const done = i < current, now = i === current;
           const dot = (
-            <span className={`relative z-10 w-6 h-6 rounded-full flex items-center justify-center text-[11px] font-black shrink-0 ${
+            <span className={`relative z-10 w-6 h-6 rounded-full flex items-center justify-center text-caption font-semibold shrink-0 ${
               onDark
                 ? (done ? "bg-white text-[var(--color-band)]" : now ? "border-2 border-white bg-[var(--color-band)] text-white" : "border border-[var(--color-ink-line)] bg-[var(--color-band)] text-[var(--color-ink-muted)]")
                 : done ? "bg-[var(--color-text)] text-[var(--color-surface)]"
@@ -39,7 +39,7 @@ export default function StepPath({ steps, current, onPick, className = "", onDar
               {done && onPick
                 ? <button type="button" onClick={() => onPick(i)} aria-label={`Back to ${label}`} className="relative z-10 rounded-full">{dot}</button>
                 : dot}
-              <span className={`hidden sm:block mt-1.5 px-1 text-center text-[12px] leading-tight truncate max-w-full ${onDark ? (now ? "font-bold text-white" : "text-[var(--color-ink-muted)]") : now ? "font-bold text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>{label}</span>
+              <span className={`hidden sm:block mt-1.5 px-1 text-center text-caption leading-tight truncate max-w-full ${onDark ? (now ? "font-medium text-white" : "text-[var(--color-ink-muted)]") : now ? "font-medium text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>{label}</span>
             </li>
           );
         })}

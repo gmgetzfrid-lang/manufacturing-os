@@ -386,7 +386,7 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
   if (hidden) {
     return (
       <div className="flex justify-end">
-        <button type="button" onClick={() => { setHidden(false); store.set(HIDE_KEY, null); }} className="text-[13px] hover:text-[var(--color-accent-text)] text-[var(--color-accent-text)] hover:underline">
+        <button type="button" onClick={() => { setHidden(false); store.set(HIDE_KEY, null); }} className="text-body hover:text-[var(--color-accent-text)] text-[var(--color-accent-text)] hover:underline">
           Show Update by note
         </button>
       </div>
@@ -400,48 +400,48 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
       {!open ? (
         // One quiet button until it's wanted: the work stays on screen.
         <button type="button" onClick={() => setOpen(true)} title="Type or say what happened on the job. You check every line before it saves."
-          className="inline-flex items-center gap-1.5 h-9 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
+          className="inline-flex items-center gap-1.5 h-10 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
           <NotebookPen className="w-4 h-4 shrink-0 text-[var(--color-text-muted)]" /> Update by note
         </button>
       ) : (
         <div className="py-2 space-y-2">
           <div className="flex items-center gap-2">
             <NotebookPen className="w-4 h-4 text-[var(--color-text-muted)]" />
-            <span className="flex-1 text-[14px] font-bold text-[var(--color-text)]">Update by note</span>
+            <span className="flex-1 text-body font-medium text-[var(--color-text)]">Update by note</span>
             <button type="button" onClick={() => { recRef.current?.stop(); setOpen(false); }} aria-label="Close" className="p-1 rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
           </div>
           <div {...drag.bind} className={`relative rounded-lg ${drag.ring}`}>
-          {drag.over && <div className="absolute inset-0 z-[1] flex items-center justify-center rounded-lg text-[13px] font-bold text-[var(--color-text)] pointer-events-none">{drag.say}</div>}
+          {drag.over && <div className="absolute inset-0 z-[1] flex items-center justify-center rounded-lg text-body font-medium text-[var(--color-text)] pointer-events-none">{drag.say}</div>}
           <textarea value={note} onChange={(e) => setDraft(e.target.value)} rows={note.length > 400 ? 10 : 4} aria-label="What happened"
             placeholder={"What happened? Name the equipment or WO, like you'd tell your relief.\nE-02 channel head is on the ground, they pulled it and washed it, staging to put it back.\nV-1 trays 50%. V-3 on hold, scaffold not built."}
-            className="w-full rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 py-2 text-[14px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)]" />
+            className="w-full rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 py-2 text-body text-[var(--color-text)] placeholder:text-[var(--color-text-faint)]" />
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <button type="button" onClick={toggleMic} disabled={!canSpeak} title={canSpeak ? undefined : "Use the microphone on your phone's keyboard to speak into the box"}
-              className={`inline-flex items-center gap-1.5 h-10 px-3 rounded-lg border text-[13px] font-bold disabled:opacity-50 ${listening ? "border-[var(--state-overdue)] bg-[var(--state-overdue)] text-white" : "border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
+              className={`inline-flex items-center gap-1.5 h-10 px-3 rounded-lg border text-body font-medium disabled:opacity-50 ${listening ? "border-[var(--state-overdue)] bg-[var(--state-overdue)] text-white" : "border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
               {listening ? <><MicOff className="w-4 h-4" /> Stop</> : <><Mic className="w-4 h-4" /> Speak</>}
             </button>
             <button type="button" onClick={() => fileRef.current?.click()} disabled={!!fileBusy || busy}
-              className="inline-flex items-center gap-1.5 h-10 px-3 rounded-lg border border-[var(--color-border-strong)] text-[13px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">
+              className="inline-flex items-center gap-1.5 h-10 px-3 rounded-lg border border-[var(--color-border-strong)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">
               <Paperclip className="w-4 h-4" /> Add a file
             </button>
             <input ref={fileRef} type="file" multiple className="hidden" aria-label="Add a file of notes"
               accept=".txt,.text,.md,.log,.csv,.tsv,.rtf,.docx,.xlsx,.xlsm,.xls,.pdf,image/*"
               onChange={(e) => void addFiles(e.target.files)} />
             <button type="button" onClick={() => void read()} disabled={busy || !!fileBusy || !note.trim()}
-              className="inline-flex items-center gap-1.5 h-10 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[13px] font-bold hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
+              className="inline-flex items-center gap-1.5 h-10 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-body font-medium hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
               {busy ? <><Loader2 className="w-4 h-4 animate-spin" /> {progress ?? "Reading…"}</> : parts?.length ? `Read all ${parts.filter((p) => !skip.has(p.key)).length} shift${parts.filter((p) => !skip.has(p.key)).length === 1 ? "" : "s"}` : "Read it"}
             </button>
-            {note && !busy && <button type="button" onClick={() => setDraft("")} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Clear</button>}
-            {!canSpeak && <span className="text-[11px] text-[var(--color-text-muted)]">To talk, use the mic on your keyboard.</span>}
+            {note && !busy && <button type="button" onClick={() => setDraft("")} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Clear</button>}
+            {!canSpeak && <span className="text-caption text-[var(--color-text-muted)]">To talk, use the mic on your keyboard.</span>}
           </div>
           {listening && (
-            <div className="text-[12px] text-[var(--state-overdue-text)]">
+            <div className="text-caption text-[var(--state-overdue-text)]">
               <b>Listening…</b> say what happened, then tap Stop. Noisy? Say tags by letter: “Echo 2”, “Victor 1”, “Papa Sierra Victor 209”.
               {hearing && <div className="mt-0.5 italic text-[var(--color-text-muted)]">Hearing: {hearing}</div>}
             </div>
           )}
-          <div className="text-[12px] text-[var(--color-text-muted)]">
+          <div className="text-caption text-[var(--color-text-muted)]">
             <button type="button" onClick={() => setShowWords((v) => !v)} aria-expanded={showWords} className="text-[var(--color-accent-text)] hover:underline">Your words ({words.length})</button>
             {showWords && (
               <div className="mt-1 space-y-1.5">
@@ -459,32 +459,32 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
                 <form onSubmit={(e) => { e.preventDefault(); addWord(); }} className="flex flex-wrap items-center gap-1.5">
                   <span>It hears</span>
                   <input value={teach.said} onChange={(e) => setTeach((t) => ({ ...t, said: e.target.value }))} placeholder="mee too" aria-label="It hears"
-                    className="h-8 pointer-coarse:h-11 w-28 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12px] text-[var(--color-text)]" />
+                    className="h-8 pointer-coarse:h-11 w-28 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-caption text-[var(--color-text)]" />
                   <span>I mean</span>
                   <input value={teach.as} onChange={(e) => setTeach((t) => ({ ...t, as: e.target.value }))} placeholder="E-2" aria-label="I mean"
-                    className="h-8 pointer-coarse:h-11 w-24 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12px] text-[var(--color-text)]" />
-                  <button type="submit" disabled={!teach.said.trim() || !teach.as.trim()} className="h-8 rounded-md border border-[var(--color-border-strong)] px-2.5 font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">Add word</button>
+                    className="h-8 pointer-coarse:h-11 w-24 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-caption text-[var(--color-text)]" />
+                  <button type="submit" disabled={!teach.said.trim() || !teach.as.trim()} className="h-8 rounded-md border border-[var(--color-border-strong)] px-2.5 font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">Add word</button>
                 </form>
               </div>
             )}
           </div>
-          {fileBusy && <div className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-[var(--color-text-muted)]"><Loader2 className="w-3.5 h-3.5 animate-spin" /> {fileBusy}</div>}
+          {fileBusy && <div className="inline-flex items-center gap-1.5 text-caption font-medium text-[var(--color-text-muted)]"><Loader2 className="w-3.5 h-3.5 animate-spin" /> {fileBusy}</div>}
           {files.length > 0 && (
-            <div className="space-y-1 text-[12px] text-[var(--color-text-muted)]">
+            <div className="space-y-1 text-caption text-[var(--color-text-muted)]">
               <ul className="space-y-1">
                 {files.map((f) => (
                   <li key={f.key} className="flex items-center gap-2 min-w-0">
                     <FileThumb file={f.file} size={28} />
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate font-semibold text-[var(--color-text)]">{f.file.name}</span>
+                      <span className="block truncate font-medium text-[var(--color-text)]">{f.file.name}</span>
                       <span className="block">
-                        {sizeOf(f.file.size)} · {f.error ? <span className="font-semibold text-[var(--state-overdue-text)]">{f.error}</span>
+                        {sizeOf(f.file.size)} · {f.error ? <span className="font-medium text-[var(--state-overdue-text)]">{f.error}</span>
                           : f.chars != null ? `read ${f.chars.toLocaleString()} characters` : "reading…"}
                       </span>
                     </span>
                     {f.error && (
                       <button type="button" disabled={!!fileBusy || busy} onClick={() => void readFile(f.key, f.file)}
-                        className="shrink-0 h-8 px-2.5 rounded-md border border-[var(--color-border-strong)] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">Try again</button>
+                        className="shrink-0 h-8 px-2.5 rounded-md border border-[var(--color-border-strong)] font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">Try again</button>
                     )}
                   </li>
                 ))}
@@ -494,13 +494,13 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
           )}
           {/* A pasted email: the shifts it names, and its sections to read or leave out. */}
           {parts && parts.length > 0 && (
-            <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2.5 py-2 text-[12px] space-y-1.5">
-              <div className="font-bold text-[var(--color-text)]">Found {parts.length} shift{parts.length === 1 ? "" : "s"} in your note, by its own dates and times:</div>
+            <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2.5 py-2 text-caption space-y-1.5">
+              <div className="font-medium text-[var(--color-text)]">Found {parts.length} shift{parts.length === 1 ? "" : "s"} in your note, by its own dates and times:</div>
               <div className="flex flex-wrap gap-1.5">
                 {parts.map((p) => {
                   const on = !skip.has(p.key);
                   return (
-                    <label key={p.key} className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 font-semibold cursor-pointer ${on ? "border-[var(--color-text)] bg-[var(--color-surface-2)] text-[var(--color-text)]" : "border-[var(--color-border-strong)] text-[var(--color-text-muted)] line-through"}`}>
+                    <label key={p.key} className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 font-medium cursor-pointer ${on ? "border-[var(--color-text)] bg-[var(--color-surface-2)] text-[var(--color-text)]" : "border-[var(--color-border-strong)] text-[var(--color-text-muted)] line-through"}`}>
                       <input type="checkbox" checked={on} onChange={() => setSkip((s0) => { const n = new Set(s0); if (n.has(p.key)) n.delete(p.key); else n.add(p.key); return n; })} className="h-3.5 w-3.5 accent-[var(--color-text)]" />
                       {partLabel(p.window, tz)}
                     </label>
@@ -509,57 +509,57 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
               </div>
               {found.length > 0 && (
                 <>
-                  <div className="font-bold text-[var(--color-text)]">Read these parts:</div>
+                  <div className="font-medium text-[var(--color-text)]">Read these parts:</div>
                   <div className="flex flex-wrap gap-1.5">
                     {found.map((f) => {
                       const on = !omit.has(f.kind);
                       return (
-                        <label key={f.kind} className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 cursor-pointer ${on ? "border-[var(--color-text)] bg-[var(--color-surface-2)] font-semibold text-[var(--color-text)]" : "border-[var(--color-border-strong)] text-[var(--color-text-muted)]"}`}>
+                        <label key={f.kind} className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 cursor-pointer ${on ? "border-[var(--color-text)] bg-[var(--color-surface-2)] font-medium text-[var(--color-text)]" : "border-[var(--color-border-strong)] text-[var(--color-text-muted)]"}`}>
                           <input type="checkbox" checked={on} onChange={() => flipOmit(f.kind)} className="h-3.5 w-3.5 accent-[var(--color-text)]" />
                           {SECTION_WORD[f.kind]} <span className="opacity-70">· {f.lines}</span>
                         </label>
                       );
                     })}
                   </div>
-                  <div className="text-[12px] text-[var(--color-text-muted)]">What you leave out stays out next time too. Anything already in the app comes in unticked.</div>
+                  <div className="text-caption text-[var(--color-text-muted)]">What you leave out stays out next time too. Anything already in the app comes in unticked.</div>
                 </>
               )}
             </div>
           )}
           {/* Which shift the notes are about. */}
           {note.trim() && !parts?.length && (
-            <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2.5 py-2 text-[12px]">
-              <div className="font-bold text-[var(--color-text)]">These notes are about:</div>
+            <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2.5 py-2 text-caption">
+              <div className="font-medium text-[var(--color-text)]">These notes are about:</div>
               <div className="mt-1 flex flex-wrap items-center gap-1.5">
                 {([["now", "Now, as it happens", undefined], ["this", `This shift (${sh(curShift)})`, curShift], ["last", `Last shift (${sh(lastShift)})`, lastShift]] as const).map(([id, label, w]) => {
                   const on = id === "now" ? from.id === "now" : from.id === "shift" && from.w.start === w!.start;
                   return (
                     <button key={id} type="button" aria-pressed={on} onClick={() => setFrom(w ? { id: "shift", w } : { id: "now" })}
-                      className={`rounded-full border px-2.5 py-1 font-semibold ${on ? "border-transparent bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30" : "border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface)]"}`}>{label}</button>
+                      className={`rounded-full border px-2.5 py-1 font-medium ${on ? "border-transparent bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30" : "border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface)]"}`}>{label}</button>
                   );
                 })}
                 <span className="inline-flex items-center gap-1">
                   <input type="date" value={pickDay} max={dayKey(nowTick, tz)} onChange={(e) => setPickDay(e.target.value)} aria-label="Another day"
-                    className="h-7 pointer-coarse:h-11 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1.5 text-[12px]" />
+                    className="h-7 pointer-coarse:h-11 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1.5 text-caption" />
                   {(["day", "night"] as const).map((k) => (
                     <button key={k} type="button" disabled={!pickDay} onClick={() => setFrom({ id: "shift", w: shiftWindow(pickDay, k, tz, times) })}
-                      className="rounded-full border border-[var(--color-border-strong)] px-2 py-0.5 font-semibold text-[var(--color-text)] disabled:opacity-40">{k === "day" ? "Day" : "Night"}</button>
+                      className="rounded-full border border-[var(--color-border-strong)] px-2 py-0.5 font-medium text-[var(--color-text)] disabled:opacity-40">{k === "day" ? "Day" : "Night"}</button>
                   ))}
                 </span>
               </div>
-              <div className="mt-1 text-[12px] text-[var(--color-text-muted)]">
+              <div className="mt-1 text-caption text-[var(--color-text-muted)]">
                 {from.id === "now" ? "A time with no date is the last time it came round: today, or last night."
                   : <>A log of the <b className="text-[var(--color-text)]">{shSpan(from.w)}</b>{from.auto ? " (from when the file was last saved; change it if that's wrong)" : ""}. Times with no date are in that shift.</>}
               </div>
             </div>
           )}
-          {err && <div role="alert" className="text-[12px] font-semibold text-[var(--state-overdue-text)]">{err}</div>}
+          {err && <div role="alert" className="text-caption font-medium text-[var(--state-overdue-text)]">{err}</div>}
           {done && (
-            <div role="status" className={`border-l-2 pl-3 py-1 text-[12px] text-[var(--color-text)] ${done.failed.length ? "border-[var(--state-overdue)]" : "border-[var(--state-released)]"}`}>
+            <div role="status" className={`border-l-2 pl-3 py-1 text-caption text-[var(--color-text)] ${done.failed.length ? "border-[var(--state-overdue)]" : "border-[var(--state-released)]"}`}>
               <div className="flex items-center gap-2">
                 <b className="flex-1">{done.saved.length && done.saved.every((s) => done.undone[s.id] === "Undone") ? "All taken back. Your note is in the box to fix and read again." : done.saved.length ? `Saved ${done.saved.length} step${done.saved.length === 1 ? "" : "s"}.` : "Nothing saved."}</b>
                 {done.saved.some((s) => !done.undone[s.id]) && (
-                  <button type="button" disabled={undoing} onClick={() => void undo(done.saved)} className="inline-flex items-center gap-1 rounded-md border border-current px-2 py-0.5 font-bold disabled:opacity-50">
+                  <button type="button" disabled={undoing} onClick={() => void undo(done.saved)} className="inline-flex items-center gap-1 rounded-md border border-current px-2 py-0.5 font-medium disabled:opacity-50">
                     {undoing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Undo2 className="w-3.5 h-3.5" />} Undo all
                   </button>
                 )}
@@ -570,7 +570,7 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
                   <li key={s.id} className="flex flex-wrap items-baseline gap-x-2">
                     <span className={done.undone[s.id] === "Undone" ? "line-through opacity-70" : ""}><b>{s.name}</b>: {done.says[s.id]}</span>
                     {done.undone[s.id]
-                      ? <span className="font-semibold">{done.undone[s.id]}</span>
+                      ? <span className="font-medium">{done.undone[s.id]}</span>
                       : <button type="button" disabled={undoing} onClick={() => void undo([s])} className="underline disabled:opacity-50">Undo</button>}
                   </li>
                 ))}
@@ -588,17 +588,17 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
           <ModalHeader icon={NotebookPen} title="Check before saving" subtitle={`Each line is what your note says, matched to a step. Nothing saves until you tap Save.${review.window ? ` Notes from the ${sh(review.window)}.` : ""}`} onClose={saving ? undefined : () => setReview(null)} />
           <ModalBody className="p-0">
             {review.parts ? (
-              <div className="px-4 py-2.5 border-b border-[var(--color-border)] bg-slate-50 dark:bg-[var(--color-surface-2)] text-[12px] text-[var(--color-text-muted)]">
+              <div className="px-4 py-2.5 border-b border-[var(--color-border)] bg-slate-50 dark:bg-[var(--color-surface-2)] text-caption text-[var(--color-text-muted)]">
                 <b className="text-[var(--color-text)]">{review.parts.length} shift{review.parts.length === 1 ? "" : "s"} read from your note</b>, newest first. Times are read in their own shift; a line with no time goes in at the end of its shift.
-                {(review.failed?.length ?? 0) > 0 && <div className="mt-1 font-semibold text-[var(--state-overdue-text)]">Not read: {review.failed!.join(" · ")}. Go back and read it again for those.</div>}
+                {(review.failed?.length ?? 0) > 0 && <div className="mt-1 font-medium text-[var(--state-overdue-text)]">Not read: {review.failed!.join(" · ")}. Go back and read it again for those.</div>}
               </div>
             ) : (
-            <div className="px-4 py-2.5 border-b border-[var(--color-border)] bg-slate-50 dark:bg-[var(--color-surface-2)] text-[12px]">
-              <div className="font-bold text-[var(--color-text)]">No time in your note? Those lines go in at:</div>
+            <div className="px-4 py-2.5 border-b border-[var(--color-border)] bg-slate-50 dark:bg-[var(--color-surface-2)] text-caption">
+              <div className="font-medium text-[var(--color-text)]">No time in your note? Those lines go in at:</div>
               <div className="mt-1.5 flex flex-wrap gap-1.5">
                 {choices.map((c) => (
                   <button key={c.id} type="button" onClick={() => setDefault(c.id, c.at)} aria-pressed={defaultPick.id === c.id}
-                    className={`rounded-full border px-2.5 py-1 font-semibold ${defaultPick.id === c.id ? "border-transparent bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30" : "border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface)]"}`}>
+                    className={`rounded-full border px-2.5 py-1 font-medium ${defaultPick.id === c.id ? "border-transparent bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30" : "border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface)]"}`}>
                     {c.label}
                   </button>
                 ))}
@@ -617,7 +617,7 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
                 return (
                   <React.Fragment key={l.id}>
                     {head && (
-                      <li className="sticky top-0 z-[1] px-4 py-1.5 bg-[var(--color-surface-2)] text-[12px] font-semibold text-[var(--color-text-muted)]">
+                      <li className="sticky top-0 z-[1] px-4 py-1.5 bg-[var(--color-surface-2)] text-caption font-medium text-[var(--color-text-muted)]">
                         {l.part!.label} · {inPart.filter((x) => x.include).length} to save{inPart.some((x) => x.already) ? `, ${inPart.filter((x) => x.already).length} already in` : ""}
                       </li>
                     )}
@@ -627,15 +627,15 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
                   </React.Fragment>
                 );
               })}
-              {review.lines.length === 0 && <li className="px-4 py-6 text-center text-[13px] text-[var(--color-text-muted)]">Nothing in the note matched a step.</li>}
+              {review.lines.length === 0 && <li className="px-4 py-6 text-center text-body text-[var(--color-text-muted)]">Nothing in the note matched a step.</li>}
               <li className="px-4 py-2.5">
-                <button type="button" onClick={() => addLine("")} className="inline-flex items-center gap-1.5 text-[13px] text-[var(--color-accent-text)] hover:underline"><Plus className="w-4 h-4" /> Add a line it missed</button>
+                <button type="button" onClick={() => addLine("")} className="inline-flex items-center gap-1.5 text-body text-[var(--color-accent-text)] hover:underline"><Plus className="w-4 h-4" /> Add a line it missed</button>
               </li>
             </ul>
             {review.unplaced.length > 0 && (
               <div className="px-4 py-3 border-t border-[var(--color-border)] border-l-2 border-l-amber-500">
-                <div className="text-[13px] font-semibold text-[var(--state-held-text)]">Couldn&apos;t place ({review.unplaced.length})</div>
-                <ul className="mt-1 space-y-1 text-[12px] text-[var(--color-text)]">
+                <div className="text-body font-medium text-[var(--state-held-text)]">Couldn&apos;t place ({review.unplaced.length})</div>
+                <ul className="mt-1 space-y-1 text-caption text-[var(--color-text)]">
                   {review.unplaced.map((u, i) => (
                     <li key={i} className="flex flex-wrap items-baseline gap-x-2">
                       <span>“{u.text}” <span className="text-[var(--color-text-muted)]">· {u.why}</span></span>
@@ -643,20 +643,20 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
                     </li>
                   ))}
                 </ul>
-                <div className="mt-1 text-[12px] text-[var(--color-text-muted)]">Not saved unless you put it on a step.</div>
+                <div className="mt-1 text-caption text-[var(--color-text-muted)]">Not saved unless you put it on a step.</div>
               </div>
             )}
           </ModalBody>
           <ModalFooter>
             <div className="w-full flex flex-wrap items-center gap-2">
-              <span className="mr-auto text-[12px]">
+              <span className="mr-auto text-caption">
                 {blocked.length > 0
                   ? <b className="text-[var(--state-overdue-text)]"><AlertTriangle className="inline w-4 h-4 -mt-0.5" /> Hold on: {blocked.length} line{blocked.length === 1 ? "" : "s"} need{blocked.length === 1 ? "s" : ""} you before anything saves. Answer, or untick.</b>
                   : <b className="text-[var(--color-text)]">{ready.length} line{ready.length === 1 ? "" : "s"} ready</b>}
               </span>
-              <button type="button" disabled={saving} onClick={() => setReview(null)} className="rounded-lg border border-[var(--color-border-strong)] px-3 py-2 text-[12px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">Back to the note</button>
+              <button type="button" disabled={saving} onClick={() => setReview(null)} className="rounded-lg border border-[var(--color-border-strong)] px-3 py-2 text-caption font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">Back to the note</button>
               <button type="button" disabled={saving || blocked.length > 0 || ready.length === 0} onClick={() => void save()}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--color-accent)] px-4 py-2 text-[12px] font-bold text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
+                className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--color-accent)] px-4 py-2 text-caption font-medium text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
                 {saving ? <><Loader2 className="w-4 h-4 animate-spin" /> Saving…</> : <><Check className="w-4 h-4" /> Save {ready.length}</>}
               </button>
             </div>
@@ -683,7 +683,7 @@ function LineRow({ l, cat, step, check, tz, times, defaultLabel, choices, onEdit
   const found = find.trim() ? searchFilter(cat, find, (c) => `${c.wo} ${c.place} ${c.name} ${c.crew}`).slice(0, 6) : [];
   const needs = l.include ? check.needs : [];
   const clockOf = (t: number) => fmtInTz(t, tz, { weekday: "short", hour: "numeric", minute: "2-digit", hour12: true });
-  const pill = "rounded-full border px-2.5 py-1 text-[12px] font-semibold";
+  const pill = "rounded-full border px-2.5 py-1 text-caption font-medium";
   return (
     <li className={`px-4 py-3 ${needs.length ? "bg-transparent" : ""} ${l.include ? "" : "opacity-70"}`}>
       <div className="flex items-start gap-3">
@@ -693,28 +693,28 @@ function LineRow({ l, cat, step, check, tz, times, defaultLabel, choices, onEdit
           {/* The step */}
           {step ? (
             <div>
-              <div className="text-[11px] font-semibold text-[var(--color-text-muted)] break-words">{[step.wo ? `WO ${step.wo}` : null, step.place].filter(Boolean).join(" · ")}</div>
-              <div className="text-[14px] font-bold text-[var(--color-text)] break-words">{step.name}</div>
+              <div className="text-caption font-medium text-[var(--color-text-muted)] break-words">{[step.wo ? `WO ${step.wo}` : null, step.place].filter(Boolean).join(" · ")}</div>
+              <div className="text-body font-medium text-[var(--color-text)] break-words">{step.name}</div>
               {/* How it was found, when the note didn't name it outright. */}
-              {l.found === "context" && l.context && <div className="text-[12px] text-[var(--color-text-muted)]">Equipment from earlier in your note: “{l.context}”</div>}
-              {l.found === "only" && <div className="text-[12px] text-[var(--color-text-muted)]">Your note doesn&apos;t name the equipment: this is the only open step by that name.</div>}
-              {l.found === "meaning" && <div className="text-[12px] font-semibold text-[var(--state-held-text)]">Matched by meaning (no word in common with the step&apos;s name). Check it&apos;s the right step.</div>}
-              {l.woNote && <div className="text-[12px] font-semibold text-[var(--state-held-text)]">{l.woNote}</div>}
-              {l.group && <div className="text-[12px] text-[var(--color-text-muted)]">Your note says this about {l.group} steps: it goes on each of them.</div>}
-              <button type="button" onClick={() => onEdit({ stepId: null, options: l.options.length ? l.options : [step.id] })} className="text-[13px] text-[var(--color-accent-text)] hover:underline">Wrong step? Pick another</button>
+              {l.found === "context" && l.context && <div className="text-caption text-[var(--color-text-muted)]">Equipment from earlier in your note: “{l.context}”</div>}
+              {l.found === "only" && <div className="text-caption text-[var(--color-text-muted)]">Your note doesn&apos;t name the equipment: this is the only open step by that name.</div>}
+              {l.found === "meaning" && <div className="text-caption font-medium text-[var(--state-held-text)]">Matched by meaning (no word in common with the step&apos;s name). Check it&apos;s the right step.</div>}
+              {l.woNote && <div className="text-caption font-medium text-[var(--state-held-text)]">{l.woNote}</div>}
+              {l.group && <div className="text-caption text-[var(--color-text-muted)]">Your note says this about {l.group} steps: it goes on each of them.</div>}
+              <button type="button" onClick={() => onEdit({ stepId: null, options: l.options.length ? l.options : [step.id] })} className="text-body text-[var(--color-accent-text)] hover:underline">Wrong step? Pick another</button>
             </div>
           ) : (
             <div className="space-y-1">
-              <div className="text-[12px] font-bold text-[var(--state-overdue-text)]">{l.heard && !l.heard.known && options.length === 1 ? `Heard “${l.heard.said}” as ${l.heard.as}. Is this the step?` : "Which step is it?"}</div>
+              <div className="text-caption font-medium text-[var(--state-overdue-text)]">{l.heard && !l.heard.known && options.length === 1 ? `Heard “${l.heard.said}” as ${l.heard.as}. Is this the step?` : "Which step is it?"}</div>
               <div className="flex flex-wrap gap-1.5">
                 {options.map((o) => (
-                  <button key={o.id} type="button" onClick={() => onEdit({ stepId: o.id })} className="rounded-lg border px-2.5 py-1.5 text-[12px] font-semibold text-left border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+                  <button key={o.id} type="button" onClick={() => onEdit({ stepId: o.id })} className="rounded-lg border px-2.5 py-1.5 text-caption font-medium text-left border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
                     {o.wo ? `WO ${o.wo} · ` : ""}{o.place ? `${o.place}: ` : ""}{o.name}
                     <span className="font-normal text-[var(--color-text-muted)]"> · {o.status === "in_progress" ? `under way ${o.pct}%` : o.status === "completed" ? "done" : o.live ? "planned around now" : o.next ? "next up" : "not started"}</span>
                   </button>
                 ))}
                 {onAll && options.length > 1 && (
-                  <button type="button" onClick={onAll} className="rounded-lg border border-dashed border-[var(--color-main)] px-2.5 py-1.5 text-[12px] font-bold text-[var(--color-accent-text)] hover:bg-[var(--color-surface-2)]">
+                  <button type="button" onClick={onAll} className="rounded-lg border border-dashed border-[var(--color-main)] px-2.5 py-1.5 text-caption font-medium text-[var(--color-accent-text)] hover:bg-[var(--color-surface-2)]">
                     All {options.length} of these
                   </button>
                 )}
@@ -722,7 +722,7 @@ function LineRow({ l, cat, step, check, tz, times, defaultLabel, choices, onEdit
               <label className="relative block max-w-md">
                 <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[var(--color-text-faint)]" />
                 <input value={find} onChange={(e) => setFind(e.target.value)} placeholder="Or find it: V-1, WO #, step" aria-label="Find the step"
-                  className="w-full h-8 pointer-coarse:h-11 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] pl-7 pr-2 text-[12px]" />
+                  className="w-full h-8 pointer-coarse:h-11 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] pl-7 pr-2 text-caption" />
               </label>
               {found.length > 0 && (
                 <div className="flex flex-wrap gap-1.5">
@@ -732,37 +732,37 @@ function LineRow({ l, cat, step, check, tz, times, defaultLabel, choices, onEdit
             </div>
           )}
           {/* What changes: read from the note, changeable. */}
-          <div className="text-[13px] font-semibold text-[var(--color-text)]">{check.says}{l.percentFrom === "words" && l.percent != null ? <span className="font-normal text-[var(--color-text-muted)]"> (from your words)</span> : null}{l.counts && l.percent != null ? <span className="font-normal text-[var(--color-text-muted)]"> (from your counts: {l.counts})</span> : null}</div>
+          <div className="text-body font-medium text-[var(--color-text)]">{check.says}{l.percentFrom === "words" && l.percent != null ? <span className="font-normal text-[var(--color-text-muted)]"> (from your words)</span> : null}{l.counts && l.percent != null ? <span className="font-normal text-[var(--color-text-muted)]"> (from your counts: {l.counts})</span> : null}</div>
           <div className="flex flex-wrap gap-1" role="group" aria-label="What happened">
             {([["start", "Started"], ["progress", "%"], ["done", "Done"], ["hold", "On hold"], ["resume", "Back on"], ["comment", "Comment only"]] as const).map(([a, label]) => (
               <button key={a} type="button" aria-pressed={l.action === a}
                 onClick={() => onEdit({ action: a, expected: false, ...(a === "progress" && l.action !== "progress" ? { percent: null, percentFrom: "said" } : {}) })}
-                className={`rounded-md border px-2 py-0.5 text-[12px] font-semibold ${l.action === a ? "border-[var(--color-text)] bg-[var(--color-surface-2)] text-[var(--color-text)]" : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>{label}</button>
+                className={`rounded-md border px-2 py-0.5 text-caption font-medium ${l.action === a ? "border-[var(--color-text)] bg-[var(--color-surface-2)] text-[var(--color-text)]" : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>{label}</button>
             ))}
           </div>
           {l.action === "progress" && step && l.percent != null && l.percentFrom !== "guess" && (
-            <label className="flex items-center gap-1.5 text-[12px] text-[var(--color-text-muted)]">
+            <label className="flex items-center gap-1.5 text-caption text-[var(--color-text-muted)]">
               % now
-              <input inputMode="numeric" aria-label="Percent" value={String(l.percent)} className="h-8 pointer-coarse:h-11 w-16 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12px] text-[var(--color-text)]"
+              <input inputMode="numeric" aria-label="Percent" value={String(l.percent)} className="h-8 pointer-coarse:h-11 w-16 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-caption text-[var(--color-text)]"
                 onChange={(e) => { const n = Number(e.target.value.replace(/\D/g, "")); onEdit({ percent: e.target.value.trim() === "" ? null : Math.min(100, Number.isFinite(n) ? n : 0), percentFrom: "said" }); }} />
             </label>
           )}
           {l.action === "progress" && step && (l.percent == null || l.percentFrom === "guess") && (
             <div className="flex flex-wrap items-center gap-1.5">
-              <span className="text-[12px] text-[var(--color-text-muted)]">Set a %? (not needed to save)</span>
+              <span className="text-caption text-[var(--color-text-muted)]">Set a %? (not needed to save)</span>
               {[...new Set([25, 50, 75, ...(l.suggest != null && l.suggest > step.pct && l.suggest < 100 ? [l.suggest] : [])])].filter((p) => p > step.pct).sort((a, b) => a - b).map((p) => (
                 <button key={p} type="button" onClick={() => onEdit({ percent: p, percentFrom: "said" })} className={`${pill} ${l.percent === p ? "border-transparent bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30" : "border-[var(--color-border-strong)] text-[var(--color-text)]"}`}>{p}%</button>
               ))}
-              <input inputMode="numeric" aria-label="Percent" placeholder="%" className="h-8 pointer-coarse:h-11 w-16 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12px]"
+              <input inputMode="numeric" aria-label="Percent" placeholder="%" className="h-8 pointer-coarse:h-11 w-16 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-caption"
                 onChange={(e) => { const n = Number(e.target.value.replace(/\D/g, "")); if (e.target.value && Number.isFinite(n)) onEdit({ percent: Math.min(100, n), percentFrom: "said" }); }} />
             </div>
           )}
           {l.action === "hold" && (
             <input defaultValue={l.reason ?? l.comment ?? ""} onChange={(e) => onEdit({ reason: e.target.value })} placeholder="Why is it on hold?" aria-label="Hold reason"
-              className="w-full max-w-md h-8 pointer-coarse:h-11 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12px]" />
+              className="w-full max-w-md h-8 pointer-coarse:h-11 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-caption" />
           )}
           {/* When */}
-          <div className="text-[12px]">
+          <div className="text-caption">
             {l.at != null ? (
               <span className="text-[var(--color-text)]">
                 <b>{whenWords(l.at, tz, times)}</b>
@@ -771,11 +771,11 @@ function LineRow({ l, cat, step, check, tz, times, defaultLabel, choices, onEdit
               </span>
             ) : l.ampm ? (
               <span className="flex flex-wrap items-center gap-1.5">
-                <span className="font-semibold text-[var(--state-overdue-text)]">{l.timeWhy}</span>
+                <span className="font-medium text-[var(--state-overdue-text)]">{l.timeWhy}</span>
                 {l.ampm.map((t) => <button key={t} type="button" onClick={() => onEdit({ at: t, timeFrom: "picked", ampm: undefined })} className={`${pill} border-[var(--color-border-strong)] text-[var(--color-text)]`}>{clockOf(t)}</button>)}
               </span>
             ) : (
-              <span className="font-semibold text-[var(--state-overdue-text)]">{l.timeWhy ?? "When did it happen?"}</span>
+              <span className="font-medium text-[var(--state-overdue-text)]">{l.timeWhy ?? "When did it happen?"}</span>
             )}
             {(l.at == null || changing) && !l.ampm && (
               <div className="mt-1 flex flex-wrap gap-1.5">
@@ -790,21 +790,21 @@ function LineRow({ l, cat, step, check, tz, times, defaultLabel, choices, onEdit
             )}
           </div>
           {/* Your words, and the comment that goes on the step (editable). */}
-          {l.evidence && <div className="text-[12px] italic text-[var(--color-text-muted)] break-words">You said: “{l.evidence}”</div>}
-          {l.heard && (step || l.heard.known) && <div className={`text-[12px] ${l.heard.known ? "text-[var(--color-text-muted)]" : "font-semibold text-[var(--state-held-text)]"}`}>Heard “{l.heard.said}” as {l.heard.as}{l.heard.known ? " (your word for it)" : l.stepId === l.heard.stepId ? ". Remembered for next time when you save." : "."}</div>}
-          <label className="block text-[12px] text-[var(--color-text-muted)]">
+          {l.evidence && <div className="text-caption italic text-[var(--color-text-muted)] break-words">You said: “{l.evidence}”</div>}
+          {l.heard && (step || l.heard.known) && <div className={`text-caption ${l.heard.known ? "text-[var(--color-text-muted)]" : "font-medium text-[var(--state-held-text)]"}`}>Heard “{l.heard.said}” as {l.heard.as}{l.heard.known ? " (your word for it)" : l.stepId === l.heard.stepId ? ". Remembered for next time when you save." : "."}</div>}
+          <label className="block text-caption text-[var(--color-text-muted)]">
             Comment on the step
             <textarea rows={1} value={l.noteText !== undefined ? l.noteText ?? "" : lineComment(l)}
               onChange={(e) => onEdit({ noteText: e.target.value })} placeholder="No comment"
-              className="mt-0.5 block w-full rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1 text-[12px] text-[var(--color-text)]" />
+              className="mt-0.5 block w-full rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1 text-caption text-[var(--color-text)]" />
           </label>
-          {l.implied && <div className="text-[12px] font-semibold text-[var(--state-held-text)]">Probably done: your note doesn&apos;t say it. Tick to include.</div>}
-          {l.expected && <div className="text-[12px] font-semibold text-[var(--state-held-text)]">Not entered as done: it hasn&apos;t happened yet. Kept as a comment.</div>}
+          {l.implied && <div className="text-caption font-medium text-[var(--state-held-text)]">Probably done: your note doesn&apos;t say it. Tick to include.</div>}
+          {l.expected && <div className="text-caption font-medium text-[var(--state-held-text)]">Not entered as done: it hasn&apos;t happened yet. Kept as a comment.</div>}
           {check.nothing && (l.already && !l.include
-            ? <div className="text-[12px] text-[var(--color-text-muted)]">{l.already} Already in the app: left out. Tick it to add your words as a comment.</div>
-            : <div className="text-[12px] text-[var(--color-text-muted)]">{check.nothing} Nothing changes; your words go on as a comment.</div>)}
+            ? <div className="text-caption text-[var(--color-text-muted)]">{l.already} Already in the app: left out. Tick it to add your words as a comment.</div>
+            : <div className="text-caption text-[var(--color-text-muted)]">{check.nothing} Nothing changes; your words go on as a comment.</div>)}
           {needs.length > 0 && (
-            <ul className="text-[12px] font-semibold text-[var(--state-overdue-text)] list-disc pl-4">
+            <ul className="text-caption font-medium text-[var(--state-overdue-text)] list-disc pl-4">
               {needs.map((n) => <li key={n}>{n}</li>)}
             </ul>
           )}

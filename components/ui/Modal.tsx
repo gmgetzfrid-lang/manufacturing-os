@@ -131,8 +131,8 @@ export function ModalHeader({
         </span>
       )}
       <div className="min-w-0 flex-1">
-        <h2 className="font-display text-[20px] leading-tight font-semibold truncate">{title}</h2>
-        {subtitle && <p className="text-[14px] text-[var(--color-text-muted)] mt-0.5">{subtitle}</p>}
+        <h2 className="font-display text-section leading-tight font-semibold truncate">{title}</h2>
+        {subtitle && <p className="text-body text-[var(--color-text-muted)] mt-0.5">{subtitle}</p>}
       </div>
       {onClose && (
         <button

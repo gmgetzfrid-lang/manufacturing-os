@@ -71,10 +71,10 @@ export function BudgetDocDrop({ orgId, projectId, onRead, compact, label }: {
           </span>
         )}
         <span className="min-w-0">
-          <span className="block text-xs font-semibold text-[var(--color-text)] truncate">
+          <span className="block text-xs font-medium text-[var(--color-text)] truncate">
             {drag.over ? drag.say : reading ? <><Loader2 className="w-3 h-3 animate-spin inline mr-1" />Reading {reading.name} · {fileSize(reading.size)}</> : label ?? "Drop your AFE, estimate, or budget sheet"}
           </span>
-          <span className="block text-[11px] text-[var(--color-text-muted)]">
+          <span className="block text-caption text-[var(--color-text-muted)]">
             {reading
               ? "Usually 20 to 60 seconds. Nothing is saved until you check it."
               : "PDF (scanned is fine), photo, Excel, CSV, Word or text. You check it before anything is made."}
@@ -84,7 +84,7 @@ export function BudgetDocDrop({ orgId, projectId, onRead, compact, label }: {
           onChange={(e) => { void read(e.target.files?.[0]); e.target.value = ""; }} />
       </div>
       {error && (
-        <div className="mt-2 flex items-center gap-2 flex-wrap border-l-2 border-[var(--state-overdue)] pl-2 text-[11px] font-bold text-[var(--state-overdue-text)]">
+        <div className="mt-2 flex items-center gap-2 flex-wrap border-l-2 border-[var(--state-overdue)] pl-2 text-caption font-medium text-[var(--state-overdue-text)]">
           {failed && <FileThumb file={failed} size={24} />}
           <span className="min-w-0 flex-1">{failed ? `${failed.name} · ${fileSize(failed.size)}: ` : ""}{error}</span>
           {failed && (
@@ -149,10 +149,10 @@ export function BudgetImportSheet({ orgId, projectId, actor, result, accounts, p
       <div className="px-4 pt-3 pb-2 flex items-start gap-3">
         <span className="p-1.5 rounded-lg bg-[var(--color-surface-2)] text-[var(--color-text)]"><Sparkles className="w-4 h-4" /></span>
         <div className="min-w-0 flex-1">
-          <div className="text-sm font-semibold text-[var(--color-text)]">
+          <div className="text-sm font-medium text-[var(--color-text)]">
             {[p.docType, p.docNumber].filter(Boolean).join(" ") || "Budget document"}{p.title ? ` - ${p.title}` : ""}
           </div>
-          <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5 flex flex-wrap gap-x-3">
+          <div className="text-caption text-[var(--color-text-muted)] mt-0.5 flex flex-wrap gap-x-3">
             <span>{result.source.fileName}</span>
             {p.chargeAccount && <span>Account <span className="font-display tabular-nums">{p.chargeAccount}</span></span>}
             {p.docDate && <span>Dated {p.docDate}</span>}
@@ -182,8 +182,8 @@ export function BudgetImportSheet({ orgId, projectId, actor, result, accounts, p
       </div>
       {result.blankPages.length > 0 && <BlankPagesNote pages={result.blankPages} />}
       {p.varianceNote && (
-        <div className="mx-4 mb-2 text-[11px] text-[var(--color-text-muted)] rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2">
-          <span className="font-bold text-[var(--color-text)]">Variance: </span>{p.varianceNote}
+        <div className="mx-4 mb-2 text-caption text-[var(--color-text-muted)] rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2">
+          <span className="font-medium text-[var(--color-text)]">Variance: </span>{p.varianceNote}
         </div>
       )}
 
@@ -191,7 +191,7 @@ export function BudgetImportSheet({ orgId, projectId, actor, result, accounts, p
       <div className="px-4 pb-2 overflow-x-auto">
         <table className="w-full text-xs min-w-[640px]">
           <thead>
-            <tr className="text-left text-[13px] font-semibold text-[var(--color-text-muted)]">
+            <tr className="text-left text-body font-medium text-[var(--color-text-muted)]">
               <th className="py-1.5 w-6" />
               <th className="py-1.5">Budget line</th>
               <th className="py-1.5">Type</th>
@@ -213,12 +213,12 @@ export function BudgetImportSheet({ orgId, projectId, actor, result, accounts, p
                   </td>
                   <td className="py-1.5 pr-2">
                     <input value={l.name} onChange={(e) => patch(l.key, { name: e.target.value })}
-                      className="w-full h-7 pointer-coarse:h-11 rounded-md border border-transparent hover:border-[var(--color-border)] bg-transparent px-1.5 text-xs font-bold text-[var(--color-text)]" />
+                      className="w-full h-7 pointer-coarse:h-11 rounded-md border border-transparent hover:border-[var(--color-border)] bg-transparent px-1.5 text-xs font-medium text-[var(--color-text)]" />
                     {(exists || upd || l.note) && (
-                      <div className="px-1.5 text-[11px] text-[var(--color-text-muted)]">
-                        {exists && <span className="font-bold text-[var(--color-text-muted)]">Already a budget line, same budget. </span>}
+                      <div className="px-1.5 text-caption text-[var(--color-text-muted)]">
+                        {exists && <span className="font-medium text-[var(--color-text-muted)]">Already a budget line, same budget. </span>}
                         {upd && (
-                          <label className="inline-flex items-center gap-1 font-bold text-[var(--state-held-text)]">
+                          <label className="inline-flex items-center gap-1 font-medium text-[var(--state-held-text)]">
                             <input type="checkbox" checked={!keepBudgets.has(upd.name.toLowerCase())} className="accent-[var(--color-text)]"
                               onChange={(e) => setKeepBudgets((k) => { const n = new Set(k); if (e.target.checked) n.delete(upd.name.toLowerCase()); else n.add(upd.name.toLowerCase()); return n; })} />
                             Change its budget {fmtMoney(upd.from, cur)} → {fmtMoney(upd.to, cur)}
@@ -230,17 +230,17 @@ export function BudgetImportSheet({ orgId, projectId, actor, result, accounts, p
                   </td>
                   <td className="py-1.5 pr-2">
                     <select value={l.costType} onChange={(e) => patch(l.key, { costType: e.target.value as CostType })}
-                      className="h-7 pointer-coarse:h-11 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-1 text-[11px]">
+                      className="h-7 pointer-coarse:h-11 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-1 text-caption">
                       {COST_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
                     </select>
                   </td>
                   <td className="py-1.5 pr-2">
                     <div className="flex items-center gap-1">
                       <input value={l.supplier ?? ""} onChange={(e) => patch(l.key, { supplier: e.target.value.trim() ? e.target.value : null })}
-                        placeholder="-" className="w-36 h-7 pointer-coarse:h-11 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-1.5 text-[11px]" />
+                        placeholder="-" className="w-36 h-7 pointer-coarse:h-11 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-1.5 text-caption" />
                       {l.supplier && !exists && (
                         <span title={known ? `Matches ${known.name} on this project` : "New company: it will be added"}
-                          className={`text-[11px] font-semibold ${known ? "text-[var(--state-released-text)]" : "text-[var(--color-text-faint)]"}`}>
+                          className={`text-caption font-medium ${known ? "text-[var(--state-released-text)]" : "text-[var(--color-text-faint)]"}`}>
                           {known ? <Check className="w-3 h-3" /> : "new"}
                         </span>
                       )}
@@ -249,7 +249,7 @@ export function BudgetImportSheet({ orgId, projectId, actor, result, accounts, p
                   <td className="py-1.5 text-right">
                     <input value={l.amount ?? ""} inputMode="decimal"
                       onChange={(e) => { const n = Number(e.target.value.replace(/[^0-9.]/g, "")); patch(l.key, { amount: e.target.value.trim() && Number.isFinite(n) ? n : null }); }}
-                      className="w-28 h-7 pointer-coarse:h-11 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-1.5 text-[11px] text-right font-display tabular-nums" />
+                      className="w-28 h-7 pointer-coarse:h-11 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-1.5 text-caption text-right font-display tabular-nums" />
                   </td>
                   <td className="py-1.5 pl-1">
                     <button onClick={() => setLines((ls) => ls.filter((x) => x.key !== l.key))}
@@ -261,21 +261,21 @@ export function BudgetImportSheet({ orgId, projectId, actor, result, accounts, p
           </tbody>
         </table>
         <button onClick={() => setLines((ls) => [...ls, { key: `n${Date.now()}`, include: true, name: "", amount: null, supplier: null, costType: "other", note: null }])}
-          className="mt-1 inline-flex items-center gap-1 text-[13px] text-[var(--color-accent-text)] hover:underline"><Plus className="w-3 h-3" /> Add line</button>
+          className="mt-1 inline-flex items-center gap-1 text-body text-[var(--color-accent-text)] hover:underline"><Plus className="w-3 h-3" /> Add line</button>
       </div>
 
       <div className="px-4 py-2.5 border-t border-[var(--color-border)] flex items-center gap-2 flex-wrap">
-        <span className="text-[11px] text-[var(--color-text-muted)] inline-flex items-center gap-1">
+        <span className="text-caption text-[var(--color-text-muted)] inline-flex items-center gap-1">
           <Building2 className="w-3 h-3" />
           Creates {plan.accountsToCreate.length} budget line{plan.accountsToCreate.length === 1 ? "" : "s"}{updating ? `, changes ${updating} budget${updating === 1 ? "" : "s"}` : ""}
           {plan.partiesToCreate.length > 0 ? ` and ${plan.partiesToCreate.length} compan${plan.partiesToCreate.length === 1 ? "y" : "ies"} (${plan.partiesToCreate.join(", ")})` : ""}.
           {" "}No money is posted: quotes and invoices do that.
         </span>
-        {error && <span className="text-[11px] font-bold text-[var(--state-overdue-text)]">{error}</span>}
+        {error && <span className="text-caption font-medium text-[var(--state-overdue-text)]">{error}</span>}
         <span className="ml-auto flex items-center gap-2">
-          <button onClick={onClose} disabled={applying} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>
+          <button onClick={onClose} disabled={applying} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>
           <button onClick={() => void apply()} disabled={applying || (plan.accountsToCreate.length === 0 && updating === 0 && recon.authorized == null)}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-semibold hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-medium hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
             {applying ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />} {accounts.length ? "Apply" : "Build cost model"}
           </button>
         </span>
@@ -288,16 +288,16 @@ function Fact({ label, value, sub, tone }: { label: string; value: string; sub?:
   const ring = tone === "warn" ? "border-[var(--state-held)] bg-[var(--state-held)]/[0.06]" : tone === "ok" ? "border-[var(--state-released)] bg-[var(--state-released)]/[0.05]" : "border-[var(--color-border)] bg-[var(--color-surface)]";
   return (
     <div className={`rounded-xl border px-3 py-2 ${ring}`}>
-      <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">{label}</div>
-      <div className="text-sm font-semibold tabular-nums text-[var(--color-text)]">{value}</div>
-      {sub && <div className={`text-[11px] font-bold ${tone === "warn" ? "text-[var(--state-held-text)]" : "text-[var(--color-text-muted)]"}`}>{sub}</div>}
+      <div className="text-body font-medium text-[var(--color-text-muted)]">{label}</div>
+      <div className="text-sm font-medium tabular-nums text-[var(--color-text)]">{value}</div>
+      {sub && <div className={`text-caption font-medium ${tone === "warn" ? "text-[var(--state-held-text)]" : "text-[var(--color-text-muted)]"}`}>{sub}</div>}
     </div>
   );
 }
 
 export function BlankPagesNote({ pages }: { pages: number[] }) {
   return (
-    <p className="mx-4 mb-2 border-l-2 border-[var(--state-held)] pl-2 text-[11px] font-bold text-[var(--state-held-text)]">
+    <p className="mx-4 mb-2 border-l-2 border-[var(--state-held)] pl-2 text-caption font-medium text-[var(--state-held-text)]">
       Page{pages.length === 1 ? "" : "s"} {pages.join(", ")} came through blank, usually scanner compression.
       Anything only on {pages.length === 1 ? "that page" : "those pages"} was not read: check it against the paper.
     </p>

@@ -79,20 +79,20 @@ export default function SetPasswordPage() {
   };
 
   return (
-    <AuthCard sheet="Set password" title="Set your password." sub={until ? `Do it now. Your one-time password stops working at ${until}.` : "Do it now, before you go on."}>
+    <AuthCard title="Set your password." sub={until ? `Do it now. Your one-time password stops working at ${until}.` : "Do it now, before you go on."}>
       {!email ? (
         <SkeletonText lines={4} />
       ) : (
         <form onSubmit={submit}>
           {error && (
-            <p role="alert" className="mb-5 flex items-start gap-2 text-[14px] font-semibold text-[var(--state-overdue-text)]"><AlertCircle aria-hidden className="w-4 h-4 mt-0.5 shrink-0" /> {error}</p>
+            <p role="alert" className="mb-5 flex items-start gap-2 text-body font-medium text-[var(--state-overdue-text)]"><AlertCircle aria-hidden className="w-4 h-4 mt-0.5 shrink-0" /> {error}</p>
           )}
-          <p className="mb-5 text-[14px] text-[var(--color-text-muted)]">Signed in as <b className="font-semibold text-[var(--color-text)]">{email}</b> with a one-time password.</p>
+          <p className="mb-5 text-body text-[var(--color-text-muted)]">Signed in as <b className="font-medium text-[var(--color-text)]">{email}</b> with a one-time password.</p>
           <div>
             <label htmlFor="np" className={label}>New password</label>
             <input id="np" type="password" autoComplete="new-password" value={pw} onChange={(e) => setPw(e.target.value)} onBlur={() => setLeft((l) => ({ ...l, pw: true }))}
               className={authField} required aria-invalid={!!shownProblem} aria-describedby="np-note" />
-            <p id="np-note" className={`mt-1.5 text-[13px] ${shownProblem ? "font-semibold text-[var(--state-overdue-text)]" : "text-[var(--color-text-muted)]"}`}>
+            <p id="np-note" className={`mt-1.5 text-body ${shownProblem ? "font-medium text-[var(--state-overdue-text)]" : "text-[var(--color-text-muted)]"}`}>
               {shownProblem ?? (pw && !problem
                 ? <span className="inline-flex items-center gap-1 text-[var(--state-released-text)]"><Check aria-hidden className="w-3.5 h-3.5" /> Strong enough</span>
                 : `At least ${MIN_PASSWORD} characters, with numbers or symbols.`)}
@@ -102,7 +102,7 @@ export default function SetPasswordPage() {
             <label htmlFor="np2" className={label}>Type it again</label>
             <input id="np2" type="password" autoComplete="new-password" value={again} onChange={(e) => setAgain(e.target.value)} onBlur={() => setLeft((l) => ({ ...l, again: true }))}
               className={authField} required aria-invalid={!!mismatch} aria-describedby={mismatch ? "np2-note" : undefined} />
-            {mismatch && <p id="np2-note" className="mt-1.5 text-[13px] font-semibold text-[var(--state-overdue-text)]">{mismatch}</p>}
+            {mismatch && <p id="np2-note" className="mt-1.5 text-body font-medium text-[var(--state-overdue-text)]">{mismatch}</p>}
           </div>
           {/* Wakes once both fields agree and the password is strong enough;
               says why when it can't. */}
@@ -110,7 +110,7 @@ export default function SetPasswordPage() {
             {busy ? "Saving" : "Save and continue"}
           </Button>
           {!ready && pw && (
-            <p className="mt-2 text-[13px] text-[var(--color-text-muted)]">{problem ? "Make the password stronger to go on." : "Type the same password again to go on."}</p>
+            <p className="mt-2 text-body text-[var(--color-text-muted)]">{problem ? "Make the password stronger to go on." : "Type the same password again to go on."}</p>
           )}
           <div className="mt-5 pt-4 border-t border-[var(--color-border)]">
             <button type="button" onClick={async () => { await supabase.auth.signOut(); router.replace("/"); }} className={btnLink}>

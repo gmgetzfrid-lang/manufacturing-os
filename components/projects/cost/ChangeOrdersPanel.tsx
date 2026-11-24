@@ -121,20 +121,20 @@ export default function ChangeOrdersPanel({ orgId, projectId, canManage, actor, 
     <div className="bg-[var(--color-surface)] rounded-lg overflow-hidden border border-[var(--color-border)]">
       <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap">
         <GitPullRequestArrow className="w-4 h-4 text-[var(--color-text-muted)]" />
-        <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Change orders</span>
+        <span className="text-body font-medium text-[var(--color-text-muted)]">Change orders</span>
         {open.length > 0 && (
-          <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded bg-[var(--state-held)] text-[var(--state-held-text)] border border-[var(--state-held)]">
+          <span className="text-caption font-medium px-1.5 py-0.5 rounded bg-[var(--state-held)] text-[var(--state-held-text)] border border-[var(--state-held)]">
             {open.length} awaiting decision
           </span>
         )}
         {summary.approvedCount > 0 && (
-          <span className="text-[11px] text-[var(--color-text-muted)]">
+          <span className="text-caption text-[var(--color-text-muted)]">
             {summary.approvedCount} approved · {fmtMoney(summary.approvedAmount)} total change
           </span>
         )}
         {canManage && (
           <button onClick={() => setShowForm((v) => !v)} aria-expanded={showForm}
-            className={`ml-auto inline-flex items-center gap-1 h-9 px-3 rounded-lg text-[13px] font-bold transition-colors ${showForm ? "border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] text-[var(--color-text)]" : "bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]"}`}>
+            className={`ml-auto inline-flex items-center gap-1 h-10 px-3 rounded-lg text-body font-medium transition-colors ${showForm ? "border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] text-[var(--color-text)]" : "bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]"}`}>
             <Plus className="w-3 h-3" /> Propose change
           </button>
         )}
@@ -146,7 +146,7 @@ export default function ChangeOrdersPanel({ orgId, projectId, canManage, actor, 
       )}
 
       {notice && (
-        <div role="status" className="mx-4 my-2 border-l-2 border-[var(--state-held)] pl-3 flex items-center gap-2 text-[11px] font-bold text-[var(--state-held-text)]">
+        <div role="status" className="mx-4 my-2 border-l-2 border-[var(--state-held)] pl-3 flex items-center gap-2 text-caption font-medium text-[var(--state-held-text)]">
           <span className="min-w-0 flex-1">{notice}</span>
           <button onClick={() => setNotice(null)} className="ml-auto p-1 text-[var(--color-text-faint)] hover:text-[var(--color-text)]" aria-label="Dismiss"><XIcon className="w-3.5 h-3.5" /></button>
         </div>
@@ -167,7 +167,7 @@ export default function ChangeOrdersPanel({ orgId, projectId, canManage, actor, 
         <>
           {summary.byReason.length > 0 && (
             <div className="px-4 py-3 border-b border-[var(--color-border)]">
-              <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-2">
+              <div className="text-body font-medium text-[var(--color-text-muted)] mb-2">
                 Approved changes by reason: who owns the growth
               </div>
               <Donut
@@ -209,16 +209,16 @@ function CoRow({ co, canManage, busy, partyName, accountLabel, accounts, decide,
   return (
     <li className={`px-4 py-2.5 text-xs ${!isOpen && co.status !== "approved" ? "opacity-60" : ""}`}>
       <div className="flex items-center gap-2 flex-wrap">
-        <span className="font-display tabular-nums text-[11px] font-semibold text-[var(--color-text-muted)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded">{co.coNumber}</span>
-        <span className="font-bold text-[var(--color-text)]">{co.title}</span>
-        <span className={`font-semibold tabular-nums ${co.amount < 0 ? "text-[var(--state-released-text)]" : "text-[var(--color-text)]"}`}>
+        <span className="font-display tabular-nums text-caption font-semibold text-[var(--color-text-muted)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded">{co.coNumber}</span>
+        <span className="font-medium text-[var(--color-text)]">{co.title}</span>
+        <span className={`font-medium tabular-nums ${co.amount < 0 ? "text-[var(--state-released-text)]" : "text-[var(--color-text)]"}`}>
           {co.amount < 0 ? `credit ${fmtMoney(Math.abs(co.amount))}` : fmtMoney(co.amount)}
         </span>
-        <span className="text-[13px] font-semibold px-1.5 py-0.5 rounded border border-[var(--color-border)] text-[var(--color-text-muted)]"
+        <span className="text-body font-medium px-1.5 py-0.5 rounded border border-[var(--color-border)] text-[var(--color-text-muted)]"
           title="Reason codes score both sides: scope gaps land on the contractor's record, design errors and owner requests on ours.">
           {CO_REASON_LABEL[co.reasonCode]}
         </span>
-        <span className={`text-[11px] font-semibold px-1.5 py-0.5 rounded border ${
+        <span className={`text-caption font-semibold px-1.5 py-0.5 rounded border ${
           co.status === "approved" ? "border-[var(--state-released)] bg-[var(--state-released)]/[0.07] text-[var(--state-released-text)]"
           : co.status === "proposed" ? "border-[var(--state-held)] bg-[var(--state-held)]/[0.07] text-[var(--state-held-text)]"
           : "border-[var(--color-border)] text-[var(--color-text-faint)]"}`}>
@@ -228,38 +228,38 @@ function CoRow({ co, canManage, busy, partyName, accountLabel, accounts, decide,
           <span className="ml-auto inline-flex items-center gap-1.5">
             {!co.costAccountId && (
               <select value={accountPick} onChange={(e) => setAccountPick(e.target.value)}
-                className="h-6 pointer-coarse:h-11 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1 text-[11px] max-w-40"
+                className="h-6 pointer-coarse:h-11 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1 text-caption max-w-40"
                 title="Approval posts money. Pick where it lands.">
                 <option value="">Posts to budget line…</option>
                 {accounts.map((a) => <option key={a.id} value={a.id}>{a.code ? `${a.code} ` : ""}{a.name}</option>)}
               </select>
             )}
             <button onClick={() => void decide(co, "approved", accountPick || undefined)} disabled={busy}
-              className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">
+              className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">
               {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />} Approve
             </button>
             <button onClick={() => void decide(co, "rejected")} disabled={busy}
-              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg border border-[var(--state-overdue)] text-[var(--state-overdue-text)] text-[11px] font-semibold hover:bg-[var(--state-overdue)] disabled:opacity-50 transition-colors">
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg border border-[var(--state-overdue)] text-[var(--state-overdue-text)] text-caption font-medium hover:bg-[var(--state-overdue)] disabled:opacity-50 transition-colors">
               <XIcon className="w-3 h-3" /> Reject
             </button>
             <button onClick={onEdit} disabled={busy} title="Change the title, amount, reason or where it posts"
-              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg border border-[var(--color-border-strong)] text-[var(--color-text-muted)] text-[11px] font-bold hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg border border-[var(--color-border-strong)] text-[var(--color-text-muted)] text-caption font-medium hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">
               <Pencil className="w-3 h-3" /> Edit
             </button>
             <button onClick={() => void decide(co, "void")} disabled={busy} title="Take the proposal back. It stays on the record as void."
-              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[var(--color-text-faint)] text-[11px] font-bold hover:text-[var(--state-overdue-text)] hover:bg-[var(--state-overdue)] disabled:opacity-50 transition-colors">
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[var(--color-text-faint)] text-caption font-medium hover:text-[var(--state-overdue-text)] hover:bg-[var(--state-overdue)] disabled:opacity-50 transition-colors">
               <Ban className="w-3 h-3" /> Withdraw
             </button>
           </span>
         )}
         {co.status === "approved" && canManage && (
           <button onClick={onVoidApproved} disabled={busy} title="Approved in error: its money comes off the budget line and the CO shows as void"
-            className="ml-auto inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[var(--color-text-faint)] text-[11px] font-bold hover:text-[var(--state-overdue-text)] hover:bg-[var(--state-overdue)] disabled:opacity-50 transition-colors">
+            className="ml-auto inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[var(--color-text-faint)] text-caption font-medium hover:text-[var(--state-overdue-text)] hover:bg-[var(--state-overdue)] disabled:opacity-50 transition-colors">
             {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Ban className="w-3 h-3" />} Void
           </button>
         )}
       </div>
-      <div className="mt-1 text-[11px] text-[var(--color-text-muted)]">
+      <div className="mt-1 text-caption text-[var(--color-text-muted)]">
         {[
           partyName, accountLabel,
           co.description,
@@ -354,11 +354,11 @@ function ProposeForm({ orgId, projectId, actor, accounts, parties, onDone, onCan
           className="h-8 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
       </div>
       <div className="flex items-center gap-2">
-        {error && <span role="alert" className="inline-flex items-center gap-1 text-[11px] font-bold text-[var(--state-overdue-text)]">{error}</span>}
+        {error && <span role="alert" className="inline-flex items-center gap-1 text-caption font-medium text-[var(--state-overdue-text)]">{error}</span>}
         <span className="ml-auto flex items-center gap-2">
-          <button onClick={onCancel} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>
+          <button onClick={onCancel} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>
           <button onClick={() => void submit()} disabled={saving}
-            className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-semibold hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
+            className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-medium hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
             {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />} {editing ? `Save ${editing.coNumber}` : "Propose"}
           </button>
         </span>

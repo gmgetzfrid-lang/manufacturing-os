@@ -101,18 +101,18 @@ export default function PlotPlansPage() {
           <SkeletonRows rows={4} cols={2} what="plot plans" />
         ) : plans.length === 0 ? (
           <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-6 flex items-center gap-x-4 gap-y-3 flex-wrap">
-            <p className="flex-1 min-w-[16rem] text-[15px] text-[var(--color-text-muted)]">Upload a plot plan, P&amp;ID or unit layout, then place markers on its equipment.</p>
+            <p className="flex-1 min-w-[16rem] text-reading text-[var(--color-text-muted)]">Upload a plot plan, P&amp;ID or unit layout, then place markers on its equipment.</p>
             {isController && <button type="button" onClick={() => setShowCreate(true)} className={btnQuiet}><Plus className="w-4 h-4" /> Upload the first drawing</button>}
           </div>
         ) : (
           <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
-            <table className="w-full text-[15px] tabular-nums">
-              <thead className="bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text-muted)] text-left max-sm:hidden">
+            <table className="w-full text-body tabular-nums">
+              <thead className="bg-[var(--color-surface-2)] text-body text-[var(--color-text-muted)] text-left max-sm:hidden">
                 <tr>
-                  <th className="font-semibold px-4 h-10 w-[128px]"><span className="sr-only">Drawing</span></th>
-                  <th className="font-semibold px-4">Plot plan</th>
-                  <th className="font-semibold px-4 text-right w-28">Markers</th>
-                  <th className="font-semibold px-4 w-44 hidden md:table-cell">Last change</th>
+                  <th className="font-medium px-4 h-10 w-[128px]"><span className="sr-only">Drawing</span></th>
+                  <th className="font-medium px-4">Plot plan</th>
+                  <th className="font-medium px-4 text-right w-28">Markers</th>
+                  <th className="font-medium px-4 w-44 hidden md:table-cell">Last change</th>
                   <th className="w-14"><span className="sr-only">More</span></th>
                 </tr>
               </thead>
@@ -131,13 +131,13 @@ export default function PlotPlansPage() {
                     </div>
                   </td>
                   <td className="px-4 py-2.5 max-sm:pl-1 min-w-0">
-                    <Link href={`/plot-plans/${p.id}`} onClick={(e) => e.stopPropagation()} className="text-[16px] font-semibold text-[var(--color-text)] hover:text-[var(--color-accent-text)] hover:underline underline-offset-2">{p.name}</Link>
-                    {p.description && <div className="text-[13px] text-[var(--color-text-muted)] truncate max-w-[60ch]">{p.description}</div>}
+                    <Link href={`/plot-plans/${p.id}`} onClick={(e) => e.stopPropagation()} className="text-reading font-medium text-[var(--color-text)] hover:text-[var(--color-accent-text)] hover:underline underline-offset-2">{p.name}</Link>
+                    {p.description && <div className="text-body text-[var(--color-text-muted)] truncate max-w-[60ch]">{p.description}</div>}
                     {!p.imagePath && <div className="mt-0.5"><span className="ui-pill is-warn">No drawing yet</span></div>}
-                    <div className="sm:hidden mt-0.5 text-[13px] text-[var(--color-text-muted)]">{plural(p.markers.length, "marker")} · {changed}</div>
+                    <div className="sm:hidden mt-0.5 text-body text-[var(--color-text-muted)]">{plural(p.markers.length, "marker")} · {changed}</div>
                   </td>
                   <td className={`px-4 py-2.5 text-right max-sm:hidden ${p.markers.length === 0 ? "text-[var(--color-text-faint)]" : "text-[var(--color-text)]"}`}>{p.markers.length.toLocaleString()}</td>
-                  <td className="px-4 py-2.5 text-[13px] text-[var(--color-text-muted)] hidden md:table-cell">{changed}</td>
+                  <td className="px-4 py-2.5 text-body text-[var(--color-text-muted)] hidden md:table-cell">{changed}</td>
                   <td className="pr-3 py-2.5 text-right">
                     <span className="inline-flex" onClick={(e) => e.stopPropagation()}>
                       <MoreMenu iconOnly label={`More for ${p.name}`} triggerClass={btnIcon} items={[
@@ -223,22 +223,22 @@ function CreatePlotPlanModal({
           <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Unit 200 plot plan" autoComplete="off" />
         </Field>
         <div>
-          <span className="block text-[14px] font-semibold text-[var(--color-text)] mb-1.5">Drawing</span>
+          <span className="block text-body font-medium text-[var(--color-text)] mb-1.5">Drawing</span>
           <label {...drag.bind} className={`flex flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-[var(--color-border-strong)] bg-[var(--color-surface-2)] p-6 cursor-pointer hover:border-[var(--color-text-muted)] transition-colors ${drag.ring}`}>
             {drag.over ? (
-              <span className="text-[14px] font-semibold text-[var(--color-text)]">{drag.say}</span>
+              <span className="text-body font-medium text-[var(--color-text)]">{drag.say}</span>
             ) : file ? (
               <span className="flex items-center gap-2 min-w-0">
                 <FileThumb file={file} />
                 <span className="min-w-0 text-left">
-                  <span className="block text-[14px] font-semibold text-[var(--color-text)] truncate max-w-[14rem]">{file.name}</span>
-                  <span className="block text-[13px] text-[var(--color-text-muted)]">{formatBytes(file.size)}{dims ? ` · ${dims.w} × ${dims.h}` : ""}</span>
+                  <span className="block text-body font-medium text-[var(--color-text)] truncate max-w-[14rem]">{file.name}</span>
+                  <span className="block text-body text-[var(--color-text-muted)]">{formatBytes(file.size)}{dims ? ` · ${dims.w} × ${dims.h}` : ""}</span>
                 </span>
               </span>
             ) : (
               <>
                 <ImageIcon className="w-6 h-6 text-[var(--color-text-faint)]" />
-                <span className="text-[14px] text-[var(--color-text-muted)]">Plot plan, P&amp;ID or unit layout (PNG or JPG)</span>
+                <span className="text-body text-[var(--color-text-muted)]">Plot plan, P&amp;ID or unit layout (PNG or JPG)</span>
               </>
             )}
             <input type="file" accept="image/*" className="sr-only" onChange={(e) => { onPick(e.target.files?.[0] ?? null); e.target.value = ""; }} />

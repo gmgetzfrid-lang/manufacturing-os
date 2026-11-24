@@ -362,7 +362,7 @@ export default function InspectorPanel({
     return (
       <div className="text-center py-12 text-[var(--color-text-faint)] bg-[var(--color-surface-2)] rounded-xl border border-[var(--color-border)] border-dashed">
         <Search className="w-8 h-8 mx-auto mb-2 opacity-50" />
-        <p className="text-[14px]">Select a document to view details.</p>
+        <p className="text-body">Select a document to view details.</p>
       </div>
     );
   }
@@ -442,36 +442,36 @@ export default function InspectorPanel({
             : bigName}
         </h2>
         {showTitle && (
-          <p className="mt-1 text-[16px] text-[var(--color-text)] break-words">{title}</p>
+          <p className="mt-1 text-reading text-[var(--color-text)] break-words">{title}</p>
         )}
         <dl className="mt-4 flex flex-wrap items-start gap-x-8 gap-y-3">
           <div className="min-w-0">
-            <dt className="text-[13px] text-[var(--color-text-muted)]">Rev</dt>
-            <dd className="mt-0.5 text-[20px] leading-tight">
-              {revShown ? <CopyId value={revShown} label="revision" /> : <span className="text-[16px] text-[var(--color-text-muted)]">No revision set</span>}
+            <dt className="text-body text-[var(--color-text-muted)]">Rev</dt>
+            <dd className="mt-0.5 text-section leading-tight">
+              {revShown ? <CopyId value={revShown} label="revision" /> : <span className="text-reading text-[var(--color-text-muted)]">No revision set</span>}
             </dd>
           </div>
           <div className="min-w-0">
-            <dt className="text-[13px] text-[var(--color-text-muted)]">Status</dt>
+            <dt className="text-body text-[var(--color-text-muted)]">Status</dt>
             <dd className="mt-1.5 min-w-0">
-              <span className={`${statusPill} !text-[15px] max-w-full`}>
+              <span className={`${statusPill} !text-reading max-w-full`}>
                 <span className="truncate">{selectedDoc.status || "None"}</span>
               </span>
             </dd>
           </div>
           <div className="min-w-0">
-            <dt className="text-[13px] text-[var(--color-text-muted)]">Checked out</dt>
+            <dt className="text-body text-[var(--color-text-muted)]">Checked out</dt>
             <dd className="mt-1.5 min-w-0"
               title={isCheckedOut ? `Checked out by ${checkedOutByMe ? "you" : selectedDoc.checkedOutByName || "someone else"}` : undefined}>
               {isCheckedOut
-                ? <span className="ui-pill is-warn !text-[15px] max-w-full"><span className="truncate">{checkedOutByMe ? "By you" : `By ${selectedDoc.checkedOutByName || "someone"}`}</span></span>
-                : <span className="ui-pill is-muted !text-[15px]">No</span>}
+                ? <span className="ui-pill is-warn !text-reading max-w-full"><span className="truncate">{checkedOutByMe ? "By you" : `By ${selectedDoc.checkedOutByName || "someone"}`}</span></span>
+                : <span className="ui-pill is-muted !text-reading">No</span>}
             </dd>
           </div>
           {sheet && (
             <div className="min-w-0">
-              <dt className="text-[13px] text-[var(--color-text-muted)]">Sheet</dt>
-              <dd className="mt-0.5 ui-id text-[20px] leading-tight">{sheet}</dd>
+              <dt className="text-body text-[var(--color-text-muted)]">Sheet</dt>
+              <dd className="mt-0.5 ui-id text-section leading-tight">{sheet}</dd>
             </div>
           )}
         </dl>
@@ -482,7 +482,7 @@ export default function InspectorPanel({
           const verb = selectedDoc.status === "Draft" ? "uploaded" : "issued";
           const rev = versionRev ?? revShown;
           return (
-            <p className="mt-3 text-[14px] text-[var(--color-text-muted)]">
+            <p className="mt-3 text-body text-[var(--color-text-muted)]">
               {rev ? <>Rev <span className="ui-id text-[var(--color-text)]">{rev}</span> {verb}</> : verb === "issued" ? "Issued" : "Uploaded"}
               {by ? <> by <span className="text-[var(--color-text)]">{by}</span></> : null}
               {when ? <>, {whenText(when)}</> : null}
@@ -492,7 +492,7 @@ export default function InspectorPanel({
           );
         })()}
         {(tags.length > 0 || selectedDoc.effectiveDate) && (
-          <div className={`${quietTags.quiet} mt-3 flex flex-wrap items-center gap-x-5 gap-y-2 text-[14px]`}>
+          <div className={`${quietTags.quiet} mt-3 flex flex-wrap items-center gap-x-5 gap-y-2 text-body`}>
             {tags.length > 0 && (
               <span className="min-w-0 inline-flex flex-wrap items-center gap-1">
                 <span className="text-[var(--color-text-muted)] mr-1">Equipment</span>
@@ -518,14 +518,14 @@ export default function InspectorPanel({
           can carry. A doc with unmerged parallel work must look WRONG
           everywhere you meet it, not just in specialist views. */}
       {openBranches.length > 0 && (
-        <div className="border-l-[3px] border-[var(--state-held)] pl-3 text-[14px] text-[var(--color-text)]">
+        <div className="border-l-[3px] border-[var(--state-held)] pl-3 text-body text-[var(--color-text)]">
           <b className="inline-flex items-center gap-1"><GitBranch className="w-3.5 h-3.5" /> The current revision is missing parallel work.</b>
           {openBranches.map((b) => (
-            <span key={b.id} className="block mt-1 text-[13px] text-[var(--color-text-muted)]">
+            <span key={b.id} className="block mt-1 text-body text-[var(--color-text-muted)]">
               {b.createdByName || b.createdBy} published it on {humanDate(b.createdAt)}: &ldquo;{b.reason}&rdquo;
             </span>
           ))}
-          <span className="block mt-1 text-[13px] text-[var(--color-text-muted)]">Merge it into a new revision or withdraw it from the Control Tower open items.</span>
+          <span className="block mt-1 text-body text-[var(--color-text-muted)]">Merge it into a new revision or withdraw it from the Control Tower open items.</span>
         </div>
       )}
 
@@ -546,7 +546,7 @@ export default function InspectorPanel({
         />
       )}
       {staleHolderCount > 0 && (
-        <p className="border-l-[3px] border-[var(--state-held)] pl-3 text-[14px] text-[var(--color-text)]">
+        <p className="border-l-[3px] border-[var(--state-held)] pl-3 text-body text-[var(--color-text)]">
           <b>{staleHolderCount} {staleHolderCount === 1 ? "person may be" : "people may be"} using an old revision.</b>{" "}
           They took an older copy in the last 60 days. See who under Who has a copy below.
         </p>
@@ -602,7 +602,7 @@ export default function InspectorPanel({
                       userId={uid}
                       resourceType="document"
                       resourceId={selectedDoc.id}
-                      className="!h-10 !px-3.5 !rounded-md !border-[var(--color-border-strong)] !bg-[var(--color-surface)] hover:!bg-[var(--color-surface-2)] !text-[14px] !font-semibold !text-[var(--color-text)]"
+                      className="!h-10 !px-3.5 !rounded-md !border-[var(--color-border-strong)] !bg-[var(--color-surface)] hover:!bg-[var(--color-surface-2)] !text-body !font-semibold !text-[var(--color-text)]"
                     />
                     <PresenceIndicator
                       resourceType="document"
@@ -615,7 +615,7 @@ export default function InspectorPanel({
                 )}
               </>;
             })()}
-            {isCheckedOut && !checkedOutByMe && <span className="basis-full text-[14px] text-[var(--color-text-muted)] inline-flex items-center gap-1.5"><Lock className="w-3.5 h-3.5" /> Publishing waits until {selectedDoc.checkedOutByName || "they"} check{selectedDoc.checkedOutByName ? "s" : ""} it in.</span>}
+            {isCheckedOut && !checkedOutByMe && <span className="basis-full text-body text-[var(--color-text-muted)] inline-flex items-center gap-1.5"><Lock className="w-3.5 h-3.5" /> Publishing waits until {selectedDoc.checkedOutByName || "they"} check{selectedDoc.checkedOutByName ? "s" : ""} it in.</span>}
           </div>
         );
       })()}
@@ -627,9 +627,9 @@ export default function InspectorPanel({
         <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] p-4 flex items-start gap-3">
           <FileText aria-hidden className="w-8 h-8 shrink-0 text-[var(--color-text-muted)]" />
           <div className="min-w-0">
-            <p className="text-[15px] font-semibold text-[var(--color-text)] break-words">{fileName || title}</p>
-            <p className="text-[14px] text-[var(--color-text-muted)]">{[fileTypeName({ fileName, mime: selectedVersion.fileType, path: selectedVersion.fileUrl }), sizeWords(sizeBytes)].filter(Boolean).join(", ")}</p>
-            <p className="mt-2 text-[14px] text-[var(--color-text-muted)]">This file type can&apos;t be shown here. Download saves it so it opens in its own program.</p>
+            <p className="text-reading font-medium text-[var(--color-text)] break-words">{fileName || title}</p>
+            <p className="text-body text-[var(--color-text-muted)]">{[fileTypeName({ fileName, mime: selectedVersion.fileType, path: selectedVersion.fileUrl }), sizeWords(sizeBytes)].filter(Boolean).join(", ")}</p>
+            <p className="mt-2 text-body text-[var(--color-text-muted)]">This file type can&apos;t be shown here. Download saves it so it opens in its own program.</p>
           </div>
         </div>
       ) : selectedVersion?.fileUrl ? (
@@ -657,7 +657,7 @@ export default function InspectorPanel({
           />
         </div>
       ) : (
-        <div className="h-40 rounded-lg bg-[var(--color-surface-2)] flex items-center justify-center text-[14px] text-[var(--color-text-muted)]">
+        <div className="h-40 rounded-lg bg-[var(--color-surface-2)] flex items-center justify-center text-body text-[var(--color-text-muted)]">
           No preview for this file
         </div>
       )}
@@ -764,14 +764,14 @@ export default function InspectorPanel({
             <button
               onClick={() => setShareOpen(true)}
               title="Send a link: to someone outside the company (no sign-in, controlled) or to someone in this workspace"
-              className="inline-flex items-center gap-1.5 h-10 pointer-coarse:h-11 px-3.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
+              className="inline-flex items-center gap-1.5 h-10 pointer-coarse:h-11 px-3.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
             >
               <ShareIcon className="w-3.5 h-3.5" /> Send
             </button>
             <NextLink
               href={`/transmittals?compose=1&doc=${selectedDoc.id}`}
               title="Issue this document on a transmittal: a cover sheet to someone, with a receipt"
-              className="inline-flex items-center gap-1.5 h-10 pointer-coarse:h-11 px-3.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
+              className="inline-flex items-center gap-1.5 h-10 pointer-coarse:h-11 px-3.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
             >
               <Send className="w-3 h-3" /> Transmit
             </NextLink>
@@ -819,14 +819,14 @@ export default function InspectorPanel({
             onClick={() => setCompareOpen(true)}
             disabled={!selectedDoc.id}
             title="Overlay any two revisions: grey unchanged, red removed, green added"
-            className="inline-flex items-center justify-center gap-1.5 h-10 pointer-coarse:h-11 px-3.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            className="inline-flex items-center justify-center gap-1.5 h-10 pointer-coarse:h-11 px-3.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
           >
             <GitCompare className="w-3.5 h-3.5" /> Compare revisions
           </button>
           <button
             onClick={onHistory}
             title="Open the full history drawer"
-            className="inline-flex items-center justify-center gap-1.5 h-10 pointer-coarse:h-11 px-3.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            className="inline-flex items-center justify-center gap-1.5 h-10 pointer-coarse:h-11 px-3.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
           >
             <History className="w-3.5 h-3.5" /> Full history
           </button>
@@ -848,16 +848,16 @@ export default function InspectorPanel({
         {auditState === "loading" ? (
           <SkeletonText lines={3} />
         ) : auditState === "failed" ? (
-          <div className="text-[13px] text-[var(--state-overdue)]">Couldn&apos;t load recent activity.</div>
+          <div className="text-body text-[var(--state-overdue)]">Couldn&apos;t load recent activity.</div>
         ) : recentAudits.length === 0 ? (
-          <div className="text-[13px] text-[var(--color-text-muted)]">No recent activity.</div>
+          <div className="text-body text-[var(--color-text-muted)]">No recent activity.</div>
         ) : (
           <div>
             {recentAudits.map((log, i) => (
-              <div key={i} className="flex items-baseline gap-3 py-1.5 border-b border-[var(--color-border)] last:border-b-0 text-[14px]">
-                <span className="flex-1 min-w-0 font-semibold text-[var(--color-text)]">{(() => { const t = log.action.replace(/_/g, " ").toLowerCase(); return t.charAt(0).toUpperCase() + t.slice(1); })()}</span>
-                <span className="shrink-0 text-[13px] text-[var(--color-text-muted)]">{log.userEmail?.split('@')[0]}</span>
-                <span className="shrink-0 text-[13px] text-[var(--color-text-muted)] tabular-nums">{formatTs(log.timestamp)}</span>
+              <div key={i} className="flex items-baseline gap-3 py-1.5 border-b border-[var(--color-border)] last:border-b-0 text-body">
+                <span className="flex-1 min-w-0 font-medium text-[var(--color-text)]">{(() => { const t = log.action.replace(/_/g, " ").toLowerCase(); return t.charAt(0).toUpperCase() + t.slice(1); })()}</span>
+                <span className="shrink-0 text-body text-[var(--color-text-muted)]">{log.userEmail?.split('@')[0]}</span>
+                <span className="shrink-0 text-body text-[var(--color-text-muted)] tabular-nums">{formatTs(log.timestamp)}</span>
               </div>
             ))}
           </div>
@@ -937,7 +937,7 @@ export default function InspectorPanel({
         {isController && isCheckedOut && onForceUnlock && (
           <button
             onClick={() => onForceUnlock(selectedDoc)}
-            className="mt-3 inline-flex items-center justify-center gap-1.5 h-10 pointer-coarse:h-11 px-3.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--state-overdue)] hover:bg-[var(--color-surface-2)] transition-colors"
+            className="mt-3 inline-flex items-center justify-center gap-1.5 h-10 pointer-coarse:h-11 px-3.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--state-overdue)] hover:bg-[var(--color-surface-2)] transition-colors"
           >
             <Shield className="w-3.5 h-3.5" />
             Force release the lock
@@ -978,16 +978,16 @@ export default function InspectorPanel({
               onClick={() => setModifyOpen(true)}
               disabled={selectedDoc.status === "Archived"}
               title="Structural changes beyond a rev-up: split into sheets, merge documents, renumber, correct a label"
-              className="inline-flex items-center justify-center gap-1.5 h-10 pointer-coarse:h-11 px-3.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors w-full"
+              className="inline-flex items-center justify-center gap-1.5 h-10 pointer-coarse:h-11 px-3.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors w-full"
             >
               <Wrench className="w-3.5 h-3.5" /> Split, merge or renumber…
             </button>
           )}
           <div className="grid grid-cols-2 gap-2">
-            <button onClick={onMove} className="inline-flex items-center justify-center gap-1.5 h-10 pointer-coarse:h-11 px-3.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+            <button onClick={onMove} className="inline-flex items-center justify-center gap-1.5 h-10 pointer-coarse:h-11 px-3.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
               <ArrowRight className="w-3.5 h-3.5" /> Move
             </button>
-            <button onClick={onPermissions} className="inline-flex items-center justify-center gap-1.5 h-10 pointer-coarse:h-11 px-3.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+            <button onClick={onPermissions} className="inline-flex items-center justify-center gap-1.5 h-10 pointer-coarse:h-11 px-3.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
               <Lock className="w-3.5 h-3.5" /> Permissions
             </button>
           </div>
@@ -1008,7 +1008,7 @@ export default function InspectorPanel({
               <button
                 onClick={onSupersede}
                 disabled={selectedDoc.status === "Archived" || selectedDoc.status === "Superseded"}
-                className="inline-flex items-center justify-center gap-1.5 h-10 pointer-coarse:h-11 px-3.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                className="inline-flex items-center justify-center gap-1.5 h-10 pointer-coarse:h-11 px-3.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
               >
                 <Layers className="w-3.5 h-3.5" /> Supersede
               </button>
@@ -1016,7 +1016,7 @@ export default function InspectorPanel({
             {onArchive && (
               <button
                 onClick={onArchive}
-                className="inline-flex items-center justify-center gap-1.5 h-10 pointer-coarse:h-11 px-3.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                className="inline-flex items-center justify-center gap-1.5 h-10 pointer-coarse:h-11 px-3.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
               >
                 {selectedDoc.status === "Archived"
                   ? <><ArchiveRestore className="w-3.5 h-3.5" /> Restore</>
@@ -1032,7 +1032,7 @@ export default function InspectorPanel({
                 catch (e) { await appAlert({ message: friendlyError(e), tone: "danger" }); }
               }}
               title="Put the chain of custody (revisions, holds, audit trail) into a report you can print to PDF"
-              className="inline-flex items-center justify-center gap-1.5 h-10 pointer-coarse:h-11 px-3.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              className="inline-flex items-center justify-center gap-1.5 h-10 pointer-coarse:h-11 px-3.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
             >
               <Shield className="w-3.5 h-3.5" /> Evidence pack
             </button>
@@ -1042,7 +1042,7 @@ export default function InspectorPanel({
           {isController && (
             <button
               onClick={onDelete}
-              className="inline-flex items-center justify-center gap-1.5 h-10 pointer-coarse:h-11 px-3.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors !text-[var(--state-overdue-text)]"
+              className="inline-flex items-center justify-center gap-1.5 h-10 pointer-coarse:h-11 px-3.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors !text-[var(--state-overdue-text)]"
             >
               <Trash2 className="w-3.5 h-3.5" /> Delete document
             </button>
@@ -1063,7 +1063,7 @@ export default function InspectorPanel({
                   await appAlert({ message: "Sent. Admin or Doc Control will review it." });
                 } catch (e) { await appAlert({ message: friendlyError(e), tone: "danger" }); }
               }}
-              className="inline-flex items-center justify-center gap-1.5 h-10 pointer-coarse:h-11 px-3.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors !text-[var(--state-overdue-text)]"
+              className="inline-flex items-center justify-center gap-1.5 h-10 pointer-coarse:h-11 px-3.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors !text-[var(--state-overdue-text)]"
             >
               <Trash2 className="w-3.5 h-3.5" /> Request deletion
             </button>
@@ -1074,7 +1074,7 @@ export default function InspectorPanel({
       {/* FILE DETAILS ───────────────────────────────────────────────── */}
       <PanelSection id="filedetails" title="File details" icon={<FileText className="w-4 h-4" />}
         summary={ext ? <span className="ui-tag !h-6">.{ext}</span> : undefined}>
-        <div className="grid grid-cols-[max-content_1fr] gap-x-6 gap-y-2 text-[14px]">
+        <div className="grid grid-cols-[max-content_1fr] gap-x-6 gap-y-2 text-body">
           <div className="text-[var(--color-text-muted)]">Type</div>
           <div className="text-[var(--color-text)] truncate" title={fileType}>{ext ? `.${ext}` : fileType}</div>
 
@@ -1182,19 +1182,19 @@ function TransmittalTrail({ orgId, documentId, currentRev }: { orgId: string; do
     return () => { alive = false; };
   }, [orgId, documentId]);
 
-  if (state === "loading") return <p className="mt-3 text-[13px] text-[var(--color-text-muted)]">Checking transmittals…</p>;
-  if (state === "failed") return <p className="mt-3 text-[13px] text-[var(--state-overdue)]">Couldn&apos;t load the transmittals for this document.</p>;
+  if (state === "loading") return <p className="mt-3 text-body text-[var(--color-text-muted)]">Checking transmittals…</p>;
+  if (state === "failed") return <p className="mt-3 text-body text-[var(--state-overdue)]">Couldn&apos;t load the transmittals for this document.</p>;
   // Never transmitted: nothing to show.
   if (rows.length === 0) return null;
   return (
     <div className="mt-3 rounded-lg border border-[var(--color-border)] px-3 py-2.5">
-      <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5">Transmitted on</div>
+      <div className="text-body font-medium text-[var(--color-text-muted)] mb-1.5">Transmitted on</div>
       <ul className="space-y-1">
         {rows.map((r) => {
           const stale = !!(r.rev && currentRev && r.rev !== currentRev);
           return (
-            <li key={r.id} className="flex items-center gap-2 text-[13px] flex-wrap">
-              <NextLink href={`/transmittals?t=${r.id}`} className="ui-id text-[15px]">{r.number}</NextLink>
+            <li key={r.id} className="flex items-center gap-2 text-body flex-wrap">
+              <NextLink href={`/transmittals?t=${r.id}`} className="ui-id text-reading">{r.number}</NextLink>
               <span className="text-[var(--color-text-muted)]">
                 Rev {r.rev ?? "-"} · {r.purpose ?? "-"} · to {r.recipient}
                 {r.issuedAt ? ` · ${humanDate(r.issuedAt)}` : ""}
@@ -1250,8 +1250,8 @@ function PanelSection({ id, title, summary, defaultOpen = false, children }: {
       <button type="button" onClick={toggle} aria-expanded={open}
         className="w-full min-h-12 py-2 flex items-center gap-3 text-left group">
         {/* Headings are text: the icon names the section for screen readers only. */}
-        <span className="flex-1 min-w-0 text-[16px] font-semibold text-[var(--color-heading)] group-hover:underline underline-offset-4 decoration-[var(--color-border-strong)]">{title}</span>
-        {summary && <span className="flex items-center gap-1.5 flex-wrap justify-end min-w-0 text-[13px] text-[var(--color-text-muted)]">{summary}</span>}
+        <span className="flex-1 min-w-0 text-reading font-medium text-[var(--color-heading)] group-hover:underline underline-offset-4 decoration-[var(--color-border-strong)]">{title}</span>
+        {summary && <span className="flex items-center gap-1.5 flex-wrap justify-end min-w-0 text-body text-[var(--color-text-muted)]">{summary}</span>}
         <ChevronRight aria-hidden className={`ui-chevron w-4 h-4 shrink-0 text-[var(--color-text-muted)] ${open ? "rotate-90" : ""}`} />
       </button>
       {open && <div className="pb-5 space-y-3">{children}</div>}

@@ -61,7 +61,7 @@ export function WoClassSelects({ c, units, types, onUnits, onTypes, className = 
   if (!c.ready || (!showUnit && !showType)) return null;
   // On a phone the two share the row, each shrinking to fit (never wider than the screen).
   // Quiet on the card (warm fill); picked, it's framed in ink.
-  const sel = (on: boolean) => `h-9 min-w-0 flex-1 basis-[8rem] sm:flex-none sm:basis-auto max-w-[14rem] truncate rounded-[10px] border px-2 text-[13px] font-semibold text-[var(--color-text)] ${on ? "border-[var(--color-text)] bg-[var(--color-surface)]" : "border-transparent bg-[var(--color-surface-2)]"}`;
+  const sel = (on: boolean) => `h-9 min-w-0 flex-1 basis-[8rem] sm:flex-none sm:basis-auto max-w-[14rem] truncate rounded-lg border px-2 text-body font-medium text-[var(--color-text)] ${on ? "border-[var(--color-text)] bg-[var(--color-surface)]" : "border-transparent bg-[var(--color-surface-2)]"}`;
   return (
     <span className={`inline-flex flex-wrap items-center gap-1.5 min-w-0 max-w-full ${className}`}>
       {showUnit && (

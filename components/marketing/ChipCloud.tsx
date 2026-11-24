@@ -17,14 +17,14 @@ export function ChipCloud({ chips, preview = 6 }: {
     <div className="flex flex-wrap gap-1.5">
       {shown.map((c, i) => (
         <span key={c}
-          className="inline-flex items-center px-2 py-0.5 min-h-7 rounded-md bg-[var(--color-surface-2)] border border-[var(--color-border)] text-[13px] text-[var(--color-text)]"
+          className="inline-flex items-center px-2 py-0.5 min-h-7 rounded-md bg-[var(--color-surface-2)] border border-[var(--color-border)] text-body text-[var(--color-text)]"
           style={open && i >= preview ? { animation: `pop 0.3s var(--ease-fluid) ${Math.min((i - preview) * 18, 400)}ms both` } : undefined}>
           {c}
         </span>
       ))}
       {chips.length > preview && (
         <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open}
-          className="inline-flex items-center gap-1 px-2.5 h-7 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-text-faint)] transition-colors">
+          className="inline-flex items-center gap-1 px-2.5 h-8 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-text-faint)] transition-colors">
           {open ? "Show less" : `Show ${chips.length - preview} more`}
           <ChevronDown className={`w-3.5 h-3.5 transition-transform ${open ? "rotate-180" : ""}`} />
         </button>

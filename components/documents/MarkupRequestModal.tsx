@@ -77,8 +77,8 @@ export default function MarkupRequestModal({
             <MessageSquare className="w-5 h-5 text-[var(--color-text-muted)]" />
           </div>
           <div className="flex-1">
-            <div className="text-sm font-semibold text-[var(--color-text)]">Request markups</div>
-            <div className="text-[13px] text-[var(--color-text-muted)] truncate">
+            <div className="text-sm font-medium text-[var(--color-text)]">Request markups</div>
+            <div className="text-body text-[var(--color-text-muted)] truncate">
               {document.documentNumber || document.title || document.name} - from <b>{holderUserName || "the current checkout holder"}</b>
             </div>
           </div>
@@ -93,7 +93,7 @@ export default function MarkupRequestModal({
             The holder can decline, share their current markup PDF, or upload a stamped copy in response.
           </p>
           <div>
-            <label className="text-[13px] font-semibold text-[var(--color-text)] ">Message *</label>
+            <label className="text-body font-medium text-[var(--color-text)] ">Message *</label>
             <textarea
               value={message}
               onChange={(e) => setMessage(e.target.value)}
@@ -103,15 +103,15 @@ export default function MarkupRequestModal({
             />
           </div>
           {error && (
-            <div className="flex items-start gap-2 text-[13px] border-l-2 border-[var(--state-overdue)] pl-3 text-[var(--state-overdue)]">
+            <div className="flex items-start gap-2 text-body border-l-2 border-[var(--state-overdue)] pl-3 text-[var(--state-overdue)]">
               <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> {error}
             </div>
           )}
         </div>
 
         <div className="px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-end gap-2">
-          <button onClick={onClose} disabled={busy} className="px-3 py-2 rounded-lg text-[13px] font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">Cancel</button>
-          <button onClick={submit} disabled={busy} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-[13px] font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-60">
+          <button onClick={onClose} disabled={busy} className="px-3 py-2 rounded-lg text-body font-medium text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">Cancel</button>
+          <button onClick={submit} disabled={busy} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-body font-medium text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-60">
             {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
             {busy ? "Sending…" : "Send Request"}
           </button>

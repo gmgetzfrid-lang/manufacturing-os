@@ -12,8 +12,8 @@ import { btnRow, btnIcon } from "@/components/admin/kit";
 /** One white sheet that holds a table or a ruled list. */
 export const sheet = "rounded-panel border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden";
 /** A table header row: grey band, muted 13px labels. */
-export const thead = "bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text-muted)] text-left";
-export const th = "font-semibold px-4 h-10 whitespace-nowrap";
+export const thead = "bg-[var(--color-surface-2)] text-body text-[var(--color-text-muted)] text-left";
+export const th = "font-medium px-4 h-10 whitespace-nowrap";
 /** A row that opens what it names. */
 export const rowHover = "hover:bg-[var(--color-surface-2)] cursor-pointer transition-colors";
 /** A secondary button in a row: white, ruled, graphite. */
@@ -36,8 +36,8 @@ export function SectionHead({ title, count, tone, id, children, className = "" }
   children?: React.ReactNode;
   className?: string;
 }) {
-  const countCls = tone === "bad" ? "font-semibold text-[var(--state-overdue-text)]"
-    : tone === "warn" ? "font-semibold text-[var(--state-held-text)]"
+  const countCls = tone === "bad" ? "font-medium text-[var(--state-overdue-text)]"
+    : tone === "warn" ? "font-medium text-[var(--state-held-text)]"
       : "font-normal text-[var(--color-text-muted)]";
   return (
     <div className={`flex flex-wrap items-end gap-x-3 gap-y-2 mb-3 min-h-8 ${className}`}>
@@ -128,9 +128,9 @@ export function FactRow({ cells, className = "" }: {
       {cells.map((c, i) => {
         const body = (
           <>
-            <span className="block min-w-0 text-[13px] text-[var(--color-text-muted)] truncate">{c.label}</span>
+            <span className="block min-w-0 text-body text-[var(--color-text-muted)] truncate">{c.label}</span>
             <span className="sm:mt-0.5 flex items-baseline gap-2 min-w-0 shrink-0 sm:shrink">
-              {c.note && <span className="sm:order-2 text-[13px] text-[var(--color-text-muted)] truncate">{c.note}</span>}
+              {c.note && <span className="sm:order-2 text-body text-[var(--color-text-muted)] truncate">{c.note}</span>}
               <span className={`font-display text-section font-semibold tabular-nums ${tone(c)}`}>{c.value}</span>
             </span>
           </>
@@ -157,7 +157,7 @@ export function WorkBar({ pct, late = false, title, className = "", width = "w-2
       <span className={`relative h-2 ${width} rounded-full bg-[var(--color-accent-soft)] overflow-hidden`} role="progressbar" aria-valuenow={v} aria-valuemin={0} aria-valuemax={100} aria-label="Work done">
         <span className="absolute inset-y-0 left-0 rounded-full" style={{ width: `${v}%`, background: late ? "var(--state-overdue)" : "var(--color-main)" }} />
       </span>
-      <span className="font-display text-[15px] font-semibold tabular-nums text-[var(--color-text)]">{v}%</span>
+      <span className="font-display text-reading font-semibold tabular-nums text-[var(--color-text)]">{v}%</span>
     </span>
   );
 }

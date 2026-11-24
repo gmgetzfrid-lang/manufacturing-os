@@ -39,7 +39,7 @@ export default function GlobalError({
           <PageBody>
             <Card>
               <details>
-                <summary className="cursor-pointer text-[13px] font-semibold text-[var(--color-text-muted)]">
+                <summary className="cursor-pointer text-body font-medium text-[var(--color-text-muted)]">
                   Developer details
                 </summary>
                 <pre className="mt-3 overflow-auto text-xs leading-relaxed text-[var(--color-text)]">

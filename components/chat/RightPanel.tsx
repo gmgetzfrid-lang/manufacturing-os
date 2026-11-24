@@ -68,13 +68,13 @@ export default function RightPanel({
   const header: PaneHeader = (kicker, title, sub) => (
     <div className="px-5 pt-4 pb-4 border-b border-[var(--color-border)] shrink-0">
       <div className="flex items-center gap-2 min-h-9">
-        <div className="min-w-0 flex-1 truncate text-[13px] font-semibold text-[var(--color-text-muted)]">{kicker}</div>
+        <div className="min-w-0 flex-1 truncate text-body font-medium text-[var(--color-text-muted)]">{kicker}</div>
         <button onClick={onClose} title="Close panel" aria-label="Close panel" className="w-9 h-9 grid place-items-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
           <X className="w-4 h-4" />
         </button>
       </div>
       <h2 className="mt-1 font-display text-[26px] leading-[1.1] font-semibold text-[var(--color-text)] line-clamp-2 break-words">{title}</h2>
-      {sub && <div className="mt-1.5 text-[14px] text-[var(--color-text-muted)]">{sub}</div>}
+      {sub && <div className="mt-1.5 text-body text-[var(--color-text-muted)]">{sub}</div>}
     </div>
   );
 
@@ -116,9 +116,9 @@ export default function RightPanel({
             {past.threadTitle ? <> in <Link className="text-[var(--color-accent-text)] hover:underline" href={`/assistant?thread=${past.threadId}`}>{past.threadTitle}</Link></> : null}
           </>)}
         <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
-          <div className="rounded-lg rounded-tr-sm border border-[var(--color-border)] bg-[var(--color-surface-2)] px-4 py-2.5 text-[15px] leading-relaxed text-[var(--color-text)]">{past.question}</div>
+          <div className="rounded-lg rounded-tr-sm border border-[var(--color-border)] bg-[var(--color-surface-2)] px-4 py-2.5 text-reading leading-relaxed text-[var(--color-text)]">{past.question}</div>
           {changed && changed.length > 0 && (
-            <div className="relative pl-4 py-1 flex items-start gap-2 text-[14px] font-semibold text-[var(--color-text)]">
+            <div className="relative pl-4 py-1 flex items-start gap-2 text-body font-medium text-[var(--color-text)]">
               <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] rounded-full bg-[var(--state-held)]" />
               <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-[var(--state-held)]" />
               <span>The sources moved on since this was answered: {changed.join("; ")}. Ask fresh to be safe.</span>
@@ -139,7 +139,7 @@ export default function RightPanel({
         </div>
         <div className="px-5 py-3.5 border-t border-[var(--color-border)] shrink-0">
           <button onClick={() => onReuse(past)}
-            className="w-full inline-flex items-center justify-center gap-2 h-10 rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[15px] font-semibold hover:bg-[var(--color-accent-hover)] shadow-[0_1px_0_rgb(0_0_0/0.12)] transition-colors">
+            className="w-full inline-flex items-center justify-center gap-2 h-10 rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-reading font-medium hover:bg-[var(--color-accent-hover)] shadow-[0_1px_0_rgb(0_0_0/0.12)] transition-colors">
             <Redo2 className="w-4 h-4" /> Use this answer here (no AI call)
           </button>
         </div>
@@ -184,12 +184,12 @@ function AttachmentPane({ att, header }: {
         ) : url ? (
           <iframe src={url} title={att.name} className="w-full h-[70vh] rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)]" />
         ) : failed ? (
-          <p role="alert" className="flex items-start gap-2 text-[14px] font-semibold text-[var(--state-overdue)]"><AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> Couldn&apos;t open the file: {failed}</p>
+          <p role="alert" className="flex items-start gap-2 text-body font-medium text-[var(--state-overdue)]"><AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> Couldn&apos;t open the file: {failed}</p>
         ) : (
-          <div className="flex items-center gap-2 text-[14px] text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin" /> Loading the file…</div>
+          <div className="flex items-center gap-2 text-body text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin" /> Loading the file…</div>
         )}
         {url && (
-          <a href={url} target="_blank" rel="noopener noreferrer" className="inline-block text-[14px] text-[var(--color-accent-text)] hover:underline">Open in a new tab</a>
+          <a href={url} target="_blank" rel="noopener noreferrer" className="inline-block text-body text-[var(--color-accent-text)] hover:underline">Open in a new tab</a>
         )}
       </div>
     </div>
@@ -226,9 +226,9 @@ function InstructionsPane({
   useEffect(() => { setProf(profile); }, [profile]);
 
   const flash = (what: string) => { setSaved(what); setTimeout(() => setSaved(null), 1800); };
-  const field = "w-full px-3 py-2 text-[15px] rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none focus:border-[var(--color-main)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40";
-  const label = "font-display text-[17px] font-semibold text-[var(--color-heading)] mb-0.5";
-  const quiet = "inline-flex items-center gap-1.5 h-9 px-3.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-[14px] font-semibold hover:bg-[var(--color-surface-2)] disabled:opacity-40 transition-colors";
+  const field = "w-full px-3 py-2 text-reading rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none focus:border-[var(--color-main)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40";
+  const label = "font-display text-section font-semibold text-[var(--color-heading)] mb-0.5";
+  const quiet = "inline-flex items-center gap-1.5 h-10 px-3.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-body font-medium hover:bg-[var(--color-surface-2)] disabled:opacity-40 transition-colors";
   const savedTag = <span className="ui-pill is-good">Saved</span>;
   const own = instructions.trim() ? 1 : 0;
   const total = own + standingCount;
@@ -241,7 +241,7 @@ function InstructionsPane({
       <div className="flex-1 overflow-y-auto px-5 divide-y divide-[var(--color-border)]">
         <section className="py-4">
           <label htmlFor="chat-instructions" className={`block ${label}`}>This conversation</label>
-          <p className="text-[13px] text-[var(--color-text-muted)] mb-2">
+          <p className="text-body text-[var(--color-text-muted)] mb-2">
             Applied to every answer in this conversation only. {thread ? "" : "Saved once the conversation starts."}
           </p>
           <textarea id="chat-instructions" value={text} onChange={(e) => setText(e.target.value)} rows={5}
@@ -250,7 +250,7 @@ function InstructionsPane({
           <div className="mt-2 flex items-center gap-2 flex-wrap">
             <button disabled={saving !== null || text === instructions}
               onClick={() => void run("instructions", () => onSaveInstructions(text))}
-              className="inline-flex items-center gap-1.5 h-9 px-4 rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[14px] font-semibold hover:bg-[var(--color-accent-hover)] disabled:opacity-40 transition-colors">
+              className="inline-flex items-center gap-1.5 h-10 px-4 rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-body font-medium hover:bg-[var(--color-accent-hover)] disabled:opacity-40 transition-colors">
               {saving === "instructions" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />} Save
             </button>
             {canPromote && text.trim() && (
@@ -263,12 +263,12 @@ function InstructionsPane({
             )}
             {saved && saved !== "profile" && savedTag}
           </div>
-          {saveError && saveError.what !== "profile" && <p role="alert" className="mt-1.5 text-[13px] font-semibold text-[var(--state-overdue)]">Not saved: {saveError.msg}</p>}
+          {saveError && saveError.what !== "profile" && <p role="alert" className="mt-1.5 text-body font-medium text-[var(--state-overdue)]">Not saved: {saveError.msg}</p>}
         </section>
 
         <section className="py-4">
           <div className={`${label} flex items-center gap-2`}>Standing instructions <span className={`ui-count ${standingCount > 0 ? "is-solid" : ""}`}>{standingCount}</span></div>
-          <p className="text-[14px] text-[var(--color-text-muted)]">
+          <p className="text-body text-[var(--color-text-muted)]">
             {standingCount > 0
               ? <>{standingCount} org playbook instruction{standingCount === 1 ? "" : "s"} appl{standingCount === 1 ? "ies" : "y"} to every library answer. </>
               : <>No org playbook instructions yet. </>}
@@ -278,7 +278,7 @@ function InstructionsPane({
 
         <section className="py-4">
           <div className={label}>About you</div>
-          <p className="text-[13px] text-[var(--color-text-muted)] mb-2">
+          <p className="text-body text-[var(--color-text-muted)] mb-2">
             Sent with every question you ask. Nothing here is guessed.
           </p>
           <div className="space-y-2">
@@ -304,7 +304,7 @@ function InstructionsPane({
             </button>
             {saved === "profile" && savedTag}
           </div>
-          {saveError?.what === "profile" && <p role="alert" className="mt-1.5 text-[13px] font-semibold text-[var(--state-overdue)]">Not saved: {saveError.msg}</p>}
+          {saveError?.what === "profile" && <p role="alert" className="mt-1.5 text-body font-medium text-[var(--state-overdue)]">Not saved: {saveError.msg}</p>}
         </section>
       </div>
     </div>

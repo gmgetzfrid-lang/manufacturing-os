@@ -29,17 +29,17 @@ export interface QuickLookFmt {
 function Tile({ label, sub, big, small, tone }: { label: string; sub?: string; big: React.ReactNode; small?: React.ReactNode; tone?: "accent" }) {
   return (
     <div className={`min-w-0 rounded-lg border px-2 py-1.5 sm:px-3 sm:py-2 ${tone === "accent" ? "border-[var(--color-border-strong)] bg-[var(--color-surface-2)] dark:border-[var(--color-border)] dark:bg-[var(--color-surface-2)]" : "border-[var(--color-border)] bg-[var(--color-surface-2)]"}`}>
-      <div className="text-[11px] sm:text-[12px] font-semibold text-[var(--color-text-muted)]">{label}{sub && <span className="hidden sm:inline normal-case font-semibold tracking-normal"> · {sub}</span>}</div>
-      <div className="text-[13px] sm:text-[14px] font-bold leading-tight text-[var(--color-text)] tabular-nums">{big}</div>
-      {small && <div className="text-[11px] sm:text-[12px] leading-snug text-[var(--color-text-muted)]">{small}</div>}
+      <div className="text-caption font-medium text-[var(--color-text-muted)]">{label}{sub && <span className="hidden sm:inline normal-case font-medium tracking-normal"> · {sub}</span>}</div>
+      <div className="text-body font-medium leading-tight text-[var(--color-text)] tabular-nums">{big}</div>
+      {small && <div className="text-caption leading-snug text-[var(--color-text-muted)]">{small}</div>}
     </div>
   );
 }
 
 function Heading({ children, hint }: { children: React.ReactNode; hint?: string }) {
   return (
-    <h3 className="mt-4 mb-1.5 text-[13px] font-semibold text-[var(--color-text-muted)]">
-      {children}{hint && <span className="ml-1.5 normal-case font-semibold tracking-normal text-[var(--color-text-faint)]">{hint}</span>}
+    <h3 className="mt-4 mb-1.5 text-body font-medium text-[var(--color-text-muted)]">
+      {children}{hint && <span className="ml-1.5 normal-case font-medium tracking-normal text-[var(--color-text-faint)]">{hint}</span>}
     </h3>
   );
 }
@@ -72,7 +72,7 @@ export function QuickLookCard({ look, goalAt, noteOf, fmt, onOpen, onClose }: {
         <div className="grid grid-cols-3 gap-1.5 sm:gap-2">
           <Tile tone="accent" label={`Goal by ${fmt.T(goalAt.end)}`} sub={`end of ${goalAt.kind} shift`}
             big={done ? "Done" : `${look.goal}%`}
-            small={done ? null : <>now {look.percent}% · <span className={behind ? "font-bold text-[var(--state-overdue-text)]" : ""}>plan by now {look.planNow}%</span></>} />
+            small={done ? null : <>now {look.percent}% · <span className={behind ? "font-medium text-[var(--state-overdue-text)]" : ""}>plan by now {look.planNow}%</span></>} />
           <Tile label="This step done by" big={fmt.DTs(look.finish)} small={`starts ${fmt.DTs(look.start)}`} />
           {eq ? (
             <Tile label={`${eqName} done by`} big={Number.isFinite(eq.finish) ? fmt.DTs(eq.finish) : "-"} small={`${eq.done} of ${eq.total} steps · ${eq.percent}%`} />
@@ -80,10 +80,10 @@ export function QuickLookCard({ look, goalAt, noteOf, fmt, onOpen, onClose }: {
         </div>
 
         {look.waitsOn.length > 0 && (
-          <div className="mt-3 border-l-2 border-[var(--state-held)] pl-3 py-0.5 text-[12px]">
+          <div className="mt-3 border-l-2 border-[var(--state-held)] pl-3 py-0.5 text-caption">
             <b className="text-[var(--state-held-text)]">Can&apos;t start until done: </b>
             {look.waitsOn.map((s, i) => (
-              <span key={s.id}>{i > 0 && " · "}{link(s, "font-semibold text-[var(--color-text)]")} <span className="text-[var(--color-text-muted)]">({s.percent}%, due {fmt.DTs(s.finish)})</span></span>
+              <span key={s.id}>{i > 0 && " · "}{link(s, "font-medium text-[var(--color-text)]")} <span className="text-[var(--color-text-muted)]">({s.percent}%, due {fmt.DTs(s.finish)})</span></span>
             ))}
           </div>
         )}
@@ -93,9 +93,9 @@ export function QuickLookCard({ look, goalAt, noteOf, fmt, onOpen, onClose }: {
           <>
             <Heading hint="in start order: tap a step to open it">Step order on {eqName ?? "this task"}</Heading>
             <div className="rounded-lg border border-[var(--color-border)] overflow-hidden">
-              <table className="w-full text-[12px]">
+              <table className="w-full text-caption">
                 <thead>
-                  <tr className="bg-[var(--color-surface-2)] text-[13px] font-semibold text-[var(--color-text-muted)] text-left">
+                  <tr className="bg-[var(--color-surface-2)] text-body font-medium text-[var(--color-text-muted)] text-left">
                     <th className="px-2 py-1 w-[104px]">Starts</th>
                     <th className="px-2 py-1 w-[104px] hidden sm:table-cell">Done by</th>
                     <th className="px-2 py-1">Step</th>
@@ -108,15 +108,15 @@ export function QuickLookCard({ look, goalAt, noteOf, fmt, onOpen, onClose }: {
                     const fin = s.percent >= 100;
                     return (
                       <tr key={s.id} className={`border-t border-[var(--color-border)] align-top ${s.isThis ? "bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)]" : ""}`}>
-                        <td className="px-2 py-1 font-display tabular-nums text-[11px] whitespace-nowrap">{fmt.DTs(s.start)}</td>
-                        <td className="px-2 py-1 font-display tabular-nums text-[11px] whitespace-nowrap hidden sm:table-cell">{fmt.DTs(s.finish)}</td>
+                        <td className="px-2 py-1 font-display tabular-nums text-caption whitespace-nowrap">{fmt.DTs(s.start)}</td>
+                        <td className="px-2 py-1 font-display tabular-nums text-caption whitespace-nowrap hidden sm:table-cell">{fmt.DTs(s.finish)}</td>
                         <td className="px-2 py-1">
-                          {s.isThis ? <b className="text-[var(--color-text)]">{s.name}</b> : link(s, fin ? "text-[var(--color-text-faint)] line-through" : "font-semibold text-[var(--color-text)]")}
-                          {s.isThis && <span className="ml-1.5 rounded border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1 py-px text-[11px] font-semibold text-[var(--color-text)]">This step</span>}
-                          {s.isNext && <span className="ml-1.5 rounded bg-slate-800 px-1 py-px text-[11px] font-semibold text-white dark:bg-slate-200 dark:text-slate-900">Next</span>}
+                          {s.isThis ? <b className="text-[var(--color-text)]">{s.name}</b> : link(s, fin ? "text-[var(--color-text-faint)] line-through" : "font-medium text-[var(--color-text)]")}
+                          {s.isThis && <span className="ml-1.5 rounded border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1 py-px text-caption font-medium text-[var(--color-text)]">This step</span>}
+                          {s.isNext && <span className="ml-1.5 rounded bg-slate-800 px-1 py-px text-caption font-medium text-white dark:bg-slate-200 dark:text-slate-900">Next</span>}
                         </td>
-                        <td className="px-2 py-1 hidden sm:table-cell text-[11px] text-[var(--color-text-muted)]">{s.who}</td>
-                        <td className="px-2 py-1 text-right font-display tabular-nums text-[11px]">{fin ? "✓" : `${s.percent}%`}</td>
+                        <td className="px-2 py-1 hidden sm:table-cell text-caption text-[var(--color-text-muted)]">{s.who}</td>
+                        <td className="px-2 py-1 text-right font-display tabular-nums text-caption">{fin ? "✓" : `${s.percent}%`}</td>
                       </tr>
                     );
                   })}
@@ -126,15 +126,15 @@ export function QuickLookCard({ look, goalAt, noteOf, fmt, onOpen, onClose }: {
           </>
         )}
         {look.order.length > 0 && look.next.length === 0 && (
-          <p className="mt-1.5 text-[12px] text-[var(--color-text-muted)]">This is the last step on {eqName ?? "this task"}.</p>
+          <p className="mt-1.5 text-caption text-[var(--color-text-muted)]">This is the last step on {eqName ?? "this task"}.</p>
         )}
 
         {look.nextElsewhere.length > 0 && (
           <>
             <Heading>Also waiting on this step</Heading>
-            <ul className="space-y-0.5 text-[12px]">
+            <ul className="space-y-0.5 text-caption">
               {look.nextElsewhere.map((s) => (
-                <li key={s.id}>{link(s, "font-semibold text-[var(--color-text)]")} <span className="text-[var(--color-text-muted)]">· {s.parentName} · starts {fmt.DTs(s.start)}</span></li>
+                <li key={s.id}>{link(s, "font-medium text-[var(--color-text)]")} <span className="text-[var(--color-text-muted)]">· {s.parentName} · starts {fmt.DTs(s.start)}</span></li>
               ))}
             </ul>
           </>
@@ -146,7 +146,7 @@ export function QuickLookCard({ look, goalAt, noteOf, fmt, onOpen, onClose }: {
             <Heading>Overall tasks it rolls up to</Heading>
             <ul className="space-y-1">
               {above.map((l, i) => (
-                <li key={l.id} className="flex items-baseline gap-2 text-[12px]" style={{ paddingLeft: i * 10 }}>
+                <li key={l.id} className="flex items-baseline gap-2 text-caption" style={{ paddingLeft: i * 10 }}>
                   <span className="min-w-0 flex-1 truncate text-[var(--color-text)]">{l.name}</span>
                   <span className="shrink-0 text-[var(--color-text-muted)]">done by <b className="font-display tabular-nums text-[var(--color-text)]">{Number.isFinite(l.finish) ? fmt.DTs(l.finish) : "-"}</b> · {l.percent}%</span>
                 </li>
@@ -158,7 +158,7 @@ export function QuickLookCard({ look, goalAt, noteOf, fmt, onOpen, onClose }: {
         {(look.reason || note) && (
           <>
             <Heading>{look.reason ? "Reason it's held" : "Last comment"}</Heading>
-            <p className="text-[12px] italic text-[var(--color-text)]">{look.reason ?? note}</p>
+            <p className="text-caption italic text-[var(--color-text)]">{look.reason ?? note}</p>
           </>
         )}
       </ModalBody>
@@ -188,16 +188,16 @@ export function TaskSearch({ idx, fmt, onPick }: { idx: QuickLookIndex; fmt: Qui
           if (e.key === "Enter" && hits[hi]) { e.preventDefault(); pick(hits[hi].id); }
           if (e.key === "Escape") { setOpen(false); (e.target as HTMLInputElement).blur(); }
         }}
-        className="w-full sm:w-52 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] py-1 pl-7 pr-2 text-[12px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)]" />
+        className="w-full sm:w-52 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] py-1 pl-7 pr-2 text-caption text-[var(--color-text)] placeholder:text-[var(--color-text-faint)]" />
       {open && q.trim() && (
         <div className="absolute right-0 top-full mt-1 z-30 w-[min(22rem,calc(100vw-2rem))] rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] shadow-lg py-1">
           {hits.length === 0 ? (
-            <div className="px-3 py-2 text-[12px] text-[var(--color-text-muted)]">No step matches “{q.trim()}”.</div>
+            <div className="px-3 py-2 text-caption text-[var(--color-text-muted)]">No step matches “{q.trim()}”.</div>
           ) : hits.map((h, i) => (
             <button key={h.id} type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => pick(h.id)}
               className={`block w-full text-left px-3 py-1.5 ${i === hi ? "bg-[var(--color-surface-2)]" : "hover:bg-[var(--color-surface-2)]"}`}>
-              <div className="text-[12px] font-semibold text-[var(--color-text)] truncate">{h.name}</div>
-              <div className="text-[11px] text-[var(--color-text-muted)] truncate">{[h.parentName, fmt.DTs(h.start), h.who].filter(Boolean).join(" · ")}</div>
+              <div className="text-caption font-medium text-[var(--color-text)] truncate">{h.name}</div>
+              <div className="text-caption text-[var(--color-text-muted)] truncate">{[h.parentName, fmt.DTs(h.start), h.who].filter(Boolean).join(" · ")}</div>
             </button>
           ))}
         </div>

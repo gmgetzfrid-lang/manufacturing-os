@@ -23,7 +23,7 @@ import { searchMatcher, hasQuery } from "@/lib/fuzzySearch";
 import { useDraft } from "@/hooks/useDraft";
 import { sayError } from "@/components/projects/sayError";
 
-const field = "h-9 w-full rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[13px] text-[var(--color-text)] disabled:opacity-50";
+const field = "h-9 w-full rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-body text-[var(--color-text)] disabled:opacity-50";
 const has = (e?: SheetEntry) => !!e && !!(e.start?.trim() || e.lunchPct?.trim() || e.endPct?.trim() || e.done?.trim() || e.hold || e.note?.trim());
 
 export default function ShiftSheetEntry({ milestones, progress, tz, times, target, projectId, userId, userName, canEdit, onClose, onSaved }: {
@@ -137,32 +137,32 @@ export default function ShiftSheetEntry({ milestones, progress, tz, times, targe
       <div key={l.id} className={`px-3 py-2.5 ${r && !r.ok ? "bg-transparent" : done ? "bg-transparent" : ""}`}>
         <div className="grid gap-2 grid-cols-2 sm:grid-cols-[minmax(0,1.5fr)_118px_72px_72px_118px_64px_minmax(0,1fr)] items-center">
           <div className="col-span-2 sm:col-span-1 min-w-0">
-            <div className="text-[13px] font-bold text-[var(--color-text)] leading-snug">{l.name}</div>
-            <div className="text-[12px] text-[var(--color-text-muted)]">
+            <div className="text-body font-medium text-[var(--color-text)] leading-snug">{l.name}</div>
+            <div className="text-caption text-[var(--color-text-muted)]">
               {l.crew || "No crew named"}
-              {isDone && <span className="ml-1.5 font-bold text-[var(--state-released-text)]">done</span>}
-              {!isDone && m && pctOf(m) > 0 && <span className="ml-1.5 font-semibold">at {Math.round(pctOf(m))}%</span>}
+              {isDone && <span className="ml-1.5 font-medium text-[var(--state-released-text)]">done</span>}
+              {!isDone && m && pctOf(m) > 0 && <span className="ml-1.5 font-medium">at {Math.round(pctOf(m))}%</span>}
             </div>
           </div>
-          <label className="min-w-0"><span className="sm:hidden block text-[12px] font-semibold text-[var(--color-text-muted)]">Start</span>
-            {started ? <span className="flex h-9 items-center justify-center rounded-lg bg-[var(--color-surface-2)] text-[12px] font-semibold text-[var(--color-text-muted)]">going</span>
+          <label className="min-w-0"><span className="sm:hidden block text-caption font-medium text-[var(--color-text-muted)]">Start</span>
+            {started ? <span className="flex h-9 items-center justify-center rounded-lg bg-[var(--color-surface-2)] text-caption font-medium text-[var(--color-text-muted)]">going</span>
               : <input type="time" aria-label={`${l.name}: start time`} value={e.start ?? ""} disabled={lock} onChange={(x) => set(l.id, { start: x.target.value })} className={field} />}
           </label>
-          <label className="min-w-0"><span className="sm:hidden block text-[12px] font-semibold text-[var(--color-text-muted)]">{at.lunchLabel}</span>
+          <label className="min-w-0"><span className="sm:hidden block text-caption font-medium text-[var(--color-text-muted)]">{at.lunchLabel}</span>
             <input inputMode="numeric" placeholder="%" aria-label={`${l.name}: ${at.lunchLabel}`} value={e.lunchPct ?? ""} disabled={lock} onChange={(x) => set(l.id, { lunchPct: x.target.value.replace(/[^\d]/g, "").slice(0, 3) })} className={`${field} text-center`} />
           </label>
-          <label className="min-w-0"><span className="sm:hidden block text-[12px] font-semibold text-[var(--color-text-muted)]">% end of shift</span>
+          <label className="min-w-0"><span className="sm:hidden block text-caption font-medium text-[var(--color-text-muted)]">% end of shift</span>
             <input inputMode="numeric" placeholder="%" aria-label={`${l.name}: % at the end of the shift`} value={e.endPct ?? ""} disabled={lock} onChange={(x) => set(l.id, { endPct: x.target.value.replace(/[^\d]/g, "").slice(0, 3) })} className={`${field} text-center`} />
           </label>
-          <label className="min-w-0"><span className="sm:hidden block text-[12px] font-semibold text-[var(--color-text-muted)]">Done</span>
+          <label className="min-w-0"><span className="sm:hidden block text-caption font-medium text-[var(--color-text-muted)]">Done</span>
             <input type="time" aria-label={`${l.name}: done time`} value={e.done ?? ""} disabled={lock} onChange={(x) => set(l.id, { done: x.target.value })} className={field} />
           </label>
-          <label className="flex items-center gap-1.5 text-[12px] font-semibold cursor-pointer select-none">
+          <label className="flex items-center gap-1.5 text-caption font-medium cursor-pointer select-none">
             <input type="checkbox" checked={!!e.hold} disabled={lock} onChange={(x) => set(l.id, { hold: x.target.checked })} className="w-4 h-4 accent-amber-600" /> Hold
           </label>
           <input placeholder={e.hold ? "Why it's held" : "Note"} aria-label={`${l.name}: note`} value={e.note ?? ""} disabled={lock} onChange={(x) => set(l.id, { note: x.target.value })} className={`${field} col-span-2 sm:col-span-1`} />
         </div>
-        {r && <div className={`mt-1 text-[12px] font-semibold ${r.ok ? (r.msg ? "text-[var(--state-held-text)]" : "text-[var(--state-released-text)]") : "text-[var(--state-overdue-text)]"}`}>{r.ok ? (r.msg ?? "Saved") : r.msg}</div>}
+        {r && <div className={`mt-1 text-caption font-medium ${r.ok ? (r.msg ? "text-[var(--state-held-text)]" : "text-[var(--state-released-text)]") : "text-[var(--state-overdue-text)]"}`}>{r.ok ? (r.msg ?? "Saved") : r.msg}</div>}
       </div>
     );
   };
@@ -173,31 +173,31 @@ export default function ShiftSheetEntry({ milestones, progress, tz, times, targe
         <div className="flex items-start gap-3 px-4 py-3 border-b border-[var(--color-border)]">
           <ClipboardPen className="w-5 h-5 mt-0.5 text-[var(--color-text-muted)] shrink-0" />
           <div className="min-w-0 flex-1">
-            <div className="text-[15px] font-semibold text-[var(--color-text)]">Enter the shift sheet</div>
-            <div className="text-[12px] text-[var(--color-text-muted)]">
+            <div className="text-reading font-medium text-[var(--color-text)]">Enter the shift sheet</div>
+            <div className="text-caption text-[var(--color-text-muted)]">
               {target.kind === "day" ? "Day" : "Night"} shift · {dayWord} · {timeWord(target.start)} to {timeWord(target.end)}
               {" · "}{printed ? "the lines as printed" : "the lines as the sheet would print now"}
             </div>
           </div>
           <button type="button" onClick={onClose} aria-label="Close" className="p-2 rounded-lg text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
         </div>
-        <div className="px-4 py-2 text-[12px] text-[var(--color-text-muted)] border-b border-[var(--color-border)] bg-[var(--color-surface-2)]">
+        <div className="px-4 py-2 text-caption text-[var(--color-text-muted)] border-b border-[var(--color-border)] bg-[var(--color-surface-2)]">
           Fill in only what&apos;s written. The {at.lunchName} % is saved at {timeWord(at.lunch)}, the end of shift % at {timeWord(at.end)}. 100% with no done time is done then.
         </div>
         <div className="flex-1 min-h-0 overflow-y-auto">
           {/* Column names, on a wide screen */}
-          <div className="hidden sm:grid sticky top-0 z-10 gap-2 px-3 py-1.5 grid-cols-[minmax(0,1.5fr)_118px_72px_72px_118px_64px_minmax(0,1fr)] bg-[var(--color-surface)] border-b border-[var(--color-border)] text-[12px] font-semibold text-[var(--color-text-muted)]">
+          <div className="hidden sm:grid sticky top-0 z-10 gap-2 px-3 py-1.5 grid-cols-[minmax(0,1.5fr)_118px_72px_72px_118px_64px_minmax(0,1fr)] bg-[var(--color-surface)] border-b border-[var(--color-border)] text-caption font-medium text-[var(--color-text-muted)]">
             <span>Step · crew</span><span>Start</span><span>{at.lunchLabel}</span><span>% end</span><span>Done</span><span>Hold</span><span>Note</span>
           </div>
-          {groups.length === 0 && <div className="px-4 py-8 text-center text-[13px] text-[var(--color-text-muted)]">Nothing on this shift&apos;s sheet. Add what was worked below.</div>}
+          {groups.length === 0 && <div className="px-4 py-8 text-center text-body text-[var(--color-text-muted)]">Nothing on this shift&apos;s sheet. Add what was worked below.</div>}
           {groups.map((g) => {
             const t = g.tag ? g : { ...g, ...splitTag(g.name) };
             return (
               <div key={g.key} className="border-b-2 border-[var(--color-border-strong)]">
                 <div className="flex items-baseline gap-2 px-3 pt-2.5 pb-1 bg-[var(--color-surface-2)]/60">
-                  <span className="text-[14px] font-semibold text-[var(--color-text)]">{t.tag ?? (g.wo ? `WO ${g.wo}` : "No WO")}</span>
-                  <span className="min-w-0 truncate text-[12px] text-[var(--color-text-muted)]">{t.tag && g.wo ? `WO ${g.wo} · ` : ""}{t.rest}</span>
-                  {g.key.startsWith("added:") && <span className="text-[12px] font-semibold text-[var(--color-text)]">added</span>}
+                  <span className="text-body font-medium text-[var(--color-text)]">{t.tag ?? (g.wo ? `WO ${g.wo}` : "No WO")}</span>
+                  <span className="min-w-0 truncate text-caption text-[var(--color-text-muted)]">{t.tag && g.wo ? `WO ${g.wo} · ` : ""}{t.rest}</span>
+                  {g.key.startsWith("added:") && <span className="text-caption font-medium text-[var(--color-text)]">added</span>}
                 </div>
                 <div className="divide-y divide-[var(--color-border)]">{g.lines.map(lineRow)}</div>
               </div>
@@ -205,7 +205,7 @@ export default function ShiftSheetEntry({ milestones, progress, tz, times, targe
           })}
           {/* Not on the sheet: find it on the schedule */}
           <div className="px-3 py-3 space-y-2">
-            <div className="text-[12px] font-bold text-[var(--color-text)]">Written in at the bottom? Find it on the schedule</div>
+            <div className="text-caption font-medium text-[var(--color-text)]">Written in at the bottom? Find it on the schedule</div>
             <div className="relative max-w-xl">
               <Search className="w-4 h-4 absolute left-2.5 top-2.5 text-[var(--color-text-muted)]" />
               <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="E-12, a WO number, a step or a crew" aria-label="Find a step" className={`${field} pl-8`} />
@@ -216,23 +216,23 @@ export default function ShiftSheetEntry({ milestones, progress, tz, times, targe
                   <button key={m.id} type="button" onClick={() => addLine(m)} className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-[var(--color-surface-2)]">
                     <Plus className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
                     <span className="min-w-0">
-                      <span className="block text-[13px] font-semibold text-[var(--color-text)] truncate">{m.name}</span>
-                      <span className="block text-[12px] text-[var(--color-text-muted)] truncate">{[parent?.name, woOf(m) ? `WO ${woOf(m)}` : "", m.responsibleParty].filter(Boolean).join(" · ")}</span>
+                      <span className="block text-body font-medium text-[var(--color-text)] truncate">{m.name}</span>
+                      <span className="block text-caption text-[var(--color-text-muted)] truncate">{[parent?.name, woOf(m) ? `WO ${woOf(m)}` : "", m.responsibleParty].filter(Boolean).join(" · ")}</span>
                     </span>
                   </button>
                 ))}
               </div>
             )}
-            <div className="text-[12px] text-[var(--color-text-muted)]">Not on the schedule at all? Add it as discovery or a new work order from Work, then enter it here.</div>
+            <div className="text-caption text-[var(--color-text-muted)]">Not on the schedule at all? Add it as discovery or a new work order from Work, then enter it here.</div>
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2 px-4 py-3 border-t border-[var(--color-border)]">
-          {summary && <span role="status" className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-[var(--color-text)]"><CheckCircle2 className="w-4 h-4 text-[var(--state-released-text)]" />{summary}</span>}
-          {!canEdit && <span className="text-[12px] text-[var(--color-text-muted)]">You can read this project; entering takes editing rights.</span>}
+          {summary && <span role="status" className="inline-flex items-center gap-1.5 text-caption font-medium text-[var(--color-text)]"><CheckCircle2 className="w-4 h-4 text-[var(--state-released-text)]" />{summary}</span>}
+          {!canEdit && <span className="text-caption text-[var(--color-text-muted)]">You can read this project; entering takes editing rights.</span>}
           <span className="ml-auto" />
-          <button type="button" onClick={onClose} className="h-9 px-3.5 rounded-lg border border-[var(--color-border-strong)] text-[13px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">{summary ? "Close" : "Cancel"}</button>
+          <button type="button" onClick={onClose} className="h-9 px-3.5 rounded-lg border border-[var(--color-border-strong)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">{summary ? "Close" : "Cancel"}</button>
           <button type="button" disabled={!canEdit || busy || filled.length === 0 || !userId} onClick={() => void save()}
-            className="inline-flex items-center gap-1.5 h-9 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[13px] font-bold hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
+            className="inline-flex items-center gap-1.5 h-10 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-body font-medium hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
             {busy && <Loader2 className="w-4 h-4 animate-spin" />} Save {filled.length || ""} line{filled.length === 1 ? "" : "s"}
           </button>
         </div>

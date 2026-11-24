@@ -73,17 +73,17 @@ export default function LogoUploadModal({ onClose }: { onClose: () => void }) {
       <ModalBody className="space-y-4">
         <div {...drag.bind} className={`rounded-xl border border-dashed border-[var(--color-border-strong)] bg-[var(--color-surface-2)] h-24 grid place-items-center overflow-hidden p-2 ${drag.ring}`}>
           {drag.over ? (
-            <div className="text-[14px] font-semibold text-[var(--color-text)]">{drag.say}</div>
+            <div className="text-body font-medium text-[var(--color-text)]">{drag.say}</div>
           ) : logoUrl ? (
             // eslint-disable-next-line @next/next/no-img-element -- signed storage URL
             <img src={logoUrl} alt="Workspace logo" className="max-h-16 max-w-[80%] object-contain" draggable={false} />
           ) : (
-            <div className="text-[14px] text-[var(--color-text-muted)]">No logo yet. Drop one here.</div>
+            <div className="text-body text-[var(--color-text-muted)]">No logo yet. Drop one here.</div>
           )}
         </div>
 
         <div>
-          <div className="text-[14px] font-semibold text-[var(--color-text)] mb-1.5">Show it as</div>
+          <div className="text-body font-medium text-[var(--color-text)] mb-1.5">Show it as</div>
           <div role="radiogroup" aria-label="Show the logo as" className={bandSeg}>
             {(["full", "mark"] as const).map((s) => (
               <button key={s} type="button" role="radio" aria-checked={shape === s} onClick={() => setShape(s)} className={bandSegItem(shape === s)}>
@@ -97,15 +97,15 @@ export default function LogoUploadModal({ onClose }: { onClose: () => void }) {
           <div className="flex items-center gap-2.5">
             <FileThumb file={picked} size={32} />
             <span className="min-w-0 flex-1">
-              <span className="block text-[14px] font-semibold text-[var(--color-text)] truncate">{picked.name}</span>
-              <span className="block text-[13px] text-[var(--color-text-muted)]">{formatBytes(picked.size)}{busy === "upload" ? ", uploading" : ""}</span>
+              <span className="block text-body font-medium text-[var(--color-text)] truncate">{picked.name}</span>
+              <span className="block text-body text-[var(--color-text-muted)]">{formatBytes(picked.size)}{busy === "upload" ? ", uploading" : ""}</span>
             </span>
             {!busy && error && (
               <Button size="sm" variant="secondary" onClick={() => void pick(picked)}>Try again</Button>
             )}
           </div>
         )}
-        {error && <p role="alert" className="text-[14px] font-semibold text-[var(--state-overdue-text)]">{error}</p>}
+        {error && <p role="alert" className="text-body font-medium text-[var(--state-overdue-text)]">{error}</p>}
 
         <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={(e) => { void pick(e.target.files?.[0]); e.target.value = ""; }} />
         <Button className="w-full" loading={busy === "upload"} disabled={!!busy} onClick={() => fileRef.current?.click()}>
@@ -114,7 +114,7 @@ export default function LogoUploadModal({ onClose }: { onClose: () => void }) {
         </Button>
 
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <Link href="/admin/branding" onClick={onClose} className={`${link} text-[14px]`}>Colors and slide template</Link>
+          <Link href="/admin/branding" onClick={onClose} className={`${link} text-body`}>Colors and slide template</Link>
           {logoUrl && (
             <Button size="sm" variant="danger" loading={busy === "remove"} disabled={!!busy} onClick={() => void remove()}>Remove logo</Button>
           )}

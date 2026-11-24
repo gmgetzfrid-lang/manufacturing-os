@@ -53,7 +53,7 @@ export function CopyId({
         <span className="truncate">{children ?? value}</span>
         <Copy aria-hidden className="w-3.5 h-3.5 shrink-0 text-[var(--color-text-faint)] opacity-0 group-hover/copy:opacity-100 group-focus-within/copy:opacity-100 pointer-coarse:opacity-100 transition-opacity" />
       </button>
-      <span aria-live="polite" className="text-[12px] text-[var(--color-text-muted)] whitespace-nowrap">
+      <span aria-live="polite" className="text-caption text-[var(--color-text-muted)] whitespace-nowrap">
         {state === "copied" && <span className="inline-flex items-center gap-1"><Check aria-hidden className="w-3.5 h-3.5 text-[var(--state-released)]" />Copied</span>}
         {state === "failed" && "Couldn't copy"}
       </span>

@@ -22,7 +22,7 @@ const FIGURE: Record<string, string> = {
 /** The score and its band's word ("85 · Excellent"); `label` false drops the word. */
 export function ScoreBadge({ score, label = true, size = "md" }: { score: number | null; label?: boolean; size?: "sm" | "md" | "lg" }) {
   const band = scoreBand(score);
-  const num = size === "lg" ? "text-[24px]" : size === "sm" ? "text-[15px]" : "text-[17px]";
+  const num = size === "lg" ? "text-[24px]" : size === "sm" ? "text-reading" : "text-section";
   return (
     <span className="inline-flex items-center gap-2 whitespace-nowrap">
       {score != null && (

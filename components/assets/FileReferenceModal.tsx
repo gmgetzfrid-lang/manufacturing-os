@@ -231,13 +231,13 @@ export default function FileReferenceModal({ tag, type, orgId, userId, canManage
         <div className="px-4 py-2.5 border-b border-slate-800 flex items-center gap-3 bg-slate-900 shrink-0">
           <FileText className="w-4 h-4 text-[var(--color-text-faint)] shrink-0" />
           <div className="min-w-0">
-            <div className="text-sm font-bold text-white truncate">{tag} <span className="text-[13px] font-medium text-[var(--color-text-faint)]">· {type || "Linked drawings"}</span></div>
+            <div className="text-sm font-medium text-white truncate">{tag} <span className="text-body font-medium text-[var(--color-text-faint)]">· {type || "Linked drawings"}</span></div>
           </div>
           <div className="ml-auto flex items-center gap-2 shrink-0">
             {activeFile && (
               <div className="hidden sm:flex items-center gap-0.5 bg-slate-800/80 rounded-lg px-1 py-0.5">
                 <button onClick={() => setZoom((z) => Math.max(0.4, Math.round((z - 0.15) * 100) / 100))} className="p-1.5 rounded-lg hover:bg-white/10 text-[var(--color-text-faint)] hover:text-white" title="Zoom out"><ZoomOut className="w-4 h-4" /></button>
-                <button onClick={() => setZoom(1)} className="w-9 text-center text-[13px] tabular-nums text-[var(--color-text-faint)] hover:text-white" title="Fit to width (Ctrl + scroll to zoom)">{Math.round(zoom * 100)}%</button>
+                <button onClick={() => setZoom(1)} className="w-9 text-center text-body tabular-nums text-[var(--color-text-faint)] hover:text-white" title="Fit to width (Ctrl + scroll to zoom)">{Math.round(zoom * 100)}%</button>
                 <button onClick={() => setZoom((z) => Math.min(3, Math.round((z + 0.15) * 100) / 100))} className="p-1.5 rounded-lg hover:bg-white/10 text-[var(--color-text-faint)] hover:text-white" title="Zoom in"><ZoomIn className="w-4 h-4" /></button>
                 <button onClick={() => panZoom.setPanMode((v) => !v)} aria-pressed={panZoom.panMode} className={`p-1.5 rounded-lg ${panZoom.panMode ? "bg-white/20 text-white" : "hover:bg-white/10 text-[var(--color-text-faint)] hover:text-white"}`} title={panZoom.panMode ? "Pan tool (drag to move). Click for the cursor." : "Cursor. Click for the pan hand."}>
                   {panZoom.panMode ? <Hand className="w-4 h-4" /> : <MousePointer2 className="w-4 h-4" />}
@@ -245,17 +245,17 @@ export default function FileReferenceModal({ tag, type, orgId, userId, canManage
               </div>
             )}
             {files.length > 0 && (
-              <button onClick={() => void printAll()} disabled={printing} className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-[13px] font-bold disabled:opacity-50" title="Print all linked drawings as one stamped, uncontrolled PDF">
+              <button onClick={() => void printAll()} disabled={printing} className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-body font-medium disabled:opacity-50" title="Print all linked drawings as one stamped, uncontrolled PDF">
                 {printing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Printer className="w-3.5 h-3.5" />} Print all ({files.length})
               </button>
             )}
             {canManage && (
-              <button onClick={() => setPickerOpen(true)} className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-[13px] font-bold"><Plus className="w-3.5 h-3.5" /> Link a drawing</button>
+              <button onClick={() => setPickerOpen(true)} className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-body font-medium"><Plus className="w-3.5 h-3.5" /> Link a drawing</button>
             )}
             <button onClick={() => void toggleFull()} className="p-1.5 rounded-lg hover:bg-white/10 text-[var(--color-text-faint)] hover:text-white transition-colors" title={isFull ? "Exit full screen" : "Full screen"}>
               {isFull ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
             </button>
-            <button onClick={onClose} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-white text-xs font-bold"><X className="w-3.5 h-3.5" /> Close</button>
+            <button onClick={onClose} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-white text-xs font-medium"><X className="w-3.5 h-3.5" /> Close</button>
           </div>
         </div>
 
@@ -266,15 +266,15 @@ export default function FileReferenceModal({ tag, type, orgId, userId, canManage
               {files.map((f) => (
                 <div key={f.id} className={`group flex items-stretch border-b border-slate-800/60 ${activeId === f.id ? "bg-slate-800" : ""}`}>
                   <button onClick={() => setActiveId(f.id)} aria-current={activeId === f.id ? "true" : undefined} className={`flex-1 min-w-0 text-left px-3 py-2.5 ${activeId === f.id ? "text-white" : "text-[var(--color-text-faint)] hover:text-white"}`}>
-                    <div className="text-[13px] font-display font-semibold tabular-nums truncate">{f.document?.document_number || f.document?.title || "Document"}</div>
-                    <div className="text-[13px] text-[var(--color-text-muted)] truncate">{f.document?.title || f.document?.name || ""}{f.document?.rev ? ` · Rev ${f.document.rev}` : ""}</div>
+                    <div className="text-body font-display font-semibold tabular-nums truncate">{f.document?.document_number || f.document?.title || "Document"}</div>
+                    <div className="text-body text-[var(--color-text-muted)] truncate">{f.document?.title || f.document?.name || ""}{f.document?.rev ? ` · Rev ${f.document.rev}` : ""}</div>
                   </button>
                   {canManage && (
                     <button onClick={() => void handleUnlink(f.id)} title="Remove link" aria-label="Remove link" className="shrink-0 px-2 flex items-center text-[var(--color-text-muted)] hover:text-[var(--state-overdue)]"><Trash2 className="w-3.5 h-3.5" /></button>
                   )}
                 </div>
               ))}
-              {files.length === 0 && <div className="p-4 text-[13px] text-[var(--color-text-muted)]">No linked drawings yet.</div>}
+              {files.length === 0 && <div className="p-4 text-body text-[var(--color-text-muted)]">No linked drawings yet.</div>}
             </div>
           )}
 
@@ -285,7 +285,7 @@ export default function FileReferenceModal({ tag, type, orgId, userId, canManage
               <Centered>
                 <div role="alert" className="text-sm text-red-300 text-center">
                   Couldn&apos;t load the linked drawings: {loadError}{" "}
-                  <button type="button" onClick={() => void loadFiles()} className="font-bold underline">Try again</button>
+                  <button type="button" onClick={() => void loadFiles()} className="font-medium underline">Try again</button>
                 </div>
               </Centered>
             ) : !activeFile ? (

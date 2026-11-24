@@ -100,7 +100,7 @@ function SubscriptionBlocked({
       {canExport && (
         <PageBody>
           <Card label="Your data">
-            <p className="text-[14px] text-[var(--color-text-muted)] mb-3">You can still download everything, in standard formats.</p>
+            <p className="text-body text-[var(--color-text-muted)] mb-3">You can still download everything, in standard formats.</p>
             <Link href="/admin/data-export" className={heroQuiet}>
               <Download className="w-4 h-4" /> Export your data
             </Link>

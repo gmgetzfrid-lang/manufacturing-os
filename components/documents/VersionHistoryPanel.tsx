@@ -169,7 +169,7 @@ export default function VersionHistoryPanel({
 
   if (loading) {
     return (
-      <div className="flex items-center gap-2 text-[13px] text-[var(--color-text-muted)] px-3 py-4">
+      <div className="flex items-center gap-2 text-body text-[var(--color-text-muted)] px-3 py-4">
         <Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading history…
       </div>
     );
@@ -177,21 +177,21 @@ export default function VersionHistoryPanel({
 
   if (error) {
     return (
-      <p role="alert" className="text-[13px] text-[var(--state-overdue)] border-l-2 border-[var(--state-overdue)] pl-3 py-1">{error}</p>
+      <p role="alert" className="text-body text-[var(--state-overdue)] border-l-2 border-[var(--state-overdue)] pl-3 py-1">{error}</p>
     );
   }
 
   if (versions.length === 0) {
     return (
       <>
-        <div className="text-[13px] text-[var(--color-text-muted)] px-3 py-4 flex items-center justify-between gap-2">
+        <div className="text-body text-[var(--color-text-muted)] px-3 py-4 flex items-center justify-between gap-2">
           <span className="flex items-center gap-2">
             <HistoryIcon className="w-3.5 h-3.5" /> No revisions recorded yet.
           </span>
           {canRevert && currentUserId && doc.orgId && (
             <button
               onClick={() => setBackfillOpen(true)}
-              className="inline-flex items-center gap-1 text-[13px] font-bold text-[var(--color-text)] hover:text-[var(--color-text)] bg-[var(--color-surface-2)] hover:bg-[var(--color-surface-2)] border border-[var(--color-border)] px-2 py-1 rounded"
+              className="inline-flex items-center gap-1 text-body font-medium text-[var(--color-text)] hover:text-[var(--color-text)] bg-[var(--color-surface-2)] hover:bg-[var(--color-surface-2)] border border-[var(--color-border)] px-2 py-1 rounded"
               title="Add a historical revision (does not change current)"
             >
               <ArrowUpFromLine className="w-3 h-3" /> Backfill older
@@ -217,7 +217,7 @@ export default function VersionHistoryPanel({
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between px-1">
-        <div className="font-display text-[16px] font-semibold text-[var(--color-heading)] flex items-center gap-2">
+        <div className="font-display text-reading font-semibold text-[var(--color-heading)] flex items-center gap-2">
           <span className="ui-icon-tile is-sm" aria-hidden><Layers className="w-4 h-4" /></span> Version history
           <span className="ui-count font-sans" title={`${versions.length} revision${versions.length === 1 ? "" : "s"}`}>{versions.length}</span>
           <HelpTooltip>
@@ -233,7 +233,7 @@ export default function VersionHistoryPanel({
           {canRevert && currentUserId && doc.orgId && (
             <button
               onClick={() => setBackfillOpen(true)}
-              className="inline-flex items-center gap-1 h-8 px-2.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
+              className="inline-flex items-center gap-1 h-8 px-2.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
               title="Add a historical revision (does not change current)"
             >
               <ArrowUpFromLine className="w-3 h-3" /> Backfill older
@@ -257,8 +257,8 @@ export default function VersionHistoryPanel({
               {isCurrent && <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] bg-[var(--color-main)]" />}
               {/* Top row: rev label + status badges + actions */}
               <div className="flex items-start gap-3">
-                <div className={`shrink-0 ui-id text-[18px] leading-6 ${isCurrent ? "!text-[var(--color-main)]" : ""}`}>
-                  <span className="font-sans text-[13px] font-normal text-[var(--color-text-muted)] mr-1">Rev</span>{v.revisionLabel || "-"}
+                <div className={`shrink-0 ui-id text-section leading-6 ${isCurrent ? "!text-[var(--color-main)]" : ""}`}>
+                  <span className="font-sans text-body font-normal text-[var(--color-text-muted)] mr-1">Rev</span>{v.revisionLabel || "-"}
                 </div>
 
                 <div className="flex-1 min-w-0">
@@ -276,10 +276,10 @@ export default function VersionHistoryPanel({
                       <span className="ui-pill is-muted">Superseded</span>
                     )}
                     {v.issueType && (
-                      <span className="ui-tag !h-6 !font-sans !text-[13px]">{v.issueType}</span>
+                      <span className="ui-tag !h-6 !font-sans !text-body">{v.issueType}</span>
                     )}
                     {v.changeType && (
-                      <span className="ui-tag !h-6 !font-sans !text-[13px]">{v.changeType}</span>
+                      <span className="ui-tag !h-6 !font-sans !text-body">{v.changeType}</span>
                     )}
                     {v.revertedFromVersionId && (
                       <span className="ui-pill is-muted"><RotateCcw className="w-3 h-3" /> Revert</span>
@@ -310,7 +310,7 @@ export default function VersionHistoryPanel({
                     )}
                     {v.sourceFileKey && (
                       <span
-                        className="ui-tag !h-6 !font-sans !text-[13px]"
+                        className="ui-tag !h-6 !font-sans !text-body"
                         title="The native CAD source file is stored with this revision."
                       >
                         <FileText className="w-3 h-3" /> CAD source
@@ -318,9 +318,9 @@ export default function VersionHistoryPanel({
                     )}
                   </div>
 
-                  <div className="mt-1 text-[13px] text-[var(--color-text-muted)] flex flex-wrap items-center gap-x-2 gap-y-0.5 min-w-0">
+                  <div className="mt-1 text-body text-[var(--color-text-muted)] flex flex-wrap items-center gap-x-2 gap-y-0.5 min-w-0">
                     <span className="inline-flex items-center gap-1 whitespace-nowrap"><Clock className="w-3 h-3" />{formatDate(v.createdAt)}</span>
-                    {v.createdByName && <span className="min-w-0 truncate">by <span className="font-semibold text-[var(--color-text)]">{v.createdByName}</span></span>}
+                    {v.createdByName && <span className="min-w-0 truncate">by <span className="font-medium text-[var(--color-text)]">{v.createdByName}</span></span>}
                   </div>
                 </div>
 
@@ -374,7 +374,7 @@ export default function VersionHistoryPanel({
 
               {/* Narrative */}
               {v.changeLog && (
-                <div className="mt-2 pl-1 text-[13px] text-[var(--color-text)] flex items-start gap-1.5">
+                <div className="mt-2 pl-1 text-body text-[var(--color-text)] flex items-start gap-1.5">
                   <MessageSquare className="w-3 h-3 mt-0.5 shrink-0 text-[var(--color-text-faint)]" />
                   <span className="whitespace-pre-wrap">{v.changeLog}</span>
                 </div>
@@ -391,7 +391,7 @@ export default function VersionHistoryPanel({
 
               {/* Cross-references */}
               {(v.mocReference || v.sourceFileName) && (
-                <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 pl-1 text-[13px] text-[var(--color-text-muted)]">
+                <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 pl-1 text-body text-[var(--color-text-muted)]">
                   {v.mocReference && (
                     <span className="inline-flex items-center gap-1">
                       <LinkIcon className="w-3 h-3" /> MOC <b className="ui-id">{v.mocReference}</b>
@@ -399,14 +399,14 @@ export default function VersionHistoryPanel({
                   )}
                   {v.sourceFileName && (
                     <span className="inline-flex items-center gap-1">
-                      <FileText className="w-3 h-3" /> <b className="text-[var(--color-text)] font-semibold">{v.sourceFileName}</b>
+                      <FileText className="w-3 h-3" /> <b className="text-[var(--color-text)] font-medium">{v.sourceFileName}</b>
                     </span>
                   )}
                 </div>
               )}
 
               {/* Footer: size + hash */}
-              <div className="mt-2 pl-1 flex items-center gap-3 text-[13px] text-[var(--color-text-faint)] font-display tabular-nums">
+              <div className="mt-2 pl-1 flex items-center gap-3 text-body text-[var(--color-text-faint)] font-display tabular-nums">
                 {typeof v.size === "number" && <span>{(v.size / 1024).toFixed(0)} KB</span>}
                 {v.fileHash && (
                   <span title={`SHA-256: ${v.fileHash}`} className="inline-flex items-center gap-1">
@@ -453,16 +453,16 @@ export default function VersionHistoryPanel({
             onClick={(e) => e.stopPropagation()}
             onSubmit={(e) => { e.preventDefault(); void saveLabelCorrection(); }}
           >
-            <div className="text-sm font-semibold text-[var(--color-text)] flex items-center gap-2">
+            <div className="text-sm font-medium text-[var(--color-text)] flex items-center gap-2">
               <Pencil className="w-4 h-4 text-[var(--color-text-muted)]" /> Correct revision label
             </div>
-            <p className="text-[13px] text-[var(--color-text-muted)] mt-1">
+            <p className="text-body text-[var(--color-text-muted)] mt-1">
               Rev <b className="font-display tabular-nums">{correctTarget.revisionLabel || "-"}</b>
               {correctTarget.id === doc.currentVersionId ? " (current)" : ""} gets a new label.
               The correction is audited: old and new label, who, when, and why.
               {correctTarget.id === doc.currentVersionId && " The document's own rev label is updated to match."}
             </p>
-            <label className="block mt-3 text-[13px] font-bold text-[var(--color-text-muted)]">
+            <label className="block mt-3 text-body font-medium text-[var(--color-text-muted)]">
               New label
               <input
                 autoFocus
@@ -472,7 +472,7 @@ export default function VersionHistoryPanel({
                 className="mt-1 w-full rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 py-2 text-sm font-display tabular-nums"
               />
             </label>
-            <label className="block mt-2 text-[13px] font-bold text-[var(--color-text-muted)]">
+            <label className="block mt-2 text-body font-medium text-[var(--color-text-muted)]">
               Why (recommended)
               <input
                 value={reasonDraft}
@@ -482,21 +482,21 @@ export default function VersionHistoryPanel({
               />
             </label>
             {labelError && (
-              <p role="alert" className="mt-2 text-[13px] text-[var(--state-overdue)] border-l-2 border-[var(--state-overdue)] pl-2.5">{labelError}</p>
+              <p role="alert" className="mt-2 text-body text-[var(--state-overdue)] border-l-2 border-[var(--state-overdue)] pl-2.5">{labelError}</p>
             )}
             <div className="mt-3 flex items-center justify-end gap-2">
               <button
                 type="button"
                 onClick={() => setCorrectTarget(null)}
                 disabled={savingLabel}
-                className="px-3 py-1.5 rounded-lg border border-[var(--color-border)] text-[13px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
+                className="px-3 py-1.5 rounded-lg border border-[var(--color-border)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
               >
                 Cancel
               </button>
               <button
                 type="submit"
                 disabled={savingLabel || !labelDraft.trim()}
-                className="px-3 py-1.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] text-[13px] font-bold disabled:opacity-50 inline-flex items-center gap-1.5"
+                className="px-3 py-1.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] text-body font-medium disabled:opacity-50 inline-flex items-center gap-1.5"
               >
                 {savingLabel ? <><Loader2 className="w-3 h-3 animate-spin" /> Saving…</> : "Save correction"}
               </button>
@@ -512,9 +512,9 @@ export default function VersionHistoryPanel({
 
 function SignoffBit({ icon, label, name }: { icon: React.ReactNode; label: string; name: string }) {
   return (
-    <span className="inline-flex items-center gap-1 text-[13px] text-[var(--color-text-muted)]">
+    <span className="inline-flex items-center gap-1 text-body text-[var(--color-text-muted)]">
       <span className="text-[var(--color-text-faint)]">{icon}</span>
-      <span className="font-semibold text-[13px]">{label}</span>
+      <span className="font-medium text-body">{label}</span>
       <span className="text-[var(--color-text)] font-medium">{name}</span>
     </span>
   );

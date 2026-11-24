@@ -195,8 +195,8 @@ export default function ModifyDocumentRouter(props: ModifyDocumentRouterProps) {
       <div className="w-full max-w-lg bg-[var(--color-surface)] rounded-lg shadow-2xl overflow-hidden animate-in fade-in zoom-in-95">
         <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center justify-between bg-[var(--color-surface-2)]">
           <div>
-            <h2 className="font-semibold text-[var(--color-text)]">Modify Document</h2>
-            <div className="text-[13px] font-display tabular-nums text-[var(--color-text-muted)] mt-0.5">
+            <h2 className="font-medium text-[var(--color-text)]">Modify Document</h2>
+            <div className="text-body font-display tabular-nums text-[var(--color-text-muted)] mt-0.5">
               {doc.documentNumber || doc.title || doc.id} · Rev {doc.rev || "-"} · {doc.status || "-"}
             </div>
           </div>
@@ -243,7 +243,7 @@ export default function ModifyDocumentRouter(props: ModifyDocumentRouterProps) {
 
           {hasSet && (
             <>
-              <div className="mt-2 mb-1 px-3 text-[13px] font-semibold text-[var(--color-text-muted)] ">
+              <div className="mt-2 mb-1 px-3 text-body font-medium text-[var(--color-text-muted)] ">
                 For all sheets in this set
               </div>
               <RouterChoice
@@ -282,8 +282,8 @@ function RouterChoice({
         <Icon className="w-4 h-4" />
       </div>
       <div className="flex-1 min-w-0">
-        <div className="text-sm font-bold text-[var(--color-text)]">{label}</div>
-        <div className="text-[13px] text-[var(--color-text-muted)] mt-0.5">{sub}</div>
+        <div className="text-sm font-medium text-[var(--color-text)]">{label}</div>
+        <div className="text-body text-[var(--color-text-muted)] mt-0.5">{sub}</div>
       </div>
       <ChevronRight className="w-4 h-4 text-[var(--color-text-faint)] shrink-0" />
     </button>

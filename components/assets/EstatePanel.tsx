@@ -34,9 +34,9 @@ export default function EstatePanel({ orgId, assetId, tag }: { orgId: string; as
   return (
     <section className="min-w-0">
       <div className="flex flex-wrap items-end gap-x-3 gap-y-1 mb-3 min-h-8">
-        <h2 className="font-display text-[20px] leading-tight font-semibold text-[var(--color-text)]">Across the estate</h2>
+        <h2 className="font-display text-section leading-tight font-semibold text-[var(--color-text)]">Across the estate</h2>
         <span className="flex-1" />
-        <Link href={`/documents/graph?q=${encodeURIComponent(tag)}`} className="text-[14px] font-semibold text-[var(--color-accent-text)] hover:underline underline-offset-2">Explore on the map</Link>
+        <Link href={`/documents/graph?q=${encodeURIComponent(tag)}`} className="text-body font-medium text-[var(--color-accent-text)] hover:underline underline-offset-2">Explore on the map</Link>
       </div>
       <div className="bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] p-4 space-y-4">
         {!!error && <ErrorNote compact error={error} title="Couldn't look across the estate." onRetry={() => setAttempt((n) => n + 1)} />}
@@ -46,7 +46,7 @@ export default function EstatePanel({ orgId, assetId, tag }: { orgId: string; as
             <EntityStrip entities={res.entities} />
             {res.groups.map((g) => (
               <div key={g.key}>
-                <div className="text-[14px] font-semibold text-[var(--color-text)] mb-1.5 flex items-center gap-2">{g.label} <span className="ui-count">{g.ids.length}</span></div>
+                <div className="text-body font-medium text-[var(--color-text)] mb-1.5 flex items-center gap-2">{g.label} <span className="ui-count">{g.ids.length}</span></div>
                 <ul className="divide-y divide-[var(--color-border)] border-y border-[var(--color-border)]">
                   {g.ids.slice(0, 8).map((id) => {
                     const r = res.results.find((x) => x.id === id)!;
@@ -54,8 +54,8 @@ export default function EstatePanel({ orgId, assetId, tag }: { orgId: string; as
                       <li key={id} className="py-2">
                         <Link href={r.href} className="flex items-center gap-2 hover:underline">
                           <FileTypeIcon type={fileTypeOf(r.name)} className="w-4 h-4 shrink-0" />
-                          <span className="text-[14px] font-semibold text-[var(--color-accent-text)] truncate">{r.name}</span>
-                          <span className="text-[13px] text-[var(--color-text-muted)] truncate">{[r.libraryName, ...r.path].filter(Boolean).join(" / ")}</span>
+                          <span className="text-body font-medium text-[var(--color-accent-text)] truncate">{r.name}</span>
+                          <span className="text-body text-[var(--color-text-muted)] truncate">{[r.libraryName, ...r.path].filter(Boolean).join(" / ")}</span>
                         </Link>
                         <RelationChips relations={r.relations} />
                         <PageHits pages={r.pages} />
@@ -63,12 +63,12 @@ export default function EstatePanel({ orgId, assetId, tag }: { orgId: string; as
                     );
                   })}
                 </ul>
-                {g.ids.length > 8 && <div className="text-[13px] text-[var(--color-text-muted)] mt-1">And {g.ids.length - 8} more on the map.</div>}
+                {g.ids.length > 8 && <div className="text-body text-[var(--color-text-muted)] mt-1">And {g.ids.length - 8} more on the map.</div>}
               </div>
             ))}
-            {res.results.length === 0 && <div className="text-[14px] text-[var(--color-text-muted)]">Nothing in the estate is linked to {tag} yet. Reading its drawings (Intelligence, Knowledge) is what makes these links.</div>}
+            {res.results.length === 0 && <div className="text-body text-[var(--color-text-muted)]">Nothing in the estate is linked to {tag} yet. Reading its drawings (Intelligence, Knowledge) is what makes these links.</div>}
             <div>
-              <div className="text-[14px] font-semibold text-[var(--color-text)] mb-1">Happening now</div>
+              <div className="text-body font-medium text-[var(--color-text)] mb-1">Happening now</div>
               <ActivityPanel activity={res.activity} />
             </div>
             <CoverageLine coverage={res.coverage} />

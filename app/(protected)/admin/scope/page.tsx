@@ -155,7 +155,7 @@ export default function ScopePage() {
           { label: "Systems", value: systemTotal },
         ] : undefined}
         tools={
-          <label className="inline-flex items-center gap-2 h-10 pointer-coarse:h-11 px-1 text-[14px] text-[var(--color-text-muted)] cursor-pointer">
+          <label className="inline-flex items-center gap-2 h-10 pointer-coarse:h-11 px-1 text-body text-[var(--color-text-muted)] cursor-pointer">
             <input type="checkbox" checked={showArchived} onChange={(e) => setShowArchived(e.target.checked)} className="w-4 h-4" />
             Show archived
           </label>
@@ -187,13 +187,13 @@ export default function ScopePage() {
       ) : tree.length === 0 ? (
         addingChildOf?.kind !== "root" && (
           <div className={`${sheet} py-8 px-5 text-center`}>
-            <p className="text-[15px] text-[var(--color-text)]">Plants hold units (crude, FCC), units hold systems (overhead). Then a search like &ldquo;all P&amp;IDs in the FCC&rdquo; works.</p>
-            {canEdit && <button type="button" onClick={() => setAddingChildOf({ kind: "root" })} className={`${link} mt-1.5 font-semibold`}>Add the first plant</button>}
+            <p className="text-reading text-[var(--color-text)]">Plants hold units (crude, FCC), units hold systems (overhead). Then a search like &ldquo;all P&amp;IDs in the FCC&rdquo; works.</p>
+            {canEdit && <button type="button" onClick={() => setAddingChildOf({ kind: "root" })} className={`${link} mt-1.5 font-medium`}>Add the first plant</button>}
           </div>
         )
       ) : (
         <div role="tree" aria-label="Plants, units and systems" onKeyDown={onScopeKeys} className={`${tbl.wrap} divide-y divide-[var(--color-border)]`}>
-          <div className="max-sm:hidden flex items-center gap-2 px-3 h-10 bg-[var(--color-surface-2)] text-[13px] font-semibold text-[var(--color-text-muted)]">
+          <div className="max-sm:hidden flex items-center gap-2 px-3 h-10 bg-[var(--color-surface-2)] text-body font-medium text-[var(--color-text-muted)]">
             <span className="flex-1 pl-9">Name</span><span className="w-28 text-right">Contains</span>{canEdit && <span className="w-12" />}
           </div>
           {tree.map(({ plant, units }) => {
@@ -233,7 +233,7 @@ export default function ScopePage() {
                 {plantOpen && (
                   <div role="group" className="ml-4 border-l border-[var(--color-border)]">
                     {units.length === 0 ? (
-                      <div className="text-[14px] text-[var(--color-text-muted)] pl-4 py-2.5 border-t border-[var(--color-border)]">No units in this plant yet.</div>
+                      <div className="text-body text-[var(--color-text-muted)] pl-4 py-2.5 border-t border-[var(--color-border)]">No units in this plant yet.</div>
                     ) : (
                       units.map(({ unit, systems }) => {
                         const unitOpen = expandedUnits.has(unit.id!);
@@ -272,7 +272,7 @@ export default function ScopePage() {
 
                             {unitOpen && (
                               <div role="group" className="ml-4 border-l border-[var(--color-border)]">
-                                {systems.length === 0 && <div className="text-[14px] text-[var(--color-text-muted)] pl-4 py-2.5 border-t border-[var(--color-border)]">No systems in this unit yet.</div>}
+                                {systems.length === 0 && <div className="text-body text-[var(--color-text-muted)] pl-4 py-2.5 border-t border-[var(--color-border)]">No systems in this unit yet.</div>}
                                 {systems.map((sys) => (
                                   <div key={sys.id} className="border-t border-[var(--color-border)]">
                                     <ScopeRow
@@ -355,13 +355,13 @@ function ScopeRow({
       <div className="flex-1 min-w-0 py-1.5">
         <div className="flex items-center gap-2 min-w-0">
           {code && <span className="ui-tag shrink-0">{code}</span>}
-          <span className={`${level === 0 ? "font-semibold" : ""} text-[15px] text-[var(--color-text)] sm:truncate break-words min-w-0`}>{name}</span>
-          {archived && <span className="text-[13px] text-[var(--color-text-muted)] shrink-0">Archived</span>}
+          <span className={`${level === 0 ? "font-medium" : ""} text-reading text-[var(--color-text)] sm:truncate break-words min-w-0`}>{name}</span>
+          {archived && <span className="text-body text-[var(--color-text-muted)] shrink-0">Archived</span>}
         </div>
-        {badge && <div className="sm:hidden text-[13px] text-[var(--color-text-muted)] tabular-nums">{plural(badge.n, badge.one, badge.many)}</div>}
+        {badge && <div className="sm:hidden text-body text-[var(--color-text-muted)] tabular-nums">{plural(badge.n, badge.one, badge.many)}</div>}
       </div>
       {badge && (
-        <span className={`max-sm:hidden w-28 text-right shrink-0 text-[14px] tabular-nums ${badge.n === 0 ? "text-[var(--color-text-faint)]" : "text-[var(--color-text-muted)]"}`}>
+        <span className={`max-sm:hidden w-28 text-right shrink-0 text-body tabular-nums ${badge.n === 0 ? "text-[var(--color-text-faint)]" : "text-[var(--color-text-muted)]"}`}>
           {plural(badge.n, badge.one, badge.many)}
         </span>
       )}
@@ -408,7 +408,7 @@ function NewScopeRowForm({
 
   return (
     <form onSubmit={onSubmit} className={`${sheet} p-4 space-y-3`}>
-      <div className="text-[16px] font-semibold text-[var(--color-text)]">{title}</div>
+      <div className="text-reading font-medium text-[var(--color-text)]">{title}</div>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         {fields.map((f) => (
           <label key={f} className="block">
@@ -473,7 +473,7 @@ function EditScopeRowModal({
           <Field label="Description"><Textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={2} /></Field>
         </ModalBody>
         <ModalFooter>
-          {!name.trim() && <span className="mr-auto text-[13px] text-[var(--color-text-muted)]">Give it a name.</span>}
+          {!name.trim() && <span className="mr-auto text-body text-[var(--color-text-muted)]">Give it a name.</span>}
           <Button type="button" variant="secondary" onClick={onCancel} disabled={submitting}>Cancel</Button>
           <Button type="submit" loading={submitting} disabled={!name.trim()}>Save</Button>
         </ModalFooter>

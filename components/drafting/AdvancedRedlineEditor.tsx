@@ -558,7 +558,7 @@ export default function AdvancedRedlineEditor({ fileUrl, onClose, onSave, isSavi
         <header className="shrink-0 z-50 border-b border-[var(--color-border)] px-3 sm:px-5 py-2.5 flex flex-wrap items-center gap-x-3 gap-y-2">
           <div className="min-w-0 flex-1 basis-[calc(100%-200px)] xl:basis-auto xl:max-w-[260px]">
             <div className={vKicker}>Redline{markCount > 0 ? ` · ${markCount} mark${markCount === 1 ? '' : 's'}` : ''}</div>
-            <div className="truncate text-[15px] font-bold text-[var(--color-text)]" title={fileName}>{fileName}</div>
+            <div className="truncate text-reading font-medium text-[var(--color-text)]" title={fileName}>{fileName}</div>
           </div>
 
           <div className="xl:order-last flex items-center gap-2 shrink-0">
@@ -578,7 +578,7 @@ export default function AdvancedRedlineEditor({ fileUrl, onClose, onSave, isSavi
               {toolBtn('line', Minus, 'Straight line')}
               {toolBtn('highlight', Highlighter, 'Highlighter')}
               <button type="button" onClick={addText} className={vTool(false, 'w-9 h-9')} title="Add text" aria-label="Add text"><Type className="w-[18px] h-[18px]" /></button>
-              <button type="button" onClick={deleteSelected} className="w-9 h-9 shrink-0 rounded-[10px] grid place-items-center text-[var(--color-text-muted)] hover:text-rose-400 hover:bg-[var(--color-ink-2)] transition-colors" title="Delete what's selected" aria-label="Delete what's selected"><Trash2 className="w-[18px] h-[18px]" /></button>
+              <button type="button" onClick={deleteSelected} className="w-9 h-9 shrink-0 rounded-lg grid place-items-center text-[var(--color-text-muted)] hover:text-rose-400 hover:bg-[var(--color-ink-2)] transition-colors" title="Delete what's selected" aria-label="Delete what's selected"><Trash2 className="w-[18px] h-[18px]" /></button>
             </div>
 
             {/* Pen color (the markup colors on the sheet) and line width */}
@@ -640,7 +640,7 @@ export default function AdvancedRedlineEditor({ fileUrl, onClose, onSave, isSavi
           <p className={`${vNote} text-[var(--color-text)]`}>
             <RotateCcw className="w-3.5 h-3.5 shrink-0 text-[var(--color-text-muted)]" />
             <span className="min-w-0">Your marks from last time are back. They were kept on this device.</span>
-            <button type="button" onClick={() => void startOver()} className="ml-auto shrink-0 h-7 px-2.5 rounded-lg bg-[var(--color-ink-2)] hover:bg-[var(--color-ink-line)] text-[13px] font-bold">Start over</button>
+            <button type="button" onClick={() => void startOver()} className="ml-auto shrink-0 h-7 px-2.5 rounded-lg bg-[var(--color-ink-2)] hover:bg-[var(--color-ink-line)] text-body font-medium">Start over</button>
             <button type="button" onClick={() => setRestoredSeen(true)} aria-label="Dismiss" className="shrink-0 w-7 h-7 grid place-items-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-ink-2)]"><X className="w-3.5 h-3.5" /></button>
           </p>
         ) : null}
@@ -663,8 +663,8 @@ export default function AdvancedRedlineEditor({ fileUrl, onClose, onSave, isSavi
                  <Document options={PDF_DOC_OPTIONS}
                    file={fileUrl}
                    onLoadSuccess={({ numPages }) => setNumPages(numPages)}
-                   loading={<div className="w-[min(80vw,720px)] h-[60vh] grid place-items-center bg-[var(--color-surface)] text-[var(--color-text-muted)] text-[13px]"><span className="inline-flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Opening the sheet</span></div>}
-                   error={<div role="alert" className="w-[min(80vw,720px)] h-[40vh] grid place-items-center bg-[var(--color-surface)] text-rose-300 text-[13px] font-semibold px-6 text-center">Couldn&apos;t open this file for redlines. Close and try again.</div>}
+                   loading={<div className="w-[min(80vw,720px)] h-[60vh] grid place-items-center bg-[var(--color-surface)] text-[var(--color-text-muted)] text-body"><span className="inline-flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Opening the sheet</span></div>}
+                   error={<div role="alert" className="w-[min(80vw,720px)] h-[40vh] grid place-items-center bg-[var(--color-surface)] text-rose-300 text-body font-medium px-6 text-center">Couldn&apos;t open this file for redlines. Close and try again.</div>}
                    className="block"
                  >
                    <Page

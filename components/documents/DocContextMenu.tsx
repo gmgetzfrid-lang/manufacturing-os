@@ -104,7 +104,7 @@ export default function DocContextMenu({
               role="menuitem"
               disabled={entry.disabled}
               onClick={() => { onClose(); entry.onSelect(); }}
-              className={`w-full flex items-center gap-2.5 px-3 min-h-10 pointer-coarse:min-h-11 text-left text-[14px] transition-colors disabled:opacity-40 disabled:cursor-not-allowed hover:bg-[var(--color-surface-2)] focus-visible:bg-[var(--color-surface-2)] ${
+              className={`w-full flex items-center gap-2.5 px-3 min-h-10 pointer-coarse:min-h-11 text-left text-body transition-colors disabled:opacity-40 disabled:cursor-not-allowed hover:bg-[var(--color-surface-2)] focus-visible:bg-[var(--color-surface-2)] ${
                 entry.danger ? "text-[var(--state-overdue-text)]" : "text-[var(--color-text)]"
               }`}
             >

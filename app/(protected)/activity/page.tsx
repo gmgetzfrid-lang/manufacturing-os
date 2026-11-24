@@ -232,9 +232,9 @@ export default function ActivityFeedPage() {
           <SkeletonRows rows={6} cols={2} what="activity" />
         ) : rows.length === 0 ? (
           error ? null : (
-            <p className={`${sheet} px-4 py-4 text-[15px] text-[var(--color-text-muted)]`}>
+            <p className={`${sheet} px-4 py-4 text-reading text-[var(--color-text-muted)]`}>
               Changes to documents, requests and projects show here as people make them.{" "}
-              <Link href="/documents" className={`font-semibold ${link}`}>Open documents</Link>
+              <Link href="/documents" className={`font-medium ${link}`}>Open documents</Link>
             </p>
           )
         ) : (
@@ -260,7 +260,7 @@ export default function ActivityFeedPage() {
                     title={group.day === today ? `Today, ${group.day.split(", ").slice(1).join(", ")}` : group.day === yesterday ? `Yesterday, ${group.day.split(", ").slice(1).join(", ")}` : group.day}
                     count={group.rows.length} />
                   <div className={`${sheet} @container`}>
-                    <table className="hidden @[40rem]:table w-full table-fixed text-[15px]">
+                    <table className="hidden @[40rem]:table w-full table-fixed text-body">
                       <thead className={thead}>
                         <tr>
                           <th className={`${th} w-[7.5rem]`}>Time</th>
@@ -277,7 +277,7 @@ export default function ActivityFeedPage() {
                               {it.time}
                             </td>
                             <td className="px-4 py-2.5 truncate text-[var(--color-text)]">{it.who}</td>
-                            <td className={`px-4 py-2.5 ${it.meta?.bad ? "text-[var(--state-overdue-text)] font-semibold" : "text-[var(--color-text)]"}`}>
+                            <td className={`px-4 py-2.5 ${it.meta?.bad ? "text-[var(--state-overdue-text)] font-medium" : "text-[var(--color-text)]"}`}>
                               <span className="block min-w-0 truncate">{it.verb}</span>
                             </td>
                             <td className="px-4 py-2">
@@ -292,7 +292,7 @@ export default function ActivityFeedPage() {
                                 ) : (
                                   <span className="ui-id min-w-0 truncate">{it.resourceLabel}</span>
                                 )}
-                                {it.name && <span className="min-w-0 truncate text-[14px] text-[var(--color-text-muted)]">{it.name}</span>}
+                                {it.name && <span className="min-w-0 truncate text-body text-[var(--color-text-muted)]">{it.name}</span>}
                               </span>
                             </td>
                           </tr>
@@ -304,11 +304,11 @@ export default function ActivityFeedPage() {
                         const inner = (
                           <>
                             <span className="flex items-baseline gap-3">
-                              <span className="ui-id min-w-0 flex-1 truncate text-[15px]">{it.resourceLabel}</span>
-                              <span className="shrink-0 text-[13px] text-[var(--color-text-muted)] tabular-nums">{it.time}</span>
+                              <span className="ui-id min-w-0 flex-1 truncate text-reading">{it.resourceLabel}</span>
+                              <span className="shrink-0 text-body text-[var(--color-text-muted)] tabular-nums">{it.time}</span>
                             </span>
-                            {it.name && <span className="block text-[13px] text-[var(--color-text-muted)] truncate">{it.name}</span>}
-                            <span className={`mt-0.5 block text-[13px] truncate ${it.meta?.bad ? "text-[var(--state-overdue-text)] font-semibold" : "text-[var(--color-text)]"}`}>{it.who} {it.verb}</span>
+                            {it.name && <span className="block text-body text-[var(--color-text-muted)] truncate">{it.name}</span>}
+                            <span className={`mt-0.5 block text-body truncate ${it.meta?.bad ? "text-[var(--state-overdue-text)] font-medium" : "text-[var(--color-text)]"}`}>{it.who} {it.verb}</span>
                           </>
                         );
                         return (

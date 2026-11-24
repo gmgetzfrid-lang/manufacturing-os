@@ -236,7 +236,7 @@ export default function AssetHubPage() {
         {(packNote || partError) && (
           <div className="space-y-1.5 -mb-4">
             {packNote && (
-              <p role={packNote.bad ? "alert" : "status"} className={`text-[14px] ${packNote.bad ? "font-semibold text-[var(--state-overdue-text)]" : "text-[var(--color-text)]"}`}>
+              <p role={packNote.bad ? "alert" : "status"} className={`text-body ${packNote.bad ? "font-medium text-[var(--state-overdue-text)]" : "text-[var(--color-text)]"}`}>
                 {packNote.text}
               </p>
             )}
@@ -249,7 +249,7 @@ export default function AssetHubPage() {
             {/* Documents */}
             <section className="min-w-0">
               <div className="flex flex-wrap items-end gap-x-3 gap-y-1 mb-3 min-h-8">
-                <h2 className="font-display text-[20px] leading-tight font-semibold text-[var(--color-text)]">Controlled documents</h2>
+                <h2 className="font-display text-section leading-tight font-semibold text-[var(--color-text)]">Controlled documents</h2>
                 <span className="ui-count">{docCount.toLocaleString()}</span>
               </div>
               {!!error ? (
@@ -257,15 +257,15 @@ export default function AssetHubPage() {
               ) : (
               <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
               {docs.length === 0 ? (
-                <p className="px-4 py-4 text-[15px] text-[var(--color-text-muted)]">No controlled documents are tagged to {tag} yet.</p>
+                <p className="px-4 py-4 text-reading text-[var(--color-text-muted)]">No controlled documents are tagged to {tag} yet.</p>
               ) : (
-                <table className="w-full text-[14px] tabular-nums">
-                  <thead className="bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text-muted)] text-left max-sm:hidden">
+                <table className="w-full text-body tabular-nums">
+                  <thead className="bg-[var(--color-surface-2)] text-body text-[var(--color-text-muted)] text-left max-sm:hidden">
                     <tr>
-                      <th className="font-semibold px-4 h-10">Number</th>
-                      <th className="font-semibold px-4 w-16">Rev</th>
-                      <th className="font-semibold px-4 w-36">Status</th>
-                      <th className="font-semibold px-4 w-32 hidden xl:table-cell">Changed</th>
+                      <th className="font-medium px-4 h-10">Number</th>
+                      <th className="font-medium px-4 w-16">Rev</th>
+                      <th className="font-medium px-4 w-36">Status</th>
+                      <th className="font-medium px-4 w-32 hidden xl:table-cell">Changed</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-[var(--color-border)]">
@@ -282,19 +282,19 @@ export default function AssetHubPage() {
                           {held && <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] bg-[var(--state-overdue)]" />}
                           <span className="flex items-center gap-3">
                             <span className="flex-1 min-w-0">
-                              <CopyId value={d.number} label="document number" className="text-[15px] max-w-full" />
-                              {d.title && d.title !== d.number && <span className="block truncate text-[13px] text-[var(--color-text-muted)]">{d.title}</span>}
+                              <CopyId value={d.number} label="document number" className="text-reading max-w-full" />
+                              {d.title && d.title !== d.number && <span className="block truncate text-body text-[var(--color-text-muted)]">{d.title}</span>}
                             </span>
                             {/* Phone: status at right, revision under it. */}
                             <span className="sm:hidden shrink-0">{status}</span>
                           </span>
-                          {d.rev && <span className="sm:hidden mt-0.5 block text-[13px] text-[var(--color-text-muted)]">Rev <span className="ui-id">{d.rev}</span></span>}
+                          {d.rev && <span className="sm:hidden mt-0.5 block text-body text-[var(--color-text-muted)]">Rev <span className="ui-id">{d.rev}</span></span>}
                           {/* The link for keyboards and screen readers. */}
-                          <Link href={d.libraryId ? `/documents/${d.libraryId}?doc=${d.id}` : "/documents"} onClick={(e) => e.stopPropagation()} className="sr-only focus:not-sr-only text-[13px] text-[var(--color-accent-text)]">Open {d.number}</Link>
+                          <Link href={d.libraryId ? `/documents/${d.libraryId}?doc=${d.id}` : "/documents"} onClick={(e) => e.stopPropagation()} className="sr-only focus:not-sr-only text-body text-[var(--color-accent-text)]">Open {d.number}</Link>
                         </td>
-                        <td className="px-4 py-2.5 font-display text-[15px] font-semibold max-sm:hidden">{d.rev || <span className="text-[var(--color-text-faint)]">-</span>}</td>
+                        <td className="px-4 py-2.5 font-display text-reading font-semibold max-sm:hidden">{d.rev || <span className="text-[var(--color-text-faint)]">-</span>}</td>
                         <td className="px-4 py-2.5 max-sm:hidden">{status}</td>
-                        <td className="px-4 py-2.5 hidden xl:table-cell text-[13px] text-[var(--color-text-muted)]">{shortDate(d.updatedAt)}</td>
+                        <td className="px-4 py-2.5 hidden xl:table-cell text-body text-[var(--color-text-muted)]">{shortDate(d.updatedAt)}</td>
                       </tr>
                     );
                   })}
@@ -302,9 +302,9 @@ export default function AssetHubPage() {
                 </table>
               )}
               {docs.length > docLimit && (
-                <div className="px-4 py-3 border-t border-[var(--color-border)] flex items-center justify-between text-[14px]">
+                <div className="px-4 py-3 border-t border-[var(--color-border)] flex items-center justify-between text-body">
                   <span className="text-[var(--color-text-muted)] tabular-nums">{docLimit} of {docs.length.toLocaleString()} shown</span>
-                  <button type="button" onClick={() => setDocLimit((n) => n + 50)} className="font-semibold text-[var(--color-accent-text)] hover:underline underline-offset-2">
+                  <button type="button" onClick={() => setDocLimit((n) => n + 50)} className="font-medium text-[var(--color-accent-text)] hover:underline underline-offset-2">
                     Show {Math.min(50, docs.length - docLimit)} more
                   </button>
                 </div>
@@ -332,19 +332,19 @@ export default function AssetHubPage() {
             {photos.length > 0 && (
               <section className="min-w-0">
                 <div className="flex items-end gap-2 mb-3 min-h-8">
-                  <h2 className="font-display text-[20px] leading-tight font-semibold text-[var(--color-text)]">Photos</h2>
+                  <h2 className="font-display text-section leading-tight font-semibold text-[var(--color-text)]">Photos</h2>
                   <span className="ui-count">{photos.length}</span>
                   <span className="flex-1" />
-                  {photos[0]?.captured_at && <span className="text-[13px] text-[var(--color-text-muted)]">Newest {shortDate(photos[0].captured_at)}</span>}
+                  {photos[0]?.captured_at && <span className="text-body text-[var(--color-text-muted)]">Newest {shortDate(photos[0].captured_at)}</span>}
                 </div>
                 <div className="grid grid-cols-3 gap-2">
                   {photos.slice(0, 9).map((p) => (
-                    <div key={p.id} className="aspect-square rounded-lg bg-[var(--color-surface-2)] border border-[var(--color-border)] flex items-center justify-center text-[13px] text-[var(--color-text-muted)] overflow-hidden" title={p.caption || ""}>
+                    <div key={p.id} className="aspect-square rounded-lg bg-[var(--color-surface-2)] border border-[var(--color-border)] flex items-center justify-center text-body text-[var(--color-text-muted)] overflow-hidden" title={p.caption || ""}>
                       <SignedImg path={p.file_url} alt={p.caption || `${tag} photo`} className="w-full h-full object-cover" placeholder={<span className="px-1 text-center truncate">{p.caption || "Photo"}</span>} />
                     </div>
                   ))}
                 </div>
-                {photos.length > 9 && <p className="mt-2 text-[13px] text-[var(--color-text-muted)]">And {photos.length - 9} more in its photos.</p>}
+                {photos.length > 9 && <p className="mt-2 text-body text-[var(--color-text-muted)]">And {photos.length - 9} more in its photos.</p>}
               </section>
             )}
 

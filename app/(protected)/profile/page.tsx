@@ -169,7 +169,7 @@ export default function ProfilePage() {
                 <div className={labelCls}>Photo</div>
                 <div {...avatarDrag.bind} className={`flex items-center gap-4 rounded-lg ${avatarDrag.ring}`}>
                   {avatarDrag.over ? (
-                    <div className="w-16 h-16 rounded-panel grid place-items-center border border-dashed border-[var(--color-border-strong)] text-[13px] font-semibold text-[var(--color-text)] text-center">{avatarDrag.say}</div>
+                    <div className="w-16 h-16 rounded-panel grid place-items-center border border-dashed border-[var(--color-border-strong)] text-body font-medium text-[var(--color-text)] text-center">{avatarDrag.say}</div>
                   ) : (
                     <UserAvatar uid={uid} name={displayName || undefined} email={userEmail} size={64} rounded="xl" />
                   )}
@@ -189,8 +189,8 @@ export default function ProfilePage() {
                     {avatarFile ? (
                       <div className="flex items-center gap-2">
                         <FileThumb file={avatarFile} size={28} />
-                        <span className="min-w-0 text-[13px]">
-                          <span className="block font-semibold text-[var(--color-text)] truncate max-w-[14rem]">{avatarFile.name}</span>
+                        <span className="min-w-0 text-body">
+                          <span className="block font-medium text-[var(--color-text)] truncate max-w-[14rem]">{avatarFile.name}</span>
                           <span className="block text-[var(--color-text-muted)]">{formatBytes(avatarFile.size)}{avatarBusy ? ", uploading" : ""}</span>
                         </span>
                         {!avatarBusy && avatarError && (
@@ -198,9 +198,9 @@ export default function ProfilePage() {
                         )}
                       </div>
                     ) : (
-                      <p className="text-[13px] text-[var(--color-text-muted)]">Without a photo, your initials show. Under 5 MB.</p>
+                      <p className="text-body text-[var(--color-text-muted)]">Without a photo, your initials show. Under 5 MB.</p>
                     )}
-                    {avatarError && <p role="alert" className="text-[13px] font-semibold text-[var(--state-overdue-text)]">{avatarError}</p>}
+                    {avatarError && <p role="alert" className="text-body font-medium text-[var(--state-overdue-text)]">{avatarError}</p>}
                   </div>
                 </div>
                 <input
@@ -228,14 +228,14 @@ export default function ProfilePage() {
                     aria-describedby="profile-name-hint"
                     className={field}
                   />
-                  <p id="profile-name-hint" className="mt-1.5 text-[13px] text-[var(--color-text-muted)]">Blank uses the first part of your email.</p>
+                  <p id="profile-name-hint" className="mt-1.5 text-body text-[var(--color-text-muted)]">Blank uses the first part of your email.</p>
                 </div>
                 <div>
                   <div className={labelCls}>Email</div>
-                  <div className="h-10 flex items-center text-[15px] text-[var(--color-text)] truncate">{userEmail ?? "None"}</div>
+                  <div className="h-10 flex items-center text-reading text-[var(--color-text)] truncate">{userEmail ?? "None"}</div>
                 </div>
               </div>
-              {saveError && <p role="alert" className="text-[14px] font-semibold text-[var(--state-overdue-text)]">{saveError}</p>}
+              {saveError && <p role="alert" className="text-body font-medium text-[var(--state-overdue-text)]">{saveError}</p>}
             </div>
             <div className="flex items-center justify-end gap-3 px-5 sm:px-6 py-3 border-t border-[var(--color-border)]">
               <Button type="submit" loading={saving} done={saved} doneLabel="Saved" disabled={!!loadError}>Save</Button>
@@ -251,7 +251,7 @@ export default function ProfilePage() {
             {orgs.length > 1 && <span className="mb-0.5 text-body tabular-nums text-[var(--color-text-muted)]">{orgs.length}</span>}
           </div>
           {orgs.length === 0 ? (
-            <p className="rounded-panel border border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-4 text-[15px] text-[var(--color-text-muted)]">You aren&apos;t in a workspace. Your workspace admin adds you.</p>
+            <p className="rounded-panel border border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-4 text-reading text-[var(--color-text-muted)]">You aren&apos;t in a workspace. Your workspace admin adds you.</p>
           ) : (
             <div className={tbl.wrap}>
               <table className={tbl.table}>
@@ -265,7 +265,7 @@ export default function ProfilePage() {
                 <tbody className={tbl.tbody}>
                   {orgs.map((o) => (
                     <tr key={o.org_id}>
-                      <td className={`${tbl.td} font-semibold text-[15px] text-[var(--color-text)] max-w-0`}>
+                      <td className={`${tbl.td} font-medium text-reading text-[var(--color-text)] max-w-0`}>
                         <span className="block truncate">{o.org_name || <span className="font-normal text-[var(--color-text-muted)]">Name not set</span>}</span>
                       </td>
                       <td className={`${tbl.td} whitespace-nowrap`}><span className="ui-tag">{o.role}</span></td>

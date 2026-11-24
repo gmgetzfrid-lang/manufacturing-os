@@ -77,36 +77,36 @@ export default function PlanNextShift({ milestones, next, now, tz, times, mode, 
           onPick={view.v === "list" ? undefined : (i) => { if (i === 0) setView({ v: "list" }); else if (view.v === "confirm") setView(view.back); }} />
         {view.v === "list" && (
           <div>
-            <div className="flex flex-wrap items-center gap-2 px-4 py-2.5 border-b border-[var(--color-border)] text-[12px]">
-              <span className="flex-1 text-[13px] text-[var(--color-text-muted)]"><b className="text-[var(--color-text)]">{list.length} step{list.length === 1 ? "" : "s"}</b> on the {next.kind} crew&apos;s list · {report.goals.mustDoHours} h</span>
+            <div className="flex flex-wrap items-center gap-2 px-4 py-2.5 border-b border-[var(--color-border)] text-caption">
+              <span className="flex-1 text-body text-[var(--color-text-muted)]"><b className="text-[var(--color-text)]">{list.length} step{list.length === 1 ? "" : "s"}</b> on the {next.kind} crew&apos;s list · {report.goals.mustDoHours} h</span>
               <button type="button" onClick={() => { setSaved(null); setView({ v: "pick" }); }}
-                className="inline-flex items-center gap-1.5 h-10 rounded-xl bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] px-4 text-[13px] font-semibold text-[var(--color-accent-fg)] shadow-[0_10px_20px_-10px_var(--color-accent)]">
+                className="inline-flex items-center gap-1.5 h-10 rounded-xl bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] px-4 text-body font-medium text-[var(--color-accent-fg)] shadow-[0_10px_20px_-10px_var(--color-accent)]">
                 <Plus className="w-3.5 h-3.5" /> Pull in work
               </button>
             </div>
-            {saved && <div role="status" className="px-4 py-2 border-b border-[var(--color-border)] text-[12px] font-semibold text-[var(--state-released-text)]">{saved}</div>}
-            {list.length === 0 && <div className="px-4 py-10 text-center text-[13px] text-[var(--color-text-muted)]">Nothing on the {next.kind} shift. Pull in work to give it some.</div>}
+            {saved && <div role="status" className="px-4 py-2 border-b border-[var(--color-border)] text-caption font-medium text-[var(--state-released-text)]">{saved}</div>}
+            {list.length === 0 && <div className="px-4 py-10 text-center text-body text-[var(--color-text-muted)]">Nothing on the {next.kind} shift. Pull in work to give it some.</div>}
             <div className="divide-y divide-[var(--color-border)]">
               {list.map((r) => (
                 <div key={r.leaf.id} className="flex flex-wrap items-start gap-x-3 gap-y-1.5 px-4 py-2.5">
                   <div className="flex-1 min-w-[200px]">
                     <div className="flex flex-wrap items-center gap-1.5">
-                      <span className="text-[13px] font-bold text-[var(--color-text)] break-words">{r.leaf.name}</span>
+                      <span className="text-body font-medium text-[var(--color-text)] break-words">{r.leaf.name}</span>
                       {r.critical && <Tag tone="rose">critical</Tag>}
                       {r.carryOver && <Tag tone="amber">carried over</Tag>}
                     </div>
                     <Where r={r} />
-                    <div className="mt-0.5 text-[12px] text-[var(--color-text-muted)]">
+                    <div className="mt-0.5 text-caption text-[var(--color-text-muted)]">
                       {r.carryOver ? `was due ${when(r.dueAt)}` : `planned ${span(r.crewStart, r.crewFinish)}`} · {r.hoursNext ?? r.hoursLeft} h this shift{r.percent > 0 ? ` · ${r.percent}% done` : ""}
                     </div>
                   </div>
                   <div className="flex items-center gap-1.5">
                     <button type="button" onClick={() => { setSaved(null); setView({ v: "pick", outId: r.leaf.id! }); }}
-                      className="inline-flex items-center gap-1 h-9 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+                      className="inline-flex items-center gap-1 h-10 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
                       <ArrowLeftRight className="w-3.5 h-3.5" /> Swap
                     </button>
                     <button type="button" onClick={() => { setSaved(null); setView({ v: "push", outId: r.leaf.id! }); }}
-                      className="inline-flex items-center gap-1 h-9 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+                      className="inline-flex items-center gap-1 h-10 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
                       <LogOut className="w-3.5 h-3.5" /> Push out
                     </button>
                   </div>
@@ -127,15 +127,15 @@ export default function PlanNextShift({ milestones, next, now, tz, times, mode, 
           // The shifts its crew works.
           const later = laterShifts(next, (w) => nextShift(w, tz, times), 12).filter((w) => !r || r.work === "both" || r.work === w.kind).slice(0, 6);
           return (
-            <div className="px-4 py-3 space-y-3 text-[12px]">
+            <div className="px-4 py-3 space-y-3 text-caption">
               <BackLink onClick={() => setView({ v: "list" })} />
               <div><span className="text-[var(--color-text-muted)]">Push out:</span> <b className="text-[var(--color-text)]">{r?.leaf.name}</b>{r && wo(r.leaf) ? <span className="text-[var(--color-text-muted)]"> · WO {wo(r.leaf)}</span> : null}</div>
               <div>
-                <div className="font-bold text-[var(--color-text)] mb-1">To start on</div>
+                <div className="font-medium text-[var(--color-text)] mb-1">To start on</div>
                 <div className="flex flex-wrap gap-1.5">
                   {later.map((w) => (
                     <button key={w.start} type="button" onClick={() => setView({ v: "confirm", action: { kind: "push", outId: view.outId, to: w.start }, back: view })}
-                      className="h-9 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+                      className="h-9 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
                       {shiftName(w)} <span className="text-[var(--color-text-muted)] font-normal">{T(w.start)}</span>
                     </button>
                   ))}
@@ -196,34 +196,34 @@ function Picker({ items, out, next, span, onBack, onPick }: {
       <div className="px-4 pt-2.5 pb-2 border-b border-[var(--color-border)] space-y-2">
         <BackLink onClick={onBack} />
         {out && (
-          <div className="text-[12px]"><span className="text-[var(--color-text-muted)]">Swapping out:</span> <b className="text-[var(--color-text)]">{out.leaf.name}</b>
+          <div className="text-caption"><span className="text-[var(--color-text-muted)]">Swapping out:</span> <b className="text-[var(--color-text)]">{out.leaf.name}</b>
             <span className="text-[var(--color-text-muted)]">{[out.parentName, out.leaf.workOrderRef?.trim() ? `WO ${out.leaf.workOrderRef.trim()}` : null, out.leaf.responsibleParty].filter(Boolean).map((x) => ` · ${x}`).join("")}: pick what the {next.kind} shift does instead</span></div>
         )}
         <label className="relative block">
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--color-text-faint)]" />
           <input autoFocus value={query} onChange={(e) => { setQuery(e.target.value); setMore(false); }} aria-label="Search the job for a work order"
             placeholder="Search a work order #, equipment (E-17), step or crew, the whole job"
-            className="w-full h-10 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] pl-8 pr-8 text-[14px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)]" />
+            className="w-full h-10 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] pl-8 pr-8 text-body text-[var(--color-text)] placeholder:text-[var(--color-text-faint)]" />
           {query && <button type="button" onClick={() => setQuery("")} aria-label="Clear search" className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-[var(--color-text-faint)] hover:text-[var(--color-text)]"><X className="w-4 h-4" /></button>}
         </label>
-        <div className="flex flex-wrap items-center gap-1.5 text-[12px]">
+        <div className="flex flex-wrap items-center gap-1.5 text-caption">
           {query ? <span className="text-[var(--color-text-muted)]">Searching the whole job · {shown.length} found</span> : (
             <>
               <div className="inline-flex rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-0.5" role="group" aria-label="How far ahead">
                 {WINDOWS.map((w) => (
                   <button key={w.id} type="button" onClick={() => { setWin(w.id); setMore(false); }} aria-pressed={win === w.id}
-                    className={`px-2 py-1 rounded-md font-semibold ${win === w.id ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>{w.label}</button>
+                    className={`px-2 py-1 rounded-md font-medium ${win === w.id ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>{w.label}</button>
                 ))}
               </div>
               <button type="button" onClick={() => setReadyOnly((v) => !v)} aria-pressed={readyOnly}
-                className={`rounded-full border px-2.5 py-1 font-semibold ${readyOnly ? "border-[var(--color-text)] bg-[var(--color-text)] dark:bg-[var(--color-surface-2)] text-[var(--color-surface)] dark:text-[var(--color-text)]" : "border-[var(--color-border)] text-[var(--color-text-muted)]"}`}>
+                className={`rounded-full border px-2.5 py-1 font-medium ${readyOnly ? "border-[var(--color-text)] bg-[var(--color-text)] dark:bg-[var(--color-surface-2)] text-[var(--color-surface)] dark:text-[var(--color-text)]" : "border-[var(--color-border)] text-[var(--color-text-muted)]"}`}>
                 {readyOnly ? "✓ " : ""}Ready to start
               </button>
             </>
           )}
         </div>
       </div>
-      {shown.length === 0 && <div className="px-4 py-10 text-center text-[13px] text-[var(--color-text-muted)]">{query ? <>No work order matches &ldquo;{query}&rdquo;.</> : `Nothing ${readyOnly ? "ready to start " : ""}in this window. Widen it${readyOnly ? " or turn off Ready to start" : ""}.`}</div>}
+      {shown.length === 0 && <div className="px-4 py-10 text-center text-body text-[var(--color-text-muted)]">{query ? <>No work order matches &ldquo;{query}&rdquo;.</> : `Nothing ${readyOnly ? "ready to start " : ""}in this window. Widen it${readyOnly ? " or turn off Ready to start" : ""}.`}</div>}
       <div className="divide-y divide-[var(--color-border)]">
         {rows.map((x) => {
           const r = x.row, offShift = r.work !== "both" && r.work !== next.kind;
@@ -232,10 +232,10 @@ function Picker({ items, out, next, span, onBack, onPick }: {
             <div key={r.leaf.id} className="flex items-start gap-3 px-4 py-2.5">
               <button type="button" disabled={cant} onClick={() => onPick(x)} aria-label={`Pick ${r.leaf.name}${r.parentName ? ` (${r.parentName})` : ""}`}
                 title={cant ? (x.blockedBy ? `Can't start: it waits on ${x.blockedBy}, which is blocked or on hold` : "Blocked or on hold") : offShift ? `${r.work === "day" ? "Day" : "Night"}-crew work: you'll say who does it on the ${next.kind} shift` : "Pick this one"}
-                className="shrink-0 mt-0.5 rounded-lg border border-[var(--color-border-strong)] px-3 py-1.5 text-[12px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40">Pick</button>
+                className="shrink-0 mt-0.5 rounded-lg border border-[var(--color-border-strong)] px-3 py-1.5 text-caption font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40">Pick</button>
               <div className="flex-1 min-w-0">
                 <div className="flex flex-wrap items-center gap-1.5">
-                  <span className="text-[13px] font-bold text-[var(--color-text)] break-words">{r.leaf.name}</span>
+                  <span className="text-body font-medium text-[var(--color-text)] break-words">{r.leaf.name}</span>
                   {r.critical && <Tag tone="rose">critical</Tag>}
                   <Ready x={x} />
                   {offShift && <Tag tone="slate">{r.work} crew work</Tag>}
@@ -243,13 +243,13 @@ function Picker({ items, out, next, span, onBack, onPick }: {
                   {same.get(r.leaf.id ?? "")?.task && <Tag tone="slate">same equipment</Tag>}
                 </div>
                 <Where r={r} />
-                <div className="mt-0.5 text-[12px] text-[var(--color-text-muted)]">planned {span(r.crewStart, r.crewFinish)} · {r.hoursLeft} h{r.percent > 0 ? ` · ${r.percent}% done` : ""}</div>
+                <div className="mt-0.5 text-caption text-[var(--color-text-muted)]">planned {span(r.crewStart, r.crewFinish)} · {r.hoursLeft} h{r.percent > 0 ? ` · ${r.percent}% done` : ""}</div>
               </div>
             </div>
           );
         })}
       </div>
-      {!more && shown.length > SHOW && <button type="button" onClick={() => setMore(true)} className="w-full py-2.5 text-[12px] font-semibold text-[var(--color-accent-text)] hover:bg-[var(--color-surface-2)]">Show all {shown.length}</button>}
+      {!more && shown.length > SHOW && <button type="button" onClick={() => setMore(true)} className="w-full py-2.5 text-caption font-medium text-[var(--color-accent-text)] hover:bg-[var(--color-surface-2)]">Show all {shown.length}</button>}
     </div>
   );
 }
@@ -273,7 +273,7 @@ function Confirm({ milestones, action, next, now, tz, times, mode, crews, when, 
   const why = useDraft<string>(`plan-why:${next.start}:${action.kind}:${action.kind === "push" ? action.outId : action.inId}`, reason, setReason, (v) => !v.trim());
   const [msg, setMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  if (!plan) return <div className="px-4 py-6 text-[13px] text-[var(--color-text-muted)]"><BackLink onClick={onBack} /> <div className="mt-2">Nothing would change.</div></div>;
+  if (!plan) return <div className="px-4 py-6 text-body text-[var(--color-text-muted)]"><BackLink onClick={onBack} /> <div className="mt-2">Nothing would change.</div></div>;
   const [f0, f1] = plan.impact.finish;
   const dh = Math.round(((f1 - f0) / 3_600_000) * 10) / 10;
   const moved = Number.isFinite(dh) && Math.abs(dh) >= 0.1;
@@ -287,18 +287,18 @@ function Confirm({ milestones, action, next, now, tz, times, mode, crews, when, 
     else setMsg("Not saved. Try again.");
   };
   return (
-    <div className="px-4 py-3 space-y-3 text-[12px] text-[var(--color-text)]">
+    <div className="px-4 py-3 space-y-3 text-caption text-[var(--color-text)]">
       <BackLink onClick={onBack} />
       <div className="rounded-lg border border-[var(--color-border)] divide-y divide-[var(--color-border)]">
         {plan.in && (
           <div className="px-3 py-2">
-            <span className="inline-block w-10 font-semibold text-[var(--state-released-text)]">In</span>
+            <span className="inline-block w-10 font-medium text-[var(--state-released-text)]">In</span>
             <b>{plan.in.name}</b><span className="text-[var(--color-text-muted)]">{wo(plan.in.wo)}</span>
             <div className="pl-10 text-[var(--color-text-muted)]">{shiftName(next)} shift: {span(plan.in.to[0], plan.in.to[1])} · was planned {when(plan.in.from[0])}</div>
             <label className="pl-10 mt-1 flex flex-wrap items-center gap-1.5">
-              <span className="font-semibold">Who does it</span>
+              <span className="font-medium">Who does it</span>
               <select value={crew} onChange={(e) => setCrew(e.target.value)} aria-label="Who does it"
-                className="h-8 pointer-coarse:h-11 max-w-[220px] rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12px] text-[var(--color-text)]">
+                className="h-8 pointer-coarse:h-11 max-w-[220px] rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-caption text-[var(--color-text)]">
                 {[...new Set([crew, ...crews])].map((c) => <option key={c || "none"} value={c}>{c || "Not named"}</option>)}
               </select>
             </label>
@@ -306,7 +306,7 @@ function Confirm({ milestones, action, next, now, tz, times, mode, crews, when, 
         )}
         {plan.out && (
           <div className="px-3 py-2">
-            <span className="inline-block w-10 font-semibold text-[var(--state-held-text)]">Out</span>
+            <span className="inline-block w-10 font-medium text-[var(--state-held-text)]">Out</span>
             <b>{plan.out.name}</b><span className="text-[var(--color-text-muted)]">{wo(plan.out.wo)}</span>
             <div className="pl-10 text-[var(--color-text-muted)]">to {span(plan.out.to[0], plan.out.to[1])} · was planned {when(plan.out.from[0])}</div>
           </div>
@@ -319,28 +319,28 @@ function Confirm({ milestones, action, next, now, tz, times, mode, crews, when, 
         </div>
       )}
       <div className={`rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-2 space-y-1 ${plan.impact.critical || (moved && dh > 0) ? "border-l-2 border-l-rose-500" : ""}`}>
-        <div className="font-semibold text-[13px] text-[var(--color-text-muted)]">What it does to the schedule</div>
+        <div className="font-medium text-body text-[var(--color-text-muted)]">What it does to the schedule</div>
         <div>{ptype.word} (forecast): {Number.isFinite(f0) ? `${when(f0)} → ` : ""}<b className={moved && dh > 0 ? "text-[var(--state-overdue-text)]" : ""}>{Number.isFinite(f1) ? when(f1) : "-"}</b>{!moved ? ": unchanged" : dh > 0 ? `: ${dh} h later` : `: ${-dh} h sooner`}</div>
-        {plan.impact.critical && <div className="font-bold text-[var(--state-overdue-text)]">Touches the critical path.</div>}
+        {plan.impact.critical && <div className="font-medium text-[var(--state-overdue-text)]">Touches the critical path.</div>}
         {plan.pushed.length > 0
           ? <div>Pushes {plan.pushed.length} linked step{plan.pushed.length === 1 ? "" : "s"} later in the forecast (their plan stays): {plan.pushed.slice(0, 5).map((p) => `${p.name} +${p.hours} h`).join(", ")}{plan.pushed.length > 5 ? ` + ${plan.pushed.length - 5} more` : ""}</div>
           : <div className="text-[var(--color-text-muted)]">No other work moves.</div>}
       </div>
       <label className="block">
-        <span className="block font-bold mb-1">Why <span className="font-normal text-[var(--color-text-muted)]">(required)</span></span>
+        <span className="block font-medium mb-1">Why <span className="font-normal text-[var(--color-text-muted)]">(required)</span></span>
         <textarea value={reason} onChange={(e) => { setReason(e.target.value); setMsg(null); }} rows={2} disabled={busy}
           placeholder="e.g. Crew's already in the area, faster to do it now than wait till Wednesday"
-          className="w-full rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 py-1.5 text-[12px]" />
+          className="w-full rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 py-1.5 text-caption" />
       </label>
-      {msg && <div role="alert" className="font-semibold text-[var(--state-overdue-text)]">{msg}</div>}
+      {msg && <div role="alert" className="font-medium text-[var(--state-overdue-text)]">{msg}</div>}
       <div className="flex items-center justify-end gap-2">
-        <button type="button" onClick={onBack} className="h-9 px-3 rounded-lg border border-[var(--color-border-strong)] font-semibold">Back</button>
+        <button type="button" onClick={onBack} className="h-9 px-3 rounded-lg border border-[var(--color-border-strong)] font-medium">Back</button>
         <button type="button" onClick={() => void save()} disabled={busy}
-          className="h-9 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] font-semibold hover:bg-[var(--color-accent-hover)] disabled:opacity-60">
+          className="h-9 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] font-medium hover:bg-[var(--color-accent-hover)] disabled:opacity-60">
           {busy ? "Saving…" : "Save to the schedule"}
         </button>
       </div>
-      <div className="text-[11px] text-[var(--color-text-faint)]">The planned dates move; the baseline doesn&apos;t, so the close-out still shows what was planned. Undo is offered after saving.</div>
+      <div className="text-caption text-[var(--color-text-faint)]">The planned dates move; the baseline doesn&apos;t, so the close-out still shows what was planned. Undo is offered after saving.</div>
     </div>
   );
 }
@@ -350,15 +350,15 @@ function Confirm({ milestones, action, next, now, tz, times, mode, crews, when, 
 function Where({ r }: { r: ShiftRow }) {
   const wo = r.leaf.workOrderRef?.trim();
   return (
-    <div className="mt-0.5 text-[12px] text-[var(--color-text-muted)] break-words" title={r.path.join(" › ")}>
-      <span className="font-semibold text-[var(--color-text)]">{r.parentName ?? r.path[r.path.length - 1]}</span>
+    <div className="mt-0.5 text-caption text-[var(--color-text-muted)] break-words" title={r.path.join(" › ")}>
+      <span className="font-medium text-[var(--color-text)]">{r.parentName ?? r.path[r.path.length - 1]}</span>
       {wo ? <> · WO <span className="font-display tabular-nums">{wo}</span></> : null}{r.leaf.responsibleParty ? ` · ${r.leaf.responsibleParty}` : ""}
     </div>
   );
 }
 
 function BackLink({ onClick }: { onClick: () => void }) {
-  return <button type="button" onClick={onClick} className="inline-flex items-center gap-1 text-[13px] text-[var(--color-accent-text)] hover:underline"><ArrowLeft className="w-3.5 h-3.5" /> Back to the list</button>;
+  return <button type="button" onClick={onClick} className="inline-flex items-center gap-1 text-body text-[var(--color-accent-text)] hover:underline"><ArrowLeft className="w-3.5 h-3.5" /> Back to the list</button>;
 }
 
 function Tag({ tone, children }: { tone: "rose" | "amber" | "emerald" | "slate"; children: React.ReactNode }) {
@@ -366,7 +366,7 @@ function Tag({ tone, children }: { tone: "rose" | "amber" | "emerald" | "slate";
     : tone === "amber" ? "bg-transparent text-[var(--state-held-text)] border-[var(--color-border)]"
       : tone === "emerald" ? "bg-transparent text-[var(--state-released-text)] border-[var(--color-border)]"
         : "bg-slate-100 text-slate-700 border-slate-300 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700";
-  return <span className={`inline-block max-w-full break-words px-1.5 py-px rounded border text-[13px] font-semibold ${cls}`}>{children}</span>;
+  return <span className={`inline-block max-w-full break-words px-1.5 py-px rounded border text-body font-medium ${cls}`}>{children}</span>;
 }
 
 function Ready({ x }: { x: LookAheadItem }) {

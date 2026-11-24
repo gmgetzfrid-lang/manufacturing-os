@@ -145,7 +145,7 @@ export default function NotificationSettingsPage() {
         />
 
         <PageBody>
-        {error && <p role="alert" className="text-[14px] font-semibold text-[var(--state-overdue-text)]">{error}</p>}
+        {error && <p role="alert" className="text-body font-medium text-[var(--state-overdue-text)]">{error}</p>}
 
         <Card pad={false} className="divide-y divide-[var(--color-border)] overflow-hidden">
           <PrefRow title="Email notifications" hint="Off means no email at all, whatever is set below."
@@ -174,7 +174,7 @@ export default function NotificationSettingsPage() {
               </button>
             ))}
           </div>
-          <p className="mt-2 text-[13px] text-[var(--color-text-muted)]">Only Right away and Never work today. Hourly and daily batching isn&apos;t built yet.</p>
+          <p className="mt-2 text-body text-[var(--color-text-muted)]">Only Right away and Never work today. Hourly and daily batching isn&apos;t built yet.</p>
         </Card>
         </PageBody>
     </PageShell>
@@ -187,8 +187,8 @@ function PrefRow({ title, hint, on, onChange, disabled, strong }: {
   return (
     <div className="px-4 sm:px-5 py-4 flex items-start gap-4">
       <div className="flex-1 min-w-0">
-        <div className={`${strong ? "text-[16px]" : "text-[15px]"} font-semibold text-[var(--color-text)]`}>{title}</div>
-        <div className="text-[13px] text-[var(--color-text-muted)] mt-0.5">{hint}</div>
+        <div className={`${strong ? "text-reading" : "text-reading"} font-medium text-[var(--color-text)]`}>{title}</div>
+        <div className="text-body text-[var(--color-text-muted)] mt-0.5">{hint}</div>
       </div>
       <Toggle label={title} on={on} onChange={onChange} disabled={disabled} />
     </div>

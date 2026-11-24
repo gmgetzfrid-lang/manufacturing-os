@@ -403,30 +403,30 @@ export default function DayAgendaPanel({
         {/* Header: the day, navigation, and the day's completion. */}
         <div className={`border-b border-[var(--color-border)] ${inline ? "px-4 py-3" : "px-5 pt-4 pb-4"}`}>
           <div className="flex items-center gap-2">
-            <button onClick={() => onChangeDay(dayKey(addDays(dayMs, -1, tz), tz))} className="w-9 h-9 shrink-0 inline-flex items-center justify-center rounded-[10px] hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]" title="Previous day" aria-label="Previous day"><ChevronLeft className="w-4 h-4" /></button>
+            <button onClick={() => onChangeDay(dayKey(addDays(dayMs, -1, tz), tz))} className="w-9 h-9 shrink-0 inline-flex items-center justify-center rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]" title="Previous day" aria-label="Previous day"><ChevronLeft className="w-4 h-4" /></button>
             <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-1.5 text-[13px] font-semibold text-[var(--color-text-muted)]">
+              <div className="flex items-center gap-1.5 text-body font-medium text-[var(--color-text-muted)]">
                 <CalendarDays className="w-3.5 h-3.5 shrink-0" /> The day&apos;s work <span title={`Plant time: ${tz}`}>· {tzAbbrev(tz, dayMs)}</span>
               </div>
-              <div className={`${inline ? "text-[15px] font-bold" : "text-[22px] sm:text-[26px] font-semibold tracking-[-0.02em] leading-[1.1]"} truncate`}>{label}</div>
-              <div className="mt-1 text-[12px] text-[var(--color-text-muted)]">
+              <div className={`${inline ? "text-reading font-bold" : "text-[22px] sm:text-[26px] font-semibold tracking-[-0.02em] leading-[1.1]"} truncate`}>{label}</div>
+              <div className="mt-1 text-caption text-[var(--color-text-muted)]">
                 {totals.n === 0 ? "Nothing scheduled this day." : <>{totals.n} step{totals.n === 1 ? "" : "s"} · {totals.done} done · {totals.avg}% complete</>}
-                {isToday && live.overdue.length > 0 && <span className="ml-2 font-bold text-[var(--state-overdue-text)]">{live.overdue.length} carried over</span>}
-                {aheadCount > 0 && <span className="ml-2 font-bold text-[var(--color-text)] dark:text-[var(--color-text)]">{aheadCount} worked ahead of plan</span>}
+                {isToday && live.overdue.length > 0 && <span className="ml-2 font-medium text-[var(--state-overdue-text)]">{live.overdue.length} carried over</span>}
+                {aheadCount > 0 && <span className="ml-2 font-medium text-[var(--color-text)] dark:text-[var(--color-text)]">{aheadCount} worked ahead of plan</span>}
               </div>
             </div>
-            <button onClick={() => onChangeDay(dayKey(addDays(dayMs, 1, tz), tz))} className="w-9 h-9 shrink-0 inline-flex items-center justify-center rounded-[10px] hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]" title="Next day" aria-label="Next day"><ChevronRight className="w-4 h-4" /></button>
-            {!inline && <button onClick={onClose} className="w-9 h-9 shrink-0 inline-flex items-center justify-center rounded-[10px] hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]" title="Close" aria-label="Close"><XIcon className="w-5 h-5" /></button>}
+            <button onClick={() => onChangeDay(dayKey(addDays(dayMs, 1, tz), tz))} className="w-9 h-9 shrink-0 inline-flex items-center justify-center rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]" title="Next day" aria-label="Next day"><ChevronRight className="w-4 h-4" /></button>
+            {!inline && <button onClick={onClose} className="w-9 h-9 shrink-0 inline-flex items-center justify-center rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]" title="Close" aria-label="Close"><XIcon className="w-5 h-5" /></button>}
           </div>
           {totals.n > 0 && (
             <div className="mt-2 h-1.5 rounded-full bg-[var(--color-accent-soft)] overflow-hidden">
               <div className="h-full bg-[var(--color-main)]" style={{ width: `${totals.avg}%` }} />
             </div>
           )}
-          {readErr && <div role="alert" className="mt-1.5 text-[11px] font-semibold text-[var(--state-overdue-text)]">Couldn&apos;t read the steps&apos; comments and history. Close and reopen the day to try again.</div>}
+          {readErr && <div role="alert" className="mt-1.5 text-caption font-medium text-[var(--state-overdue-text)]">Couldn&apos;t read the steps&apos; comments and history. Close and reopen the day to try again.</div>}
           {onAddWork && (
             <button type="button" onClick={onAddWork}
-              className="mt-3 inline-flex items-center gap-1.5 h-9 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+              className="mt-3 inline-flex items-center gap-1.5 h-10 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
               <Plus className="w-3.5 h-3.5" /> Add discovery or added scope
             </button>
           )}
@@ -437,12 +437,12 @@ export default function DayAgendaPanel({
                 // A keyboard popping up on a tablet hides half the list: focus only with a mouse.
                 autoFocus={typeof window !== "undefined" && window.matchMedia?.("(pointer: fine)").matches}
                 placeholder="Find equipment, WO # or step, e.g. E-606, 4410037"
-                className="w-full h-9 pointer-coarse:h-11 pl-8 pr-8 rounded-[10px] border border-transparent bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:bg-[var(--color-surface)]" />
+                className="w-full h-9 pointer-coarse:h-11 pl-8 pr-8 rounded-lg border border-transparent bg-[var(--color-surface-2)] text-body text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:bg-[var(--color-surface)]" />
               {query && <button onClick={() => setQuery("")} className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 text-[var(--color-text-faint)] hover:text-[var(--color-text)]" title="Clear"><XIcon className="w-3.5 h-3.5" /></button>}
             </div>
           )}
           {groups.length > 1 && (
-            <div className="mt-2 flex items-center gap-3 text-[11px] font-bold text-[var(--color-text-muted)]">
+            <div className="mt-2 flex items-center gap-3 text-caption font-medium text-[var(--color-text-muted)]">
               <button onClick={() => setToggled(new Map(groups.map((g) => [keyOf(g), true])))} className="hover:text-[var(--color-text)]">Open all</button>
               <button onClick={() => setToggled(new Map(groups.map((g) => [keyOf(g), false])))} className="hover:text-[var(--color-text)]">Close all</button>
             </div>
@@ -456,17 +456,17 @@ export default function DayAgendaPanel({
             {sec.shift === "day" && (
               <div className="sticky top-0 z-[1] px-4 py-1.5 flex items-center gap-2 border-b border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)] dark:border-[var(--color-border)] dark:bg-[var(--color-surface-2)] dark:text-[var(--color-text)]">
                 <Sun className="w-3.5 h-3.5" aria-hidden />
-                <span className="text-[12px] font-semibold">Day shift</span>
-                <span className="text-[11px] opacity-80">{shiftTimes.dayStart}–{shiftTimes.nightStart}</span>
-                <span className="ml-auto text-[11px] font-semibold opacity-80">{sec.groups.reduce((a, g) => a + g.rows.length, 0)} steps</span>
+                <span className="text-caption font-medium">Day shift</span>
+                <span className="text-caption opacity-80">{shiftTimes.dayStart}–{shiftTimes.nightStart}</span>
+                <span className="ml-auto text-caption font-medium opacity-80">{sec.groups.reduce((a, g) => a + g.rows.length, 0)} steps</span>
               </div>
             )}
             {sec.shift === "night" && (
               <div ref={nightRef} className="sticky top-0 z-[1] px-4 py-1.5 flex items-center gap-2 bg-[var(--color-surface-2)] text-[var(--color-text)] dark:bg-[var(--color-surface-2)]">
                 <Moon className="w-3.5 h-3.5 text-[var(--color-text-muted)]" aria-hidden />
-                <span className="text-[12px] font-semibold">Night shift</span>
-                <span className="text-[11px] text-[var(--color-text-muted)]">{shiftTimes.nightStart} → {fmtInTz(addDays(dayMs, 1, tz), tz, { weekday: "short" })} {shiftTimes.dayStart}</span>
-                <span className="ml-auto text-[11px] font-semibold text-[var(--color-text-muted)]">{sec.groups.reduce((a, g) => a + g.rows.length, 0)} steps</span>
+                <span className="text-caption font-medium">Night shift</span>
+                <span className="text-caption text-[var(--color-text-muted)]">{shiftTimes.nightStart} → {fmtInTz(addDays(dayMs, 1, tz), tz, { weekday: "short" })} {shiftTimes.dayStart}</span>
+                <span className="ml-auto text-caption font-medium text-[var(--color-text-muted)]">{sec.groups.reduce((a, g) => a + g.rows.length, 0)} steps</span>
               </div>
             )}
             {sec.groups.map((g) => {
@@ -485,18 +485,18 @@ export default function DayAgendaPanel({
                     {/* Just the area it's in (Exchangers, Towers) — the full path
                         is on the task itself. */}
                     {g.crumbs.length > 0 && (
-                      <div className={`text-[11px] font-bold truncate ${color.text}`} title={g.crumbs.map((c) => c.name).join(" › ")}>
+                      <div className={`text-caption font-medium truncate ${color.text}`} title={g.crumbs.map((c) => c.name).join(" › ")}>
                         {g.crumbs[g.crumbs.length - 1].name}
                       </div>
                     )}
-                    <button onClick={() => onOpenDetail(head)} className="flex items-start gap-1 text-[12px] font-bold text-[var(--color-text)] hover:underline text-left max-w-full">
+                    <button onClick={() => onOpenDetail(head)} className="flex items-start gap-1 text-caption font-medium text-[var(--color-text)] hover:underline text-left max-w-full">
                       <Layers className="w-3 h-3 shrink-0 opacity-70 mt-0.5" />
                       <span className="break-words min-w-0">{head.name}</span>
                       <ExternalLink className="w-3 h-3 shrink-0 opacity-50 mt-0.5" />
                     </button>
                     {/* Under the name, so the name keeps the width: how the
                         equipment stands overall and how many steps today. */}
-                    <div className="text-[11px] font-display tabular-nums text-[var(--color-text-muted)]" title="This equipment overall">
+                    <div className="text-caption font-display tabular-nums text-[var(--color-text-muted)]" title="This equipment overall">
                       {g.parent && headInfo ? <>
                         {headInfo.percent}%{head.id && planNow.get(head.id) != null ? <> of {planNow.get(head.id)}% planned</> : null} · {headInfo.leafDone}/{headInfo.leafTotal} steps · </> : null}
                       {g.rows.length} today
@@ -513,7 +513,7 @@ export default function DayAgendaPanel({
                         {r.live === "overdue" && <span aria-hidden className="absolute left-0 top-1.5 bottom-1.5 w-[3px] rounded-r bg-[var(--state-overdue)]" />}
                         {/* Day-only or night-only work is marked; round the clock is the norm. */}
                         {(() => { const w = workShiftOf(r.leaf, tz, shiftTimes); return w === "both" ? <span className="w-4 shrink-0" aria-hidden /> : <ShiftMark work={w} />; })()}
-                        <span className={`w-[80px] shrink-0 text-[11px] font-display tabular-nums ${r.live === "overdue" ? "font-semibold text-[var(--state-overdue-text)]" : r.live === "started-early" ? "font-bold text-[var(--color-text)] dark:text-[var(--color-text)]" : r.live === "done-ahead" ? "font-bold text-[var(--state-released-text)]" : "text-[var(--color-text-muted)]"}`}>{windowOf(r)}</span>
+                        <span className={`w-[80px] shrink-0 text-caption font-display tabular-nums ${r.live === "overdue" ? "font-semibold text-[var(--state-overdue-text)]" : r.live === "started-early" ? "font-bold text-[var(--color-text)] dark:text-[var(--color-text)]" : r.live === "done-ahead" ? "font-bold text-[var(--state-released-text)]" : "text-[var(--color-text-muted)]"}`}>{windowOf(r)}</span>
                         <span className="shrink-0">
                           <StatusControl
                             status={r.leaf.status} size="sm" variant="dot" disabled={!canEdit || !onSetStatus || !r.leaf.id}
@@ -525,20 +525,20 @@ export default function DayAgendaPanel({
                         </span>
                         <button onClick={() => setOpenId(openId === r.leaf.id ? null : r.leaf.id ?? null)} className="flex-1 min-w-0 text-left" aria-expanded={openId === r.leaf.id}
                           title={canEdit ? "Update this step here - % done, status, what's blocking it, a note" : "Show this step"}>
-                          <span className={`block text-[12px] leading-snug break-words font-semibold ${r.leaf.status === "completed" ? "line-through text-[var(--color-text-faint)]" : "text-[var(--color-text)]"}`}>{r.leaf.name} <PathTag id={r.leaf.id} marks={pathMarks} /> <DiscoveryTag m={r.leaf} tz={tz} /></span>
-                          <span className="block text-[11px] text-[var(--color-text-faint)] truncate">
+                          <span className={`block text-caption leading-snug break-words font-medium ${r.leaf.status === "completed" ? "line-through text-[var(--color-text-faint)]" : "text-[var(--color-text)]"}`}>{r.leaf.name} <PathTag id={r.leaf.id} marks={pathMarks} /> <DiscoveryTag m={r.leaf} tz={tz} /></span>
+                          <span className="block text-caption text-[var(--color-text-faint)] truncate">
                             {[note, r.leaf.responsibleParty, woOf(r.leaf) ? `WO ${woOf(r.leaf)}` : null].filter(Boolean).join(" · ")}
                           </span>
                           {r.leaf.id && latestByStep.get(r.leaf.id) && (
-                            <span className="block text-[11px] italic text-[var(--color-text-muted)] break-words">&ldquo;{latestByStep.get(r.leaf.id)!.body}&rdquo;{latestByStep.get(r.leaf.id)!.t < dayStartsAt ? ` · ${fmtInTz(latestByStep.get(r.leaf.id)!.t, tz, { weekday: "short", month: "short", day: "numeric" })}` : ""}</span>
+                            <span className="block text-caption italic text-[var(--color-text-muted)] break-words">&ldquo;{latestByStep.get(r.leaf.id)!.body}&rdquo;{latestByStep.get(r.leaf.id)!.t < dayStartsAt ? ` · ${fmtInTz(latestByStep.get(r.leaf.id)!.t, tz, { weekday: "short", month: "short", day: "numeric" })}` : ""}</span>
                           )}
                           {r.leaf.status !== "completed" && waitsOn(r.leaf).length > 0 && (
-                            <span className="block text-[11px] font-semibold text-[var(--state-held-text)] break-words">
+                            <span className="block text-caption font-medium text-[var(--state-held-text)] break-words">
                               Waits on {waitsOn(r.leaf).map((p) => `${ancestorsOf(p)[0]?.name ? `${ancestorsOf(p)[0].name} · ` : ""}${p.name}${p.responsibleParty ? ` (${p.responsibleParty})` : ""}`).join("; ")}
                             </span>
                           )}
                           {(r.leaf.status === "on_hold" || r.leaf.status === "blocked") && (
-                            <span className={`block text-[11px] font-semibold break-words ${r.leaf.status === "blocked" ? "text-[var(--state-overdue-text)]" : "text-[var(--state-held-text)]"}`}>
+                            <span className={`block text-caption font-medium break-words ${r.leaf.status === "blocked" ? "text-[var(--state-overdue-text)]" : "text-[var(--state-held-text)]"}`}>
                               {r.leaf.status === "blocked" ? "Blocked" : "On hold"}: {r.leaf.statusReason || "no reason recorded"}
                             </span>
                           )}
@@ -561,8 +561,8 @@ export default function DayAgendaPanel({
                           const short = g - pct >= 5;
                           return (
                             <span title={`The plan has this step at ${g}% by ${goalLabel}`}
-                              className={`text-right text-[11px] font-bold tabular-nums leading-tight ${short ? "text-[var(--state-held-text)]" : "text-[var(--color-text-faint)]"}`}>
-                              goal {g}%<span className="block font-semibold opacity-80">by {goalLabel}</span>
+                              className={`text-right text-caption font-medium tabular-nums leading-tight ${short ? "text-[var(--state-held-text)]" : "text-[var(--color-text-faint)]"}`}>
+                              goal {g}%<span className="block font-medium opacity-80">by {goalLabel}</span>
                             </span>
                           );
                         })()}
@@ -581,8 +581,8 @@ export default function DayAgendaPanel({
                               tz={tz} times={shiftTimes} now={clock} canEdit={canEdit}
                               onUpdate={async (u) => { const ok = await onUpdateStep(id, u); setNotesTick((t) => t + 1); return ok; }}
                               onFixTimes={onFixTimes ? async (t) => { const ok = await onFixTimes(id, t); setNotesTick((x) => x + 1); return ok; } : undefined} />
-                            <div className="px-3 pl-7 pb-2 flex items-center justify-between text-[12px]">
-                              <button type="button" onClick={() => onOpenDetail(r.leaf)} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Details</button>
+                            <div className="px-3 pl-7 pb-2 flex items-center justify-between text-caption">
+                              <button type="button" onClick={() => onOpenDetail(r.leaf)} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Details</button>
                               {nx && <button type="button" onClick={() => { setOpenId(nx); openGroupOf(nx); }} className="text-[var(--color-accent-text)] hover:underline">Next step ›</button>}
                             </div>
                           </div>
@@ -614,7 +614,7 @@ export default function DayAgendaPanel({
           )}
           {otherDays.length > 0 && (
             <section className="border-t border-[var(--color-border)]">
-              <div className="px-4 py-2 text-[12px] font-semibold text-[var(--color-text-muted)] bg-[var(--color-surface-2)]">On other days: tap to go to its day</div>
+              <div className="px-4 py-2 text-caption font-medium text-[var(--color-text-muted)] bg-[var(--color-surface-2)]">On other days: tap to go to its day</div>
               <ul className="divide-y divide-[var(--color-border)]">
                 {otherDays.map((m) => {
                   const d = dayKey(startMsOf(m), tz);
@@ -622,10 +622,10 @@ export default function DayAgendaPanel({
                     <li key={m.id}>
                       <button onClick={() => { setQuery(""); setOpenId(m.id ?? null); onChangeDay(d); }}
                         className="w-full px-4 py-2 flex items-start gap-3 text-left hover:bg-[var(--color-surface-2)]">
-                        <span className="w-[80px] shrink-0 text-[11px] font-display tabular-nums font-bold text-[var(--color-text)]">{fmtInTz(startMsOf(m), tz, { weekday: "short", month: "short", day: "numeric" })}</span>
+                        <span className="w-[80px] shrink-0 text-caption font-display tabular-nums font-bold text-[var(--color-text)]">{fmtInTz(startMsOf(m), tz, { weekday: "short", month: "short", day: "numeric" })}</span>
                         <span className="flex-1 min-w-0">
-                          <span className="block text-[12px] font-semibold break-words">{m.name}</span>
-                          <span className="block text-[11px] text-[var(--color-text-faint)] truncate">{[ancestorsOf(m)[0]?.name, m.responsibleParty, `${pctOf(m)}%`].filter(Boolean).join(" · ")}</span>
+                          <span className="block text-caption font-medium break-words">{m.name}</span>
+                          <span className="block text-caption text-[var(--color-text-faint)] truncate">{[ancestorsOf(m)[0]?.name, m.responsibleParty, `${pctOf(m)}%`].filter(Boolean).join(" · ")}</span>
                         </span>
                       </button>
                     </li>
@@ -636,7 +636,7 @@ export default function DayAgendaPanel({
           )}
         </div>
 
-        <div className="px-4 py-2 border-t border-[var(--color-border)] text-[11px] text-[var(--color-text-faint)]">
+        <div className="px-4 py-2 border-t border-[var(--color-border)] text-caption text-[var(--color-text-faint)]">
           Click a step to update it here · Next moves down the list · an ellipsis means the step continues past this day.
         </div>
       </div>
@@ -856,12 +856,12 @@ function QuickEdit({ leaf, pct, canEdit, onSetStatus, onSetProgress, onAddNote, 
   const active = hold ?? leaf.status;
 
   return (
-    <div className="px-4 pb-3 pt-1 space-y-2 text-[11px]" onKeyDown={(e) => { if (e.key === "Escape") { e.preventDefault(); onClose(); } }}>
+    <div className="px-4 pb-3 pt-1 space-y-2 text-caption" onKeyDown={(e) => { if (e.key === "Escape") { e.preventDefault(); onClose(); } }}>
       <div className="flex items-center gap-1.5 flex-wrap">
-        <span className="w-16 shrink-0 font-semibold text-[13px] text-[var(--color-text-muted)]">% done</span>
+        <span className="w-16 shrink-0 font-medium text-body text-[var(--color-text-muted)]">% done</span>
         {PCTS.map((v) => (
           <button key={v} disabled={ro} onClick={() => pickPct(v)}
-            className={`h-7 min-w-[38px] px-1.5 rounded-md border font-bold tabular-nums pointer-coarse:h-9 ${(stagedPct ?? Math.round(pct)) === v ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30 border-transparent" : "border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"} disabled:opacity-40`}>
+            className={`h-7 min-w-[38px] px-1.5 rounded-md border font-medium tabular-nums pointer-coarse:h-9 ${(stagedPct ?? Math.round(pct)) === v ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30 border-transparent" : "border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"} disabled:opacity-40`}>
             {v === 100 ? "100" : v}
           </button>
         ))}
@@ -871,29 +871,29 @@ function QuickEdit({ leaf, pct, canEdit, onSetStatus, onSetProgress, onAddNote, 
             onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); if (pctDraft !== "") pickPct(Number(pctDraft)); } }}
             onBlur={() => { if (pctDraft !== "" && Number(pctDraft) !== (stagedPct ?? Math.round(pct))) pickPct(Number(pctDraft)); }}
             aria-label="Percent done"
-            className="h-7 pointer-coarse:h-11 w-12 px-1.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-right font-bold tabular-nums" />
-          <span className="font-bold text-[var(--color-text-muted)]">%</span>
+            className="h-7 pointer-coarse:h-11 w-12 px-1.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-right font-medium tabular-nums" />
+          <span className="font-medium text-[var(--color-text-muted)]">%</span>
         </span>
       </div>
       <div className="flex items-center gap-1.5 flex-wrap">
-        <span className="w-16 shrink-0 font-semibold text-[13px] text-[var(--color-text-muted)]">Status</span>
+        <span className="w-16 shrink-0 font-medium text-body text-[var(--color-text-muted)]">Status</span>
         {STATUS_BTNS.map((b) => (
           <button key={b.s} disabled={ro} onClick={() => void setStatus(b.s)}
-            className={`h-7 px-2.5 rounded-md border font-bold pointer-coarse:h-9 ${(starting ? "in_progress" : stage != null && stage >= 100 ? "completed" : stage != null && stage > 0 ? "in_progress" : active) === b.s ? b.on : "border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"} disabled:opacity-40`}>
+            className={`h-7 px-2.5 rounded-md border font-medium pointer-coarse:h-9 ${(starting ? "in_progress" : stage != null && stage >= 100 ? "completed" : stage != null && stage > 0 ? "in_progress" : active) === b.s ? b.on : "border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"} disabled:opacity-40`}>
             {b.label}
           </button>
         ))}
       </div>
       {hold && (
         <div className="flex items-center gap-1.5">
-          <span className={`w-16 shrink-0 font-semibold text-[11px] ${timed && holdTouched && !reason.trim() ? "text-[var(--state-held-text)]" : "text-[var(--color-text-muted)]"}`}>
+          <span className={`w-16 shrink-0 font-medium text-caption ${timed && holdTouched && !reason.trim() ? "text-[var(--state-held-text)]" : "text-[var(--color-text-muted)]"}`}>
             Blocking it{timed && holdTouched && <span className="block normal-case tracking-normal">required</span>}
           </span>
           <input value={reason} disabled={ro} autoFocus onChange={(e) => { setReason(e.target.value); setHoldTouched(true); setNeedMsg(null); }}
             onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void saveHold(); } }}
             placeholder="What's stopping it: permit, scaffold, ops release, parts…"
             className="flex-1 h-7 pointer-coarse:h-11 px-2 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)]" />
-          <button disabled={ro} onClick={() => void saveHold()} className="h-7 px-2.5 rounded-md font-bold bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)] disabled:opacity-40">
+          <button disabled={ro} onClick={() => void saveHold()} className="h-7 px-2.5 rounded-md font-medium bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)] disabled:opacity-40">
             Save {hold === "blocked" ? "blocked" : "on hold"}{timed && holdTouched && whenAt != null ? ` at ${clock}` : ""}
           </button>
         </div>
@@ -907,25 +907,25 @@ function QuickEdit({ leaf, pct, canEdit, onSetStatus, onSetProgress, onAddNote, 
         <div className="flex flex-wrap items-center gap-1.5">
           {/* When it happened: the shift (this one, or a card further on
               done ahead of plan: now or before) and the time. */}
-          <span className={`w-16 shrink-0 font-semibold text-[11px] ${whenAt == null ? "text-[var(--state-held-text)]" : "text-[var(--color-text-muted)]"}`}>
+          <span className={`w-16 shrink-0 font-medium text-caption ${whenAt == null ? "text-[var(--state-held-text)]" : "text-[var(--color-text-muted)]"}`}>
             When<span className="block normal-case tracking-normal">{whenAt == null ? "required" : "24-hour"}</span>
           </span>
           <span className="inline-flex flex-wrap gap-1" role="group" aria-label="Which shift">
             {choice.choices.map((c, i) => (
               <button key={c.w.start} type="button" disabled={ro} aria-pressed={i === wi && !otherDay} onClick={() => { setWi(i); setOtherDay(null); setPicking(false); setNeedMsg(null); }}
-                className={`h-7 px-2 rounded-md border font-bold pointer-coarse:h-9 ${i === wi && !otherDay ? PICKED : "border-[var(--color-border-strong)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"}`}>{c.label}</button>
+                className={`h-7 px-2 rounded-md border font-medium pointer-coarse:h-9 ${i === wi && !otherDay ? PICKED : "border-[var(--color-border-strong)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"}`}>{c.label}</button>
             ))}
             {picking || otherDay
               ? <DayPick value={otherDay} onChange={(d) => { setOtherDay(d); setNeedMsg(null); }} tz={tz} disabled={ro} className={`h-7 pointer-coarse:h-9 ${otherDay ? "ring-1 ring-[var(--color-text)] border-[var(--color-text)]" : ""}`} />
-              : <button type="button" disabled={ro} onClick={() => setPicking(true)} className="h-7 px-2 rounded-md border border-dashed border-[var(--color-border-strong)] font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] pointer-coarse:h-9">Other day…</button>}
+              : <button type="button" disabled={ro} onClick={() => setPicking(true)} className="h-7 px-2 rounded-md border border-dashed border-[var(--color-border-strong)] font-medium text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] pointer-coarse:h-9">Other day…</button>}
           </span>
           <input ref={clockRef} value={clock} disabled={ro} inputMode="numeric" placeholder="hh:mm" aria-label="Time it happened, 24-hour"
             onChange={(e) => { setClock(typeClock(e.target.value)); setNeedMsg(null); }}
             onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); if (progressPending()) void commit(); else void saveHold(); } }}
             className={`h-7 w-[64px] px-1.5 rounded-md font-display tabular-nums font-bold pointer-coarse:h-9   ${whenAt == null ? "border-2 border-[var(--state-held)] bg-transparent" : "border border-[var(--color-border-strong)] bg-[var(--color-surface)]"}`} />
           <button type="button" disabled={ro} onClick={() => { setWi(0); setOtherDay(null); setPicking(false); setClock(new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: tz })); setNeedMsg(null); }}
-            className="h-7 px-2 rounded-md border border-[var(--color-border-strong)] font-bold hover:bg-[var(--color-surface-2)] pointer-coarse:h-9">Now</button>
-          <span className="text-[var(--color-text-muted)]">{when && "error" in when ? <span className="font-semibold text-[var(--state-overdue-text)]">{when.error}</span> : when && "at" in when ? <>{when.moved ? "→ " : "on "}<b className="text-[var(--color-text)]">{shiftWord(when.shift, tz)}</b></> : fmtInTz(win.start, tz, { weekday: "short", month: "short", day: "numeric" })}</span>
+            className="h-7 px-2 rounded-md border border-[var(--color-border-strong)] font-medium hover:bg-[var(--color-surface-2)] pointer-coarse:h-9">Now</button>
+          <span className="text-[var(--color-text-muted)]">{when && "error" in when ? <span className="font-medium text-[var(--state-overdue-text)]">{when.error}</span> : when && "at" in when ? <>{when.moved ? "→ " : "on "}<b className="text-[var(--color-text)]">{shiftWord(when.shift, tz)}</b></> : fmtInTz(win.start, tz, { weekday: "short", month: "short", day: "numeric" })}</span>
         </div>
       )}
       {timed && choice.ahead && (progressPending() || (holdTouched && !!hold)) && (
@@ -933,14 +933,14 @@ function QuickEdit({ leaf, pct, canEdit, onSetStatus, onSetProgress, onAddNote, 
       )}
       {onAddNote && latest && noteMode === "new" && (
         <div className="flex items-start gap-1.5">
-          <span className="w-16 shrink-0 font-semibold text-[13px] text-[var(--color-text-muted)]">Latest</span>
+          <span className="w-16 shrink-0 font-medium text-body text-[var(--color-text-muted)]">Latest</span>
           <span className="flex-1 italic text-[var(--color-text-muted)]">&ldquo;{latest.body}&rdquo; · {latest.by ?? "someone"}{latest.at ? `, ${new Date(latest.at).toLocaleDateString(undefined, { month: "short", day: "numeric" })}` : ""}</span>
         </div>
       )}
       {onAddNote && (
         <div className="flex flex-wrap items-center gap-1.5">
           {/* A % being saved needs its comment — said right on the box. */}
-          <span className={`w-16 shrink-0 font-semibold text-[11px] ${needsNote() ? "text-[var(--state-held-text)]" : "text-[var(--color-text-muted)]"}`}>
+          <span className={`w-16 shrink-0 font-medium text-caption ${needsNote() ? "text-[var(--state-held-text)]" : "text-[var(--color-text-muted)]"}`}>
             {needsNote() ? <>{timed && stagedPct === 0 && !starting ? "Why" : starting && (stagedPct ?? 0) <= Math.round(pct) ? "What started" : "What got done"}<span className="block normal-case tracking-normal">required</span></> : noteMode === "edit" ? "Comment" : "Note"}
           </span>
           <input ref={noteRef} value={note} disabled={ro} onChange={(e) => { setNote(e.target.value); setNeedMsg(null); }}
@@ -950,27 +950,27 @@ function QuickEdit({ leaf, pct, canEdit, onSetStatus, onSetProgress, onAddNote, 
             className={`flex-1 min-w-[180px] h-7 px-2 rounded-md bg-[var(--color-surface)] pointer-coarse:h-9   ${needMsg && needsNote() ? "border-2 border-[var(--state-overdue)]" : needsNote() ? "border-2 border-[var(--state-held)] bg-transparent" : "border border-[var(--color-border-strong)]"}`} />
           {progressPending() && (
             <button disabled={ro} onClick={() => void commit()}
-              className={`shrink-0 h-7 px-2.5 rounded-md font-semibold bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)] disabled:opacity-40 pointer-coarse:h-9 ${needsNote() || needsTime() ? "opacity-70" : ""}`}>
+              className={`shrink-0 h-7 px-2.5 rounded-md font-medium bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)] disabled:opacity-40 pointer-coarse:h-9 ${needsNote() || needsTime() ? "opacity-70" : ""}`}>
               {needsNote() ? "Add a comment to save" : needsTime() ? "Put in the time" : !timed ? `Save ${stagedPct ?? 0}%`
                 : `${(stagedPct ?? 0) >= 100 ? "Mark done" : stagedPct === 0 && !starting ? "Set to not started" : `Save ${stagedPct ?? 0}%`} at ${clock}`}
             </button>
           )}
           {own && (
             <button disabled={ro} onClick={() => { if (noteMode === "edit") { setNoteMode("new"); setNote(""); sentNote.current = null; } else { setNoteMode("edit"); setNote(latest!.body); sentNote.current = latest!.body.trim(); } }}
-              className="shrink-0 text-[13px] text-[var(--color-accent-text)] hover:underline">
+              className="shrink-0 text-body text-[var(--color-accent-text)] hover:underline">
               {noteMode === "edit" ? "New comment instead" : "Edit my last one"}
             </button>
           )}
         </div>
       )}
-      {needMsg && <div className="pl-[70px] font-semibold text-[var(--state-overdue-text)]">{needMsg}</div>}
+      {needMsg && <div className="pl-[70px] font-medium text-[var(--state-overdue-text)]">{needMsg}</div>}
       <div className="flex items-center gap-2">
-        {saved && <span className="inline-flex items-center gap-1 font-bold text-[var(--state-released-text)]"><Check className="w-3.5 h-3.5" /> {saved}</span>}
+        {saved && <span className="inline-flex items-center gap-1 font-medium text-[var(--state-released-text)]"><Check className="w-3.5 h-3.5" /> {saved}</span>}
         <button onClick={onOpenDetail} className="ml-auto inline-flex items-center gap-1 text-[var(--color-accent-text)] hover:underline">
           <ExternalLink className="w-3 h-3" /> Full details
         </button>
         <button onClick={() => void goNext()}
-          className="inline-flex items-center gap-1 h-7 px-3 rounded-md bg-slate-900 text-white font-bold hover:bg-slate-800 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-white">
+          className="inline-flex items-center gap-1 h-8 px-3 rounded-md bg-slate-900 text-white font-medium hover:bg-slate-800 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-white">
           {next ? <><ArrowDown className="w-3.5 h-3.5" /> Next step</> : <>Close</>}
         </button>
       </div>

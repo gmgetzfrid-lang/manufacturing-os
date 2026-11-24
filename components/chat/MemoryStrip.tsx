@@ -20,10 +20,10 @@ export default function MemoryStrip({ past, changed, onReview, onReuse, onDismis
 }) {
   const stale = (changed?.length ?? 0) > 0;
   return (
-    <div className="mb-2 flex items-center gap-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)] pl-3 pr-1.5 py-1.5 text-[13px] animate-rise">
+    <div className="mb-2 flex items-center gap-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)] pl-3 pr-1.5 py-1.5 text-body animate-rise">
       <span aria-hidden className="ui-icon-tile is-sm"><History className="w-4 h-4" /></span>
       <span className="min-w-0 flex-1 truncate text-[var(--color-text)]">
-        <span className="font-semibold">Asked before</span>
+        <span className="font-medium">Asked before</span>
         <span className="text-[var(--color-text-muted)]"> by {(past.userName ?? "someone").split("@")[0]}, {relativeTime(past.createdAt)}: </span>
         &ldquo;{past.question}&rdquo;
       </span>
@@ -33,10 +33,10 @@ export default function MemoryStrip({ past, changed, onReview, onReuse, onDismis
           <AlertTriangle className="w-3.5 h-3.5" /> Sources changed
         </span>
       )}
-      <button onClick={onReview} className="shrink-0 inline-flex items-center gap-1 h-8 px-2.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+      <button onClick={onReview} className="shrink-0 inline-flex items-center gap-1 h-8 px-2.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
         <Eye className="w-3.5 h-3.5" /> Review
       </button>
-      <button onClick={onReuse} className="shrink-0 inline-flex items-center gap-1 h-8 px-2.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+      <button onClick={onReuse} className="shrink-0 inline-flex items-center gap-1 h-8 px-2.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
         <Redo2 className="w-3.5 h-3.5" /> Use it
       </button>
       <button onClick={onDismiss} title="Ask fresh" aria-label="Dismiss, ask fresh" className="shrink-0 w-8 h-8 grid place-items-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface)]">

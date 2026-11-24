@@ -178,7 +178,7 @@ export default function HistoryDrawer({ isOpen, onClose, docRecord }: HistoryDra
         {/* HEADER */}
         <div className="h-16 border-b border-[var(--color-border)] flex items-center justify-between px-6 bg-[var(--color-surface)] shrink-0">
           <div>
-            <h2 className="font-display text-[19px] font-semibold text-[var(--color-text)] flex items-center gap-1">
+            <h2 className="font-display text-section font-semibold text-[var(--color-text)] flex items-center gap-1">
               <History className="w-5 h-5 mr-2 text-[var(--color-text-muted)]" />
               Audit trail
               <HelpTooltip>
@@ -188,7 +188,7 @@ export default function HistoryDrawer({ isOpen, onClose, docRecord }: HistoryDra
                 <b className="block mt-1">Audit log</b> is the raw audit_logs rows for forensic inspection.
               </HelpTooltip>
             </h2>
-            <div className="flex items-center text-[13px] text-[var(--color-text-muted)] font-display tabular-nums mt-0.5 space-x-2">
+            <div className="flex items-center text-body text-[var(--color-text-muted)] font-display tabular-nums mt-0.5 space-x-2">
               <span>{headerSubtitle.docNum}</span>
               <span className="text-[var(--color-text-faint)]">/</span>
               <span>{headerSubtitle.title}</span>
@@ -210,10 +210,10 @@ export default function HistoryDrawer({ isOpen, onClose, docRecord }: HistoryDra
           {activeSnapshot && (
             <div className="mb-8 bg-slate-900 rounded-xl overflow-hidden shadow-2xl border border-slate-700 h-96 flex flex-col animate-in zoom-in-95 duration-200 ring-4 ring-slate-100">
               <div className="bg-slate-800 px-4 py-2 flex justify-between items-center shrink-0 border-b border-slate-700">
-                <span className="text-[13px] font-bold text-white flex items-center">
+                <span className="text-body font-medium text-white flex items-center">
                   <Shield className="w-3 h-3 mr-1.5 text-[var(--color-text-muted)]" />
                   SNAPSHOT: Rev {activeSnapshot.revisionLabel}
-                  <span className="ml-2 text-[var(--color-text-muted)] font-display tabular-nums text-[13px]">
+                  <span className="ml-2 text-[var(--color-text-muted)] font-display tabular-nums text-body">
                     {formatFirestoreTimestamp(activeSnapshot.createdAt, true)}
                   </span>
                 </span>
@@ -251,17 +251,17 @@ export default function HistoryDrawer({ isOpen, onClose, docRecord }: HistoryDra
               <div className="flex-1 bg-[var(--color-surface)] border border-[var(--color-border-strong)] rounded-md p-4">
                 <div className="flex justify-between items-start mb-2">
                   <div>
-                    <h3 className="font-display text-[17px] font-semibold text-[var(--color-text)]">Current live version</h3>
-                    <p className="text-[13px] text-[var(--color-text-muted)] font-medium">
+                    <h3 className="font-display text-section font-semibold text-[var(--color-text)]">Current live version</h3>
+                    <p className="text-body text-[var(--color-text-muted)] font-medium">
                       Rev {docRecord.rev} / {docRecord.status}
                     </p>
                   </div>
-                  <span className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-[var(--color-text)]">
+                  <span className="inline-flex items-center gap-1.5 text-body font-medium text-[var(--color-text)]">
                     <span aria-hidden className="w-2 h-2 rounded-full bg-[var(--state-released)]" /> Active
                   </span>
                 </div>
                 {docRecord.checkedOutBy && (
-                  <div className="mt-2 border-l-[3px] border-[var(--state-held)] pl-2 flex items-center text-[14px] text-[var(--color-text)] font-semibold">
+                  <div className="mt-2 border-l-[3px] border-[var(--state-held)] pl-2 flex items-center text-body text-[var(--color-text)] font-medium">
                     <Lock className="w-3 h-3 mr-2" />
                     Checked out by {docRecord.checkedOutByName || "someone"}
                   </div>
@@ -274,25 +274,25 @@ export default function HistoryDrawer({ isOpen, onClose, docRecord }: HistoryDra
           <div className="flex border-b border-[var(--color-border)] mb-6">
             <button
               onClick={() => setTab('timeline')}
-              className={`flex-1 pb-3 text-[13px] font-semibold transition-colors border-b-2 ${tab === 'timeline' ? 'border-[var(--color-text)] text-[var(--color-text)]' : 'border-transparent text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)]'}`}
+              className={`flex-1 pb-3 text-body font-medium transition-colors border-b-2 ${tab === 'timeline' ? 'border-[var(--color-text)] text-[var(--color-text)]' : 'border-transparent text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)]'}`}
             >
               Timeline
             </button>
             <button
               onClick={() => setTab('history')}
-              className={`flex-1 pb-3 text-[13px] font-semibold transition-colors border-b-2 ${tab === 'history' ? 'border-[var(--color-text)] text-[var(--color-text)]' : 'border-transparent text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)]'}`}
+              className={`flex-1 pb-3 text-body font-medium transition-colors border-b-2 ${tab === 'history' ? 'border-[var(--color-text)] text-[var(--color-text)]' : 'border-transparent text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)]'}`}
             >
               Revision history
             </button>
             <button
               onClick={() => setTab('checkouts')}
-              className={`flex-1 pb-3 text-[13px] font-semibold transition-colors border-b-2 ${tab === 'checkouts' ? 'border-[var(--color-text)] text-[var(--color-text)]' : 'border-transparent text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)]'}`}
+              className={`flex-1 pb-3 text-body font-medium transition-colors border-b-2 ${tab === 'checkouts' ? 'border-[var(--color-text)] text-[var(--color-text)]' : 'border-transparent text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)]'}`}
             >
               Checkout log
             </button>
             <button
               onClick={() => setTab('audit')}
-              className={`flex-1 pb-3 text-[13px] font-semibold transition-colors border-b-2 ${tab === 'audit' ? 'border-[var(--color-text)] text-[var(--color-text)]' : 'border-transparent text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)]'}`}
+              className={`flex-1 pb-3 text-body font-medium transition-colors border-b-2 ${tab === 'audit' ? 'border-[var(--color-text)] text-[var(--color-text)]' : 'border-transparent text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)]'}`}
             >
               Audit log
             </button>
@@ -302,12 +302,12 @@ export default function HistoryDrawer({ isOpen, onClose, docRecord }: HistoryDra
             <div className="space-y-4">
               {docRecord.id && <RevisionChainStrip documentId={docRecord.id} />}
               {timelineLoading ? (
-                <div className="flex items-center justify-center gap-2 p-8 text-[13px] text-[var(--color-text-muted)]">
+                <div className="flex items-center justify-center gap-2 p-8 text-body text-[var(--color-text-muted)]">
                   <div className="w-5 h-5 border-4 border-[var(--color-border)] border-t-[var(--color-border-strong)] rounded-full animate-spin" />
                   Loading the timeline…
                 </div>
               ) : timelineErr ? (
-                <p role="alert" className="border-l-2 border-[var(--state-overdue)] pl-3 text-[13px] text-[var(--state-overdue)]">Couldn&apos;t load the timeline: {timelineErr}</p>
+                <p role="alert" className="border-l-2 border-[var(--state-overdue)] pl-3 text-body text-[var(--state-overdue)]">Couldn&apos;t load the timeline: {timelineErr}</p>
               ) : (
                 <TimelineFeed
                   events={timelineEvents}
@@ -318,12 +318,12 @@ export default function HistoryDrawer({ isOpen, onClose, docRecord }: HistoryDra
               )}
             </div>
           ) : loading ? (
-            <div className="flex items-center justify-center gap-2 p-8 text-[13px] text-[var(--color-text-muted)]">
+            <div className="flex items-center justify-center gap-2 p-8 text-body text-[var(--color-text-muted)]">
               <div className="w-5 h-5 border-4 border-[var(--color-border)] border-t-[var(--color-border-strong)] rounded-full animate-spin" />
               Loading the history…
             </div>
           ) : loadErr ? (
-            <p role="alert" className="border-l-2 border-[var(--state-overdue)] pl-3 text-[13px] text-[var(--state-overdue)]">Couldn&apos;t load the history: {loadErr}</p>
+            <p role="alert" className="border-l-2 border-[var(--state-overdue)] pl-3 text-body text-[var(--state-overdue)]">Couldn&apos;t load the history: {loadErr}</p>
           ) : tab === 'history' ? (
             versions.length === 0 ? (
             <div className="text-center p-8 border-2 border-dashed border-[var(--color-border)] rounded-xl">
@@ -337,7 +337,7 @@ export default function HistoryDrawer({ isOpen, onClose, docRecord }: HistoryDra
               {versions.map((ver) => (
                 <div key={ver.id} className="flex items-start relative group">
                   {/* Revision Bubble */}
-                  <div className="w-8 h-8 rounded-full bg-[var(--color-surface)] border-2 border-[var(--color-border-strong)] flex items-center justify-center shrink-0 z-10 mr-4 group-hover:border-[var(--color-border-strong)] group-hover:scale-110 transition-all shadow-sm ring-4 ring-white text-[13px] font-bold text-[var(--color-text-muted)]">
+                  <div className="w-8 h-8 rounded-full bg-[var(--color-surface)] border-2 border-[var(--color-border-strong)] flex items-center justify-center shrink-0 z-10 mr-4 group-hover:border-[var(--color-border-strong)] group-hover:scale-110 transition-all shadow-sm ring-4 ring-white text-body font-medium text-[var(--color-text-muted)]">
                     {ver.revisionLabel}
                   </div>
 
@@ -346,7 +346,7 @@ export default function HistoryDrawer({ isOpen, onClose, docRecord }: HistoryDra
                     <div className="px-4 py-3 border-b border-slate-50 bg-[var(--color-surface-2)]/50 flex justify-between items-center">
                       <div className="flex items-center space-x-2">
                         <span
-                          className={`text-[13px] font-semibold px-2 py-0.5 rounded border ${
+                          className={`text-body font-semibold px-2 py-0.5 rounded border ${
                             ver.changeType === "Major"
                               ? "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]"
                               : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]"
@@ -354,13 +354,13 @@ export default function HistoryDrawer({ isOpen, onClose, docRecord }: HistoryDra
                         >
                           {ver.changeType || "Revision"}
                         </span>
-                        <span className="text-[13px] text-[var(--color-text-faint)] font-display tabular-nums">
+                        <span className="text-body text-[var(--color-text-faint)] font-display tabular-nums">
                           {formatFirestoreTimestamp(ver.createdAt)}
                         </span>
                       </div>
                       <button
                         onClick={() => setActiveSnapshot(ver)}
-                        className="flex items-center text-[13px] font-bold text-[var(--color-text)] hover:text-[var(--color-text)] bg-[var(--color-surface-2)] hover:bg-[var(--color-surface-2)] px-2 py-1 rounded transition-colors"
+                        className="flex items-center text-body font-medium text-[var(--color-text)] hover:text-[var(--color-text)] bg-[var(--color-surface-2)] hover:bg-[var(--color-surface-2)] px-2 py-1 rounded transition-colors"
                         type="button"
                       >
                         <Eye className="w-3 h-3 mr-1" /> View Snapshot
@@ -374,8 +374,8 @@ export default function HistoryDrawer({ isOpen, onClose, docRecord }: HistoryDra
                       </p>
 
                       {/* Asset Impact Analysis (Visual Diff) */}
-                      <div className="mt-3 p-3 bg-[var(--color-surface-2)] rounded-lg border border-[var(--color-border)] text-[13px]">
-                        <div className="flex items-center text-[var(--color-text-faint)] font-semibold text-[13px] mb-2">
+                      <div className="mt-3 p-3 bg-[var(--color-surface-2)] rounded-lg border border-[var(--color-border)] text-body">
+                        <div className="flex items-center text-[var(--color-text-faint)] font-medium text-body mb-2">
                           <FileDiff className="w-3 h-3 mr-1" /> Automated Impact Analysis
                         </div>
                         <div className="flex gap-2">
@@ -410,15 +410,15 @@ export default function HistoryDrawer({ isOpen, onClose, docRecord }: HistoryDra
                              <Users className="w-3 h-3" />
                            </div>
                            <div>
-                             <p className="text-sm font-bold text-[var(--color-text)] leading-none">{s.userName}</p>
-                             <p className="text-[13px] text-[var(--color-text-faint)] mt-0.5">{s.mode}</p>
+                             <p className="text-sm font-medium text-[var(--color-text)] leading-none">{s.userName}</p>
+                             <p className="text-body text-[var(--color-text-faint)] mt-0.5">{s.mode}</p>
                            </div>
                          </div>
-                         <span className={`text-[13px] font-semibold px-2 py-0.5 rounded border ${s.status === 'active' ? 'bg-[color-mix(in_srgb,var(--state-released)_10%,transparent)] text-[var(--state-released)] border-[color-mix(in_srgb,var(--state-released)_35%,transparent)]' : 'bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]'}`}>
+                         <span className={`text-body font-medium px-2 py-0.5 rounded border ${s.status === 'active' ? 'bg-[color-mix(in_srgb,var(--state-released)_10%,transparent)] text-[var(--state-released)] border-[color-mix(in_srgb,var(--state-released)_35%,transparent)]' : 'bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]'}`}>
                            {s.status === 'checked_in' ? 'Checked In' : s.status}
                          </span>
                       </div>
-                      <div className="text-[13px] text-[var(--color-text-muted)] space-y-1 ml-9">
+                      <div className="text-body text-[var(--color-text-muted)] space-y-1 ml-9">
                          <div className="flex items-center gap-2">
                            <ArrowRight className="w-3 h-3 text-[var(--color-text-faint)]" />
                            <span>Started: {formatFirestoreTimestamp(s.startedAt, true)}</span>
@@ -451,7 +451,7 @@ export default function HistoryDrawer({ isOpen, onClose, docRecord }: HistoryDra
                 {auditLogs.map((log, i) => (
                   <div key={i} className="p-4 border-b border-[var(--color-border)] bg-[var(--color-surface)] last:border-0 hover:bg-[var(--color-surface-2)] transition-colors">
                     <div className="flex justify-between items-start mb-1">
-                      <span className={`text-[13px] font-semibold px-2 py-0.5 rounded border 
+                      <span className={`text-body font-semibold px-2 py-0.5 rounded border 
                         ${log.action === 'FORCE_RELEASE' ? 'bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] text-[var(--state-overdue)] border-[color-mix(in_srgb,var(--state-overdue)_35%,transparent)]' : 
                           log.action === 'CHECK_OUT' ? 'bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]' :
                           log.action === 'VIEW' ? 'bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]' :
@@ -459,16 +459,16 @@ export default function HistoryDrawer({ isOpen, onClose, docRecord }: HistoryDra
                         }`}>
                         {log.action.replace('_', ' ')}
                       </span>
-                      <span className="text-[13px] text-[var(--color-text-faint)] font-display tabular-nums">
+                      <span className="text-body text-[var(--color-text-faint)] font-display tabular-nums">
                         {formatFirestoreTimestamp(log.timestamp, true)}
                       </span>
                     </div>
                     <div className="flex items-center gap-2 mt-2">
-                      <div className="w-5 h-5 rounded-full bg-slate-200 flex items-center justify-center text-[13px] font-bold text-[var(--color-text-muted)]">
+                      <div className="w-5 h-5 rounded-full bg-slate-200 flex items-center justify-center text-body font-medium text-[var(--color-text-muted)]">
                         {(log.userEmail || 'U')[0].toUpperCase()}
                       </div>
-                      <span className="text-[13px] font-bold text-[var(--color-text)]">{log.userEmail}</span>
-                      <span className="text-[13px] text-[var(--color-text-faint)]">({log.userRole})</span>
+                      <span className="text-body font-medium text-[var(--color-text)]">{log.userEmail}</span>
+                      <span className="text-body text-[var(--color-text-faint)]">({log.userRole})</span>
                     </div>
                     {log.details && (
                       <div className="mt-2 text-xs text-[var(--color-text-muted)] font-mono bg-[var(--color-surface-2)] p-2 rounded">

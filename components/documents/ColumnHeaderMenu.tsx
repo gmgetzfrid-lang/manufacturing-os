@@ -64,7 +64,7 @@ export default function ColumnHeaderMenu({ onAdd, isController }: ColumnHeaderMe
       {isOpen && (
         <div role="menu" aria-label="Add a column" className="ui-float ui-float-in absolute right-0 top-full mt-1.5 w-56 origin-top-right rounded-xl bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] z-50 overflow-hidden">
           <div className="py-1">
-            <div className="px-3 pt-1.5 pb-1 text-[12px] font-normal text-[var(--color-text-muted)]">Add a column of</div>
+            <div className="px-3 pt-1.5 pb-1 text-caption font-normal text-[var(--color-text-muted)]">Add a column of</div>
             <div>
               {FIELD_TYPES.map((t) => {
                 const Icon = t.icon;
@@ -73,7 +73,7 @@ export default function ColumnHeaderMenu({ onAdd, isController }: ColumnHeaderMe
                     key={t.type}
                     onClick={() => { onAdd(t.type); setIsOpen(false); }}
                     role="menuitem"
-                    className="w-full flex items-center gap-2.5 px-3 min-h-10 text-[14px] font-normal text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors"
+                    className="w-full flex items-center gap-2.5 px-3 min-h-10 text-body font-normal text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors"
                   >
                     <Icon aria-hidden className="w-4 h-4 text-[var(--color-text-faint)]" />
                     {t.label}
@@ -86,7 +86,7 @@ export default function ColumnHeaderMenu({ onAdd, isController }: ColumnHeaderMe
              <button
                type="button"
                role="menuitem"
-               className="w-full flex items-center px-3 min-h-10 text-[14px] font-normal text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
+               className="w-full flex items-center px-3 min-h-10 text-body font-normal text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
                onClick={() => { onAdd('text'); setIsOpen(false); }} // Should trigger full wizard step 1 ideally, but text is fine default
              >
                Other kinds…

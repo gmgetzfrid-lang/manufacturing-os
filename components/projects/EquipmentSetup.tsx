@@ -58,9 +58,9 @@ export function useProjectEquipment(orgId: string | null | undefined, projectId:
   return { data, matches, set, error, reload };
 }
 
-const btn = "inline-flex items-center justify-center gap-1.5 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-[12px] font-bold px-3.5 py-2 shadow-sm disabled:opacity-50";
-const quiet = "inline-flex items-center gap-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[12px] font-semibold text-[var(--color-text)] px-2.5 py-1.5 disabled:opacity-50";
-const field = "h-9 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[13px] text-[var(--color-text)]";
+const btn = "inline-flex items-center justify-center gap-1.5 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-caption font-medium px-3.5 py-2 shadow-sm disabled:opacity-50";
+const quiet = "inline-flex items-center gap-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-caption font-medium text-[var(--color-text)] px-2.5 py-1.5 disabled:opacity-50";
+const field = "h-9 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-body text-[var(--color-text)]";
 
 export function EquipmentStep({ projectId, projectName, milestones, canManage, userId }: {
   projectId: string; projectName?: string; milestones: Milestone[]; canManage: boolean; userId: string;
@@ -179,9 +179,9 @@ export function EquipmentStep({ projectId, projectName, milestones, canManage, u
     if (data) await pruneEquipmentLinks(data.edges, inUseAfter(changes));
   });
 
-  if (!canManage) return <div className="text-[12px] text-[var(--color-text-muted)]">Only the project owner, a co-owner or an admin can change this.</div>;
-  if (!orgId) return <div className="text-[12px] text-[var(--color-text-muted)]">Import the schedule first: the work orders come from it.</div>;
-  if (!data) return <div className="flex items-center gap-2 text-[12px] text-[var(--color-text-muted)]">{error ? <span className="text-[var(--state-overdue-text)]">{error}</span> : <><Loader2 className="w-4 h-4 animate-spin" /> Reading the registry…</>}</div>;
+  if (!canManage) return <div className="text-caption text-[var(--color-text-muted)]">Only the project owner, a co-owner or an admin can change this.</div>;
+  if (!orgId) return <div className="text-caption text-[var(--color-text-muted)]">Import the schedule first: the work orders come from it.</div>;
+  if (!data) return <div className="flex items-center gap-2 text-caption text-[var(--color-text-muted)]">{error ? <span className="text-[var(--state-overdue-text)]">{error}</span> : <><Loader2 className="w-4 h-4 animate-spin" /> Reading the registry…</>}</div>;
 
   // Tags to add: once per tag and unit (three C-01 work orders, one C-01).
   const notIn = [...new Set(todo.filter((m) => m.state === "not_in_registry" && m.tag).map((m) => `${homeOf(m)}:${tagKey(m.tag!)}`))];
@@ -190,9 +190,9 @@ export function EquipmentStep({ projectId, projectName, milestones, canManage, u
     <div className="space-y-4">
       {/* The units */}
       <div className="space-y-1.5">
-        <div className="text-[12px] font-semibold text-[var(--color-text-muted)]">Units this project is on</div>
+        <div className="text-caption font-medium text-[var(--color-text-muted)]">Units this project is on</div>
         {data.units.length === 0 ? (
-          <div className="text-[12px] text-[var(--color-text-muted)]">No units in the Site Codebook yet. Add them under Admin › Codebook.</div>
+          <div className="text-caption text-[var(--color-text-muted)]">No units in the Site Codebook yet. Add them under Admin › Codebook.</div>
         ) : (
           <>
             <div className="flex flex-wrap items-center gap-1.5">
@@ -200,11 +200,11 @@ export function EquipmentStep({ projectId, projectName, milestones, canManage, u
                 const n = woUnits.find(([c]) => c === u.code)?.[1] ?? 0;
                 const own = data.edges.some((e) => e.b === `cbunit:${u.code}` && e.evidence?.source === "setup");
                 return (
-                  <span key={u.code} className="inline-flex items-center gap-1 rounded-full border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] pl-2.5 pr-1 py-1 text-[12px] font-semibold text-[var(--color-text)]">
+                  <span key={u.code} className="inline-flex items-center gap-1 rounded-full border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] pl-2.5 pr-1 py-1 text-caption font-medium text-[var(--color-text)]">
                     <span className="min-w-0">{unitName(u)}<span className="font-normal text-[var(--color-text-muted)]">{i === 0 && pUnits.length > 1 ? " · main" : ""}{n ? ` · ${n} WO${n === 1 ? "" : "s"}` : ""}</span></span>
                     {busy === `unit:${u.code}` ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
                       : own ? <button type="button" disabled={!!busy} onClick={() => unitOn(u, false)} aria-label={`Take the project off ${u.label}`} className="p-0.5 rounded-full hover:bg-[var(--color-surface-2)]"><X className="w-3.5 h-3.5" /></button>
-                        : <span className="px-1 text-[11px] font-normal text-[var(--color-text-muted)]" title="Linked in Documents › Scope">Scope</span>}
+                        : <span className="px-1 text-caption font-normal text-[var(--color-text-muted)]" title="Linked in Documents › Scope">Scope</span>}
                   </span>
                 );
               })}
@@ -221,7 +221,7 @@ export function EquipmentStep({ projectId, projectName, milestones, canManage, u
               {busy === "units" && <Loader2 className="w-4 h-4 animate-spin text-[var(--color-text-muted)]" />}
             </div>
             {missingUnits.length > 0 && (
-              <div className="flex flex-wrap items-center gap-2 text-[12px] text-[var(--color-text-muted)]">
+              <div className="flex flex-wrap items-center gap-2 text-caption text-[var(--color-text-muted)]">
                 <span>{pUnits.length ? "Work orders are also on" : "The work orders' equipment numbers put them on"} {missingUnits.map(([c, n]) => `${unitName(unitOf(c))} (${n})`).join(", ")}.</span>
                 <button type="button" disabled={!!busy} onClick={() => addUnits(missingUnits.map(([c]) => c))} className={quiet}><Plus className="w-3.5 h-3.5" /> Add {missingUnits.length === 1 ? "it" : `all ${missingUnits.length}`}</button>
               </div>
@@ -233,12 +233,12 @@ export function EquipmentStep({ projectId, projectName, milestones, canManage, u
       {/* Asks waiting on an admin: each opens on its work order, ready to add. */}
       {asks.length > 0 && (
         <div className="border-l-2 border-[var(--state-held)] pl-3 py-1 space-y-2">
-          <div className="text-[12px] font-bold text-[var(--state-held-text)]">
+          <div className="text-caption font-medium text-[var(--state-held-text)]">
             {asks.length === 1 ? "1 work order is" : `${asks.length} work orders are`} waiting on equipment to be added{canEditEquipment ? "" : " by an admin"}
           </div>
           <ul className="space-y-1.5">
             {asks.map(({ m, r }) => (
-              <li key={m.id} className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px]">
+              <li key={m.id} className="flex flex-wrap items-center gap-x-2 gap-y-1 text-caption">
                 <span className="flex-1 min-w-[10rem] text-[var(--color-text)]">{m.workOrderRef ? `WO ${m.workOrderRef} · ` : ""}{m.name}<span className="text-[var(--color-text-muted)]">{r.byName ? ` · asked by ${r.byName}` : ""}</span></span>
                 <EquipmentField milestone={m} milestones={milestones} />
               </li>
@@ -250,7 +250,7 @@ export function EquipmentStep({ projectId, projectName, milestones, canManage, u
       {/* The work orders */}
       <div className="space-y-2">
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-          <div className="text-[12px] font-semibold text-[var(--color-text-muted)]">Work orders: equipment, unit and type · {matches.length}</div>
+          <div className="text-caption font-medium text-[var(--color-text-muted)]">Work orders: equipment, unit and type · {matches.length}</div>
           {todo.length > 0 && (
             <button type="button" onClick={confirmAll} disabled={!!busy || !pUnits.length} className={`${btn} ml-auto`} title={pUnits.length ? undefined : "Pick the project's unit first"}>
               {busy === "all" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} Confirm all {todo.length}
@@ -258,18 +258,18 @@ export function EquipmentStep({ projectId, projectName, milestones, canManage, u
           )}
         </div>
         {todo.length > 0 && (
-          <p className="text-[12px] text-[var(--color-text-muted)]">
+          <p className="text-caption text-[var(--color-text-muted)]">
             {!pUnits.length ? "Pick the project's unit first. " : ""}
             Confirm all saves each work order&apos;s equipment, unit and type as shown{notIn.length && pUnits.length ? (canEditEquipment ? `, and adds ${notIn.length === 1 ? "the 1 tag" : `the ${notIn.length} tags`} not in the equipment list under their unit` : `, and asks an admin to add ${notIn.length === 1 ? "the 1 tag" : `the ${notIn.length} tags`} not in the equipment list (only admins add equipment)`) : ""}. Change any one first if it&apos;s wrong.
           </p>
         )}
         {unknownTypes.length > 0 && (
-          <div className="text-[12px] text-[var(--state-held-text)]">
+          <div className="text-caption text-[var(--state-held-text)]">
             Equipment type {unknownTypes.map((t) => `${t}`).join(", ")} {unknownTypes.length === 1 ? "is" : "are"} in your equipment numbers but not in the Site Codebook. Add {unknownTypes.length === 1 ? "it" : "them"} under Admin › Codebook to name {unknownTypes.length === 1 ? "it" : "them"}.
           </div>
         )}
         {flaggedAssets.length > 0 && (
-          <div className="border-l-2 border-[var(--state-held)] pl-3 py-1 text-[12px] text-[var(--state-held-text)] space-y-1.5">
+          <div className="border-l-2 border-[var(--state-held)] pl-3 py-1 text-caption text-[var(--state-held-text)] space-y-1.5">
             <div className="flex items-start gap-2">
               <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
               <span>
@@ -280,18 +280,18 @@ export function EquipmentStep({ projectId, projectName, milestones, canManage, u
             {canEditEquipment ? <button type="button" disabled={!!busy} className={quiet}
               onClick={() => void run("move", async () => { for (const x of flaggedAssets) await moveToUnit(x.asset.id, x.to!, userId); })}>
               {busy === "move" && <Loader2 className="w-3.5 h-3.5 animate-spin" />} Move {flaggedAssets.length === 1 ? flaggedAssets[0].asset.tag : `all ${flaggedAssets.length}`} to {flaggedAssets.length === 1 ? unitOf(flaggedAssets[0].to)?.label : "their work order's unit"}
-            </button> : <span className="text-[12px]">Only an admin can move equipment to another unit.</span>}
+            </button> : <span className="text-caption">Only an admin can move equipment to another unit.</span>}
           </div>
         )}
         {matches.length === 0 ? (
-          <div className="text-[12px] text-[var(--color-text-muted)]">No work orders on the schedule yet.</div>
+          <div className="text-caption text-[var(--color-text-muted)]">No work orders on the schedule yet.</div>
         ) : (
           <ul className="rounded-lg border border-[var(--color-border)] divide-y divide-[var(--color-border)]">
             {matches.map((m) => (
-              <li key={m.ownerId} className="px-3 py-2 text-[12px]">
+              <li key={m.ownerId} className="px-3 py-2 text-caption">
                 <div className="flex flex-wrap items-start gap-x-3 gap-y-1">
                   <div className="flex-1 min-w-[12rem]">
-                    <div className="font-semibold text-[var(--color-text)] break-words">{m.title}{m.wo ? <span className="font-normal text-[var(--color-text-muted)]"> · WO {m.wo}</span> : null}</div>
+                    <div className="font-medium text-[var(--color-text)] break-words">{m.title}{m.wo ? <span className="font-normal text-[var(--color-text-muted)]"> · WO {m.wo}</span> : null}</div>
                     <MatchLine m={m} where={where} />
                     {m.state === "two_answers" && m.clash && (
                       <div className="mt-1.5 flex flex-wrap gap-1.5" data-two-answers>
@@ -330,14 +330,14 @@ export function EquipmentStep({ projectId, projectName, milestones, canManage, u
             ))}
           </ul>
         )}
-        {err && <div className="text-[12px] text-[var(--state-overdue-text)]">{err}</div>}
+        {err && <div className="text-caption text-[var(--state-overdue-text)]">{err}</div>}
       </div>
     </div>
   );
 }
 
 const chip = (t: string, tone: "emerald" | "amber" | "slate") => (
-  <span className={`inline-block rounded px-1.5 py-px text-[12px] font-semibold ${tone === "emerald" ? "bg-transparent text-[var(--state-released-text)]" : tone === "amber" ? "bg-transparent text-[var(--state-held-text)]" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"}`}>{t}</span>
+  <span className={`inline-block rounded px-1.5 py-px text-caption font-medium ${tone === "emerald" ? "bg-transparent text-[var(--state-released-text)]" : tone === "amber" ? "bg-transparent text-[var(--state-held-text)]" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"}`}>{t}</span>
 );
 
 /** The registry lists the work order's equipment ID under another name
@@ -354,13 +354,13 @@ function NameDiffers({ orgId, m, canRename, busy, onRename }: { orgId: string; m
   }, [orgId, code]);
   const backed = !!m.tag && !!drawn?.some((d) => tagKey(d.tag) === tagKey(m.tag!));
   return (
-    <div className="mt-1.5 border-l-2 border-[var(--state-held)] pl-2.5 py-1 text-[12px] text-[var(--state-held-text)] space-y-1.5" data-name-differs>
+    <div className="mt-1.5 border-l-2 border-[var(--state-held)] pl-2.5 py-1 text-caption text-[var(--state-held-text)] space-y-1.5" data-name-differs>
       <div><b>{code}</b> is in the equipment list as <b>{m.listedAs}</b>. This work order calls it <b>{m.tag}</b>. It is matched by its equipment number.</div>
       {drawn && drawn.length > 0 && (
         <ul className="space-y-0.5">
           {drawn.map((d) => (
             <li key={`${d.documentId}|${d.tag}`} className="break-words">
-              <Link href={`/documents/${d.libraryId}?doc=${d.documentId}`} className="font-bold underline decoration-dotted underline-offset-2 hover:decoration-solid">{d.sheet}</Link> prints <b>{d.tag}</b>{d.name ? ` ${d.name}` : ""}
+              <Link href={`/documents/${d.libraryId}?doc=${d.documentId}`} className="font-medium underline decoration-dotted underline-offset-2 hover:decoration-solid">{d.sheet}</Link> prints <b>{d.tag}</b>{d.name ? ` ${d.name}` : ""}
             </li>
           ))}
         </ul>
@@ -368,8 +368,8 @@ function NameDiffers({ orgId, m, canRename, busy, onRename }: { orgId: string; m
       {/* A rename only on the drawings' word: some sheet prints this name beside this number. */}
       {drawn && !backed && <div>No drawing on file prints {m.tag} beside {code}. Check the work order&apos;s name and its equipment number before changing the list.</div>}
       {backed && (canRename
-        ? <button type="button" disabled={busy} onClick={onRename} className="inline-flex items-center gap-1.5 h-9 px-3 rounded-lg border border-[var(--state-held)] bg-[var(--color-surface)] text-[12px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">Rename it {m.tag} in the equipment list</button>
-        : <div className="text-[12px]">Only an admin can rename equipment.</div>)}
+        ? <button type="button" disabled={busy} onClick={onRename} className="inline-flex items-center gap-1.5 h-10 px-3 rounded-lg border border-[var(--state-held)] bg-[var(--color-surface)] text-caption font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">Rename it {m.tag} in the equipment list</button>
+        : <div className="text-caption">Only an admin can rename equipment.</div>)}
     </div>
   );
 }
@@ -422,17 +422,17 @@ function EditRow({ m, data, busy, onSave, onCancel }: {
   return (
     <form className="mt-2 space-y-1.5" onSubmit={(e) => { e.preventDefault(); onSave(tagNow, cls); }}>
       <div className="grid gap-2 sm:grid-cols-[10rem_minmax(0,1fr)_minmax(0,1fr)]">
-        <label className="text-[11px] font-semibold text-[var(--color-text-muted)]">Tag
+        <label className="text-caption font-medium text-[var(--color-text-muted)]">Tag
           <input value={tag} onChange={(e) => setTag(e.target.value)} list={id} placeholder="E-12" aria-label="Equipment tag" autoFocus className={`${field} mt-0.5 w-full`} />
           <datalist id={id}>{data.registry.slice(0, 400).map((a) => <option key={a.id} value={a.tag.replace(/\s*\(.*$/, "")} />)}</datalist>
         </label>
-        <label className="text-[11px] font-semibold text-[var(--color-text-muted)]">Unit
+        <label className="text-caption font-medium text-[var(--color-text-muted)]">Unit
           <select value={unit} onChange={(e) => setUnit(e.target.value)} aria-label="Unit" className={`${field} mt-0.5 w-full`}>
             <option value="">No unit</option>
             {units.map((u) => <option key={u.code} value={u.code}>{unitName(u)}</option>)}
           </select>
         </label>
-        <label className="text-[11px] font-semibold text-[var(--color-text-muted)]">Equipment type
+        <label className="text-caption font-medium text-[var(--color-text-muted)]">Equipment type
           <select value={type} onChange={(e) => setType(e.target.value)} aria-label="Equipment type" className={`${field} mt-0.5 w-full`}>
             <option value="">No type</option>
             {type && !types.some((t) => t.code === type) && <option value={type}>Type {type} (not in the codebook)</option>}
@@ -443,9 +443,9 @@ function EditRow({ m, data, busy, onSave, onCancel }: {
       <div className="flex flex-wrap items-center gap-2">
         <button type="submit" disabled={busy} className={btn}>{busy && <Loader2 className="w-4 h-4 animate-spin" />} Save</button>
         <button type="button" disabled={busy} onClick={() => onSave(null, cls)} className={quiet}>No equipment</button>
-        <button type="button" disabled={busy} onClick={onCancel} className="text-[12px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-1">Cancel</button>
+        <button type="button" disabled={busy} onClick={onCancel} className="text-caption text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-1">Cancel</button>
       </div>
-      {tag.trim() && !known && <div className="text-[12px] text-[var(--color-text-muted)]">Not in the registry: it will be added under {unit ? unitName(units.find((u) => u.code === unit)) : "the project's unit"}.</div>}
+      {tag.trim() && !known && <div className="text-caption text-[var(--color-text-muted)]">Not in the registry: it will be added under {unit ? unitName(units.find((u) => u.code === unit)) : "the project's unit"}.</div>}
     </form>
   );
 }

@@ -50,7 +50,7 @@ export default function ScheduleFilterBar({ filter, onChange, groups, matchCount
   const ON = "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30 border-transparent";
   const quick = (label: string, icon: React.ReactNode, on: boolean, flip: () => void) => (
     <button type="button" onClick={flip} aria-pressed={on}
-      className={`shrink-0 whitespace-nowrap inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-bold border transition-colors ${on ? ON : "bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-[var(--color-border-strong)]"}`}>
+      className={`shrink-0 whitespace-nowrap inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-caption font-medium border transition-colors ${on ? ON : "bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-[var(--color-border-strong)]"}`}>
       {icon} {label}
     </button>
   );
@@ -67,7 +67,7 @@ export default function ScheduleFilterBar({ filter, onChange, groups, matchCount
             onChange={(e) => onChange({ ...filter, query: e.target.value })}
             placeholder="Search tasks, work-order number, area, person…"
             aria-label="Search tasks"
-            className="w-full h-9 pl-8 pr-8 text-[13px] rounded-[10px] bg-[var(--color-surface-2)] border border-transparent placeholder:text-[var(--color-text-faint)] focus:bg-[var(--color-surface)]"
+            className="w-full h-9 pl-8 pr-8 text-body rounded-lg bg-[var(--color-surface-2)] border border-transparent placeholder:text-[var(--color-text-faint)] focus:bg-[var(--color-surface)]"
           />
           {filter.query && (
             <button onClick={() => onChange({ ...filter, query: "" })} className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 rounded hover:bg-[var(--color-surface-2)] text-[var(--color-text-faint)] transition-colors" title="Clear search">
@@ -81,16 +81,16 @@ export default function ScheduleFilterBar({ filter, onChange, groups, matchCount
           <button
             onClick={() => setShowMore((v) => !v)}
             aria-expanded={showMore}
-            className={`shrink-0 whitespace-nowrap inline-flex items-center gap-1.5 h-9 px-3 rounded-[10px] text-[13px] font-semibold transition-colors ${showMore || filter.statuses.length || filter.groupIds.length || filter.shifts.length ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30" : "border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}
+            className={`shrink-0 whitespace-nowrap inline-flex items-center gap-1.5 h-10 px-3 rounded-lg text-body font-medium transition-colors ${showMore || filter.statuses.length || filter.groupIds.length || filter.shifts.length ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30" : "border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}
           >
             {(() => { const n = filter.statuses.length + filter.groupIds.length + filter.shifts.length + [filter.criticalOnly, filter.behindOnly, filter.overdueOnly, filter.notStartedOnly, filter.blockedOnly, !!filter.added?.length].filter(Boolean).length + (filter.units?.length ?? 0) + (filter.types?.length ?? 0); return <><SlidersHorizontal className="w-3.5 h-3.5" /> Filter{n > 0 ? ` (${n})` : ""}</>; })()}
           </button>
         {/* Match count + clear */}
-        <span className="text-[12px] text-[var(--color-text-muted)] tabular-nums ml-auto">
+        <span className="text-caption text-[var(--color-text-muted)] tabular-nums ml-auto">
           {active ? <><b className="text-[var(--color-text)]">{matchCount}</b> of {totalCount}</> : <>{totalCount} tasks</>}
         </span>
         {active && (
-          <button onClick={() => onChange(EMPTY_FILTER)} className="inline-flex items-center gap-1 h-9 text-[13px] font-semibold text-[var(--color-text)] px-2 rounded-[10px] hover:bg-[var(--color-surface-2)] transition-colors">
+          <button onClick={() => onChange(EMPTY_FILTER)} className="inline-flex items-center gap-1 h-10 text-body font-medium text-[var(--color-text)] px-2 rounded-lg hover:bg-[var(--color-surface-2)] transition-colors">
             <XIcon className="w-3 h-3" /> Clear
           </button>
         )}
@@ -100,7 +100,7 @@ export default function ScheduleFilterBar({ filter, onChange, groups, matchCount
       {showMore && (
         <div className="pt-2.5 space-y-2 border-t border-[var(--color-border)]">
           <div role="group" aria-label="Show only" className="flex items-center gap-1.5 flex-wrap">
-            <span className="text-[13px] font-semibold text-[var(--color-text-muted)] mr-1">Show only</span>
+            <span className="text-body font-medium text-[var(--color-text-muted)] mr-1">Show only</span>
           {classSelects}
           {quick("Critical path", <Flame className="w-3.5 h-3.5" />, !!filter.criticalOnly, () => onChange({ ...filter, criticalOnly: !filter.criticalOnly }))}
           {quick("Behind", <TrendingDown className="w-3.5 h-3.5" />, !!filter.behindOnly, () => onChange({ ...filter, behindOnly: !filter.behindOnly }))}
@@ -109,11 +109,11 @@ export default function ScheduleFilterBar({ filter, onChange, groups, matchCount
           {quick("Needs attention", <PauseCircle className="w-3.5 h-3.5" />, filter.blockedOnly, () => onChange({ ...filter, blockedOnly: !filter.blockedOnly }))}
           </div>
           <div className="flex items-center gap-1.5 flex-wrap">
-            <span className="text-[13px] font-semibold text-[var(--color-text-muted)] mr-1">Status</span>
+            <span className="text-body font-medium text-[var(--color-text-muted)] mr-1">Status</span>
             {STATUS_CHIPS.map(({ s, label, dot }) => {
               const on = filter.statuses.includes(s);
               return (
-                <button key={s} onClick={() => toggleStatus(s)} className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-[11px] font-semibold border transition-colors ${on ? ON : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`}>
+                <button key={s} onClick={() => toggleStatus(s)} className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-caption font-medium border transition-colors ${on ? ON : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`}>
                   <span className={`w-1.5 h-1.5 rounded-full ${dot}`} /> {label}
                 </button>
               );
@@ -121,11 +121,11 @@ export default function ScheduleFilterBar({ filter, onChange, groups, matchCount
           </div>
           {groups.length > 1 && (
             <div className="flex items-center gap-1.5 flex-wrap">
-              <span className="text-[13px] font-semibold text-[var(--color-text-muted)] mr-1">Group</span>
+              <span className="text-body font-medium text-[var(--color-text-muted)] mr-1">Group</span>
               {groups.map((g) => {
                 const on = !!g.id && filter.groupIds.includes(g.id);
                 return (
-                  <button key={g.id} onClick={() => g.id && toggleGroup(g.id)} className={`px-2 py-1 rounded-full text-[11px] font-semibold border transition-colors ${on ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30 border-transparent" : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`}>
+                  <button key={g.id} onClick={() => g.id && toggleGroup(g.id)} className={`px-2 py-1 rounded-full text-caption font-medium border transition-colors ${on ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30 border-transparent" : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`}>
                     {g.name}
                   </button>
                 );
@@ -133,19 +133,19 @@ export default function ScheduleFilterBar({ filter, onChange, groups, matchCount
             </div>
           )}
           <div className="flex items-center gap-1.5 flex-wrap">
-            <span className="text-[13px] font-semibold text-[var(--color-text-muted)] mr-1">Discovery &amp; added</span>
+            <span className="text-body font-medium text-[var(--color-text-muted)] mr-1">Discovery &amp; added</span>
             {(["discovery", "added"] as const).map((k) => {
               const on = !!filter.added?.includes(k);
               return (
                 <button key={k} aria-pressed={on} onClick={() => onChange({ ...filter, added: on ? (filter.added ?? []).filter((x) => x !== k) : [...(filter.added ?? []), k] })}
-                  className={`px-2 py-1 rounded-full text-[11px] font-semibold border transition-colors ${on ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30 border-transparent" : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`}>
+                  className={`px-2 py-1 rounded-full text-caption font-medium border transition-colors ${on ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30 border-transparent" : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`}>
                   {ADDED[k].word}
                 </button>
               );
             })}
           </div>
           <div className="flex items-center gap-1.5 flex-wrap">
-            <span className="text-[13px] font-semibold text-[var(--color-text-muted)] mr-1">Shift</span>
+            <span className="text-body font-medium text-[var(--color-text-muted)] mr-1">Shift</span>
             {(["day", "night", "swing"] as const).map((sh) => {
               const on = filter.shifts.includes(sh);
               const has = filter.shifts.includes(sh);
@@ -153,7 +153,7 @@ export default function ScheduleFilterBar({ filter, onChange, groups, matchCount
                 <button
                   key={sh}
                   onClick={() => onChange({ ...filter, shifts: has ? filter.shifts.filter((x) => x !== sh) : [...filter.shifts, sh] })}
-                  className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-[11px] font-semibold border capitalize transition-colors ${on ? ON : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`}
+                  className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-caption font-medium border capitalize transition-colors ${on ? ON : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`}
                 >
                   {sh === "day" ? <Sun className="w-3 h-3" /> : sh === "night" ? <Moon className="w-3 h-3" /> : <Sunset className="w-3 h-3" />} {sh}
                 </button>

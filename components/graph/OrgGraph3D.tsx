@@ -1071,13 +1071,13 @@ export default function OrgGraph3D({
     >
       {failed && (
         <div className="absolute inset-0 flex items-center justify-center p-6 text-center">
-          <div className="text-[13px] text-amber-300 max-w-xs">{failed}</div>
+          <div className="text-body text-amber-300 max-w-xs">{failed}</div>
         </div>
       )}
       {pinned && ready && !failed && (
         <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-10 flex items-center gap-2 rounded-full bg-black/40 backdrop-blur px-2 py-1 max-w-[calc(100%-24px)]">
-          <button onClick={() => { refitRef.current++; setGapIds(new Set()); onSelect(null); }} className="shrink-0 rounded-full bg-white/10 hover:bg-white/20 text-white text-[13px] font-bold px-2.5 py-0.5">Whole site</button>
-          <span className="text-[13px] text-[var(--color-text-faint)] truncate">Drag to turn · scroll toward what you want · click to open · point at a line to see why it exists</span>
+          <button onClick={() => { refitRef.current++; setGapIds(new Set()); onSelect(null); }} className="shrink-0 rounded-full bg-white/10 hover:bg-white/20 text-white text-body font-medium px-2.5 py-0.5">Whole site</button>
+          <span className="text-body text-[var(--color-text-faint)] truncate">Drag to turn · scroll toward what you want · click to open · point at a line to see why it exists</span>
         </div>
       )}
       {pinned && ready && !failed && info && (
@@ -1086,31 +1086,31 @@ export default function OrgGraph3D({
           onPick={(n) => onSelect(n)} />
       )}
       {hover && !linkCard && (
-        <div className="absolute z-20 pointer-events-none max-w-[280px] rounded-lg border border-white/15 bg-slate-950/90 px-2.5 py-1.5 text-[13px] text-slate-200 shadow-xl"
+        <div className="absolute z-20 pointer-events-none max-w-[280px] rounded-lg border border-white/15 bg-slate-950/90 px-2.5 py-1.5 text-body text-slate-200 shadow-xl"
           style={{ left: Math.min(hover.x + 14, (mountRef.current?.clientWidth ?? 9999) - 290), top: hover.y + 14 }}>
-          <div className="font-semibold text-white flex items-center gap-1.5">{hover.color && <span className="w-2 h-2 rounded-full shrink-0" style={{ background: hover.color }} />}<span className="break-words">{hover.title}</span></div>
+          <div className="font-medium text-white flex items-center gap-1.5">{hover.color && <span className="w-2 h-2 rounded-full shrink-0" style={{ background: hover.color }} />}<span className="break-words">{hover.title}</span></div>
           {hover.lines.map((l, i) => <div key={i} className="text-[var(--color-text-faint)] leading-snug">{l}</div>)}
-          {hover.hint && <div className="mt-0.5 text-[13px] text-[var(--color-text-faint)]">{hover.hint}</div>}
+          {hover.hint && <div className="mt-0.5 text-body text-[var(--color-text-faint)]">{hover.hint}</div>}
         </div>
       )}
       {linkCard && (
-        <div className="absolute z-20 w-72 rounded-lg border border-white/15 bg-slate-950/95 p-2.5 text-[13px] text-slate-200 shadow-2xl"
+        <div className="absolute z-20 w-72 rounded-lg border border-white/15 bg-slate-950/95 p-2.5 text-body text-slate-200 shadow-2xl"
           style={{ left: Math.min(linkCard.x + 10, (mountRef.current?.clientWidth ?? 9999) - 300), top: Math.min(linkCard.y + 10, (mountRef.current?.clientHeight ?? 9999) - 140) }}>
           <div className="flex items-start justify-between gap-2">
-            <div className="text-[13px] font-semibold text-amber-300">Why these are linked</div>
+            <div className="text-body font-medium text-amber-300">Why these are linked</div>
             <button onClick={() => setLinkCard(null)} className="text-[var(--color-text-faint)] hover:text-white">✕</button>
           </div>
           <div className="mt-1 leading-snug text-slate-100">{linkCard.why}</div>
           <div className="mt-2 flex flex-wrap gap-1">
             {[linkCard.a, linkCard.b].map((n) => (
-              <button key={n.id} onClick={() => { setLinkCard(null); onSelect(n); }} className="rounded-full bg-white/10 hover:bg-white/20 px-2 py-0.5 font-semibold truncate max-w-full">{n.label.replace(/ · \d+ docs?$/, "")}</button>
+              <button key={n.id} onClick={() => { setLinkCard(null); onSelect(n); }} className="rounded-full bg-white/10 hover:bg-white/20 px-2 py-0.5 font-medium truncate max-w-full">{n.label.replace(/ · \d+ docs?$/, "")}</button>
             ))}
           </div>
         </div>
       )}
       {!ready && !failed && (
         <div className="absolute inset-0 flex items-center justify-center">
-          <div className="text-[13px] font-bold text-[var(--color-text-faint)]">Building the 3D scene…</div>
+          <div className="text-body font-medium text-[var(--color-text-faint)]">Building the 3D scene…</div>
         </div>
       )}
     </div>
@@ -1133,7 +1133,7 @@ function GlobeLegend({ info, nodes, gapIds, onGaps, onPick }: {
   const unplacedDocs = info.get("__unplaced__")?.docs ?? 0;
   const order: GlobeKind[] = ["area", "category", "asset", "docgroup", "document", "project", "group"];
   return (
-    <div className="absolute top-14 max-sm:top-[6.5rem] left-3 z-10 w-56 max-sm:w-48 rounded-xl border border-white/10 bg-slate-950/75 backdrop-blur p-2.5 text-[13px] text-slate-200 space-y-1.5">
+    <div className="absolute top-14 max-sm:top-[6.5rem] left-3 z-10 w-56 max-sm:w-48 rounded-xl border border-white/10 bg-slate-950/75 backdrop-blur p-2.5 text-body text-slate-200 space-y-1.5">
       {site && <div className="text-[var(--color-text-faint)]">{site.equipment} equipment · {site.docs} documents</div>}
       <div className="space-y-0.5">
         {order.filter((k) => counts.get(k)).map((k) => (
@@ -1145,7 +1145,7 @@ function GlobeLegend({ info, nodes, gapIds, onGaps, onPick }: {
         ))}
       </div>
       <div className="border-t border-white/10 pt-1.5 space-y-1">
-        <div className="text-[13px] font-semibold text-[var(--color-text-faint)]">Gaps</div>
+        <div className="text-body font-medium text-[var(--color-text-faint)]">Gaps</div>
         <button disabled={!bare.length} onClick={() => onGaps(gapIds.size ? new Set() : new Set(bare))}
           className={`w-full text-left rounded-md px-1.5 py-1 ${gapIds.size ? "bg-[var(--state-held)]/20 text-amber-200" : "hover:bg-white/10"} disabled:opacity-40`}>
           {gapIds.size ? "Showing" : "Show"} equipment with no documents ({bare.length})

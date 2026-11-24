@@ -108,8 +108,8 @@ export default function SharedPdfViewer({ url, title, sub, onClose, onDownload, 
           <X className="w-5 h-5" />
         </button>
         <div className="min-w-0 flex-1">
-          <div className="text-[15px] font-semibold text-[var(--color-text)] truncate">{title}</div>
-          {sub && <div className="text-[13px] text-[var(--color-text-muted)] truncate">{sub}</div>}
+          <div className="text-reading font-medium text-[var(--color-text)] truncate">{title}</div>
+          {sub && <div className="text-body text-[var(--color-text-muted)] truncate">{sub}</div>}
         </div>
         {onDownload && (
           <button type="button" onClick={onDownload} disabled={downloading} className={`${btnQuiet} h-10 max-sm:px-2.5`} aria-label="Download">
@@ -121,7 +121,7 @@ export default function SharedPdfViewer({ url, title, sub, onClose, onDownload, 
 
       <div ref={scroller} className="flex-1 min-h-0 overflow-auto overscroll-contain" style={{ touchAction: "pan-x pan-y pinch-zoom" }}>
         {err ? (
-          <div className="max-w-md mx-auto mt-16 px-4 text-center text-[15px] text-[var(--color-text)]">{err}</div>
+          <div className="max-w-md mx-auto mt-16 px-4 text-center text-reading text-[var(--color-text)]">{err}</div>
         ) : fit > 0 && (
           <Document
             file={file}
@@ -135,7 +135,7 @@ export default function SharedPdfViewer({ url, title, sub, onClose, onDownload, 
               } catch { /* keep the default shape */ }
             }}
             onLoadError={() => setErr("The document couldn't be shown. Try again, or ask the person who sent it.")}
-            loading={<div className="flex items-center justify-center gap-2 py-24 text-[15px] text-[var(--color-text-muted)]"><Loader2 className="w-5 h-5 animate-spin" /> Opening…</div>}
+            loading={<div className="flex items-center justify-center gap-2 py-24 text-reading text-[var(--color-text-muted)]"><Loader2 className="w-5 h-5 animate-spin" /> Opening…</div>}
           >
             <div className="py-3 sm:py-6 flex flex-col gap-3 sm:gap-5" style={{ minWidth: width + 16 }}>
               {Array.from({ length: pages }, (_, i) => (
@@ -147,7 +147,7 @@ export default function SharedPdfViewer({ url, title, sub, onClose, onDownload, 
       </div>
 
       <div className="shrink-0 flex items-center gap-2 px-3 sm:px-4 h-14 bg-[var(--color-surface)] border-t border-[var(--color-border)] pb-[env(safe-area-inset-bottom)]">
-        <div className="text-[14px] text-[var(--color-text-muted)] tabular-nums min-w-0 truncate">
+        <div className="text-body text-[var(--color-text-muted)] tabular-nums min-w-0 truncate">
           {pages > 0 ? (pages === 1 ? "1 page" : `Page ${current} of ${pages}`) : ""}
           {downloadNote && <span className="max-sm:hidden"> · {downloadNote}</span>}
         </div>
@@ -156,7 +156,7 @@ export default function SharedPdfViewer({ url, title, sub, onClose, onDownload, 
           <button type="button" aria-label="Zoom out" onClick={() => setZoomAt((z) => Math.max(0, z - 1))} disabled={zoomAt === 0} className={`${btnIcon} w-11 h-11`}>
             <Minus className="w-5 h-5" />
           </button>
-          <span className="w-14 text-center text-[14px] font-semibold tabular-nums text-[var(--color-text)]">{zoomLabel}</span>
+          <span className="w-14 text-center text-body font-medium tabular-nums text-[var(--color-text)]">{zoomLabel}</span>
           <button type="button" aria-label="Zoom in" onClick={() => setZoomAt((z) => Math.min(ZOOMS.length - 1, z + 1))} disabled={zoomAt === ZOOMS.length - 1} className={`${btnIcon} w-11 h-11`}>
             <Plus className="w-5 h-5" />
           </button>

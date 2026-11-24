@@ -365,8 +365,8 @@ export default function AdminUsersPage() {
           <ErrorNote error={loadError} title="Couldn't load the people in this workspace." onRetry={() => void fetchMembers()} />
         ) : members.length === 0 ? (
           <div className={`${tbl.wrap} px-4 py-8 text-center`}>
-            <p className="text-[15px] text-[var(--color-text)]">Nobody is in this workspace yet.</p>
-            <button type="button" onClick={openAdd} className={`${link} mt-2 font-semibold`}>Add the first person</button>
+            <p className="text-reading text-[var(--color-text)]">Nobody is in this workspace yet.</p>
+            <button type="button" onClick={openAdd} className={`${link} mt-2 font-medium`}>Add the first person</button>
           </div>
         ) : (
           <div className="space-y-3">
@@ -405,7 +405,7 @@ export default function AdminUsersPage() {
                         </td>
                         <td className={`${tbl.td} whitespace-nowrap`}>
                           <StatusTag tone={st.tone}>{st.word}</StatusTag>
-                          {mustUseMicrosoft(m.email, policy) && <div className="text-[13px] text-[var(--color-text-muted)] mt-0.5">Signs in with Microsoft</div>}
+                          {mustUseMicrosoft(m.email, policy) && <div className="text-body text-[var(--color-text-muted)] mt-0.5">Signs in with Microsoft</div>}
                         </td>
                         <td className={`${tbl.td} max-md:hidden whitespace-nowrap text-[var(--color-text-muted)]`}>
                           {shortDate(m.created_at) || <span className="text-[var(--color-text-faint)]">Not recorded</span>}
@@ -443,7 +443,7 @@ export default function AdminUsersPage() {
                     <div className="mt-3">
                       <RoleChips m={m} isSelf={isSelf} saving={savingRoleId === m.id} onAdd={(r) => addRole(m, r)} onRemove={(r) => removeRole(m, r)} />
                     </div>
-                    <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px] text-[var(--color-text-muted)]">
+                    <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-body text-[var(--color-text-muted)]">
                       <StatusTag tone={st.tone}>{st.word}</StatusTag>
                       {mustUseMicrosoft(m.email, policy) && <span>Signs in with Microsoft</span>}
                       {m.created_at && <span>Added {shortDate(m.created_at)}</span>}
@@ -489,11 +489,11 @@ function Person({ m, isSelf }: { m: MemberRow; isSelf: boolean }) {
     <div className="flex items-center gap-3 min-w-0">
       <UserAvatar uid={m.uid} name={m.display_name} email={m.email} size={36} rounded="full" />
       <div className="min-w-0">
-        <div className="font-semibold text-[var(--color-text)] truncate">
+        <div className="font-medium text-[var(--color-text)] truncate">
           {m.display_name || m.email}
-          {isSelf && <span className="ml-1.5 text-[13px] font-normal text-[var(--color-text-muted)]">(you)</span>}
+          {isSelf && <span className="ml-1.5 text-body font-normal text-[var(--color-text-muted)]">(you)</span>}
         </div>
-        <div className="text-[13px] text-[var(--color-text-muted)] truncate">{m.display_name ? m.email : 'No name yet'}</div>
+        <div className="text-body text-[var(--color-text-muted)] truncate">{m.display_name ? m.email : 'No name yet'}</div>
       </div>
     </div>
   );
@@ -587,13 +587,13 @@ function AddPersonDialog({ formData, setFormData, policy, members, processing, e
             </Select>
           </Field>
 
-          {error && <p role="alert" className="text-[14px] font-semibold text-[var(--state-overdue-text)]">{error}</p>}
+          {error && <p role="alert" className="text-body font-medium text-[var(--state-overdue-text)]">{error}</p>}
 
           <div className="pt-1">
             <Button type="submit" loading={processing} disabled={blocked} className="w-full">
               {already ? 'Add them again' : 'Add to workspace'}
             </Button>
-            <p className="text-[13px] text-center text-[var(--color-text-muted)] mt-2.5">
+            <p className="text-body text-center text-[var(--color-text-muted)] mt-2.5">
               {already ? 'Their sign-in stays as it is.'
                 : viaMicrosoft ? 'They sign in with Microsoft using this email.'
                 : "If they have no sign-in yet, you'll get a one-time password to give them."}
@@ -622,7 +622,7 @@ function RoleAddPicker({
 
   // Nothing left that would grant new access.
   if (options.length === 0) {
-    return <span className="text-[13px] text-[var(--color-text-muted)]">Full access</span>;
+    return <span className="text-body text-[var(--color-text-muted)]">Full access</span>;
   }
 
   return (
@@ -641,7 +641,7 @@ function RoleAddPicker({
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
           <div role="menu" className="on-sheet ui-float ui-float-in absolute left-0 z-50 mt-1 w-72 max-w-[calc(100vw-3rem)] bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] rounded-xl py-1 max-h-72 overflow-auto">
-            <div className="px-3 py-1.5 text-[13px] text-[var(--color-text-muted)] border-b border-[var(--color-border)]">
+            <div className="px-3 py-1.5 text-body text-[var(--color-text-muted)] border-b border-[var(--color-border)]">
               Roles that add new access
             </div>
             {options.map((r) => {
@@ -654,8 +654,8 @@ function RoleAddPicker({
                   role="menuitem"
                   className="block w-full text-left px-3 py-2 hover:bg-[var(--color-surface-2)] transition-colors"
                 >
-                  <div className="text-[14px] font-semibold text-[var(--color-text)]">{r}</div>
-                  <div className="text-[13px] text-[var(--color-text-muted)] leading-snug mt-0.5">Adds {adds.join(', ')}</div>
+                  <div className="text-body font-medium text-[var(--color-text)]">{r}</div>
+                  <div className="text-body text-[var(--color-text-muted)] leading-snug mt-0.5">Adds {adds.join(', ')}</div>
                 </button>
               );
             })}

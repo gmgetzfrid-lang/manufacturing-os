@@ -13,6 +13,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useRole } from "@/components/providers/RoleContext";
 import { useStagedDocs } from "@/lib/stagedDocs";
 import { onTransitionClick, transitionPush } from "@/lib/viewTransition";
+import { TabGlide } from "@/components/ui/TabGlide";
 
 export interface ViewTab {
   label: string;
@@ -87,9 +88,9 @@ export default function ViewTabs({
   return (
     <div className="flex items-end gap-x-4 gap-y-2 flex-wrap min-w-0 max-w-full mb-4 border-b border-[var(--color-border)]">
       {title && (
-        <span className="self-center text-[14px] text-[var(--color-text-muted)]">{title}</span>
+        <span className="self-center text-body text-[var(--color-text-muted)]">{title}</span>
       )}
-      <nav aria-label={title ? `${title} views` : "Views"} ref={strip} className="-mb-px flex items-end gap-5 min-w-0 max-w-full overflow-x-auto overscroll-x-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+      <nav aria-label={title ? `${title} views` : "Views"} ref={strip} className="relative tab-glide -mb-px flex items-end gap-5 min-w-0 max-w-full overflow-x-auto overscroll-x-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         {tabs.map((t) => {
           const active = isActive(t);
           const badge = badgeOf(t);
@@ -102,19 +103,20 @@ export default function ViewTabs({
                 onTransitionClick(e, () => router.push(hrefFor(t.href)));
               }}
               aria-current={active ? "page" : undefined}
-              className={`shrink-0 whitespace-nowrap inline-flex items-center gap-1.5 h-10 pointer-coarse:h-11 border-b-2 text-[14px] transition-colors ${
+              className={`shrink-0 whitespace-nowrap inline-flex items-center gap-1.5 h-10 pointer-coarse:h-11 border-b-2 text-body transition-colors ${
                 active
-                  ? "border-[var(--color-current)] text-[var(--color-text)] font-semibold"
+                  ? "border-[var(--color-current)] text-[var(--color-text)] font-medium"
                   : "border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-border-strong)]"
               }`}
             >
               {t.label}
               {typeof badge === "number" && badge > 0 && (
-                <span className="text-[13px] font-normal tabular-nums text-[var(--color-text-muted)]">{badgeText(badge)}</span>
+                <span className="text-body font-normal tabular-nums text-[var(--color-text-muted)]">{badgeText(badge)}</span>
               )}
             </Link>
           );
         })}
+        <TabGlide id={`views:${title ?? "views"}`} />
       </nav>
       {right && <div className="ml-auto self-center pb-1.5">{right}</div>}
     </div>

@@ -239,7 +239,7 @@ export default function CommandPalette({
             placeholder="Search documents, folders, or actions…"
             className="flex-1 bg-transparent text-[var(--color-text)] text-sm placeholder-[var(--color-text-faint)]"
           />
-          <kbd className="text-[13px] font-mono text-[var(--color-text-muted)] bg-[var(--color-surface-2)] border border-[var(--color-border)] px-1.5 py-0.5 rounded">ESC</kbd>
+          <kbd className="text-body font-mono text-[var(--color-text-muted)] bg-[var(--color-surface-2)] border border-[var(--color-border)] px-1.5 py-0.5 rounded">ESC</kbd>
         </div>
 
         {/* Results */}
@@ -302,11 +302,11 @@ export default function CommandPalette({
                       {primary}
                     </div>
                     {secondary && (
-                      <div className="text-[13px] text-[var(--color-text-muted)] truncate">{secondary}</div>
+                      <div className="text-body text-[var(--color-text-muted)] truncate">{secondary}</div>
                     )}
                   </div>
                   <div className="shrink-0 flex items-center gap-2">
-                    <span className="text-[13px] font-semibold text-[var(--color-text-faint)] ">{kindLabel}</span>
+                    <span className="text-body font-medium text-[var(--color-text-faint)] ">{kindLabel}</span>
                     {active && <CornerDownLeft className="w-3 h-3 text-[var(--color-text-muted)]" />}
                   </div>
                 </button>
@@ -316,7 +316,7 @@ export default function CommandPalette({
         </div>
 
         {/* Footer hint */}
-        <div className="px-4 py-2 border-t border-[var(--color-border)] flex items-center justify-between text-[13px] text-[var(--color-text-muted)]">
+        <div className="px-4 py-2 border-t border-[var(--color-border)] flex items-center justify-between text-body text-[var(--color-text-muted)]">
           <div className="flex items-center gap-3">
             <span className="flex items-center gap-1">
               <kbd className="font-mono bg-[var(--color-surface-2)] border border-[var(--color-border)] px-1 rounded">↑</kbd>

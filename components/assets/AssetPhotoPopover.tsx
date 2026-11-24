@@ -186,15 +186,15 @@ export default function AssetPhotoPopover({
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5">
-            <span className="text-[13px] font-semibold text-[var(--color-text)] truncate">{equipmentLabel({ tag: asset.tag, code: asset.code })}</span>
+            <span className="text-body font-medium text-[var(--color-text)] truncate">{equipmentLabel({ tag: asset.tag, code: asset.code })}</span>
             {assetType && (
-              <span className="text-[13px] font-semibold bg-[var(--color-surface-2)] text-[var(--color-text-muted)] px-1.5 py-0.5 rounded">
+              <span className="text-body font-medium bg-[var(--color-surface-2)] text-[var(--color-text-muted)] px-1.5 py-0.5 rounded">
                 {assetType.name}
               </span>
             )}
           </div>
           {(asset.description || asset.location) && (
-            <div className="text-[13px] text-[var(--color-text-muted)] truncate flex items-center gap-1.5">
+            <div className="text-body text-[var(--color-text-muted)] truncate flex items-center gap-1.5">
               {asset.description && <span className="truncate">{asset.description}</span>}
               {asset.location && (
                 <span className="inline-flex items-center gap-0.5 shrink-0">
@@ -217,11 +217,11 @@ export default function AssetPhotoPopover({
       {/* Main photo area */}
       <div className="relative bg-[var(--color-surface-2)] aspect-[4/3] flex items-center justify-center">
         {loading ? (
-          <div className="text-[var(--color-text-faint)] flex items-center gap-2 text-[13px]">
+          <div className="text-[var(--color-text-faint)] flex items-center gap-2 text-body">
             <Loader2 className="w-4 h-4 animate-spin" /> Loading photos…
           </div>
         ) : loadFailed ? (
-          <div role="alert" className="text-[13px] text-[var(--state-overdue)] p-3 text-center">Couldn&apos;t load the photos. Close and open the tag again.</div>
+          <div role="alert" className="text-body text-[var(--state-overdue)] p-3 text-center">Couldn&apos;t load the photos. Close and open the tag again.</div>
         ) : photos.length === 0 ? (
           <EmptyState canUpload={canManage && !!onUploadClick} onUpload={onUploadClick} />
         ) : (
@@ -257,14 +257,14 @@ export default function AssetPhotoPopover({
 
       {/* Date, age and status: a plain line under the photo, not a badge on it. */}
       {active && age && (
-        <div className="px-3 py-1.5 border-t border-[var(--color-border)] flex items-center gap-1.5 text-[13px] text-[var(--color-text-muted)]">
+        <div className="px-3 py-1.5 border-t border-[var(--color-border)] flex items-center gap-1.5 text-body text-[var(--color-text-muted)]">
           <Calendar className="w-3 h-3 shrink-0" />
           <span className="tabular-nums">{active.captured_at ? new Date(active.captured_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "No date"}</span>
           {age.category !== "unknown" && (
-            <span className={age.category === "stale" ? "text-[var(--state-overdue)] font-bold" : age.category === "aging" ? "text-[var(--state-held)] font-bold" : ""}>· {age.label}</span>
+            <span className={age.category === "stale" ? "text-[var(--state-overdue)] font-medium" : age.category === "aging" ? "text-[var(--state-held)] font-medium" : ""}>· {age.label}</span>
           )}
           {active.status !== "current" && (
-            <span className={`ml-auto font-bold ${active.status === "needs_verification" ? "text-[var(--state-held)]" : "text-[var(--state-overdue)]"}`}>
+            <span className={`ml-auto font-medium ${active.status === "needs_verification" ? "text-[var(--state-held)]" : "text-[var(--state-overdue)]"}`}>
               {active.status === "needs_verification" ? "Needs checking" : "Out of date"}
             </span>
           )}
@@ -273,7 +273,7 @@ export default function AssetPhotoPopover({
 
       {/* Caption */}
       {active?.caption && (
-        <div className="px-3 py-2 text-[13px] text-[var(--color-text)] border-t border-[var(--color-border)] leading-snug">
+        <div className="px-3 py-2 text-body text-[var(--color-text)] border-t border-[var(--color-border)] leading-snug">
           {active.caption}
         </div>
       )}
@@ -299,14 +299,14 @@ export default function AssetPhotoPopover({
 
       {/* Footer action */}
       <div className="px-3 py-2 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-between gap-2">
-        <span className="text-[13px] text-[var(--color-text-muted)]">
+        <span className="text-body text-[var(--color-text-muted)]">
           {photos.length > 0 ? `${activeIdx + 1} of ${photos.length}` : "No photos"}
           {photos.length > 0 && <> · <button onClick={onExpandFull} className="text-[var(--color-accent-text)] hover:underline">Open full view</button></>}
         </span>
         {canManage && onUploadClick && photos.length > 0 && (
           <button
             onClick={onUploadClick}
-            className="inline-flex items-center gap-1 px-2 py-1 rounded text-[13px] font-bold border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
+            className="inline-flex items-center gap-1 px-2 py-1 rounded text-body font-medium border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
           >
             <Upload className="w-3 h-3" /> Add photos
           </button>
@@ -321,12 +321,12 @@ function EmptyState({ canUpload, onUpload }: { canUpload: boolean; onUpload?: ()
   return (
     <div className="flex flex-col items-center text-center text-[var(--color-text-muted)] p-3">
       <Camera className="w-8 h-8 text-[var(--color-text-faint)] mb-1" />
-      <div className="text-[13px] font-bold text-[var(--color-text)]">No photos yet</div>
+      <div className="text-body font-medium text-[var(--color-text)]">No photos yet</div>
       {canUpload && onUpload && (
         <button
           type="button"
           onClick={onUpload}
-          className="mt-2 inline-flex items-center gap-1 h-8 px-2.5 rounded-lg text-[13px] font-bold text-[var(--color-surface)] bg-[var(--color-text)] hover:opacity-90"
+          className="mt-2 inline-flex items-center gap-1 h-8 px-2.5 rounded-lg text-body font-medium text-[var(--color-surface)] bg-[var(--color-text)] hover:opacity-90"
         >
           <Upload className="w-3 h-3" /> Upload first photo
         </button>

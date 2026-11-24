@@ -125,10 +125,10 @@ export default function SlideTemplateSetup({ bare = false }: { bare?: boolean } 
   const heading = "Slide template";
   const notes = (
     <>
-      {err && <p role="alert" className="mt-3 text-[14px] font-semibold text-[var(--state-overdue-text)]">{err}</p>}
-      {msg && <p role="status" className="mt-3 inline-flex items-center gap-1.5 text-[14px] text-[var(--color-text)]"><Check className="w-4 h-4 text-[var(--state-released)]" /> {msg}</p>}
+      {err && <p role="alert" className="mt-3 text-body font-medium text-[var(--state-overdue-text)]">{err}</p>}
+      {msg && <p role="status" className="mt-3 inline-flex items-center gap-1.5 text-body text-[var(--color-text)]"><Check className="w-4 h-4 text-[var(--state-released)]" /> {msg}</p>}
       {held && (
-        <p role="status" className="mt-3 flex items-center gap-3 text-[14px] font-semibold text-[var(--color-text)]">
+        <p role="status" className="mt-3 flex items-center gap-3 text-body font-medium text-[var(--color-text)]">
           The test deck is ready.
           <button type="button" onClick={async () => { if (await saveFile(held.data, held.name, PPTX_MIME)) setHeld(null); }} className={btnQuiet}><Download className="w-4 h-4" /> Save file</button>
         </p>
@@ -143,11 +143,11 @@ export default function SlideTemplateSetup({ bare = false }: { bare?: boolean } 
         <label {...drag.bind}
           className={`flex flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed px-4 py-9 text-center cursor-pointer transition-colors ${drag.over ? `border-[var(--color-main)] ${drag.ring}` : "border-[var(--color-border-strong)] hover:bg-[var(--color-surface-2)]"} ${!canEdit ? "pointer-events-none opacity-60" : ""}`}>
           <span aria-hidden className="text-[var(--color-text-faint)]">{busy === "read" ? <Loader2 className="w-5 h-5 animate-spin" /> : <FileUp className="w-5 h-5" />}</span>
-          <span className="text-[16px] font-semibold text-[var(--color-text)]">{drag.over ? drag.say : busy === "read" ? "Reading your template" : "Upload your company's PowerPoint template"}</span>
-          <span className="text-[14px] text-[var(--color-text-muted)] max-w-md">A .pptx or .potx. Review slides go onto its layouts, fonts and colors.</span>
+          <span className="text-reading font-medium text-[var(--color-text)]">{drag.over ? drag.say : busy === "read" ? "Reading your template" : "Upload your company's PowerPoint template"}</span>
+          <span className="text-body text-[var(--color-text-muted)] max-w-md">A .pptx or .potx. Review slides go onto its layouts, fonts and colors.</span>
           <input type="file" accept={TEMPLATE_ACCEPT} className="sr-only" disabled={!!busy || !canEdit} onChange={(e) => { void upload(e.target.files?.[0]); e.target.value = ""; }} />
         </label>
-        {!canEdit && <p className="mt-2 text-[13px] text-[var(--color-text-muted)]">Only an admin can set the slide template.</p>}
+        {!canEdit && <p className="mt-2 text-body text-[var(--color-text-muted)]">Only an admin can set the slide template.</p>}
         {notes}
       </>
     );
@@ -158,14 +158,14 @@ export default function SlideTemplateSetup({ bare = false }: { bare?: boolean } 
     <>
       <div className="flex flex-col sm:flex-row gap-5">
         <div className="min-w-0 flex-1">
-          <div className="text-[17px] font-semibold text-[var(--color-text)] break-words">{ref.name}</div>
-          <div className="mt-0.5 text-[14px] text-[var(--color-text-muted)]">{ref.layouts.length} layouts · {mb(ref.size)} · Saved {day(ref.savedAt)}</div>
+          <div className="text-section font-semibold text-[var(--color-text)] break-words">{ref.name}</div>
+          <div className="mt-0.5 text-body text-[var(--color-text-muted)]">{ref.layouts.length} layouts · {mb(ref.size)} · Saved {day(ref.savedAt)}</div>
           <div className="mt-3 flex items-center gap-1.5" aria-label="Template colors">
             {ref.colors.swatches.map((c) => (
               <span key={c} title={`#${c}`} className={`rounded-full ring-1 ring-black/10 ${c === ref.colors.main || c === ref.colors.accent ? "w-7 h-7" : "w-5 h-5"}`} style={{ background: `#${c}` }} />
             ))}
           </div>
-          <div className="mt-2 text-[14px] text-[var(--color-text)]">Titles in <b className="font-semibold">{ref.fonts.title}</b>, text in <b className="font-semibold">{ref.fonts.body}</b></div>
+          <div className="mt-2 text-body text-[var(--color-text)]">Titles in <b className="font-medium">{ref.fonts.title}</b>, text in <b className="font-medium">{ref.fonts.body}</b></div>
           <div className="mt-4 flex flex-wrap gap-2">
             <button type="button" onClick={() => void testDeck()} disabled={!!busy} className={btnQuiet}>
               {busy === "test" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />} Make a test deck
@@ -177,13 +177,13 @@ export default function SlideTemplateSetup({ bare = false }: { bare?: boolean } 
       </div>
 
       <div className="mt-5" data-template-preview>
-        <div className="mb-2 text-[13px] font-semibold text-[var(--color-text-muted)]">How slides come out on it</div>
+        <div className="mb-2 text-body font-medium text-[var(--color-text-muted)]">How slides come out on it</div>
         {shown?.deck ? (
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
             {shown.deck.slides.map((h, i) => <SlideFrame key={i} html={h} w={shown.deck!.w} h={shown.deck!.h} label={`Test slide ${i + 1}`} className="rounded-sm overflow-hidden ring-1 ring-[var(--color-border-strong)]" />)}
           </div>
         ) : shown?.error ? (
-          <p role="alert" className="text-[14px] font-semibold text-[var(--state-overdue-text)]">{said(shown.error, "The test slides couldn't be drawn.")}</p>
+          <p role="alert" className="text-body font-medium text-[var(--state-overdue-text)]">{said(shown.error, "The test slides couldn't be drawn.")}</p>
         ) : (
           <div role="status" className="grid grid-cols-2 lg:grid-cols-4 gap-3">
             <span className="sr-only">Laying test slides on your template</span>
@@ -193,16 +193,16 @@ export default function SlideTemplateSetup({ bare = false }: { bare?: boolean } 
       </div>
 
       <div className="mt-5 rounded-lg border border-[var(--color-border)] divide-y divide-[var(--color-border)]">
-        <div className="px-4 py-2.5 text-[13px] font-semibold text-[var(--color-text-muted)]">Which layout each slide goes on</div>
+        <div className="px-4 py-2.5 text-body font-medium text-[var(--color-text-muted)]">Which layout each slide goes on</div>
         {roleRows.map((role) => {
           const auto = ref.roles[role];
           const value = ref.pick?.[role] ?? auto ?? "none";
           const optional = role === "agenda" || role === "section";
           return (
             <div key={role} className="px-4 py-2.5 flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4">
-              <label htmlFor={`lay-${role}`} className="sm:w-48 shrink-0 text-[15px] font-semibold text-[var(--color-text)]">{ROLE_WORD[role]}</label>
+              <label htmlFor={`lay-${role}`} className="sm:w-48 shrink-0 text-reading font-medium text-[var(--color-text)]">{ROLE_WORD[role]}</label>
               <select id={`lay-${role}`} value={value} disabled={!canEdit || !!busy} onChange={(e) => void pickLayout(role, e.target.value)}
-                className={`${fieldBox} h-10 pointer-coarse:h-11 text-[15px] max-sm:text-[16px] w-full sm:w-72`}>
+                className={`${fieldBox} h-10 pointer-coarse:h-11 text-reading w-full sm:w-72`}>
                 {(optional || !auto) && <option value="none">{optional ? "Leave out" : "None"}</option>}
                 {ref.layouts.map((l) => <option key={l.file} value={l.file}>{l.name}{l.file === auto ? " (app's pick)" : ""}</option>)}
               </select>

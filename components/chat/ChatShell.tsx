@@ -689,7 +689,7 @@ export default function ChatShell() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active]);
 
-  if (!orgId) return <div className="p-8 text-[14px] text-[var(--color-text-muted)]">Select a workspace to continue.</div>;
+  if (!orgId) return <div className="p-8 text-body text-[var(--color-text-muted)]">Select a workspace to continue.</div>;
 
   const readyDocs = scope === "library" ? docs.filter((d) => d.libraryId === libraryId && d.status === "ready").length : 1;
   const disabledReason = scope === "library" && libraryId && docsFor === libraryId && readyDocs === 0
@@ -739,8 +739,8 @@ export default function ChatShell() {
             </button>
           )}
           <div className="min-w-0 flex-1">
-            <h1 className="font-display text-[19px] sm:text-[21px] leading-tight font-semibold text-[var(--color-text)] truncate">{active?.title || "New conversation"}</h1>
-            <div className="mt-0.5 flex items-center gap-1.5 text-[13px] text-[var(--color-text-muted)] min-w-0">
+            <h1 className="font-display text-section sm:text-[21px] leading-tight font-semibold text-[var(--color-text)] truncate">{active?.title || "New conversation"}</h1>
+            <div className="mt-0.5 flex items-center gap-1.5 text-body text-[var(--color-text-muted)] min-w-0">
               <ScopeIcon className="w-3.5 h-3.5 shrink-0" aria-hidden />
               <span className="truncate">{contextLine}</span>
             </div>
@@ -817,7 +817,7 @@ export default function ChatShell() {
               answerMode={pickedMode} onAnswerMode={pickMode}
               skills={skills} pickedSkills={pickedSkills} onPickSkills={pickSkills}
             />
-            <p className="mt-1.5 px-1 text-[13px] text-[var(--color-text-muted)] truncate">
+            <p className="mt-1.5 px-1 text-body text-[var(--color-text-muted)] truncate">
               {scope === "library" && useWeb
                 ? "Documents first, they govern. Web is on: every web statement links to the page it came from."
                 : SCOPE_META[scope].hint}

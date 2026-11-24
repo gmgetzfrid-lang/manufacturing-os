@@ -165,10 +165,10 @@ export function PathSteps({ rows }: { rows: PathRow[] }) {
         return (
           <li key={i} className="flex gap-3.5" aria-current={r.state === "next" ? "step" : undefined}>
             <div className="flex flex-col items-center">
-              <span className={`w-[22px] h-[22px] shrink-0 rounded-full box-border flex items-center justify-center text-[11px] ${
+              <span className={`w-[22px] h-[22px] shrink-0 rounded-full box-border flex items-center justify-center text-caption ${
                 r.state === "done" ? "bg-[var(--state-released)] text-white"
-                  : r.state === "next" ? "border-2 border-[var(--color-text)] font-semibold text-[var(--color-text)]"
-                    : "border border-[var(--color-border-strong)] font-bold text-[var(--color-text-faint)]"}`}>
+                  : r.state === "next" ? "border-2 border-[var(--color-text)] font-medium text-[var(--color-text)]"
+                    : "border border-[var(--color-border-strong)] font-medium text-[var(--color-text-faint)]"}`}>
                 {r.state === "done" ? <Check className="w-3 h-3" strokeWidth={3} /> : i + 1}
               </span>
               {!last && <span aria-hidden className={`flex-1 w-0.5 min-h-[18px] ${r.state === "done" ? "bg-[var(--color-text)]" : "bg-[var(--color-border)]"}`} />}
@@ -176,10 +176,10 @@ export function PathSteps({ rows }: { rows: PathRow[] }) {
             <div className={`min-w-0 flex-1 ${last ? "" : "pb-4"}`}>
               <div className="flex items-start gap-2 flex-wrap">
                 <div className="min-w-0 flex-1 basis-48">
-                  <div className={`text-[15px] leading-snug font-semibold ${r.state === "todo" ? "text-[var(--color-text-muted)]" : "text-[var(--color-text)]"}`}>
-                    {r.title}{r.state === "next" && <span className="ml-2 text-[13px] font-semibold text-[var(--color-text-muted)]">Next</span>}
+                  <div className={`text-reading leading-snug font-medium ${r.state === "todo" ? "text-[var(--color-text-muted)]" : "text-[var(--color-text)]"}`}>
+                    {r.title}{r.state === "next" && <span className="ml-2 text-body font-medium text-[var(--color-text-muted)]">Next</span>}
                   </div>
-                  {r.detail && <div className="mt-0.5 text-[14px] text-[var(--color-text-muted)] leading-snug">{r.detail}</div>}
+                  {r.detail && <div className="mt-0.5 text-body text-[var(--color-text-muted)] leading-snug">{r.detail}</div>}
                 </div>
                 {r.action && <div className="shrink-0">{r.action}</div>}
               </div>
@@ -377,7 +377,7 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
   // A secondary button, the one main (filled) button, and a link-style action.
   const btn = `${heroQuiet} whitespace-nowrap`;
   const pri = `${heroPrimary} !h-9 whitespace-nowrap`;
-  const quiet = "inline-flex items-center h-9 text-[14px] text-[var(--color-accent-text)] hover:underline whitespace-nowrap disabled:opacity-50";
+  const quiet = "inline-flex items-center h-9 text-body text-[var(--color-accent-text)] hover:underline whitespace-nowrap disabled:opacity-50";
   // One main next step, the only orange button: schedule a phase that has
   // none, else upload the PSSR that's missing, else Mark complete once
   // everything is clear.
@@ -418,8 +418,8 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
         const x = phasePssr(p.id);
         const ok = x.notNeeded || listOk(x.list);
         return (
-          <div key={p.id} className="flex items-center gap-x-3 gap-y-1 flex-wrap text-[14px] min-h-11 py-1">
-            <span className="w-24 shrink-0 font-semibold text-[var(--color-text)]">
+          <div key={p.id} className="flex items-center gap-x-3 gap-y-1 flex-wrap text-body min-h-11 py-1">
+            <span className="w-24 shrink-0 font-medium text-[var(--color-text)]">
               {ok && <Check className="inline w-3.5 h-3.5 mr-1 -mt-0.5 text-[var(--state-released)]" />}
               {p.name}
             </span>
@@ -435,12 +435,12 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
         );
       })}
       {untied.map((x) => (
-        <label key={x.list.id} className="flex items-center gap-x-3 gap-y-1 flex-wrap text-[14px] min-h-11 py-1">
-          <span className="min-w-0 flex-1 basis-40 text-[var(--color-text)]"><span className="font-semibold">{x.list.title}</span> <span className="block text-[13px] text-[var(--color-text-muted)]">Uploaded before the phases. Which phase is it?</span></span>
+        <label key={x.list.id} className="flex items-center gap-x-3 gap-y-1 flex-wrap text-body min-h-11 py-1">
+          <span className="min-w-0 flex-1 basis-40 text-[var(--color-text)]"><span className="font-medium">{x.list.title}</span> <span className="block text-body text-[var(--color-text-muted)]">Uploaded before the phases. Which phase is it?</span></span>
           {canManage && (
             <select value="" aria-label={`Phase for ${x.list.title}`} disabled={!!busy}
               onChange={(e) => { const id = e.target.value; if (id) void run("pssr", () => saveCloseoutSettings(projectId, { pssrByPhase: { [id]: { checklistId: x.list.id, notNeeded: false } } })); }}
-              className="h-9 pointer-coarse:h-11 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[14px] font-semibold">
+              className="h-9 pointer-coarse:h-11 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-body font-medium">
               <option value="">Pick the phase</option>
               {phases.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
@@ -450,14 +450,14 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
     </div>
   ) : null;
   const workRows = phases.length ? (
-    <ul className="mt-2 divide-y divide-[var(--color-border)] border-y border-[var(--color-border)] text-[14px] text-[var(--color-text)]">
+    <ul className="mt-2 divide-y divide-[var(--color-border)] border-y border-[var(--color-border)] text-body text-[var(--color-text)]">
       {phaseWork.map(({ p, w }) => (
         <li key={p.id} className="flex items-center gap-x-3 gap-y-0.5 flex-wrap min-h-11 py-1">
-          <span className="w-24 shrink-0 font-semibold">{p.name}</span>
-          {w.total === 0 ? <span className="min-w-0 flex-1 basis-40 text-[var(--state-held)] font-semibold">{upper(noScheduleWords(p, now, tz).replace(`${p.name}: `, ""))}</span>
+          <span className="w-24 shrink-0 font-medium">{p.name}</span>
+          {w.total === 0 ? <span className="min-w-0 flex-1 basis-40 text-[var(--state-held)] font-medium">{upper(noScheduleWords(p, now, tz).replace(`${p.name}: `, ""))}</span>
             : w.allDone ? <>
               <span className="min-w-0 flex-1 basis-44">Done {w.finishedAt != null ? when(w.finishedAt) : ""}</span>
-              {w.finishedAt != null && w.plannedFinish != null && <span className={`sm:w-40 ${w.hoursAfterPlan != null && w.hoursAfterPlan >= 0.5 ? "text-[var(--state-overdue)] font-semibold" : "text-[var(--color-text-muted)]"}`}>{vsPlanWords(w.hoursAfterPlan)}</span>}
+              {w.finishedAt != null && w.plannedFinish != null && <span className={`sm:w-40 ${w.hoursAfterPlan != null && w.hoursAfterPlan >= 0.5 ? "text-[var(--state-overdue)] font-medium" : "text-[var(--color-text-muted)]"}`}>{vsPlanWords(w.hoursAfterPlan)}</span>}
               <span className="sm:w-28 sm:text-right font-display tabular-nums text-[var(--color-text-muted)]">{w.done}/{w.total} steps</span>
             </>
               : <span className="min-w-0 flex-1 basis-40 text-[var(--color-text-muted)]"><span className="font-display tabular-nums">{w.done}/{w.total}</span> steps done</span>}
@@ -471,7 +471,7 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
     {
       state: stateAt(0), title: allWorkDone ? "Work done" : "The work",
       detail: phases.length ? undefined
-        : work.allDone ? <>{work.done} of {work.total} steps{work.finishedAt != null ? `, finished ${when(work.finishedAt)}` : ""}{work.finishedAt != null && work.plannedFinish != null ? <span className={work.hoursAfterPlan != null && work.hoursAfterPlan >= 0.5 ? "text-[var(--state-overdue-text)] font-semibold" : ""}> ({vsPlanWords(work.hoursAfterPlan)})</span> : null}.</>
+        : work.allDone ? <>{work.done} of {work.total} steps{work.finishedAt != null ? `, finished ${when(work.finishedAt)}` : ""}{work.finishedAt != null && work.plannedFinish != null ? <span className={work.hoursAfterPlan != null && work.hoursAfterPlan >= 0.5 ? "text-[var(--state-overdue-text)] font-medium" : ""}> ({vsPlanWords(work.hoursAfterPlan)})</span> : null}.</>
           : work.total ? `${work.total - work.done} of ${work.total} steps not marked done.` : "No schedule yet.",
       action: !allWorkDone && !unscheduled.length ? <button type="button" onClick={() => onTab("work")} className={btn}>Open the work <ArrowRight className="w-3.5 h-3.5" /></button> : null,
       children: workRows,
@@ -512,18 +512,18 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
             <div className="py-2 flex items-center gap-2 flex-wrap">
               {items.length === 0 && <>
                 {/* The usual list is sized by the job: pick the size here, then start from it. */}
-                <label className="inline-flex items-center gap-2 text-[14px] text-[var(--color-text)]">
+                <label className="inline-flex items-center gap-2 text-body text-[var(--color-text)]">
                   <span>Usual list for a</span>
                   <select value={jobKind ?? "standard"} disabled={!!busy} aria-label="Job size"
                     onChange={(e) => { const k = e.target.value as "small" | "standard" | "capital"; void run("jobsize", async () => { const r = await saveJobKind(projectId, k, userEmail); if (r.ok) onJobKind?.(k); return r; }); }}
-                    className="h-9 pointer-coarse:h-11 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[14px] font-semibold">
+                    className="h-9 pointer-coarse:h-11 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-body font-medium">
                     {JOB_SIZES.map((j) => <option key={j.v} value={j.v}>{j.label}</option>)}
                   </select>
                 </label>
                 <button type="button" disabled={!!busy} onClick={() => void run("seed", async () => { const r = await seedTurnoverItems({ orgId, projectId, jobKind, actor }); return { ok: r.ok, error: r.error }; })} className={btn}>Start from it ({seedsForJobKind(jobKind).length} documents)</button>
               </>}
               <input value={newDoc} onChange={(e) => setNewDoc(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && newDoc.trim()) { const n = newDoc.trim(); setNewDoc(""); void run("add", async () => { const r = await addTurnoverItem({ orgId, projectId, name: n, required: true, actor }); return { ok: r.ok, error: r.error }; }); } }}
-                placeholder="Add a document this job needs" aria-label="Add a document this job needs" className="h-9 pointer-coarse:h-11 flex-1 min-w-40 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 text-[14px] placeholder:text-[var(--color-text-faint)]" />
+                placeholder="Add a document this job needs" aria-label="Add a document this job needs" className="h-9 pointer-coarse:h-11 flex-1 min-w-40 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 text-body placeholder:text-[var(--color-text-faint)]" />
               <button type="button" disabled={!newDoc.trim() || !!busy} onClick={() => { const n = newDoc.trim(); setNewDoc(""); void run("add", async () => { const r = await addTurnoverItem({ orgId, projectId, name: n, required: true, actor }); return { ok: r.ok, error: r.error }; }); }} className={btn}><Plus className="w-3.5 h-3.5" /> Add</button>
             </div>
           )}
@@ -550,7 +550,7 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
     ...(projectStatus !== "completed" ? [{
       state: (left === 0 && allWorkDone ? "next" : "todo") as PathRow["state"], title: "Mark the project complete",
       detail: !canManage ? "The project owner marks it complete."
-        : unscheduled.length > 0 ? <span className="font-semibold text-[var(--state-held)]">{joinNames(unscheduled.map((p) => p.name))} {unscheduled.length === 1 ? "has" : "have"} no schedule. Complete only if {unscheduled.length === 1 ? "it isn't" : "they aren't"} going ahead.</span>
+        : unscheduled.length > 0 ? <span className="font-medium text-[var(--state-held)]">{joinNames(unscheduled.map((p) => p.name))} {unscheduled.length === 1 ? "has" : "have"} no schedule. Complete only if {unscheduled.length === 1 ? "it isn't" : "they aren't"} going ahead.</span>
           : left > 0 ? `${left} step${left === 1 ? "" : "s"} still open. You can complete anyway.` : "Everything above is clear.",
       action: canManage ? <button type="button" onClick={onComplete} className={main === "complete" ? pri : btn}><Check className="w-4 h-4" /> Mark project complete</button> : null,
     }] : [{ state: "done" as const, title: "Project complete", detail: "The project is marked complete." }]),
@@ -563,7 +563,7 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
       {nav}
 
       {/* To close this project: every step as one path. */}
-      <Card label="To close the project" action={<span className="text-[14px] font-semibold text-[var(--color-text-muted)]">{left === 0 ? "All clear" : `${left} left`}</span>}>
+      <Card label="To close the project" action={<span className="text-body font-medium text-[var(--color-text-muted)]">{left === 0 ? "All clear" : `${left} left`}</span>}>
         {readFailed.length > 0 && (
           <ErrorNote compact className="mb-3" title={`Couldn't load ${readFailed.join(", ")}.`} next="What's shown may be missing items." onRetry={reload} />
         )}
@@ -573,7 +573,7 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
 
       {/* How the job did: its numbers as a ruled table, then each phase. */}
       <Card label="How the job did" action={phases.length > 0 ? (
-        <label className="inline-flex items-center gap-2 text-[13px] text-[var(--color-text-muted)]">
+        <label className="inline-flex items-center gap-2 text-body text-[var(--color-text-muted)]">
           Phase
           <select value={phasePick ?? ""} onChange={(e) => setPhasePick(e.target.value || null)} className={bandSelect}>
             <option value="">All phases</option>
@@ -583,19 +583,19 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
       ) : undefined}>
         {stats ? (
           <div className="space-y-5">
-            {pickedPhase && <div className="text-[14px] text-[var(--color-text-muted)]">{phaseDates(pickedPhase).replace(" – ", " to ")}, {pickedPhase.share}% of the {money0?.afe != null ? "AFE" : "budget"}</div>}
+            {pickedPhase && <div className="text-body text-[var(--color-text-muted)]">{phaseDates(pickedPhase).replace(" – ", " to ")}, {pickedPhase.share}% of the {money0?.afe != null ? "AFE" : "budget"}</div>}
             {stats.noSchedule && pickedPhase ? (
-              <p className="text-[15px] text-[var(--color-text)]">
-                <span className="font-semibold text-[var(--state-held)]">{upper(noScheduleWords(pickedPhase, now, tz))}.</span> Nothing to measure until its schedule is imported.
+              <p className="text-reading text-[var(--color-text)]">
+                <span className="font-medium text-[var(--state-held)]">{upper(noScheduleWords(pickedPhase, now, tz))}.</span> Nothing to measure until its schedule is imported.
               </p>
             ) : (
               <>
                 {stats.missing.length > 0 && (
-                  <p className="text-[14px] text-[var(--color-text)]">
-                    <span className="font-semibold text-[var(--state-held)]">{stats.missing.map((p) => upper(noScheduleWords(p, now, tz))).join("; ")}.</span> These figures cover only {phases.filter((p) => !stats.missing.some((x) => x.id === p.id)).map((p) => p.name).join(", ")}.
+                  <p className="text-body text-[var(--color-text)]">
+                    <span className="font-medium text-[var(--state-held)]">{stats.missing.map((p) => upper(noScheduleWords(p, now, tz))).join("; ")}.</span> These figures cover only {phases.filter((p) => !stats.missing.some((x) => x.id === p.id)).map((p) => p.name).join(", ")}.
                   </p>
                 )}
-                <table className="w-full text-[15px]">
+                <table className="w-full text-body">
                   <tbody className="divide-y divide-[var(--color-border)] border-y border-[var(--color-border)]">
                     {stats.missing.length > 0
                       ? <Fact k="Finish" v="Not finished" s={`${stats.missing.map((p) => p.name).join(", ")} not scheduled`} tone="warn" />
@@ -613,15 +613,15 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
                   // All phases: each phase against its own plan, never merged into one line.
                   <div className="space-y-4">
                     <div>
-                      <h3 className="font-display text-[17px] font-semibold text-[var(--color-text)] mb-1.5">Each phase against its own plan</h3>
-                      <table className="w-full text-[15px]">
-                        <thead className="text-[13px] text-[var(--color-text-muted)] text-left">
+                      <h3 className="font-display text-section font-semibold text-[var(--color-text)] mb-1.5">Each phase against its own plan</h3>
+                      <table className="w-full text-body">
+                        <thead className="text-body text-[var(--color-text-muted)] text-left">
                           <tr className="border-b border-[var(--color-border-strong)]">
-                            <th scope="col" className="font-semibold py-2 pr-4">Phase</th>
-                            <th scope="col" className="font-semibold py-2 pr-4 hidden md:table-cell">Dates</th>
-                            <th scope="col" className="font-semibold py-2 pr-4 hidden sm:table-cell">Plan finish</th>
-                            <th scope="col" className="font-semibold py-2 pr-4">Finished</th>
-                            <th scope="col" className="font-semibold py-2 text-right">Against plan</th>
+                            <th scope="col" className="font-medium py-2 pr-4">Phase</th>
+                            <th scope="col" className="font-medium py-2 pr-4 hidden md:table-cell">Dates</th>
+                            <th scope="col" className="font-medium py-2 pr-4 hidden sm:table-cell">Plan finish</th>
+                            <th scope="col" className="font-medium py-2 pr-4">Finished</th>
+                            <th scope="col" className="font-medium py-2 text-right">Against plan</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-[var(--color-border)]">
@@ -629,11 +629,11 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
                             const lateH = ps.finishedAt != null && ps.plannedFinish != null ? lateBy(ps.finishedAt, ps.plannedFinish) : null;
                             return (
                               <tr key={p.id} className="align-top">
-                                <th scope="row" className="py-2.5 pr-4 text-left font-semibold text-[var(--color-text)] whitespace-nowrap">{p.name}</th>
+                                <th scope="row" className="py-2.5 pr-4 text-left font-medium text-[var(--color-text)] whitespace-nowrap">{p.name}</th>
                                 <td className="py-2.5 pr-4 hidden md:table-cell text-[var(--color-text-muted)] whitespace-nowrap">{phaseDates(p).replace(" – ", " to ")}</td>
                                 <td className="py-2.5 pr-4 hidden sm:table-cell text-[var(--color-text)] whitespace-nowrap">{ps.plannedFinish != null ? short(ps.plannedFinish) : "-"}</td>
                                 <td className="py-2.5 pr-4 text-[var(--color-text)]">
-                                  {ps.noSchedule ? <span className="text-[var(--state-held)] font-semibold">No schedule yet</span>
+                                  {ps.noSchedule ? <span className="text-[var(--state-held)] font-medium">No schedule yet</span>
                                     : ps.finishedAt != null ? short(ps.finishedAt)
                                       : <span className="text-[var(--color-text-muted)]"><span className="font-display tabular-nums text-[var(--color-text)]">{ps.actualPct}%</span> done, plan by now {ps.plannedPct}%</span>}
                                 </td>
@@ -664,7 +664,7 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
         <Modal onClose={() => setUploading(null)} size="lg">
           <ModalHeader icon={UploadCloud} title={uploading === "all" ? "Upload the PSSR" : `Upload ${phases.find((p) => p.id === uploading)?.name ?? "the phase"}'s PSSR`} subtitle="Filed where you pick, then read into checklist items. You check them before anything is kept." onClose={() => setUploading(null)} />
           <ModalBody className="!p-0">
-            {err && <div role="alert" className="px-4 pt-3 text-[12px] font-semibold text-[var(--state-overdue-text)]">{err}</div>}
+            {err && <div role="alert" className="px-4 pt-3 text-caption font-medium text-[var(--state-overdue-text)]">{err}</div>}
             <NewChecklistFlow orgId={orgId} projectId={projectId} projectName={projectName} actor={actor}
               part={uploading === "all" ? null : phases.find((p) => p.id === uploading)?.name ?? null}
               onDone={() => { const forPhase = uploading; setUploading(null); void tieNewPssr(forPhase); void projectFileHome(orgId, projectId).then(setHome).catch(() => undefined); }} onCancel={() => setUploading(null)} setErr={setErr} kindDefault="pssr" />
@@ -703,7 +703,7 @@ function Progress({ name, stats, tz, look, lookById, ids, loading, records, mp }
         <ChevronUp className="w-4 h-4 shrink-0 text-[var(--color-text-muted)]" />
       </button>
       <div>
-        <div className="mb-2 flex items-center gap-1.5 text-[15px] font-semibold text-[var(--color-text)]">
+        <div className="mb-2 flex items-center gap-1.5 text-reading font-medium text-[var(--color-text)]">
           Against the original plan, shift by shift
           <HelpTooltip>
             <ul className="space-y-1">
@@ -716,11 +716,11 @@ function Progress({ name, stats, tz, look, lookById, ids, loading, records, mp }
           {stats.shifts.map((r) => {
             const red = behindAt(r);
             return (
-              <div key={r.start} className={`grid grid-cols-[116px_minmax(0,1fr)_auto] gap-2 items-center py-1 text-[12px] ${r.kind === "night" ? "bg-[var(--color-surface-2)]/50" : ""}`}>
+              <div key={r.start} className={`grid grid-cols-[116px_minmax(0,1fr)_auto] gap-2 items-center py-1 text-caption ${r.kind === "night" ? "bg-[var(--color-surface-2)]/50" : ""}`}>
                 <span className="text-[var(--color-text)] leading-tight pl-1">{shiftLabel(r)}
-                  {r.planEnds && stats.plannedFinish != null && <span className="block text-[11px] font-bold text-[var(--color-text)]">plan finish {fmtInTz(stats.plannedFinish, tz, { hour: "numeric", minute: "2-digit", hour12: true })}</span>}
-                  {r.finishes && stats.finishedAt != null && <span className="block text-[11px] font-bold text-[var(--state-released-text)]">all done {fmtInTz(stats.finishedAt, tz, { hour: "numeric", minute: "2-digit", hour12: true })}</span>}
-                  {r.current && <span className="block text-[11px] text-[var(--color-text-muted)]">now</span>}</span>
+                  {r.planEnds && stats.plannedFinish != null && <span className="block text-caption font-medium text-[var(--color-text)]">plan finish {fmtInTz(stats.plannedFinish, tz, { hour: "numeric", minute: "2-digit", hour12: true })}</span>}
+                  {r.finishes && stats.finishedAt != null && <span className="block text-caption font-medium text-[var(--state-released-text)]">all done {fmtInTz(stats.finishedAt, tz, { hour: "numeric", minute: "2-digit", hour12: true })}</span>}
+                  {r.current && <span className="block text-caption text-[var(--color-text-muted)]">now</span>}</span>
                 <div className="space-y-0.5">
                   {r.plan != null
                     ? <div className="h-1.5 rounded-full bg-[var(--color-accent-soft)] overflow-hidden"><div className="h-full rounded-full bg-[var(--color-main)]/45" style={{ width: `${Math.min(100, r.plan)}%` }} /></div>
@@ -729,7 +729,7 @@ function Progress({ name, stats, tz, look, lookById, ids, loading, records, mp }
                 </div>
                 <span className="text-right tabular-nums text-[var(--color-text-muted)] leading-tight pr-1">
                   {r.plan != null ? `${r.plan}%` : "past plan"}{r.done != null ? <> / <b className={red ? "text-[var(--state-overdue-text)]" : "text-[var(--state-released-text)]"}>{r.done}%</b>{r.plan == null && red && <b className="text-[var(--state-overdue-text)]"> late</b>}</> : " / to come"}
-                  {r.addedKnown > 0 && <span className="block text-[11px] text-[var(--state-held-text)]">added {Math.round((r.addedDone ?? 0) * 10) / 10} of {r.addedKnown} h</span>}
+                  {r.addedKnown > 0 && <span className="block text-caption text-[var(--state-held-text)]">added {Math.round((r.addedDone ?? 0) * 10) / 10} of {r.addedKnown} h</span>}
                 </span>
               </div>
             );
@@ -773,13 +773,13 @@ function SlipStory({ stats, tz, look, lookById, setbacks, steps, loading, counts
   };
   const Cause = ({ x, held, self }: { x: StepLook; held?: Array<{ s: SlipStep; right: string }>; self?: number }) => (
     <li className="py-2">
-      <div className="text-[12px] font-bold text-[var(--color-text)] leading-snug">{label(x)}</div>
-      {rootWords(x).slice(0, 3).map((w) => <div key={w} className="text-[12px] text-[var(--state-held-text)] leading-snug">{w}</div>)}
-      {hands(x) && <div className="text-[12px] text-[var(--color-text-muted)] leading-snug">{hands(x)}</div>}
-      {unexplained(x) && whileWaiting(lookById, x, 2).map((w) => <div key={w} className="text-[12px] text-[var(--color-text-muted)] leading-snug">While it waited: {w}</div>)}
-      {self != null && self > 0 && <div className="mt-0.5 text-[12px] text-[var(--color-text-muted)] leading-snug">{Math.round(self * 10) / 10} h of its own planned work behind then</div>}
+      <div className="text-caption font-medium text-[var(--color-text)] leading-snug">{label(x)}</div>
+      {rootWords(x).slice(0, 3).map((w) => <div key={w} className="text-caption text-[var(--state-held-text)] leading-snug">{w}</div>)}
+      {hands(x) && <div className="text-caption text-[var(--color-text-muted)] leading-snug">{hands(x)}</div>}
+      {unexplained(x) && whileWaiting(lookById, x, 2).map((w) => <div key={w} className="text-caption text-[var(--color-text-muted)] leading-snug">While it waited: {w}</div>)}
+      {self != null && self > 0 && <div className="mt-0.5 text-caption text-[var(--color-text-muted)] leading-snug">{Math.round(self * 10) / 10} h of its own planned work behind then</div>}
       {held && held.length > 0 && (
-        <div className="mt-0.5 text-[12px] text-[var(--color-text-muted)] leading-snug">Held up: {held.map((h) => `${h.s.task ? `${h.s.task} \u203a ` : ""}${h.s.name} (${h.right})`).join("; ")}</div>
+        <div className="mt-0.5 text-caption text-[var(--color-text-muted)] leading-snug">Held up: {held.map((h) => `${h.s.task ? `${h.s.task} \u203a ` : ""}${h.s.name} (${h.right})`).join("; ")}</div>
       )}
     </li>
   );
@@ -803,32 +803,32 @@ function SlipStory({ stats, tz, look, lookById, setbacks, steps, loading, counts
   const behindCauses = [...groups.values()].sort((a, b) => b.hours - a.hours).slice(0, 5);
   const byCause = (["hold", "longer", "crew", "late-start", "replanned", "discovery"] as CauseKind[]).map((c) => ({ c, h: Math.round(steps.reduce((a, x) => a + (x.lost[c] ?? 0), 0) * 10) / 10, n: steps.filter((x) => (x.lost[c] ?? 0) > 0).length })).filter((x) => x.h > 0);
   const maxH = Math.max(1, ...byCause.map((x) => x.h));
-  const head = "text-[14px] font-semibold text-[var(--color-text)] mt-3";
+  const head = "text-body font-medium text-[var(--color-text)] mt-3";
   return (
     <div className="pt-3 border-t border-[var(--color-border)]">
-      <div className="font-display text-[17px] font-semibold text-[var(--color-text)]">{late ? "Why it finished late" : "Where it slipped"}</div>
-      <ul className="mt-1 space-y-0.5 text-[12px] text-[var(--color-text)] leading-snug">
+      <div className="font-display text-section font-semibold text-[var(--color-text)]">{late ? "Why it finished late" : "Where it slipped"}</div>
+      <ul className="mt-1 space-y-0.5 text-caption text-[var(--color-text)] leading-snug">
         {slipWords(stats, tz).map((w) => <li key={w}>{w}</li>)}
       </ul>
-      {loading && <div className="mt-2 text-[12px] text-[var(--color-text-muted)]">Reading what was recorded on each step…</div>}
+      {loading && <div className="mt-2 text-caption text-[var(--color-text-muted)]">Reading what was recorded on each step…</div>}
       {drivers.length > 0 && (
         <>
           <div className={`${head} flex items-center gap-1.5`}>What set the finish <HelpTooltip>The last step done, back through what each waited on (its links). These steps lost time of their own.</HelpTooltip></div>
           <ol className="divide-y divide-[var(--color-border)]/60">{drivers.map((x) => <Cause key={x.id} x={x} />)}</ol>
-          {waited.length > 0 && <div className="text-[12px] text-[var(--color-text-muted)] leading-snug">Waited on them: {waited.map((x) => x.name).join(", ")}.</div>}
+          {waited.length > 0 && <div className="text-caption text-[var(--color-text-muted)] leading-snug">Waited on them: {waited.map((x) => x.name).join(", ")}.</div>}
         </>
       )}
       {at && behindCauses.length > 0 && (
         <>
           <div className={head}>What put it behind {at.current ? "so far this shift" : "at the end of"} {at.current ? `(${shiftLabel(at)})` : shiftLabel(at)}</div>
-          <div className="text-[12px] text-[var(--color-text-muted)]">The steps furthest behind then, under where their delay came from:</div>
+          <div className="text-caption text-[var(--color-text-muted)]">The steps furthest behind then, under where their delay came from:</div>
           <ul className="divide-y divide-[var(--color-border)]/60">{behindCauses.map((g) => <Cause key={g.cause.id} x={g.cause} held={g.held} self={g.self} />)}</ul>
         </>
       )}
       {sl.pastPlan.length > 0 && stats.plannedFinish != null && (
         <>
           <div className={head}>Still going when the plan said done ({when(stats.plannedFinish)})</div>
-          <div className="text-[12px] text-[var(--color-text)] leading-snug">{sl.pastPlan.slice(0, 10).map((x) => `${slipStepLine(x)}: ${x.finish != null ? `done ${when(x.finish)}` : "not done"}`).join(" · ")}{sl.pastPlan.length > 10 ? ` · and ${sl.pastPlan.length - 10} more` : ""}</div>
+          <div className="text-caption text-[var(--color-text)] leading-snug">{sl.pastPlan.slice(0, 10).map((x) => `${slipStepLine(x)}: ${x.finish != null ? `done ${when(x.finish)}` : "not done"}`).join(" · ")}{sl.pastPlan.length > 10 ? ` · and ${sl.pastPlan.length - 10} more` : ""}</div>
         </>
       )}
       {setbacks.length > 0 && (
@@ -837,12 +837,12 @@ function SlipStory({ stats, tz, look, lookById, setbacks, steps, loading, counts
           <ul className="divide-y divide-[var(--color-border)]/60">{setbacks.slice(0, 5).map((x) => (
             <li key={x.id} className="py-1.5">
               <div className="flex items-start gap-2">
-                <span className="min-w-0 flex-1 text-[12px] text-[var(--color-text)] leading-snug">{label(x)}</span>
-                <span className="shrink-0 text-[12px] tabular-nums text-[var(--state-overdue-text)]">lost {x.lostH} h</span>
+                <span className="min-w-0 flex-1 text-caption text-[var(--color-text)] leading-snug">{label(x)}</span>
+                <span className="shrink-0 text-caption tabular-nums text-[var(--state-overdue-text)]">lost {x.lostH} h</span>
               </div>
-              {lostWords(x).slice(0, 3).map((w) => <div key={w} className="text-[12px] text-[var(--state-held-text)] leading-snug">{w}</div>)}
-              {hands(x) && <div className="text-[12px] text-[var(--color-text-muted)] leading-snug">{hands(x)}</div>}
-              {unexplained(x) && whileWaiting(lookById, x, 1).map((w) => <div key={w} className="text-[12px] text-[var(--color-text-muted)] leading-snug">While it waited: {w}</div>)}
+              {lostWords(x).slice(0, 3).map((w) => <div key={w} className="text-caption text-[var(--state-held-text)] leading-snug">{w}</div>)}
+              {hands(x) && <div className="text-caption text-[var(--color-text-muted)] leading-snug">{hands(x)}</div>}
+              {unexplained(x) && whileWaiting(lookById, x, 1).map((w) => <div key={w} className="text-caption text-[var(--color-text-muted)] leading-snug">While it waited: {w}</div>)}
             </li>
           ))}</ul>
         </>
@@ -851,7 +851,7 @@ function SlipStory({ stats, tz, look, lookById, setbacks, steps, loading, counts
         <>
           <div className={`${head} flex items-center gap-1.5 mb-1`}>Where the time went <HelpTooltip>Hours each step lost of its own, by cause (waiting on the work before it isn&rsquo;t counted again). Steps run side by side, so these add up to more than the finish&rsquo;s slip.</HelpTooltip></div>
           <div className="space-y-1">{byCause.map((x) => (
-            <div key={x.c} className="grid grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_auto] gap-2 items-center text-[12px]">
+            <div key={x.c} className="grid grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_auto] gap-2 items-center text-caption">
               <span className="text-[var(--color-text)] leading-tight">{CAUSE_LABEL[x.c]}</span>
               <div className="h-2 rounded-full bg-[var(--color-accent-soft)] overflow-hidden"><div className="h-full rounded-full bg-[var(--state-overdue)]" style={{ width: `${(x.h / maxH) * 100}%` }} /></div>
               <span className="tabular-nums text-[var(--color-text-muted)]">{x.h} h · {x.n} step{x.n === 1 ? "" : "s"}</span>
@@ -883,13 +883,13 @@ function WholeManpower({ shifts, records, mp }: { shifts: ReturnType<typeof phas
   ];
   return (
     <div>
-      <h3 className="font-display text-[17px] font-semibold text-[var(--color-text)] mb-1.5">Manpower, whole project</h3>
+      <h3 className="font-display text-section font-semibold text-[var(--color-text)] mb-1.5">Manpower, whole project</h3>
       <dl className="grid grid-cols-2 lg:grid-cols-4 border-y border-[var(--color-border)]">
         {cells.map((c, i) => (
           <div key={c.k} className={`py-2.5 pr-4 border-[var(--color-border)] ${i % 2 ? "pl-4 border-l" : ""} ${i >= 2 ? "max-lg:border-t lg:pl-4 lg:border-l" : ""}`}>
-            <dt className="text-[13px] text-[var(--color-text-muted)]">{c.k}</dt>
+            <dt className="text-body text-[var(--color-text-muted)]">{c.k}</dt>
             <dd className="font-display text-[22px] leading-tight font-semibold tabular-nums text-[var(--color-text)]">{c.v}</dd>
-            {c.s && <dd className="text-[13px] text-[var(--color-text-muted)]">{c.s}</dd>}
+            {c.s && <dd className="text-body text-[var(--color-text-muted)]">{c.s}</dd>}
           </div>
         ))}
       </dl>
@@ -909,13 +909,13 @@ function Fact({ k, v, s, tone, bar }: { k: string; v: string; s: string; tone?: 
   );
   return (
     <tr className="align-top">
-      <th scope="row" className="w-32 sm:w-40 py-2.5 pr-4 text-left text-[14px] font-normal text-[var(--color-text-muted)]">{k}</th>
+      <th scope="row" className="w-32 sm:w-40 py-2.5 pr-4 text-left text-body font-normal text-[var(--color-text-muted)]">{k}</th>
       <td className="py-2.5 pr-4">
-        <span className={`font-display text-[17px] font-semibold tabular-nums whitespace-nowrap ${color}`}>{v}</span>
+        <span className={`font-display text-section font-semibold tabular-nums whitespace-nowrap ${color}`}>{v}</span>
         {meter && <span className="sm:hidden block mt-1">{meter}</span>}
-        <span className="sm:hidden block text-[13px] text-[var(--color-text-muted)]">{s}</span>
+        <span className="sm:hidden block text-body text-[var(--color-text-muted)]">{s}</span>
       </td>
-      <td className="py-2.5 hidden sm:table-cell text-[14px] text-[var(--color-text-muted)] w-[55%]">
+      <td className="py-2.5 hidden sm:table-cell text-body text-[var(--color-text-muted)] w-[55%]">
         {meter ? <span className="flex items-center gap-3">{meter}<span className="min-w-0">{s}</span></span> : s}
       </td>
     </tr>
@@ -947,10 +947,10 @@ function TurnoverRow({ it, canManage, busy, onRequired, onAccept, onFile }: { it
   };
   const drag = useFileDrag((fs) => { void send(fs[0]); }, !canAttach || busy || !!sending);
   const st = it.required ? STATUS[it.status] : { word: "Not for this job", pill: "is-muted" };
-  const small = "shrink-0 inline-flex items-center h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50";
+  const small = "shrink-0 inline-flex items-center h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50";
   return (
     <div {...drag.bind} className={`${drag.ring}`}>
-    <div className={`py-2 flex items-center gap-3 text-[14px] ${it.required ? "" : "opacity-60"}`}>
+    <div className={`py-2 flex items-center gap-3 text-body ${it.required ? "" : "opacity-60"}`}>
       <button type="button" role="switch" aria-checked={it.required} aria-label={`${it.name} needed for this job`} disabled={!canManage || busy} onClick={onRequired}
         className={`relative w-9 h-5 rounded-full shrink-0 transition-colors ${it.required ? "bg-[var(--color-main)]" : "bg-[var(--color-border-strong)]"} disabled:opacity-60`}>
         <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-[var(--color-surface)] shadow transition-all ${it.required ? "left-[18px]" : "left-0.5"}`} />
@@ -970,12 +970,12 @@ function TurnoverRow({ it, canManage, busy, onRequired, onAccept, onFile }: { it
         <button type="button" disabled={busy} onClick={onAccept} className={small}>Accept</button>
       )}
     </div>
-    {drag.over && <div className="pb-2 text-[13px] font-semibold text-[var(--color-text)]">{drag.say}</div>}
+    {drag.over && <div className="pb-2 text-body font-medium text-[var(--color-text)]">{drag.say}</div>}
     {(sending || failed) && (
-      <div className="pb-2 flex items-center gap-2 text-[13px]">
+      <div className="pb-2 flex items-center gap-2 text-body">
         <FileThumb file={(sending ?? failed!.file)} size={28} />
         <span className="min-w-0 flex-1 truncate text-[var(--color-text)]">{(sending ?? failed!.file).name} <span className="text-[var(--color-text-muted)]">· {fileSize((sending ?? failed!.file).size)}</span>
-          {sending ? <span className="text-[var(--color-text-muted)]"> · attaching…</span> : <span className="block font-semibold text-[var(--state-overdue-text)] truncate">{failed!.error}</span>}
+          {sending ? <span className="text-[var(--color-text-muted)]"> · attaching…</span> : <span className="block font-medium text-[var(--state-overdue-text)] truncate">{failed!.error}</span>}
         </span>
         {failed && !sending && <button type="button" onClick={() => void send(failed.file)} className={small}>Try again</button>}
       </div>

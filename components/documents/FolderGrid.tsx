@@ -120,42 +120,42 @@ export default function FolderGrid({
       role="menu" className="ui-float ui-float-in absolute z-50 bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] rounded-xl w-56 py-1 overflow-hidden origin-top-right"
       style={contextMenu?.id === id ? { top: 0, left: 0, position: 'relative' } : { top: '100%', right: 0 }}
     >
-      <button onClick={() => { onOpen(id); setContextMenu(null); }} role="menuitem" className="w-full text-left px-3 min-h-10 text-[14px] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center">
+      <button onClick={() => { onOpen(id); setContextMenu(null); }} role="menuitem" className="w-full text-left px-3 min-h-10 text-body text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center">
         <FolderOpen className="w-4 h-4 mr-2 text-[var(--color-text-faint)]" /> Open
       </button>
       {isController && (
         <>
           <div className="h-px bg-[var(--color-border)] my-1" />
-          <button onClick={() => { onRename?.(id); setContextMenu(null); }} role="menuitem" className="w-full text-left px-3 min-h-10 text-[14px] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center">
+          <button onClick={() => { onRename?.(id); setContextMenu(null); }} role="menuitem" className="w-full text-left px-3 min-h-10 text-body text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center">
             <Pencil className="w-4 h-4 mr-2 text-[var(--color-text-faint)]" /> Rename
           </button>
-          <button onClick={() => { onMove?.(id); setContextMenu(null); }} role="menuitem" className="w-full text-left px-3 min-h-10 text-[14px] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center">
+          <button onClick={() => { onMove?.(id); setContextMenu(null); }} role="menuitem" className="w-full text-left px-3 min-h-10 text-body text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center">
             <ArrowRight className="w-4 h-4 mr-2 text-[var(--color-text-faint)]" /> Move
           </button>
-          <button onClick={() => { onCustomize?.(id); setContextMenu(null); }} role="menuitem" className="w-full text-left px-3 min-h-10 text-[14px] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center">
+          <button onClick={() => { onCustomize?.(id); setContextMenu(null); }} role="menuitem" className="w-full text-left px-3 min-h-10 text-body text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center">
             <Palette className="w-4 h-4 mr-2 text-[var(--color-text-faint)]" /> Customize
           </button>
           {onReviewCycle && (
-            <button onClick={() => { onReviewCycle(id); setContextMenu(null); }} role="menuitem" className="w-full text-left px-3 min-h-10 text-[14px] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center">
+            <button onClick={() => { onReviewCycle(id); setContextMenu(null); }} role="menuitem" className="w-full text-left px-3 min-h-10 text-body text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center">
               <CalendarClock className="w-4 h-4 mr-2 text-[var(--color-text-faint)]" /> Review cycle
             </button>
           )}
           {onAckPolicy && (
-            <button onClick={() => { onAckPolicy(id); setContextMenu(null); }} role="menuitem" className="w-full text-left px-3 min-h-10 text-[14px] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center">
+            <button onClick={() => { onAckPolicy(id); setContextMenu(null); }} role="menuitem" className="w-full text-left px-3 min-h-10 text-body text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center">
               <ClipboardCheck className="w-4 h-4 mr-2 text-[var(--color-text-faint)]" /> Read &amp; understood
             </button>
           )}
           {onReviewControl && (
-            <button onClick={() => { onReviewControl(id); setContextMenu(null); }} role="menuitem" className="w-full text-left px-3 min-h-10 text-[14px] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center">
+            <button onClick={() => { onReviewControl(id); setContextMenu(null); }} role="menuitem" className="w-full text-left px-3 min-h-10 text-body text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center">
               <ShieldCheck className="w-4 h-4 mr-2 text-[var(--color-text-faint)]" /> Pre-publish review
             </button>
           )}
           {onRetention && (
-            <button onClick={() => { onRetention(id); setContextMenu(null); }} role="menuitem" className="w-full text-left px-3 min-h-10 text-[14px] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center">
+            <button onClick={() => { onRetention(id); setContextMenu(null); }} role="menuitem" className="w-full text-left px-3 min-h-10 text-body text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center">
               <Archive className="w-4 h-4 mr-2 text-[var(--color-text-faint)]" /> Retention
             </button>
           )}
-          <button onClick={() => { onPermissions?.(id); setContextMenu(null); }} role="menuitem" className="w-full text-left px-3 min-h-10 text-[14px] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center">
+          <button onClick={() => { onPermissions?.(id); setContextMenu(null); }} role="menuitem" className="w-full text-left px-3 min-h-10 text-body text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center">
             <Lock className="w-4 h-4 mr-2 text-[var(--color-text-faint)]" /> Permissions
           </button>
           {onDelete && (
@@ -373,16 +373,16 @@ export default function FolderGrid({
                   <Folder aria-hidden className="w-[18px] h-[18px] shrink-0 text-[var(--color-text-faint)]" />
                 )}
                 <span className="min-w-0">
-                  <span className="block text-[15px] font-semibold text-[var(--color-text)] group-hover:text-[var(--color-accent-text)] truncate select-none">{folder.name}</span>
-                  <span className="sm:hidden block text-[13px] text-[var(--color-text-muted)] truncate select-none">{metaLine(folder, kids)}</span>
+                  <span className="block text-reading font-medium text-[var(--color-text)] group-hover:text-[var(--color-accent-text)] truncate select-none">{folder.name}</span>
+                  <span className="sm:hidden block text-body text-[var(--color-text-muted)] truncate select-none">{metaLine(folder, kids)}</span>
                 </span>
               </button>
             </div>
             {/* Counts as plain right-aligned figures; a zero is muted. */}
-            <div role="cell" className={`max-sm:hidden text-right text-[14px] tabular-nums ${(docTotals?.get(folder.id!) ?? 0) > 0 ? "text-[var(--color-text)]" : "text-[var(--color-text-faint)]"}`}>
+            <div role="cell" className={`max-sm:hidden text-right text-body tabular-nums ${(docTotals?.get(folder.id!) ?? 0) > 0 ? "text-[var(--color-text)]" : "text-[var(--color-text-faint)]"}`}>
               {(docTotals?.get(folder.id!) ?? 0).toLocaleString()}
             </div>
-            <div role="cell" className={`max-sm:hidden text-right text-[14px] tabular-nums ${kids ? "text-[var(--color-text)]" : "text-[var(--color-text-faint)]"}`}>
+            <div role="cell" className={`max-sm:hidden text-right text-body tabular-nums ${kids ? "text-[var(--color-text)]" : "text-[var(--color-text-faint)]"}`}>
               {(kids ?? 0).toLocaleString()}
             </div>
             <div role="cell" className="flex justify-end">{menuButton}</div>
@@ -393,7 +393,7 @@ export default function FolderGrid({
           key={folder.id}
           {...rowProps}
           className={strip ? `
-            group relative shrink-0 basis-[248px] sm:basis-[280px] flex items-center gap-3 pl-4 pr-2 py-3.5 rounded-[14px] bg-[var(--color-surface)] shadow-[var(--shadow-card)] transition-shadow cursor-pointer
+            group relative shrink-0 basis-[248px] sm:basis-[280px] flex items-center gap-3 pl-4 pr-2 py-3.5 rounded-xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] transition-shadow cursor-pointer
             ${dropInto ? 'ring-2 ring-[var(--color-border-strong)] bg-[var(--color-surface-2)]'
               : dropBefore ? 'shadow-[inset_4px_0_0_0_var(--color-border-strong),var(--shadow-card)]'
               : dropAfter ? 'shadow-[inset_-4px_0_0_0_var(--color-border-strong),var(--shadow-card)]'
@@ -423,12 +423,12 @@ export default function FolderGrid({
                 <NodeCover
                   appearance={{ color: folder.color, icon: folder.icon, coverImageUrl: folder.coverImageUrl, coverTint: folder.coverTint }}
                   className="w-9 h-9 shrink-0"
-                  rounded="rounded-[9px]"
+                  rounded="rounded-lg"
                   iconSize="w-4 h-4"
                 />
                 <span className="min-w-0">
-                  <span className="block text-[14px] font-bold text-[var(--color-text)] truncate select-none">{folder.name}</span>
-                  <span className="block text-[13px] text-[var(--color-text-muted)] truncate select-none">{metaLine(folder, kids)}</span>
+                  <span className="block text-body font-medium text-[var(--color-text)] truncate select-none">{folder.name}</span>
+                  <span className="block text-body text-[var(--color-text-muted)] truncate select-none">{metaLine(folder, kids)}</span>
                 </span>
               </button>
               {menuButton}
@@ -448,9 +448,9 @@ export default function FolderGrid({
             </div>
           </div>
 
-          <h3 className="text-sm font-bold text-[var(--color-text)] truncate mb-0.5 select-none">{folder.name}</h3>
+          <h3 className="text-sm font-medium text-[var(--color-text)] truncate mb-0.5 select-none">{folder.name}</h3>
           <div className="flex items-center justify-between gap-2 min-w-0">
-            <p className="text-[13px] text-[var(--color-text-faint)] font-medium truncate select-none min-w-0">
+            <p className="text-body text-[var(--color-text-faint)] font-medium truncate select-none min-w-0">
               {metaLine(folder, kids)}
             </p>
             {/* Open affordance — appears on hover, keeps the card scannable at rest. */}
@@ -484,7 +484,7 @@ export default function FolderGrid({
   if (list) {
     return (
       <div role="table" aria-label="Folders" className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
-        <div role="row" className={`max-sm:hidden grid ${LIST_COLS} items-center gap-x-3 px-4 h-10 text-[13px] font-semibold text-[var(--color-text-muted)]`}>
+        <div role="row" className={`max-sm:hidden grid ${LIST_COLS} items-center gap-x-3 px-4 h-10 text-body font-medium text-[var(--color-text-muted)]`}>
           <span role="columnheader">Folder</span>
           <span role="columnheader" className="text-right">Files</span>
           <span role="columnheader" className="text-right">Subfolders</span>

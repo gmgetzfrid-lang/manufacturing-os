@@ -7,13 +7,15 @@ import ServiceWorkerManager from '@/components/pwa/ServiceWorkerManager';
 // Barlow is self-hosted (app/fonts, SIL Open Font License) through
 // next/font/local: no request to Google at build time or in the browser,
 // so plant networks that filter fonts.googleapis.com still get the real
-// type, and nothing shifts when it arrives. Two weights do the work (400
-// and 700); 600 is kept for small labels where 700 is too heavy. The
+// type, and nothing shifts when it arrives. Weights by job: 400 reading,
+// 500 the working emphasis (buttons, labels, row names, the menu), 600
+// headings, 700 the hero number and page titles. The
 // variables feed --font-inter / --font-display in globals.css, so pages
 // don't change.
 const barlow = localFont({
   src: [
     { path: './fonts/barlow-400.woff2', weight: '400', style: 'normal' },
+    { path: './fonts/barlow-500.woff2', weight: '500', style: 'normal' },
     { path: './fonts/barlow-600.woff2', weight: '600', style: 'normal' },
     { path: './fonts/barlow-700.woff2', weight: '700', style: 'normal' },
   ],
@@ -24,6 +26,7 @@ const barlow = localFont({
 const barlowSemiCondensed = localFont({
   src: [
     { path: './fonts/barlow-semi-condensed-400.woff2', weight: '400', style: 'normal' },
+    { path: './fonts/barlow-semi-condensed-500.woff2', weight: '500', style: 'normal' },
     { path: './fonts/barlow-semi-condensed-600.woff2', weight: '600', style: 'normal' },
     { path: './fonts/barlow-semi-condensed-700.woff2', weight: '700', style: 'normal' },
   ],

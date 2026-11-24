@@ -50,8 +50,8 @@ export default function ConnectPreview({ orgId, plan, loading, canChange, onStar
       <div className="w-full max-w-3xl rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] shadow-2xl my-4" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-start justify-between gap-3 px-5 py-4 border-b border-[var(--color-border)]">
           <div className="min-w-0">
-            <h2 id="connect-preview-title" className="font-display text-[19px] font-semibold text-[var(--color-text)]">Before anything is sent to AI</h2>
-            <p className="text-[14px] text-[var(--color-text-muted)]">Nothing has run yet. Check what will be read, change it, then press Start.</p>
+            <h2 id="connect-preview-title" className="font-display text-section font-semibold text-[var(--color-text)]">Before anything is sent to AI</h2>
+            <p className="text-body text-[var(--color-text-muted)]">Nothing has run yet. Check what will be read, change it, then press Start.</p>
           </div>
           <button type="button" aria-label="Close" onClick={onClose} className={btnIcon}><X className="w-4 h-4" /></button>
         </div>
@@ -65,17 +65,17 @@ export default function ConnectPreview({ orgId, plan, loading, canChange, onStar
             { label: "Held back", value: totals.blocked.toLocaleString(), hint: "Not touched", tone: totals.blocked > 0 ? "bad" : undefined },
           ]} />
         </div>
-        <div className="px-5 py-3 space-y-2 border-b border-[var(--color-border)] text-[14px]">
+        <div className="px-5 py-3 space-y-2 border-b border-[var(--color-border)] text-body">
           <p className="flex items-start gap-2 text-[var(--color-text-muted)]">
             <Send className="w-4 h-4 mt-0.5 shrink-0" />
-            <span>Only pages with no usable text go to {model ? <>your key (<span className="text-[var(--color-text)] font-semibold">{model}</span>)</> : "your AI key"}, as images.</span>
+            <span>Only pages with no usable text go to {model ? <>your key (<span className="text-[var(--color-text)] font-medium">{model}</span>)</> : "your AI key"}, as images.</span>
           </p>
           {!plan.hasKey && <Note tone="warn" title="No AI key on your account.">Text is still read on the server, but nothing goes to a model until you add a key in Intelligence, Setup.</Note>}
-          <p className="text-[13px] text-[var(--color-text-muted)]">Only Admin and Doc Control can run this. Every change it makes to a drawing is recorded and can be undone.</p>
+          <p className="text-body text-[var(--color-text-muted)]">Only Admin and Doc Control can run this. Every change it makes to a drawing is recorded and can be undone.</p>
         </div>
 
         <div className="px-5 pt-4 pb-1">
-          <h3 className="font-display text-[17px] font-semibold text-[var(--color-text)]">Libraries</h3>
+          <h3 className="font-display text-section font-semibold text-[var(--color-text)]">Libraries</h3>
         </div>
         <ul className="divide-y divide-[var(--color-border)] border-y border-[var(--color-border)] mt-2">
           {plan.libraries.map((l) => {
@@ -88,9 +88,9 @@ export default function ConnectPreview({ orgId, plan, loading, canChange, onStar
                   <label className={`inline-flex items-center gap-2.5 min-w-0 ${l.neverAi ? "opacity-60" : "cursor-pointer"}`}>
                     <input type="checkbox" checked={tick} disabled={l.neverAi} onChange={(e) => setPicked((s) => { const n = new Set(s); if (e.target.checked) n.add(l.id); else n.delete(l.id); return n; })} className="w-4 h-4 accent-[var(--color-accent)]" />
                     {l.neverAi ? <ShieldOff className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" /> : <FileText className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />}
-                    <span className="text-[15px] font-semibold text-[var(--color-text)] truncate">{l.name}</span>
+                    <span className="text-reading font-medium text-[var(--color-text)] truncate">{l.name}</span>
                   </label>
-                  <span className="text-[14px] text-[var(--color-text-muted)] tabular-nums">{l.files.toLocaleString()} file{l.files === 1 ? "" : "s"}{l.drawings ? ", drawings" : ""}</span>
+                  <span className="text-body text-[var(--color-text-muted)] tabular-nums">{l.files.toLocaleString()} file{l.files === 1 ? "" : "s"}{l.drawings ? ", drawings" : ""}</span>
                   <span className="ml-auto"><LibraryAiSwitch orgId={orgId} libraryId={l.id} libraryName={l.name} excluded={l.neverAi} canChange={canChange} compact onChanged={() => onReplan(pickedNow.filter((id) => id !== l.id))} /></span>
                 </div>
                 {l.selected && (
@@ -99,25 +99,25 @@ export default function ConnectPreview({ orgId, plan, loading, canChange, onStar
                       {(Object.keys(STATE) as PlanFileState[]).filter((k) => l.counts[k]).map((k) => <StatusTag key={k} tone={STATE[k].tone}>{l.counts[k]} {STATE[k].short.toLowerCase()}</StatusTag>)}
                       {l.toCensus > 0 && <StatusTag tone="none">{l.toCensus} drawings to your model</StatusTag>}
                     </div>
-                    <button type="button" onClick={() => setOpen(isOpen ? null : l.id)} aria-expanded={isOpen} className="mt-1.5 text-[14px] text-[var(--color-accent-text)] hover:underline underline-offset-2 inline-flex items-center gap-0.5">
+                    <button type="button" onClick={() => setOpen(isOpen ? null : l.id)} aria-expanded={isOpen} className="mt-1.5 text-body text-[var(--color-accent-text)] hover:underline underline-offset-2 inline-flex items-center gap-0.5">
                       <ChevronRight className={`w-4 h-4 ui-chevron${(isOpen) ? " rotate-90" : ""}`} /> {isOpen ? "Hide the files" : "Show every file"}
                     </button>
                     {isOpen && (
                       <ul className="mt-1.5 max-h-64 overflow-y-auto rounded-md border border-[var(--color-border)] divide-y divide-[var(--color-border)]">
                         {l.sample.map((f) => (
-                          <li key={f.id} className="flex items-center gap-3 px-3 py-1.5 text-[14px]">
+                          <li key={f.id} className="flex items-center gap-3 px-3 py-1.5 text-body">
                             <span className="truncate flex-1 text-[var(--color-text)]">{f.name}</span>
-                            {f.census && <span className="shrink-0 text-[13px] text-[var(--color-text-muted)]">To your model</span>}
+                            {f.census && <span className="shrink-0 text-body text-[var(--color-text-muted)]">To your model</span>}
                             <StatusTag tone={STATE[f.state].tone}>{STATE[f.state].sent ? "Will be read" : STATE[f.state].short}</StatusTag>
                           </li>
                         ))}
-                        {l.files > l.sample.length && <li className="px-3 py-1.5 text-[13px] text-[var(--color-text-muted)]">And {(l.files - l.sample.length).toLocaleString()} more</li>}
+                        {l.files > l.sample.length && <li className="px-3 py-1.5 text-body text-[var(--color-text-muted)]">And {(l.files - l.sample.length).toLocaleString()} more</li>}
                       </ul>
                     )}
                   </div>
                 )}
-                {!l.selected && !l.neverAi && tick && <div className="mt-1 pl-[26px] text-[13px] text-[var(--color-text-muted)]">Ticked. Press Update the list to see its files.</div>}
-                {l.neverAi && <div className="mt-1 pl-[26px] text-[13px] text-[var(--color-text-muted)] inline-flex items-center gap-1"><Lock className="w-3.5 h-3.5" /> Never sent to AI. Nothing in it is read.</div>}
+                {!l.selected && !l.neverAi && tick && <div className="mt-1 pl-[26px] text-body text-[var(--color-text-muted)]">Ticked. Press Update the list to see its files.</div>}
+                {l.neverAi && <div className="mt-1 pl-[26px] text-body text-[var(--color-text-muted)] inline-flex items-center gap-1"><Lock className="w-3.5 h-3.5" /> Never sent to AI. Nothing in it is read.</div>}
               </li>
             );
           })}

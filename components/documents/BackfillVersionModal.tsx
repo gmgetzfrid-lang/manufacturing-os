@@ -171,8 +171,8 @@ export default function BackfillVersionModal({
           <div className="flex items-center gap-2">
             <History className="w-5 h-5 text-[var(--color-text-muted)]" />
             <div>
-              <h2 className="font-semibold text-[var(--color-text)]">Add an older revision</h2>
-              <div className="text-[13px] text-[var(--color-text-muted)] font-display tabular-nums">
+              <h2 className="font-medium text-[var(--color-text)]">Add an older revision</h2>
+              <div className="text-body text-[var(--color-text-muted)] font-display tabular-nums">
                 {doc.documentNumber || doc.title || doc.name} - current is Rev {doc.rev || "-"}
               </div>
             </div>
@@ -183,14 +183,14 @@ export default function BackfillVersionModal({
         </div>
 
         {/* One line so it can't be mistaken for a new revision. */}
-        <p className="px-5 py-2.5 border-b border-[var(--color-border)] text-[13px] text-[var(--color-text)]">
+        <p className="px-5 py-2.5 border-b border-[var(--color-border)] text-body text-[var(--color-text)]">
           <b>The current revision stays as it is.</b> This adds a past revision to the history.
         </p>
 
         <div className="p-5 space-y-4">
           {/* File picker */}
           <div>
-            <label className="text-[13px] font-semibold text-[var(--color-text)] ">File (PDF) *</label>
+            <label className="text-body font-medium text-[var(--color-text)] ">File (PDF) *</label>
             <div
               className={`mt-1 border-2 border-dashed border-[var(--color-border-strong)] rounded-xl p-4 hover:bg-[var(--color-surface-2)] transition-colors cursor-pointer text-center ${fileDrag.ring}`}
               onClick={() => inputRef.current?.click()}
@@ -204,13 +204,13 @@ export default function BackfillVersionModal({
                 onChange={(e) => onPickFile(e.target.files?.[0] ?? null)}
               />
               {fileDrag.over ? (
-                <div className="text-sm font-bold text-[var(--color-text)]">{fileDrag.say}</div>
+                <div className="text-sm font-medium text-[var(--color-text)]">{fileDrag.say}</div>
               ) : file ? (
                 <div className="flex items-center gap-3 text-left">
                   <FileThumb file={file} />
                   <span className="min-w-0 flex-1">
-                    <span className="block text-sm font-semibold text-[var(--color-text)] truncate">{file.name}</span>
-                    <span className="block text-[13px] text-[var(--color-text-muted)]">{file.size < 1024 * 1024 ? `${(file.size / 1024).toFixed(0)} KB` : `${(file.size / (1024 * 1024)).toFixed(1)} MB`} · tap to pick another</span>
+                    <span className="block text-sm font-medium text-[var(--color-text)] truncate">{file.name}</span>
+                    <span className="block text-body text-[var(--color-text-muted)]">{file.size < 1024 * 1024 ? `${(file.size / 1024).toFixed(0)} KB` : `${(file.size / (1024 * 1024)).toFixed(1)} MB`} · tap to pick another</span>
                   </span>
                 </div>
               ) : (
@@ -312,7 +312,7 @@ export default function BackfillVersionModal({
           )}
 
           {error && (
-            <p role="alert" className="border-l-2 border-[var(--state-overdue)] pl-3 text-[13px] text-[var(--state-overdue)]">{error}</p>
+            <p role="alert" className="border-l-2 border-[var(--state-overdue)] pl-3 text-body text-[var(--state-overdue)]">{error}</p>
           )}
         </div>
 
@@ -323,7 +323,7 @@ export default function BackfillVersionModal({
             <button
               type="submit"
               disabled={busy || !file || !revisionLabel.trim() || !changeLog.trim()}
-              className="inline-flex items-center gap-1.5 text-sm font-bold bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] px-3 py-1.5 rounded disabled:opacity-40"
+              className="inline-flex items-center gap-1.5 text-sm font-medium bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] px-3 py-1.5 rounded disabled:opacity-40"
             >
               {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ArrowUpFromLine className="w-3.5 h-3.5" />}
               Add revision
@@ -338,7 +338,7 @@ export default function BackfillVersionModal({
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <label className="block">
-      <span className="text-[13px] font-semibold text-[var(--color-text)] ">{label}</span>
+      <span className="text-body font-medium text-[var(--color-text)] ">{label}</span>
       <div className="mt-1">{children}</div>
     </label>
   );

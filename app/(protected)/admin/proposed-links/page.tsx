@@ -189,16 +189,16 @@ export default function ProposedLinksPage() {
             <dl className="flex flex-wrap gap-x-8 gap-y-3 px-4 py-3">
               {[["Documents scanned", lastRun.scanned], ["Linked for you", lastRun.autoApplied], ["Waiting for review", lastRun.proposed]].map(([l, v]) => (
                 <div key={String(l)}>
-                  <dt className="text-[13px] text-[var(--color-text-muted)]">{l}</dt>
-                  <dd className={`text-[20px] leading-tight font-semibold tabular-nums ${Number(v) === 0 ? "text-[var(--color-text-faint)]" : l === "Waiting for review" ? "text-[var(--state-held-text)]" : "text-[var(--color-text)]"}`}>{Number(v).toLocaleString()}</dd>
+                  <dt className="text-body text-[var(--color-text-muted)]">{l}</dt>
+                  <dd className={`text-section leading-tight font-semibold tabular-nums ${Number(v) === 0 ? "text-[var(--color-text-faint)]" : l === "Waiting for review" ? "text-[var(--state-held-text)]" : "text-[var(--color-text)]"}`}>{Number(v).toLocaleString()}</dd>
                 </div>
               ))}
             </dl>
             {(lastRun.evidenceLost > 0 || lastRun.notes.length > 0 || (lastRun.proposed === 0 && lastRun.autoApplied === 0 && lastRun.inputs)) && (
-              <div className="border-t border-[var(--color-border)] px-4 py-3 space-y-1 text-[14px]">
+              <div className="border-t border-[var(--color-border)] px-4 py-3 space-y-1 text-body">
                 {lastRun.evidenceLost > 0 && (
                   <p className="text-[var(--color-text)]">
-                    <b className="font-semibold text-[var(--state-held-text)] tabular-nums">{lastRun.evidenceLost}</b> system link{lastRun.evidenceLost === 1 ? " no longer matches" : "s no longer match"} the reason it was made. Marked, not removed.
+                    <b className="font-medium text-[var(--state-held-text)] tabular-nums">{lastRun.evidenceLost}</b> system link{lastRun.evidenceLost === 1 ? " no longer matches" : "s no longer match"} the reason it was made. Marked, not removed.
                   </p>
                 )}
                 {lastRun.notes.map((n) => (
@@ -209,7 +209,7 @@ export default function ProposedLinksPage() {
                     honest answer instead. */}
                 {lastRun.proposed === 0 && lastRun.autoApplied === 0 && lastRun.inputs && (
                   <>
-                    <div className="font-semibold text-[var(--color-text)]">Why nothing was found</div>
+                    <div className="font-medium text-[var(--color-text)]">Why nothing was found</div>
                     <ul className="list-disc pl-5 text-[var(--color-text-muted)]">
                       {diagnose(lastRun.inputs).map((d) => <li key={d}>{d}</li>)}
                       {diagnose(lastRun.inputs).length === 0 && <li>Everything it needs is there. What it can find is likely already linked or was decided before.</li>}
@@ -228,12 +228,12 @@ export default function ProposedLinksPage() {
         <SkeletonRows rows={3} cols={2} what="proposed connections" />
       ) : rows.length === 0 ? (
         <div className={`${sheet} px-5 py-8 text-center`}>
-          <p className="text-[15px] text-[var(--color-text)] max-w-xl mx-auto">
+          <p className="text-reading text-[var(--color-text)] max-w-xl mx-auto">
             {canRun
               ? "Find connections reads off-page connectors, equipment tags and aliases. Sure links are made for you; the rest wait here."
               : "Connections that need a person's decision show up here."}
           </p>
-          {canRun && !running && <button type="button" onClick={() => void runProposers()} className={`${link} mt-1.5 font-semibold`}>Find connections now</button>}
+          {canRun && !running && <button type="button" onClick={() => void runProposers()} className={`${link} mt-1.5 font-medium`}>Find connections now</button>}
         </div>
       ) : (
         <Section label={<>Waiting for a decision <HelpTooltip>&ldquo;Not related&rdquo; sticks until a new revision gives a new reason.</HelpTooltip></>} count={rows.length}>
@@ -252,18 +252,18 @@ export default function ProposedLinksPage() {
                   <tr key={p.id} className={`${tbl.tr} max-md:flex max-md:flex-col max-md:py-1`}>
                     <td className={`${tbl.td} max-md:py-1 align-top`}>
                       <div className="flex items-center gap-2 flex-wrap">
-                        <Link href={docLink(p.doc)} className="ui-id text-[16px]">{docLabel(p.doc)}</Link>
+                        <Link href={docLink(p.doc)} className="ui-id text-reading">{docLabel(p.doc)}</Link>
                         <ArrowLeftRight aria-label="and" className="w-4 h-4 text-[var(--color-text-faint)]" />
-                        <Link href={docLink(p.target)} className="ui-id text-[16px]">{docLabel(p.target)}</Link>
+                        <Link href={docLink(p.target)} className="ui-id text-reading">{docLabel(p.target)}</Link>
                       </div>
                     </td>
                     <td className={`${tbl.td} max-md:py-1 align-top`}>
-                      <div className="text-[15px] text-[var(--color-text)]">{p.evidence?.summary}</div>
-                      {p.evidence?.detail && <div className="text-[14px] text-[var(--color-text-muted)]">{p.evidence.detail}</div>}
+                      <div className="text-reading text-[var(--color-text)]">{p.evidence?.summary}</div>
+                      {p.evidence?.detail && <div className="text-body text-[var(--color-text-muted)]">{p.evidence.detail}</div>}
                     </td>
                     <td className={`${tbl.td} max-md:py-1 align-top max-lg:hidden`}>
                       <StatusTag tone={TIER_TONE[p.tier]} colored={false}>{TIER_LABELS[p.tier]}</StatusTag>
-                      <div className="mt-1 text-[13px] text-[var(--color-text-muted)]">{proposerLabel(p.proposer, p.evidence)}{p.source_rev ? `, from rev ${p.source_rev}` : ""}</div>
+                      <div className="mt-1 text-body text-[var(--color-text-muted)]">{proposerLabel(p.proposer, p.evidence)}{p.source_rev ? `, from rev ${p.source_rev}` : ""}</div>
                     </td>
                     {canDecide && (
                       <td className={`${tbl.td} max-md:py-1 align-top`}>

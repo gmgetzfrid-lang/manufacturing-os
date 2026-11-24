@@ -50,10 +50,10 @@ export default function StagingTray() {
       <div className="h-full px-4 sm:px-6 flex items-center gap-3">
         <Layers aria-hidden className="w-[18px] h-[18px] shrink-0 text-[var(--color-text-muted)]" />
         <div className="min-w-0 flex-1 sm:flex sm:items-baseline sm:gap-3">
-          <div className="text-[15px] font-semibold text-[var(--color-text)] whitespace-nowrap">
+          <div className="text-reading font-medium text-[var(--color-text)] whitespace-nowrap">
             Staged: <span className="tabular-nums">{n}</span> document{n === 1 ? "" : "s"}
           </div>
-          <div className="min-w-0 truncate text-[13px] text-[var(--color-text-muted)] tabular-nums" title={staged.docs.map(stagedLabel).join(", ")}>
+          <div className="min-w-0 truncate text-body text-[var(--color-text-muted)] tabular-nums" title={staged.docs.map(stagedLabel).join(", ")}>
             {shown.join(", ")}{more > 0 ? ` and ${more} more` : ""}
           </div>
         </div>

@@ -263,10 +263,10 @@ export default function DocControlQueue({ orgId, currentUser }: DocControlQueueP
     <div className="mb-4 rounded-lg border-2 border-[var(--color-border)] bg-[var(--color-surface-2)] overflow-hidden">
       <div className="px-4 py-2.5 bg-[var(--color-surface-2)] border-b border-[var(--color-border)] flex items-center gap-2">
         <Flag className="w-4 h-4 text-[var(--color-text-muted)]" />
-        <span className="text-[13px] font-semibold text-[var(--color-text)] ">
+        <span className="text-body font-medium text-[var(--color-text)] ">
           Document Control - open items ({total})
         </span>
-        <span className="text-[13px] text-[var(--color-text)]">resolved on the record, never dismissed</span>
+        <span className="text-body text-[var(--color-text)]">resolved on the record, never dismissed</span>
       </div>
 
       <div className="p-3 space-y-2">
@@ -277,18 +277,18 @@ export default function DocControlQueue({ orgId, currentUser }: DocControlQueueP
             <div key={b.id} className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3">
               <div className="flex items-start gap-2">
                 <GitBranch className="w-4 h-4 mt-0.5 text-[var(--color-text-muted)] shrink-0" />
-                <div className="flex-1 min-w-0 text-[13px]">
+                <div className="flex-1 min-w-0 text-body">
                   <b>Unreconciled branch</b> on{" "}
                   <Link href={docLink(b.documentId, meta?.libraryId ?? null)} className="text-[var(--color-accent-text)] hover:underline">
                     {meta?.label ?? "Document"}
                   </Link>{" "}
                   by <b>{b.createdByName || b.createdBy}</b> · {new Date(b.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
-                  <div className="text-[13px] text-[var(--color-text-muted)] mt-0.5 italic">&ldquo;{b.reason}&rdquo;</div>
+                  <div className="text-body text-[var(--color-text-muted)] mt-0.5 italic">&ldquo;{b.reason}&rdquo;</div>
                 </div>
                 {resolveFor === b.id ? null : (
                   <button
                     onClick={() => { setResolveFor(b.id); setResolveNote(""); setError(null); }}
-                    className="shrink-0 px-2 py-1 rounded-lg text-[13px] font-bold border border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
+                    className="shrink-0 px-2 py-1 rounded-lg text-body font-medium border border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
                   >
                     Resolve…
                   </button>
@@ -300,22 +300,22 @@ export default function DocControlQueue({ orgId, currentUser }: DocControlQueueP
                     value={resolveNote}
                     onChange={(e) => setResolveNote(e.target.value)}
                     placeholder='How was it reconciled? e.g. "both changes merged into Rev 5"'
-                    className="w-full px-2 py-1.5 rounded-lg border border-[var(--color-border-strong)] text-[13px]"
+                    className="w-full px-2 py-1.5 rounded-lg border border-[var(--color-border-strong)] text-body"
                   />
-                  {error && <div className="text-[13px] text-[var(--state-overdue)] font-bold">{error}</div>}
+                  {error && <div className="text-body text-[var(--state-overdue)] font-medium">{error}</div>}
                   <div className="flex gap-1.5 justify-end">
-                    <button onClick={() => setResolveFor(null)} className="px-2 py-1 rounded-lg text-[13px] font-bold border border-[var(--color-border)]">Cancel</button>
+                    <button onClick={() => setResolveFor(null)} className="px-2 py-1 rounded-lg text-body font-medium border border-[var(--color-border)]">Cancel</button>
                     <button
                       onClick={() => void handleResolve(b, "withdrawn")}
                       disabled={busyId === b.id}
-                      className="px-2 py-1 rounded-lg text-[13px] font-bold border border-[color-mix(in_srgb,var(--state-overdue)_35%,transparent)] text-[var(--state-overdue)] hover:bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] disabled:opacity-50"
+                      className="px-2 py-1 rounded-lg text-body font-medium border border-[color-mix(in_srgb,var(--state-overdue)_35%,transparent)] text-[var(--state-overdue)] hover:bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] disabled:opacity-50"
                     >
                       Withdrawn
                     </button>
                     <button
                       onClick={() => void handleResolve(b, "merged")}
                       disabled={busyId === b.id}
-                      className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[13px] font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50"
+                      className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-body font-medium text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50"
                     >
                       {busyId === b.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
                       Merged
@@ -331,21 +331,21 @@ export default function DocControlQueue({ orgId, currentUser }: DocControlQueueP
         {unverified.map((rev) => (
           <div key={rev.id} className="rounded-xl border border-[color-mix(in_srgb,var(--state-overdue)_35%,transparent)] bg-[var(--color-surface)] p-3 flex items-start gap-2">
             <Flag className="w-4 h-4 mt-0.5 text-[var(--state-overdue)] shrink-0" />
-            <div className="flex-1 min-w-0 text-[13px]">
+            <div className="flex-1 min-w-0 text-body">
               <b>Rev {rev.revisionLabel}</b> of{" "}
               <Link href={docLink(rev.recordId, rev.libraryId)} className="text-[var(--color-accent-text)] hover:underline">
                 {rev.docLabel}
               </Link>{" "}
               was published with <b>no recorded checkout or download trail</b>
               {rev.createdByName ? <> by <b>{rev.createdByName}</b></> : null} · {new Date(rev.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}.
-              <div className="text-[13px] text-[var(--color-text-muted)] mt-0.5">
+              <div className="text-body text-[var(--color-text-muted)] mt-0.5">
                 Confirm with the author what their work was based on, then verify.
               </div>
             </div>
             <button
               onClick={() => void handleVerify(rev)}
               disabled={busyId === rev.id}
-              className="shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[13px] font-bold border border-[color-mix(in_srgb,var(--state-released)_35%,transparent)] text-[var(--state-released)] hover:bg-[color-mix(in_srgb,var(--state-released)_10%,transparent)] disabled:opacity-50"
+              className="shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded-lg text-body font-medium border border-[color-mix(in_srgb,var(--state-released)_35%,transparent)] text-[var(--state-released)] hover:bg-[color-mix(in_srgb,var(--state-released)_10%,transparent)] disabled:opacity-50"
             >
               {busyId === rev.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
               Verified with author
@@ -359,13 +359,13 @@ export default function DocControlQueue({ orgId, currentUser }: DocControlQueueP
           return (
             <div key={s.sessionId} className="rounded-xl border border-[color-mix(in_srgb,var(--state-held)_40%,transparent)] bg-[var(--color-surface)] p-3 flex items-start gap-2">
               <KeyRound className="w-4 h-4 mt-0.5 text-[var(--state-held)] shrink-0" />
-              <div className="flex-1 min-w-0 text-[13px]">
+              <div className="flex-1 min-w-0 text-body">
                 <Link href={docLink(s.documentId, s.libraryId)} className="text-[var(--color-accent-text)] hover:underline">
                   {s.docLabel}
                 </Link>{" "}
                 has been checked out by <b>{s.userName || "a user"}</b> for <b>{days} days</b>
                 {s.purpose ? <> ({s.purpose})</> : null}.
-                <div className="text-[13px] text-[var(--color-text-muted)] mt-0.5">
+                <div className="text-body text-[var(--color-text-muted)] mt-0.5">
                   Nudge them, or force-release from the document&apos;s checkout popover if the work is done.
                 </div>
               </div>
@@ -377,20 +377,20 @@ export default function DocControlQueue({ orgId, currentUser }: DocControlQueueP
         {deletionRequests.map((req) => (
           <div key={req.auditId} className="rounded-xl border border-[color-mix(in_srgb,var(--state-overdue)_35%,transparent)] bg-[var(--color-surface)] p-3 flex items-start gap-2">
             <AlertTriangle className="w-4 h-4 mt-0.5 text-[var(--state-overdue)] shrink-0" />
-            <div className="flex-1 min-w-0 text-[13px]">
+            <div className="flex-1 min-w-0 text-body">
               <Link href={docLink(req.documentId, req.libraryId)} className="text-[var(--color-accent-text)] hover:underline">
                 {req.label}
               </Link>{" "}
               - <b>deletion requested</b> by {req.requestedBy || "the owner"} on {new Date(req.requestedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}.
-              {req.reason && <div className="text-[13px] italic text-[var(--color-text-muted)] mt-0.5">&ldquo;{req.reason}&rdquo;</div>}
-              <div className="text-[13px] text-[var(--color-text-muted)] mt-0.5">
+              {req.reason && <div className="text-body italic text-[var(--color-text-muted)] mt-0.5">&ldquo;{req.reason}&rdquo;</div>}
+              <div className="text-body text-[var(--color-text-muted)] mt-0.5">
                 Review the document, then delete/archive it (or decline) - and mark this request handled.
               </div>
             </div>
             <button
               onClick={() => void handleResolveDeletion(req)}
               disabled={busyId === req.auditId}
-              className="shrink-0 px-2 py-1 rounded-md text-[13px] font-bold border border-[color-mix(in_srgb,var(--state-overdue)_35%,transparent)] text-[var(--state-overdue)] hover:bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] disabled:opacity-50"
+              className="shrink-0 px-2 py-1 rounded-md text-body font-medium border border-[color-mix(in_srgb,var(--state-overdue)_35%,transparent)] text-[var(--state-overdue)] hover:bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] disabled:opacity-50"
             >
               Mark handled
             </button>

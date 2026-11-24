@@ -82,44 +82,44 @@ export default function ProjectScopePanel({ orgId, projectId, projectName, canMa
 
   return (
     <Card label="Scope: what this project is about"
-      action={<Link href={`/graph?focus=${encodeURIComponent(node)}`} className="text-[14px] text-[var(--color-accent-text)] hover:underline inline-flex items-center gap-1 whitespace-nowrap"><Link2 className="w-3.5 h-3.5" /> See on the graph</Link>}>
+      action={<Link href={`/graph?focus=${encodeURIComponent(node)}`} className="text-body text-[var(--color-accent-text)] hover:underline inline-flex items-center gap-1 whitespace-nowrap"><Link2 className="w-3.5 h-3.5" /> See on the graph</Link>}>
       <div className="space-y-3">
-        {err && <div role="alert" className="text-[13px] text-[var(--state-overdue-text)]">{err}</div>}
+        {err && <div role="alert" className="text-body text-[var(--state-overdue-text)]">{err}</div>}
         {edges === null ? (
-          <div className="text-[13px] text-[var(--color-text-muted)] inline-flex items-center gap-2"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading the scope…</div>
+          <div className="text-body text-[var(--color-text-muted)] inline-flex items-center gap-2"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading the scope…</div>
         ) : (
           <>
             <div className="flex flex-wrap gap-1.5">
-              {scope.length === 0 && <span className="text-[14px] text-[var(--color-text-muted)]">No unit or equipment set yet. <HelpTooltip>Set them so this project shows up when someone asks what&apos;s going on in a unit.</HelpTooltip></span>}
+              {scope.length === 0 && <span className="text-body text-[var(--color-text-muted)]">No unit or equipment set yet. <HelpTooltip>Set them so this project shows up when someone asks what&apos;s going on in a unit.</HelpTooltip></span>}
               {scope.map((e) => {
                 const l = L(e.b);
                 return (
-                  <span key={e.id} title={e.summary} className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[13px] ${e.status === "pending" ? "bg-[var(--state-held)]" : "bg-[var(--color-surface-2)]"}`}>
+                  <span key={e.id} title={e.summary} className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-body ${e.status === "pending" ? "bg-[var(--state-held)]" : "bg-[var(--color-surface-2)]"}`}>
                     <Icon id={e.b} />
-                    {l.href ? <Link href={l.href} className="font-bold hover:underline">{l.label}</Link> : <span className="font-bold">{l.label}</span>}
-                    {e.status === "pending" && <span className="text-[11px] text-[var(--state-held-text)]">proposed · {Math.round(e.confidence * 100)}%</span>}
-                    {canManage && e.status === "pending" && <button onClick={() => accept(e)} disabled={busy} className="text-[13px] text-[var(--color-accent-text)] hover:underline">accept</button>}
+                    {l.href ? <Link href={l.href} className="font-medium hover:underline">{l.label}</Link> : <span className="font-medium">{l.label}</span>}
+                    {e.status === "pending" && <span className="text-caption text-[var(--state-held-text)]">proposed · {Math.round(e.confidence * 100)}%</span>}
+                    {canManage && e.status === "pending" && <button onClick={() => accept(e)} disabled={busy} className="text-body text-[var(--color-accent-text)] hover:underline">accept</button>}
                     {canManage && <button onClick={() => drop(e)} disabled={busy} className="opacity-50 hover:opacity-100" title={e.origin === "human" ? "Remove" : "Dismiss"} aria-label={`${e.origin === "human" ? "Remove" : "Dismiss"} ${l.label}`}><X className="w-3 h-3" /></button>}
                   </span>
                 );
               })}
             </div>
             {members.length > 0 && (
-              <div className="text-[13px] text-[var(--color-text-muted)]">
-                <span className="font-bold text-[var(--color-text)]">{members.length}</span> folder{members.length === 1 ? "" : "s"}/file{members.length === 1 ? "" : "s"} linked to this project by name:{" "}
+              <div className="text-body text-[var(--color-text-muted)]">
+                <span className="font-medium text-[var(--color-text)]">{members.length}</span> folder{members.length === 1 ? "" : "s"}/file{members.length === 1 ? "" : "s"} linked to this project by name:{" "}
                 {members.slice(0, 6).map((e, i) => { const l = L(e.a); return <React.Fragment key={e.id}>{i > 0 && ", "}{l.href ? <Link href={l.href} className="hover:underline">{l.label}</Link> : l.label}</React.Fragment>; })}
                 {members.length > 6 && ` and ${members.length - 6} more`}
               </div>
             )}
             {canManage && (
               <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-[var(--color-border)]">
-                <select value={unitPick} onChange={(e) => setUnitPick(e.target.value)} aria-label="Unit" className="h-9 text-[14px] font-semibold rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2">
+                <select value={unitPick} onChange={(e) => setUnitPick(e.target.value)} aria-label="Unit" className="h-9 text-body font-medium rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2">
                   <option value="">Add a unit…</option>
                   {units.map((u) => <option key={u.code} value={u.code}>{u.label} ({u.code})</option>)}
                 </select>
-                <button onClick={addUnit} disabled={busy || !unitPick} className="inline-flex items-center gap-1 h-9 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"><Plus className="w-3.5 h-3.5" /> Unit</button>
-                <input value={tagInput} onChange={(e) => setTagInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void addAsset(); }} placeholder="Equipment tag, e.g. X-35" aria-label="Equipment tag" className="h-9 text-[13px] rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 w-44" />
-                <button onClick={addAsset} disabled={busy || !tagInput.trim()} className="inline-flex items-center gap-1 h-9 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"><Plus className="w-3.5 h-3.5" /> Equipment</button>
+                <button onClick={addUnit} disabled={busy || !unitPick} className="inline-flex items-center gap-1 h-10 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"><Plus className="w-3.5 h-3.5" /> Unit</button>
+                <input value={tagInput} onChange={(e) => setTagInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void addAsset(); }} placeholder="Equipment tag, e.g. X-35" aria-label="Equipment tag" className="h-9 text-body rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 w-44" />
+                <button onClick={addAsset} disabled={busy || !tagInput.trim()} className="inline-flex items-center gap-1 h-10 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"><Plus className="w-3.5 h-3.5" /> Equipment</button>
               </div>
             )}
           </>

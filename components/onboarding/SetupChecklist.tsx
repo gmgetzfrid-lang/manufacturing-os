@@ -105,7 +105,7 @@ export default function SetupChecklist() {
   return (
     <section aria-label="Set up your workspace" className="min-w-0">
       <SectionHead title="Set up your workspace">
-        <span className="text-[14px] text-[var(--color-text-muted)] tabular-nums">{doneCount} of {all.length} done</span>
+        <span className="text-body text-[var(--color-text-muted)] tabular-nums">{doneCount} of {all.length} done</span>
         <button type="button" onClick={dismiss} aria-label="Hide this list" title="Hide this list"
           className="w-9 h-9 pointer-coarse:w-11 pointer-coarse:h-11 grid place-items-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
           <X className="w-4 h-4" />
@@ -116,20 +116,20 @@ export default function SetupChecklist() {
         {/* The one question, answered in place. */}
         {!first ? (
           <fieldset className="px-4 py-3.5 border-b border-[var(--color-border)]">
-            <legend className="float-left w-full text-[15px] font-semibold text-[var(--color-text)]">What will your team use first?</legend>
+            <legend className="float-left w-full text-reading font-medium text-[var(--color-text)]">What will your team use first?</legend>
             <div className="clear-both pt-2.5 flex flex-wrap gap-2">
               {FIRST.map((f) => (
                 <button key={f.key} type="button" onClick={() => answer(f.key)}
-                  className="h-10 pointer-coarse:h-11 px-3.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-border-control)] transition-colors">
+                  className="h-10 pointer-coarse:h-11 px-3.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-border-control)] transition-colors">
                   {f.label}
                 </button>
               ))}
             </div>
           </fieldset>
         ) : (
-          <p className="px-4 py-2.5 border-b border-[var(--color-border)] text-[14px] text-[var(--color-text-muted)]">
+          <p className="px-4 py-2.5 border-b border-[var(--color-border)] text-body text-[var(--color-text-muted)]">
             Starting with {FIRST.find((f) => f.key === first)?.label.toLowerCase()}.{" "}
-            <button type="button" onClick={() => setFirst(null)} className={`font-semibold ${link}`}>Change</button>
+            <button type="button" onClick={() => setFirst(null)} className={`font-medium ${link}`}>Change</button>
           </p>
         )}
 
@@ -143,12 +143,12 @@ export default function SetupChecklist() {
                   : <span aria-hidden className={`w-5 h-5 shrink-0 rounded-full border-2 ${isNext ? "border-[var(--color-current)]" : "border-[var(--color-border-strong)]"}`} />}
                 <span className="sr-only">{s.done ? "Done:" : "To do:"}</span>
                 <span className="min-w-0 flex-1">
-                  <span className={`block text-[15px] ${s.done ? "text-[var(--color-text-muted)]" : "font-semibold text-[var(--color-text)]"}`}>
+                  <span className={`block text-reading ${s.done ? "text-[var(--color-text-muted)]" : "font-medium text-[var(--color-text)]"}`}>
                     <span className="tabular-nums text-[var(--color-text-muted)] font-normal mr-1.5">{i + 1}.</span>{s.label}
                   </span>
-                  {!s.done && s.blurb && <span className="block text-[13px] text-[var(--color-text-muted)] truncate">{s.blurb}</span>}
+                  {!s.done && s.blurb && <span className="block text-body text-[var(--color-text-muted)] truncate">{s.blurb}</span>}
                 </span>
-                {isNext && <span className="shrink-0 text-[13px] font-semibold text-[var(--color-accent-text)]">Next</span>}
+                {isNext && <span className="shrink-0 text-body font-medium text-[var(--color-accent-text)]">Next</span>}
                 {!s.done && <ChevronRight aria-hidden className="w-4 h-4 shrink-0 text-[var(--color-text-faint)]" />}
               </>
             );

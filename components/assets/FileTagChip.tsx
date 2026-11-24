@@ -48,7 +48,7 @@ export default function FileTagChip({ tag, type = "Linked drawings", orgId, user
         <FileText className="w-3 h-3 opacity-70" aria-hidden />
         <span>{tag}</span>
         {hasFiles ? (
-          <span className="inline-flex items-center gap-0.5 font-sans text-[12px] font-bold" aria-hidden>
+          <span className="inline-flex items-center gap-0.5 font-sans text-caption font-medium" aria-hidden>
             <Files className="w-3 h-3" />{fileCount}
           </span>
         ) : null}

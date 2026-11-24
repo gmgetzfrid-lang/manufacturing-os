@@ -18,8 +18,8 @@ import { fileSize } from "@/components/projects/cost/FilePreview";
 import { appConfirm } from "@/components/providers/DialogProvider";
 import { sayError } from "@/components/projects/sayError";
 
-const btn = "inline-flex items-center gap-1.5 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-[12px] font-bold px-3.5 py-2 shadow-sm disabled:opacity-50";
-const quiet = "inline-flex items-center gap-1.5 rounded-lg border border-[var(--color-border-strong)] text-[12px] font-semibold text-[var(--color-text)] px-3 py-2 hover:bg-[var(--color-surface-2)] disabled:opacity-50";
+const btn = "inline-flex items-center gap-1.5 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-caption font-medium px-3.5 py-2 shadow-sm disabled:opacity-50";
+const quiet = "inline-flex items-center gap-1.5 rounded-lg border border-[var(--color-border-strong)] text-caption font-medium text-[var(--color-text)] px-3 py-2 hover:bg-[var(--color-surface-2)] disabled:opacity-50";
 const ACCEPT = ".docx,.pdf,.png,.jpg,.jpeg,.webp";
 
 /** A page of the letterhead, shrunk to `width` px, with the report's place
@@ -44,7 +44,7 @@ export function LetterheadPreview({ lh, which, width = 220 }: { lh: Letterhead; 
           </div>
         </div>
       </div>
-      <figcaption className="mt-1 text-[11px] text-[var(--color-text-muted)]">{which === "first" ? "Page 1" : "Pages after"}</figcaption>
+      <figcaption className="mt-1 text-caption text-[var(--color-text-muted)]">{which === "first" ? "Page 1" : "Pages after"}</figcaption>
     </figure>
   );
 }
@@ -116,7 +116,7 @@ export function LetterheadStep({ projectId, canManage }: { projectId: string; ca
     </label>
   );
 
-  if (!loaded) return <div className="text-[12px] text-[var(--color-text-muted)] inline-flex items-center gap-1.5"><Loader2 className="w-4 h-4 animate-spin" /> Reading the saved letterhead…</div>;
+  if (!loaded) return <div className="text-caption text-[var(--color-text-muted)] inline-flex items-center gap-1.5"><Loader2 className="w-4 h-4 animate-spin" /> Reading the saved letterhead…</div>;
 
   if (!lh) {
     return (
@@ -124,22 +124,22 @@ export function LetterheadStep({ projectId, canManage }: { projectId: string; ca
         <label {...drag.bind}
           className={`flex flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed px-4 py-8 text-center cursor-pointer ${drag.over ? `border-[var(--color-main)] ${drag.ring}` : "border-[var(--color-border-strong)] hover:bg-[var(--color-surface-2)]"} ${!canManage ? "pointer-events-none opacity-60" : ""}`}>
           {picked ? <FileThumb file={picked} size={44} /> : <FileUp className="w-6 h-6 text-[var(--color-text-muted)]" />}
-          <span className="text-[14px] font-bold text-[var(--color-text)]">
+          <span className="text-body font-medium text-[var(--color-text)]">
             {drag.over ? drag.say : picked ? <><Loader2 className="w-4 h-4 animate-spin inline mr-1" />Reading {picked.name} · {fileSize(picked.size)}</> : "Upload your letterhead"}
           </span>
-          <span className="text-[12px] text-[var(--color-text-muted)] max-w-md">Word (.docx) keeps its logo, address and margins. A PDF or a picture of the page works too: the report goes in its blank part.</span>
+          <span className="text-caption text-[var(--color-text-muted)] max-w-md">Word (.docx) keeps its logo, address and margins. A PDF or a picture of the page works too: the report goes in its blank part.</span>
           <input type="file" accept={ACCEPT} className="sr-only" disabled={!!busy || !canManage}
             onChange={(e) => { void read(e.target.files?.[0]); e.target.value = ""; }} />
         </label>
-        {!canManage && <div className="text-[12px] text-[var(--color-text-muted)]">Only the project owner or an admin can set the letterhead.</div>}
+        {!canManage && <div className="text-caption text-[var(--color-text-muted)]">Only the project owner or an admin can set the letterhead.</div>}
         {err && (
-          <div role="alert" className="flex items-center gap-2 flex-wrap border-l-2 border-[var(--state-overdue)] pl-2 text-[12px] text-[var(--state-overdue-text)]">
+          <div role="alert" className="flex items-center gap-2 flex-wrap border-l-2 border-[var(--state-overdue)] pl-2 text-caption text-[var(--state-overdue-text)]">
             {failed && <FileThumb file={failed} size={28} />}
             <span className="min-w-0 flex-1">{failed ? `${failed.name} · ${fileSize(failed.size)}: ` : ""}{err}</span>
             {failed && <button type="button" onClick={() => void read(failed)} className={quiet}>Try again</button>}
           </div>
         )}
-        {msg && <div className="text-[12px] text-[var(--state-released-text)]">{msg}</div>}
+        {msg && <div className="text-caption text-[var(--state-released-text)]">{msg}</div>}
       </div>
     );
   }
@@ -153,39 +153,39 @@ export function LetterheadStep({ projectId, canManage }: { projectId: string; ca
           {hasRest && <LetterheadPreview lh={lh} which="rest" width={170} />}
         </div>
         <div className="flex-1 min-w-0 space-y-3">
-          <div className="text-[12px] text-[var(--color-text)]">
+          <div className="text-caption text-[var(--color-text)]">
             <b className="break-words">{lh.name}</b>
             <span className="text-[var(--color-text-muted)]"> · {lh.kind === "docx" ? "Word" : lh.kind === "pdf" ? "PDF" : "picture"} · {lh.page.w}″ × {lh.page.h}″{draft ? " · not saved yet" : ""}</span>
           </div>
           <fieldset className="space-y-1.5" disabled={!canManage}>
-            <legend className="text-[12px] font-semibold text-[var(--color-text)]">Where the report goes: inches in from each edge</legend>
+            <legend className="text-caption font-medium text-[var(--color-text)]">Where the report goes: inches in from each edge</legend>
             <div className="grid grid-cols-2 gap-2 max-w-xs">
               {(["top", "bottom", "left", "right"] as const).map((k) => (
-                <label key={k} className="flex items-center justify-between gap-2 text-[12px] text-[var(--color-text-muted)] capitalize">
+                <label key={k} className="flex items-center justify-between gap-2 text-caption text-[var(--color-text-muted)] capitalize">
                   {k}
                   <input type="number" step={0.05} min={0} value={lh.margins[k]} onChange={(e) => margin(k, Number(e.target.value))}
-                    className="h-8 pointer-coarse:h-11 w-20 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[13px] text-[var(--color-text)] tabular-nums" />
+                    className="h-8 pointer-coarse:h-11 w-20 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-body text-[var(--color-text)] tabular-nums" />
                 </label>
               ))}
             </div>
           </fieldset>
           <fieldset className="space-y-1" disabled={!canManage}>
-            <legend className="text-[12px] font-semibold text-[var(--color-text)]">Print it on</legend>
+            <legend className="text-caption font-medium text-[var(--color-text)]">Print it on</legend>
             {([["all", lh.first ? "Every page (page 1 as in the file, the rest with its other header)" : "Every page"], ["first", "Page 1 only"]] as const).map(([v, label]) => (
-              <label key={v} className="flex items-center gap-2 text-[12px] text-[var(--color-text)]">
+              <label key={v} className="flex items-center gap-2 text-caption text-[var(--color-text)]">
                 <input type="radio" name="lh-pages" checked={(lh.pages ?? "all") === v} onChange={() => setDraft({ ...lh, pages: v })} /> {label}
               </label>
             ))}
           </fieldset>
           {err && (
-            <div role="alert" className="flex items-center gap-2 flex-wrap border-l-2 border-[var(--state-overdue)] pl-2 text-[12px] text-[var(--state-overdue-text)]">
+            <div role="alert" className="flex items-center gap-2 flex-wrap border-l-2 border-[var(--state-overdue)] pl-2 text-caption text-[var(--state-overdue-text)]">
               {failed && <FileThumb file={failed} size={28} />}
               <span className="min-w-0 flex-1">{failed ? `${failed.name} · ${fileSize(failed.size)}: ` : ""}{err}</span>
               {failed && <button type="button" onClick={() => void read(failed)} className={quiet}>Try again</button>}
             </div>
           )}
-          {picked && <div className="flex items-center gap-2 text-[12px] text-[var(--color-text-muted)]"><FileThumb file={picked} size={28} /> Reading {picked.name} · {fileSize(picked.size)}…</div>}
-          {msg && !draft && <div className="text-[12px] text-[var(--state-released-text)]">{msg}</div>}
+          {picked && <div className="flex items-center gap-2 text-caption text-[var(--color-text-muted)]"><FileThumb file={picked} size={28} /> Reading {picked.name} · {fileSize(picked.size)}…</div>}
+          {msg && !draft && <div className="text-caption text-[var(--state-released-text)]">{msg}</div>}
           <div className="flex flex-wrap gap-2">
             {canManage && draft && (
               <button type="button" onClick={() => void save()} disabled={!!busy} className={btn}>
@@ -203,7 +203,7 @@ export function LetterheadStep({ projectId, canManage }: { projectId: string; ca
               </button>
             )}
           </div>
-          <p className="text-[12px] text-[var(--color-text-muted)]">The shift report&apos;s Print and Email / Print both use it. For the best result print at 100% (no &ldquo;fit to page&rdquo;), with headers and footers off.</p>
+          <p className="text-caption text-[var(--color-text-muted)]">The shift report&apos;s Print and Email / Print both use it. For the best result print at 100% (no &ldquo;fit to page&rdquo;), with headers and footers off.</p>
         </div>
       </div>
     </div>
@@ -228,9 +228,9 @@ export function SlidesStep({ projectId, canManage }: { projectId: string; canMan
   return (
     <section id="slides" className="mt-6 pt-5 border-t border-[var(--color-border)] scroll-mt-20" data-slides-step>
       <div className="flex items-center gap-2.5 flex-wrap">
-        <h3 className="min-w-0 flex-1 text-[16px] font-semibold text-[var(--color-text)]">Slides</h3>
+        <h3 className="min-w-0 flex-1 text-reading font-medium text-[var(--color-text)]">Slides</h3>
         {t && (
-          <div role="radiogroup" aria-label="This project's slides" className="inline-flex rounded-md border border-[var(--color-border-strong)] overflow-hidden text-[14px] font-semibold">
+          <div role="radiogroup" aria-label="This project's slides" className="inline-flex rounded-md border border-[var(--color-border-strong)] overflow-hidden text-body font-medium">
             {([[true, "Company template"], [false, "Plain"]] as const).map(([v, label]) => (
               <button key={label} type="button" role="radio" aria-checked={on === v} disabled={!canManage || busy || !loaded} onClick={() => void set(v)}
                 className={`h-9 px-3 ${on === v ? "bg-[var(--color-main)] text-white" : "bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"} disabled:cursor-not-allowed`}>
@@ -240,11 +240,11 @@ export function SlidesStep({ projectId, canManage }: { projectId: string; canMan
           </div>
         )}
       </div>
-      <p className="mt-1.5 text-[13px] text-[var(--color-text-muted)]">
+      <p className="mt-1.5 text-body text-[var(--color-text-muted)]">
         {!t ? "Upload the company's PowerPoint template. Every project can use it." : on ? "This project's slides go onto the company template." : "This project's slides use the workspace colors, without the template."}
         {t && !canManage ? " Only the project owner or an admin can change this." : ""}
       </p>
-      {err && <p role="alert" className="mt-1.5 text-[13px] font-semibold text-[var(--state-overdue)]">{err}</p>}
+      {err && <p role="alert" className="mt-1.5 text-body font-medium text-[var(--state-overdue)]">{err}</p>}
       <div className="mt-3"><SlideTemplateSetup bare /></div>
     </section>
   );

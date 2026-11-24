@@ -69,8 +69,8 @@ export default function RevertConfirmModal({
             <RotateCcw className="w-5 h-5 text-[var(--color-text-muted)]" />
           </div>
           <div className="flex-1 min-w-0">
-            <div className="text-sm font-semibold text-[var(--color-text)]">Revert to Rev {targetVersion.revisionLabel}</div>
-            <div className="text-[13px] text-[var(--color-text-muted)] truncate">
+            <div className="text-sm font-medium text-[var(--color-text)]">Revert to Rev {targetVersion.revisionLabel}</div>
+            <div className="text-body text-[var(--color-text-muted)] truncate">
               {doc.documentNumber || doc.title || doc.name} - current is Rev {doc.rev}
             </div>
           </div>
@@ -85,13 +85,13 @@ export default function RevertConfirmModal({
               This will create a <b>new revision</b> on the document that copies the file payload from <b>Rev {targetVersion.revisionLabel}</b>.
               The current revision will be marked superseded but remain in the history.
             </p>
-            <p className="text-[13px] text-[var(--color-text-muted)]">
+            <p className="text-body text-[var(--color-text-muted)]">
               Reverts never overwrite history: the audit chain stays intact and the action is logged with your reason.
             </p>
           </div>
 
           <div>
-            <label className="text-[13px] font-semibold text-[var(--color-text)] ">Reason *</label>
+            <label className="text-body font-medium text-[var(--color-text)] ">Reason *</label>
             <textarea
               value={reason}
               onChange={(e) => setReason(e.target.value)}
@@ -102,7 +102,7 @@ export default function RevertConfirmModal({
           </div>
 
           <div>
-            <label className="text-[13px] font-semibold text-[var(--color-text)] ">MOC Reference</label>
+            <label className="text-body font-medium text-[var(--color-text)] ">MOC Reference</label>
             <input
               value={mocRef}
               onChange={(e) => setMocRef(e.target.value)}
@@ -112,7 +112,7 @@ export default function RevertConfirmModal({
           </div>
 
           {error && (
-            <div className="flex items-start gap-2 text-[13px] border-l-2 border-[var(--state-overdue)] pl-3 text-[var(--state-overdue)]">
+            <div className="flex items-start gap-2 text-body border-l-2 border-[var(--state-overdue)] pl-3 text-[var(--state-overdue)]">
               <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
               <span>{error}</span>
             </div>
@@ -120,13 +120,13 @@ export default function RevertConfirmModal({
         </div>
 
         <div className="px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-end gap-2">
-          <button onClick={onClose} disabled={busy} className="px-3 py-2 rounded-lg text-[13px] font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">
+          <button onClick={onClose} disabled={busy} className="px-3 py-2 rounded-lg text-body font-medium text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">
             Cancel
           </button>
           <button
             onClick={() => void submit()}
             disabled={busy}
-            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-[13px] font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-60"
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-body font-medium text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-60"
           >
             {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RotateCcw className="w-3.5 h-3.5" />}
             {busy ? "Reverting…" : "Confirm Revert"}

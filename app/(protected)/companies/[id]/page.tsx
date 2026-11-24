@@ -104,7 +104,7 @@ export default function CompanyProfilePage() {
       <PageBody>
         {error != null
           ? <ErrorNote error={error} onRetry={() => { setLoading(true); refresh(); }} />
-          : <p className="text-[15px] text-[var(--color-text)]">It may have been removed, or it&apos;s in another workspace.</p>}
+          : <p className="text-reading text-[var(--color-text)]">It may have been removed, or it&apos;s in another workspace.</p>}
         <Link href="/companies" className={heroQuiet}>Back to companies</Link>
       </PageBody>
     </PageShell>
@@ -179,12 +179,12 @@ export default function CompanyProfilePage() {
         <dl className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-x-6 gap-y-3 px-4 sm:px-5 py-4">
           {cells.map(([label, value]) => (
             <div key={label} className="min-w-0">
-              <dt className="text-[13px] text-[var(--color-text-muted)]">{label}</dt>
-              <dd className="mt-0.5 text-[15px] text-[var(--color-text)] min-w-0 truncate">{value}</dd>
+              <dt className="text-body text-[var(--color-text-muted)]">{label}</dt>
+              <dd className="mt-0.5 text-reading text-[var(--color-text)] min-w-0 truncate">{value}</dd>
             </div>
           ))}
         </dl>
-        {company.notes && <p className="px-4 sm:px-5 py-3 border-t border-[var(--color-border)] text-[15px] text-[var(--color-text)] max-w-[80ch]">{company.notes}</p>}
+        {company.notes && <p className="px-4 sm:px-5 py-3 border-t border-[var(--color-border)] text-reading text-[var(--color-text)] max-w-[80ch]">{company.notes}</p>}
       </Card>
 
       <Card pad={false} className="overflow-hidden" label={
@@ -198,20 +198,20 @@ export default function CompanyProfilePage() {
             ? <ErrorNote compact className="px-4 py-3" error={profileError} title="The record wasn't gathered." onRetry={refresh} />
             : <SkeletonRows rows={5} cols={1} what="the score" sheet={false} />
         ) : (
-          <table className="w-full text-[15px]">
-            <thead className="bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text-muted)] text-left">
+          <table className="w-full text-body">
+            <thead className="bg-[var(--color-surface-2)] text-body text-[var(--color-text-muted)] text-left">
               <tr>
-                <th className="font-semibold px-4 h-10 whitespace-nowrap">Part</th>
-                <th className="font-semibold px-4 h-10 text-right whitespace-nowrap">Score</th>
-                <th className="font-semibold px-4 h-10 hidden sm:table-cell w-40"><span className="sr-only">Out of 100</span></th>
-                <th className="font-semibold px-4 h-10 w-full">How it&apos;s worked out</th>
+                <th className="font-medium px-4 h-10 whitespace-nowrap">Part</th>
+                <th className="font-medium px-4 h-10 text-right whitespace-nowrap">Score</th>
+                <th className="font-medium px-4 h-10 hidden sm:table-cell w-40"><span className="sr-only">Out of 100</span></th>
+                <th className="font-medium px-4 h-10 w-full">How it&apos;s worked out</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[var(--color-border)]">
               {(sc?.dimensions ?? []).map((d) => (
                 <tr key={d.key}>
-                  <td className="px-4 py-2.5 font-semibold text-[var(--color-text)] whitespace-nowrap">{d.label}</td>
-                  <td className="px-4 py-2.5 text-right">{d.score != null ? <ScoreFigure score={d.score} className="text-[17px]" /> : <Faint>None</Faint>}</td>
+                  <td className="px-4 py-2.5 font-medium text-[var(--color-text)] whitespace-nowrap">{d.label}</td>
+                  <td className="px-4 py-2.5 text-right">{d.score != null ? <ScoreFigure score={d.score} className="text-section" /> : <Faint>None</Faint>}</td>
                   <td className="px-4 py-2.5 hidden sm:table-cell">
                     {d.score != null && (
                       <span className="block h-1.5 w-32 rounded-full bg-[var(--color-surface-2)] overflow-hidden" aria-hidden>
@@ -251,9 +251,9 @@ function Faint({ children }: { children: React.ReactNode }) {
 }
 
 /** A field with no width of its own (inline rows), 40 px, 16 px on a phone. */
-const FIELD = `h-10 pointer-coarse:h-11 text-[15px] max-sm:text-[16px] ${fieldBox}`;
+const FIELD = `h-10 pointer-coarse:h-11 text-reading ${fieldBox}`;
 const LABEL = kitLabel;
-const TH = "font-semibold px-4 h-10 whitespace-nowrap";
+const TH = "font-medium px-4 h-10 whitespace-nowrap";
 
 // ── Quality manual ───────────────────────────────────────────────────────
 
@@ -322,18 +322,18 @@ function QualityManualPanel({ orgId, company, canManage, actorId, onChanged, set
   return (
     <Card pad={false} className="overflow-hidden"
       label={<span className="inline-flex items-center gap-1.5">Quality manual <HelpTooltip>How much of a real quality program their manual covers, checked against an ISO 9001-shaped list (document control, welding, NDE, calibration, ITPs, materials, NCRs, training, records). The AI only proposes; you confirm before anything is recorded.</HelpTooltip></span>}
-      action={company.qualityManualReviewedAt ? <span className="text-[13px] text-[var(--color-text-muted)]">Confirmed {fmtDay(company.qualityManualReviewedAt)}</span> : undefined}>
+      action={company.qualityManualReviewedAt ? <span className="text-body text-[var(--color-text-muted)]">Confirmed {fmtDay(company.qualityManualReviewedAt)}</span> : undefined}>
       <div className="px-4 py-3 flex items-baseline gap-2">
         {company.qualityManualScore != null ? (
-          <><span className="text-[22px]"><ScoreFigure score={company.qualityManualScore} />%</span><span className="text-[15px] text-[var(--color-text-muted)]">covered</span></>
+          <><span className="text-[22px]"><ScoreFigure score={company.qualityManualScore} />%</span><span className="text-reading text-[var(--color-text-muted)]">covered</span></>
         ) : (
-          <span className="text-[15px] text-[var(--color-text-muted)]">Not checked yet.</span>
+          <span className="text-reading text-[var(--color-text-muted)]">Not checked yet.</span>
         )}
       </div>
 
       {(company.qualityManualGaps?.length ?? 0) > 0 && !proposal && (
-        <table className="w-full text-[15px] border-t border-[var(--color-border)]">
-          <thead className="bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text-muted)] text-left">
+        <table className="w-full text-body border-t border-[var(--color-border)]">
+          <thead className="bg-[var(--color-surface-2)] text-body text-[var(--color-text-muted)] text-left">
             <tr><th className={TH}>Gap</th><th className={`${TH} w-full`}>Finding</th></tr>
           </thead>
           <tbody className="divide-y divide-[var(--color-border)]">
@@ -353,7 +353,7 @@ function QualityManualPanel({ orgId, company, canManage, actorId, onChanged, set
             <>
               <div className="flex items-center gap-2 flex-wrap">
                 {doc ? (
-                  <span className="inline-flex items-center gap-1.5 h-10 rounded-md border border-[var(--color-border-strong)] px-3 text-[15px] font-semibold text-[var(--color-text)]">
+                  <span className="inline-flex items-center gap-1.5 h-10 rounded-md border border-[var(--color-border-strong)] px-3 text-reading font-medium text-[var(--color-text)]">
                     <FileText className="w-4 h-4 text-[var(--color-text-muted)]" /> {doc.label}
                     <button type="button" onClick={() => setDoc(null)} aria-label={`Remove ${doc.label}`} className="w-7 h-7 grid place-items-center rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] hover:text-[var(--color-text)]"><X className="w-3.5 h-3.5" /></button>
                   </span>
@@ -374,7 +374,7 @@ function QualityManualPanel({ orgId, company, canManage, actorId, onChanged, set
                 <ul className="rounded-md border border-[var(--color-border)] divide-y divide-[var(--color-border)] overflow-hidden">
                   {results.map((d) => (
                     <li key={d.id}>
-                      <button type="button" onClick={() => setDoc(d)} className="w-full px-3 h-10 text-left text-[15px] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center gap-2">
+                      <button type="button" onClick={() => setDoc(d)} className="w-full px-3 h-10 text-left text-reading text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center gap-2">
                         <FileText className="w-4 h-4 text-[var(--color-text-faint)]" /> {d.label}
                       </button>
                     </li>
@@ -385,8 +385,8 @@ function QualityManualPanel({ orgId, company, canManage, actorId, onChanged, set
           ) : (
             <>
               <div className="flex items-center gap-3 flex-wrap">
-                <span className="text-[15px] font-semibold text-[var(--color-text)]">Proposed: {proposal.score}% covered</span>
-                <span className="text-[13px] text-[var(--color-text-muted)]">Nothing is recorded until you confirm.</span>
+                <span className="text-reading font-medium text-[var(--color-text)]">Proposed: {proposal.score}% covered</span>
+                <span className="text-body text-[var(--color-text-muted)]">Nothing is recorded until you confirm.</span>
                 <span className="ml-auto flex items-center gap-2">
                   <button type="button" onClick={() => setProposal(null)} className={heroQuiet}>Discard</button>
                   <Button variant="secondary" onClick={() => void confirm()} loading={confirming}>
@@ -394,7 +394,7 @@ function QualityManualPanel({ orgId, company, canManage, actorId, onChanged, set
                   </Button>
                 </span>
               </div>
-              <table className="w-full text-[15px] rounded-md border border-[var(--color-border)]">
+              <table className="w-full text-body rounded-md border border-[var(--color-border)]">
                 <tbody className="divide-y divide-[var(--color-border)]">
                   {proposal.findings.map((f) => (
                     <tr key={f.area}>
@@ -442,7 +442,7 @@ function EventsPanel({ orgId, company, events, canManage, actorId, actorName, on
   return (
     <Card pad={false} className="overflow-hidden"
       label={<span className="inline-flex items-center gap-1.5">Safety and performance log <HelpTooltip>Dated, named facts that feed the safety score. Logging a near miss costs nothing; it&apos;s a healthy habit.</HelpTooltip></span>}
-      action={<span className="text-[13px] text-[var(--color-text-muted)] tabular-nums">{plural(events.length, "event")}</span>}>
+      action={<span className="text-body text-[var(--color-text-muted)] tabular-nums">{plural(events.length, "event")}</span>}>
       {canManage && (
         <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap">
           <select value={kind} aria-label="Kind of event" onChange={(e) => setKind(e.target.value as CompanyEvent["kind"])} className={FIELD}>
@@ -462,11 +462,11 @@ function EventsPanel({ orgId, company, events, canManage, actorId, actorName, on
         </div>
       )}
       {events.length === 0 ? (
-        <p className="px-4 py-4 text-[15px] text-[var(--color-text-muted)]">No events on record yet.</p>
+        <p className="px-4 py-4 text-reading text-[var(--color-text-muted)]">No events on record yet.</p>
       ) : (
         <div className="max-h-96 overflow-y-auto">
-          <table className="w-full text-[15px]">
-            <thead className="bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text-muted)] text-left">
+          <table className="w-full text-body">
+            <thead className="bg-[var(--color-surface-2)] text-body text-[var(--color-text-muted)] text-left">
               <tr><th className={TH}>Date</th><th className={TH}>Event</th><th className={`${TH} w-full`}>What happened</th><th className={`${TH} hidden sm:table-cell`}>Logged by</th></tr>
             </thead>
             <tbody className="divide-y divide-[var(--color-border)]">
@@ -496,21 +496,21 @@ function HistoryPanels({ profile, companyName, onPlan }: { profile: CompanyProfi
   return (
     <>
       {projects.length > 0 && (
-        <Card pad={false} className="overflow-hidden" label="Jobs" action={<span className="text-[13px] text-[var(--color-text-muted)] tabular-nums">{plural(projects.length, "job")}</span>}>
-          <table className="w-full text-[15px]">
-            <thead className="bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text-muted)] text-left">
+        <Card pad={false} className="overflow-hidden" label="Jobs" action={<span className="text-body text-[var(--color-text-muted)] tabular-nums">{plural(projects.length, "job")}</span>}>
+          <table className="w-full text-body">
+            <thead className="bg-[var(--color-surface-2)] text-body text-[var(--color-text-muted)] text-left">
               <tr><th className={`${TH} w-full`}>Project</th><th className={`${TH} hidden sm:table-cell`}>Trade</th><th className={`${TH} text-right`}>Contract</th><th className={TH}><span className="sr-only">Staffing plan and rates</span></th></tr>
             </thead>
             <tbody className="divide-y divide-[var(--color-border)]">
               {projects.map((p) => (
                 <tr key={p.projectId}>
-                  <td className="px-4 py-2.5"><Link href={`/projects/${p.projectId}`} className="font-semibold text-[var(--color-text)] hover:text-[var(--color-accent-text)]">{p.projectName}</Link></td>
+                  <td className="px-4 py-2.5"><Link href={`/projects/${p.projectId}`} className="font-medium text-[var(--color-text)] hover:text-[var(--color-accent-text)]">{p.projectName}</Link></td>
                   <td className="px-4 py-2.5 whitespace-nowrap hidden sm:table-cell">{p.trade ?? <Faint>None</Faint>}</td>
                   <td className="px-4 py-2.5 whitespace-nowrap text-right tabular-nums">{p.contractValue != null ? fmtMoney(p.contractValue) : <Faint>None</Faint>}</td>
                   <td className="px-4 py-2.5 whitespace-nowrap text-right">
                     {/* Its staffing plan, rate sheet and every shift live on the project's Costs › Contractors page. */}
                     <button type="button" onClick={() => onPlan(p.projectId)} title={`${companyName}'s staffing plan, rate sheet and shifts on this project`}
-                      className="inline-flex items-center gap-1.5 min-h-8 pointer-coarse:min-h-11 text-[14px] font-semibold text-[var(--color-accent-text)] hover:underline underline-offset-2">
+                      className="inline-flex items-center gap-1.5 min-h-8 pointer-coarse:min-h-11 text-body font-medium text-[var(--color-accent-text)] hover:underline underline-offset-2">
                       <HardHat aria-hidden className="w-4 h-4" /><span className="max-sm:sr-only">Staffing plan and rates</span>
                     </button>
                   </td>
@@ -521,9 +521,9 @@ function HistoryPanels({ profile, companyName, onPlan }: { profile: CompanyProfi
         </Card>
       )}
       {bids.length > 0 && (
-        <Card pad={false} className="overflow-hidden" label="Bid history" action={<span className="text-[13px] text-[var(--color-text-muted)] tabular-nums">{won} of {bids.length} won</span>}>
-          <table className="w-full text-[15px]">
-            <thead className="bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text-muted)] text-left">
+        <Card pad={false} className="overflow-hidden" label="Bid history" action={<span className="text-body text-[var(--color-text-muted)] tabular-nums">{won} of {bids.length} won</span>}>
+          <table className="w-full text-body">
+            <thead className="bg-[var(--color-surface-2)] text-body text-[var(--color-text-muted)] text-left">
               <tr><th className={`${TH} w-full`}>Quote</th><th className={`${TH} hidden sm:table-cell`}>Date</th><th className={`${TH} text-right`}>Total</th><th className={TH}>Result</th></tr>
             </thead>
             <tbody className="divide-y divide-[var(--color-border)]">
@@ -532,7 +532,7 @@ function HistoryPanels({ profile, companyName, onPlan }: { profile: CompanyProfi
                   <td className="px-4 py-2.5">{b.rfqGroup ?? "Quote"}</td>
                   <td className="px-4 py-2.5 whitespace-nowrap hidden sm:table-cell tabular-nums text-[var(--color-text-muted)]">{b.docDate ? fmtDay(b.docDate) : ""}</td>
                   <td className="px-4 py-2.5 whitespace-nowrap text-right tabular-nums">{b.total != null ? fmtMoney(b.total) : <Faint>None</Faint>}</td>
-                  <td className="px-4 py-2.5 whitespace-nowrap">{b.won ? <StatusTag tone="good">Won</StatusTag> : <span className="text-[13px] text-[var(--color-text-muted)]">Not selected</span>}</td>
+                  <td className="px-4 py-2.5 whitespace-nowrap">{b.won ? <StatusTag tone="good">Won</StatusTag> : <span className="text-body text-[var(--color-text-muted)]">Not selected</span>}</td>
                 </tr>
               ))}
             </tbody>
@@ -540,9 +540,9 @@ function HistoryPanels({ profile, companyName, onPlan }: { profile: CompanyProfi
         </Card>
       )}
       {changeOrders.length > 0 && (
-        <Card pad={false} className="overflow-hidden" label="Change orders on their scopes" action={<span className="text-[13px] text-[var(--color-text-muted)] tabular-nums">{plural(changeOrders.length, "change order")}</span>}>
-          <table className="w-full text-[15px]">
-            <thead className="bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text-muted)] text-left">
+        <Card pad={false} className="overflow-hidden" label="Change orders on their scopes" action={<span className="text-body text-[var(--color-text-muted)] tabular-nums">{plural(changeOrders.length, "change order")}</span>}>
+          <table className="w-full text-body">
+            <thead className="bg-[var(--color-surface-2)] text-body text-[var(--color-text-muted)] text-left">
               <tr><th className={TH}>Number</th><th className={`${TH} w-full`}>Title</th><th className={`${TH} text-right`}>Amount</th><th className={`${TH} hidden md:table-cell`}>Reason</th><th className={`${TH} hidden sm:table-cell`}>Status</th></tr>
             </thead>
             <tbody className="divide-y divide-[var(--color-border)]">
@@ -623,7 +623,7 @@ function EditCompanyModal({ company, actorId, onClose, onSaved }: {
               </select>
             </div>
           </div>
-          <p id="ce-status-hint" className="-mt-2 text-[13px] text-[var(--color-text-muted)]">Do not use keeps the record and flags the company across the app.</p>
+          <p id="ce-status-hint" className="-mt-2 text-body text-[var(--color-text-muted)]">Do not use keeps the record and flags the company across the app.</p>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div><label htmlFor="ce-cname" className={LABEL}>Contact <span className="font-normal text-[var(--color-text-muted)]">(optional)</span></label><input id="ce-cname" value={contactName} onChange={(e) => setContactName(e.target.value)} className={kitField} /></div>
             <div><label htmlFor="ce-email" className={LABEL}>Email <span className="font-normal text-[var(--color-text-muted)]">(optional)</span></label><input id="ce-email" type="email" value={contactEmail} onChange={(e) => setContactEmail(e.target.value)} className={kitField} /></div>

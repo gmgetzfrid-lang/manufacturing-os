@@ -158,10 +158,10 @@ export default function BulkCheckoutToProjectModal({
               : <Briefcase className="w-5 h-5 text-[var(--color-text-muted)]" />}
           </div>
           <div className="flex-1">
-            <div className="text-sm font-semibold text-[var(--color-text)]">
+            <div className="text-sm font-medium text-[var(--color-text)]">
               Bulk checkout · {docs.length} document{docs.length === 1 ? "" : "s"}
             </div>
-            <div className="text-[13px] text-[var(--color-text-muted)]">
+            <div className="text-body text-[var(--color-text-muted)]">
               {kind === "adhoc"
                 ? "Quick checkout: no project required. Auto-expires in 24h if you forget to check back in."
                 : "Attach all checkouts to the same project so the team knows they belong together."}
@@ -177,13 +177,13 @@ export default function BulkCheckoutToProjectModal({
           <div className="flex bg-[var(--color-surface-2)] p-1 rounded-lg">
             <button
               onClick={() => setKind("adhoc")}
-              className={`flex-1 py-1.5 text-[13px] font-bold rounded-md inline-flex items-center justify-center gap-1.5 ${kind === "adhoc" ? "bg-[var(--color-surface)] shadow text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}
+              className={`flex-1 py-1.5 text-body font-medium rounded-md inline-flex items-center justify-center gap-1.5 ${kind === "adhoc" ? "bg-[var(--color-surface)] shadow text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}
             >
               <Wand2 className="w-3 h-3" /> Ad-hoc (no project)
             </button>
             <button
               onClick={() => setKind("project")}
-              className={`flex-1 py-1.5 text-[13px] font-bold rounded-md inline-flex items-center justify-center gap-1.5 ${kind === "project" ? "bg-[var(--color-surface)] shadow text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}
+              className={`flex-1 py-1.5 text-body font-medium rounded-md inline-flex items-center justify-center gap-1.5 ${kind === "project" ? "bg-[var(--color-surface)] shadow text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}
             >
               <Briefcase className="w-3 h-3" /> Project
             </button>
@@ -193,19 +193,19 @@ export default function BulkCheckoutToProjectModal({
         <div className="px-6 py-5 space-y-4 max-h-[70vh] overflow-y-auto">
           {/* Docs being checked out */}
           <div>
-            <div className="text-[13px] font-semibold text-[var(--color-text)] mb-2">
+            <div className="text-body font-medium text-[var(--color-text)] mb-2">
               Documents ({docs.length})
             </div>
             <div className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-lg max-h-40 overflow-y-auto divide-y divide-[var(--color-border)]">
               {docs.map((d) => {
                 const conflict = d.checkedOutBy && d.checkedOutBy !== actorUserId;
                 return (
-                  <div key={d.id} className="px-3 py-2 flex items-center gap-2 text-[13px]">
+                  <div key={d.id} className="px-3 py-2 flex items-center gap-2 text-body">
                     <FileText className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" />
                     <span className="font-display font-semibold tabular-nums text-[var(--color-text)] truncate">{d.documentNumber || "-"}</span>
                     <span className="text-[var(--color-text-muted)] truncate">{d.title || d.name}</span>
                     {conflict && (
-                      <span className="ml-auto inline-flex items-center gap-1 text-[13px] text-[var(--state-held)] bg-[color-mix(in_srgb,var(--state-held)_12%,transparent)] px-1.5 py-0.5 rounded border border-[color-mix(in_srgb,var(--state-held)_40%,transparent)]">
+                      <span className="ml-auto inline-flex items-center gap-1 text-body text-[var(--state-held)] bg-[color-mix(in_srgb,var(--state-held)_12%,transparent)] px-1.5 py-0.5 rounded border border-[color-mix(in_srgb,var(--state-held)_40%,transparent)]">
                         <AlertTriangle className="w-3 h-3" /> already locked
                       </span>
                     )}
@@ -214,7 +214,7 @@ export default function BulkCheckoutToProjectModal({
               })}
             </div>
             {conflicts.length > 0 && (
-              <div className="mt-2 text-[13px] text-[var(--state-held)]">
+              <div className="mt-2 text-body text-[var(--state-held)]">
                 {conflicts.length} document{conflicts.length === 1 ? " is" : "s are"} locked by other users and will be skipped. You can request markups from them after.
               </div>
             )}
@@ -223,16 +223,16 @@ export default function BulkCheckoutToProjectModal({
           {/* Project tabs — only when kind === project */}
           {kind === "project" && (
           <div>
-            <div className="text-[13px] font-semibold text-[var(--color-text)] mb-1.5">Project</div>
+            <div className="text-body font-medium text-[var(--color-text)] mb-1.5">Project</div>
             <div className="flex bg-[var(--color-surface-2)] p-1 rounded-lg mb-3">
               <button
                 onClick={() => setChoice("new")}
-                className={`flex-1 py-1.5 text-[13px] font-bold rounded-md ${choice === "new" ? "bg-[var(--color-surface)] shadow text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}
+                className={`flex-1 py-1.5 text-body font-medium rounded-md ${choice === "new" ? "bg-[var(--color-surface)] shadow text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}
               >New Project</button>
               <button
                 onClick={() => setChoice("existing")}
                 disabled={projects.length === 0}
-                className={`flex-1 py-1.5 text-[13px] font-bold rounded-md ${choice === "existing" ? "bg-[var(--color-surface)] shadow text-[var(--color-text)]" : "text-[var(--color-text-muted)]"} disabled:opacity-40 disabled:cursor-not-allowed`}
+                className={`flex-1 py-1.5 text-body font-medium rounded-md ${choice === "existing" ? "bg-[var(--color-surface)] shadow text-[var(--color-text)]" : "text-[var(--color-text-muted)]"} disabled:opacity-40 disabled:cursor-not-allowed`}
               >Existing</button>
             </div>
 
@@ -256,20 +256,20 @@ export default function BulkCheckoutToProjectModal({
                     value={moc}
                     onChange={(e) => setMoc(e.target.value)}
                     placeholder="MOC reference"
-                    className="px-3 py-1.5 border border-[var(--color-border)] rounded-md text-[13px]"
+                    className="px-3 py-1.5 border border-[var(--color-border)] rounded-md text-body"
                   />
                   <input
                     type="date"
                     value={targetDate}
                     onChange={(e) => setTargetDate(e.target.value)}
-                    className="px-3 py-1.5 border border-[var(--color-border)] rounded-md text-[13px]"
+                    className="px-3 py-1.5 border border-[var(--color-border)] rounded-md text-body"
                   />
                 </div>
                 <div className="flex bg-[var(--color-surface)] p-1 rounded-md border border-[var(--color-border)]">
-                  <button onClick={() => setVisibility("public")} className={`flex-1 py-1 text-[13px] font-bold rounded ${visibility === "public" ? "bg-[var(--color-surface)] text-[var(--color-text)] ring-1 ring-[var(--color-text-muted)] shadow-sm" : "text-[var(--color-text-muted)]"}`}>
+                  <button onClick={() => setVisibility("public")} className={`flex-1 py-1 text-body font-medium rounded ${visibility === "public" ? "bg-[var(--color-surface)] text-[var(--color-text)] ring-1 ring-[var(--color-text-muted)] shadow-sm" : "text-[var(--color-text-muted)]"}`}>
                     <Globe className="inline w-3 h-3 mr-1" />Public
                   </button>
-                  <button onClick={() => setVisibility("private")} className={`flex-1 py-1 text-[13px] font-bold rounded ${visibility === "private" ? "bg-slate-700 text-white" : "text-[var(--color-text-muted)]"}`}>
+                  <button onClick={() => setVisibility("private")} className={`flex-1 py-1 text-body font-medium rounded ${visibility === "private" ? "bg-slate-700 text-white" : "text-[var(--color-text-muted)]"}`}>
                     <Lock className="inline w-3 h-3 mr-1" />Private
                   </button>
                 </div>
@@ -293,20 +293,20 @@ export default function BulkCheckoutToProjectModal({
 
           {/* Shared checkout details */}
           <div>
-            <div className="text-[13px] font-semibold text-[var(--color-text)] mb-1.5">Mode (applied to all)</div>
+            <div className="text-body font-medium text-[var(--color-text)] mb-1.5">Mode (applied to all)</div>
             <div className="flex bg-[var(--color-surface-2)] p-1 rounded-lg">
               {(["view", "markup", "edit"] as const).map((m) => (
                 <button
                   key={m}
                   onClick={() => setMode(m)}
-                  className={`flex-1 py-1.5 text-[13px] font-bold rounded-md capitalize ${mode === m ? "bg-[var(--color-surface)] shadow text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}
+                  className={`flex-1 py-1.5 text-body font-medium rounded-md capitalize ${mode === m ? "bg-[var(--color-surface)] shadow text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}
                 >{m}</button>
               ))}
             </div>
           </div>
 
           <div>
-            <label className="text-[13px] font-semibold text-[var(--color-text)] inline-flex items-center gap-1">
+            <label className="text-body font-medium text-[var(--color-text)] inline-flex items-center gap-1">
               Purpose *
               <IsoGuidance topic="checkout_purpose" />
             </label>
@@ -319,31 +319,31 @@ export default function BulkCheckoutToProjectModal({
           </div>
 
           <div>
-            <label className="text-[13px] font-semibold text-[var(--color-text)] ">Expected release (optional)</label>
+            <label className="text-body font-medium text-[var(--color-text)] ">Expected release (optional)</label>
             <input
               type="date"
               value={expectedReleaseAt ? expectedReleaseAt.slice(0, 10) : ""}
               onChange={(e) => setExpectedReleaseAt(e.target.value ? new Date(e.target.value).toISOString() : "")}
               className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm"
             />
-            <div className="text-[13px] text-[var(--color-text-muted)] mt-1">
+            <div className="text-body text-[var(--color-text-muted)] mt-1">
               Stale checkouts past this date surface a warning bar to the whole team.
             </div>
           </div>
 
           {error && (
-            <div className="flex items-start gap-2 text-[13px] border-l-2 border-[var(--state-overdue)] pl-3 text-[var(--state-overdue)]">
+            <div className="flex items-start gap-2 text-body border-l-2 border-[var(--state-overdue)] pl-3 text-[var(--state-overdue)]">
               <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> {error}
             </div>
           )}
         </div>
 
         <div className="px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-end gap-2">
-          <button onClick={onClose} disabled={busy} className="px-3 py-2 rounded-lg text-[13px] font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">Cancel</button>
+          <button onClick={onClose} disabled={busy} className="px-3 py-2 rounded-lg text-body font-medium text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">Cancel</button>
           <button
             onClick={submit}
             disabled={busy}
-            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-[13px] font-bold disabled:opacity-60 bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)]"
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-body font-medium disabled:opacity-60 bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)]"
           >
             {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ChevronRight className="w-3.5 h-3.5" />}
             {busy ? "Checking out…" : `Checkout ${docs.length} doc${docs.length === 1 ? "" : "s"}`}

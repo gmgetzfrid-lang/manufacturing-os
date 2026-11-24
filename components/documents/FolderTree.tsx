@@ -178,16 +178,16 @@ export default function FolderTree({
           {open ? <FolderOpen className="h-4 w-4 shrink-0 text-[var(--color-text-muted)]" /> : <Folder className="h-4 w-4 shrink-0 text-[var(--color-text-muted)]" />}
 
           <div className="min-w-0 flex-1">
-            <div className="truncate text-sm font-semibold text-[var(--color-text)]">{node.name}</div>
+            <div className="truncate text-sm font-medium text-[var(--color-text)]">{node.name}</div>
             {Array.isArray(node.pathNames) && node.pathNames.length > 1 ? (
-              <div className="truncate text-[13px] text-[var(--color-text-muted)]">
+              <div className="truncate text-body text-[var(--color-text-muted)]">
                 {node.pathNames.slice(0, -1).join(" / ")}
               </div>
             ) : null}
           </div>
 
           {visibility !== "normal" && (
-            <span className="text-[13px] px-2 py-0.5 rounded-full border border-[color-mix(in_srgb,var(--state-held)_40%,transparent)] bg-[color-mix(in_srgb,var(--state-held)_12%,transparent)] text-[var(--state-held)]">
+            <span className="text-body px-2 py-0.5 rounded-full border border-[color-mix(in_srgb,var(--state-held)_40%,transparent)] bg-[color-mix(in_srgb,var(--state-held)_12%,transparent)] text-[var(--state-held)]">
               {visibility}
             </span>
           )}
@@ -197,7 +197,7 @@ export default function FolderTree({
               {onCreate && (
                 <button
                   type="button"
-                  className="text-[13px] px-2 py-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)]"
+                  className="text-body px-2 py-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)]"
                   onClick={(e) => {
                     e.stopPropagation();
                     onCreate(node.id!);
@@ -209,7 +209,7 @@ export default function FolderTree({
               {onMove && (
                 <button
                   type="button"
-                  className="text-[13px] px-2 py-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)]"
+                  className="text-body px-2 py-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)]"
                   onClick={(e) => {
                     e.stopPropagation();
                     onMove(node.id!);
@@ -257,7 +257,7 @@ export default function FolderTree({
           >
             <div className="h-7 w-7" />
             <Folder className="h-4 w-4 shrink-0 text-[var(--color-text-muted)]" />
-            <div className="truncate text-sm font-semibold text-[var(--color-text)]">{rootLabel}</div>
+            <div className="truncate text-sm font-medium text-[var(--color-text)]">{rootLabel}</div>
           </div>
         ) : null}
 

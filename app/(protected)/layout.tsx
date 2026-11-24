@@ -80,7 +80,7 @@ const ProtectedContent = ({ children }: { children: React.ReactNode }) => {
       <div className="h-dvh w-full flex bg-[var(--color-canvas)]" aria-busy="true">
         <div className="surface-side max-md:hidden w-64 shrink-0" aria-hidden />
         <div className="flex-1 min-w-0 px-4 sm:px-6 lg:px-8 pt-20">
-          <p role="status" className="text-[14px] text-[var(--color-text-muted)]">Loading your workspace</p>
+          <p role="status" className="text-body text-[var(--color-text-muted)]">Loading your workspace</p>
           <Skeleton className="mt-4 w-[min(420px,80%)] h-7" />
           <Skeleton className="mt-3 w-[min(300px,60%)] h-4" />
           <SkeletonRows rows={5} cols={2} className="mt-8 max-w-[1400px]" />
@@ -145,8 +145,8 @@ function NotAMemberScreen({ email }: { email: string | null }) {
   return (
     <div className="h-dvh w-full flex items-center justify-center bg-[var(--color-canvas)] p-6">
       <div className="max-w-md w-full bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl p-8">
-        <h1 className="text-[20px] font-semibold text-[var(--color-heading)]">Your access is off.</h1>
-        <p className="text-[15px] text-[var(--color-text)] mt-2 leading-relaxed">
+        <h1 className="text-section font-semibold text-[var(--color-heading)]">Your access is off.</h1>
+        <p className="text-reading text-[var(--color-text)] mt-2 leading-relaxed">
           You&apos;re signed in as <b>{email ?? "this account"}</b>. Your access to the workspace is suspended. Ask your admin to turn it back on, then sign in again.
         </p>
         <div className="mt-5">
@@ -163,8 +163,8 @@ function MembershipErrorScreen() {
   return (
     <div className="h-dvh w-full flex items-center justify-center bg-[var(--color-canvas)] p-6">
       <div className="max-w-md w-full bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl p-8 text-center">
-        <h1 className="text-[20px] font-semibold text-[var(--color-text)]">Couldn&apos;t load your workspace</h1>
-        <p className="text-[15px] text-[var(--color-text-muted)] mt-2">
+        <h1 className="text-section font-semibold text-[var(--color-text)]">Couldn&apos;t load your workspace</h1>
+        <p className="text-reading text-[var(--color-text-muted)] mt-2">
           The connection dropped while looking up your membership. Your access is
           unchanged. Check your connection, then try again.
         </p>

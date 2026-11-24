@@ -60,7 +60,7 @@ const modelLabel = (m: string, offered: string[]) =>
 function Notice({ notice }: { notice: { tone: "ok" | "err"; text: string } | null }) {
   if (!notice) return null;
   return (
-    <p className={`relative pl-4 py-0.5 text-[14px] font-semibold flex items-start gap-1.5 ${
+    <p className={`relative pl-4 py-0.5 text-body font-semibold flex items-start gap-1.5 ${
       notice.tone === "ok" ? "text-[var(--color-text)]" : "text-[var(--state-overdue)]"}`}>
       <span aria-hidden className={`absolute left-0 inset-y-0 w-[3px] rounded-full ${notice.tone === "ok" ? "bg-[var(--state-released)]" : "bg-[var(--state-overdue)]"}`} />
       {notice.tone === "ok"
@@ -84,7 +84,7 @@ function Section({ title, state, help, children }: { title: string; icon?: React
   return (
     <section className="min-w-0">
       <div className="flex items-end gap-3 mb-2.5 min-h-8">
-        <h2 className="font-display text-[19px] leading-tight font-semibold text-[var(--color-text)] inline-flex items-center gap-1.5">
+        <h2 className="font-display text-section leading-tight font-semibold text-[var(--color-text)] inline-flex items-center gap-1.5">
           
           {title}{help && <HelpTooltip>{help}</HelpTooltip>}
         </h2>
@@ -96,8 +96,8 @@ function Section({ title, state, help, children }: { title: string; icon?: React
   );
 }
 
-const FIELD_LABEL = "block mb-1 text-[13px] font-semibold text-[var(--color-text-muted)]";
-const NOTE = "text-[13px] text-[var(--color-text-muted)]";
+const FIELD_LABEL = "block mb-1 text-body font-medium text-[var(--color-text-muted)]";
+const NOTE = "text-body text-[var(--color-text-muted)]";
 
 const fmtUsd = (n: number) => `$${n.toFixed(2)}`;
 const fmtTok = (n: number) =>
@@ -226,7 +226,7 @@ export function KeyEditor({ orgId, current, onChanged }: {
         ? <StateTag tone="good">Active, key ending {current.keyLast4 ?? "????"}</StateTag>
         : !current ? <StateTag tone="warn">No key saved yet</StateTag> : null}>
       {grandfatheredBlocked && (
-        <p role="alert" className="relative pl-4 py-0.5 text-[14px] font-semibold text-[var(--state-overdue)]">
+        <p role="alert" className="relative pl-4 py-0.5 text-body font-medium text-[var(--state-overdue)]">
           <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] rounded-full bg-[var(--state-overdue)]" />
           Your saved {current?.provider} key is blocked: that provider can train on submitted data.
           Save a Claude or OpenAI key to ask questions again.
@@ -317,7 +317,7 @@ export function JobModelsEditor({ orgId, current, jobModels, ready, jobUse, onCh
     <Section title="Model for each job"
       help={`Each choice shows what one use costs on it, from your own averages once you have a few. Everything else (codebook, flows, links, equipment census, catalog) runs on the main model, ${mainName}.`}>
       {!ready && (
-        <p className="relative pl-4 py-0.5 text-[14px] font-semibold text-[var(--color-text)]">
+        <p className="relative pl-4 py-0.5 text-body font-medium text-[var(--color-text)]">
           <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] rounded-full bg-[var(--state-held)]" />
           Picking a model per job needs a one-time database update (20261108_job_models.sql). Until it&apos;s run,
           every job uses its default below.
@@ -334,7 +334,7 @@ export function JobModelsEditor({ orgId, current, jobModels, ready, jobUse, onCh
           return (
             <li key={j.id} className="px-4 sm:px-5 py-3 grid gap-x-6 gap-y-1.5 sm:grid-cols-[minmax(0,1fr)_minmax(0,340px)] items-start">
               <div className="min-w-0">
-                <div className="text-[15px] font-semibold text-[var(--color-text)]">{j.label}</div>
+                <div className="text-reading font-medium text-[var(--color-text)]">{j.label}</div>
                 <div className={NOTE}>{j.what}</div>
               </div>
               <div className="min-w-0">
@@ -349,7 +349,7 @@ export function JobModelsEditor({ orgId, current, jobModels, ready, jobUse, onCh
                   </Select>
                   {busy === j.id && <Loader2 className="w-4 h-4 animate-spin text-[var(--color-text-muted)] shrink-0" />}
                 </div>
-                <p className="mt-1 text-[13px] text-[var(--color-text-muted)]">
+                <p className="mt-1 text-body text-[var(--color-text-muted)]">
                   Cost per {j.use.per}{own && own.n >= 3 ? ` from your average of ${own.n}` : " at a typical size"}.
                 </p>
               </div>
@@ -487,7 +487,7 @@ export function EmbeddingKeyEditor({ orgId, current, onChanged }: {
       <p className={NOTE}>A separate key from your chat key. Without it, search is keyword-only.</p>
 
       {reusingChatKey && !saved && (
-        <p className="relative pl-4 py-0.5 text-[14px] text-[var(--color-text)]">
+        <p className="relative pl-4 py-0.5 text-body text-[var(--color-text)]">
           <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] rounded-full bg-[var(--state-released)]" />
           Your OpenAI chat key already works for embeddings. Nothing to add here unless you
           want to use a different provider.
@@ -568,7 +568,7 @@ export function UsagePanel({ orgId }: { orgId: string }) {
   if (!usage) {
     return (
       <Section title="Your AI use this month">
-        <p className="text-center text-[14px] text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin inline mr-1.5" /> Loading this month&apos;s AI spend…</p>
+        <p className="text-center text-body text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin inline mr-1.5" /> Loading this month&apos;s AI spend…</p>
       </Section>
     );
   }
@@ -628,20 +628,20 @@ export function UsagePanel({ orgId }: { orgId: string }) {
       {/* The month in ruled cells: spent against the cap, then what it bought. */}
       <dl className="-mx-4 sm:-mx-5 -mt-4 sm:-mt-5 grid grid-cols-2 sm:grid-cols-4 divide-x divide-[var(--color-border)] border-b border-[var(--color-border)]">
         <div className={cell}>
-          <dt className="text-[13px] text-[var(--color-text-muted)]">Spent</dt>
+          <dt className="text-body text-[var(--color-text-muted)]">Spent</dt>
           <dd className={`mt-1 ${figure} ${capped ? "!text-[var(--state-overdue)]" : hot ? "!text-[var(--state-held)]" : ""}`}>{fmtUsd(usage.spentUsd)}</dd>
         </div>
         <div className={cell}>
-          <dt className="text-[13px] text-[var(--color-text-muted)]">Cap</dt>
+          <dt className="text-body text-[var(--color-text-muted)]">Cap</dt>
           <dd className={`mt-1 ${figure}`}>{fmtUsd(usage.capUsd)}</dd>
         </div>
         <div className={`${cell} max-sm:border-t max-sm:border-[var(--color-border)] max-sm:!border-l-0`}>
-          <dt className="text-[13px] text-[var(--color-text-muted)]">Questions</dt>
+          <dt className="text-body text-[var(--color-text-muted)]">Questions</dt>
           <dd className={`mt-1 ${figure}`}>{usage.asks.toLocaleString()}</dd>
         </div>
         <div className={`${cell} max-sm:border-t max-sm:border-[var(--color-border)]`}>
-          <dt className="text-[13px] text-[var(--color-text-muted)]">Tokens</dt>
-          <dd className={`mt-1 ${figure}`}>{fmtTok(totalTokens)}{estTokenBudget ? <span className="text-[15px] font-normal text-[var(--color-text-muted)]"> of ~{fmtTok(estTokenBudget)}</span> : null}</dd>
+          <dt className="text-body text-[var(--color-text-muted)]">Tokens</dt>
+          <dd className={`mt-1 ${figure}`}>{fmtTok(totalTokens)}{estTokenBudget ? <span className="text-reading font-normal text-[var(--color-text-muted)]"> of ~{fmtTok(estTokenBudget)}</span> : null}</dd>
         </div>
       </dl>
       <div className="flex items-center gap-3">
@@ -649,21 +649,21 @@ export function UsagePanel({ orgId }: { orgId: string }) {
           <div className={`h-full rounded-full transition-all ${barColor}`}
             style={{ width: `${Math.min(100, usage.percent)}%` }} />
         </div>
-        <span className="font-display text-[15px] font-semibold tabular-nums text-[var(--color-text)]">{usage.percent}% used</span>
+        <span className="font-display text-reading font-semibold tabular-nums text-[var(--color-text)]">{usage.percent}% used</span>
       </div>
       {(usage.asks > 0 || background > 0.005) && (
-        <div className="flex flex-wrap gap-x-5 gap-y-1 text-[13px] text-[var(--color-text-muted)]">
+        <div className="flex flex-wrap gap-x-5 gap-y-1 text-body text-[var(--color-text-muted)]">
           {usage.asks > 0 && <span>About {fmtTok(usage.avgPromptTokens)} prompt tokens per question</span>}
           {background > 0.005 && <span>{fmtUsd(background)} on indexing and reading documents</span>}
         </div>
       )}
       {capped ? (
-        <p className="relative pl-4 py-0.5 text-[14px] font-semibold text-[var(--state-overdue)]">
+        <p className="relative pl-4 py-0.5 text-body font-medium text-[var(--state-overdue)]">
           <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] rounded-full bg-[var(--state-overdue)]" />
           Cap reached. Questions are locked until the 1st, unless an Admin raises the cap.
         </p>
       ) : hot ? (
-        <p className="relative pl-4 py-0.5 text-[14px] font-semibold text-[var(--color-text)]">
+        <p className="relative pl-4 py-0.5 text-body font-medium text-[var(--color-text)]">
           <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] rounded-full bg-[var(--state-held)]" />
           Over 80% of your monthly budget. Questions lock at 100% until the 1st.
         </p>
@@ -672,11 +672,11 @@ export function UsagePanel({ orgId }: { orgId: string }) {
       {usage.team && (
         <div className="pt-4 border-t border-[var(--color-border)] space-y-3">
           <div className="flex items-center gap-x-3 gap-y-2 flex-wrap">
-            <h3 className="font-display text-[17px] font-semibold text-[var(--color-text)] inline-flex items-center gap-1.5">
+            <h3 className="font-display text-section font-semibold text-[var(--color-text)] inline-flex items-center gap-1.5">
               Team this month <span className="ui-count font-sans">{usage.team.length}</span>
             </h3>
             <div className="ml-auto flex items-center gap-2">
-              <label htmlFor="ai-default-cap" className="text-[13px] text-[var(--color-text-muted)]">Default cap, $ per person</label>
+              <label htmlFor="ai-default-cap" className="text-body text-[var(--color-text-muted)]">Default cap, $ per person</label>
               <Input id="ai-default-cap" value={capDraft} onChange={(e) => setCapDraft(e.target.value)}
                 className="!w-20" inputMode="decimal" />
               <Button variant="secondary" size="sm" onClick={() => void saveCap()} disabled={savingCap}>
@@ -685,14 +685,14 @@ export function UsagePanel({ orgId }: { orgId: string }) {
             </div>
           </div>
           <div className="-mx-4 sm:-mx-5 border-y border-[var(--color-border)] overflow-x-auto">
-            <table className="w-full text-[14px]">
-              <thead className="bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text-muted)] text-left">
+            <table className="w-full text-body">
+              <thead className="bg-[var(--color-surface-2)] text-body text-[var(--color-text-muted)] text-left">
                 <tr>
-                  <th className="font-semibold px-4 sm:px-5 h-10">Person</th>
-                  <th className="font-semibold px-3 text-right">Spent</th>
-                  <th className="font-semibold px-3 text-right hidden sm:table-cell">Questions</th>
-                  <th className="font-semibold px-3 hidden md:table-cell w-[30%]">Used</th>
-                  <th className="font-semibold px-4 sm:px-5">Cap</th>
+                  <th className="font-medium px-4 sm:px-5 h-10">Person</th>
+                  <th className="font-medium px-3 text-right">Spent</th>
+                  <th className="font-medium px-3 text-right hidden sm:table-cell">Questions</th>
+                  <th className="font-medium px-3 hidden md:table-cell w-[30%]">Used</th>
+                  <th className="font-medium px-4 sm:px-5">Cap</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[var(--color-border)]">
@@ -703,7 +703,7 @@ export function UsagePanel({ orgId }: { orgId: string }) {
                   if (m.hasOverride && !presets.includes(m.capUsd)) presets.push(m.capUsd);
                   return (
                     <tr key={m.userId}>
-                      <td className="px-4 sm:px-5 py-2.5 font-semibold text-[var(--color-text)] max-w-[180px] truncate">{m.name}</td>
+                      <td className="px-4 sm:px-5 py-2.5 font-medium text-[var(--color-text)] max-w-[180px] truncate">{m.name}</td>
                       <td className={`px-3 py-2.5 text-right font-display tabular-nums font-semibold ${pct >= 100 ? "text-[var(--state-overdue)]" : "text-[var(--color-text)]"}`}>{fmtUsd(m.spentUsd)}</td>
                       <td className="px-3 py-2.5 text-right tabular-nums text-[var(--color-text-muted)] hidden sm:table-cell">{m.asks}</td>
                       <td className="px-3 py-2.5 hidden md:table-cell">
@@ -712,7 +712,7 @@ export function UsagePanel({ orgId }: { orgId: string }) {
                             <div className={`h-full rounded-full ${pct >= 100 ? "bg-[var(--state-overdue)]" : pct >= 80 ? "bg-[var(--state-held)]" : "bg-[var(--state-released)]"}`}
                               style={{ width: `${pct}%` }} />
                           </div>
-                          <span className={`ui-count !h-5 !text-[12px] ${pct >= 100 ? "is-bad" : pct >= 80 ? "is-warn" : ""}`}>{pct}%</span>
+                          <span className={`ui-count !h-5 !text-caption ${pct >= 100 ? "is-bad" : pct >= 80 ? "is-warn" : ""}`}>{pct}%</span>
                         </div>
                       </td>
                       <td className="px-4 sm:px-5 py-2">
@@ -721,7 +721,7 @@ export function UsagePanel({ orgId }: { orgId: string }) {
                           disabled={savingUser === m.userId}
                           onChange={(e) => void setMemberCap(m.userId, m.name, e.target.value)}
                           aria-label={`${m.name}'s monthly cap`}
-                          className={`h-8 w-[118px] text-[13px] font-semibold rounded-md border px-2 bg-[var(--color-surface)] cursor-pointer disabled:opacity-50 ${
+                          className={`h-8 w-[118px] text-body font-semibold rounded-md border px-2 bg-[var(--color-surface)] cursor-pointer disabled:opacity-50 ${
                             m.hasOverride
                               ? "border-[var(--color-main)] text-[var(--color-accent-text)] bg-[var(--color-accent-soft)]"
                               : "border-[var(--color-border-strong)] text-[var(--color-text-muted)]"}`}>
@@ -768,10 +768,10 @@ export default function AiSettingsModal({ orgId, open, onClose }: {
           onClose={onClose} />
         <ModalBody className="space-y-6">
           {loadError && (
-            <p role="alert" className="relative pl-4 py-0.5 text-[14px] font-semibold text-[var(--state-overdue)]"><span aria-hidden className="absolute left-0 inset-y-0 w-[3px] rounded-full bg-[var(--state-overdue)]" />Couldn&apos;t load the AI settings: {loadError}</p>
+            <p role="alert" className="relative pl-4 py-0.5 text-body font-medium text-[var(--state-overdue)]"><span aria-hidden className="absolute left-0 inset-y-0 w-[3px] rounded-full bg-[var(--state-overdue)]" />Couldn&apos;t load the AI settings: {loadError}</p>
           )}
           {!data && !loadError && (
-            <div className="py-8 text-center text-[14px] text-[var(--color-text-muted)]"><Loader2 className="w-5 h-5 animate-spin inline mr-2" /> Loading the AI settings…</div>
+            <div className="py-8 text-center text-body text-[var(--color-text-muted)]"><Loader2 className="w-5 h-5 animate-spin inline mr-2" /> Loading the AI settings…</div>
           )}
           {data && (
             <>

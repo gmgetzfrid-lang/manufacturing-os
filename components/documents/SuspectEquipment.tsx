@@ -40,12 +40,12 @@ export default function SuspectEquipment({ orgId, refreshKey = "", onRemoved }: 
     finally { setBusy(false); }
   };
   return (
-    <div className="rounded-xl border border-[color-mix(in_srgb,var(--state-held)_40%,transparent)] bg-[color-mix(in_srgb,var(--state-held)_12%,transparent)] p-2.5 space-y-2 text-[13px]">
+    <div className="rounded-xl border border-[color-mix(in_srgb,var(--state-held)_40%,transparent)] bg-[color-mix(in_srgb,var(--state-held)_12%,transparent)] p-2.5 space-y-2 text-body">
       <div className="flex items-start gap-1.5">
         <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0 text-[var(--state-held)]" />
         <div>
-          <div className="font-bold">{list.items.length} item{list.items.length === 1 ? "" : "s"} in the equipment registry {list.items.length === 1 ? "was" : "were"} read off a drawing by mistake</div>
-          <div className="text-[13px] text-[var(--color-text-muted)]">Drawing numbers, pipe specs, nameplates and revisions that an earlier reader took for equipment. Items with photos, files, notes, manual tags or edits are never listed.{list.readingInProgress ? " Drawings are still being read, so items on no sheet yet are not judged." : ""}</div>
+          <div className="font-medium">{list.items.length} item{list.items.length === 1 ? "" : "s"} in the equipment registry {list.items.length === 1 ? "was" : "were"} read off a drawing by mistake</div>
+          <div className="text-body text-[var(--color-text-muted)]">Drawing numbers, pipe specs, nameplates and revisions that an earlier reader took for equipment. Items with photos, files, notes, manual tags or edits are never listed.{list.readingInProgress ? " Drawings are still being read, so items on no sheet yet are not judged." : ""}</div>
         </div>
       </div>
       {state.error && <div className="text-[var(--state-overdue)]">{state.error}</div>}
@@ -62,7 +62,7 @@ export default function SuspectEquipment({ orgId, refreshKey = "", onRemoved }: 
           </li>
         ))}
       </ul>
-      <button onClick={() => void remove()} disabled={busy || !sel.size} className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] px-3 py-1.5 font-bold inline-flex items-center gap-1.5 disabled:opacity-50">
+      <button onClick={() => void remove()} disabled={busy || !sel.size} className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] px-3 py-1.5 font-medium inline-flex items-center gap-1.5 disabled:opacity-50">
         {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />} Remove {sel.size} from the registry
       </button>
     </div>

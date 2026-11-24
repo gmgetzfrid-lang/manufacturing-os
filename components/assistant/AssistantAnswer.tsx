@@ -34,7 +34,7 @@ function Inline({ text, docs }: { text: string; docs: MentionedDoc[] }) {
       {parts.map((part, i) => {
         if (part.startsWith("**") && part.endsWith("**")) {
           // Recurse so a doc mention INSIDE a bold span still gets its chip.
-          return <b key={i} className="font-semibold"><Inline text={part.slice(2, -2)} docs={docs} /></b>;
+          return <b key={i} className="font-medium"><Inline text={part.slice(2, -2)} docs={docs} /></b>;
         }
         if (part.startsWith("`") && part.endsWith("`") && part.length > 2) {
           const inner = part.slice(1, -1);
@@ -73,7 +73,7 @@ export default function AssistantAnswer({ answer, mentionedDocs }: {
       {rest.map((b, i) => {
         if (b.type === "label") {
           return (
-            <h4 key={i} className="pt-4 first:pt-0 font-display text-[17px] font-semibold text-[var(--color-heading)]">{b.text}</h4>
+            <h4 key={i} className="pt-4 first:pt-0 font-display text-section font-semibold text-[var(--color-heading)]">{b.text}</h4>
           );
         }
         if (b.type === "important") {
@@ -81,7 +81,7 @@ export default function AssistantAnswer({ answer, mentionedDocs }: {
             <div key={i} className="relative pl-4 py-1 flex items-start gap-2">
               <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] rounded-full bg-[var(--state-held)]" />
               <AlertTriangle className="w-4 h-4 text-[var(--state-held)] mt-1 shrink-0" />
-              <span className="text-[15px] font-semibold text-[var(--color-text)] leading-relaxed">
+              <span className="text-reading font-medium text-[var(--color-text)] leading-relaxed">
                 <Inline text={b.text} docs={docs} />
               </span>
             </div>
@@ -89,14 +89,14 @@ export default function AssistantAnswer({ answer, mentionedDocs }: {
         }
         if (b.type === "bullet") {
           return (
-            <div key={i} className="flex items-start gap-2.5 text-[15px] text-[var(--color-text)] leading-relaxed">
+            <div key={i} className="flex items-start gap-2.5 text-reading text-[var(--color-text)] leading-relaxed">
               <span className="mt-[10px] w-1.5 h-1.5 rounded-full bg-[var(--color-main)] shrink-0" />
               <span><Inline text={b.text} docs={docs} /></span>
             </div>
           );
         }
         return (
-          <p key={i} className="text-[15px] text-[var(--color-text)] leading-relaxed">
+          <p key={i} className="text-reading text-[var(--color-text)] leading-relaxed">
             <Inline text={b.text} docs={docs} />
           </p>
         );

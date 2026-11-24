@@ -173,13 +173,13 @@ const ActionModal = ({ onClose, onSubmit, onRedline, title, description, isDestr
               autoFocus
             />
             {draft.restored ? (
-              <p className="text-[13px] text-[var(--color-text-muted)] mt-1.5">Your unsent note is back.</p>
+              <p className="text-body text-[var(--color-text-muted)] mt-1.5">Your unsent note is back.</p>
             ) : defaultValue ? (
-              <p className="text-[13px] text-[var(--color-text-muted)] mt-1.5">
+              <p className="text-body text-[var(--color-text-muted)] mt-1.5">
                 Filled in from your last comment.
               </p>
             ) : !comment.trim() ? (
-              <p className="text-[13px] text-[var(--color-text-muted)] mt-1.5">{isDestructive ? 'Send back' : 'Confirm'} works once there&apos;s a note here.</p>
+              <p className="text-body text-[var(--color-text-muted)] mt-1.5">{isDestructive ? 'Send back' : 'Confirm'} works once there&apos;s a note here.</p>
             ) : null}
           </div>
       </ModalBody>
@@ -261,7 +261,7 @@ const AssignmentModal = ({ onClose, onSubmit, isLoading, activeOrgId, isReassign
                 aria-describedby={reasonMissing ? 'reassign-why-err' : undefined}
                 onChange={(e) => { setReason(e.target.value); setReasonMissing(false); }}
               />
-              {reasonMissing && <p id="reassign-why-err" role="alert" className="mt-1.5 text-[13px] font-semibold text-[var(--state-overdue-text)]">Say why first, then pick the new drafter.</p>}
+              {reasonMissing && <p id="reassign-why-err" role="alert" className="mt-1.5 text-body font-medium text-[var(--state-overdue-text)]">Say why first, then pick the new drafter.</p>}
             </div>
           )}
 
@@ -271,7 +271,7 @@ const AssignmentModal = ({ onClose, onSubmit, isLoading, activeOrgId, isReassign
             ) : listError != null ? (
               <ErrorNote compact className="p-4" error={listError} title="The drafters didn't load." onRetry={() => setListTry((n) => n + 1)} />
             ) : drafters.length === 0 ? (
-              <p className="p-4 text-center text-[15px] text-[var(--color-text-muted)]">No drafters in this workspace yet.</p>
+              <p className="p-4 text-center text-reading text-[var(--color-text-muted)]">No drafters in this workspace yet.</p>
             ) : (
               <div className="grid grid-cols-1 divide-y divide-[var(--color-border)]">
                 {drafters.map(drafter => (
@@ -285,7 +285,7 @@ const AssignmentModal = ({ onClose, onSubmit, isLoading, activeOrgId, isReassign
                     className="flex items-center px-3 py-2.5 hover:bg-[var(--color-surface-2)] transition-colors group text-left w-full disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     <UserAvatar uid={drafter.uid} email={drafter.email} size={32} rounded="full" className="mr-3" />
-                    <div className="min-w-0"><p className="font-semibold text-[var(--color-text)] text-[15px] truncate">{shortName(drafter.email)}</p><p className="text-[13px] text-[var(--color-text-muted)] truncate">{drafter.uid === currentDrafterId ? 'On it now' : drafter.email}</p></div>
+                    <div className="min-w-0"><p className="font-medium text-[var(--color-text)] text-reading truncate">{shortName(drafter.email)}</p><p className="text-body text-[var(--color-text-muted)] truncate">{drafter.uid === currentDrafterId ? 'On it now' : drafter.email}</p></div>
                     <ChevronRight aria-hidden className="w-4 h-4 ml-auto text-[var(--color-text-faint)] group-hover:text-[var(--color-text-muted)]" />
                   </button>
                 ))}
@@ -319,19 +319,19 @@ const UploadIFCModal = ({ onClose, onSubmit, isLoading, error }: UploadIFCModalP
       <ModalBody className="space-y-3">
           <label {...drag.bind} className={`flex flex-col items-center justify-center w-full min-h-32 p-4 border border-dashed border-[var(--color-border-control)] rounded-xl cursor-pointer bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] transition-colors ${drag.ring}`}>
             {drag.over ? (
-              <p className="text-[15px] font-semibold text-[var(--color-text)]">{drag.say}</p>
+              <p className="text-reading font-medium text-[var(--color-text)]">{drag.say}</p>
             ) : file ? (
               <div className="flex items-center gap-3 min-w-0">
                 <FileThumb file={file} />
                 <div className="min-w-0 text-left">
-                  <p className="text-[15px] font-semibold text-[var(--color-text)] truncate">{file.name}</p>
-                  <p className="text-[13px] text-[var(--color-text-muted)]">PDF, {formatBytes(file.size)}. Tap to pick another.</p>
+                  <p className="text-reading font-medium text-[var(--color-text)] truncate">{file.name}</p>
+                  <p className="text-body text-[var(--color-text-muted)]">PDF, {formatBytes(file.size)}. Tap to pick another.</p>
                 </div>
               </div>
             ) : (
               <div className="text-center">
                 <UploadCloud aria-hidden className="w-6 h-6 text-[var(--color-text-faint)] mx-auto mb-2" />
-                <p className="text-[15px] text-[var(--color-text)]">Drop the stamped PDF here, or <span className="text-[var(--color-accent-text)]">pick it</span></p>
+                <p className="text-reading text-[var(--color-text)]">Drop the stamped PDF here, or <span className="text-[var(--color-accent-text)]">pick it</span></p>
               </div>
             )}
             <input type="file" className="hidden" accept=".pdf" onChange={(e) => { const f = e.target.files?.[0]; if (f) setFile(f); e.target.value = ''; }} />
@@ -361,8 +361,8 @@ const DownloadComplianceModal = ({ onClose, onConfirm, fileName }: DownloadCompl
   <Modal onClose={onClose} size="sm" zIndex={500}>
     <ModalHeader icon={AlertTriangle} title="This is a draft" onClose={onClose} />
     <ModalBody>
-      <p className="text-[15px] text-[var(--color-text)]"><strong className="break-all">{fileName}</strong></p>
-      <p className="mt-2 border-l-[3px] border-[var(--state-held)] pl-2.5 text-[15px] font-semibold text-[var(--state-held-text)]">Not for construction. For review only.</p>
+      <p className="text-reading text-[var(--color-text)]"><strong className="break-all">{fileName}</strong></p>
+      <p className="mt-2 border-l-[3px] border-[var(--state-held)] pl-2.5 text-reading font-medium text-[var(--state-held-text)]">Not for construction. For review only.</p>
     </ModalBody>
     <ModalFooter>
       <button type="button" onClick={onClose} className={heroQuiet}>Cancel</button>
@@ -383,7 +383,7 @@ const WatermarkOverlay = () => (
       {Array.from({ length: 9 }).map((_, i) => (
         <div key={i} className="flex justify-around whitespace-nowrap opacity-[0.07]">
           {Array.from({ length: 3 }).map((__, j) => (
-            <span key={j} className="text-xl font-semibold text-[var(--color-text)]">
+            <span key={j} className="text-xl font-medium text-[var(--color-text)]">
               Preliminary&nbsp;·&nbsp;Not for Construction
             </span>
           ))}
@@ -433,7 +433,7 @@ function RedlineEditorMount({
   if (!resolvedUrl) {
     return (
       <div className="fixed inset-0 z-[200] bg-slate-900/80 flex items-center justify-center">
-        <div role="status" className="text-white text-[15px] inline-flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Opening the file for markup</div>
+        <div role="status" className="text-white text-reading inline-flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Opening the file for markup</div>
       </div>
     );
   }
@@ -671,9 +671,9 @@ const FileViewerModal = ({
                {file.type === 'Draft' ? <AlertTriangle className="w-6 h-6 text-amber-400" /> : <FileCheck className="w-6 h-6" />}
             </div>
             <div className="min-w-0">
-              <h3 className="font-bold text-lg leading-none flex items-center min-w-0">
+              <h3 className="font-medium text-lg leading-none flex items-center min-w-0">
                 <span className="truncate">{file.name}</span>
-                {file.type === 'Draft' && <span className="ml-3 shrink-0 px-2 py-0.5 border border-amber-400/60 text-amber-300 text-[13px] font-semibold rounded ">Draft, not for construction</span>}
+                {file.type === 'Draft' && <span className="ml-3 shrink-0 px-2 py-0.5 border border-amber-400/60 text-amber-300 text-body font-medium rounded ">Draft, not for construction</span>}
               </h3>
               <div className="flex items-center text-xs text-slate-400 mt-1.5 space-x-2">
                 <span className="bg-slate-800 px-2 py-0.5 rounded border border-slate-700">{file.type}</span>
@@ -694,7 +694,7 @@ const FileViewerModal = ({
             {!archived && (
               <button
                 onClick={handleDownloadClick}
-                className={`flex items-center px-3 sm:px-4 py-2 rounded-lg text-sm font-bold transition-colors ${onApprove && file.type === 'Draft' ? 'bg-slate-800 hover:bg-slate-700 border border-slate-700 text-white' : 'bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]'}`}
+                className={`flex items-center px-3 sm:px-4 py-2 rounded-lg text-sm font-medium transition-colors ${onApprove && file.type === 'Draft' ? 'bg-slate-800 hover:bg-slate-700 border border-slate-700 text-white' : 'bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]'}`}
               >
                 <Download className="w-4 h-4 sm:mr-2" /><span className="hidden sm:inline">Download</span>
               </button>
@@ -702,7 +702,7 @@ const FileViewerModal = ({
             {onApprove && file.type === 'Draft' && (
               <button
                 onClick={onApprove}
-                className="flex items-center px-4 py-2 rounded-lg text-sm font-bold transition-colors bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]"
+                className="flex items-center px-4 py-2 rounded-lg text-sm font-medium transition-colors bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]"
               >
                 <CheckCircle2 className="w-4 h-4 mr-2" /> Approve
               </button>
@@ -722,7 +722,7 @@ const FileViewerModal = ({
               <div className="w-24 h-24 bg-[var(--color-surface-2)] rounded-full flex items-center justify-center mx-auto mb-6 border border-[var(--color-border)]">
                 <Archive className="w-12 h-12 text-[var(--color-text-muted)]" />
               </div>
-              <h3 className="text-xl font-bold text-[var(--color-text)] mb-2">This file is in the archive</h3>
+              <h3 className="text-xl font-medium text-[var(--color-text)] mb-2">This file is in the archive</h3>
               <p className="text-[var(--color-text-muted)] leading-relaxed">
                 The request closed a while ago, so its files moved to{' '}
                 {archiveId ? <span className="font-display font-semibold">{archiveId}</span> : 'the offline archive'}.
@@ -733,25 +733,25 @@ const FileViewerModal = ({
             resolvedUrl ? (
               <iframe src={`${resolvedUrl}#toolbar=0&navpanes=0`} className="w-full h-full rounded-lg shadow-2xl bg-[var(--color-surface)] border border-slate-700 relative z-0" title="PDF Viewer" />
             ) : resolveError != null ? (
-              <div role="alert" className="max-w-md text-center text-slate-200 text-[15px]">{friendlyError(resolveError)}</div>
+              <div role="alert" className="max-w-md text-center text-slate-200 text-reading">{friendlyError(resolveError)}</div>
             ) : (
-              <div role="status" className="text-slate-300 text-[15px] flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Loading the preview</div>
+              <div role="status" className="text-slate-300 text-reading flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Loading the preview</div>
             )
           ) : isImage ? (
             resolvedUrl ? (
               // eslint-disable-next-line @next/next/no-img-element -- ephemeral signed-URL preview; optimizer can't cache short-lived URLs and intrinsic size is unknown
               <img src={resolvedUrl} alt="Preview" className="max-w-full max-h-full object-contain shadow-2xl rounded-lg border border-slate-700 relative z-0" />
             ) : resolveError != null ? (
-              <div role="alert" className="max-w-md text-center text-slate-200 text-[15px]">{friendlyError(resolveError)}</div>
+              <div role="alert" className="max-w-md text-center text-slate-200 text-reading">{friendlyError(resolveError)}</div>
             ) : (
-              <div role="status" className="text-slate-300 text-[15px] flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Loading the preview</div>
+              <div role="status" className="text-slate-300 text-reading flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Loading the preview</div>
             )
           ) : (
             <div className="text-center p-12 bg-[var(--color-surface)] rounded-xl shadow-2xl max-w-md border border-[var(--color-border)] relative z-10">
               <div className="w-24 h-24 bg-[var(--color-surface-2)] rounded-full flex items-center justify-center mx-auto mb-6 border border-[var(--color-border)]">
                 <FileIcon className="w-12 h-12 text-[var(--color-text-faint)]" />
               </div>
-              <h3 className="text-xl font-bold text-[var(--color-text)] mb-2">No preview for this type</h3>
+              <h3 className="text-xl font-medium text-[var(--color-text)] mb-2">No preview for this type</h3>
               <p className="text-[var(--color-text-muted)] leading-relaxed">Download it to open it.</p>
             </div>
           )}
@@ -1423,7 +1423,7 @@ export default function TicketDetailView() {
         <PageBody>
           {failed
             ? <ErrorNote error={loadError.error} onRetry={() => { setLoadError(null); setLoading(true); setReloadKey((k) => k + 1); }} />
-            : <p className="text-[15px] text-[var(--color-text)]">{loadError.words}</p>}
+            : <p className="text-reading text-[var(--color-text)]">{loadError.words}</p>}
           <Link href="/requests" className={heroQuiet}>Go to drafting requests</Link>
         </PageBody>
       </PageShell>
@@ -1718,8 +1718,8 @@ export default function TicketDetailView() {
               <div className="p-3 border border-[var(--color-border)] rounded-xl mb-4 flex items-center gap-3">
                 <FileThumb file={fileToUpload} />
                 <div className="overflow-hidden">
-                  <p className="font-semibold text-[15px] truncate text-[var(--color-text)]">{fileToUpload.name}</p>
-                  <p className="text-[13px] text-[var(--color-text-muted)]">{(fileToUpload.name.split('.').pop() || 'file').toUpperCase()}, {formatBytes(fileToUpload.size)}</p>
+                  <p className="font-medium text-reading truncate text-[var(--color-text)]">{fileToUpload.name}</p>
+                  <p className="text-body text-[var(--color-text-muted)]">{(fileToUpload.name.split('.').pop() || 'file').toUpperCase()}, {formatBytes(fileToUpload.size)}</p>
                 </div>
               </div>
               <div className="flex flex-col gap-2">
@@ -1738,7 +1738,7 @@ export default function TicketDetailView() {
       <PageHero
         back={{ onClick: () => router.back(), label: 'Back' }}
         size="md"
-        kicker={<span className="inline-flex items-center gap-2 min-w-0 max-w-full"><Link href="/requests" className="shrink-0 hover:text-[var(--color-text)] hover:underline underline-offset-2">Drafting requests</Link><span aria-hidden className="text-[var(--color-text-faint)]">/</span><CopyId value={ticket.ticketId} label="request number" className="text-[15px] min-w-0" /></span>}
+        kicker={<span className="inline-flex items-center gap-2 min-w-0 max-w-full"><Link href="/requests" className="shrink-0 hover:text-[var(--color-text)] hover:underline underline-offset-2">Drafting requests</Link><span aria-hidden className="text-[var(--color-text-faint)]">/</span><CopyId value={ticket.ticketId} label="request number" className="text-reading min-w-0" /></span>}
         title={ticket.title}
         sub={<>{stateWords}{stagedNote}{availableActions.length === 0 ? ' Nothing for you to do here.' : ''}</>}
         facts={facts}
@@ -1758,7 +1758,7 @@ export default function TicketDetailView() {
         <div className="space-y-4">
           {stepAt >= 0 && (
             <button type="button" onClick={() => setShowWorkflowDiagram(true)} title="See what each step means" className="block w-full text-left rounded-lg -m-1.5 p-1.5 hover:bg-[var(--color-surface)]">
-              <span className="sm:hidden block mb-2.5 text-[14px] font-semibold text-[var(--color-text)]">Step {stepAt + 1} of {REQUEST_STEPS.length}: {REQUEST_STEPS[stepAt]}</span>
+              <span className="sm:hidden block mb-2.5 text-body font-medium text-[var(--color-text)]">Step {stepAt + 1} of {REQUEST_STEPS.length}: {REQUEST_STEPS[stepAt]}</span>
               <span className="hidden sm:block">
                 <StepLine steps={REQUEST_STEPS.map((label, i) => ({ label, state: i < stepAt ? 'done' : i === stepAt ? 'now' : 'next' }))} />
               </span>
@@ -1790,11 +1790,11 @@ export default function TicketDetailView() {
         <section aria-label="Request sent" className="relative rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 sm:px-5 py-4 flex flex-wrap items-center gap-x-4 gap-y-3">
           <CheckCircle2 aria-hidden className="w-5 h-5 shrink-0 text-[var(--state-released)]" />
           <div className="min-w-0 flex-1 basis-[260px]">
-            <p className="text-[15px] font-semibold text-[var(--color-text)]">Sent.{ticket.status === 'PENDING_ASSIGNMENT' ? ' A supervisor assigns a drafter next.' : ''}</p>
+            <p className="text-reading font-medium text-[var(--color-text)]">Sent.{ticket.status === 'PENDING_ASSIGNMENT' ? ' A supervisor assigns a drafter next.' : ''}</p>
             {emailAsk === 'off' ? (
-              <p className="text-[14px] text-[var(--color-text-muted)]">Email you when a drafter picks up {ticket.ticketId} and when the draft is ready for your review?</p>
+              <p className="text-body text-[var(--color-text-muted)]">Email you when a drafter picks up {ticket.ticketId} and when the draft is ready for your review?</p>
             ) : (
-              <p className="text-[14px] text-[var(--color-text-muted)]">
+              <p className="text-body text-[var(--color-text-muted)]">
                 {emailDone ? 'Email is on. ' : ''}You&apos;ll get an email when a drafter picks it up and when the draft is ready for your review. <Link href="/settings/notifications" className="text-[var(--color-accent-text)] hover:underline underline-offset-2">Email settings</Link>
               </p>
             )}
@@ -1821,8 +1821,8 @@ export default function TicketDetailView() {
           ) : undefined} className="relative overflow-hidden">
             <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] bg-[var(--state-held)]" />
             {latestRevision.category && <StatusTag tone="warn">{latestRevision.category}</StatusTag>}
-            <p className="text-[16px] text-[var(--color-text)] mt-1.5 whitespace-pre-wrap leading-relaxed max-w-[75ch]">{latestRevision.text}</p>
-            <p className="text-[13px] text-[var(--color-text-muted)] mt-1.5">
+            <p className="text-reading text-[var(--color-text)] mt-1.5 whitespace-pre-wrap leading-relaxed max-w-[75ch]">{latestRevision.text}</p>
+            <p className="text-body text-[var(--color-text-muted)] mt-1.5">
               {authorLabel(latestRevision.user ?? 'Reviewer')}{latestRevision.date ? `, ${fmtWhen(latestRevision.date)}` : ''}
             </p>
           </Card>
@@ -1839,12 +1839,12 @@ export default function TicketDetailView() {
           <Card label="Archived" action={
             <button type="button" onClick={() => setShowArchiveViewer(true)} className={heroQuiet}><Archive className="w-4 h-4" /> Open from the archive</button>
           }>
-            <p className="text-[15px] text-[var(--color-text)]">
+            <p className="text-reading text-[var(--color-text)]">
               Its files and comments moved to the archive{ticket.archiveId ? <> <span className="font-display font-semibold">{ticket.archiveId}</span></> : ''}.
               <HelpTooltip>Have the archive file{ticket.archiveId ? <> (<span className="break-all">&lt;root&gt;/data/{ticket.archiveId}.zip</span>)</> : ''}? Open it here. An admin can restore it fully on the Storage and backup page.</HelpTooltip>
             </p>
             {hasShape && (
-              <p className="mt-2 text-[14px] text-[var(--color-text-muted)] tabular-nums">
+              <p className="mt-2 text-body text-[var(--color-text-muted)] tabular-nums">
                 {sum.commentCount ?? 0} comments, {sum.attachmentCount ?? 0} files, {sum.historyCount ?? 0} history events{names.length > 0 ? `: ${names.join(', ')}${(sum.attachmentCount ?? 0) > names.length ? `, and ${(sum.attachmentCount ?? 0) - names.length} more` : ''}` : ''}
               </p>
             )}
@@ -1856,8 +1856,8 @@ export default function TicketDetailView() {
         {/* LEFT: the request and its files */}
         <div className="space-y-8 min-w-0">
           <Card label="Scope of work">
-            <p className="text-[16px] text-[var(--color-text)] leading-relaxed whitespace-pre-wrap max-w-[80ch]">{ticket.description || <Muted>No scope written.</Muted>}</p>
-            <dl className="mt-4 pt-4 border-t border-[var(--color-border)] grid grid-cols-2 md:grid-cols-4 gap-x-6 gap-y-3 text-[14px]">
+            <p className="text-reading text-[var(--color-text)] leading-relaxed whitespace-pre-wrap max-w-[80ch]">{ticket.description || <Muted>No scope written.</Muted>}</p>
+            <dl className="mt-4 pt-4 border-t border-[var(--color-border)] grid grid-cols-2 md:grid-cols-4 gap-x-6 gap-y-3 text-body">
               {([
                 ['Unit', ticket.unit ? `Unit ${ticket.unit}` : <Muted key="u">None</Muted>],
                 ['Type', ticket.requestType || <Muted key="t">None</Muted>],
@@ -1875,14 +1875,14 @@ export default function TicketDetailView() {
                   <span key="w" className="inline-flex items-center gap-2">
                     <span className="tabular-nums">{(ticket.watchers ?? []).length}</span>
                     <button type="button" onClick={toggleWatch} aria-pressed={watching}
-                      className="inline-flex items-center gap-1 text-[14px] font-semibold text-[var(--color-accent-text)] hover:underline underline-offset-2">
+                      className="inline-flex items-center gap-1 text-body font-medium text-[var(--color-accent-text)] hover:underline underline-offset-2">
                       {watching ? <><Check aria-hidden className="w-3.5 h-3.5" /> Watching</> : <><Eye aria-hidden className="w-3.5 h-3.5" /> Watch</>}
                     </button>
                   </span>
                 )],
               ] as Array<[string, React.ReactNode]>).map(([label, value]) => (
                 <div key={label} className="min-w-0">
-                  <dt className="text-[13px] text-[var(--color-text-muted)]">{label}</dt>
+                  <dt className="text-body text-[var(--color-text-muted)]">{label}</dt>
                   <dd className="mt-0.5 text-[var(--color-text)] min-w-0 truncate">{value}</dd>
                 </div>
               ))}
@@ -1892,13 +1892,13 @@ export default function TicketDetailView() {
           {/* Files: drop one anywhere here to add it. */}
           <section {...filesDrag.bind} aria-labelledby="req-files" className={`min-w-0 rounded-xl ${filesDrag.ring}`}>
             <div className="flex flex-wrap items-end gap-x-3 gap-y-2 mb-3 min-h-8">
-              <h2 id="req-files" className="font-display text-[20px] leading-tight font-semibold text-[var(--color-text)]">
+              <h2 id="req-files" className="font-display text-section leading-tight font-semibold text-[var(--color-text)]">
                 Files {fileCount > 0 && <span className="ui-count">{fileCount}</span>}
               </h2>
               <div className="flex-1" />
               {filesDrag.over
-                ? <span className="text-[14px] font-semibold text-[var(--color-text)]">{filesDrag.say}</span>
-                : !ticket.archivedAt && canAddFile && <span className="max-md:hidden text-[13px] text-[var(--color-text-muted)]">Drop a file here, or</span>}
+                ? <span className="text-body font-medium text-[var(--color-text)]">{filesDrag.say}</span>
+                : !ticket.archivedAt && canAddFile && <span className="max-md:hidden text-body text-[var(--color-text-muted)]">Drop a file here, or</span>}
               {pickFile}
             </div>
             <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
@@ -1911,15 +1911,15 @@ export default function TicketDetailView() {
                     {failed && <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] bg-[var(--state-overdue)]" />}
                     <FileThumb file={u.file} />
                     <div className="min-w-0 flex-1">
-                      <p className="text-[15px] font-semibold text-[var(--color-text)] truncate">{u.file.name}</p>
+                      <p className="text-reading font-medium text-[var(--color-text)] truncate">{u.file.name}</p>
                       {failed ? (
-                        <p className="text-[13px] text-[var(--state-overdue-text)]">Not added. {uploadError}</p>
+                        <p className="text-body text-[var(--state-overdue-text)]">Not added. {uploadError}</p>
                       ) : (
                         <div className="mt-1 flex items-center gap-2">
                           <span className="block h-1.5 flex-1 max-w-64 rounded-full bg-[var(--color-surface-2)] overflow-hidden" role="progressbar" aria-label={`Uploading ${u.file.name}`} aria-valuenow={Math.round(uploadProgress)} aria-valuemin={0} aria-valuemax={100}>
                             <span className="block h-full bg-[var(--color-main)] transition-[width] duration-200" style={{ width: `${Math.max(3, uploadProgress)}%` }} />
                           </span>
-                          <span className="text-[13px] tabular-nums text-[var(--color-text-muted)]">{uploadProgress.toFixed(0)}% of {formatBytes(u.file.size)}, as {u.type === 'Draft' ? 'a draft' : u.type.toLowerCase()}</span>
+                          <span className="text-body tabular-nums text-[var(--color-text-muted)]">{uploadProgress.toFixed(0)}% of {formatBytes(u.file.size)}, as {u.type === 'Draft' ? 'a draft' : u.type.toLowerCase()}</span>
                         </div>
                       )}
                     </div>
@@ -1932,21 +1932,21 @@ export default function TicketDetailView() {
                   </div>
                 );
               })()}
-              <table className="w-full text-[14px]">
-                <thead className="bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text-muted)] text-left">
+              <table className="w-full text-body">
+                <thead className="bg-[var(--color-surface-2)] text-body text-[var(--color-text-muted)] text-left">
                   <tr>
-                    <th className="font-semibold px-4 h-10 w-full">File</th>
-                    <th className="font-semibold px-4 h-10 hidden sm:table-cell">Kind</th>
-                    <th className="font-semibold px-4 h-10 hidden lg:table-cell text-right">Size</th>
-                    <th className="font-semibold px-4 h-10 hidden sm:table-cell">Added</th>
+                    <th className="font-medium px-4 h-10 w-full">File</th>
+                    <th className="font-medium px-4 h-10 hidden sm:table-cell">Kind</th>
+                    <th className="font-medium px-4 h-10 hidden lg:table-cell text-right">Size</th>
+                    <th className="font-medium px-4 h-10 hidden sm:table-cell">Added</th>
                     <th className="h-10 pr-3"><span className="sr-only">Actions</span></th>
                   </tr>
                 </thead>
                 {fileGroups.map((g) => (
                   <tbody key={g.key} className="divide-y divide-[var(--color-border)] border-t border-[var(--color-border)]">
-                    <tr><th colSpan={5} scope="colgroup" className="px-4 pt-3 pb-1.5 text-left text-[13px] font-semibold text-[var(--color-text-muted)]">{g.label}</th></tr>
+                    <tr><th colSpan={5} scope="colgroup" className="px-4 pt-3 pb-1.5 text-left text-body font-medium text-[var(--color-text-muted)]">{g.label}</th></tr>
                     {g.rows.length === 0 ? (
-                      <tr><td colSpan={5} className="px-4 pb-3 text-[13px] text-[var(--color-text-faint)]">{g.empty}</td></tr>
+                      <tr><td colSpan={5} className="px-4 pb-3 text-body text-[var(--color-text-faint)]">{g.empty}</td></tr>
                     ) : g.rows.map((r) => (
                       <tr key={r.file.id || r.file.name} onClick={(e) => { if ((e.target as HTMLElement).closest('button,a')) return; setViewerFile(r.file); }}
                         className={`cursor-pointer hover:bg-[var(--color-surface-2)] ${r.faded ? 'text-[var(--color-text-muted)]' : 'text-[var(--color-text)]'}`}>
@@ -1955,9 +1955,9 @@ export default function TicketDetailView() {
                             <span aria-hidden className={`shrink-0 ${r.issued ? 'text-[var(--state-released)]' : 'text-[var(--color-text-faint)]'}`}>
                               {r.issued ? <CheckSquare className="w-4 h-4" /> : r.kind.includes('draft') ? <FileText className="w-4 h-4" /> : <FileIcon className="w-4 h-4" />}
                             </span>
-                            <button type="button" onClick={() => setViewerFile(r.file)} title={`Open ${r.file.name}`} className={`min-w-0 text-left truncate hover:text-[var(--color-accent-text)] ${r.faded ? '' : 'font-semibold'}`}>{r.file.name}</button>
+                            <button type="button" onClick={() => setViewerFile(r.file)} title={`Open ${r.file.name}`} className={`min-w-0 text-left truncate hover:text-[var(--color-accent-text)] ${r.faded ? '' : 'font-medium'}`}>{r.file.name}</button>
                           </div>
-                          <div className="sm:hidden pl-[26px] text-[13px] text-[var(--color-text-muted)] flex flex-wrap items-center gap-x-2">{r.kind}{r.file.uploadedAt ? `, ${fmtDay(r.file.uploadedAt)}` : ''}{r.tag}</div>
+                          <div className="sm:hidden pl-[26px] text-body text-[var(--color-text-muted)] flex flex-wrap items-center gap-x-2">{r.kind}{r.file.uploadedAt ? `, ${fmtDay(r.file.uploadedAt)}` : ''}{r.tag}</div>
                         </td>
                         <td className="px-4 py-2.5 hidden sm:table-cell whitespace-nowrap">
                           <span className="flex flex-col items-start gap-0.5">
@@ -2008,7 +2008,7 @@ export default function TicketDetailView() {
           <div ref={chatContainerRef} className="flex-1 overflow-y-auto custom-scrollbar relative">
             {activeTab === 'discussion' && (
               <>
-                {(!ticket.comments || ticket.comments.length === 0) && <p className="px-4 py-10 text-center text-[15px] text-[var(--color-text-muted)]">No comments yet. Ask a question or leave a note below.</p>}
+                {(!ticket.comments || ticket.comments.length === 0) && <p className="px-4 py-10 text-center text-reading text-[var(--color-text-muted)]">No comments yet. Ask a question or leave a note below.</p>}
                 <ol className="divide-y divide-[var(--color-border)]">
                 {ticket.comments?.map((comment, idx) => {
                   const kindTag = comment.type === 'Rejection' || comment.type === 'Revision'
@@ -2022,9 +2022,9 @@ export default function TicketDetailView() {
                     <UserAvatar email={comment.user} size={28} rounded="full" className="shrink-0 mt-0.5" />
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-x-2 gap-y-0.5">
-                        <span className="text-[15px] font-semibold text-[var(--color-text)]">{mine ? 'You' : authorLabel(comment.user)}</span>
-                        <span className="text-[13px] text-[var(--color-text-muted)] tabular-nums" title={fmtWhen(comment.date)}>{relTime(comment.date)}</span>
-                        {(comment as TicketComment & { editedAt?: string }).editedAt && <span className="text-[13px] text-[var(--color-text-muted)]">, edited</span>}
+                        <span className="text-reading font-medium text-[var(--color-text)]">{mine ? 'You' : authorLabel(comment.user)}</span>
+                        <span className="text-body text-[var(--color-text-muted)] tabular-nums" title={fmtWhen(comment.date)}>{relTime(comment.date)}</span>
+                        {(comment as TicketComment & { editedAt?: string }).editedAt && <span className="text-body text-[var(--color-text-muted)]">, edited</span>}
                         <span className="flex-1" />
                         {(mine || isAdmin) && editingTextId !== comment.id && (
                           <MoreMenu iconOnly label="Comment actions" triggerClass="-my-1 w-8 h-8 pointer-coarse:w-11 pointer-coarse:h-11 grid place-items-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]" items={[
@@ -2041,14 +2041,14 @@ export default function TicketDetailView() {
                             editingCommentId === comment.id ? (
                               <span className="inline-flex items-center gap-1">
                                 <select aria-label="Reason" value={editCategoryVal} onChange={(e) => setEditCategoryVal(e.target.value)}
-                                  className="h-8 pointer-coarse:h-11 px-2 rounded-lg border border-[var(--color-border-control)] text-[13px] max-sm:text-[16px] text-[var(--color-text)] bg-[var(--color-surface)]">
+                                  className="h-8 pointer-coarse:h-11 px-2 rounded-lg border border-[var(--color-border-control)] text-body max-sm:text-reading text-[var(--color-text)] bg-[var(--color-surface)]">
                                   {REVISION_REASONS.map(r => <option key={r} value={r}>{r}</option>)}
                                 </select>
                                 <button type="button" onClick={() => handleUpdateCategory(comment.id)} aria-label="Save reason" title="Save reason" className="w-8 h-8 pointer-coarse:w-11 pointer-coarse:h-11 grid place-items-center rounded-lg border border-[var(--color-border-strong)] hover:bg-[var(--color-surface-2)]"><Check className="w-3.5 h-3.5" /></button>
                                 <button type="button" onClick={() => setEditingCommentId(null)} aria-label="Cancel" title="Cancel" className="w-8 h-8 pointer-coarse:w-11 pointer-coarse:h-11 grid place-items-center rounded-lg text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"><X className="w-3.5 h-3.5" /></button>
                               </span>
                             ) : (
-                              <span className="inline-flex items-center gap-1 text-[13px] text-[var(--color-text-muted)]">
+                              <span className="inline-flex items-center gap-1 text-body text-[var(--color-text-muted)]">
                                 {comment.category || 'No reason given'}
                                 {isAdmin && (
                                   <button type="button" onClick={() => { setEditingCommentId(comment.id); setEditCategoryVal(comment.category || REVISION_REASONS[0]); }}
@@ -2071,7 +2071,7 @@ export default function TicketDetailView() {
                           </div>
                         </div>
                       ) : (
-                        <CommentBody text={comment.text} currentUserId={uid ?? undefined} className="mt-1 text-[15px] leading-relaxed text-[var(--color-text)]" />
+                        <CommentBody text={comment.text} currentUserId={uid ?? undefined} className="mt-1 text-reading leading-relaxed text-[var(--color-text)]" />
                       )}
                     </div>
                   </li>
@@ -2082,14 +2082,14 @@ export default function TicketDetailView() {
             )}
             {activeTab === 'audit' && (
               historyDays.length === 0
-                ? <p className="px-4 py-10 text-center text-[15px] text-[var(--color-text-muted)]">Nothing has happened yet.</p>
+                ? <p className="px-4 py-10 text-center text-reading text-[var(--color-text-muted)]">Nothing has happened yet.</p>
                 : (
                   // Newest first, by day: what happened, who did it, when; the
                   // reason they gave under it.
                   <div className="px-4 py-3">
                     {historyDays.map((g) => (
                       <section key={g.day} className="mb-3 last:mb-0">
-                        <h3 className="text-[13px] font-semibold text-[var(--color-text-muted)] py-1.5">{g.day}</h3>
+                        <h3 className="text-body font-medium text-[var(--color-text-muted)] py-1.5">{g.day}</h3>
                         <ol className="relative ml-1 border-l border-[var(--color-border-strong)]">
                           {g.items.map((event, idx) => {
                             const what = historyWords(event.action, event.details);
@@ -2099,12 +2099,12 @@ export default function TicketDetailView() {
                               <li key={`${g.day}-${idx}`} className="relative pl-4 py-2">
                                 <span aria-hidden className="absolute -left-[4.5px] top-[15px] w-2 h-2 rounded-full bg-[var(--color-surface)] border-2 border-[var(--color-border-control)]" />
                                 <div className="flex items-baseline justify-between gap-3">
-                                  <span className="text-[15px] font-semibold text-[var(--color-text)] min-w-0">{what}</span>
-                                  <span className="shrink-0 text-[13px] text-[var(--color-text-muted)] tabular-nums">{toDate(event.date).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}</span>
+                                  <span className="text-reading font-medium text-[var(--color-text)] min-w-0">{what}</span>
+                                  <span className="shrink-0 text-body text-[var(--color-text-muted)] tabular-nums">{toDate(event.date).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}</span>
                                 </div>
-                                <p className="text-[13px] text-[var(--color-text-muted)]">
+                                <p className="text-body text-[var(--color-text-muted)]">
                                   by {event.user ? shortName(event.user) : 'someone'}
-                                  {(note || reason) && <span className="block mt-0.5 text-[14px] text-[var(--color-text)] whitespace-pre-wrap line-clamp-3">{reason ?? note}</span>}
+                                  {(note || reason) && <span className="block mt-0.5 text-body text-[var(--color-text)] whitespace-pre-wrap line-clamp-3">{reason ?? note}</span>}
                                 </p>
                               </li>
                             );
@@ -2118,7 +2118,7 @@ export default function TicketDetailView() {
           </div>
           {activeTab === 'discussion' && (
             ticket.archivedAt ? (
-              <p className="px-4 py-3 border-t border-[var(--color-border)] text-[13px] text-[var(--color-text-muted)]">
+              <p className="px-4 py-3 border-t border-[var(--color-border)] text-body text-[var(--color-text-muted)]">
                 Archived. Restore it to comment again.
               </p>
             ) : (
@@ -2133,7 +2133,7 @@ export default function TicketDetailView() {
                 />
               )}
               <div className="mt-2 flex items-center justify-between gap-2">
-                <p className="text-[13px] text-[var(--color-text-muted)] min-w-0">
+                <p className="text-body text-[var(--color-text-muted)] min-w-0">
                   {newCommentMentions.length > 0 ? `${newCommentMentions.length} ${newCommentMentions.length === 1 ? 'person' : 'people'} will be notified` : null}
                 </p>
                 {/* Quiet until there's something to send. */}

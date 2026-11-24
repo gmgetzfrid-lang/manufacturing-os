@@ -45,7 +45,7 @@ export default function SigninSettings({ orgId, canEdit, suggestDomain }: { orgI
     <Section label="Sign-in">
       <div className={`${sheet} divide-y divide-[var(--color-border)]`}>
         <FormRow label="Microsoft only for" htmlFor="ms-domains"
-          hint={<>Emails on these domains must sign in with Microsoft; a password sign-in is refused.{suggestDomain && !parsed.includes(suggestDomain) ? <> Yours is <b className="font-semibold">{suggestDomain}</b>.</> : null}</>}>
+          hint={<>Emails on these domains must sign in with Microsoft; a password sign-in is refused.{suggestDomain && !parsed.includes(suggestDomain) ? <> Yours is <b className="font-medium">{suggestDomain}</b>.</> : null}</>}>
           <input id="ms-domains" className={field} value={domains} disabled={!canEdit || !loaded} spellCheck={false} autoCapitalize="off"
             onChange={(e) => setDomains(e.target.value)} placeholder="kernenergy.com" />
           {parsed.length > 0 && <div className="mt-2 flex flex-wrap gap-1.5">{parsed.map((d) => <span key={d} className="ui-tag">{d}</span>)}</div>}
@@ -61,12 +61,12 @@ export default function SigninSettings({ orgId, canEdit, suggestDomain }: { orgI
             ))}
           </div>
           {policy.allowPasswords && (
-            <p className="mt-2 text-[13px] text-[var(--color-text-muted)]">They get a one-time password when added. They must set their own the same day, or the account is suspended until an admin resets it.</p>
+            <p className="mt-2 text-body text-[var(--color-text-muted)]">They get a one-time password when added. They must set their own the same day, or the account is suspended until an admin resets it.</p>
           )}
         </FormRow>
         {canEdit && (
           <div className="px-4 sm:px-5 py-3 flex items-center justify-end gap-3">
-            {dirty && <span className="text-[13px] text-[var(--color-text-muted)]">Not saved yet</span>}
+            {dirty && <span className="text-body text-[var(--color-text-muted)]">Not saved yet</span>}
             <Button variant="secondary" {...saveFx.state} doneLabel="Saved" onClick={() => void save()} disabled={!loaded || (!dirty && !saveFx.done)}
               title={!dirty ? "Nothing changed yet" : undefined}>
               Save sign-in rules

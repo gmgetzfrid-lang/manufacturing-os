@@ -44,17 +44,17 @@ export default function RevisionChainStrip({ documentId, refreshKey }: RevisionC
 
   if (loading) {
     return (
-      <div className="flex items-center gap-2 text-[13px] text-[var(--color-text-muted)] px-2 py-3">
+      <div className="flex items-center gap-2 text-body text-[var(--color-text-muted)] px-2 py-3">
         <Loader2 className="w-3 h-3 animate-spin" /> Loading revision chain…
       </div>
     );
   }
-  if (error) return <div className="text-[13px] text-[var(--state-overdue)] px-2 py-2">{error}</div>;
+  if (error) return <div className="text-body text-[var(--state-overdue)] px-2 py-2">{error}</div>;
   if (chain.length === 0) return null;
 
   return (
     <div className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-xl p-3">
-      <div className="text-[13px] font-semibold text-[var(--color-text)] mb-2">
+      <div className="text-body font-medium text-[var(--color-text)] mb-2">
         Revision chain
       </div>
       <div className="flex items-center gap-1 overflow-x-auto pb-1">
@@ -83,7 +83,7 @@ function ChainNode({ node }: { node: RevisionChainNode }) {
 
   return (
     <div
-      className={`shrink-0 inline-flex items-center gap-1.5 border ${wrapper} rounded-md px-2 py-1 text-[13px] font-display font-semibold tabular-nums`}
+      className={`shrink-0 inline-flex items-center gap-1.5 border ${wrapper} rounded-md px-2 py-1 text-body font-display font-semibold tabular-nums`}
       title={tooltipFor(node)}
     >
       <Icon className="w-3 h-3" />

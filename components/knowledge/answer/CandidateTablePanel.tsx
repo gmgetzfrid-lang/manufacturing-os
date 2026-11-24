@@ -20,15 +20,15 @@ export default function CandidateTablePanel({ table, onOpen }: {
     <section className="pt-4 border-t border-[var(--color-border)]">
       <div className="flex items-center gap-2 flex-wrap pb-1">
         <ListFilter className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
-        <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Shortlist</span>
-        <span className="text-[14px] font-bold text-[var(--color-text)]">{table.rows.length} {table.rows.length === 1 ? "entry" : "entries"}{table.catalog ? ` from ${table.catalog}` : ""}</span>
+        <span className="text-body font-medium text-[var(--color-text-muted)]">Shortlist</span>
+        <span className="text-body font-medium text-[var(--color-text)]">{table.rows.length} {table.rows.length === 1 ? "entry" : "entries"}{table.catalog ? ` from ${table.catalog}` : ""}</span>
       </div>
-      <p className="pb-2 text-[13px] text-[var(--color-text-muted)]">{table.basis}</p>
+      <p className="pb-2 text-body text-[var(--color-text-muted)]">{table.basis}</p>
       {/* Wide: it scrolls sideways, and the fade at the edge says so. */}
       <div className="overflow-x-auto [mask-image:linear-gradient(to_right,black_calc(100%-24px),transparent)] pr-6">
-        <table className="w-full text-[13px]">
+        <table className="w-full text-body">
           <thead>
-            <tr className="border-y border-[var(--color-border)] text-left text-[13px] font-semibold text-[var(--color-text-muted)]">
+            <tr className="border-y border-[var(--color-border)] text-left text-body font-medium text-[var(--color-text-muted)]">
               <th className="px-3 py-1.5">Code</th>
               {hasRating && <th className="px-3 py-1.5">Rating</th>}
               <th className="px-3 py-1.5">For</th>
@@ -46,14 +46,14 @@ export default function CandidateTablePanel({ table, onOpen }: {
                     </button>
                   ) : <span className="font-display font-semibold">{r.code}</span>}
                 </td>
-                {hasRating && <td className="px-3 py-1.5 whitespace-nowrap font-display tabular-nums">{r.rating ?? <span className="font-sans text-[13px] text-[var(--color-text-faint)]" title="Not read from the page - check it on the entry's page">not recorded</span>}</td>}
+                {hasRating && <td className="px-3 py-1.5 whitespace-nowrap font-display tabular-nums">{r.rating ?? <span className="font-sans text-body text-[var(--color-text-faint)]" title="Not read from the page - check it on the entry's page">not recorded</span>}</td>}
                 <td className="px-3 py-1.5 min-w-[240px]">{r.service ?? "-"}</td>
                 {fieldCols.map((f) => <td key={f} className="px-3 py-1.5 whitespace-nowrap">{r.attrs[f] ?? "-"}</td>)}
                 <td className="px-3 py-1.5">
                   <div className="flex flex-wrap gap-1">
                     {r.matched.map((m) => (
                       <span key={`${m.how}:${m.term}`} title={m.how === "asker" ? "your word" : m.how === "company" ? "the word your documents use for it" : "a related word only"}
-                        className={`rounded px-1 py-px text-[13px] font-bold border ${m.how === "asker" ? "border-[color-mix(in_srgb,var(--state-released)_35%,transparent)] bg-[color-mix(in_srgb,var(--state-released)_10%,transparent)] text-[var(--state-released)]" : m.how === "company" ? "border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)] dark:bg-[var(--color-surface-2)] dark:text-[var(--color-text)] dark:border-[var(--color-border)]" : "border-[var(--color-border)] text-[var(--color-text-muted)]"}`}>
+                        className={`rounded px-1 py-px text-body font-semibold border ${m.how === "asker" ? "border-[color-mix(in_srgb,var(--state-released)_35%,transparent)] bg-[color-mix(in_srgb,var(--state-released)_10%,transparent)] text-[var(--state-released)]" : m.how === "company" ? "border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)] dark:bg-[var(--color-surface-2)] dark:text-[var(--color-text)] dark:border-[var(--color-border)]" : "border-[var(--color-border)] text-[var(--color-text-muted)]"}`}>
                         {m.term}
                       </span>
                     ))}
@@ -65,7 +65,7 @@ export default function CandidateTablePanel({ table, onOpen }: {
         </table>
       </div>
       {(table.differ.length > 0 || table.related > 0) && (
-        <div className="pt-2.5 border-t border-[var(--color-border)] text-[13px] text-[var(--color-text-muted)] space-y-0.5">
+        <div className="pt-2.5 border-t border-[var(--color-border)] text-body text-[var(--color-text-muted)] space-y-0.5">
           {table.differ.length > 0 && <div><b className="text-[var(--color-text)]">Narrow it by:</b> {table.differ.map((d) => `${d.field} (${d.values.join(" / ")})`).join(" · ")}</div>}
           {table.related > 0 && <div>{table.related} more {table.related === 1 ? "entry" : "entries"} matched only on a related word - not shown.</div>}
         </div>

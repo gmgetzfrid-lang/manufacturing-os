@@ -70,17 +70,17 @@ export default function EquipmentTagsStrip({
     <div className={`space-y-2 ${className}`} onClick={(e) => e.stopPropagation()}>
       <div className="flex items-center gap-2">
         <span className="ui-icon-tile is-sm" aria-hidden><Tag className="w-4 h-4" /></span>
-        <span className="font-display text-[16px] font-semibold text-[var(--color-heading)]">
+        <span className="font-display text-reading font-semibold text-[var(--color-heading)]">
           Equipment tags
         </span>
-        <span className="text-[13px] text-[var(--color-text-muted)] ml-auto inline-flex items-center gap-1">
+        <span className="text-body text-[var(--color-text-muted)] ml-auto inline-flex items-center gap-1">
           <Info className="w-3 h-3" /> Press a tag for its photos
         </span>
       </div>
       {groups.map((g) => (
         <div key={g.key} className="pl-9">
-          <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5 flex items-center gap-1.5">
-            {g.label} <span className="ui-count !h-5 !min-w-5 !text-[12px]">{g.tags.length}</span>
+          <div className="text-body font-medium text-[var(--color-text-muted)] mb-1.5 flex items-center gap-1.5">
+            {g.label} <span className="ui-count !h-5 !min-w-5 !text-caption">{g.tags.length}</span>
           </div>
           <div className="flex flex-wrap gap-1">
             {g.tags.map((t, i) => (

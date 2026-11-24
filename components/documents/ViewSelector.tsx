@@ -80,7 +80,7 @@ export default function ViewSelector({
     <div className="relative">
       <button
         onClick={() => setOpen((o) => !o)}
-        className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[13px] font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:border-[var(--color-border-strong)] shadow-sm"
+        className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-body font-medium text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:border-[var(--color-border-strong)] shadow-sm"
       >
         <Eye className="w-3 h-3 text-[var(--color-text-muted)]" />
         <span className="truncate max-w-[120px]">{activeView ? activeView.name : "Default View"}</span>
@@ -92,18 +92,18 @@ export default function ViewSelector({
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
           <div className="absolute right-0 mt-1 w-64 origin-top-right bg-[var(--color-surface)] text-[var(--color-text)] rounded-xl border border-[var(--color-border)] ring-1 ring-black/5 shadow-lg z-50 overflow-hidden animate-in fade-in zoom-in-95 duration-150">
             <div className="px-3 py-2 border-b border-[var(--color-border)]">
-              <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">Views</div>
+              <div className="text-body font-medium text-[var(--color-text-muted)]">Views</div>
             </div>
             <div className="max-h-72 overflow-y-auto">
               {loading ? (
-                <div className="p-3 text-[13px] text-[var(--color-text-muted)] flex items-center gap-2">
+                <div className="p-3 text-body text-[var(--color-text-muted)] flex items-center gap-2">
                   <Loader2 className="w-3 h-3 animate-spin" /> Loading…
                 </div>
               ) : (
                 <>
                   {orgViews.length > 0 && (
                     <>
-                      <div className="px-3 py-1 text-[13px] font-semibold text-[var(--color-text-faint)] bg-[var(--color-surface-2)]">Admin Views</div>
+                      <div className="px-3 py-1 text-body font-medium text-[var(--color-text-faint)] bg-[var(--color-surface-2)]">Admin Views</div>
                       {orgViews.map((v) => (
                         <ViewRow key={v.id} v={v} active={v.id === activeViewId} onApply={() => apply(v)} onDelete={isAdmin ? () => remove(v.id) : undefined} />
                       ))}
@@ -111,14 +111,14 @@ export default function ViewSelector({
                   )}
                   {userViews.length > 0 && (
                     <>
-                      <div className="px-3 py-1 text-[13px] font-semibold text-[var(--color-text-faint)] bg-[var(--color-surface-2)]">My Views</div>
+                      <div className="px-3 py-1 text-body font-medium text-[var(--color-text-faint)] bg-[var(--color-surface-2)]">My Views</div>
                       {userViews.map((v) => (
                         <ViewRow key={v.id} v={v} active={v.id === activeViewId} onApply={() => apply(v)} onDelete={() => remove(v.id)} />
                       ))}
                     </>
                   )}
                   {views.length === 0 && (
-                    <div className="p-3 text-[13px] text-[var(--color-text-muted)] italic">
+                    <div className="p-3 text-body text-[var(--color-text-muted)] italic">
                       No saved views yet. Use <b>Save current view</b> below to create one.
                     </div>
                   )}
@@ -128,7 +128,7 @@ export default function ViewSelector({
             <div className="border-t border-[var(--color-border)] p-1">
               <button
                 onClick={() => { setShowSaveModal(true); setOpen(false); }}
-                className="w-full inline-flex items-center gap-2 px-3 py-2 rounded-md text-[13px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
+                className="w-full inline-flex items-center gap-2 px-3 py-2 rounded-md text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
               >
                 <Plus className="w-3 h-3" /> Save current view…
               </button>
@@ -161,11 +161,11 @@ function ViewRow({ v, active, onApply, onDelete }: {
     <div className={`flex items-center gap-2 px-3 py-2 hover:bg-[var(--color-surface-2)] cursor-pointer ${active ? "bg-[var(--color-surface-2)]" : ""}`} onClick={onApply}>
       {v.scope === "user" ? <UserIcon className="w-3 h-3 text-[var(--color-text-faint)] shrink-0" /> : <Eye className="w-3 h-3 text-[var(--color-text-faint)] shrink-0" />}
       <div className="flex-1 min-w-0">
-        <div className="text-[13px] font-bold text-[var(--color-text)] truncate flex items-center gap-1">
+        <div className="text-body font-medium text-[var(--color-text)] truncate flex items-center gap-1">
           {v.name}
           {v.is_default && <Star className="w-3 h-3 text-[var(--state-held)] fill-current" />}
         </div>
-        {v.description && <div className="text-[13px] text-[var(--color-text-muted)] truncate">{v.description}</div>}
+        {v.description && <div className="text-body text-[var(--color-text-muted)] truncate">{v.description}</div>}
       </div>
       {onDelete && (
         <button onClick={(e) => { e.stopPropagation(); onDelete(); }} className="p-1 text-[var(--color-text-faint)] hover:text-[var(--state-overdue)] hover:bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] rounded">
@@ -213,7 +213,7 @@ function SaveViewModal({
     <div className="fixed inset-0 z-[400] bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)] animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
       <div className="w-full max-w-md bg-[var(--color-surface)] rounded-lg shadow-2xl border border-[var(--color-border)] overflow-hidden animate-in fade-in zoom-in-95">
         <div className="px-5 py-3 border-b border-[var(--color-border)] flex items-center justify-between">
-          <div className="text-sm font-semibold text-[var(--color-text)] flex items-center gap-2">
+          <div className="text-sm font-medium text-[var(--color-text)] flex items-center gap-2">
             <Save className="w-4 h-4 text-[var(--color-text-muted)]" /> Save current view
           </div>
           <button aria-label="Close" onClick={onClose} disabled={busy} className="p-1.5 rounded text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
@@ -222,35 +222,35 @@ function SaveViewModal({
         </div>
         <div className="px-5 py-4 space-y-3">
           <div>
-            <label className="text-[13px] font-semibold text-[var(--color-text)] ">Name *</label>
+            <label className="text-body font-medium text-[var(--color-text)] ">Name *</label>
             <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Past Due P&IDs" autoFocus className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm" />
           </div>
           <div>
-            <label className="text-[13px] font-semibold text-[var(--color-text)] ">Description</label>
+            <label className="text-body font-medium text-[var(--color-text)] ">Description</label>
             <input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Optional" className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm" />
           </div>
           <div>
-            <label className="text-[13px] font-semibold text-[var(--color-text)] ">Visibility</label>
+            <label className="text-body font-medium text-[var(--color-text)] ">Visibility</label>
             <div className="mt-1 flex bg-[var(--color-surface-2)] p-1 rounded-lg w-fit">
               {isAdmin && (
-                <button onClick={() => setScope("org")} className={`px-3 py-1.5 text-[13px] font-bold rounded-md ${scope === "org" ? "bg-[var(--color-surface)] shadow text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>
+                <button onClick={() => setScope("org")} className={`px-3 py-1.5 text-body font-medium rounded-md ${scope === "org" ? "bg-[var(--color-surface)] shadow text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>
                   Org-wide
                 </button>
               )}
-              <button onClick={() => setScope("user")} className={`px-3 py-1.5 text-[13px] font-bold rounded-md ${scope === "user" ? "bg-[var(--color-surface)] shadow text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>
+              <button onClick={() => setScope("user")} className={`px-3 py-1.5 text-body font-medium rounded-md ${scope === "user" ? "bg-[var(--color-surface)] shadow text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>
                 Personal
               </button>
             </div>
           </div>
-          <label className="flex items-center gap-2 text-[13px]">
+          <label className="flex items-center gap-2 text-body">
             <input type="checkbox" checked={isDefault} onChange={(e) => setIsDefault(e.target.checked)} />
             Set as default {scope === "org" ? "for the team" : "for me"}
           </label>
-          {error && <div className="text-[13px] border-l-2 border-[var(--state-overdue)] pl-3 text-[var(--state-overdue)]">{error}</div>}
+          {error && <div className="text-body border-l-2 border-[var(--state-overdue)] pl-3 text-[var(--state-overdue)]">{error}</div>}
         </div>
         <div className="px-5 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-end gap-2">
-          <button onClick={onClose} disabled={busy} className="px-3 py-2 rounded-lg text-[13px] font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)]">Cancel</button>
-          <button onClick={save} disabled={busy || !name.trim()} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-[13px] font-semibold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50 shadow">
+          <button onClick={onClose} disabled={busy} className="px-3 py-2 rounded-lg text-body font-medium text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)]">Cancel</button>
+          <button onClick={save} disabled={busy || !name.trim()} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-body font-medium text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50 shadow">
             {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />} Save view
           </button>
         </div>

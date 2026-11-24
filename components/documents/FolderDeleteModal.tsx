@@ -104,8 +104,8 @@ export default function FolderDeleteModal({
         onChange={() => setMode(value)} />
       <Icon className={`w-5 h-5 shrink-0 mt-0.5 ${value === "all" ? "text-[var(--state-overdue)]" : "text-[var(--color-text-muted)]"}`} />
       <span className="min-w-0">
-        <span className="block text-sm font-semibold text-[var(--color-text)]">{t}</span>
-        <span className="block text-[13px] text-[var(--color-text-muted)] mt-0.5">{children}</span>
+        <span className="block text-sm font-medium text-[var(--color-text)]">{t}</span>
+        <span className="block text-body text-[var(--color-text-muted)] mt-0.5">{children}</span>
       </span>
     </label>
   );
@@ -117,8 +117,8 @@ export default function FolderDeleteModal({
         <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-start gap-3">
           <div className="p-2 rounded-lg bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)]"><Trash2 className="w-5 h-5 text-[var(--state-overdue)]" /></div>
           <div className="min-w-0 flex-1">
-            <div className="text-sm font-semibold text-[var(--color-text)] truncate">{title}</div>
-            <div className="text-[13px] text-[var(--color-text-muted)] mt-0.5">
+            <div className="text-sm font-medium text-[var(--color-text)] truncate">{title}</div>
+            <div className="text-body text-[var(--color-text-muted)] mt-0.5">
               {loadError ? <span className="text-[var(--state-overdue)]">{loadError}</span>
                 : previews === null ? <span className="inline-flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" /> Counting what&apos;s inside…</span>
                 : empty ? (one ? "This folder is empty." : "These folders are empty.")
@@ -134,7 +134,7 @@ export default function FolderDeleteModal({
         {previews !== null && !empty && (
           <div className="p-5 space-y-2.5">
             {option("all", FolderX, "Delete the folder and everything in it", held > 0
-                ? <span className="text-[var(--state-overdue)] font-bold">{held} document{held === 1 ? " is" : "s are"} under a legal hold inside - release the hold or move those records out first.</span>
+                ? <span className="text-[var(--state-overdue)] font-medium">{held} document{held === 1 ? " is" : "s are"} under a legal hold inside - release the hold or move those records out first.</span>
                 : <>All {docs.toLocaleString()} document{docs === 1 ? "" : "s"} are <b>permanently deleted</b>
                     {subfolders > 0 ? `, and all ${subfolders.toLocaleString()} subfolder${subfolders === 1 ? "" : "s"} go with ${one ? "it" : "them"}` : ""}.
                     {" "}The empty folder structure can be restored from Recently deleted for 30 days; the documents can&apos;t.</>,
@@ -146,8 +146,8 @@ export default function FolderDeleteModal({
                 : <>Nothing directly inside to move.</>)}
             {needsTyping && held === 0 && (
               <div className="pt-1">
-                <label className="block text-[13px] font-bold text-[var(--color-text-muted)] mb-1">
-                  Type <span className="font-semibold text-[var(--state-overdue)]">DELETE</span> to permanently delete {docs.toLocaleString()} documents
+                <label className="block text-body font-medium text-[var(--color-text-muted)] mb-1">
+                  Type <span className="font-medium text-[var(--state-overdue)]">DELETE</span> to permanently delete {docs.toLocaleString()} documents
                 </label>
                 <input value={typed} onChange={(e) => setTyped(e.target.value)} autoFocus disabled={!!running}
                   className="w-full h-9 px-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-sm" />
@@ -157,26 +157,26 @@ export default function FolderDeleteModal({
         )}
 
         {error && (
-          <div className="mx-5 mb-3 text-[13px] flex gap-2 border-l-2 border-[var(--state-overdue)] pl-3 text-[var(--state-overdue)]">
+          <div className="mx-5 mb-3 text-body flex gap-2 border-l-2 border-[var(--state-overdue)] pl-3 text-[var(--state-overdue)]">
             <AlertTriangle className="w-4 h-4 shrink-0" /> {error}
           </div>
         )}
 
         <div className="px-5 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-between gap-2">
-          <div className="text-[13px] text-[var(--color-text-muted)] min-w-0">
+          <div className="text-body text-[var(--color-text-muted)] min-w-0">
             {running && mode === "all" && docs > 0 && (
-              <span className="inline-flex items-center gap-1.5 font-bold text-[var(--color-text)]">
+              <span className="inline-flex items-center gap-1.5 font-medium text-[var(--color-text)]">
                 <Loader2 className="w-3.5 h-3.5 animate-spin" /> {running.docs.toLocaleString()} of {docs.toLocaleString()} documents deleted…
               </span>
             )}
           </div>
           <div className="flex items-center gap-2">
             <button onClick={onClose} disabled={!!running}
-              className="px-3 py-2 rounded-lg text-[13px] font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-40">
+              className="px-3 py-2 rounded-lg text-body font-medium text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-40">
               Cancel
             </button>
             <button onClick={() => void go()} disabled={!canGo}
-              className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-[13px] font-semibold text-white disabled:opacity-40 ${
+              className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-body font-semibold text-white disabled:opacity-40 ${
                 mode === "all" || empty ? "bg-[var(--state-overdue)] hover:bg-[var(--state-overdue)]" : "bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)]"}`}>
               {running ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
               {running ? "Deleting…"

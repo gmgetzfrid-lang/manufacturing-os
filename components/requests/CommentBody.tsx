@@ -29,7 +29,7 @@ export default function CommentBody({ text, currentUserId, className }: CommentB
           return (
             <span
               key={idx}
-              className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[12px] font-bold align-baseline mr-0.5 ${
+              className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-caption font-bold align-baseline mr-0.5 ${
                 isMe
                   ? "bg-[var(--color-surface-2)] text-[var(--color-text)] ring-1 ring-[var(--color-border-strong)]"
                   : "bg-[var(--color-surface-2)] text-[var(--color-text)] ring-1 ring-[var(--color-accent-ring)]"
@@ -87,9 +87,9 @@ function renderInline(line: string): React.ReactNode[] {
   let i = 0;
   while ((m = re.exec(line)) !== null) {
     if (m.index > last) out.push(<React.Fragment key={`t${i++}`}>{line.slice(last, m.index)}</React.Fragment>);
-    if (m[1]) out.push(<strong key={`b${i++}`} className="font-bold">{m[2]}</strong>);
+    if (m[1]) out.push(<strong key={`b${i++}`} className="font-medium">{m[2]}</strong>);
     else if (m[3]) out.push(<em key={`i${i++}`} className="italic">{m[4] ?? m[5]}</em>);
-    else if (m[6]) out.push(<code key={`c${i++}`} className="px-1 py-0.5 rounded bg-[var(--color-surface-2)] text-[11px] font-mono">{m[7]}</code>);
+    else if (m[6]) out.push(<code key={`c${i++}`} className="px-1 py-0.5 rounded bg-[var(--color-surface-2)] text-caption font-mono">{m[7]}</code>);
     else if (m[8]) out.push(<a key={`l${i++}`} href={m[10]} target="_blank" rel="noopener noreferrer" className="text-[var(--color-accent-text)] underline hover:text-[var(--color-accent-hover)] transition-colors">{m[9]}</a>);
     else if (m[11]) out.push(<a key={`a${i++}`} href={m[11]} target="_blank" rel="noopener noreferrer" className="text-[var(--color-accent-text)] underline hover:text-[var(--color-accent-hover)] transition-colors break-all">{m[11]}</a>);
     last = m.index + m[0].length;

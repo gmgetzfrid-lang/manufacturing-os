@@ -163,20 +163,20 @@ export default function AdminBrandingPage() {
         <Card label="Logo">
           <div {...drag.bind} className={`rounded-xl border border-dashed border-[var(--color-border-strong)] bg-[var(--color-surface-2)] h-28 flex items-center justify-center mb-3 overflow-hidden ${drag.ring}`}>
             {drag.over ? (
-              <span className="text-[14px] font-semibold text-[var(--color-text)]">{drag.say}</span>
+              <span className="text-body font-medium text-[var(--color-text)]">{drag.say}</span>
             ) : logoPreview ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img src={logoPreview} alt="Logo preview" className="max-h-20 max-w-[80%] object-contain" />
             ) : (
-              <span className="text-[14px] text-[var(--color-text-muted)]">No logo yet. Drop one here.</span>
+              <span className="text-body text-[var(--color-text-muted)]">No logo yet. Drop one here.</span>
             )}
           </div>
           {picked && (
             <div className="mb-3 flex items-center gap-2.5">
               <FileThumb file={picked} size={32} />
               <span className="min-w-0 flex-1">
-                <span className="block text-[14px] font-semibold text-[var(--color-text)] truncate">{picked.name}</span>
-                <span className="block text-[13px] text-[var(--color-text-muted)]">
+                <span className="block text-body font-medium text-[var(--color-text)] truncate">{picked.name}</span>
+                <span className="block text-body text-[var(--color-text-muted)]">
                   {formatBytes(picked.size)}{uploading && <span className="inline-flex items-center gap-1 ml-2"><Loader2 aria-hidden className="w-3 h-3 animate-spin" /> Uploading</span>}
                 </span>
               </span>
@@ -185,7 +185,7 @@ export default function AdminBrandingPage() {
               )}
             </div>
           )}
-          {logoError && <p role="alert" className="mb-3 text-[14px] font-semibold text-[var(--state-overdue-text)]">{logoError}</p>}
+          {logoError && <p role="alert" className="mb-3 text-body font-medium text-[var(--state-overdue-text)]">{logoError}</p>}
           <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
             <input ref={fileRef} type="file" accept="image/*" className="hidden"
               onChange={(e) => { const f = e.target.files?.[0]; if (f) void handleLogo(f); e.target.value = ""; }} />
@@ -201,7 +201,7 @@ export default function AdminBrandingPage() {
             )}
           </div>
           <div className="mt-5">
-            <div className="text-[14px] font-semibold text-[var(--color-text)] mb-1.5">Logo shape</div>
+            <div className="text-body font-medium text-[var(--color-text)] mb-1.5">Logo shape</div>
             <div role="radiogroup" aria-label="Logo shape" className={bandSeg}>
               {(["full", "mark"] as const).map((s) => (
                 <button key={s} type="button" role="radio" aria-checked={logoShape === s} onClick={() => { setLogoTouched(true); setLogoShape(s); }}
@@ -211,7 +211,7 @@ export default function AdminBrandingPage() {
               ))}
             </div>
           </div>
-          <p className="text-[13px] text-[var(--color-text-muted)] mt-3">{logoNote ?? "Uploading a logo also sets the colors from it."}</p>
+          <p className="text-body text-[var(--color-text-muted)] mt-3">{logoNote ?? "Uploading a logo also sets the colors from it."}</p>
         </Card>
 
         {/* COLORS */}

@@ -25,15 +25,15 @@ export function EntityStrip({ entities }: { entities: FindEntity[] }) {
   const Icon = (k: FindEntity["kind"]) => (k === "asset" ? Cpu : k === "unit" ? Factory : k === "tag" ? Tag : FolderKanban);
   return (
     <div className="flex flex-wrap items-center gap-1.5 text-xs">
-      <span className="text-[13px] text-[var(--color-text-muted)]">Looking at</span>
+      <span className="text-body text-[var(--color-text-muted)]">Looking at</span>
       {entities.map((e) => {
         const I = Icon(e.kind);
         const body = (
           <span className="inline-flex items-center gap-1.5 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-0.5">
             <I className={`w-3.5 h-3.5 ${e.kind === "asset" ? "text-emerald-600" : e.kind === "unit" ? "text-[var(--color-text-muted)]" : e.kind === "tag" ? "text-slate-500" : "text-amber-600"}`} />
-            <span className="font-bold">{e.label}</span>
+            <span className="font-medium">{e.label}</span>
             {e.sub && <span className="text-[var(--color-text-muted)]">· {e.sub}</span>}
-            {e.via !== "typed" && <span className="text-[11px] text-[var(--color-text-faint)]">({e.via})</span>}
+            {e.via !== "typed" && <span className="text-caption text-[var(--color-text-faint)]">({e.via})</span>}
           </span>
         );
         return e.href ? <Link key={e.node} href={e.href} className="hover:underline">{body}</Link> : <span key={e.node}>{body}</span>;
@@ -76,18 +76,18 @@ export function EquipmentCards({ entities, results, onReveal, onUnit }: {
         if (c.filed_under) parts.push(`${c.filed_under} filed under it`);
         return (
           <div key={e.node} className="rounded-xl border border-emerald-200 dark:border-emerald-900 bg-emerald-50/50 dark:bg-emerald-950/20 p-2.5 text-xs">
-            <div className="flex items-center gap-1 flex-wrap text-[11px] text-[var(--color-text-muted)]">
+            <div className="flex items-center gap-1 flex-wrap text-caption text-[var(--color-text-muted)]">
               {e.unitCode ? (
-                <button onClick={() => onUnit?.(e.unitCode!)} className="inline-flex items-center gap-1 font-bold text-[var(--color-accent-text)] hover:underline" title="Narrow to this unit"><Factory className="w-3 h-3" /> {e.unitLabel ?? e.unitCode}</button>
+                <button onClick={() => onUnit?.(e.unitCode!)} className="inline-flex items-center gap-1 font-medium text-[var(--color-accent-text)] hover:underline" title="Narrow to this unit"><Factory className="w-3 h-3" /> {e.unitLabel ?? e.unitCode}</button>
               ) : <span className="inline-flex items-center gap-1"><Factory className="w-3 h-3" /> no unit on record</span>}
               <ChevronRight className="w-3 h-3" />
-              <span className="inline-flex items-center gap-1 font-bold text-emerald-700">{e.kind === "asset" ? <Cpu className="w-3 h-3" /> : <Tag className="w-3 h-3" />} {e.typeName ?? (e.kind === "asset" ? "Equipment" : "Tag")}</span>
+              <span className="inline-flex items-center gap-1 font-medium text-emerald-700">{e.kind === "asset" ? <Cpu className="w-3 h-3" /> : <Tag className="w-3 h-3" />} {e.typeName ?? (e.kind === "asset" ? "Equipment" : "Tag")}</span>
             </div>
             <div className="mt-0.5 flex items-start justify-between gap-2">
               <div className="min-w-0">
-                <div className="text-sm font-black text-[var(--color-text)]">{e.label}{e.code ? <span className="ml-1.5 text-[11px] font-semibold text-[var(--color-text-muted)]">{e.code}</span> : null}</div>
-                {e.description && <div className="text-[11px] text-[var(--color-text-muted)] truncate">{e.description}</div>}
-                <div className="text-[11px] text-[var(--color-text-muted)]">
+                <div className="text-sm font-semibold text-[var(--color-text)]">{e.label}{e.code ? <span className="ml-1.5 text-caption font-medium text-[var(--color-text-muted)]">{e.code}</span> : null}</div>
+                {e.description && <div className="text-caption text-[var(--color-text-muted)] truncate">{e.description}</div>}
+                <div className="text-caption text-[var(--color-text-muted)]">
                   {e.kind === "tag"
                     ? <>Read off the drawings; not in the equipment registry yet. Documents › the drawing library › <b>Equipment</b> sweep puts it there.</>
                     : related ? <>{parts.join(" · ")}{e.via !== "typed" ? ` · found ${e.via}` : ""}</> : <>Nothing in the results is linked to it yet{e.via !== "typed" ? ` · found ${e.via}` : ""}.</>}
@@ -100,14 +100,14 @@ export function EquipmentCards({ entities, results, onReveal, onUnit }: {
                       <SignedImg path={p} alt="" className="w-full h-full object-cover" placeholder={<ImageIcon className="w-4 h-4 m-auto text-[var(--color-text-faint)]" />} />
                     </div>
                   )) : <div className="w-11 h-11 rounded-lg border border-dashed border-[var(--color-border)] flex items-center justify-center" title="No photos on file"><ImageIcon className="w-4 h-4 text-[var(--color-text-faint)]" /></div>}
-                  {(e.photos ?? 0) > 3 && <span className="text-[11px] text-[var(--color-text-muted)]">+{(e.photos ?? 0) - 3}</span>}
+                  {(e.photos ?? 0) > 3 && <span className="text-caption text-[var(--color-text-muted)]">+{(e.photos ?? 0) - 3}</span>}
                 </div>
               )}
             </div>
             <div className="mt-1.5 flex flex-wrap gap-1">
-              {e.href && <Link href={e.href} className="inline-flex items-center gap-1 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-0.5 text-[11px] font-semibold hover:underline"><ExternalLink className="w-3 h-3" /> Equipment page{e.photos ? ` · ${e.photos} photo${e.photos === 1 ? "" : "s"}` : ""}</Link>}
-              {e.kind === "asset" && <Link href={globalGraphHref(e.node)} className="inline-flex items-center gap-1 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-0.5 text-[11px] font-semibold hover:underline"><Globe className="w-3 h-3" /> Global graph</Link>}
-              {related > 0 && onReveal && <button onClick={() => onReveal(e.node)} className="inline-flex items-center gap-1 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-0.5 text-[11px] font-semibold hover:underline"><Crosshair className="w-3 h-3" /> Show on map</button>}
+              {e.href && <Link href={e.href} className="inline-flex items-center gap-1 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-0.5 text-caption font-medium hover:underline"><ExternalLink className="w-3 h-3" /> Equipment page{e.photos ? ` · ${e.photos} photo${e.photos === 1 ? "" : "s"}` : ""}</Link>}
+              {e.kind === "asset" && <Link href={globalGraphHref(e.node)} className="inline-flex items-center gap-1 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-0.5 text-caption font-medium hover:underline"><Globe className="w-3 h-3" /> Global graph</Link>}
+              {related > 0 && onReveal && <button onClick={() => onReveal(e.node)} className="inline-flex items-center gap-1 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-0.5 text-caption font-medium hover:underline"><Crosshair className="w-3 h-3" /> Show on map</button>}
             </div>
           </div>
         );
@@ -125,12 +125,12 @@ export function RelationChips({ relations, onPage }: { relations: FindRelation[]
         const clickable = !!onPage && r.page != null;
         return (
           <button key={i} type="button" disabled={!clickable} onClick={() => clickable && onPage!(r)} title={r.snippet ?? r.detail}
-            className={`inline-flex items-center gap-1 rounded-full border px-1.5 py-px text-[11px] font-semibold ${r.rel === "drawn_on" ? "bg-[var(--color-text)] border-[var(--color-text)] text-[var(--color-surface)]" : r.rel === "mentioned_in" ? "bg-[var(--color-text)] border-[var(--color-text)] text-[var(--color-surface)]" : "bg-slate-50 border-slate-200 text-slate-700"} ${clickable ? "hover:ring-1 hover:ring-[var(--color-border-strong)] cursor-pointer" : "cursor-default"}`}>
+            className={`inline-flex items-center gap-1 rounded-full border px-1.5 py-px text-caption font-medium ${r.rel === "drawn_on" ? "bg-[var(--color-text)] border-[var(--color-text)] text-[var(--color-surface)]" : r.rel === "mentioned_in" ? "bg-[var(--color-text)] border-[var(--color-text)] text-[var(--color-surface)]" : "bg-slate-50 border-slate-200 text-slate-700"} ${clickable ? "hover:ring-1 hover:ring-[var(--color-border-strong)] cursor-pointer" : "cursor-default"}`}>
             <I className="w-3 h-3" /> {REL_LABEL[r.rel]} {r.label}{r.detail ? ` · ${r.detail}` : ""}
           </button>
         );
       })}
-      {relations.length > 6 && <span className="text-[11px] text-[var(--color-text-muted)]">+{relations.length - 6} more</span>}
+      {relations.length > 6 && <span className="text-caption text-[var(--color-text-muted)]">+{relations.length - 6} more</span>}
     </div>
   );
 }
@@ -140,8 +140,8 @@ export function PageHits({ pages, onPage }: { pages: FindResult["pages"]; onPage
   return (
     <ul className="mt-1 space-y-0.5">
       {pages.slice(0, 3).map((p, i) => (
-        <li key={i} className="text-[11px] text-[var(--color-text-muted)]">
-          <button type="button" onClick={() => onPage?.(p.page, p.knowledgeDocId)} className="font-bold text-[var(--color-accent-text)] hover:underline">p.{p.page}</button> “{p.snippet}”
+        <li key={i} className="text-caption text-[var(--color-text-muted)]">
+          <button type="button" onClick={() => onPage?.(p.page, p.knowledgeDocId)} className="font-medium text-[var(--color-accent-text)] hover:underline">p.{p.page}</button> “{p.snippet}”
         </li>
       ))}
     </ul>
@@ -159,7 +159,7 @@ export function ActivityPanel({ activity, compact = false }: { activity: FindAct
     <li>
       <Link href={href} className="flex items-start gap-2 rounded-md px-1.5 py-1 hover:bg-[var(--color-canvas)]">
         <I className={`w-3.5 h-3.5 mt-0.5 shrink-0 ${tone}`} />
-        <span className="min-w-0"><span className="block text-xs font-semibold truncate">{title}</span>{sub && <span className="block text-[11px] text-[var(--color-text-muted)] truncate">{sub}</span>}</span>
+        <span className="min-w-0"><span className="block text-xs font-medium truncate">{title}</span>{sub && <span className="block text-caption text-[var(--color-text-muted)] truncate">{sub}</span>}</span>
       </Link>
     </li>
   );
@@ -180,7 +180,7 @@ export function CoverageLine({ coverage, onReadFolder }: { coverage: FindCoverag
   if (!coverage.inScope) return null;
   const pct = Math.round((coverage.read / coverage.inScope) * 100);
   return (
-    <div className="text-[11px] text-[var(--color-text-muted)] space-y-1">
+    <div className="text-caption text-[var(--color-text-muted)] space-y-1">
       <div className="flex items-center gap-1.5">
         {pct >= 100 ? <Eye className="w-3 h-3 text-emerald-600" /> : <EyeOff className="w-3 h-3 text-amber-600" />}
         <span><b>{coverage.read}</b> of <b>{coverage.inScope}</b> files in this scope have had their contents read ({pct}%). Names and folders are always searched; contents only once read.</span>
@@ -190,7 +190,7 @@ export function CoverageLine({ coverage, onReadFolder }: { coverage: FindCoverag
           {coverage.unreadFolders.slice(0, 3).map((f, i) => (
             <li key={i} className="flex items-center gap-2">
               <span className="truncate">{f.path || "Library root"} · {f.count} unread</span>
-              {onReadFolder && <button type="button" onClick={() => onReadFolder(f)} className="shrink-0 rounded border border-[var(--color-border)] px-1.5 py-px text-[11px] font-bold hover:bg-[var(--color-canvas)]">Read these…</button>}
+              {onReadFolder && <button type="button" onClick={() => onReadFolder(f)} className="shrink-0 rounded border border-[var(--color-border)] px-1.5 py-px text-caption font-medium hover:bg-[var(--color-canvas)]">Read these…</button>}
             </li>
           ))}
         </ul>

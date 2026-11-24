@@ -132,10 +132,10 @@ export function TrendChip({ current, previous, what = "" }: { current: number; p
   const diff = current - previous;
   const glyph = diff === 0 ? "" : diff > 0 ? "▲" : "▼";
   return (
-    <span className="inline-flex items-center gap-1 text-[13px] text-[var(--color-text-muted)] tabular-nums whitespace-nowrap"
+    <span className="inline-flex items-center gap-1 text-body text-[var(--color-text-muted)] tabular-nums whitespace-nowrap"
       title={`${current}${what ? ` ${what}` : ""} in the last 7 days, ${previous} in the 7 days before`}>
       {glyph && <span aria-hidden className="text-[var(--color-text)]">{glyph}</span>}
-      <span><span className="font-semibold text-[var(--color-text)]">{current}</span>{what ? ` ${what}` : ""} this week, {previous} last week</span>
+      <span><span className="font-medium text-[var(--color-text)]">{current}</span>{what ? ` ${what}` : ""} this week, {previous} last week</span>
     </span>
   );
 }
@@ -201,7 +201,7 @@ export function SegmentBar({ segments, className = "" }: { segments: Segment[]; 
         {shown.map((s) => {
           const slot = segments.indexOf(s);
           return (
-            <span key={s.label} className="inline-flex items-center gap-1.5 text-[13px] text-[var(--color-text-muted)]">
+            <span key={s.label} className="inline-flex items-center gap-1.5 text-body text-[var(--color-text-muted)]">
               <span aria-hidden className="w-2 h-2 rounded-full shrink-0" style={{ background: neutralStep(slot) }} />
               {s.label}
               <span className="font-display font-semibold text-[var(--color-text)] tabular-nums">{s.count}</span>

@@ -9,7 +9,7 @@ import { sourceWords, type Source } from "@/lib/requirementSource";
 
 /** "App default: each phase needs its own PSSR" / "Set for this project (Nov 23 by eng)". */
 export function SourceLine({ source, tz, className = "" }: { source: Source; tz: string; className?: string }) {
-  return <span className={`block text-[13px] leading-snug text-[var(--color-text-muted)] ${className}`} data-source={source.kind}>{sourceWords(source, tz)}</span>;
+  return <span className={`block text-body leading-snug text-[var(--color-text-muted)] ${className}`} data-source={source.kind}>{sourceWords(source, tz)}</span>;
 }
 
 /** An on/off switch (a turnover document required for this job). */
@@ -31,7 +31,7 @@ export function NeededChoice({ needed, what, disabled, onChange }: { needed: boo
   return (
     <span className="inline-flex items-center gap-4" role="radiogroup" aria-label={`${what}: needed for this project?`}>
       {[true, false].map((v) => (
-        <label key={String(v)} className={`inline-flex items-center gap-2 min-h-9 pointer-coarse:min-h-11 text-[14px] cursor-pointer select-none ${disabled ? "opacity-60 cursor-not-allowed" : ""} ${needed === v ? "text-[var(--color-text)] font-semibold" : "text-[var(--color-text-muted)]"}`}>
+        <label key={String(v)} className={`inline-flex items-center gap-2 min-h-9 pointer-coarse:min-h-11 text-body cursor-pointer select-none ${disabled ? "opacity-60 cursor-not-allowed" : ""} ${needed === v ? "text-[var(--color-text)] font-medium" : "text-[var(--color-text-muted)]"}`}>
           <input type="radio" name={name} checked={needed === v} disabled={disabled}
             onChange={() => { if (needed !== v) onChange(v); }}
             className="w-4 h-4 accent-[var(--color-current)] cursor-pointer disabled:cursor-not-allowed" />

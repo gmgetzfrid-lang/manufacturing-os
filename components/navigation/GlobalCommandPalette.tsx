@@ -363,7 +363,7 @@ export default function GlobalCommandPalette() {
             onKeyDown={handleKey}
             aria-label="Search or run an action"
             placeholder="Search documents, tags, requests, or type an action"
-            className="flex-1 min-w-0 bg-transparent outline-none text-[16px] sm:text-[15px] placeholder:text-[var(--color-text-faint)]"
+            className="flex-1 min-w-0 bg-transparent outline-none text-reading placeholder:text-[var(--color-text-faint)]"
           />
           {busy && <Loader2 className="w-3.5 h-3.5 animate-spin text-[var(--color-text-faint)]" />}
           <button onClick={() => setOpen(false)} aria-label="Close" className="w-8 h-8 grid place-items-center rounded-lg bg-[var(--color-surface-2)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] shrink-0">
@@ -376,8 +376,8 @@ export default function GlobalCommandPalette() {
         ) : (
           <ul className="max-h-[60vh] overflow-y-auto py-1">
             {visible.length === 0 ? (
-              <li className="px-4 py-8 text-center text-[13px] text-[var(--color-text-muted)]">
-                {query.trim().length < 2 ? "Type two letters to search. 'g i' goes to the Inbox, '?' lists shortcuts." : busy ? "Searching…" : searchError ? <span className="font-semibold text-red-700 dark:text-red-400">Search didn&apos;t work: {searchError}</span> : "No matches"}
+              <li className="px-4 py-8 text-center text-body text-[var(--color-text-muted)]">
+                {query.trim().length < 2 ? "Type two letters to search. 'g i' goes to the Inbox, '?' lists shortcuts." : busy ? "Searching…" : searchError ? <span className="font-medium text-red-700 dark:text-red-400">Search didn&apos;t work: {searchError}</span> : "No matches"}
               </li>
             ) : (
               visible.map((it, i) => {
@@ -391,14 +391,14 @@ export default function GlobalCommandPalette() {
                       onMouseEnter={() => setActiveIdx(i)}
                       className={`w-full px-4 min-h-12 py-2 flex items-center gap-3 text-left ${isActive ? "bg-[var(--color-surface-2)]" : "hover:bg-[var(--color-surface-2)]"}`}
                     >
-                      <div className={`shrink-0 w-8 h-8 rounded-[9px] flex items-center justify-center ${tone.replace(/border-\S+/g, "")}`}>
+                      <div className={`shrink-0 w-8 h-8 rounded-lg flex items-center justify-center ${tone.replace(/border-\S+/g, "")}`}>
                         <Icon className="w-4 h-4" />
                       </div>
                       <div className="min-w-0 flex-1">
-                        <div className="text-[14px] font-semibold text-[var(--color-text)] truncate">{it.label}</div>
-                        {it.subtitle && <div className="text-[12px] text-[var(--color-text-muted)] truncate">{it.subtitle}</div>}
+                        <div className="text-body font-medium text-[var(--color-text)] truncate">{it.label}</div>
+                        {it.subtitle && <div className="text-caption text-[var(--color-text-muted)] truncate">{it.subtitle}</div>}
                       </div>
-                      {it.badge && <span className="text-[11px] font-bold uppercase text-[var(--color-text-muted)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded shrink-0">{it.badge}</span>}
+                      {it.badge && <span className="text-caption font-medium uppercase text-[var(--color-text-muted)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded shrink-0">{it.badge}</span>}
                       {isActive && <CornerDownLeft className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" />}
                     </button>
                   </li>
@@ -408,7 +408,7 @@ export default function GlobalCommandPalette() {
           </ul>
         )}
 
-        <div className="px-4 py-2.5 border-t border-[var(--color-border)] flex items-center justify-between gap-3 text-[12px] text-[var(--color-text-muted)]">
+        <div className="px-4 py-2.5 border-t border-[var(--color-border)] flex items-center justify-between gap-3 text-caption text-[var(--color-text-muted)]">
           <div className="max-sm:hidden flex items-center gap-3">
             <span className="inline-flex items-center gap-1"><ArrowUp className="w-2.5 h-2.5" /><ArrowDown className="w-2.5 h-2.5" /> navigate</span>
             <span className="inline-flex items-center gap-1"><CornerDownLeft className="w-2.5 h-2.5" /> open</span>
@@ -418,12 +418,12 @@ export default function GlobalCommandPalette() {
             {query.trim().length >= 2 && !showShortcuts && (
               <button
                 onClick={() => { setOpen(false); router.push(`/search?q=${encodeURIComponent(query)}`); }}
-                className="font-bold text-[var(--color-accent-text)] hover:text-[var(--color-accent-hover)]"
+                className="font-medium text-[var(--color-accent-text)] hover:text-[var(--color-accent-hover)]"
               >
                 See all results →
               </button>
             )}
-            <button onClick={() => setShowShortcuts((v) => !v)} className="font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
+            <button onClick={() => setShowShortcuts((v) => !v)} className="font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
               {showShortcuts ? "Search" : "Shortcuts (?)"}
             </button>
           </div>
@@ -436,21 +436,21 @@ export default function GlobalCommandPalette() {
 function Shortcuts() {
   return (
     <div className="p-4 max-h-[60vh] overflow-y-auto">
-      <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-2">Quick Navigation</div>
+      <div className="text-body font-medium text-[var(--color-text-muted)] mb-2">Quick Navigation</div>
       <ul className="space-y-1 text-xs mb-4">
         {QUICK_NAV.map((n) => (
           <li key={n.href} className="flex items-center gap-2">
-            <kbd className="px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] border border-[var(--color-border)] font-mono text-[11px]">{n.keys}</kbd>
+            <kbd className="px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] border border-[var(--color-border)] font-mono text-caption">{n.keys}</kbd>
             <span className="text-[var(--color-text)]">{n.label}</span>
           </li>
         ))}
       </ul>
-      <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-2">Global</div>
+      <div className="text-body font-medium text-[var(--color-text-muted)] mb-2">Global</div>
       <ul className="space-y-1 text-xs">
-        <li className="flex items-center gap-2"><kbd className="px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] border border-[var(--color-border)] font-mono text-[11px]">⌘ K</kbd><span>Open this palette</span></li>
-        <li className="flex items-center gap-2"><kbd className="px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] border border-[var(--color-border)] font-mono text-[11px]">/</kbd><span>Open this palette (when not typing)</span></li>
-        <li className="flex items-center gap-2"><kbd className="px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] border border-[var(--color-border)] font-mono text-[11px]">esc</kbd><span>Close any modal</span></li>
-        <li className="flex items-center gap-2"><kbd className="px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] border border-[var(--color-border)] font-mono text-[11px]">?</kbd><span>Show shortcuts</span></li>
+        <li className="flex items-center gap-2"><kbd className="px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] border border-[var(--color-border)] font-mono text-caption">⌘ K</kbd><span>Open this palette</span></li>
+        <li className="flex items-center gap-2"><kbd className="px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] border border-[var(--color-border)] font-mono text-caption">/</kbd><span>Open this palette (when not typing)</span></li>
+        <li className="flex items-center gap-2"><kbd className="px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] border border-[var(--color-border)] font-mono text-caption">esc</kbd><span>Close any modal</span></li>
+        <li className="flex items-center gap-2"><kbd className="px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] border border-[var(--color-border)] font-mono text-caption">?</kbd><span>Show shortcuts</span></li>
       </ul>
     </div>
   );

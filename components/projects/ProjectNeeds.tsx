@@ -96,7 +96,7 @@ const money = (n: number) => `$${Math.round(n).toLocaleString("en-US")}`;
  *  lines kept for your information are muted. */
 const MARK: Record<State, { word: string; dot: string; text: string } | null> = {
   set: { word: "Set", dot: "var(--state-released)", text: "text-[var(--color-text)]" },
-  open: { word: "To do", dot: "var(--state-held)", text: "text-[var(--state-held-text)] font-semibold" },
+  open: { word: "To do", dot: "var(--state-held)", text: "text-[var(--state-held-text)] font-medium" },
   default: { word: "App default", dot: "var(--color-text-faint)", text: "text-[var(--color-text-muted)]" },
   info: null,
 };
@@ -104,7 +104,7 @@ function Mark({ state }: { state: State }) {
   const m = MARK[state];
   if (!m) return null;
   return (
-    <span className={`inline-flex items-center gap-1.5 text-[13px] whitespace-nowrap ${m.text}`}>
+    <span className={`inline-flex items-center gap-1.5 text-body whitespace-nowrap ${m.text}`}>
       <span aria-hidden className="w-[7px] h-[7px] rounded-full shrink-0" style={{ background: m.dot }} />{m.word}
     </span>
   );
@@ -118,9 +118,9 @@ function NeedRow({ r, tz }: { r: Row; tz: string }) {
   return (
     <li className="px-4 sm:px-5 py-3" data-need-row={r.id} data-need-state={r.state}>
       <div className={`${COLS} max-md:flex max-md:flex-wrap max-md:items-baseline max-md:gap-x-3 max-md:gap-y-1`}>
-        <div className="min-w-0 max-md:flex-1 text-[14px] leading-snug font-semibold text-[var(--color-text)]">{r.name}</div>
+        <div className="min-w-0 max-md:flex-1 text-body leading-snug font-medium text-[var(--color-text)]">{r.name}</div>
         <div className="min-w-0 max-md:order-3 max-md:basis-full">
-          <div className="text-[14px] leading-snug text-[var(--color-text)]">{r.value}</div>
+          <div className="text-body leading-snug text-[var(--color-text)]">{r.value}</div>
           {r.source && <SourceLine source={r.source} tz={tz} className="mt-0.5" />}
         </div>
         <div className="max-md:order-2 md:pt-px"><Mark state={r.state} /></div>
@@ -146,8 +146,8 @@ function Stage({ id, projectId, title, rows, tz }: { id: string; projectId: stri
         <button type="button" onClick={() => fold(!folded)} aria-expanded={!folded}
           className="w-full flex items-center gap-3 px-4 sm:px-5 h-11 text-left bg-[var(--color-surface-2)] hover:bg-[color-mix(in_srgb,var(--color-text)_5%,var(--color-surface-2))] transition-colors">
           <ChevronDown aria-hidden className={`ui-chevron w-4 h-4 shrink-0 text-[var(--color-text-muted)] ${folded ? "-rotate-90" : ""}`} />
-          <span className="font-display text-[15px] font-semibold text-[var(--color-text)]">{title}</span>
-          <span className={`text-[13px] tabular-nums ${open ? "font-semibold text-[var(--state-held-text)]" : "text-[var(--color-text-muted)]"}`}>{open ? `${open} to do` : settings ? `${set} of ${settings} set` : `${rows.length}`}</span>
+          <span className="font-display text-reading font-semibold text-[var(--color-text)]">{title}</span>
+          <span className={`text-body tabular-nums ${open ? "font-medium text-[var(--state-held-text)]" : "text-[var(--color-text-muted)]"}`}>{open ? `${open} to do` : settings ? `${set} of ${settings} set` : `${rows.length}`}</span>
         </button>
       </h3>
       {!folded && <ul className="divide-y divide-[var(--color-border)] border-t border-[var(--color-border)]">{rows.map((r) => <NeedRow key={r.id} r={r} tz={tz} />)}</ul>}
@@ -156,7 +156,7 @@ function Stage({ id, projectId, title, rows, tz }: { id: string; projectId: stri
 }
 
 /** A row's one way to change it: a quiet link, not a boxed button. */
-const changeLink = "inline-flex items-center min-h-8 pointer-coarse:min-h-11 text-[14px] font-semibold text-[var(--color-accent-text)] hover:underline underline-offset-2 whitespace-nowrap disabled:opacity-50 disabled:no-underline";
+const changeLink = "inline-flex items-center min-h-8 pointer-coarse:min-h-11 text-body font-medium text-[var(--color-accent-text)] hover:underline underline-offset-2 whitespace-nowrap disabled:opacity-50 disabled:no-underline";
 
 export default function ProjectNeeds({ orgId, project, jobKind, phases, steps, members, canManage, uid, userEmail, refreshKey = 0, onPhases, onEdit, onTab, onLessons, onJobKind }: {
   orgId: string; project: Project; jobKind: string | null; phases: ProjectPhase[];
@@ -260,7 +260,7 @@ export default function ProjectNeeds({ orgId, project, jobKind, phases, steps, m
           <select value={jobKind ?? "standard"} disabled={busy === "jobsize"} onChange={(e) => {
             const k = e.target.value as "small" | "standard" | "capital";
             void run("jobsize", async () => { const r = await saveJobKind(projectId, k, by); if (r.ok) onJobKind(k); return r; });
-          }} className={`${fieldBox} h-9 pointer-coarse:h-11 md:w-full text-[14px] max-sm:text-[16px]`}>
+          }} className={`${fieldBox} h-9 pointer-coarse:h-11 md:w-full text-body max-sm:text-reading`}>
             {JOB_SIZES.map((j) => <option key={j.v} value={j.v}>{j.label}</option>)}
           </select>
         </label>
@@ -387,8 +387,8 @@ export default function ProjectNeeds({ orgId, project, jobKind, phases, steps, m
       {pssrRows.map((x) => (
         <div key={x.id ?? "job"} className="py-2 flex items-center gap-x-3 gap-y-1.5 flex-wrap">
           <span className="min-w-0 flex-1 basis-40">
-            <span className="block text-[14px] font-semibold text-[var(--color-text)]">{x.name}</span>
-            <span className="block text-[13px] text-[var(--color-text)]">{!x.needed ? "Not needed" : x.list ? `${x.list.satisfied} of ${x.list.applicable} items done` : "Not uploaded yet"}</span>
+            <span className="block text-body font-medium text-[var(--color-text)]">{x.name}</span>
+            <span className="block text-body text-[var(--color-text)]">{!x.needed ? "Not needed" : x.list ? `${x.list.satisfied} of ${x.list.applicable} items done` : "Not uploaded yet"}</span>
             <SourceLine source={pssrSource(x.v, phases.length > 0)} tz={tz} />
           </span>
           {canManage
@@ -407,11 +407,11 @@ export default function ProjectNeeds({ orgId, project, jobKind, phases, steps, m
       {items.length > 0 && (
         <ul className="divide-y divide-[var(--color-border)]">
           {items.map((it) => (
-            <li key={it.id} className={`py-1.5 flex items-center gap-3 text-[14px] ${it.required ? "" : "opacity-70"}`}>
+            <li key={it.id} className={`py-1.5 flex items-center gap-3 text-body ${it.required ? "" : "opacity-70"}`}>
               <Switch on={it.required} label={`${it.name} needed for this project`} disabled={!canManage || !!busy}
                 onChange={() => void run(it.id, () => updateTurnoverItem({ item: it, patch: { required: !it.required }, actor }))} />
               <span className="min-w-0 flex-1 break-words text-[var(--color-text)]" title={it.description ?? undefined}>{it.name}</span>
-              <span className="shrink-0 text-[13px] text-[var(--color-text-muted)]">{it.required ? "Needed" : "Not needed"}</span>
+              <span className="shrink-0 text-body text-[var(--color-text-muted)]">{it.required ? "Needed" : "Not needed"}</span>
             </li>
           ))}
         </ul>
@@ -425,7 +425,7 @@ export default function ProjectNeeds({ orgId, project, jobKind, phases, steps, m
           )}
           <input value={newDoc} onChange={(e) => setNewDoc(e.target.value)} aria-label="Add a document this project needs" placeholder="e.g. Hydrotest record"
             onKeyDown={(e) => { if (e.key === "Enter" && newDoc.trim()) { const n = newDoc.trim(); setNewDoc(""); void run("add", () => addTurnoverItem({ orgId, projectId, name: n, required: true, actor })); } }}
-            className={`${fieldBox} h-9 pointer-coarse:h-11 flex-1 min-w-40 text-[14px] max-sm:text-[16px]`} />
+            className={`${fieldBox} h-9 pointer-coarse:h-11 flex-1 min-w-40 text-body max-sm:text-reading`} />
           <Button size="sm" variant="secondary" disabled={!newDoc.trim() || !!busy} title={!newDoc.trim() ? "Type the document's name first" : undefined}
             onClick={() => { const n = newDoc.trim(); setNewDoc(""); void run("add", () => addTurnoverItem({ orgId, projectId, name: n, required: true, actor })); }}>
             <Plus className="w-3.5 h-3.5" /> Add
@@ -497,21 +497,21 @@ export default function ProjectNeeds({ orgId, project, jobKind, phases, steps, m
   return (
     <Card label="What this project needs" pad={false} className="overflow-hidden"
       action={<span className="flex items-center gap-3">
-        {busy && <span role="status" className="inline-flex items-center gap-1.5 text-[13px] text-[var(--color-text-muted)]"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Saving</span>}
+        {busy && <span role="status" className="inline-flex items-center gap-1.5 text-body text-[var(--color-text-muted)]"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Saving</span>}
         {canManage && (
           <button type="button" onClick={() => requestSetup()} className={heroQuiet} data-needs-setup>
-            <Settings2 className="w-4 h-4" /> Setup{todo ? <span className="font-semibold text-[var(--state-held-text)]">{`${todo} to do`}</span> : <Check aria-label="all set" className="w-4 h-4 text-[var(--state-released)]" />}
+            <Settings2 className="w-4 h-4" /> Setup{todo ? <span className="font-medium text-[var(--state-held-text)]">{`${todo} to do`}</span> : <Check aria-label="all set" className="w-4 h-4 text-[var(--state-released)]" />}
           </button>
         )}
       </span>}>
       {(!canManage || err) && (
         <div className="px-4 sm:px-5 py-3 border-b border-[var(--color-border)] space-y-1">
-          {!canManage && <p className="text-[14px] text-[var(--color-text-muted)]">The project owner, a co-owner or an admin changes these.</p>}
+          {!canManage && <p className="text-body text-[var(--color-text-muted)]">The project owner, a co-owner or an admin changes these.</p>}
           {err && <ErrorNote compact title={err} next="" />}
         </div>
       )}
       {/* The columns, once, over all three stages (wide screens). */}
-      <div aria-hidden className={`${COLS} max-md:hidden px-4 sm:px-5 h-9 items-center text-[13px] text-[var(--color-text-muted)] border-b border-[var(--color-border)]`}>
+      <div aria-hidden className={`${COLS} max-md:hidden px-4 sm:px-5 h-9 items-center text-body text-[var(--color-text-muted)] border-b border-[var(--color-border)]`}>
         <span>Need</span><span>Set to, and where that came from</span><span>Status</span><span />
       </div>
       <Stage id="before" projectId={projectId} title="Before the work" rows={before} tz={tz} />

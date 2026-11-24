@@ -61,17 +61,17 @@ export function RoleTreeSelector({ selected, onChange, disabled }: RoleTreeSelec
                 className="w-7 h-7 grid place-items-center rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] hover:text-[var(--color-text)]">
                 <ChevronRight aria-hidden className={`ui-chevron w-4 h-4 ${isExpanded ? "rotate-90" : ""}`} />
               </button>
-              <label className="flex-1 flex items-center gap-2 cursor-pointer text-[14px] font-semibold text-[var(--color-text)]">
+              <label className="flex-1 flex items-center gap-2 cursor-pointer text-body font-medium text-[var(--color-text)]">
                 <GroupBox all={isAll} some={isSome} disabled={disabled} label={group.name} onChange={() => handleGroup(group.roles)} />
                 {group.name}
               </label>
-              <span className="text-[13px] text-[var(--color-text-muted)] tabular-nums">{count} of {group.roles.length}</span>
+              <span className="text-body text-[var(--color-text-muted)] tabular-nums">{count} of {group.roles.length}</span>
             </div>
             {isExpanded && (
               <ul className="ml-[22px] pl-4 border-l border-[var(--color-border)] pb-1.5">
                 {group.roles.map((role) => (
                   <li key={role}>
-                    <label className={`flex items-center gap-2.5 px-2 min-h-9 pointer-coarse:min-h-11 rounded-md cursor-pointer hover:bg-[var(--color-surface-2)] text-[14px] ${selected.includes(role) ? "text-[var(--color-text)] font-semibold" : "text-[var(--color-text-muted)]"} ${disabled ? "opacity-50 pointer-events-none" : ""}`}>
+                    <label className={`flex items-center gap-2.5 px-2 min-h-9 pointer-coarse:min-h-11 rounded-md cursor-pointer hover:bg-[var(--color-surface-2)] text-body ${selected.includes(role) ? "text-[var(--color-text)] font-medium" : "text-[var(--color-text-muted)]"} ${disabled ? "opacity-50 pointer-events-none" : ""}`}>
                       <input type="checkbox" className="w-4 h-4" checked={selected.includes(role)} disabled={disabled} onChange={() => handleRole(role)} />
                       {role}
                     </label>

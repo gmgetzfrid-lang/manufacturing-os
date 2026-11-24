@@ -30,7 +30,7 @@ export function PublicBar() {
  *  in the field), white on the verdict's color. */
 export function PublicSignature() {
   return (
-    <p className="mt-10 inline-flex items-center gap-2 font-display text-[15px] font-semibold text-white">
+    <p className="mt-10 inline-flex items-center gap-2 font-display text-reading font-semibold text-white">
       <AppMark size={22} ring /> Manufacturing OS
     </p>
   );
@@ -47,11 +47,11 @@ export function PublicNav({ base = "" }: { base?: string }) {
     <header className="surface-side sticky top-0 z-50">
       <div className={`${wrap} h-14 flex items-center gap-6`}>
         <Link href="/about" aria-label="Manufacturing OS home"><Logo /></Link>
-        <nav aria-label="Sections" className="hidden lg:flex items-center gap-5 text-[14px] font-medium text-[var(--color-text-muted)]">
+        <nav aria-label="Sections" className="hidden lg:flex items-center gap-5 text-body font-medium text-[var(--color-text-muted)]">
           {SECTIONS.map(([href, text]) => <a key={href} href={`${base}${href}`} className="hover:text-[var(--color-text)]">{text}</a>)}
         </nav>
         <div className="ml-auto flex items-center gap-3">
-          <Link href="/signup" className="max-sm:hidden text-[14px] font-semibold text-white hover:underline underline-offset-2">Create a workspace</Link>
+          <Link href="/signup" className="max-sm:hidden text-body font-medium text-white hover:underline underline-offset-2">Create a workspace</Link>
           <Link href="/" className={btnQuiet}>Sign in</Link>
         </div>
       </div>
@@ -60,14 +60,14 @@ export function PublicNav({ base = "" }: { base?: string }) {
 }
 
 export function PublicFooter({ base = "" }: { base?: string }) {
-  const col = "text-[13px] text-[var(--color-text-muted)] mb-2";
-  const a = "text-[14px] text-[var(--color-text)] hover:text-[var(--color-accent-text)] hover:underline underline-offset-2";
+  const col = "text-body text-[var(--color-text-muted)] mb-2";
+  const a = "text-body text-[var(--color-text)] hover:text-[var(--color-accent-text)] hover:underline underline-offset-2";
   return (
     <footer className="surface-side">
       <div className={`${wrap} py-10 grid grid-cols-2 md:grid-cols-4 gap-8`}>
         <div className="col-span-2">
           <Logo />
-          <p className="mt-3 text-[14px] leading-snug text-[var(--color-text-muted)] max-w-sm">
+          <p className="mt-3 text-body leading-snug text-[var(--color-text-muted)] max-w-sm">
             Document control, drafting workflow and an AI that has read your library. Leaving takes one click.
           </p>
         </div>
@@ -87,7 +87,7 @@ export function PublicFooter({ base = "" }: { base?: string }) {
         </div>
       </div>
       <div className="border-t border-[var(--color-border)]">
-        <div className={`${wrap} py-4 text-[13px] text-[var(--color-text-muted)]`}>
+        <div className={`${wrap} py-4 text-body text-[var(--color-text-muted)]`}>
           &copy; {new Date().getFullYear()} Manufacturing OS. All rights reserved.
         </div>
       </div>

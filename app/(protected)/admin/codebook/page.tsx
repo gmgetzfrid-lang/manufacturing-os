@@ -178,7 +178,7 @@ export default function CodebookPage() {
             const on = tab === t.key;
             return (
               <button key={t.key} type="button" role="tab" aria-selected={on} tabIndex={on ? 0 : -1} onClick={() => setTab(t.key)}
-                className={`shrink-0 whitespace-nowrap inline-flex items-center gap-1.5 h-10 pointer-coarse:h-11 -mb-px border-b-2 text-[15px] transition-colors ${on ? "border-[var(--color-current)] font-semibold text-[var(--color-text)]" : "border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
+                className={`shrink-0 whitespace-nowrap inline-flex items-center gap-1.5 h-10 pointer-coarse:h-11 -mb-px border-b-2 text-reading transition-colors ${on ? "border-[var(--color-current)] font-medium text-[var(--color-text)]" : "border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
                 {t.label}
                 {n !== null && n > 0 && <span className="ui-count">{n}</span>}
               </button>
@@ -288,10 +288,10 @@ function EntryTable({ kind, title, entries, canWrite, codeHint, labelHint, withP
       </table>
       {canWrite && (
         <div className="px-4 py-3 border-t border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center gap-2 flex-wrap">
-          <input value={draft.code} onChange={(e) => setDraft({ ...draft, code: e.target.value })} placeholder={codeHint} aria-label="Code" className={`${fieldBox} h-10 text-[15px] w-44`} />
-          <input value={draft.label} onChange={(e) => setDraft({ ...draft, label: e.target.value })} placeholder={labelHint} aria-label="Label" className={`${fieldBox} h-10 text-[15px] flex-1 min-w-[180px]`} />
+          <input value={draft.code} onChange={(e) => setDraft({ ...draft, code: e.target.value })} placeholder={codeHint} aria-label="Code" className={`${fieldBox} h-10 text-reading w-44`} />
+          <input value={draft.label} onChange={(e) => setDraft({ ...draft, label: e.target.value })} placeholder={labelHint} aria-label="Label" className={`${fieldBox} h-10 text-reading flex-1 min-w-[180px]`} />
           {withPrefixes && (
-            <input value={draft.prefixes} onChange={(e) => setDraft({ ...draft, prefixes: e.target.value })} placeholder="Prefixes, e.g. E or EA, E" aria-label="Tag prefixes" className={`${fieldBox} h-10 text-[15px] w-52`} />
+            <input value={draft.prefixes} onChange={(e) => setDraft({ ...draft, prefixes: e.target.value })} placeholder="Prefixes, e.g. E or EA, E" aria-label="Tag prefixes" className={`${fieldBox} h-10 text-reading w-52`} />
           )}
           <Button variant="secondary" loading={busy} onClick={() => void add()} disabled={!draft.code.trim() || !draft.label.trim()}>
             <Plus aria-hidden className="w-4 h-4" /> Add
@@ -324,10 +324,10 @@ function EntryRow({ entry, withPrefixes, canWrite, orgId, uid, onChanged, onErro
 
   return (
     <tr className={tbl.tr}>
-      <td className={tbl.td}><span className="ui-id text-[16px]">{entry.code}</span></td>
+      <td className={tbl.td}><span className="ui-id text-reading">{entry.code}</span></td>
       <td className={tbl.td}>
         {editing
-          ? <input value={label} onChange={(e) => setLabel(e.target.value)} aria-label="Label" className={`${fieldBox} h-9 text-[15px] w-full`} autoFocus />
+          ? <input value={label} onChange={(e) => setLabel(e.target.value)} aria-label="Label" className={`${fieldBox} h-9 text-reading w-full`} autoFocus />
           : canWrite
             // Tap the meaning to change it, as before.
             ? <button type="button" onClick={() => setEditing(true)} title="Change what this code means" className="text-left text-[var(--color-text)] hover:text-[var(--color-accent-text)] hover:underline underline-offset-2">{entry.label}</button>
@@ -336,18 +336,18 @@ function EntryRow({ entry, withPrefixes, canWrite, orgId, uid, onChanged, onErro
       {withPrefixes && (
         <td className={`${tbl.td} max-sm:hidden`}>
           {editing
-            ? <input value={prefixes} onChange={(e) => setPrefixes(e.target.value)} aria-label="Tag prefixes" className={`${fieldBox} h-9 text-[15px] w-full`} />
+            ? <input value={prefixes} onChange={(e) => setPrefixes(e.target.value)} aria-label="Tag prefixes" className={`${fieldBox} h-9 text-reading w-full`} />
             : (
               <span className="flex flex-wrap gap-1">
                 <span className="font-display font-semibold tabular-nums text-[var(--color-text)]">{(entry.meta.tagPrefixes ?? []).slice(0, 4).map((p) => `${p}-`).join(", ")}</span>
                 {(entry.meta.tagPrefixes ?? []).length > 4 && (
-                  <button type="button" onClick={() => canWrite && setEditing(true)} title={(entry.meta.tagPrefixes ?? []).map((p) => `${p}-`).join(", ")} className="text-[13px] text-[var(--color-text-muted)] hover:underline underline-offset-2">and {(entry.meta.tagPrefixes ?? []).length - 4} more</button>
+                  <button type="button" onClick={() => canWrite && setEditing(true)} title={(entry.meta.tagPrefixes ?? []).map((p) => `${p}-`).join(", ")} className="text-body text-[var(--color-text-muted)] hover:underline underline-offset-2">and {(entry.meta.tagPrefixes ?? []).length - 4} more</button>
                 )}
               </span>
             )}
         </td>
       )}
-      <td className={`${tbl.td} max-sm:hidden text-[14px] text-[var(--color-text-muted)]`}>
+      <td className={`${tbl.td} max-sm:hidden text-body text-[var(--color-text-muted)]`}>
         {entry.origin === "import" ? "Imported" : "Typed in"}
       </td>
       {canWrite && (
@@ -414,27 +414,27 @@ function NumberingTab({ book, canWrite, orgId, uid, onChanged, onError }: {
     <div className="space-y-8">
       <Section label="Drawing number segments, in order">
       <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 sm:p-5">
-        <p className="text-[14px] text-[var(--color-text-muted)] mb-3">
+        <p className="text-body text-[var(--color-text-muted)] mb-3">
           Separators (dashes, dots, “SHT”) are handled for you. Unit (2), Drawing type (2), Paper size (1), Number, Sheet reads <span className="font-display font-semibold">2002-D-10001 SHT.4</span>.
         </p>
         <div className="space-y-1.5">
           {segments.map((seg, i) => (
             <div key={i} className="flex items-center gap-2 flex-wrap">
-              <span className="text-[13px] font-semibold text-[var(--color-text-faint)] w-4">{i + 1}.</span>
+              <span className="text-body font-medium text-[var(--color-text-faint)] w-4">{i + 1}.</span>
               <select value={seg.kind} disabled={!canWrite}
                 onChange={(e) => setSegments(segments.map((s, j) => j === i ? { kind: e.target.value as DrawingSegment["kind"], digits: 2, letters: 1 } : s))}
-                className={`${fieldBox} h-9 text-[14px]`}>
+                className={`${fieldBox} h-9 text-body`}>
                 {SEGMENT_KINDS.map((k) => <option key={k.kind} value={k.kind}>{k.label}</option>)}
               </select>
               {(seg.kind === "unit" || seg.kind === "drawing_type") && (
-                <label className="text-[13px] text-[var(--color-text-muted)] inline-flex items-center gap-1">
+                <label className="text-body text-[var(--color-text-muted)] inline-flex items-center gap-1">
                   digits <Input type="number" value={seg.digits ?? 2} disabled={!canWrite} min={1} max={4}
                     onChange={(e) => setSegments(segments.map((s, j) => j === i ? { ...s, digits: Math.max(1, Math.min(4, Number(e.target.value) || 2)) } : s))}
                     className="w-14 h-8" />
                 </label>
               )}
               {seg.kind === "size" && (
-                <label className="text-[13px] text-[var(--color-text-muted)] inline-flex items-center gap-1">
+                <label className="text-body text-[var(--color-text-muted)] inline-flex items-center gap-1">
                   letters <Input type="number" value={seg.letters ?? 1} disabled={!canWrite} min={1} max={3}
                     onChange={(e) => setSegments(segments.map((s, j) => j === i ? { ...s, letters: Math.max(1, Math.min(3, Number(e.target.value) || 1)) } : s))}
                     className="w-14 h-8" />
@@ -461,11 +461,11 @@ function NumberingTab({ book, canWrite, orgId, uid, onChanged, onError }: {
       <Section label="Check it with a real drawing number">
       <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 sm:p-5">
         <Input value={sample} onChange={(e) => setSample(e.target.value)} aria-label="Sample drawing number" className="max-w-md font-display tabular-nums" placeholder="2002-D-10001 SHT.4" autoComplete="off" />
-        <div className="mt-2.5 flex flex-wrap gap-1.5 text-[13px]">
+        <div className="mt-2.5 flex flex-wrap gap-1.5 text-body">
           {segments.length === 0 ? (
             <span className="text-[var(--color-text-muted)]">Add segments above to see the decode.</span>
           ) : !parsed ? (
-            <span className="inline-flex items-center gap-1.5 text-[14px] text-[var(--state-overdue-text)] font-semibold"><AlertTriangle aria-hidden className="w-4 h-4" /> Doesn&apos;t match the segments. Change the segments or the sample.</span>
+            <span className="inline-flex items-center gap-1.5 text-body text-[var(--state-overdue-text)] font-medium"><AlertTriangle aria-hidden className="w-4 h-4" /> Doesn&apos;t match the segments. Change the segments or the sample.</span>
           ) : (
             <>
               <PreviewChip label="Unit" value={parsed.unitCode} extra={parsed.unitLabel} />
@@ -481,11 +481,11 @@ function NumberingTab({ book, canWrite, orgId, uid, onChanged, onError }: {
 
       <Section label="The number after the point">
       <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 sm:p-5 flex items-center gap-4 flex-wrap">
-        <p className="basis-full text-[14px] text-[var(--color-text-muted)]">Is it the tag&apos;s number (E-5 is 2030.05)? If not, equipment IDs are never worked out from the name: they come from the schedule or are typed in.</p>
-        <label className="text-[13px] text-[var(--color-text-muted)] inline-flex items-center gap-1.5">
+        <p className="basis-full text-body text-[var(--color-text-muted)]">Is it the tag&apos;s number (E-5 is 2030.05)? If not, equipment IDs are never worked out from the name: they come from the schedule or are typed in.</p>
+        <label className="text-body text-[var(--color-text-muted)] inline-flex items-center gap-1.5">
           <input type="checkbox" checked={mirrors} disabled={!canWrite} onChange={(e) => setMirrors(e.target.checked)} className="w-4 h-4 accent-[var(--color-main)]" /> it&apos;s the tag&apos;s number
         </label>
-        <label className={`text-[14px] text-[var(--color-text-muted)] inline-flex items-center gap-1.5 whitespace-nowrap ${mirrors ? "" : "opacity-40"}`}>
+        <label className={`text-body text-[var(--color-text-muted)] inline-flex items-center gap-1.5 whitespace-nowrap ${mirrors ? "" : "opacity-40"}`}>
           pad to <Input type="number" value={padTo} disabled={!canWrite || !mirrors} min={0} max={6}
             onChange={(e) => setPadTo(Math.max(0, Math.min(6, Number(e.target.value) || 0)))} className="w-14 h-8" /> digits
         </label>
@@ -503,8 +503,8 @@ function NumberingTab({ book, canWrite, orgId, uid, onChanged, onError }: {
 function PreviewChip({ label, value, extra }: { label: string; value: string | null; extra?: string | null }) {
   return (
     <span className="inline-flex flex-col px-3 py-1.5 border-l border-[var(--color-border-strong)] first:border-l-0 first:pl-0">
-      <span className="text-[13px] text-[var(--color-text-muted)]">{label}</span>
-      <span className={`font-display text-[18px] font-semibold tabular-nums ${value ? "text-[var(--color-text)]" : "text-[var(--color-text-faint)]"}`}>{value ?? "-"}{extra && <span className="font-sans text-[14px] font-normal text-[var(--color-text-muted)]"> {extra}</span>}</span>
+      <span className="text-body text-[var(--color-text-muted)]">{label}</span>
+      <span className={`font-display text-section font-semibold tabular-nums ${value ? "text-[var(--color-text)]" : "text-[var(--color-text-faint)]"}`}>{value ?? "-"}{extra && <span className="font-sans text-body font-normal text-[var(--color-text-muted)]"> {extra}</span>}</span>
     </span>
   );
 }
@@ -543,16 +543,16 @@ function LegendTab({ book, canWrite, orgId, uid, onChanged, onError }: {
   };
 
   return (
-    <Section label="Symbols legend and decoder sheets" action={<span className="text-[14px] text-[var(--color-text-muted)] tabular-nums">{book.legendDocIds.length} of 3</span>}>
+    <Section label="Symbols legend and decoder sheets" action={<span className="text-body text-[var(--color-text-muted)] tabular-nums">{book.legendDocIds.length} of 3</span>}>
     <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 sm:p-5">
-      <p className="text-[14px] text-[var(--color-text-muted)] mb-3">
+      <p className="text-body text-[var(--color-text-muted)] mb-3">
         Attach your P&ID legend sheets (indexed in any knowledge library). Every knowledge library inherits them automatically, so the AI can read your symbols when it answers.
       </p>
       <div className="space-y-1.5 mb-3">
         {book.legendDocIds.map((id) => (
           <div key={id} className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-[var(--color-border)]">
             <FileText aria-hidden className="w-4 h-4 text-[var(--color-text-faint)] shrink-0" />
-            <span className="text-[14px] font-semibold text-[var(--color-text)] truncate flex-1">{names.get(id) ?? id}</span>
+            <span className="text-body font-medium text-[var(--color-text)] truncate flex-1">{names.get(id) ?? id}</span>
             {canWrite && (
               <button onClick={() => void setLegend(book.legendDocIds.filter((x) => x !== id))}
                 className={btnIcon} title="Detach" aria-label="Detach legend">
@@ -561,7 +561,7 @@ function LegendTab({ book, canWrite, orgId, uid, onChanged, onError }: {
             )}
           </div>
         ))}
-        {book.legendDocIds.length === 0 && <div className="text-[14px] text-[var(--color-text-muted)]">No legend attached yet.</div>}
+        {book.legendDocIds.length === 0 && <div className="text-body text-[var(--color-text-muted)]">No legend attached yet.</div>}
       </div>
       {canWrite && book.legendDocIds.length < 3 && (
         <div>
@@ -570,7 +570,7 @@ function LegendTab({ book, canWrite, orgId, uid, onChanged, onError }: {
             <div className="mt-1 rounded-lg border border-[var(--color-border)] divide-y divide-[var(--color-border)] overflow-hidden">
               {results.map((r) => (
                 <button key={r.id} onClick={() => { setQuery(""); void setLegend([...book.legendDocIds, r.id]); }}
-                  className="w-full text-left px-3 py-1.5 text-[14px] hover:bg-[var(--color-surface-2)] flex items-center gap-2">
+                  className="w-full text-left px-3 py-1.5 text-body hover:bg-[var(--color-surface-2)] flex items-center gap-2">
                   <Plus className="w-3 h-3 text-[var(--color-text-muted)]" /> {r.name}
                 </button>
               ))}
@@ -805,8 +805,8 @@ function ImportModal({ orgId, uid, book, onClose, onApplied }: {
       <div className="w-full max-w-2xl bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl ui-float ui-float-in flex flex-col max-h-[88vh]">
         <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-start gap-2.5">
           <div className="flex-1">
-            <h2 className="font-display text-[20px] leading-tight font-semibold text-[var(--color-text)]">Build the codebook from a document</h2>
-            <p className="text-[14px] text-[var(--color-text-muted)] mt-0.5">Runs on your own AI key. Nothing is written until you check it and apply.</p>
+            <h2 className="font-display text-section leading-tight font-semibold text-[var(--color-text)]">Build the codebook from a document</h2>
+            <p className="text-body text-[var(--color-text-muted)] mt-0.5">Runs on your own AI key. Nothing is written until you check it and apply.</p>
           </div>
           <button onClick={onClose} disabled={running || applying} aria-label="Close" title="Close" className={btnIcon}><X className="w-4 h-4" /></button>
         </div>
@@ -817,16 +817,16 @@ function ImportModal({ orgId, uid, book, onClose, onApplied }: {
           {!diff && (
             <>
               <div>
-                <div className="text-[14px] font-semibold text-[var(--color-text)] mb-1.5">Upload your standard</div>
+                <div className="text-body font-medium text-[var(--color-text)] mb-1.5">Upload your standard</div>
                 <input ref={fileInputRef} type="file" className="hidden"
                   accept=".pdf,.docx,.txt,.md,.csv,.tsv,text/plain,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                   onChange={(e) => { const f = e.target.files?.[0]; if (f) void handleFile(f); e.target.value = ""; }} />
                 {pickedFile ? (
-                  <div className="flex items-center gap-2.5 px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] text-[14px]">
+                  <div className="flex items-center gap-2.5 px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] text-body">
                     <FileThumb file={pickedFile.file} />
                     <span className="min-w-0 flex-1">
-                      <span className="block font-semibold text-[var(--color-text)] truncate">{pickedFile.name}</span>
-                      <span className="block text-[13px] text-[var(--color-text-muted)]">{formatBytes(pickedFile.file.size)}</span>
+                      <span className="block font-medium text-[var(--color-text)] truncate">{pickedFile.name}</span>
+                      <span className="block text-body text-[var(--color-text-muted)]">{formatBytes(pickedFile.file.size)}</span>
                     </span>
                     <button onClick={() => setPickedFile(null)} disabled={running} aria-label={`Remove ${pickedFile.name}`} className="ml-auto p-0.5 text-[var(--color-text-faint)] hover:text-[var(--state-overdue)]"><X className="w-3.5 h-3.5" /></button>
                   </div>
@@ -836,24 +836,24 @@ function ImportModal({ orgId, uid, book, onClose, onApplied }: {
                     {...codeDrag.bind}
                     className={`w-full border-2 border-dashed border-[var(--color-border-strong)] rounded-lg px-4 py-5 text-center hover:bg-[var(--color-surface-2)] transition-colors ${codeDrag.ring}`}
                   >
-                    <div className="text-[14px] font-semibold text-[var(--color-text)]">{codeDrag.over ? codeDrag.say : "Drop your standards document here, or click to pick"}</div>
-                    <div className="text-[13px] text-[var(--color-text-muted)] mt-0.5">PDF, Word (.docx), TXT, CSV, MD · up to 3 MB. Scanned and CAD PDFs are read page by page.</div>
+                    <div className="text-body font-medium text-[var(--color-text)]">{codeDrag.over ? codeDrag.say : "Drop your standards document here, or click to pick"}</div>
+                    <div className="text-body text-[var(--color-text-muted)] mt-0.5">PDF, Word (.docx), TXT, CSV, MD · up to 3 MB. Scanned and CAD PDFs are read page by page.</div>
                   </button>
                 )}
               </div>
-              <div className="text-center text-[13px] font-semibold text-[var(--color-text-faint)]">or</div>
+              <div className="text-center text-body font-medium text-[var(--color-text-faint)]">or</div>
               <div>
-                <label htmlFor="cb-paste" className="block text-[14px] font-semibold text-[var(--color-text)] mb-1.5">Paste your standard</label>
-                {pasteDraft.restored && text.trim() && <p className="text-[13px] text-[var(--color-text-muted)] mb-1">Brought back what you pasted last time.</p>}
+                <label htmlFor="cb-paste" className="block text-body font-medium text-[var(--color-text)] mb-1.5">Paste your standard</label>
+                {pasteDraft.restored && text.trim() && <p className="text-body text-[var(--color-text-muted)] mb-1">Brought back what you pasted last time.</p>}
                 <textarea id="cb-paste" value={text} onChange={(e) => setText(e.target.value)} rows={7}
                   placeholder={"e.g.  20  Crude Unit\n      25  DHT\n      Equipment: 30 Exchangers (E-), 10 Vessels (V-)"}
-                  className={`${fieldBox} w-full py-2 text-[14px] max-sm:text-[16px] font-mono resize-y`} />
+                  className={`${fieldBox} w-full py-2 text-body max-sm:text-reading font-mono resize-y`} />
               </div>
-              <div className="text-center text-[13px] font-semibold text-[var(--color-text-faint)]">or</div>
+              <div className="text-center text-body font-medium text-[var(--color-text-faint)]">or</div>
               <div>
-                <div className="text-[14px] font-semibold text-[var(--color-text)] mb-1.5">Pick an indexed document</div>
+                <div className="text-body font-medium text-[var(--color-text)] mb-1.5">Pick an indexed document</div>
                 {pickedDoc ? (
-                  <div className="flex items-center gap-2 px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] text-[14px] font-semibold text-[var(--color-text)]">
+                  <div className="flex items-center gap-2 px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] text-body font-medium text-[var(--color-text)]">
                     <FileText className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> {pickedDoc.name}
                     <button onClick={() => setPickedDoc(null)} disabled={running} aria-label={`Remove ${pickedDoc.name}`} className="ml-auto p-0.5 text-[var(--color-text-faint)] hover:text-[var(--state-overdue)]"><X className="w-3.5 h-3.5" /></button>
                   </div>
@@ -864,7 +864,7 @@ function ImportModal({ orgId, uid, book, onClose, onApplied }: {
                       <div className="mt-1 rounded-lg border border-[var(--color-border)] divide-y divide-[var(--color-border)] overflow-hidden">
                         {docResults.map((r) => (
                           <button key={r.id} onClick={() => { setPickedDoc(r); setDocQuery(""); }}
-                            className="w-full text-left px-3 py-1.5 text-[14px] hover:bg-[var(--color-surface-2)]">{r.name}</button>
+                            className="w-full text-left px-3 py-1.5 text-body hover:bg-[var(--color-surface-2)]">{r.name}</button>
                         ))}
                       </div>
                     )}
@@ -878,12 +878,12 @@ function ImportModal({ orgId, uid, book, onClose, onApplied }: {
 
           {diff && (
             <>
-              {readLine && <div className="text-[14px] font-semibold text-[var(--color-text)]">{readLine}</div>}
-              <div className="text-[14px] text-[var(--color-text-muted)]">
+              {readLine && <div className="text-body font-medium text-[var(--color-text)]">{readLine}</div>}
+              <div className="text-body text-[var(--color-text-muted)]">
                 <b className="text-[var(--color-text)]">{diff.adds.length}</b> new · <b className="text-[var(--color-text)]">{diff.changes.length}</b> changed · {diff.unchanged.length} already match. Tick what to apply.
               </div>
               {notes && (
-                <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] p-3 text-[13px] text-[var(--color-text)]">
+                <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] p-3 text-body text-[var(--color-text)]">
                   <b>AI notes on your numbering convention:</b> {notes} <span className="opacity-70">(configure segments in the Drawing numbers tab.)</span>
                 </div>
               )}
@@ -899,18 +899,18 @@ function ImportModal({ orgId, uid, book, onClose, onApplied }: {
                   ...diff.changes.map((c) => ({ p: c.proposed, change: c.existing }))].map(({ p, change }) => {
                   const k = keyOf(p);
                   return (
-                    <label key={k} className="flex items-center gap-2.5 px-3 py-2 text-[14px] cursor-pointer hover:bg-[var(--color-surface-2)]/60">
+                    <label key={k} className="flex items-center gap-2.5 px-3 py-2 text-body cursor-pointer hover:bg-[var(--color-surface-2)]/60">
                       <input type="checkbox" checked={accepted.has(k)} onChange={() => toggle(k)} className="w-3.5 h-3.5 accent-[var(--color-main)]" />
-                      <span className="text-[13px] font-semibold text-[var(--color-text-faint)] w-16">{KIND_LABEL[p.kind]}</span>
+                      <span className="text-body font-medium text-[var(--color-text-faint)] w-16">{KIND_LABEL[p.kind]}</span>
                       <span className="font-display font-semibold tabular-nums text-[var(--color-text)] w-14">{p.code}</span>
-                      <span className="font-semibold text-[var(--color-text)] flex-1">{p.label}</span>
+                      <span className="font-medium text-[var(--color-text)] flex-1">{p.label}</span>
                       {p.tagPrefixes && p.tagPrefixes.length > 0 && <span className="font-mono text-[var(--color-text-muted)]">{p.tagPrefixes.join(", ")}-</span>}
-                      {change && <span className="text-[13px] text-[var(--color-text-muted)]" title={`Currently: ${change.label}`}>replaces “{change.label}”</span>}
+                      {change && <span className="text-body text-[var(--color-text-muted)]" title={`Currently: ${change.label}`}>replaces “{change.label}”</span>}
                     </label>
                   );
                 })}
                 {diff.adds.length === 0 && diff.changes.length === 0 && (
-                  <div className="px-3 py-4 text-[14px] text-[var(--color-text-muted)]">Nothing new. The codebook already matches this document.</div>
+                  <div className="px-3 py-4 text-body text-[var(--color-text-muted)]">Nothing new. The codebook already matches this document.</div>
                 )}
               </div>
             </>
@@ -921,7 +921,7 @@ function ImportModal({ orgId, uid, book, onClose, onApplied }: {
           <button type="button" onClick={onClose} disabled={running || applying} className={btnQuiet}>Cancel</button>
           {/* While it reads, the progress shows beside the button and the
               button itself turns into Stop, in the same place. */}
-          {running && progress && <span role="status" className="mr-auto text-[14px] text-[var(--color-text-muted)] tabular-nums truncate">{stopping ? "Stopping after this part" : progress}</span>}
+          {running && progress && <span role="status" className="mr-auto text-body text-[var(--color-text-muted)] tabular-nums truncate">{stopping ? "Stopping after this part" : progress}</span>}
           {!diff ? (
             running ? (
               <Button variant="secondary" disabled={stopping} loading={stopping} onClick={() => { stopRef.current = true; setStopping(true); }}>

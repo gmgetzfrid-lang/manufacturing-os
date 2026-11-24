@@ -110,11 +110,11 @@ function NudgeList({ nudges }: { nudges: ReturnType<typeof computeNudges> }) {
   return (
     <ul className="divide-y divide-[var(--color-border)]">
       {nudges.map((n) => (
-        <li key={n.id} className="py-2.5 flex items-baseline gap-3 text-[15px] text-[var(--color-text)]">
+        <li key={n.id} className="py-2.5 flex items-baseline gap-3 text-reading text-[var(--color-text)]">
           <span aria-hidden className={`w-[7px] h-[7px] shrink-0 rounded-full -translate-y-px ${n.severity === "high" ? "bg-[var(--state-overdue)]" : "bg-[var(--state-held)]"}`} />
           <span className="flex-1 min-w-0">{n.message}</span>
           {n.actionLabel && n.href && (
-            <Link href={n.href} className={`shrink-0 text-[14px] font-semibold ${link}`}>{n.actionLabel}</Link>
+            <Link href={n.href} className={`shrink-0 text-body font-medium ${link}`}>{n.actionLabel}</Link>
           )}
         </li>
       ))}
@@ -158,7 +158,7 @@ function InboxBody() {
       {/* Your notifications over two weeks. */}
       <div className="mt-4 shrink-0">
         <div className="flex items-baseline justify-between gap-3 mb-1.5">
-          <span className="text-[13px] text-[var(--color-text-muted)]">Your notifications, last 14 days</span>
+          <span className="text-body text-[var(--color-text-muted)]">Your notifications, last 14 days</span>
           <TrendChip current={wk.cur} previous={wk.prev} what="notifications" />
         </div>
         {sum(buckets.counts) > 0
@@ -182,7 +182,7 @@ function DailyBriefBody() {
       <DailyBrief data={snap} />
       {nudges.length > 0 && (
         <div className="border-t border-[var(--color-border)] pt-3">
-          <h3 className="text-[15px] font-semibold text-[var(--color-text)]">Suggested actions</h3>
+          <h3 className="text-reading font-medium text-[var(--color-text)]">Suggested actions</h3>
           <NudgeList nudges={nudges} />
         </div>
       )}
@@ -307,8 +307,8 @@ function WidgetCard({
   return (
     <section className="pt-1">
       <div className="flex items-baseline gap-2 pb-1.5 border-b border-[var(--color-border)]">
-        <h3 className="text-[15px] font-semibold text-[var(--color-text)]">{title}</h3>
-        <span className="text-[13px] tabular-nums text-[var(--color-text-muted)]">{badgeText(count)}</span>
+        <h3 className="text-reading font-medium text-[var(--color-text)]">{title}</h3>
+        <span className="text-body tabular-nums text-[var(--color-text-muted)]">{badgeText(count)}</span>
       </div>
       {children}
     </section>
@@ -358,14 +358,14 @@ function OutstandingBody() {
   if (total === 0) {
     return <BodyShell>Nothing outstanding: no markups, checkouts, holds, transmittals or milestones waiting.</BodyShell>;
   }
-  const row = "py-2.5 flex items-center gap-3 min-w-0 text-[15px]";
+  const row = "py-2.5 flex items-center gap-3 min-w-0 text-reading";
 
   return (
     <div className={FILL}>
       <div className={`space-y-5 ${SCROLL}`}>
         {snap.markupRequestsToMe.length > 0 && (
           <WidgetCard icon={PenLine} title="Markup requests for you" count={snap.markupRequestsToMe.length}>
-            {resolveError && <p role="alert" className="mt-2 text-[13px] font-semibold text-[var(--state-overdue)]">{resolveError}</p>}
+            {resolveError && <p role="alert" className="mt-2 text-body font-medium text-[var(--state-overdue)]">{resolveError}</p>}
             <ul className="divide-y divide-[var(--color-border)]">
               {snap.markupRequestsToMe.slice(0, 6).map((mr) => (
                 <li key={mr.id} className={`${row} flex-wrap`}>
@@ -374,7 +374,7 @@ function OutstandingBody() {
                       {mr.documentNumber || mr.documentTitle || mr.documentId.slice(0, 8)}
                     </Link>
                     {mr.requestedByName && <span className="text-[var(--color-text-muted)]"> from {mr.requestedByName}</span>}
-                    {mr.message && <span className="block text-[13px] text-[var(--color-text-muted)] truncate">&ldquo;{mr.message}&rdquo;</span>}
+                    {mr.message && <span className="block text-body text-[var(--color-text-muted)] truncate">&ldquo;{mr.message}&rdquo;</span>}
                   </span>
                   <span className="shrink-0 flex items-center gap-2">
                     <button type="button" onClick={() => respondToMarkup(mr, "shared")} disabled={resolvingId === mr.id} className={rowBtn}>
@@ -401,11 +401,11 @@ function OutstandingBody() {
                   <DocHoverPreview documentId={s.documentId}>
                     <DocThumb documentId={s.documentId} width={28} />
                   </DocHoverPreview>
-                  <Link href={`/documents/${s.libraryId ?? ""}?doc=${s.documentId}`} className="min-w-0 flex-1 truncate font-semibold text-[var(--color-text)] hover:text-[var(--color-accent-text)]">
+                  <Link href={`/documents/${s.libraryId ?? ""}?doc=${s.documentId}`} className="min-w-0 flex-1 truncate font-medium text-[var(--color-text)] hover:text-[var(--color-accent-text)]">
                     {s.purpose || "Checked-out document"}
                   </Link>
                   <span className="shrink-0 ui-tag is-more capitalize">{String(s.mode).replace(/_/g, " ")}</span>
-                  <span className="shrink-0 w-16 text-right text-[13px] text-[var(--color-text-muted)] tabular-nums">{formatAgo(typeof s.startedAt === "string" ? s.startedAt : undefined)}</span>
+                  <span className="shrink-0 w-16 text-right text-body text-[var(--color-text-muted)] tabular-nums">{formatAgo(typeof s.startedAt === "string" ? s.startedAt : undefined)}</span>
                 </li>
               ))}
             </ul>
@@ -419,13 +419,13 @@ function OutstandingBody() {
                 <li key={h.id} className={row}>
                   <span className="min-w-0 flex-1">
                     <StatusTag tone="overdue">{h.reason}</StatusTag>
-                    {h.notes && <span className="block text-[13px] text-[var(--color-text-muted)] truncate">&ldquo;{h.notes}&rdquo;</span>}
+                    {h.notes && <span className="block text-body text-[var(--color-text-muted)] truncate">&ldquo;{h.notes}&rdquo;</span>}
                   </span>
-                  <span className="shrink-0 text-[13px] text-[var(--color-text-muted)]">Opened {formatAgo(typeof h.openedAt === "string" ? h.openedAt : undefined)}</span>
+                  <span className="shrink-0 text-body text-[var(--color-text-muted)]">Opened {formatAgo(typeof h.openedAt === "string" ? h.openedAt : undefined)}</span>
                 </li>
               ))}
             </ul>
-            <Link href="/admin/holds" className={`mt-1 inline-block text-[14px] ${link}`}>Hold queue</Link>
+            <Link href="/admin/holds" className={`mt-1 inline-block text-body ${link}`}>Hold queue</Link>
           </WidgetCard>
         )}
 
@@ -438,12 +438,12 @@ function OutstandingBody() {
                   <li key={t.id} className={row}>
                     <Link href="/transmittals" className="shrink-0 ui-id">{t.number}</Link>
                     <span className="min-w-0 flex-1 truncate text-[var(--color-text-muted)]">{t.subject || [t.recipientName, t.recipientCompany].filter(Boolean).join(", ") || `${t.documentCount} doc${t.documentCount === 1 ? "" : "s"}`}</span>
-                    {tone ? <StatusTag tone={tone}>{ageWords(t.__ageDays)}</StatusTag> : <span className="shrink-0 text-[13px] text-[var(--color-text-muted)]">{ageWords(t.__ageDays)}</span>}
+                    {tone ? <StatusTag tone={tone}>{ageWords(t.__ageDays)}</StatusTag> : <span className="shrink-0 text-body text-[var(--color-text-muted)]">{ageWords(t.__ageDays)}</span>}
                   </li>
                 );
               })}
             </ul>
-            <Link href="/transmittals" className={`mt-1 inline-block text-[14px] ${link}`}>Transmittal register</Link>
+            <Link href="/transmittals" className={`mt-1 inline-block text-body ${link}`}>Transmittal register</Link>
           </WidgetCard>
         )}
 
@@ -454,10 +454,10 @@ function OutstandingBody() {
                 const d = m.__dueInDays ?? 0;
                 return (
                   <li key={m.id} className={row}>
-                    <span className="min-w-0 flex-1 truncate font-semibold text-[var(--color-text)]">{m.name}</span>
+                    <span className="min-w-0 flex-1 truncate font-medium text-[var(--color-text)]">{m.name}</span>
                     {d <= 2
                       ? <StatusTag tone="held">{d === 0 ? "Due today" : `In ${d} day${d === 1 ? "" : "s"}`}</StatusTag>
-                      : <span className="shrink-0 text-[13px] text-[var(--color-text-muted)]">In {d} days</span>}
+                      : <span className="shrink-0 text-body text-[var(--color-text-muted)]">In {d} days</span>}
                   </li>
                 );
               })}
@@ -517,7 +517,7 @@ function AdminAnalyticsBody() {
       {/* Workspace activity: 30 days of recorded changes. */}
       <div className="mt-4 shrink-0">
         <div className="flex items-baseline justify-between gap-3 mb-1.5">
-          <span className="text-[13px] text-[var(--color-text-muted)]">Workspace activity, last 30 days</span>
+          <span className="text-body text-[var(--color-text-muted)]">Workspace activity, last 30 days</span>
           <TrendChip current={wk.cur} previous={wk.prev} what="changes" />
         </div>
         {sum(audit.counts) > 0
@@ -528,17 +528,17 @@ function AdminAnalyticsBody() {
       {/* Busiest libraries: where the documents live. */}
       {(data?.topLibs?.length ?? 0) > 0 && (
         <div className="mt-4 shrink-0">
-          <div className="text-[13px] text-[var(--color-text-muted)] mb-1">Busiest libraries</div>
+          <div className="text-body text-[var(--color-text-muted)] mb-1">Busiest libraries</div>
           <ul className="divide-y divide-[var(--color-border)]">
             {data!.topLibs.map((l, i) => (
               <li key={l.id}>
                 <Link href={`/documents/${l.id}`} className="group flex items-center gap-3 py-2">
-                  <span className="text-[15px] font-semibold text-[var(--color-text)] truncate w-40 group-hover:text-[var(--color-accent-text)]">{l.name}</span>
+                  <span className="text-reading font-medium text-[var(--color-text)] truncate w-40 group-hover:text-[var(--color-accent-text)]">{l.name}</span>
                   <span className="flex-1 h-2 rounded-sm bg-[var(--color-surface-2)] overflow-hidden">
                     {/* The busiest one in the brand color, the rest gray. */}
                     <span className="block h-full rounded-sm" style={{ width: `${(l.count / maxLib) * 100}%`, background: i === 0 ? "var(--color-current)" : "var(--color-text-faint)" }} />
                   </span>
-                  <span className="font-display text-[15px] tabular-nums text-[var(--color-text)] w-14 text-right">{l.count.toLocaleString()}</span>
+                  <span className="font-display text-reading tabular-nums text-[var(--color-text)] w-14 text-right">{l.count.toLocaleString()}</span>
                 </Link>
               </li>
             ))}

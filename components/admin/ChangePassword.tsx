@@ -60,7 +60,7 @@ export default function ChangePassword() {
   if (kind === "microsoft") {
     return (
       <Card label="Password">
-        <p className="text-[15px] text-[var(--color-text)]">You sign in with Microsoft. Your company account sets your password and multi-factor sign-in.</p>
+        <p className="text-reading text-[var(--color-text)]">You sign in with Microsoft. Your company account sets your password and multi-factor sign-in.</p>
       </Card>
     );
   }
@@ -77,7 +77,7 @@ export default function ChangePassword() {
           <Input type="password" autoComplete="new-password" value={again} onChange={(e) => setAgain(e.target.value)} onBlur={() => setAgainTouched(true)} required />
         </Field>
         {msg && (
-          <p role={msg.ok ? "status" : "alert"} className={`flex items-center gap-2 text-[14px] font-semibold ${msg.ok ? "text-[var(--color-text)]" : "text-[var(--state-overdue-text)]"}`}>
+          <p role={msg.ok ? "status" : "alert"} className={`flex items-center gap-2 text-body font-medium ${msg.ok ? "text-[var(--color-text)]" : "text-[var(--state-overdue-text)]"}`}>
             {msg.ok && <Check aria-hidden className="w-4 h-4 text-[var(--state-released)]" />} {msg.text}
           </p>
         )}

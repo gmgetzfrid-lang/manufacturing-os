@@ -95,22 +95,22 @@ export default function UploadIndicator() {
         <div className="bg-[var(--color-surface)] rounded-xl shadow-lg border border-[var(--color-border)] px-3 py-2.5">
           <div className="flex items-center gap-2">
             <AlertCircle className="w-4 h-4 text-rose-500 shrink-0" />
-            <span className="text-xs font-bold text-[var(--color-text)] flex-1">{failed.length} files didn&apos;t upload</span>
+            <span className="text-xs font-medium text-[var(--color-text)] flex-1">{failed.length} files didn&apos;t upload</span>
             <button onClick={() => failed.forEach((u) => dismiss(u.id))} className="p-0.5 rounded text-[var(--color-text-faint)] hover:text-[var(--color-text)] shrink-0" aria-label="Close">
               <X className="w-3.5 h-3.5" />
             </button>
           </div>
           <details className="mt-1">
-            <summary className="text-[11px] text-[var(--color-text-muted)] cursor-pointer">Show them</summary>
+            <summary className="text-caption text-[var(--color-text-muted)] cursor-pointer">Show them</summary>
             <ul className="mt-1 max-h-40 overflow-y-auto space-y-0.5">
               {failed.map((u) => (
-                <li key={u.id} className="text-[11px] text-[var(--color-text)] truncate" title={u.error}>{u.name}{u.error ? <span className="text-rose-700 dark:text-rose-400">: {u.error}</span> : null}</li>
+                <li key={u.id} className="text-caption text-[var(--color-text)] truncate" title={u.error}>{u.name}{u.error ? <span className="text-rose-700 dark:text-rose-400">: {u.error}</span> : null}</li>
               ))}
             </ul>
           </details>
           {failed.some((u) => u.retry) && (
             <button type="button" onClick={() => failed.forEach((u) => u.retry?.())}
-              className="mt-2 h-8 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[12px] font-black hover:bg-[var(--color-accent-hover)]">
+              className="mt-2 h-8 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-caption font-semibold hover:bg-[var(--color-accent-hover)]">
               Try them again
             </button>
           )}
@@ -122,8 +122,8 @@ export default function UploadIndicator() {
             {u.status === "uploading" && <Loader2 className="w-4 h-4 animate-spin text-[var(--color-text-muted)] shrink-0" />}
             {u.status === "done" && <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />}
             {u.status === "error" && <AlertCircle className="w-4 h-4 text-rose-500 shrink-0" />}
-            <span className="text-xs font-bold text-[var(--color-text)] truncate flex-1" title={u.name}>{u.name}</span>
-            <span className={`text-[11px] font-black shrink-0 ${u.status === "error" ? "text-rose-500" : u.status === "done" ? "text-emerald-600" : "text-[var(--color-text-faint)]"}`}>
+            <span className="text-xs font-medium text-[var(--color-text)] truncate flex-1" title={u.name}>{u.name}</span>
+            <span className={`text-caption font-semibold shrink-0 ${u.status === "error" ? "text-rose-500" : u.status === "done" ? "text-emerald-600" : "text-[var(--color-text-faint)]"}`}>
               {u.status === "uploading" ? (u.retrying && u.percent === 0 ? "Trying again" : `${Math.round(u.percent)}%`) : u.status === "done" ? "Done" : "Didn't upload"}
             </span>
             {u.status !== "uploading" && (
@@ -137,13 +137,13 @@ export default function UploadIndicator() {
               <div className="h-full bg-[var(--color-text)] transition-all duration-200" style={{ width: `${Math.max(4, Math.round(u.percent))}%` }} />
             </div>
           )}
-          {u.status === "uploading" && (() => { const left = timeLeft(u, Date.now()); return left || u.retrying ? <div className="text-[11px] text-[var(--color-text-muted)] mt-1">{u.retrying ? "Trying again with the same file." : left}</div> : null; })()}
+          {u.status === "uploading" && (() => { const left = timeLeft(u, Date.now()); return left || u.retrying ? <div className="text-caption text-[var(--color-text-muted)] mt-1">{u.retrying ? "Trying again with the same file." : left}</div> : null; })()}
           {u.status === "error" && u.error && (
-            <div className="text-[11px] text-rose-700 dark:text-rose-400 mt-1 line-clamp-3">{u.error}</div>
+            <div className="text-caption text-rose-700 dark:text-rose-400 mt-1 line-clamp-3">{u.error}</div>
           )}
           {u.status === "error" && u.retry && (
             <button type="button" onClick={u.retry}
-              className="mt-2 h-8 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[12px] font-black hover:bg-[var(--color-accent-hover)]">
+              className="mt-2 h-8 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-caption font-semibold hover:bg-[var(--color-accent-hover)]">
               Try again
             </button>
           )}

@@ -71,7 +71,7 @@ export default function SlideEditPanel({ edit, slideKey, slideNo, rowKey, rowKin
         <button key={o.photoId} type="button" disabled={!!busy || here.pics.some((p) => p.path === o.path)} onClick={() => void add(o)}
           className="text-left rounded-lg p-1 ring-1 ring-[var(--color-border)] hover:ring-[var(--color-main)] disabled:opacity-40" title={o.caption}>
           <SignedImg path={o.path} alt="" className={thumb} />
-          <span className="block mt-1 text-[12px] font-semibold text-[var(--color-text)] truncate">{o.tag}</span>
+          <span className="block mt-1 text-caption font-medium text-[var(--color-text)] truncate">{o.tag}</span>
         </button>
       ))}
     </div>
@@ -80,27 +80,27 @@ export default function SlideEditPanel({ edit, slideKey, slideNo, rowKey, rowKin
   return (
     <aside className="h-full flex flex-col bg-[var(--color-surface)] text-[var(--color-text)] on-sheet" aria-label="Edit this slide" data-slide-edit>
       <div className="flex items-center gap-2 px-4 py-3 border-b border-[var(--color-border)]">
-        <h2 className="min-w-0 flex-1 text-[16px] font-semibold">Edit slide {slideNo}</h2>
-        {busy ? <Loader2 className="w-4 h-4 animate-spin text-[var(--color-text-muted)]" /> : saved ? <span className="inline-flex items-center gap-1 text-[13px] text-[var(--state-released)]"><Check className="w-4 h-4" /> Saved</span> : null}
+        <h2 className="min-w-0 flex-1 text-reading font-medium">Edit slide {slideNo}</h2>
+        {busy ? <Loader2 className="w-4 h-4 animate-spin text-[var(--color-text-muted)]" /> : saved ? <span className="inline-flex items-center gap-1 text-body text-[var(--state-released)]"><Check className="w-4 h-4" /> Saved</span> : null}
         <button type="button" onClick={onDone} className={btnQuiet}>Done</button>
       </div>
       <div className="flex-1 min-h-0 overflow-y-auto px-4 py-4 space-y-6">
-        {err && <p role="alert" className="text-[14px] font-semibold text-[var(--state-overdue)]">{err}</p>}
+        {err && <p role="alert" className="text-body font-medium text-[var(--state-overdue)]">{err}</p>}
 
         <section>
-          <h3 className="text-[14px] font-semibold text-[var(--color-heading)]">Pictures</h3>
+          <h3 className="text-body font-medium text-[var(--color-heading)]">Pictures</h3>
           {here.room === 0 ? (
-            <p className="mt-1.5 text-[14px] text-[var(--color-text-muted)]">{here.why}</p>
+            <p className="mt-1.5 text-body text-[var(--color-text-muted)]">{here.why}</p>
           ) : (
             <>
-              {here.pics.length === 0 && <p className="mt-1.5 text-[14px] text-[var(--color-text-muted)]">{here.chosen ? "You took the pictures off this slide." : "No picture yet."}</p>}
+              {here.pics.length === 0 && <p className="mt-1.5 text-body text-[var(--color-text-muted)]">{here.chosen ? "You took the pictures off this slide." : "No picture yet."}</p>}
               <ul className="mt-2 space-y-2">
                 {here.pics.map((p) => (
                   <li key={p.path} className="flex items-center gap-3 rounded-lg ring-1 ring-[var(--color-border)] p-2">
                     <div className="w-20 shrink-0">{p.url ? (/* eslint-disable-next-line @next/next/no-img-element */ <img src={p.url} alt="" className={thumb} />) : <SignedImg path={p.path} alt="" className={thumb} />}</div>
                     <div className="min-w-0 flex-1">
-                      <div className="text-[14px] font-semibold truncate">{p.caption || "Picture"}</div>
-                      <div className="text-[12px] text-[var(--color-text-muted)]">{here.chosen ? "You picked it" : "The app picked it"}</div>
+                      <div className="text-body font-medium truncate">{p.caption || "Picture"}</div>
+                      <div className="text-caption text-[var(--color-text-muted)]">{here.chosen ? "You picked it" : "The app picked it"}</div>
                     </div>
                     <button type="button" onClick={() => void remove(p.path)} disabled={!!busy} className={btnRow} aria-label={`Take ${p.caption || "this picture"} off the slide`}>
                       <Trash2 className="w-4 h-4" /> Remove
@@ -112,20 +112,20 @@ export default function SlideEditPanel({ edit, slideKey, slideNo, rowKey, rowKin
                 {!picking && <button type="button" onClick={() => setPicking(true)} disabled={!!busy || full} className={btnQuiet}><ImagePlus className="w-4 h-4" /> Add a picture</button>}
                 {here.chosen && <button type="button" onClick={() => void reset()} disabled={!!busy} className={btnQuiet}><RotateCcw className="w-4 h-4" /> Use the app&apos;s picks</button>}
               </div>
-              {full && !picking && <p className="mt-1.5 text-[13px] text-[var(--color-text-muted)]">This slide holds {here.room === 1 ? "one picture" : `${here.room} pictures`}. Remove one to add another.</p>}
+              {full && !picking && <p className="mt-1.5 text-body text-[var(--color-text-muted)]">This slide holds {here.room === 1 ? "one picture" : `${here.room} pictures`}. Remove one to add another.</p>}
               {picking && (
                 <div className="mt-3 rounded-lg ring-1 ring-[var(--color-border-strong)] p-3 space-y-3" data-pic-picker>
                   <div className="flex items-center gap-2">
-                    <span className="min-w-0 flex-1 text-[14px] font-semibold">Add a picture</span>
+                    <span className="min-w-0 flex-1 text-body font-medium">Add a picture</span>
                     <button type="button" onClick={() => setPicking(false)} className="p-1.5 rounded-md hover:bg-[var(--color-surface-2)]" aria-label="Close"><X className="w-4 h-4" /></button>
                   </div>
-                  {onSlide.length > 0 && <div><div className="mb-1.5 text-[12px] font-semibold text-[var(--color-text-muted)]">Equipment on this slide</div>{grid(onSlide)}</div>}
-                  {others.length > 0 && <div><div className="mb-1.5 text-[12px] font-semibold text-[var(--color-text-muted)]">Other equipment in this review</div>{grid(others)}</div>}
-                  {!edit.options.length && <p className="text-[13px] text-[var(--color-text-muted)]">No equipment in this review has photos yet. Upload one: it&apos;s kept with its equipment, so the next slides can use it too.</p>}
+                  {onSlide.length > 0 && <div><div className="mb-1.5 text-caption font-medium text-[var(--color-text-muted)]">Equipment on this slide</div>{grid(onSlide)}</div>}
+                  {others.length > 0 && <div><div className="mb-1.5 text-caption font-medium text-[var(--color-text-muted)]">Other equipment in this review</div>{grid(others)}</div>}
+                  {!edit.options.length && <p className="text-body text-[var(--color-text-muted)]">No equipment in this review has photos yet. Upload one: it&apos;s kept with its equipment, so the next slides can use it too.</p>}
                   <div className="pt-2 border-t border-[var(--color-border)] space-y-2">
                     <label className="block">
-                      <span className="block text-[12px] font-semibold text-[var(--color-text-muted)] mb-1">Whose photo is it?</span>
-                      <select value={upTag} onChange={(e) => setUpTag(e.target.value)} className="w-full h-10 px-2 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[15px]">
+                      <span className="block text-caption font-medium text-[var(--color-text-muted)] mb-1">Whose photo is it?</span>
+                      <select value={upTag} onChange={(e) => setUpTag(e.target.value)} className="w-full h-10 px-2 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-reading">
                         <option value="">Not one piece of equipment</option>
                         {tags.map((t) => <option key={t} value={t}>{t}</option>)}
                       </select>
@@ -146,14 +146,14 @@ export default function SlideEditPanel({ edit, slideKey, slideNo, rowKey, rowKin
         </section>
 
         <section>
-          <h3 className="text-[14px] font-semibold text-[var(--color-heading)]">Words</h3>
+          <h3 className="text-body font-medium text-[var(--color-heading)]">Words</h3>
           {!rowPicked ? (
-            <p className="mt-1.5 text-[14px] text-[var(--color-text-muted)]">Tap a line on the slide to change what it says.</p>
+            <p className="mt-1.5 text-body text-[var(--color-text-muted)]">Tap a line on the slide to change what it says.</p>
           ) : rowKind === "finding" && rowKey ? (
             <div className="mt-2" data-slide-words>{edit.words(rowKey, onClearRow)}</div>
           ) : (
             <div className="mt-1.5 space-y-2">
-              <p className="text-[14px] text-[var(--color-text-muted)]">{rowKind === "score" ? "The score is counted from the records, so it can't be typed over here. Targets, the budget and what a person enters on a line are set on the score in the review." : rowKind === "record" ? "This line is counted from the records, so it can't be typed over. Change the record and the slide follows." : "This line is the same in every review."}</p>
+              <p className="text-body text-[var(--color-text-muted)]">{rowKind === "score" ? "The score is counted from the records, so it can't be typed over here. Targets, the budget and what a person enters on a line are set on the score in the review." : rowKind === "record" ? "This line is counted from the records, so it can't be typed over. Change the record and the slide follows." : "This line is the same in every review."}</p>
               <button type="button" onClick={onClearRow} className={btnRow}>OK</button>
             </div>
           )}

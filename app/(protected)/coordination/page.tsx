@@ -217,8 +217,8 @@ function CoordinationInner() {
             says what it watches and what it could compare. */}
         <CoordinationRadar analysis={snap.coordination} sessionById={sessionById} notes={<>
           {setupNeeded && (
-            <p className="mb-3 text-[14px] text-[var(--color-text)]">
-              <span className="font-semibold text-[var(--state-held)]">Not set up yet.</span> Equipment state and plot plans are off for this workspace. <HelpTooltip>Ask your Admin to finish setup: Admin › Settings › Database updates.</HelpTooltip>
+            <p className="mb-3 text-body text-[var(--color-text)]">
+              <span className="font-medium text-[var(--state-held)]">Not set up yet.</span> Equipment state and plot plans are off for this workspace. <HelpTooltip>Ask your Admin to finish setup: Admin › Settings › Database updates.</HelpTooltip>
             </p>
           )}
           {snap.failed.length > 0 && (
@@ -230,17 +230,17 @@ function CoordinationInner() {
           {/* Equipment state distribution */}
           <Panel title="Equipment state" span={2}>
             {totalEquip === 0 ? (
-              <div className="text-[15px] text-[var(--color-text-muted)]">No equipment tracked yet. <Link href="/admin/assets" className="text-[var(--color-accent-text)] hover:underline underline-offset-2">Register equipment</Link></div>
+              <div className="text-reading text-[var(--color-text-muted)]">No equipment tracked yet. <Link href="/admin/assets" className="text-[var(--color-accent-text)] hover:underline underline-offset-2">Register equipment</Link></div>
             ) : (
               <>
-                <p className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[15px] mb-3 text-[var(--color-text)] tabular-nums"><span>{totalEquip} tracked</span>{blocked > 0 && <span className="font-semibold text-[var(--state-overdue-text)]">{blocked} blocked</span>}</p>
+                <p className="flex flex-wrap items-center gap-x-4 gap-y-1 text-reading mb-3 text-[var(--color-text)] tabular-nums"><span>{totalEquip} tracked</span>{blocked > 0 && <span className="font-medium text-[var(--state-overdue-text)]">{blocked} blocked</span>}</p>
                 <MiniBars
                   height={12}
                   segments={WHITEBOARD_STATES.map((s) => ({ value: snap.states[s], color: STATE_CONFIG[s].hex, label: STATE_CONFIG[s].label }))}
                 />
                 <div className="flex flex-wrap gap-3 mt-3">
                   {WHITEBOARD_STATES.map((s) => (
-                    <span key={s} className="inline-flex items-center gap-1.5 text-[13px] text-[var(--color-text-muted)]">
+                    <span key={s} className="inline-flex items-center gap-1.5 text-body text-[var(--color-text-muted)]">
                       <span className="w-2 h-2 rounded-full" style={{ backgroundColor: STATE_CONFIG[s].hex }} />
                       {STATE_CONFIG[s].label} <span className="tabular-nums text-[var(--color-text)]">{snap.states[s]}</span>
                     </span>
@@ -253,10 +253,10 @@ function CoordinationInner() {
           {/* Blockers (holds): framed around health, not just a count. */}
           <Panel title="Blockers" href="/admin/holds">
             {snap.failed.includes("holds")
-              ? <p className="text-[15px] text-[var(--color-text-muted)]">The holds didn&apos;t load.</p>
-              : <p className="text-[15px] text-[var(--color-text)]">{holds === 0 ? "Nothing blocked right now." : <span className="font-semibold text-[var(--state-held-text)] tabular-nums">{holds} active hold{holds === 1 ? "" : "s"}</span>}</p>}
+              ? <p className="text-reading text-[var(--color-text-muted)]">The holds didn&apos;t load.</p>
+              : <p className="text-reading text-[var(--color-text)]">{holds === 0 ? "Nothing blocked right now." : <span className="font-medium text-[var(--state-held-text)] tabular-nums">{holds} active hold{holds === 1 ? "" : "s"}</span>}</p>}
             {/* How holds are going: one fact a row. */}
-            <dl className="mt-2 divide-y divide-[var(--color-border)] border-t border-[var(--color-border)] text-[14px]">
+            <dl className="mt-2 divide-y divide-[var(--color-border)] border-t border-[var(--color-border)] text-body">
               {([
                 snap.holds.longestActiveDays > 0 ? ["Longest open", `${snap.holds.longestActiveDays}d`] : null,
                 snap.holds.avgClosedDurationDays > 0 ? ["Average to clear", `${snap.holds.avgClosedDurationDays}d`] : null,
@@ -265,7 +265,7 @@ function CoordinationInner() {
               ].filter(Boolean) as Array<[string, string]>).map(([k, v]) => (
                 <div key={k} className="flex items-center justify-between gap-3 py-1.5">
                   <dt className="text-[var(--color-text-muted)]">{k}</dt>
-                  <dd className={`font-semibold tabular-nums ${v === "0" ? "text-[var(--color-text-faint)]" : "text-[var(--color-text)]"}`}>{v}</dd>
+                  <dd className={`font-medium tabular-nums ${v === "0" ? "text-[var(--color-text-faint)]" : "text-[var(--color-text)]"}`}>{v}</dd>
                 </div>
               ))}
             </dl>
@@ -283,7 +283,7 @@ function CoordinationInner() {
           {/* Plot plans */}
           <Panel title="Spatial boards" span={3}>
             {snap.plotPlans.length === 0 ? (
-              <div className="text-[15px] text-[var(--color-text-muted)]">No plot plans yet. <Link href="/plot-plans" className="text-[var(--color-accent-text)] hover:underline underline-offset-2">Create a plot plan</Link></div>
+              <div className="text-reading text-[var(--color-text-muted)]">No plot plans yet. <Link href="/plot-plans" className="text-[var(--color-accent-text)] hover:underline underline-offset-2">Create a plot plan</Link></div>
             ) : (
               <div className="flex flex-wrap gap-2">
                 {snap.plotPlans.slice(0, 8).map((p) => (
@@ -291,7 +291,7 @@ function CoordinationInner() {
                     <MapIcon aria-hidden className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> {p.name} <span className="font-normal tabular-nums text-[var(--color-text-muted)]">{p.markers.length}</span>
                   </Link>
                 ))}
-                {snap.plotPlans.length > 8 && <Link href="/plot-plans" className="inline-flex items-center h-10 px-2 text-[14px] font-semibold text-[var(--color-accent-text)] hover:underline underline-offset-2">Show {snap.plotPlans.length - 8} more</Link>}
+                {snap.plotPlans.length > 8 && <Link href="/plot-plans" className="inline-flex items-center h-10 px-2 text-body font-medium text-[var(--color-accent-text)] hover:underline underline-offset-2">Show {snap.plotPlans.length - 8} more</Link>}
               </div>
             )}
           </Panel>
@@ -339,11 +339,11 @@ function CoordinationRadar({
   const cover: Array<[string, number]> = [["Checkouts scanned", activeCheckouts], ["Documents", documents], ["On equipment", assetLinkedDocuments], ["On a unit or system", scopedDocuments], ["Comparable", comparableDocuments]];
   // What it looked at, as one quiet line of labeled values (zeros muted).
   const Header = (
-    <dl className="mb-4 flex flex-wrap gap-x-6 gap-y-2 text-[14px]">
+    <dl className="mb-4 flex flex-wrap gap-x-6 gap-y-2 text-body">
       {cover.map(([k, v]) => (
         <div key={k} className="flex items-baseline gap-1.5">
           <dt className="text-[var(--color-text-muted)]">{k}</dt>
-          <dd className={`font-semibold tabular-nums ${v === 0 ? "text-[var(--color-text-faint)]" : "text-[var(--color-text)]"}`}>{v}</dd>
+          <dd className={`font-medium tabular-nums ${v === 0 ? "text-[var(--color-text-faint)]" : "text-[var(--color-text)]"}`}>{v}</dd>
         </div>
       ))}
     </dl>
@@ -353,7 +353,7 @@ function CoordinationRadar({
   // STATE 1: collisions found.
   if (overlaps.length > 0) {
     return (
-      <Card label={RADAR_LABEL} pad={false} className="overflow-hidden" action={<span className="text-[14px] font-semibold tabular-nums text-[var(--state-overdue-text)]">{overlaps.length} active</span>}>
+      <Card label={RADAR_LABEL} pad={false} className="overflow-hidden" action={<span className="text-body font-medium tabular-nums text-[var(--state-overdue-text)]">{overlaps.length} active</span>}>
         <div className="px-4 sm:px-5 pt-4">{notes}{Header}</div>
         <div className="border-t border-[var(--color-border)] divide-y divide-[var(--color-border)]">
           {overlaps.slice(0, 8).map((o, i) => {
@@ -373,15 +373,15 @@ function CoordinationRadar({
                 <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] bg-[var(--state-overdue)]" />
                 <AlertTriangle aria-hidden className="w-4 h-4 shrink-0 text-[var(--state-overdue)]" />
                 <div className="min-w-0 flex-1 sm:grid sm:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)_auto] sm:items-center sm:gap-4">
-                  <div className="flex items-center gap-1.5 min-w-0 text-[15px]">
-                    <span className="text-[13px] text-[var(--color-text-muted)]">{scope.kind}</span>
+                  <div className="flex items-center gap-1.5 min-w-0 text-reading">
+                    <span className="text-body text-[var(--color-text-muted)]">{scope.kind}</span>
                     {scope.tag ? <CopyId value={String(scope.tag)} label={scope.kind === "Asset" ? "tag" : `${scope.kind.toLowerCase()} name`} /> : null}
                   </div>
-                  <Link href={href} className="text-[14px] text-[var(--color-text)] flex items-center gap-1.5 min-w-0 hover:text-[var(--color-accent-text)]">
+                  <Link href={href} className="text-body text-[var(--color-text)] flex items-center gap-1.5 min-w-0 hover:text-[var(--color-accent-text)]">
                     <Users aria-hidden className="w-3.5 h-3.5 shrink-0 text-[var(--color-text-muted)]" />
                     <span className="truncate">{people.length > 0 ? people.join(", ") : `${o.checkoutIds.length} people`}</span>
                   </Link>
-                  <div className="text-[13px] text-[var(--color-text-muted)] whitespace-nowrap tabular-nums">{o.checkoutIds.length} checkouts on {o.documentIds.length} doc{o.documentIds.length === 1 ? "" : "s"}</div>
+                  <div className="text-body text-[var(--color-text-muted)] whitespace-nowrap tabular-nums">{o.checkoutIds.length} checkouts on {o.documentIds.length} doc{o.documentIds.length === 1 ? "" : "s"}</div>
                 </div>
                 <ChevronRight aria-hidden className="w-4 h-4 text-[var(--color-text-faint)] shrink-0" />
               </div>
@@ -390,7 +390,7 @@ function CoordinationRadar({
         </div>
         {overlaps.length > 8 && (
           <div className="px-4 sm:px-5 py-3 border-t border-[var(--color-border)]">
-            <Link href="/checkouts" className="text-[14px] font-semibold text-[var(--color-accent-text)] hover:underline underline-offset-2">Show {overlaps.length - 8} more</Link>
+            <Link href="/checkouts" className="text-body font-medium text-[var(--color-accent-text)] hover:underline underline-offset-2">Show {overlaps.length - 8} more</Link>
           </div>
         )}
       </Card>
@@ -405,8 +405,8 @@ function CoordinationRadar({
         <div className="flex items-start gap-3">
           <ShieldCheck className="w-5 h-5 mt-0.5 shrink-0 text-[var(--state-released)]" />
           <div>
-            <div className="text-[15px] font-semibold text-[var(--color-text)]">All clear: no scope collisions</div>
-            <div className="text-[14px] text-[var(--color-text-muted)] mt-0.5">No two crews hold documents on the same equipment, unit or system.</div>
+            <div className="text-reading font-medium text-[var(--color-text)]">All clear: no scope collisions</div>
+            <div className="text-body text-[var(--color-text-muted)] mt-0.5">No two crews hold documents on the same equipment, unit or system.</div>
           </div>
         </div>
       </Card>
@@ -421,8 +421,8 @@ function CoordinationRadar({
       <div className="flex items-start gap-3">
         <Info className="w-5 h-5 mt-0.5 shrink-0 text-[var(--color-text-muted)]" />
         <div className="min-w-0">
-          <div className="text-[15px] font-semibold text-[var(--color-text)]">Nothing to compare yet</div>
-          <div className="text-[14px] text-[var(--color-text-muted)] mt-0.5 leading-relaxed">
+          <div className="text-reading font-medium text-[var(--color-text)]">Nothing to compare yet</div>
+          <div className="text-body text-[var(--color-text-muted)] mt-0.5 leading-relaxed">
             {documents === 0
               ? "No documents are checked out."
               : <>Only {comparableDocuments} of {documents} checked-out document{documents === 1 ? "" : "s"} {comparableDocuments === 1 ? "is" : "are"} tied to equipment, a unit or a system. It needs two.</>}
@@ -432,8 +432,8 @@ function CoordinationRadar({
             <Link href="/documents" className={QUIET_LINK}>
               <Tag aria-hidden className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> Tag documents to equipment
             </Link>
-            <Link href="/admin/assets" className="text-[14px] font-semibold text-[var(--color-accent-text)] hover:underline underline-offset-2">Equipment registry</Link>
-            <Link href="/plot-plans" className="text-[14px] font-semibold text-[var(--color-accent-text)] hover:underline underline-offset-2">Plot plans</Link>
+            <Link href="/admin/assets" className="text-body font-medium text-[var(--color-accent-text)] hover:underline underline-offset-2">Equipment registry</Link>
+            <Link href="/plot-plans" className="text-body font-medium text-[var(--color-accent-text)] hover:underline underline-offset-2">Plot plans</Link>
           </div>
         </div>
       </div>
@@ -452,7 +452,7 @@ function Panel({
   const spanCls = span === 3 ? "lg:col-span-3" : span === 2 ? "lg:col-span-2" : "";
   return (
     <Card label={title} className={spanCls}
-      action={href ? <Link href={href} className="text-[14px] font-semibold text-[var(--color-accent-text)] hover:underline underline-offset-2">Open {title.toLowerCase()}</Link> : undefined}>
+      action={href ? <Link href={href} className="text-body font-medium text-[var(--color-accent-text)] hover:underline underline-offset-2">Open {title.toLowerCase()}</Link> : undefined}>
       {children}
     </Card>
   );

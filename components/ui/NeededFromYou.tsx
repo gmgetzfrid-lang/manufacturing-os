@@ -61,7 +61,7 @@ export function NeededFromYou({
       className={`relative rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] pl-4 pr-4 sm:pl-5 sm:pr-5 py-4 overflow-hidden ${className}`}
     >
       <span aria-hidden className="absolute left-0 top-0 bottom-0 w-[3px]" style={{ background: edge }} />
-      <p className="text-[13px] text-[var(--color-text-muted)] flex items-center gap-1.5">
+      <p className="text-body text-[var(--color-text-muted)] flex items-center gap-1.5">
         {done && <CheckCircle2 aria-hidden className="w-3.5 h-3.5 text-[var(--state-released)]" />}
         {done ? "Done" : label}
       </p>
@@ -72,9 +72,9 @@ export function NeededFromYou({
         </div>
       ) : (
         <>
-          <p className="mt-1 text-[17px] leading-snug font-semibold text-[var(--color-heading)] break-words">{what}</p>
+          <p className="mt-1 text-section leading-snug font-semibold text-[var(--color-heading)] break-words">{what}</p>
           {(why || when) && (
-            <dl className="mt-2 space-y-1 text-[14px] leading-snug">
+            <dl className="mt-2 space-y-1 text-body leading-snug">
               {why && (
                 <div className="flex gap-2">
                   <dt className="shrink-0 w-14 text-[var(--color-text-muted)]">Why</dt>
@@ -84,13 +84,13 @@ export function NeededFromYou({
               {when && (
                 <div className="flex gap-2">
                   <dt className="shrink-0 w-14 text-[var(--color-text-muted)]">By when</dt>
-                  <dd className={`min-w-0 ${when.late ? "font-semibold text-[var(--state-overdue-text)]" : when.soon ? "text-[var(--state-held-text)]" : "text-[var(--color-text)]"}`}>{when.text}</dd>
+                  <dd className={`min-w-0 ${when.late ? "font-medium text-[var(--state-overdue-text)]" : when.soon ? "text-[var(--state-held-text)]" : "text-[var(--color-text)]"}`}>{when.text}</dd>
                 </div>
               )}
             </dl>
           )}
           {children && <div className="mt-3 flex flex-wrap items-center gap-2">{children}</div>}
-          {note && <div className="mt-2 text-[14px] text-[var(--color-text-muted)]">{note}</div>}
+          {note && <div className="mt-2 text-body text-[var(--color-text-muted)]">{note}</div>}
         </>
       )}
     </section>

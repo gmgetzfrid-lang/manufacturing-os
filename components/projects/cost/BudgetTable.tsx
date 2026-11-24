@@ -120,67 +120,67 @@ export default function BudgetTable({ orgId, projectId, accounts, numbers, entri
 
   const pickedAccounts = accounts.filter((a) => sel.has(a.id));
   const allShown = rows.length > 0 && rows.every((r) => sel.has(r.account.id));
-  const th = "px-2 py-2 text-left text-[13px] font-semibold text-[var(--color-text-muted)] whitespace-nowrap";
+  const th = "px-2 py-2 text-left text-body font-medium text-[var(--color-text-muted)] whitespace-nowrap";
   const td = "px-2 py-1.5 align-middle";
   const sharePhase = phase ? phases.find((p) => p.id === phase) ?? null : null;
 
   return (
     <div className="bg-[var(--color-surface)] rounded-lg border border-[var(--color-border)] overflow-hidden">
       <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap">
-        <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Budget lines</span>
-        <span className="text-[11px] text-[var(--color-text-muted)]">{accounts.length - closedCount} open{closedCount ? ` · ${closedCount} closed` : ""}</span>
+        <span className="text-body font-medium text-[var(--color-text-muted)]">Budget lines</span>
+        <span className="text-caption text-[var(--color-text-muted)]">{accounts.length - closedCount} open{closedCount ? ` · ${closedCount} closed` : ""}</span>
         <span className="relative ml-auto">
           <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[var(--color-text-faint)]" />
-          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Find a line" aria-label="Find a line" className="h-8 pointer-coarse:h-11 w-40 pl-7 pr-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[12px]" />
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Find a line" aria-label="Find a line" className="h-8 pointer-coarse:h-11 w-40 pl-7 pr-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-caption" />
         </span>
-        <label className="inline-flex items-center gap-1.5 text-[12px] font-bold text-[var(--color-text)]">Group
-          <select value={groupBy} onChange={(e) => setGroupBy(e.target.value as GroupBy)} aria-label="Group by" className="h-8 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12px]">
+        <label className="inline-flex items-center gap-1.5 text-caption font-medium text-[var(--color-text)]">Group
+          <select value={groupBy} onChange={(e) => setGroupBy(e.target.value as GroupBy)} aria-label="Group by" className="h-8 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-caption">
             <option value="none">None</option><option value="type">Type</option><option value="contractor">Contractor</option>{phases.length > 0 && <option value="phase">Phase</option>}
           </select>
         </label>
         {closedCount > 0 && (
-          <label className="inline-flex items-center gap-1.5 text-[12px] font-bold text-[var(--color-text)] cursor-pointer select-none">
+          <label className="inline-flex items-center gap-1.5 text-caption font-medium text-[var(--color-text)] cursor-pointer select-none">
             <input type="checkbox" checked={showClosed} onChange={(e) => setShowClosed(e.target.checked)} className="w-4 h-4 accent-[var(--color-text)]" /> Closed
           </label>
         )}
       </div>
 
       {canManage && sel.size > 0 && (
-        <div className="px-4 py-2 border-b border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center gap-2 flex-wrap text-[12px]">
+        <div className="px-4 py-2 border-b border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center gap-2 flex-wrap text-caption">
           <b>{sel.size} picked</b>
           {phases.length > 0 && (
-            <select value="" onChange={(e) => { if (e.target.value) void setPhase(pickedAccounts, e.target.value === "split" ? null : e.target.value); }} aria-label="Set phase" className="h-8 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 font-bold">
+            <select value="" onChange={(e) => { if (e.target.value) void setPhase(pickedAccounts, e.target.value === "split" ? null : e.target.value); }} aria-label="Set phase" className="h-8 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 font-medium">
               <option value="">Set phase…</option><option value="split">Split by the phases</option>{phases.map((p) => <option key={p.id} value={p.id}>{p.name} only</option>)}
             </select>
           )}
-          <button type="button" disabled={busy} onClick={() => void close(pickedAccounts.filter((a) => a.status !== "closed"), true)} className="h-8 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] font-bold">Close</button>
-          <button type="button" disabled={busy} onClick={() => void remove(pickedAccounts)} className="h-8 px-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] font-bold text-[var(--state-overdue-text)]">Delete</button>
-          <button type="button" onClick={() => setSel(new Set())} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Clear</button>
+          <button type="button" disabled={busy} onClick={() => void close(pickedAccounts.filter((a) => a.status !== "closed"), true)} className="h-8 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] font-medium">Close</button>
+          <button type="button" disabled={busy} onClick={() => void remove(pickedAccounts)} className="h-8 px-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] font-medium text-[var(--state-overdue-text)]">Delete</button>
+          <button type="button" onClick={() => setSel(new Set())} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Clear</button>
         </div>
       )}
 
       {undo && (
-        <div role="status" className="px-4 py-2 border-b border-[var(--color-border)] flex items-center gap-2 text-[12px] font-bold text-[var(--color-text)]">
+        <div role="status" className="px-4 py-2 border-b border-[var(--color-border)] flex items-center gap-2 text-caption font-medium text-[var(--color-text)]">
           {undo.name} deleted.
-          <button type="button" onClick={() => void undoDelete()} className="inline-flex items-center gap-1 h-7 px-2.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)]"><Undo2 className="w-3.5 h-3.5" /> Undo</button>
+          <button type="button" onClick={() => void undoDelete()} className="inline-flex items-center gap-1 h-8 px-2.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)]"><Undo2 className="w-3.5 h-3.5" /> Undo</button>
         </div>
       )}
 
       {moving && (
-        <div className="px-4 py-2 border-b border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center gap-2 flex-wrap text-[12px]">
+        <div className="px-4 py-2 border-b border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center gap-2 flex-wrap text-caption">
           <span>Move the spending on <b>{moving.from.name}</b> to</span>
-          <select value={moving.to} onChange={(e) => setMoving({ ...moving, to: e.target.value })} aria-label="Move to" className="h-8 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 font-bold">
+          <select value={moving.to} onChange={(e) => setMoving({ ...moving, to: e.target.value })} aria-label="Move to" className="h-8 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 font-medium">
             <option value="">Pick a line…</option>
             {accounts.filter((a) => a.id !== moving.from.id && a.status !== "closed").map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
           </select>
           <button type="button" disabled={!moving.to || busy} onClick={() => { const to = accounts.find((a) => a.id === moving.to); if (!to) return; void run(async () => { const r = await moveSpend({ orgId, projectId, fromId: moving.from.id, toId: to.id, toName: to.name, actor }); return { ok: r.ok, error: r.error }; }, `Spending on ${moving.from.name} moved to ${to.name}. Close ${moving.from.name} if it's no longer needed.`).then((ok) => { if (ok) setMoving(null); }); }}
-            className="h-8 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] font-semibold disabled:opacity-50">{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : "Move"}</button>
-          <button type="button" onClick={() => setMoving(null)} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>
+            className="h-8 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] font-medium disabled:opacity-50">{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : "Move"}</button>
+          <button type="button" onClick={() => setMoving(null)} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>
         </div>
       )}
 
       <div className="overflow-x-auto">
-        <table className="w-full border-collapse text-[12px] min-w-[860px]">
+        <table className="w-full border-collapse text-caption min-w-[860px]">
           <thead className="bg-[var(--color-surface-2)]">
             <tr>
               {canManage && <th className={`${th} w-8`}><input type="checkbox" aria-label="Pick every line shown" checked={allShown} onChange={() => setSel(allShown ? new Set() : new Set(rows.map((r) => r.account.id)))} className="w-4 h-4 accent-[var(--color-text)]" /></th>}
@@ -197,8 +197,8 @@ export default function BudgetTable({ orgId, projectId, accounts, numbers, entri
               <React.Fragment key={g.key}>
                 {groupBy !== "none" && (
                   <tr className="bg-[var(--color-surface-2)]/60 border-t border-[var(--color-border)]">
-                    <td colSpan={canManage ? 4 + (phases.length ? 1 : 0) : 3 + (phases.length ? 1 : 0)} className={`${td} font-semibold text-[var(--color-text)]`}>{g.label} <span className="font-semibold text-[var(--color-text-muted)]">· {g.rows.length} line{g.rows.length === 1 ? "" : "s"}</span></td>
-                    <td className={`${td} text-right font-semibold tabular-nums`}>{fmtMoney(g.budget, cur)}</td>
+                    <td colSpan={canManage ? 4 + (phases.length ? 1 : 0) : 3 + (phases.length ? 1 : 0)} className={`${td} font-medium text-[var(--color-text)]`}>{g.label} <span className="font-medium text-[var(--color-text-muted)]">· {g.rows.length} line{g.rows.length === 1 ? "" : "s"}</span></td>
+                    <td className={`${td} text-right font-medium tabular-nums`}>{fmtMoney(g.budget, cur)}</td>
                     {sharePhase && <td />}
                     <td className={`${td} text-right tabular-nums`}>{fmtMoney(g.committed, cur)}</td><td className={`${td} text-right tabular-nums`}>{fmtMoney(g.spent, cur)}</td>
                     <td className={`${td} text-right tabular-nums`}>{fmtMoney(g.budget - g.spent, cur)}</td><td colSpan={2} />
@@ -216,43 +216,43 @@ export default function BudgetTable({ orgId, projectId, accounts, numbers, entri
                         <td className={`${td} min-w-[200px]`}>
                           <div className="flex items-center gap-1">
                             <button type="button" onClick={() => setOpen(open === a.id ? null : a.id)} aria-label={`${open === a.id ? "Close" : "Open"} ${a.name}'s entries`} className="shrink-0 text-[var(--color-text-faint)]"><ChevronRight className={`w-4 h-4 ui-chevron${(open === a.id) ? " rotate-90" : ""}`} /></button>
-                            {a.code && <span className="font-display tabular-nums text-[11px] text-[var(--color-text-faint)]">{a.code}</span>}
-                            <Cell value={a.name} disabled={!canManage || closed} aria={`${a.name} name`} onSave={(v) => (v.trim() && v.trim() !== a.name ? savePatch(a, { name: v.trim() }) : undefined)} className="font-bold" />
-                            {closed && <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">closed</span>}
+                            {a.code && <span className="font-display tabular-nums text-caption text-[var(--color-text-faint)]">{a.code}</span>}
+                            <Cell value={a.name} disabled={!canManage || closed} aria={`${a.name} name`} onSave={(v) => (v.trim() && v.trim() !== a.name ? savePatch(a, { name: v.trim() }) : undefined)} className="font-medium" />
+                            {closed && <span className="text-body font-medium text-[var(--color-text-muted)]">closed</span>}
                           </div>
                         </td>
                         <td className={td}>
-                          <select value={a.costType ?? ""} disabled={!canManage || closed} onChange={(e) => void savePatch(a, { costType: e.target.value || null })} aria-label={`${a.name} type`} className="h-8 pointer-coarse:h-11 rounded-md border border-transparent hover:border-[var(--color-border-strong)] bg-transparent px-1 text-[12px] disabled:hover:border-transparent">
+                          <select value={a.costType ?? ""} disabled={!canManage || closed} onChange={(e) => void savePatch(a, { costType: e.target.value || null })} aria-label={`${a.name} type`} className="h-8 pointer-coarse:h-11 rounded-md border border-transparent hover:border-[var(--color-border-strong)] bg-transparent px-1 text-caption disabled:hover:border-transparent">
                             <option value="">-</option>{TYPES.map((t) => <option key={t} value={t}>{cap(t)}</option>)}
                           </select>
                         </td>
                         <td className={td}>
-                          <select value={a.partyId ?? ""} disabled={!canManage || closed} onChange={(e) => void savePatch(a, { partyId: e.target.value || null })} aria-label={`${a.name} contractor`} className="h-8 pointer-coarse:h-11 max-w-[160px] rounded-md border border-transparent hover:border-[var(--color-border-strong)] bg-transparent px-1 text-[12px] disabled:hover:border-transparent">
+                          <select value={a.partyId ?? ""} disabled={!canManage || closed} onChange={(e) => void savePatch(a, { partyId: e.target.value || null })} aria-label={`${a.name} contractor`} className="h-8 pointer-coarse:h-11 max-w-[160px] rounded-md border border-transparent hover:border-[var(--color-border-strong)] bg-transparent px-1 text-caption disabled:hover:border-transparent">
                             <option value="">-</option>{parties.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
                           </select>
                         </td>
                         {phases.length > 0 && (
                           <td className={td}>
-                            <select value={a.phaseId ?? ""} disabled={!canManage || closed} onChange={(e) => void setPhase([a], e.target.value || null)} aria-label={`${a.name} phase`} className="h-8 pointer-coarse:h-11 rounded-md border border-transparent hover:border-[var(--color-border-strong)] bg-transparent px-1 text-[12px] disabled:hover:border-transparent">
+                            <select value={a.phaseId ?? ""} disabled={!canManage || closed} onChange={(e) => void setPhase([a], e.target.value || null)} aria-label={`${a.name} phase`} className="h-8 pointer-coarse:h-11 rounded-md border border-transparent hover:border-[var(--color-border-strong)] bg-transparent px-1 text-caption disabled:hover:border-transparent">
                               <option value="">Split {phases.map((p) => Math.round(p.share)).join("/")}</option>{phases.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
                             </select>
                           </td>
                         )}
                         <td className={`${td} text-right`}>
-                          <Cell value={String(a.budget)} display={fmtMoney(a.budget, cur)} numeric disabled={!canManage || closed} aria={`${a.name} budget`} className="font-bold tabular-nums"
+                          <Cell value={String(a.budget)} display={fmtMoney(a.budget, cur)} numeric disabled={!canManage || closed} aria={`${a.name} budget`} className="font-medium tabular-nums"
                             onSave={(v) => { const n = Number(v.replace(/[$,\s]/g, "")); return Number.isFinite(n) && n >= 0 && n !== a.budget ? saveBudget(a, n) : undefined; }} />
                         </td>
                         {sharePhase && <td className={`${td} text-right tabular-nums text-[var(--color-text-muted)]`}>{fmtMoney(share, cur)}</td>}
                         <td className={`${td} text-right tabular-nums`}>{fmtMoney(committed, cur)}</td>
-                        <td className={`${td} text-right tabular-nums ${spent > a.budget && a.budget > 0 ? "text-[var(--state-overdue)] font-semibold" : ""}`}>{fmtMoney(spent, cur)}</td>
-                        <td className={`${td} text-right tabular-nums ${left < 0 ? "text-[var(--state-overdue)] font-semibold" : ""}`}>{fmtMoney(left, cur)}</td>
+                        <td className={`${td} text-right tabular-nums ${spent > a.budget && a.budget > 0 ? "text-[var(--state-overdue)] font-medium" : ""}`}>{fmtMoney(spent, cur)}</td>
+                        <td className={`${td} text-right tabular-nums ${left < 0 ? "text-[var(--state-overdue)] font-medium" : ""}`}>{fmtMoney(left, cur)}</td>
                         <td className={td}><div className="h-2 rounded-full bg-[var(--color-accent-soft)] overflow-hidden"><div className={`h-full rounded-full ${spent > a.budget && a.budget > 0 ? "bg-[var(--state-overdue)]" : "bg-[var(--color-main)]"}`} style={{ width: `${used}%` }} /></div></td>
                         <td className={`${td} relative`}>
                           {canManage && (
                             <button type="button" onClick={() => setMenu(menu === a.id ? null : a.id)} aria-label={`${a.name} actions`} className="w-8 h-8 rounded-lg hover:bg-[var(--color-surface-2)] flex items-center justify-center"><MoreHorizontal className="w-4 h-4" /></button>
                           )}
                           {menu === a.id && (
-                            <div role="menu" className="absolute right-2 top-9 z-20 w-56 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-xl p-1 text-[12px]" onMouseLeave={() => setMenu(null)}>
+                            <div role="menu" className="absolute right-2 top-9 z-20 w-56 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-xl p-1 text-caption" onMouseLeave={() => setMenu(null)}>
                               <MenuItem onClick={() => { setOpen(a.id); setMenu(null); }}>Entries, history and full edit</MenuItem>
                               {!closed && <MenuItem onClick={() => { setMoving({ from: a, to: "" }); setMenu(null); }}>Move its spending to another line…</MenuItem>}
                               <MenuItem onClick={() => { setMenu(null); void close([a], !closed); }}>{closed ? "Open again" : "Close (kept, out of the totals)"}</MenuItem>
@@ -279,13 +279,13 @@ export default function BudgetTable({ orgId, projectId, accounts, numbers, entri
                 <td className={td}><select value={draft.type} onChange={(e) => setDraft({ ...draft, type: e.target.value })} aria-label="New line type" className="h-8 pointer-coarse:h-11 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1">{TYPES.map((t) => <option key={t} value={t}>{cap(t)}</option>)}</select></td>
                 <td className={td} />{phases.length > 0 && <td className={td} />}
                 <td className={td}><input value={draft.budget} onChange={(e) => setDraft({ ...draft, budget: e.target.value })} onKeyDown={(e) => { if (e.key === "Enter") void add(); }} inputMode="decimal" placeholder="$0" aria-label="New line budget" className="h-8 pointer-coarse:h-11 w-28 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-right" /></td>
-                <td colSpan={99} className={td}><button type="button" disabled={busy || !draft.name.trim()} onClick={() => void add()} className="inline-flex items-center gap-1 h-8 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] font-semibold hover:bg-[var(--color-surface-2)] disabled:opacity-50"><Plus className="w-4 h-4" /> Add</button></td>
+                <td colSpan={99} className={td}><button type="button" disabled={busy || !draft.name.trim()} onClick={() => void add()} className="inline-flex items-center gap-1 h-8 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] font-medium hover:bg-[var(--color-surface-2)] disabled:opacity-50"><Plus className="w-4 h-4" /> Add</button></td>
               </tr>
             )}
           </tbody>
           {rows.length > 0 && (
             <tfoot>
-              <tr className="border-t-2 border-[var(--color-text)]/70 font-semibold">
+              <tr className="border-t-2 border-[var(--color-text)]/70 font-medium">
                 <td colSpan={canManage ? 4 + (phases.length ? 1 : 0) : 3 + (phases.length ? 1 : 0)} className={td}>Total (open lines)</td>
                 <td className={`${td} text-right tabular-nums`}>{fmtMoney(totals.budget, cur)}</td>
                 {sharePhase && <td className={`${td} text-right tabular-nums`}>{fmtMoney(rows.filter((r) => r.account.status !== "closed").reduce((s, r) => s + (r.account.phaseId ? (r.account.phaseId === sharePhase.id ? r.account.budget : 0) : phaseAmount(r.account.budget, sharePhase.share)), 0), cur)}</td>}
@@ -301,7 +301,7 @@ export default function BudgetTable({ orgId, projectId, accounts, numbers, entri
 }
 
 function MenuItem({ children, onClick, danger }: { children: React.ReactNode; onClick: () => void; danger?: boolean }) {
-  return <button type="button" role="menuitem" onClick={onClick} className={`w-full text-left px-2.5 py-2 rounded-lg hover:bg-[var(--color-surface-2)] font-semibold ${danger ? "text-[var(--state-overdue-text)]" : "text-[var(--color-text)]"}`}>{children}</button>;
+  return <button type="button" role="menuitem" onClick={onClick} className={`w-full text-left px-2.5 py-2 rounded-lg hover:bg-[var(--color-surface-2)] font-medium ${danger ? "text-[var(--state-overdue-text)]" : "text-[var(--color-text)]"}`}>{children}</button>;
 }
 
 /** A cell edited where it is: tap, type, Enter or leave it to save; Esc to cancel. */
@@ -328,8 +328,8 @@ export function LinesChart({ rows, cur, bare }: { rows: Array<{ name: string; bu
   return (
     <div className={bare ? "" : "rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] px-4 sm:px-5 py-4"}>
       <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
-        <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Each budget line</span>
-        <span className="flex items-center gap-3 text-[13px] text-[var(--color-text-muted)]">
+        <span className="text-body font-medium text-[var(--color-text-muted)]">Each budget line</span>
+        <span className="flex items-center gap-3 text-body text-[var(--color-text-muted)]">
           <span className="inline-flex items-center gap-1.5"><span className="w-3 h-2 rounded-sm bg-[var(--color-accent-soft)] ring-1 ring-inset ring-[var(--color-main)]/25" /> Budget</span>
           <span className="inline-flex items-center gap-1.5"><span className="w-3 h-2 rounded-sm bg-[var(--color-main)]/55" /> Committed</span>
           <span className="inline-flex items-center gap-1.5"><span className="w-3 h-2 rounded-sm bg-[var(--color-main)]" /> Spent</span>
@@ -337,7 +337,7 @@ export function LinesChart({ rows, cur, bare }: { rows: Array<{ name: string; bu
       </div>
       <div className="space-y-2">
         {shown.map((r) => (
-          <div key={r.name} className="grid grid-cols-[minmax(0,180px)_minmax(0,1fr)_auto] gap-2 items-center text-[13px]">
+          <div key={r.name} className="grid grid-cols-[minmax(0,180px)_minmax(0,1fr)_auto] gap-2 items-center text-body">
             <span className="truncate text-[var(--color-text)]" title={r.name}>{r.name}</span>
             <div className="space-y-0.5">
               <div className="h-2 rounded-sm bg-[var(--color-accent-soft)] ring-1 ring-inset ring-[var(--color-main)]/25" style={{ width: `${(r.budget / max) * 100}%` }} />

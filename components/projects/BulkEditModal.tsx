@@ -85,7 +85,7 @@ export default function BulkEditModal({ milestones, selectedIds, startMode, orgI
       <ModalHeader icon={Replace} title="Change on many tasks"
         subtitle="Swap a contractor, crew, company or location everywhere it appears, or set it (or day or night) on the tasks you selected." onClose={busy ? undefined : onClose} />
       <ModalBody className="space-y-3">
-        <div className="inline-flex flex-wrap rounded-[10px] bg-[var(--color-surface-2)] p-0.5 gap-0.5 text-[12px] font-bold" role="group" aria-label="What to change">
+        <div className="inline-flex flex-wrap rounded-lg bg-[var(--color-surface-2)] p-0.5 gap-0.5 text-caption font-medium" role="group" aria-label="What to change">
           <button onClick={() => setMode("replace")} aria-pressed={mode === "replace"} className={`h-8 px-3 rounded-lg ${mode === "replace" ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>Replace a name everywhere</button>
           <button onClick={() => selectedIds.size > 0 && setMode("set")} disabled={selectedIds.size === 0} aria-pressed={mode === "set"}
             title={selectedIds.size === 0 ? "Select tasks on the timeline first" : undefined}
@@ -95,20 +95,20 @@ export default function BulkEditModal({ milestones, selectedIds, startMode, orgI
         </div>
 
         <label className="block">
-          <span className="block mb-1 text-[13px] font-semibold text-[var(--color-text-muted)]">Field</span>
+          <span className="block mb-1 text-body font-medium text-[var(--color-text-muted)]">Field</span>
           <select value={field.key} onChange={(e) => pickField(e.target.value)} className={inp}>
             {BULK_FIELDS.map((f) => <option key={f.key} value={f.key}>{f.label}</option>)}
           </select>
         </label>
 
         {mode === "replace" && field.options && (
-          <p className="text-[12px] text-[var(--color-text-muted)]">Select the tasks on the timeline first, then set the crew on them.</p>
+          <p className="text-caption text-[var(--color-text-muted)]">Select the tasks on the timeline first, then set the crew on them.</p>
         )}
         {mode === "replace" && !field.options && (
           <div>
-            <span className="block mb-1 text-[13px] font-semibold text-[var(--color-text-muted)]">1. Pick the name to replace</span>
+            <span className="block mb-1 text-body font-medium text-[var(--color-text-muted)]">1. Pick the name to replace</span>
             {values.length === 0 ? (
-              <p className="text-[12px] text-[var(--color-text-muted)]">No task has this field filled in.</p>
+              <p className="text-caption text-[var(--color-text-muted)]">No task has this field filled in.</p>
             ) : (
               <>
                 {values.length > 8 && (
@@ -121,9 +121,9 @@ export default function BulkEditModal({ milestones, selectedIds, startMode, orgI
                   {shownValues.map((v) => (
                     <li key={v.value}>
                       <button onClick={() => { setFrom(v.value); setClear(false); }} aria-pressed={from === v.value}
-                        className={`w-full flex items-center gap-2 px-3 py-2 text-left text-[13px] ${from === v.value ? "bg-[var(--color-text)] font-bold text-[var(--color-surface)]" : "text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
+                        className={`w-full flex items-center gap-2 px-3 py-2 text-left text-body ${from === v.value ? "bg-[var(--color-text)] font-medium text-[var(--color-surface)]" : "text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
                         <span className="flex-1 truncate">{v.value}</span>
-                        <span className={`shrink-0 text-[12px] ${from === v.value ? "opacity-80" : "text-[var(--color-text-muted)]"}`}>{v.count} task{v.count === 1 ? "" : "s"}</span>
+                        <span className={`shrink-0 text-caption ${from === v.value ? "opacity-80" : "text-[var(--color-text-muted)]"}`}>{v.count} task{v.count === 1 ? "" : "s"}</span>
                       </button>
                     </li>
                   ))}
@@ -135,7 +135,7 @@ export default function BulkEditModal({ milestones, selectedIds, startMode, orgI
 
         {mode === "set" && field.options && (
           <label className="block">
-            <span className="block mb-1 text-[13px] font-semibold text-[var(--color-text-muted)]">Set to</span>
+            <span className="block mb-1 text-body font-medium text-[var(--color-text-muted)]">Set to</span>
             <select value={to} onChange={(e) => setTo(e.target.value)} className={inp}>
               {field.options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
             </select>
@@ -144,43 +144,43 @@ export default function BulkEditModal({ milestones, selectedIds, startMode, orgI
         {(mode === "set" || from) && !field.options && (
           <div className="space-y-1.5">
             <label className="block">
-              <span className="block mb-1 text-[13px] font-semibold text-[var(--color-text-muted)]">
+              <span className="block mb-1 text-body font-medium text-[var(--color-text-muted)]">
                 {mode === "replace" ? <>2. Replace &ldquo;<span className="normal-case tracking-normal">{from}</span>&rdquo; with</> : "Set to"}
               </span>
               <input value={to} onChange={(e) => { setTo(e.target.value); if (e.target.value.trim()) setClear(false); }} autoFocus list="bulk-values" disabled={clear}
                 placeholder={mode === "replace" ? "The new name (pick one or type it)" : "The value"} className={`${inp} disabled:opacity-50`} />
               <datalist id="bulk-values">{values.filter((v) => v.value !== from).map((v) => <option key={v.value} value={v.value} />)}</datalist>
             </label>
-            <label className="inline-flex items-center gap-2 text-[12px] text-[var(--color-text-muted)] cursor-pointer select-none">
+            <label className="inline-flex items-center gap-2 text-caption text-[var(--color-text-muted)] cursor-pointer select-none">
               <input type="checkbox" checked={clear} onChange={(e) => { setClear(e.target.checked); if (e.target.checked) setTo(""); }} className="w-4 h-4 accent-rose-600" />
               {mode === "replace" ? <>Take &ldquo;{from}&rdquo; off and leave no name</> : "Clear it on the selected tasks"}
             </label>
-            {!ready && <p className="text-[12px] text-[var(--color-text-muted)]">Nothing changes until you type the new name{mode === "replace" ? ", or tick the box to take it off" : ""}.</p>}
+            {!ready && <p className="text-caption text-[var(--color-text-muted)]">Nothing changes until you type the new name{mode === "replace" ? ", or tick the box to take it off" : ""}.</p>}
           </div>
         )}
 
         {plan.length > 0 && (
           <div>
-            <span className="block mb-1 text-[13px] font-semibold text-[var(--color-text-muted)]">Will change {plan.length} task{plan.length === 1 ? "" : "s"}</span>
-            <ul className="max-h-48 overflow-y-auto border-y border-[var(--color-border)] divide-y divide-[var(--color-border)] text-[12px]">
+            <span className="block mb-1 text-body font-medium text-[var(--color-text-muted)]">Will change {plan.length} task{plan.length === 1 ? "" : "s"}</span>
+            <ul className="max-h-48 overflow-y-auto border-y border-[var(--color-border)] divide-y divide-[var(--color-border)] text-caption">
               {plan.slice(0, 200).map((c) => (
                 <li key={c.id} className="px-1 py-1.5 flex items-center gap-2">
-                  <span className="w-32 sm:w-44 shrink-0 truncate font-semibold text-[var(--color-text)]" title={c.name}>{c.name}</span>
+                  <span className="w-32 sm:w-44 shrink-0 truncate font-medium text-[var(--color-text)]" title={c.name}>{c.name}</span>
                   <span className="truncate text-[var(--color-text-muted)] line-through" title={c.before ?? ""}>{valueLabel(field, c.before) || "-"}</span>
                   <ArrowRight className="w-3 h-3 shrink-0 text-[var(--color-text-faint)]" />
-                  <span className="truncate font-semibold text-[var(--color-text)]" title={c.after ?? ""}>{valueLabel(field, c.after) || "(empty)"}</span>
+                  <span className="truncate font-medium text-[var(--color-text)]" title={c.after ?? ""}>{valueLabel(field, c.after) || "(empty)"}</span>
                 </li>
               ))}
               {plan.length > 200 && <li className="px-3 py-1.5 text-[var(--color-text-muted)]">…and {plan.length - 200} more</li>}
             </ul>
           </div>
         )}
-        {error && <div className="text-[12px] font-bold text-[var(--state-overdue-text)]">{error}</div>}
+        {error && <div className="text-caption font-medium text-[var(--state-overdue-text)]">{error}</div>}
       </ModalBody>
       <ModalFooter>
-        <button onClick={onClose} disabled={busy} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>
+        <button onClick={onClose} disabled={busy} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>
         <button onClick={() => void apply()} disabled={busy || plan.length === 0}
-          className="inline-flex items-center gap-1.5 h-9 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[13px] font-bold hover:bg-[var(--color-accent-hover)] disabled:opacity-40">
+          className="inline-flex items-center gap-1.5 h-10 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-body font-medium hover:bg-[var(--color-accent-hover)] disabled:opacity-40">
           {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Replace className="w-4 h-4" />}
           {plan.length ? (clears === plan.length && !field.options ? `Take it off ${plan.length} task${plan.length === 1 ? "" : "s"}` : `Change ${plan.length} task${plan.length === 1 ? "" : "s"}`) : "Change"}
         </button>

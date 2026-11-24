@@ -173,7 +173,7 @@ export default function GraphShapeWizard({
     if (!c) return null;
     const Icon = c.type === "document" ? FileText : Wrench;
     return (
-      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-[var(--color-surface-2)] text-[13px] font-semibold text-[var(--color-text)] max-w-[11rem]"
+      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-[var(--color-surface-2)] text-body font-medium text-[var(--color-text)] max-w-[11rem]"
         title={c.title ?? c.label}>
         <Icon className={`w-3 h-3 shrink-0 text-[var(--color-text-muted)]`} />
         <span className="truncate">{c.label}</span>
@@ -190,8 +190,8 @@ export default function GraphShapeWizard({
                 <div className="flex items-center gap-2 px-4 py-3 border-b border-[var(--color-border)] shrink-0">
           <Waypoints className="w-4 h-4 text-[var(--color-text-muted)]" />
           <div className="flex-1 min-w-0">
-            <div className="text-sm font-semibold text-[var(--color-text)]">Shape the graph from this answer</div>
-            <div className="text-[13px] text-[var(--color-text-muted)] truncate">{question || "This answer"}</div>
+            <div className="text-sm font-medium text-[var(--color-text)]">Shape the graph from this answer</div>
+            <div className="text-body text-[var(--color-text-muted)] truncate">{question || "This answer"}</div>
           </div>
           <button onClick={onClose} aria-label="Close" className="p-1.5 rounded-lg text-[var(--color-text-faint)] hover:text-[var(--color-text)]">
             <X className="w-4 h-4" />
@@ -204,8 +204,8 @@ export default function GraphShapeWizard({
               <span className="relative inline-flex">
                 <BrainCircuit className="w-8 h-8 text-[var(--color-text-muted)]" />
               </span>
-              <div className="text-sm font-semibold text-[var(--color-text)]">Reading the answer&hellip;</div>
-              <div className="text-[13px] text-[var(--color-text-muted)] max-w-sm">
+              <div className="text-sm font-medium text-[var(--color-text)]">Reading the answer&hellip;</div>
+              <div className="text-body text-[var(--color-text-muted)] max-w-sm">
                 Grounding it in your controlled documents and equipment registry, then asking your
                 model which of them this answer actually ties together.
               </div>
@@ -215,26 +215,26 @@ export default function GraphShapeWizard({
           {stage !== "thinking" && (
             <>
               {error && (
-                <div className="flex items-start gap-2 text-[13px] border-l-2 border-[var(--state-overdue)] pl-3 text-[var(--state-overdue)]">
+                <div className="flex items-start gap-2 text-body border-l-2 border-[var(--state-overdue)] pl-3 text-[var(--state-overdue)]">
                   <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" /> {error}
                 </div>
               )}
               {note && (
-                <div className="text-[13px] text-[var(--color-text-muted)] bg-[var(--color-surface-2)]/60 rounded-lg px-3 py-2">{note}</div>
+                <div className="text-body text-[var(--color-text-muted)] bg-[var(--color-surface-2)]/60 rounded-lg px-3 py-2">{note}</div>
               )}
 
               {stage === "done" ? (
                 <div className="py-8 flex flex-col items-center gap-3 text-center">
                   <CheckCircle2 className="w-9 h-9 text-[var(--state-released)]" style={{ animation: "pop 0.3s var(--ease-fluid) both" }} />
-                  <div className="text-sm font-semibold text-[var(--color-text)]">
+                  <div className="text-sm font-medium text-[var(--color-text)]">
                     {written} connection{written === 1 ? "" : "s"} written to the graph
                   </div>
-                  <div className="text-[13px] text-[var(--color-text-muted)] max-w-sm">
+                  <div className="text-body text-[var(--color-text-muted)] max-w-sm">
                     Each carries this question as its evidence. They appear in the documents&apos;
                     Related panels and on the org graph now.
                   </div>
                   <Link href="/graph"
-                    className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-[13px] font-semibold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)]">
+                    className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-body font-medium text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)]">
                     <Waypoints className="w-3.5 h-3.5" /> See it on the graph
                   </Link>
                 </div>
@@ -242,7 +242,7 @@ export default function GraphShapeWizard({
                 <>
                   {rows.length > 0 && (
                     <div className="space-y-2">
-                      <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">
+                      <div className="text-body font-medium text-[var(--color-text-muted)]">
                         Proposed attributions · accept, reject, or rewrite
                       </div>
                       {rows.map((r, i) => (
@@ -266,7 +266,7 @@ export default function GraphShapeWizard({
                                 <ArrowRight className="w-3 h-3 text-[var(--color-text-faint)] shrink-0" />
                                 {chip(r.b)}
                                 {r.aiAssisted && (
-                                  <span className="inline-flex items-center gap-0.5 text-[13px] font-semibold text-[var(--color-text-muted)]">
+                                  <span className="inline-flex items-center gap-0.5 text-body font-medium text-[var(--color-text-muted)]">
                                     <Sparkles className="w-2.5 h-2.5" /> AI
                                   </span>
                                 )}
@@ -274,10 +274,10 @@ export default function GraphShapeWizard({
                               <input
                                 value={r.label}
                                 onChange={(e) => setRows((prev) => prev.map((x) => x.key === r.key ? { ...x, label: e.target.value } : x))}
-                                className="w-full px-2 py-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[13px] font-bold text-[var(--color-text)]"
+                                className="w-full px-2 py-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)]"
                                 maxLength={120}
                               />
-                              <div className="text-[13px] text-[var(--color-text-muted)] leading-snug">{r.reason}</div>
+                              <div className="text-body text-[var(--color-text-muted)] leading-snug">{r.reason}</div>
                               {/* Confidence, as a quiet meter — never a bare number. */}
                               <div className="h-1 rounded-full bg-[var(--color-surface-2)] overflow-hidden">
                                 <div className="h-full bg-[var(--color-text-muted)]" style={{ width: `${Math.round(r.confidence * 100)}%` }} />
@@ -291,18 +291,18 @@ export default function GraphShapeWizard({
 
                   {candidates.length >= 2 && (
                     <div className="rounded-xl border border-dashed border-[var(--color-border-strong)] p-3 space-y-2">
-                      <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">
+                      <div className="text-body font-medium text-[var(--color-text-muted)]">
                         Connect manually - same verified entities
                       </div>
                       <div className="flex items-center gap-1.5 flex-wrap">
                         <select value={manual.a} onChange={(e) => setManual((m) => ({ ...m, a: e.target.value }))}
-                          className="flex-1 min-w-[8rem] px-2 py-1.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px]">
+                          className="flex-1 min-w-[8rem] px-2 py-1.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body">
                           <option value="">From…</option>
                           {candidates.map((c) => <option key={c.ref} value={c.ref}>{c.type === "document" ? "📄" : "⚙"} {c.label}</option>)}
                         </select>
                         <ArrowRight className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" />
                         <select value={manual.b} onChange={(e) => setManual((m) => ({ ...m, b: e.target.value }))}
-                          className="flex-1 min-w-[8rem] px-2 py-1.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px]">
+                          className="flex-1 min-w-[8rem] px-2 py-1.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body">
                           <option value="">To…</option>
                           {candidates.filter((c) => c.ref !== manual.a).map((c) => <option key={c.ref} value={c.ref}>{c.type === "document" ? "📄" : "⚙"} {c.label}</option>)}
                         </select>
@@ -310,9 +310,9 @@ export default function GraphShapeWizard({
                       <div className="flex items-center gap-1.5">
                         <input value={manual.label} onChange={(e) => setManual((m) => ({ ...m, label: e.target.value }))}
                           placeholder="What is the relationship? (optional)"
-                          className="flex-1 px-2 py-1.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px]" />
+                          className="flex-1 px-2 py-1.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body" />
                         <button type="button" onClick={addManual} disabled={!manual.a || !manual.b}
-                          className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[13px] font-semibold text-[var(--color-text)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-40">
+                          className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-body font-medium text-[var(--color-text)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-40">
                           <Plus className="w-3.5 h-3.5" /> Add
                         </button>
                       </div>
@@ -320,7 +320,7 @@ export default function GraphShapeWizard({
                   )}
 
                   {rows.length === 0 && candidates.length < 2 && (
-                    <div className="text-[13px] text-[var(--color-text-muted)] text-center py-6">
+                    <div className="text-body text-[var(--color-text-muted)] text-center py-6">
                       Nothing here can shape the graph - this answer doesn&apos;t ground to known
                       documents or equipment.
                     </div>
@@ -333,17 +333,17 @@ export default function GraphShapeWizard({
 
         {stage === "review" && rows.length > 0 && (
           <div className="px-4 py-3 border-t border-[var(--color-border)] flex items-center justify-between gap-2 shrink-0">
-            <span className="text-[13px] text-[var(--color-text-muted)]">
+            <span className="text-body text-[var(--color-text-muted)]">
               {acceptedCount} of {rows.length} selected
             </span>
             <button onClick={() => void apply()} disabled={acceptedCount === 0}
-              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-[13px] font-semibold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
+              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-body font-medium text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
               <Waypoints className="w-3.5 h-3.5" /> Write {acceptedCount} connection{acceptedCount === 1 ? "" : "s"}
             </button>
           </div>
         )}
         {stage === "applying" && (
-          <div className="px-4 py-3 border-t border-[var(--color-border)] flex items-center gap-2 text-[13px] text-[var(--color-text-muted)] shrink-0">
+          <div className="px-4 py-3 border-t border-[var(--color-border)] flex items-center gap-2 text-body text-[var(--color-text-muted)] shrink-0">
             <Loader2 className="w-3.5 h-3.5 animate-spin" /> Writing links&hellip;
           </div>
         )}

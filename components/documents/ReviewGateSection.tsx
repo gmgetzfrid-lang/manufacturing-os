@@ -129,9 +129,9 @@ export default function ReviewGateSection({ doc, orgId, canManage, onChanged }: 
   };
 
   const statusChip = (r: ReviewSignoffRow) => {
-    if (r.status === "signed") return <span className="inline-flex items-center gap-1 text-[13px] font-bold text-[var(--state-released)]"><CheckCircle2 className="w-3 h-3" /> {r.signedAt?.slice(0, 10)}</span>;
-    if (r.slot === "alternate" && !r.activated) return <span className="text-[13px] font-bold text-[var(--color-text-faint)]">Standby</span>;
-    return <span className="inline-flex items-center gap-1 text-[13px] font-bold text-[var(--state-held)]"><Clock className="w-3 h-3" /> Pending</span>;
+    if (r.status === "signed") return <span className="inline-flex items-center gap-1 text-body font-medium text-[var(--state-released)]"><CheckCircle2 className="w-3 h-3" /> {r.signedAt?.slice(0, 10)}</span>;
+    if (r.slot === "alternate" && !r.activated) return <span className="text-body font-medium text-[var(--color-text-faint)]">Standby</span>;
+    return <span className="inline-flex items-center gap-1 text-body font-medium text-[var(--state-held)]"><Clock className="w-3 h-3" /> Pending</span>;
   };
 
   // Nothing in review: show the effective mode (and stay quiet if none).
@@ -141,9 +141,9 @@ export default function ReviewGateSection({ doc, orgId, canManage, onChanged }: 
       <div className="pt-3 border-t border-[var(--color-border)] first:border-t-0 first:pt-0">
         <div className="flex items-center gap-2">
           <ShieldCheck className="w-4 h-4 text-[var(--color-text-muted)]" />
-          <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Pre-publish review</span>
+          <span className="text-body font-medium text-[var(--color-text-muted)]">Pre-publish review</span>
         </div>
-        <div className="text-[13px] text-[var(--color-text-muted)] mt-1.5">
+        <div className="text-body text-[var(--color-text-muted)] mt-1.5">
           {control.mode === "require" ? "Revisions in this library require reviewer sign-off before they publish." : "The publisher may route a revision through review before it publishes."}
         </div>
       </div>
@@ -157,9 +157,9 @@ export default function ReviewGateSection({ doc, orgId, canManage, onChanged }: 
       <div className="pt-3 border-t border-[var(--color-border)] first:border-t-0 first:pt-0">
         <div className="flex items-center gap-2">
           <ShieldCheck className="w-4 h-4 text-[var(--color-text-muted)]" />
-          <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Pre-publish review</span>
+          <span className="text-body font-medium text-[var(--color-text-muted)]">Pre-publish review</span>
         </div>
-        <div className="text-[13px] text-[var(--color-text-muted)] mt-1.5">A new revision is in review by the assigned reviewers. The current Rev {doc.rev || "-"} remains the controlled copy.</div>
+        <div className="text-body text-[var(--color-text-muted)] mt-1.5">A new revision is in review by the assigned reviewers. The current Rev {doc.rev || "-"} remains the controlled copy.</div>
       </div>
     );
   }
@@ -168,28 +168,28 @@ export default function ReviewGateSection({ doc, orgId, canManage, onChanged }: 
     <div className="pt-3 border-t border-[var(--color-border)] first:border-t-0 first:pt-0 space-y-2.5">
       <div className="flex items-center gap-2">
         <ShieldCheck className="w-4 h-4 text-[var(--color-text-muted)]" />
-        <span className="text-[13px] font-semibold text-[var(--color-text)]">In review{draftLabel ? ` · ${draftLabel}` : ""}</span>
-        {!loading && <span className="ml-auto text-[13px] font-bold text-[var(--color-text)]">{signedCount}/{primaries.length} signed</span>}
+        <span className="text-body font-medium text-[var(--color-text)]">In review{draftLabel ? ` · ${draftLabel}` : ""}</span>
+        {!loading && <span className="ml-auto text-body font-medium text-[var(--color-text)]">{signedCount}/{primaries.length} signed</span>}
       </div>
 
       {loading ? (
-        <div className="flex items-center gap-2 text-[13px] text-[var(--color-text-muted)]"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading…</div>
+        <div className="flex items-center gap-2 text-body text-[var(--color-text-muted)]"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading…</div>
       ) : (
         <>
           {draftFileUrl && (
-            <button onClick={() => void viewDraft()} className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border border-[var(--color-border)] bg-white text-[var(--color-text)] text-[13px] font-bold hover:bg-[var(--color-surface-2)]">
+            <button onClick={() => void viewDraft()} className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border border-[var(--color-border)] bg-white text-[var(--color-text)] text-body font-medium hover:bg-[var(--color-surface-2)]">
               <FileText className="w-3.5 h-3.5" /> View draft{draftLabel ? ` ${draftLabel}` : ""}
             </button>
           )}
           {mine && (
-            <button onClick={() => setSigning(true)} className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] text-[13px] font-semibold shadow">
+            <button onClick={() => setSigning(true)} className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] text-body font-medium shadow">
               <PenLine className="w-3.5 h-3.5" /> Review &amp; sign off{draftLabel ? ` ${draftLabel}` : ""}
             </button>
           )}
 
           <div className="space-y-0.5 max-h-40 overflow-y-auto">
             {roster.map((r) => (
-              <div key={r.id} className="flex items-center gap-2 text-[13px] py-0.5">
+              <div key={r.id} className="flex items-center gap-2 text-body py-0.5">
                 <span className="min-w-0 truncate text-[var(--color-text)]">
                   {r.reviewerName || r.reviewerUserId}
                   {r.slot === "alternate" && <span className="text-[var(--color-text-muted)]"> · alt</span>}
@@ -206,22 +206,22 @@ export default function ReviewGateSection({ doc, orgId, canManage, onChanged }: 
           {canManage && roster.length === 0 ? (
             // RESCUE, not a dead end: a zero-person roster can never complete,
             // so the disabled button would strand this draft forever.
-            <div className="border-l-2 border-[var(--state-overdue)] pl-2.5 text-[13px] text-[var(--state-overdue)]">
+            <div className="border-l-2 border-[var(--state-overdue)] pl-2.5 text-body text-[var(--state-overdue)]">
               <b>No reviewers are configured for this library</b> - this draft can never complete review as-is.
               Set reviewers in the library&apos;s review policy, or lower the review mode, then resubmit.
-              <a href="/admin/libraries" className="block mt-1 font-semibold underline">Open library settings →</a>
+              <a href="/admin/libraries" className="block mt-1 font-medium underline">Open library settings →</a>
             </div>
           ) : canManage && (
             <button
               onClick={() => void publish()}
               disabled={busy || !complete}
               title={complete ? "Publish the approved revision" : "Waiting on reviewer sign-off"}
-              className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] text-[13px] font-semibold shadow disabled:opacity-40 disabled:cursor-not-allowed"
+              className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] text-body font-medium shadow disabled:opacity-40 disabled:cursor-not-allowed"
             >
               {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ArrowUpFromLine className="w-3.5 h-3.5" />} Publish approved revision
             </button>
           )}
-          <div className="text-[13px] text-[var(--color-text-muted)]">The current Rev {doc.rev || "-"} stays the controlled copy until this draft is approved &amp; published.</div>
+          <div className="text-body text-[var(--color-text-muted)]">The current Rev {doc.rev || "-"} stays the controlled copy until this draft is approved &amp; published.</div>
         </>
       )}
 

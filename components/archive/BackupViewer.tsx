@@ -186,7 +186,7 @@ export default function BackupViewer({ target }: { target?: ArchiveTarget }) {
   return (
     <div className="space-y-4">
       {notice && (
-        <p className="rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] px-5 py-3 text-[13px] text-amber-800 dark:text-amber-300 leading-relaxed">{notice.message}</p>
+        <p className="rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] px-5 py-3 text-body text-amber-800 dark:text-amber-300 leading-relaxed">{notice.message}</p>
       )}
 
       {!zip ? (
@@ -203,20 +203,20 @@ export default function BackupViewer({ target }: { target?: ArchiveTarget }) {
                 <div className="inline-flex items-center gap-2 text-left">
                   <FileThumb file={picked} size={32} />
                   <span className="min-w-0">
-                    <span className="block text-[13px] font-bold text-[var(--color-text)] truncate max-w-[16rem]">{picked.name}</span>
-                    <span className="block text-[13px] text-[var(--color-text-muted)]">{formatBytes(picked.size)}</span>
+                    <span className="block text-body font-medium text-[var(--color-text)] truncate max-w-[16rem]">{picked.name}</span>
+                    <span className="block text-body text-[var(--color-text-muted)]">{formatBytes(picked.size)}</span>
                   </span>
                 </div>
               )}
               <div className="inline-flex items-center gap-2 text-sm text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin" /> Reading archive…</div>
             </div>
           ) : drag.over ? (
-            <div className="text-sm font-bold text-[var(--color-text)]">{drag.say}</div>
+            <div className="text-sm font-medium text-[var(--color-text)]">{drag.say}</div>
           ) : (
             <>
               <UploadCloud className="w-8 h-8 mx-auto text-[var(--color-text-faint)] mb-2" />
-              <div className="text-[14px] font-bold text-[var(--color-text)]">Drop the backup .zip here, or tap to choose</div>
-              <div className="text-[13px] text-[var(--color-text-muted)] mt-1 inline-flex items-center gap-1.5">
+              <div className="text-body font-medium text-[var(--color-text)]">Drop the backup .zip here, or tap to choose</div>
+              <div className="text-body text-[var(--color-text-muted)] mt-1 inline-flex items-center gap-1.5">
                 <ShieldCheck className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> Opened in your browser only. Never uploaded or saved again.
               </div>
             </>
@@ -229,7 +229,7 @@ export default function BackupViewer({ target }: { target?: ArchiveTarget }) {
             <div className="px-3 py-2 border-b border-[var(--color-border)] flex items-center gap-2">
               <Search className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" />
               <input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder={`Filter ${entries.length} files…`}
-                className="flex-1 bg-transparent text-[13px] text-[var(--color-text)] outline-none" />
+                className="flex-1 bg-transparent text-body text-[var(--color-text)] outline-none" />
               <button onClick={clearAll} title="Close archive (discards it)" aria-label="Close archive" className="p-1 rounded text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><X className="w-3.5 h-3.5" /></button>
             </div>
             <div className="overflow-y-auto divide-y divide-[var(--color-border)]">
@@ -241,11 +241,11 @@ export default function BackupViewer({ target }: { target?: ArchiveTarget }) {
                   <button key={e.path} onClick={() => void openEntry(zip, e.path, e.name)}
                     className={`w-full px-3 py-2 flex items-center gap-2 text-left transition-colors ${active ? "bg-[var(--color-surface-2)]" : "hover:bg-[var(--color-surface-2)]"}`}>
                     <Icon className="w-3.5 h-3.5 text-[var(--color-text-muted)] shrink-0" />
-                    <span className="text-[13px] text-[var(--color-text)] truncate flex-1" title={e.path}>{e.name}</span>
+                    <span className="text-body text-[var(--color-text)] truncate flex-1" title={e.path}>{e.name}</span>
                   </button>
                 );
               })}
-              {shown.length === 0 && <div className="px-3 py-4 text-[13px] text-[var(--color-text-muted)] text-center">No files match.</div>}
+              {shown.length === 0 && <div className="px-3 py-4 text-body text-[var(--color-text-muted)] text-center">No files match.</div>}
             </div>
           </div>
 
@@ -257,28 +257,28 @@ export default function BackupViewer({ target }: { target?: ArchiveTarget }) {
               <>
                 <div className="px-3 py-2 border-b border-[var(--color-border)] flex items-center gap-2">
                   <Eye className="w-3.5 h-3.5 text-[var(--color-text-muted)] shrink-0" />
-                  <span className="text-[13px] font-bold text-[var(--color-text)] truncate flex-1">{preview.name}</span>
+                  <span className="text-body font-medium text-[var(--color-text)] truncate flex-1">{preview.name}</span>
                   {verify?.status === "checking" && (
-                    <span className="inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-text-faint)]"><Loader2 className="w-3 h-3 animate-spin" /> verifying…</span>
+                    <span className="inline-flex items-center gap-1 text-caption font-medium text-[var(--color-text-faint)]"><Loader2 className="w-3 h-3 animate-spin" /> verifying…</span>
                   )}
                   {verify?.status === "verified" && (
-                    <span className="inline-flex items-center gap-1 text-[13px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded"
+                    <span className="inline-flex items-center gap-1 text-body font-medium text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded"
                       title={verify.source === "record" ? "SHA-256 matches the hash recorded on this revision at upload. These are the original bytes." : "SHA-256 matches the archive's own manifest."}>
                       <ShieldCheck className="w-3 h-3" /> {verify.source === "record" ? "Matches recorded hash" : "Matches manifest"}
                     </span>
                   )}
                   {verify?.status === "mismatch" && (
-                    <span className="inline-flex items-center gap-1 text-[13px] font-semibold text-red-700 bg-red-50 border border-red-300 px-1.5 py-0.5 rounded"
+                    <span className="inline-flex items-center gap-1 text-body font-medium text-red-700 bg-red-50 border border-red-300 px-1.5 py-0.5 rounded"
                       title="The bytes in this zip do NOT match the recorded SHA-256. The file was changed or this is the wrong archive. Do not rely on this copy.">
                       <ShieldAlert className="w-3 h-3" /> Hash mismatch
                     </span>
                   )}
                   {verify?.status === "none" && (
-                    <span className="inline-flex items-center gap-1 text-[13px] font-bold text-[var(--color-text-faint)]" title="No recorded hash to verify against (older archive or non-document file).">
+                    <span className="inline-flex items-center gap-1 text-body font-medium text-[var(--color-text-faint)]" title="No recorded hash to verify against (older archive or non-document file).">
                       <ShieldQuestion className="w-3 h-3" /> unverified
                     </span>
                   )}
-                  <a href={preview.url} download={preview.name} className="inline-flex items-center gap-1 text-[12px] font-bold text-[var(--color-text)] hover:underline"><Download className="w-3 h-3" /> Save a copy</a>
+                  <a href={preview.url} download={preview.name} className="inline-flex items-center gap-1 text-caption font-medium text-[var(--color-text)] hover:underline"><Download className="w-3 h-3" /> Save a copy</a>
                 </div>
                 <div className="flex-1 overflow-auto bg-[var(--color-surface-2)] grid place-items-center">
                   {preview.kind === "pdf" ? (
@@ -289,8 +289,8 @@ export default function BackupViewer({ target }: { target?: ArchiveTarget }) {
                   ) : (
                     <div className="text-center p-6">
                       <FileIcon className="w-10 h-10 mx-auto text-[var(--color-text-faint)] mb-2" />
-                      <div className="text-[13px] text-[var(--color-text-muted)] mb-3">This file type can&apos;t preview inline.</div>
-                      <a href={preview.url} download={preview.name} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)]"><Download className="w-3.5 h-3.5" /> Open / download</a>
+                      <div className="text-body text-[var(--color-text-muted)] mb-3">This file type can&apos;t preview inline.</div>
+                      <a href={preview.url} download={preview.name} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)]"><Download className="w-3.5 h-3.5" /> Open / download</a>
                     </div>
                   )}
                 </div>
@@ -308,7 +308,7 @@ export default function BackupViewer({ target }: { target?: ArchiveTarget }) {
       )}
 
       {error && (
-        <p role="alert" className="mt-4 border-l-2 border-red-500 pl-3 text-[13px] text-red-700 dark:text-red-400 flex items-start gap-2">
+        <p role="alert" className="mt-4 border-l-2 border-red-500 pl-3 text-body text-red-700 dark:text-red-400 flex items-start gap-2">
           <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> {error}
         </p>
       )}

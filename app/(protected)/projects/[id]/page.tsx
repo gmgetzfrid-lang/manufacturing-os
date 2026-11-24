@@ -467,9 +467,9 @@ export default function ProjectDetailPage() {
         title={error === "Project not found" || !error ? "Project not found." : "Couldn't open the project."} />
       <PageBody>
         {error === "Project not found" || !error ? (
-          <p className="text-[15px] text-[var(--color-text)]">
+          <p className="text-reading text-[var(--color-text)]">
             It may have been deleted, or you&apos;re not on it.{" "}
-            <Link href="/projects" className="font-semibold text-[var(--color-accent-text)] hover:underline underline-offset-2">All projects</Link>
+            <Link href="/projects" className="font-medium text-[var(--color-accent-text)] hover:underline underline-offset-2">All projects</Link>
           </p>
         ) : (
           <ErrorNote title="Couldn't load the project." next={error} onRetry={() => void refresh()} />
@@ -550,7 +550,7 @@ export default function ProjectDetailPage() {
     const ph = phases.find((p) => p.id === s.id);
     const late = lateWords(s.lateHours);
     const bad = (s.state === "finished" && (s.lateHours ?? 0) >= 0.5) || (s.state === "running" && s.standing === "behind");
-    const red = "font-semibold text-[var(--state-overdue-text)]";
+    const red = "font-medium text-[var(--state-overdue-text)]";
     // Two short lines: the dates, then where it stands (when it finished
     // and how late, in one line; the exact time is in its tooltip).
     const day = (iso: string) => fmtInTz(Date.parse(iso), tz, { month: "short", day: "numeric" });
@@ -682,11 +682,11 @@ export default function ProjectDetailPage() {
         back={{ onClick: goBack, label: "Back to projects" }}
         kicker={<span className="flex items-center gap-3 min-w-0" title={project.name}>
           <span className="truncate">{project.name}</span>
-          <span className="shrink-0 inline-flex items-center gap-1.5 text-[13px] font-semibold text-[var(--color-text)]">
+          <span className="shrink-0 inline-flex items-center gap-1.5 text-body font-medium text-[var(--color-text)]">
             <span aria-hidden className="w-2 h-2 rounded-full" style={{ background: project.status === "paused" ? "var(--state-held)" : project.status === "completed" ? "var(--state-released)" : project.status === "active" ? "var(--color-text-faint)" : "var(--color-border-strong)" }} />
             {statusWord}
           </span>
-          {project.visibility === "private" && <span className="shrink-0 max-sm:hidden inline-flex items-center gap-1 text-[13px]"><Lock className="w-3 h-3" /> Private</span>}
+          {project.visibility === "private" && <span className="shrink-0 max-sm:hidden inline-flex items-center gap-1 text-body"><Lock className="w-3 h-3" /> Private</span>}
         </span>}
         title={answer}
         sub={sub}
@@ -748,7 +748,7 @@ export default function ProjectDetailPage() {
             <span aria-hidden className="shrink-0 self-center w-px h-5 bg-[var(--color-border-strong)]" />
             {RECORD_TABS.map((t) => (
               <TabButton key={t.id} active={tab === t.id} onClick={() => switchTab(t.id)}>
-                {t.label}{t.id === "documents" && checkouts.length > 0 && <span className="text-[13px] font-normal tabular-nums text-[var(--color-text-muted)]">{checkouts.length}</span>}
+                {t.label}{t.id === "documents" && checkouts.length > 0 && <span className="text-body font-normal tabular-nums text-[var(--color-text-muted)]">{checkouts.length}</span>}
               </TabButton>
             ))}
             {MORE_TABS.filter((t) => t.id === tab).map((t) => (
@@ -756,7 +756,7 @@ export default function ProjectDetailPage() {
             ))}
           </TabStrip>
           <span className="shrink-0 self-center ml-3 sm:ml-5">
-            <MoreMenu label="More" triggerClass="inline-flex items-center justify-center gap-1 h-10 pointer-coarse:h-11 px-2 -mx-2 rounded-lg text-[15px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
+            <MoreMenu label="More" triggerClass="inline-flex items-center justify-center gap-1 h-10 pointer-coarse:h-11 px-2 -mx-2 rounded-lg text-reading font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
               items={MORE_TABS.map((t) => ({ icon: <t.icon className="w-4 h-4" />, label: t.label, current: tab === t.id, onClick: () => switchTab(t.id) }))} />
           </span>
           <div className="ml-auto pl-2 self-center shrink-0 max-sm:hidden">
@@ -881,8 +881,8 @@ export default function ProjectDetailPage() {
         )}
         {tab === "intake" && !canManage && (
           <Card label="Intake">
-            <p className="text-[15px] text-[var(--color-text)]">The project owner and Document Control run intake.</p>
-            <p className="text-[13px] text-[var(--color-text-muted)] mt-1">Approved contractor revisions show up under Documents.</p>
+            <p className="text-reading text-[var(--color-text)]">The project owner and Document Control run intake.</p>
+            <p className="text-body text-[var(--color-text-muted)] mt-1">Approved contractor revisions show up under Documents.</p>
           </Card>
         )}
         {tab === "intake" && canManage && project.id && project.orgId && uid && (
@@ -985,7 +985,7 @@ export default function ProjectDetailPage() {
                 className="absolute top-3 right-3 p-1.5 rounded-lg text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
                 <X className="w-4 h-4" />
               </button>
-              <h2 className="font-display text-[20px] font-semibold text-[var(--color-text)]">
+              <h2 className="font-display text-section font-semibold text-[var(--color-text)]">
                 {pendingStatus === "cancelled" ? "Cancel project" :
                  pendingStatus === "completed" ? "Mark project complete" :
                  pendingStatus === "archived" ? "Archive project" :
@@ -993,7 +993,7 @@ export default function ProjectDetailPage() {
                  canReopen(project.status) ? "Reopen project" :
                  "Resume project"}
               </h2>
-              <div className="text-[14px] text-[var(--color-text-muted)] mt-1">
+              <div className="text-body text-[var(--color-text-muted)] mt-1">
                 {pendingStatus === "cancelled" || pendingStatus === "completed" || pendingStatus === "archived"
                   ? "Every active checkout on this project will be released."
                   : pendingStatus === "active" && canReopen(project.status)
@@ -1010,7 +1010,7 @@ export default function ProjectDetailPage() {
             {pendingStatus === "completed" && !gates && (
               <div className="px-6 pt-4">
                 {gatesFailed
-                  ? <p className="text-[14px] font-semibold text-[var(--state-held-text)]">Couldn&apos;t check what&apos;s still open. You can still complete it.</p>
+                  ? <p className="text-body font-medium text-[var(--state-held-text)]">Couldn&apos;t check what&apos;s still open. You can still complete it.</p>
                   : <SkeletonText lines={3} />}
               </div>
             )}
@@ -1028,17 +1028,17 @@ export default function ProjectDetailPage() {
               const failed = gateLines.filter((g) => !g.ok).length;
               return (
                 <div className="px-6 pt-4">
-                  <h3 className="text-[14px] font-semibold text-[var(--color-text)] mb-1">Left to close</h3>
+                  <h3 className="text-body font-medium text-[var(--color-text)] mb-1">Left to close</h3>
                   <ul className="divide-y divide-[var(--color-border)] border-y border-[var(--color-border)]">
                     {gateLines.map((g, i) => (
-                      <li key={i} className="flex items-center gap-2.5 py-2 text-[14px] text-[var(--color-text)]">
+                      <li key={i} className="flex items-center gap-2.5 py-2 text-body text-[var(--color-text)]">
                         <span aria-label={g.ok ? "Clear" : "Open"} className="w-[7px] h-[7px] rounded-full shrink-0" style={{ background: g.ok ? "var(--state-released)" : "var(--state-held)" }} />
                         {g.text}
                       </li>
                     ))}
                   </ul>
                   {failed > 0 && (
-                    <p className="mt-2 text-[13px] text-[var(--color-text-muted)]">
+                    <p className="mt-2 text-body text-[var(--color-text-muted)]">
                       You can complete anyway. The open items stay on the record and in the report.
                     </p>
                   )}
@@ -1156,7 +1156,7 @@ function TabButton({ active, onClick, children }: { active: boolean; onClick: ()
       type="button"
       onClick={onClick}
       aria-current={active ? "page" : undefined}
-      className={`shrink-0 h-11 text-[15px] font-semibold inline-flex items-center gap-1.5 border-b-2 whitespace-nowrap transition-colors ${
+      className={`shrink-0 h-11 text-reading font-semibold inline-flex items-center gap-1.5 border-b-2 whitespace-nowrap transition-colors ${
         active ? "border-[var(--color-current)] text-[var(--color-text)]" : "border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-border-strong)]"
       }`}
     >
@@ -1169,8 +1169,8 @@ function DocumentsTab({ checkouts }: { checkouts: CheckoutWithDoc[] }) {
   if (checkouts.length === 0) {
     return (
       <Card label="Checked out to this project">
-        <p className="text-[15px] text-[var(--color-text-muted)]">Nothing checked out to this project. Check a document out from its library.{" "}
-          <Link href="/documents" className="font-semibold text-[var(--color-accent-text)] hover:underline underline-offset-2">Open Documents</Link>
+        <p className="text-reading text-[var(--color-text-muted)]">Nothing checked out to this project. Check a document out from its library.{" "}
+          <Link href="/documents" className="font-medium text-[var(--color-accent-text)] hover:underline underline-offset-2">Open Documents</Link>
         </p>
       </Card>
     );
@@ -1180,12 +1180,12 @@ function DocumentsTab({ checkouts }: { checkouts: CheckoutWithDoc[] }) {
   return (
     <>
       {active.length > 0 && (
-        <Card label={<>Checked out now <span className="ml-1 text-[15px] font-normal tabular-nums text-[var(--color-text-muted)]">{active.length}</span></>} pad={false} className="overflow-hidden">
+        <Card label={<>Checked out now <span className="ml-1 text-reading font-normal tabular-nums text-[var(--color-text-muted)]">{active.length}</span></>} pad={false} className="overflow-hidden">
           <CheckoutTable rows={active} />
         </Card>
       )}
       {released.length > 0 && (
-        <Card label={<>Checked out before <span className="ml-1 text-[15px] font-normal tabular-nums text-[var(--color-text-muted)]">{released.length}</span></>} pad={false} className="overflow-hidden">
+        <Card label={<>Checked out before <span className="ml-1 text-reading font-normal tabular-nums text-[var(--color-text-muted)]">{released.length}</span></>} pad={false} className="overflow-hidden">
           <CheckoutTable rows={released} historical />
         </Card>
       )}
@@ -1197,14 +1197,14 @@ function DocumentsTab({ checkouts }: { checkouts: CheckoutWithDoc[] }) {
 function CheckoutTable({ rows, historical }: { rows: CheckoutWithDoc[]; historical?: boolean }) {
   const router = useRouter();
   return (
-    <table className="w-full text-[14px]">
-      <thead className="max-sm:hidden bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text-muted)] text-left">
+    <table className="w-full text-body">
+      <thead className="max-sm:hidden bg-[var(--color-surface-2)] text-body text-[var(--color-text-muted)] text-left">
         <tr className="border-b border-[var(--color-border)]">
-          <th scope="col" className="font-semibold px-4 h-10">Document</th>
-          <th scope="col" className="font-semibold px-4 hidden lg:table-cell">Library</th>
-          <th scope="col" className="font-semibold px-4">Who</th>
-          <th scope="col" className="font-semibold px-4 hidden md:table-cell">Mode</th>
-          <th scope="col" className="font-semibold px-4 whitespace-nowrap">{historical ? "Released" : "Since"}</th>
+          <th scope="col" className="font-medium px-4 h-10">Document</th>
+          <th scope="col" className="font-medium px-4 hidden lg:table-cell">Library</th>
+          <th scope="col" className="font-medium px-4">Who</th>
+          <th scope="col" className="font-medium px-4 hidden md:table-cell">Mode</th>
+          <th scope="col" className="font-medium px-4 whitespace-nowrap">{historical ? "Released" : "Since"}</th>
         </tr>
       </thead>
       <tbody className="divide-y divide-[var(--color-border)]">
@@ -1216,16 +1216,16 @@ function CheckoutTable({ rows, historical }: { rows: CheckoutWithDoc[]; historic
               onClick={(e) => { if (!(e.target as HTMLElement).closest("a, button")) router.push(href); }}>
               <td className="sm:px-4 sm:py-3 max-sm:basis-full min-w-0">
                 {c.docNumber ? <CopyId value={c.docNumber} label="document number" /> : null}
-                <Link href={href} className={`block line-clamp-1 hover:text-[var(--color-accent-text)] hover:underline underline-offset-2 ${c.docNumber ? "text-[13px] text-[var(--color-text-muted)]" : "font-semibold text-[var(--color-text)]"}`}>{c.docTitle || c.docNumber || "Open the document"}</Link>
-                {note && <div className="text-[13px] text-[var(--color-text-muted)] line-clamp-1 md:hidden">{note}</div>}
+                <Link href={href} className={`block line-clamp-1 hover:text-[var(--color-accent-text)] hover:underline underline-offset-2 ${c.docNumber ? "text-body text-[var(--color-text-muted)]" : "font-medium text-[var(--color-text)]"}`}>{c.docTitle || c.docNumber || "Open the document"}</Link>
+                {note && <div className="text-body text-[var(--color-text-muted)] line-clamp-1 md:hidden">{note}</div>}
               </td>
               <td className="px-4 py-3 hidden lg:table-cell">{c.libraryName ? <Link href={`/documents/${c.libraryId}`} className="text-[var(--color-text)] hover:text-[var(--color-accent-text)] hover:underline underline-offset-2">{c.libraryName}</Link> : null}</td>
-              <td className="sm:px-4 sm:py-3 text-[14px] text-[var(--color-text)] max-sm:text-[13px] max-sm:text-[var(--color-text-muted)]">
+              <td className="sm:px-4 sm:py-3 text-body text-[var(--color-text)] max-sm:text-body max-sm:text-[var(--color-text-muted)]">
                 {c.userName || "-"}
-                {note && <div className="max-md:hidden text-[13px] text-[var(--color-text-muted)] line-clamp-1">{note}</div>}
+                {note && <div className="max-md:hidden text-body text-[var(--color-text-muted)] line-clamp-1">{note}</div>}
               </td>
               <td className="px-4 py-3 hidden md:table-cell text-[var(--color-text-muted)]">{(() => { const w = String(c.mode ?? "").replace(/_/g, " "); return w ? w[0].toUpperCase() + w.slice(1) : null; })()}</td>
-              <td className="sm:px-4 sm:py-3 text-[14px] text-[var(--color-text-muted)] whitespace-nowrap max-sm:text-[13px]">{formatRelative(historical ? (c.releasedAt ?? c.endedAt) : c.startedAt)}</td>
+              <td className="sm:px-4 sm:py-3 text-body text-[var(--color-text-muted)] whitespace-nowrap max-sm:text-body">{formatRelative(historical ? (c.releasedAt ?? c.endedAt) : c.startedAt)}</td>
             </tr>
           );
         })}
@@ -1271,9 +1271,9 @@ function ActivityTab({
         </Card>
       )}
 
-      <Card label={timeline.length ? <>Activity <span className="ml-1 text-[15px] font-normal tabular-nums text-[var(--color-text-muted)]">{timeline.length}</span></> : "Activity"}>
+      <Card label={timeline.length ? <>Activity <span className="ml-1 text-reading font-normal tabular-nums text-[var(--color-text-muted)]">{timeline.length}</span></> : "Activity"}>
         {/* Empty: one plain line on the sheet, not a box inside it. */}
-        {timeline.length === 0 ? <p className="text-[15px] text-[var(--color-text-muted)]">No activity yet. Comments, checkouts and revisions show up here.</p> : <TimelineFeed
+        {timeline.length === 0 ? <p className="text-reading text-[var(--color-text-muted)]">No activity yet. Comments, checkouts and revisions show up here.</p> : <TimelineFeed
           events={timeline.slice(0, shown)}
           showScope={false}
           emptyMessage="No activity yet. Comments, checkouts and revisions show up here."
@@ -1411,26 +1411,26 @@ function MembersTab({
           onDone={(note) => { setTransferTo(undefined); setTransferNote(note ?? "Ownership transferred."); onAdded(); }} />
       )}
 
-      <Card label={<>Members <span className="ml-1 text-[15px] font-normal tabular-nums text-[var(--color-text-muted)]">{members.length}</span></>} pad={false} className="overflow-hidden"
+      <Card label={<>Members <span className="ml-1 text-reading font-normal tabular-nums text-[var(--color-text-muted)]">{members.length}</span></>} pad={false} className="overflow-hidden"
         action={canTransfer ? (
           <span className="flex items-center gap-3">
-            {transferNote && <span role="status" className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-[var(--color-text)]"><span aria-hidden className="w-[7px] h-[7px] rounded-full bg-[var(--state-released)]" />{transferNote}</span>}
+            {transferNote && <span role="status" className="inline-flex items-center gap-1.5 text-body font-medium text-[var(--color-text)]"><span aria-hidden className="w-[7px] h-[7px] rounded-full bg-[var(--state-released)]" />{transferNote}</span>}
             <button type="button" onClick={() => setTransferTo(null)} title="Hand the project to someone else and choose what you become" className={heroQuiet}>
               Transfer ownership
             </button>
           </span>
         ) : undefined}>
         {members.length === 0 ? (
-          <p className="px-4 sm:px-5 py-4 text-[15px] text-[var(--color-text-muted)]">
+          <p className="px-4 sm:px-5 py-4 text-reading text-[var(--color-text-muted)]">
             Only the owner{project.ownerUserName ? ` (${project.ownerUserName})` : ""} so far.{canManage ? " Add people below to let them edit or view it." : ""}
           </p>
         ) : (
-        <table className="w-full text-[14px]">
-          <thead className="max-sm:hidden bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text-muted)] text-left">
+        <table className="w-full text-body">
+          <thead className="max-sm:hidden bg-[var(--color-surface-2)] text-body text-[var(--color-text-muted)] text-left">
             <tr className="border-b border-[var(--color-border)]">
-              <th scope="col" className="font-semibold px-4 h-10">Member</th>
-              <th scope="col" className="font-semibold px-4 w-[170px]">Permission</th>
-              <th scope="col" className="font-semibold px-4 hidden md:table-cell">Responsible for</th>
+              <th scope="col" className="font-medium px-4 h-10">Member</th>
+              <th scope="col" className="font-medium px-4 w-[170px]">Permission</th>
+              <th scope="col" className="font-medium px-4 hidden md:table-cell">Responsible for</th>
               <th scope="col" className="px-4 w-[1%]"><span className="sr-only">Actions</span></th>
             </tr>
           </thead>
@@ -1447,16 +1447,16 @@ function MembersTab({
                       onChange={(e) => setEditingResp((p) => ({ ...p, [m.userId]: e.target.value }))}
                       onKeyDown={(e) => { if (e.key === "Enter") void saveResp(m); if (e.key === "Escape") setEditingResp((p) => { const n = { ...p }; delete n[m.userId]; return n; }); }}
                       placeholder="e.g. Exchanger bundles, nights"
-                      className={`${fieldCls} flex-1 min-w-0 !h-9 pointer-coarse:!h-11 text-[14px] max-sm:text-[16px]`} />
+                      className={`${fieldCls} flex-1 min-w-0 !h-9 pointer-coarse:!h-11 text-body max-sm:text-reading`} />
                     <Button size="sm" variant="secondary" onClick={() => void saveResp(m)}>Save</Button>
                   </div>
                 ) : (
                   <button type="button" onClick={() => setEditingResp((p) => ({ ...p, [m.userId]: m.responsibility ?? "" }))}
-                    className="text-left text-[14px] text-[var(--color-text)] hover:text-[var(--color-accent-text)]">
+                    className="text-left text-body text-[var(--color-text)] hover:text-[var(--color-accent-text)]">
                     {m.responsibility ? m.responsibility : <span className="text-[var(--color-accent-text)] hover:underline underline-offset-2">Add what they&apos;re responsible for</span>}
                   </button>
                 )
-              ) : m.responsibility ? <span className="text-[14px] text-[var(--color-text)]">{m.responsibility}</span> : null;
+              ) : m.responsibility ? <span className="text-body text-[var(--color-text)]">{m.responsibility}</span> : null;
               // Their row's rare actions, in one menu.
               const rowMenu = [
                 ...(canTransfer && !isOwner ? [{ icon: <ShieldCheck className="w-4 h-4" />, label: "Make owner", onClick: () => setTransferTo(m.userId) }] : []),
@@ -1472,10 +1472,10 @@ function MembersTab({
                 <tr key={m.id} className="group align-top max-sm:flex max-sm:flex-wrap max-sm:items-center max-sm:gap-x-3 max-sm:px-4 max-sm:py-3">
                   <td className="sm:px-4 sm:py-3 max-sm:flex-1 max-sm:min-w-0">
                     <div className="flex items-center gap-3 min-w-0">
-                      <span aria-hidden className="w-8 h-8 shrink-0 rounded-full grid place-items-center bg-[var(--color-surface-2)] border border-[var(--color-border)] font-display text-[12px] font-semibold text-[var(--color-text-muted)]">{initials(who)}</span>
+                      <span aria-hidden className="w-8 h-8 shrink-0 rounded-full grid place-items-center bg-[var(--color-surface-2)] border border-[var(--color-border)] font-display text-caption font-semibold text-[var(--color-text-muted)]">{initials(who)}</span>
                       <div className="min-w-0">
-                        <div className="font-semibold text-[var(--color-text)] truncate">{who}</div>
-                        {m.userEmail && m.userEmail !== who && <div className="text-[13px] text-[var(--color-text-muted)] truncate">{m.userEmail}</div>}
+                        <div className="font-medium text-[var(--color-text)] truncate">{who}</div>
+                        {m.userEmail && m.userEmail !== who && <div className="text-body text-[var(--color-text-muted)] truncate">{m.userEmail}</div>}
                       </div>
                     </div>
                   </td>
@@ -1483,11 +1483,11 @@ function MembersTab({
                     {canManage && !isOwner ? (
                       <select value={m.role} disabled={roleBusy === m.userId} onChange={(e) => void setRole(m, e.target.value as ProjectMemberRole)}
                         aria-label={`Permission for ${who}`} title={MEMBER_ROLES.find((r) => r.role === m.role)?.help}
-                        className="h-9 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-control)] bg-[var(--color-surface)] px-2 text-[14px] max-sm:text-[16px] text-[var(--color-text)] disabled:opacity-60">
+                        className="h-9 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-control)] bg-[var(--color-surface)] px-2 text-body max-sm:text-reading text-[var(--color-text)] disabled:opacity-60">
                         {MEMBER_ROLES.map((r) => <option key={r.role} value={r.role}>{r.label}</option>)}
                       </select>
                     ) : (
-                      <span className="inline-flex h-9 items-center text-[14px] text-[var(--color-text)]">{roleLabel(isOwner ? "owner" : m.role)}</span>
+                      <span className="inline-flex h-9 items-center text-body text-[var(--color-text)]">{roleLabel(isOwner ? "owner" : m.role)}</span>
                     )}
                   </td>
                   <td className="hidden max-sm:block max-sm:order-3 max-sm:basis-full max-sm:pt-1.5 md:table-cell md:px-4 md:py-3">{resp}</td>

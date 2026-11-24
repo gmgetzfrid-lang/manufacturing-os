@@ -158,7 +158,7 @@ export default function KnowledgeIndexIndicator() {
         <button
           onClick={() => setMinimized(false)}
           title={working ? `Indexing ${state.docName} - click to expand` : state.heldBack ? `${state.heldBack} couldn't finish - click to expand` : "Indexing caught up - click to expand"}
-          className="pointer-events-auto inline-flex items-center gap-1.5 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] shadow-lg px-3 py-1.5 text-[11px] font-black text-[var(--color-text)] hover:shadow-xl transition-shadow"
+          className="pointer-events-auto inline-flex items-center gap-1.5 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] shadow-lg px-3 py-1.5 text-caption font-semibold text-[var(--color-text)] hover:shadow-xl transition-shadow"
         >
           {working
             ? <><Loader2 className="w-3.5 h-3.5 animate-spin text-[var(--color-text-muted)]" /> Indexing {pctLabel}</>
@@ -175,7 +175,7 @@ export default function KnowledgeIndexIndicator() {
         {working
           ? <BookOpenText className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
           : <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />}
-        <span className="text-xs font-black text-[var(--color-text)] flex-1 truncate">
+        <span className="text-xs font-semibold text-[var(--color-text)] flex-1 truncate">
           {working ? "Indexing knowledge in the background" : state.heldBack ? "Knowledge indexing paused for some files" : "Knowledge indexing caught up"}
         </span>
         <button onClick={() => setMinimized(true)} className="p-1 rounded hover:bg-[var(--color-surface-2)] shrink-0" title="Minimize - indexing keeps running">
@@ -191,7 +191,7 @@ export default function KnowledgeIndexIndicator() {
       </div>
       {working ? (
         <div className="mt-1.5 space-y-1">
-          <div className="text-[11px] text-[var(--color-text-muted)] truncate" title={state.docName}>
+          <div className="text-caption text-[var(--color-text-muted)] truncate" title={state.docName}>
             {state.docName}
             {state.total ? ` - page ${state.indexed} of ${state.total}` : ""}
             {state.queued > 0 ? ` · ${state.queued} more queued` : ""}
@@ -205,22 +205,22 @@ export default function KnowledgeIndexIndicator() {
             </div>
           )}
           {state.visionPages > 0 && (
-            <div className="text-[11px] text-[var(--color-text)] flex items-center gap-1">
+            <div className="text-caption text-[var(--color-text)] flex items-center gap-1">
               <Eye className="w-3 h-3" /> {state.visionPages} page{state.visionPages === 1 ? "" : "s"} read by AI vision
             </div>
           )}
           {state.visionSkipReason && (
-            <div className="text-[11px] text-amber-700">{state.visionSkipReason}</div>
+            <div className="text-caption text-amber-700">{state.visionSkipReason}</div>
           )}
           {state.waiting && (
-            <div role="status" className="text-[11px] text-amber-700 dark:text-amber-300">{state.waiting}</div>
+            <div role="status" className="text-caption text-amber-700 dark:text-amber-300">{state.waiting}</div>
           )}
-          <div className="text-[11px] text-[var(--color-text-faint)]">
+          <div className="text-caption text-[var(--color-text-faint)]">
             Keeps going anywhere in the app - only closing the tab pauses it.
           </div>
         </div>
       ) : (
-        <div className="mt-1 text-[11px] text-[var(--color-text-muted)]">
+        <div className="mt-1 text-caption text-[var(--color-text-muted)]">
           {state.finished} document{state.finished === 1 ? "" : "s"} indexed.
           {state.heldBack > 0 && (
             <span className="block text-amber-700 dark:text-amber-300">

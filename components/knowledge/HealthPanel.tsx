@@ -182,9 +182,9 @@ export default function HealthPanel({ orgId, libraryId, isController, onRepaired
   if (!report) {
     return (
       <Section label="Library health" action={error ? actions(false) : undefined}>
-        <div className={`${sheet} px-4 py-4 text-[14px]`}>
+        <div className={`${sheet} px-4 py-4 text-body`}>
           {error
-            ? <p role="alert" className="text-[var(--state-overdue)]"><span className="font-semibold">Couldn&apos;t check the library.</span> <span className="text-[var(--color-text-muted)]">{error}</span></p>
+            ? <p role="alert" className="text-[var(--state-overdue)]"><span className="font-medium">Couldn&apos;t check the library.</span> <span className="text-[var(--color-text-muted)]">{error}</span></p>
             : <div><p className="sr-only">Checking that every linked document is accounted for</p><SkeletonText lines={2} /></div>}
         </div>
       </Section>
@@ -226,8 +226,8 @@ export default function HealthPanel({ orgId, libraryId, isController, onRepaired
         {/* The answer in four numbers. */}
         <Cells cells={[
           L
-            ? { label: "Indexed", value: <>{L.counts.indexed.toLocaleString()}<span className="text-[var(--color-text-muted)] font-medium text-[18px]"> of {L.indexable.toLocaleString()}</span></> }
-            : { label: "PDFs indexed", value: <>{report.uploaded.ready.toLocaleString()}<span className="text-[var(--color-text-muted)] font-medium text-[18px]"> of {report.uploaded.total.toLocaleString()}</span></> },
+            ? { label: "Indexed", value: <>{L.counts.indexed.toLocaleString()}<span className="text-[var(--color-text-muted)] font-medium text-section"> of {L.indexable.toLocaleString()}</span></> }
+            : { label: "PDFs indexed", value: <>{report.uploaded.ready.toLocaleString()}<span className="text-[var(--color-text-muted)] font-medium text-section"> of {report.uploaded.total.toLocaleString()}</span></> },
           ...(L ? [{ label: report.sources.length === 1 ? "In the linked source" : "In the linked sources", value: L.total.toLocaleString() }] : []),
           { label: "To repair", value: fixable.toLocaleString(), tone: fixable > 0 ? "warn" as const : undefined },
           { label: "Can't be indexed", value: notIndexable.toLocaleString(), hint: "Not PDFs, held back or superseded. Expected." },
@@ -237,7 +237,7 @@ export default function HealthPanel({ orgId, libraryId, isController, onRepaired
         {L && L.total > 0 && (
           <div className="px-4 sm:px-5 pb-4">
             <Bar segments={ORDER.filter((k) => L.counts[k] > 0).map((k) => ({ key: k, value: L.counts[k], color: SWATCH[k], title: `${STATUS_LABEL[k]}: ${L.counts[k].toLocaleString()}` }))} total={L.total} />
-            <p className="mt-1.5 text-[13px] text-[var(--color-text-muted)]">
+            <p className="mt-1.5 text-body text-[var(--color-text-muted)]">
               {allGood
                 ? (inFlight > 0 ? `${inFlight.toLocaleString()} still being read. Everything is accounted for.` : "Every linked document is accounted for.")
                 : fixable > 0 ? "Repair fixes them without paying again for work already done."
@@ -296,7 +296,7 @@ export default function HealthPanel({ orgId, libraryId, isController, onRepaired
             )}
             {N && namesOpen && (
               <div className={`${tbl.wrap} max-h-72 overflow-auto`}>
-                <table className="w-full text-[14px]">
+                <table className="w-full text-body">
                   <thead className={`${tbl.thead} sticky top-0`}>
                     <tr><th className={tbl.th}>File</th><th className={tbl.th}>Now</th><th className={tbl.th}>Corrected to</th></tr>
                   </thead>
@@ -305,12 +305,12 @@ export default function HealthPanel({ orgId, libraryId, isController, onRepaired
                       <tr key={f.id}>
                         <td className="px-4 py-2 max-w-0 w-1/2">
                           <div className="truncate" title={f.fileName}>{f.fileName}</div>
-                          {f.clash && <div className="text-[13px] text-[var(--state-held)]">Needs you: {f.clash}</div>}
+                          {f.clash && <div className="text-body text-[var(--state-held)]">Needs you: {f.clash}</div>}
                         </td>
                         <td className="px-4 py-2 font-display tabular-nums text-[var(--color-text-muted)] whitespace-nowrap"><s>{f.from.documentNumber || "-"}{f.from.rev !== f.to.rev ? ` rev ${f.from.rev}` : ""}</s></td>
                         <td className="px-4 py-2 font-display tabular-nums font-semibold whitespace-nowrap">
                           {f.to.documentNumber}{f.from.rev !== f.to.rev ? ` rev ${f.to.rev}` : ""}
-                          {f.kind === "sheet-suffix" && f.sheet ? <span className="font-sans font-normal text-[13px] text-[var(--color-text-muted)]">, sheet {String(f.sheet).replace(/^0+(?=\d)/, "")}</span> : null}
+                          {f.kind === "sheet-suffix" && f.sheet ? <span className="font-sans font-normal text-body text-[var(--color-text-muted)]">, sheet {String(f.sheet).replace(/^0+(?=\d)/, "")}</span> : null}
                         </td>
                       </tr>
                     ))}
@@ -328,7 +328,7 @@ export default function HealthPanel({ orgId, libraryId, isController, onRepaired
                 ].filter(Boolean).join(" ") || "The index now cites them by their real numbers."}
                 {nameResult.conflicts.length > 0 && (
                   <>
-                    <span className="block mt-1 font-semibold">{nameResult.conflicts.length} need your decision: the right number is already in use.</span>
+                    <span className="block mt-1 font-medium">{nameResult.conflicts.length} need your decision: the right number is already in use.</span>
                     <ul className="mt-0.5 max-h-32 overflow-auto">
                       {nameResult.conflicts.slice(0, 100).map((c) => <li key={c.id} className="truncate">{c.fileName}: wants {c.wanted}{c.clashesWith ? `, used by ${c.clashesWith}` : ""}</li>)}
                     </ul>
@@ -339,8 +339,8 @@ export default function HealthPanel({ orgId, libraryId, isController, onRepaired
           </div>
         )}
 
-        <div className="border-t border-[var(--color-border)] px-4 sm:px-5 h-11 flex items-center gap-3 text-[13px] text-[var(--color-text-muted)]">
-          <button type="button" onClick={() => setExpanded(!expanded)} aria-expanded={expanded} className={`${link} inline-flex items-center gap-1 text-[14px]`}>
+        <div className="border-t border-[var(--color-border)] px-4 sm:px-5 h-11 flex items-center gap-3 text-body text-[var(--color-text-muted)]">
+          <button type="button" onClick={() => setExpanded(!expanded)} aria-expanded={expanded} className={`${link} inline-flex items-center gap-1 text-body`}>
             <ChevronRight className={`w-4 h-4 ui-chevron${(expanded) ? " rotate-90" : ""}`} /> {expanded ? "Hide the details" : "Every status, in detail"}
           </button>
           <span className="flex-1" />
@@ -350,7 +350,7 @@ export default function HealthPanel({ orgId, libraryId, isController, onRepaired
         {expanded && (
           <div className="border-t border-[var(--color-border)]">
             {L && (
-              <table className="w-full text-[14px]">
+              <table className="w-full text-body">
                 <thead className={tbl.thead}>
                   <tr>
                     <th className={tbl.th}>Status</th>
@@ -370,28 +370,28 @@ export default function HealthPanel({ orgId, libraryId, isController, onRepaired
                             <span className="inline-flex items-center gap-2.5">
                               <span aria-hidden className="w-3 h-3 rounded-sm shrink-0" style={{ background: SWATCH[k] }} />
                               {items.length > 0 ? (
-                                <button type="button" aria-expanded={isOpen} onClick={(e) => { e.stopPropagation(); setOpen(isOpen ? null : k); }} className="inline-flex items-center gap-1 font-semibold text-[var(--color-text)] hover:text-[var(--color-accent-text)]">
+                                <button type="button" aria-expanded={isOpen} onClick={(e) => { e.stopPropagation(); setOpen(isOpen ? null : k); }} className="inline-flex items-center gap-1 font-medium text-[var(--color-text)] hover:text-[var(--color-accent-text)]">
                                   {STATUS_LABEL[k]} <ChevronRight className={`w-3.5 h-3.5 ui-chevron${(isOpen) ? " rotate-90" : ""}`} />
                                 </button>
-                              ) : <span className="font-semibold text-[var(--color-text)]">{STATUS_LABEL[k]}</span>}
+                              ) : <span className="font-medium text-[var(--color-text)]">{STATUS_LABEL[k]}</span>}
                             </span>
                           </td>
-                          <td className={`px-4 py-2.5 text-right font-display text-[16px] font-semibold tabular-nums ${FIXABLE.has(k) && n > 0 ? (k === "failed" || k === "missing" ? "text-[var(--state-overdue)]" : "text-[var(--state-held)]") : "text-[var(--color-text)]"}`}>{n.toLocaleString()}</td>
+                          <td className={`px-4 py-2.5 text-right font-display text-reading font-semibold tabular-nums ${FIXABLE.has(k) && n > 0 ? (k === "failed" || k === "missing" ? "text-[var(--state-overdue)]" : "text-[var(--state-held)]") : "text-[var(--color-text)]"}`}>{n.toLocaleString()}</td>
                           <td className="px-4 py-2.5 max-md:hidden text-[var(--color-text-muted)]">{EXPLAIN[k]}</td>
                         </tr>
                         {isOpen && (
                           <tr>
                             <td colSpan={3} className="px-4 pb-3 pt-0">
-                              <p className="md:hidden mb-1.5 text-[13px] text-[var(--color-text-muted)]">{EXPLAIN[k]}</p>
+                              <p className="md:hidden mb-1.5 text-body text-[var(--color-text-muted)]">{EXPLAIN[k]}</p>
                               <ul className="max-h-56 overflow-auto rounded-md border border-[var(--color-border)] divide-y divide-[var(--color-border)] bg-[var(--color-surface)]">
                                 {items.map((it) => (
-                                  <li key={it.id} className="px-3 py-1.5 flex items-center gap-3 text-[14px]">
+                                  <li key={it.id} className="px-3 py-1.5 flex items-center gap-3 text-body">
                                     <span className="font-display tabular-nums truncate flex-1 text-[var(--color-text)]">{it.name}</span>
-                                    {it.detail && <span className="shrink-0 max-w-[50%] truncate text-[13px] text-[var(--color-text-muted)]" title={it.detail}>{it.detail}</span>}
+                                    {it.detail && <span className="shrink-0 max-w-[50%] truncate text-body text-[var(--color-text-muted)]" title={it.detail}>{it.detail}</span>}
                                   </li>
                                 ))}
                               </ul>
-                              {n > items.length && <p className="mt-1 text-[13px] text-[var(--color-text-muted)]">Showing {items.length} of {n.toLocaleString()}.</p>}
+                              {n > items.length && <p className="mt-1 text-body text-[var(--color-text-muted)]">Showing {items.length} of {n.toLocaleString()}.</p>}
                             </td>
                           </tr>
                         )}
@@ -404,19 +404,19 @@ export default function HealthPanel({ orgId, libraryId, isController, onRepaired
                         <td className="px-4 py-2.5">
                           <span className="inline-flex items-center gap-2.5">
                             <span aria-hidden className="w-3 h-3 rounded-sm shrink-0 bg-[var(--state-held)]" />
-                            <button type="button" aria-expanded={open === "leftovers"} onClick={(e) => { e.stopPropagation(); setOpen(open === "leftovers" ? null : "leftovers"); }} className="inline-flex items-center gap-1 font-semibold text-[var(--color-text)] hover:text-[var(--color-accent-text)]">
+                            <button type="button" aria-expanded={open === "leftovers"} onClick={(e) => { e.stopPropagation(); setOpen(open === "leftovers" ? null : "leftovers"); }} className="inline-flex items-center gap-1 font-medium text-[var(--color-text)] hover:text-[var(--color-accent-text)]">
                               Left behind <ChevronRight className={`w-3.5 h-3.5 ui-chevron${(open === "leftovers") ? " rotate-90" : ""}`} />
                             </button>
                           </span>
                         </td>
-                        <td className="px-4 py-2.5 text-right font-display text-[16px] font-semibold tabular-nums text-[var(--state-held)]">{L.leftovers.length.toLocaleString()}</td>
+                        <td className="px-4 py-2.5 text-right font-display text-reading font-semibold tabular-nums text-[var(--state-held)]">{L.leftovers.length.toLocaleString()}</td>
                         <td className="px-4 py-2.5 max-md:hidden text-[var(--color-text-muted)]">Their document moved out, was held back or deleted. Repair sets them aside; they come back at no cost.</td>
                       </tr>
                       {open === "leftovers" && (
                         <tr>
                           <td colSpan={3} className="px-4 pb-3 pt-0">
                             <ul className="max-h-56 overflow-auto rounded-md border border-[var(--color-border)] divide-y divide-[var(--color-border)]">
-                              {L.leftovers.slice(0, 100).map((it) => <li key={it.mirrorId ?? it.id} className="px-3 py-1.5 text-[14px] font-display tabular-nums truncate">{it.name}</li>)}
+                              {L.leftovers.slice(0, 100).map((it) => <li key={it.mirrorId ?? it.id} className="px-3 py-1.5 text-body font-display tabular-nums truncate">{it.name}</li>)}
                             </ul>
                           </td>
                         </tr>

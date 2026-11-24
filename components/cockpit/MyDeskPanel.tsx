@@ -175,13 +175,13 @@ export default function MyDeskPanel({ orgId, uid, userEmail }: MyDeskPanelProps)
   const docHref = (libraryId: string | null, docId: string) =>
     libraryId ? `/documents/${libraryId}?doc=${docId}` : "/documents";
 
-  const band = "px-4 h-10 flex items-center gap-2 bg-[var(--color-surface-2)] text-[14px] font-semibold text-[var(--color-text)] border-t border-[var(--color-border)] first:border-t-0";
+  const band = "px-4 h-10 flex items-center gap-2 bg-[var(--color-surface-2)] text-body font-medium text-[var(--color-text)] border-t border-[var(--color-border)] first:border-t-0";
   const count = (n: number) => <span className="font-normal tabular-nums text-[var(--color-text-muted)]">{n}</span>;
 
   return (
     <section aria-label="Checked out to you">
       <SectionHead title="Checked out to you" count={total} />
-      {releaseError && <p role="alert" className="mb-2 text-[14px] font-semibold text-[var(--state-overdue-text)]">{releaseError}</p>}
+      {releaseError && <p role="alert" className="mb-2 text-body font-medium text-[var(--state-overdue-text)]">{releaseError}</p>}
       <div className={sheet}>
         {checkouts.length > 0 && (
           <>
@@ -193,10 +193,10 @@ export default function MyDeskPanel({ orgId, uid, userEmail }: MyDeskPanelProps)
                   <li key={c.sessionId} className="relative flex items-center gap-3 px-4 py-2.5">
                     {k.hot && <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] bg-[var(--state-held)]" />}
                     <Link href={docHref(c.libraryId, c.documentId)} className="min-w-0 flex-1">
-                      <span className="ui-id block text-[15px] truncate hover:text-[var(--color-accent-text)]">{c.docLabel}</span>
-                      {c.purpose && <span className="block text-[13px] text-[var(--color-text-muted)] truncate">{c.purpose}</span>}
+                      <span className="ui-id block text-reading truncate hover:text-[var(--color-accent-text)]">{c.docLabel}</span>
+                      {c.purpose && <span className="block text-body text-[var(--color-text-muted)] truncate">{c.purpose}</span>}
                     </Link>
-                    <span className="shrink-0 text-[14px] tabular-nums">
+                    <span className="shrink-0 text-body tabular-nums">
                       {k.hot ? <StatusTag tone="held"><Clock className="w-3.5 h-3.5" aria-hidden />{k.text}</StatusTag> : <span className="text-[var(--color-text-muted)]">{k.text}</span>}
                     </span>
                     <button
@@ -223,13 +223,13 @@ export default function MyDeskPanel({ orgId, uid, userEmail }: MyDeskPanelProps)
               {staleCopies.slice(0, 5).map((s) => (
                 <li key={s.documentId}>
                   <Link href={docHref(s.libraryId, s.documentId)} className="flex items-center gap-3 px-4 py-2.5 hover:bg-[var(--color-surface-2)]">
-                    <span className="ui-id min-w-0 flex-1 text-[15px] truncate">{s.docLabel}</span>
+                    <span className="ui-id min-w-0 flex-1 text-reading truncate">{s.docLabel}</span>
                     <StatusTag tone="held">You have Rev {s.downloadedRev ?? "?"}, now Rev {s.currentRev ?? "?"}</StatusTag>
                   </Link>
                 </li>
               ))}
               {staleCopies.length > 5 && (
-                <li className="px-4 py-2.5 text-[13px] text-[var(--color-text-muted)]">and {staleCopies.length - 5} more</li>
+                <li className="px-4 py-2.5 text-body text-[var(--color-text-muted)]">and {staleCopies.length - 5} more</li>
               )}
             </ul>
           </>
@@ -242,8 +242,8 @@ export default function MyDeskPanel({ orgId, uid, userEmail }: MyDeskPanelProps)
               {branches.map((b) => (
                 <li key={b.id}>
                   <Link href={docHref(b.libraryId, b.documentId)} className="flex items-center gap-3 px-4 py-2.5 hover:bg-[var(--color-surface-2)]">
-                    <span className="ui-id min-w-0 flex-1 text-[15px] truncate">{b.docLabel}</span>
-                    <span className="shrink-0 text-[13px] text-[var(--color-text-muted)]">
+                    <span className="ui-id min-w-0 flex-1 text-reading truncate">{b.docLabel}</span>
+                    <span className="shrink-0 text-body text-[var(--color-text-muted)]">
                       Since {new Date(b.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
                     </span>
                   </Link>

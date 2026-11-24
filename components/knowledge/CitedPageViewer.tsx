@@ -369,8 +369,8 @@ export default function CitedPageViewer({
   const stateLine = jumped
     ? `Jumped here from ${title.replace(/\.pdf$/i, "")} · page ${pageNumber}${numPages ? ` of ${numPages}` : ""}`
     : `Page ${page} cited${pageNumber !== page ? ` · you're on page ${pageNumber}` : marks.length > 0 ? " · tags marked" : " · passage highlighted"}${numPages ? ` · ${numPages} pages` : ""}`;
-  const square = "w-9 h-9 grid place-items-center rounded-[10px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40 transition-colors";
-  const tool = "h-8 inline-flex items-center gap-1 px-2.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[13px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-border-strong)] disabled:opacity-40 transition-colors";
+  const square = "w-9 h-9 grid place-items-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40 transition-colors";
+  const tool = "h-8 inline-flex items-center gap-1 px-2.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-border-strong)] disabled:opacity-40 transition-colors";
   const iconTool = "w-8 h-8 grid place-items-center rounded-lg text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40 transition-colors";
 
   return (
@@ -389,7 +389,7 @@ export default function CitedPageViewer({
         {/* Header: where you are, the document (big), the page in words. */}
         <div className="px-4 sm:px-5 pt-3 pb-3.5 shrink-0">
           <div className="flex items-center gap-1.5 min-h-9">
-            <div className="min-w-0 flex-1 truncate text-[13px] font-semibold text-[var(--color-text-muted)]">
+            <div className="min-w-0 flex-1 truncate text-body font-medium text-[var(--color-text-muted)]">
               {list.length > 1 ? `Source ${idx + 1} of ${list.length}` : "Cited page"}{section ? ` · ${section}` : ""}
             </div>
             {url && (
@@ -404,14 +404,14 @@ export default function CitedPageViewer({
               </button>
             )}
             <button type="button" onClick={onClose} aria-label="Close" title={embedded ? "Close" : "Close (Esc)"}
-              className="w-9 h-9 grid place-items-center rounded-[10px] bg-[var(--color-surface-2)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
+              className="w-9 h-9 grid place-items-center rounded-lg bg-[var(--color-surface-2)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
               <X className="w-4 h-4" />
             </button>
           </div>
           <h2 className="mt-1 font-display text-[22px] sm:text-[26px] leading-[1.1] font-semibold text-[var(--color-text)] line-clamp-2 break-words">
             {view.title.replace(/\.pdf$/i, "")}
           </h2>
-          <p className="mt-1 text-[13px] text-[var(--color-text-muted)] truncate">
+          <p className="mt-1 text-body text-[var(--color-text-muted)] truncate">
             {stateLine}<span className="max-sm:hidden"> · Ctrl+scroll zooms, drag to pan</span>
           </p>
         </div>
@@ -426,7 +426,7 @@ export default function CitedPageViewer({
               className={iconTool} title="Previous page" aria-label="Previous page">
               <ChevronLeft className="w-4 h-4" />
             </button>
-            <span className="px-1 text-[13px] font-bold text-[var(--color-text)] tabular-nums" aria-live="polite">
+            <span className="px-1 text-body font-medium text-[var(--color-text)] tabular-nums" aria-live="polite">
               {pageNumber}{numPages ? ` / ${numPages}` : ""}
             </span>
             <button onClick={() => setPageNumber((p) => (numPages ? Math.min(numPages, p + 1) : p + 1))}
@@ -442,7 +442,7 @@ export default function CitedPageViewer({
               <ZoomOut className="w-4 h-4" />
             </button>
             <button onClick={() => setZoom(1)}
-              className="h-8 px-1.5 rounded-lg text-[12px] font-bold tabular-nums text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"
+              className="h-8 px-1.5 rounded-lg text-caption font-medium tabular-nums text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"
               title="Reset to fit width" aria-label="Reset zoom to fit width">
               {Math.round(zoom * 100)}%
             </button>
@@ -476,7 +476,7 @@ export default function CitedPageViewer({
               <input value={findTag} onChange={(e) => setFindTag(e.target.value)}
                 aria-label="Find on this page"
                 placeholder="Find on this page"
-                className="w-full h-8 pl-8 pr-2 rounded-lg text-[13px] border border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] " />
+                className="w-full h-8 pl-8 pr-2 rounded-lg text-body border border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] " />
             </div>
             <button type="submit" disabled={locating || !findTag.trim()} className={`${tool} shrink-0`}>
               {locating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Crosshair className="w-3.5 h-3.5" />}
@@ -484,7 +484,7 @@ export default function CitedPageViewer({
             </button>
             {findApplied && (
               <button type="button" onClick={() => { setFindApplied(""); setFindTag(""); }}
-                className="h-8 px-1.5 text-[13px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] shrink-0">
+                className="h-8 px-1.5 text-body font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] shrink-0">
                 Clear
               </button>
             )}
@@ -492,7 +492,7 @@ export default function CitedPageViewer({
           {(marks.some((m) => m.source === "vision") || elsewhere.length > 0 || locateNote) && (
             <div className="basis-full flex items-center gap-2 flex-wrap">
               {marks.some((m) => m.source === "vision") && (
-                <span className="text-[12px] text-[var(--color-text-muted)]">
+                <span className="text-caption text-[var(--color-text-muted)]">
                   Gray marks are approximate: this sheet was read by AI, not extracted.
                 </span>
               )}
@@ -504,7 +504,7 @@ export default function CitedPageViewer({
                 </button>
               ))}
               {locateNote && (
-                <span className="text-[13px] font-semibold text-[var(--state-held)] flex-1 min-w-0">{locateNote}</span>
+                <span className="text-body font-medium text-[var(--state-held)] flex-1 min-w-0">{locateNote}</span>
               )}
             </div>
           )}
@@ -522,11 +522,11 @@ export default function CitedPageViewer({
           {error ? (
             <div role="alert" className="mt-16 mx-auto max-w-sm text-center">
               <AlertTriangle className="w-5 h-5 mx-auto text-rose-300" />
-              <p className="mt-2 text-[14px] font-bold text-[var(--color-ink-fg)]">This page didn&apos;t open.</p>
-              <p className="mt-1 text-[13px] text-rose-200 break-words">{error}</p>
+              <p className="mt-2 text-body font-medium text-[var(--color-ink-fg)]">This page didn&apos;t open.</p>
+              <p className="mt-1 text-body text-rose-200 break-words">{error}</p>
             </div>
           ) : !url ? (
-            <div className="mt-16 flex items-center justify-center gap-2 text-[14px] text-[var(--color-ink-fg)] opacity-80" aria-busy="true">
+            <div className="mt-16 flex items-center justify-center gap-2 text-body text-[var(--color-ink-fg)] opacity-80" aria-busy="true">
               <Loader2 className="w-5 h-5 animate-spin" /> Getting the file…
             </div>
           ) : (
@@ -539,7 +539,7 @@ export default function CitedPageViewer({
                 setPageNumber((p) => Math.min(p, n));
               }}
               onLoadError={(e) => setError(`Couldn't open the PDF: ${e.message}`)}
-              loading={<div className="mt-16 flex items-center justify-center gap-2 text-[14px] text-[var(--color-ink-fg)] opacity-80"><Loader2 className="w-5 h-5 animate-spin" /> Opening the PDF…</div>}
+              loading={<div className="mt-16 flex items-center justify-center gap-2 text-body text-[var(--color-ink-fg)] opacity-80"><Loader2 className="w-5 h-5 animate-spin" /> Opening the PDF…</div>}
             >
               {/* The wrapper hugs the rendered page exactly, so a marker at
                   (0.42, 0.18) lands where it does on paper at any zoom. */}
@@ -550,7 +550,7 @@ export default function CitedPageViewer({
                   customTextRenderer={textRenderer}
                   renderAnnotationLayer={false}
                   className="ui-float"
-                  loading={<div className="py-16 text-center text-[14px] text-[var(--color-ink-fg)] opacity-80"><Loader2 className="w-5 h-5 animate-spin inline mr-2" /> Loading page {pageNumber}…</div>}
+                  loading={<div className="py-16 text-center text-body text-[var(--color-ink-fg)] opacity-80"><Loader2 className="w-5 h-5 animate-spin inline mr-2" /> Loading page {pageNumber}…</div>}
                 />
                 {/* A marker is a HIGHLIGHTER SWIPE over the tag, not a vague
                     ring around a neighborhood: engineers mark up drawings by
@@ -568,13 +568,13 @@ export default function CitedPageViewer({
                         <span className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2
  w-24 h-14 rounded-md border-2 border-dashed border-[var(--color-text-muted)]" />
                       )}
-                      <span className={`block rounded-[3px] ${
+                      <span className={`block rounded-md ${
                         approx
                           ? "w-20 h-5 bg-[color-mix(in_srgb,var(--color-text-muted)_45%,transparent)] ring-1 ring-[var(--color-text-muted)]"
                           : "w-14 h-4 bg-[var(--state-held)]/60 ring-1 ring-[var(--state-held)]"
                       }`} />
                       <span className="absolute left-1/2 -translate-x-1/2 top-full mt-1 whitespace-nowrap
- px-1.5 py-0.5 rounded font-display text-[12px] font-semibold text-[var(--color-ink-fg)] bg-[var(--color-ink)]">
+ px-1.5 py-0.5 rounded font-display text-caption font-semibold text-[var(--color-ink-fg)] bg-[var(--color-ink)]">
                         {m.tag}{approx ? " ~" : ""}
                       </span>
                     </div>
@@ -592,7 +592,7 @@ export default function CitedPageViewer({
         {list.length > 1 && (
           <div className="px-3 sm:px-4 py-2.5 border-t border-[var(--color-border)] bg-[var(--color-surface)] shrink-0 flex items-center gap-2 sm:gap-3">
             <button type="button" onClick={() => setIdx((i) => Math.max(0, i - 1))} disabled={idx === 0}
-              className="shrink-0 inline-flex items-center gap-1 h-10 px-3 rounded-xl border border-[var(--color-border)] text-[13px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-border-strong)] disabled:opacity-40"
+              className="shrink-0 inline-flex items-center gap-1 h-10 px-3 rounded-xl border border-[var(--color-border)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-border-strong)] disabled:opacity-40"
               aria-label="Previous source">
               <ChevronLeft className="w-4 h-4" /> <span className="max-sm:hidden">Previous</span>
             </button>
@@ -604,7 +604,7 @@ export default function CitedPageViewer({
                     <button type="button" onClick={() => setIdx(i)}
                       title={`${s.title.replace(/\.pdf$/i, "")}${s.section ? ` · ${s.section}` : ""} · p.${s.page}`}
                       aria-label={`Source ${s.n ?? i + 1}: ${s.title.replace(/\.pdf$/i, "")}, page ${s.page}`}
-                      className={`w-7 h-7 rounded-full grid place-items-center font-display text-[13px] font-semibold tabular-nums transition-colors ${
+                      className={`w-7 h-7 rounded-full grid place-items-center font-display text-body font-semibold tabular-nums transition-colors ${
                         i === idx
                           ? "bg-[var(--color-text)] text-[var(--color-surface)]"
                           : "border-2 border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:border-[var(--color-text)] hover:text-[var(--color-text)]"
@@ -614,14 +614,14 @@ export default function CitedPageViewer({
                   </li>
                 ))}
               </ol>
-              <div className="mt-1 text-center text-[12px] text-[var(--color-text-muted)] truncate">
+              <div className="mt-1 text-center text-caption text-[var(--color-text-muted)] truncate">
                 {activeSource.title.replace(/\.pdf$/i, "").slice(0, 44)}
                 {activeSource.section ? ` · ${activeSource.section}` : ""} · p.{activeSource.page}
               </div>
             </div>
             <button type="button" onClick={() => setIdx((i) => Math.min(list.length - 1, i + 1))}
               disabled={idx >= list.length - 1}
-              className="shrink-0 inline-flex items-center gap-1 h-10 px-4 rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[14px] font-semibold hover:bg-[var(--color-accent-hover)] shadow-[0_1px_0_rgb(0_0_0/0.12)] disabled:opacity-40 disabled:shadow-none"
+              className="shrink-0 inline-flex items-center gap-1 h-10 px-4 rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-body font-medium hover:bg-[var(--color-accent-hover)] shadow-[0_1px_0_rgb(0_0_0/0.12)] disabled:opacity-40 disabled:shadow-none"
               aria-label="Next source">
               <span className="max-sm:hidden">Next source</span> <ChevronRight className="w-4 h-4" />
             </button>

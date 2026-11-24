@@ -113,7 +113,7 @@ export default function SearchPage() {
             placeholder="E-101, 5602-D 1000, or words from the drawing"
             aria-label="Search tags, equipment IDs, drawing numbers and words from the drawings"
             data-find-input
-            className="w-full h-12 pl-11 pr-12 rounded-lg border border-[var(--color-border-control)] bg-[var(--color-surface)] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] text-[16px] sm:text-[15px] [&::-webkit-search-cancel-button]:hidden"
+            className="w-full h-12 pl-11 pr-12 rounded-lg border border-[var(--color-border-control)] bg-[var(--color-surface)] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] text-reading [&::-webkit-search-cancel-button]:hidden"
           />
           {query && (
             <button type="button" onClick={() => { setQuery(""); router.replace("/search"); }} title="Clear the search" aria-label="Clear the search"
@@ -142,7 +142,7 @@ export default function SearchPage() {
         <section aria-label="Requests, projects, notes">
           <SectionHead title="Requests, projects, notes" count={others.length} />
           <div className={sheet}>
-            <table className="w-full text-[15px]">
+            <table className="w-full text-body">
               <thead className={thead}>
                 <tr>
                   <th className={th}>Match</th>
@@ -156,9 +156,9 @@ export default function SearchPage() {
                     <tr key={`${h.kind}-${h.id}`} className={rowHover} onClick={() => transitionPush(router, h.href)}>
                       <td className="px-4 py-2.5 max-w-0 w-full">
                         <span className="block min-w-0">
-                          <Link href={h.href} onClick={(e) => e.stopPropagation()} className="block truncate font-semibold text-[var(--color-text)] hover:text-[var(--color-accent-text)]">{h.title}</Link>
-                          {h.subtitle && <span className="block text-[13px] text-[var(--color-text-muted)] truncate">{h.subtitle}</span>}
-                          <span className="sm:hidden block text-[13px] text-[var(--color-text-muted)]">{OTHER_LABEL[h.kind]}{h.badge ? `, ${badgeWords(h.badge)}` : ""}</span>
+                          <Link href={h.href} onClick={(e) => e.stopPropagation()} className="block truncate font-medium text-[var(--color-text)] hover:text-[var(--color-accent-text)]">{h.title}</Link>
+                          {h.subtitle && <span className="block text-body text-[var(--color-text-muted)] truncate">{h.subtitle}</span>}
+                          <span className="sm:hidden block text-body text-[var(--color-text-muted)]">{OTHER_LABEL[h.kind]}{h.badge ? `, ${badgeWords(h.badge)}` : ""}</span>
                         </span>
                       </td>
                       <td className="px-4 py-2.5 hidden sm:table-cell whitespace-nowrap"><span className="ui-tag is-more">{OTHER_LABEL[h.kind]}</span></td>

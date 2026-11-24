@@ -114,18 +114,18 @@ export default function MessageStream({
                 {scope === "library" ? "Ask the library." : scope === "tools" ? "Ask the system." : "Ask the internet."}
               </h2>
               {scope !== "internet" && (
-                <p className="mt-1.5 text-[15px] text-[var(--color-text-muted)]">It reads only documents cleared for AI.</p>
+                <p className="mt-1.5 text-reading text-[var(--color-text-muted)]">It reads only documents cleared for AI.</p>
               )}
               {emptyNote && (
-                <p className="mt-4 text-[14px] text-[var(--color-text)]">
+                <p className="mt-4 text-body text-[var(--color-text)]">
                   <span className="ui-pill is-warn mr-2">Can&apos;t ask yet</span>{emptyNote}
                 </p>
               )}
-              <h3 className="mt-8 mb-2 text-[14px] font-semibold text-[var(--color-text-muted)]">Try one of these</h3>
+              <h3 className="mt-8 mb-2 text-body font-medium text-[var(--color-text-muted)]">Try one of these</h3>
               <div className="flex flex-col divide-y divide-[var(--color-border)] border-y border-[var(--color-border)]">
                 {EXAMPLES[scope].map((e) => (
                   <button key={e} type="button" onClick={() => onExample(e)} disabled={!!emptyNote}
-                    className="group -mx-2 px-2 flex items-center gap-3 py-3 text-left text-[15px] text-[var(--color-text)] rounded-lg hover:bg-[var(--color-surface-2)] disabled:opacity-60 disabled:hover:bg-transparent transition-colors">
+                    className="group -mx-2 px-2 flex items-center gap-3 py-3 text-left text-reading text-[var(--color-text)] rounded-lg hover:bg-[var(--color-surface-2)] disabled:opacity-60 disabled:hover:bg-transparent transition-colors">
                     <span className="flex-1">{e}</span>
                     <ArrowRight aria-hidden className="w-4 h-4 shrink-0 text-[var(--color-text-faint)] group-hover:text-[var(--color-accent-text)] transition-colors" />
                   </button>
@@ -157,7 +157,7 @@ export default function MessageStream({
       </div>
       {!atBottom && !empty && (
         <button onClick={jump}
-          className="absolute left-1/2 -translate-x-1/2 bottom-3 inline-flex items-center gap-1.5 h-9 pointer-coarse:h-11 px-3.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] ui-float hover:bg-[var(--color-surface-2)] transition-colors animate-pop">
+          className="absolute left-1/2 -translate-x-1/2 bottom-3 inline-flex items-center gap-1.5 h-10 pointer-coarse:h-11 px-3.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] ui-float hover:bg-[var(--color-surface-2)] transition-colors animate-pop">
           <ArrowDown className="w-3.5 h-3.5" /> Latest
         </button>
       )}

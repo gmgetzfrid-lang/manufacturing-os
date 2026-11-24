@@ -23,6 +23,7 @@ import { badgeText } from "@/lib/badge";
 import { useEscapeClose } from "@/hooks/useEscapeClose";
 import { onTransitionClick, transitionPush } from "@/lib/viewTransition";
 import { DOCUMENT_VIEWS, type ViewTab } from "@/components/navigation/ViewTabs";
+import { TabGlide } from "@/components/ui/TabGlide";
 
 /** The views document control opens every day: always in the row. */
 const DAILY = ["/documents", "/documents/staged", "/checkouts", "/transmittals"];
@@ -123,16 +124,16 @@ export default function DocViewTabs({
     items[to]?.focus();
   };
 
-  const tabCls = (on: boolean) => `shrink-0 whitespace-nowrap inline-flex items-center gap-1.5 h-10 pointer-coarse:h-11 border-b-2 text-[14px] transition-colors ${
+  const tabCls = (on: boolean) => `shrink-0 whitespace-nowrap inline-flex items-center gap-1.5 h-10 pointer-coarse:h-11 border-b-2 text-body transition-colors ${
     on
-      ? "border-[var(--color-current)] text-[var(--color-text)] font-semibold"
+      ? "border-[var(--color-current)] text-[var(--color-text)] font-medium"
       : "border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-border-strong)]"
   }`;
 
   return (
     <div className="flex items-end gap-x-4 gap-y-2 flex-wrap min-w-0 max-w-full mb-4 border-b border-[var(--color-border)]">
       <nav aria-label="Documents views" ref={strip}
-        className="-mb-px flex items-end gap-5 min-w-0 max-w-full overflow-x-auto overscroll-x-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        className="relative tab-glide -mb-px flex items-end gap-5 min-w-0 max-w-full overflow-x-auto overscroll-x-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         {daily.map((t) => {
           const on = isActive(t);
           const n = countOf(t);
@@ -140,7 +141,7 @@ export default function DocViewTabs({
             <Link key={t.href} href={hrefFor(t.href)} onClick={(e) => go(e, t)} aria-current={on ? "page" : undefined} className={tabCls(on)}>
               {t.label}
               {typeof n === "number" && n > 0 && (
-                <span className="text-[13px] font-normal tabular-nums text-[var(--color-text-muted)]">{badgeText(n)}</span>
+                <span className="text-body font-normal tabular-nums text-[var(--color-text-muted)]">{badgeText(n)}</span>
               )}
             </Link>
           );
@@ -153,6 +154,7 @@ export default function DocViewTabs({
           {moreOn ? moreOn.label : "More"}
           <ChevronDown aria-hidden className={`ui-chevron w-3.5 h-3.5 ${open ? "rotate-180" : ""}`} />
         </button>
+        <TabGlide id="doc-views" />
       </nav>
       {right && <div className="ml-auto self-center pb-1.5">{right}</div>}
       {open && typeof document !== "undefined" && createPortal(
@@ -161,14 +163,14 @@ export default function DocViewTabs({
           className="on-sheet ui-float ui-float-in fixed z-[650] w-60 max-w-[calc(100vw-1rem)] rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] py-1.5">
           {groups.map((g, gi) => (
             <div key={g.label} role="group" aria-label={g.label} className={gi > 0 ? "mt-1 pt-1 border-t border-[var(--color-border)]" : ""}>
-              <div className="px-3 pt-1.5 pb-1 text-[12px] text-[var(--color-text-muted)]">{g.label}</div>
+              <div className="px-3 pt-1.5 pb-1 text-caption text-[var(--color-text-muted)]">{g.label}</div>
               {g.tabs.map((t) => {
                 const on = isActive(t);
                 const Icon = t.icon;
                 return (
                   <Link key={t.href} href={hrefFor(t.href)} role="menuitem" aria-current={on ? "page" : undefined}
                     onClick={(e) => { setOpen(false); go(e, t); }}
-                    className={`relative flex items-center gap-2.5 px-3 min-h-10 pointer-coarse:min-h-11 text-[14px] hover:bg-[var(--color-surface-2)] focus-visible:bg-[var(--color-surface-2)] ${on ? "font-semibold text-[var(--color-text)]" : "text-[var(--color-text)]"}`}>
+                    className={`relative flex items-center gap-2.5 px-3 min-h-10 pointer-coarse:min-h-11 text-body hover:bg-[var(--color-surface-2)] focus-visible:bg-[var(--color-surface-2)] ${on ? "font-medium text-[var(--color-text)]" : "text-[var(--color-text)]"}`}>
                     {on && <span aria-hidden className="absolute left-0 inset-y-2 w-[3px] rounded-r bg-[var(--color-current)]" />}
                     {Icon && <Icon className="w-4 h-4 shrink-0 text-[var(--color-text-faint)]" />}
                     {t.label}

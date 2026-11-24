@@ -42,13 +42,13 @@ function readFacts() {
 function Cell({ label, children, className = "" }: { label: string; children: React.ReactNode; className?: string }) {
   return (
     <div className={`min-w-0 px-3 py-2 ${className}`}>
-      <div className="text-[12px] uppercase tracking-[0.06em] text-[var(--color-text-faint)]">{label}</div>
-      <div className="mt-0.5 text-[14px] font-semibold text-[var(--color-text)] truncate">{children}</div>
+      <div className="text-caption uppercase tracking-[0.06em] text-[var(--color-text-faint)]">{label}</div>
+      <div className="mt-0.5 text-body font-medium text-[var(--color-text)] truncate">{children}</div>
     </div>
   );
 }
 
-export function AuthCard({ title, sub, children, footer, wide = false, sheet = "Sign in", status, signed, leaving = false }: {
+export function AuthCard({ title, sub, children, footer, wide = false, status, signed, leaving = false }: {
   /** Wider, for longer forms (sign up). */
   wide?: boolean;
   title: React.ReactNode;
@@ -57,8 +57,6 @@ export function AuthCard({ title, sub, children, footer, wide = false, sheet = "
   children: React.ReactNode;
   /** Links and small print under the card. */
   footer?: React.ReactNode;
-  /** What this sheet is, for the title block when no workspace is known. */
-  sheet?: string;
   /** The sign-in's state, in words: "Checking your sign-in". */
   status?: React.ReactNode;
   /** Who signed, once they're in: the SIGNED line fills in. */
@@ -91,8 +89,8 @@ export function AuthCard({ title, sub, children, footer, wide = false, sheet = "
         {/* On a phone the words sit over the drawing: the top fades back. */}
         <div aria-hidden className="md:hidden absolute inset-x-0 top-0 h-36" style={{ background: "linear-gradient(var(--side-bg, #081d48) 45%, transparent)" }} />
         <div className="bp-intro absolute left-6 right-6 top-7 lg:left-16 lg:top-16 lg:right-auto max-w-[30rem]">
-          <p className="text-[12px] font-semibold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Manufacturing OS</p>
-          <p className="mt-2 font-display text-[20px] sm:text-[26px] lg:text-[34px] leading-[1.15] font-semibold text-[var(--color-text)]">
+          <p className="text-caption font-medium uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Manufacturing OS</p>
+          <p className="mt-2 font-display text-section sm:text-[26px] lg:text-[34px] leading-[1.15] font-semibold text-[var(--color-text)]">
             Your site&apos;s drawings, equipment and work, in one place.
           </p>
         </div>
@@ -100,7 +98,7 @@ export function AuthCard({ title, sub, children, footer, wide = false, sheet = "
 
       {/* The title block: the sign-in. */}
       <main className="relative z-10 min-h-dvh flex flex-col justify-end pt-[38dvh] md:pt-[46dvh] md:pb-10 md:px-6 lg:p-14 lg:items-end pointer-events-none">
-        <div className={`bp-rise pointer-events-auto w-full md:mx-auto lg:mx-0 ${wide ? "md:max-w-[640px]" : "md:max-w-[480px]"} rounded-t-[20px] md:rounded-[14px] bg-[var(--color-surface)] border border-[var(--color-border)] shadow-[var(--shadow-float)] flex flex-col overflow-hidden`}>
+        <div className={`bp-rise pointer-events-auto w-full md:mx-auto lg:mx-0 ${wide ? "md:max-w-[640px]" : "md:max-w-[480px]"} rounded-t-[20px] md:rounded-xl bg-[var(--color-surface)] border border-[var(--color-border)] shadow-[var(--shadow-float)] flex flex-col overflow-hidden`}>
           <div className="order-1 px-5 pt-6 pb-5 sm:px-7 sm:pt-7">
             <h1 className="font-display text-[30px] sm:text-[34px] leading-[1.1] font-bold text-[var(--color-text)]">{title}</h1>
             {sub && <p className="mt-2 text-reading text-[var(--color-text-muted)]">{sub}</p>}
@@ -113,8 +111,8 @@ export function AuthCard({ title, sub, children, footer, wide = false, sheet = "
           <div className="order-2 relative text-[var(--color-text)]">
             <div aria-hidden className="tb-rule absolute inset-x-0 top-0 h-px bg-[var(--color-border-strong)]" />
             <div className="grid grid-cols-4 divide-x divide-[var(--color-border)]">
-              <Cell label={workspace ? "Workspace" : "Drawing"} className="col-span-2">{workspace ?? sheet}</Cell>
-              <Cell label="Date">{today || "\u00a0"}</Cell>
+              {workspace && <Cell label="Workspace" className="col-span-2">{workspace}</Cell>}
+              <Cell label="Date" className={workspace ? "" : "col-span-3"}>{today || "\u00a0"}</Cell>
               <Cell label="Rev">{APP_VERSION}</Cell>
             </div>
           </div>
@@ -139,9 +137,9 @@ export function AuthCard({ title, sub, children, footer, wide = false, sheet = "
 /** A front-door field: 48 px tall, 16 px text (no zoom on a phone), the
  *  resting edge at 3:1, focus is the app-wide ring. */
 export const authField =
-  "w-full h-12 px-3.5 rounded-lg border border-[var(--color-border-control)] bg-[var(--color-surface)] text-[16px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] aria-[invalid=true]:border-[var(--state-overdue)] disabled:opacity-60 transition-colors";
+  "w-full h-12 px-3.5 rounded-lg border border-[var(--color-border-control)] bg-[var(--color-surface)] text-reading text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] aria-[invalid=true]:border-[var(--state-overdue)] disabled:opacity-60 transition-colors";
 
 /** A front-door button: as tall as the fields. */
-export const authBtn = "w-full !h-12 !text-[16px]";
+export const authBtn = "w-full !h-12 !text-reading";
 
 export default AuthCard;

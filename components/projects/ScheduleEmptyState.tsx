@@ -27,11 +27,11 @@ export default function ScheduleEmptyState({ canEdit, onImport, onAdd, phaseName
     <Card pad={false}>
       {lead && <div className="px-4 sm:px-5 pt-4">{lead}</div>}
       <div className="px-5 sm:px-6 pt-6 pb-5">
-        <div className="text-[13px] font-semibold text-[var(--color-text-muted)] inline-flex items-center gap-1.5">
+        <div className="text-body font-medium text-[var(--color-text-muted)] inline-flex items-center gap-1.5">
           <CalendarRange className="w-3.5 h-3.5" /> Schedule
         </div>
-        <h2 className="mt-2 text-[15px] font-bold text-[var(--color-text)]">{phaseName ? `No schedule in ${phaseName} yet.` : "No schedule yet."}</h2>
-        <p className="text-[13px] text-[var(--color-text-muted)] mt-1 max-w-xl">
+        <h2 className="mt-2 text-reading font-medium text-[var(--color-text)]">{phaseName ? `No schedule in ${phaseName} yet.` : "No schedule yet."}</h2>
+        <p className="text-body text-[var(--color-text-muted)] mt-1 max-w-xl">
           {phaseName
             ? `Import ${phaseName}'s schedule file: it goes into ${phaseName} only and is tracked on its own. The other phases aren't touched, and All phases shows the whole project.`
             : "Import the schedule file you already have, or add tasks one at a time. Both land in the same plan."}
@@ -58,7 +58,7 @@ export default function ScheduleEmptyState({ canEdit, onImport, onAdd, phaseName
           />
         </div>
       ) : (
-        <div className="px-6 pb-6 text-[13px] text-[var(--color-text-muted)]">
+        <div className="px-6 pb-6 text-body text-[var(--color-text-muted)]">
           No schedule has been created for this project yet.
         </div>
       )}
@@ -77,11 +77,11 @@ function StartCard({ main, icon, title, body, cta, onClick }: {
       className="group text-left p-5 sm:p-6 flex flex-col hover:bg-[var(--color-surface-2)] transition-colors first:rounded-bl-2xl last:rounded-br-2xl max-md:first:rounded-bl-none max-md:last:rounded-b-2xl"
     >
       <span className="w-9 h-9 rounded-lg flex items-center justify-center bg-[var(--color-surface-2)] text-[var(--color-text-muted)]">{icon}</span>
-      <div className="mt-3 text-[14px] font-bold text-[var(--color-text)]">{title}</div>
-      <div className="mt-1 text-[13px] text-[var(--color-text-muted)] leading-snug flex-1">{body}</div>
+      <div className="mt-3 text-body font-medium text-[var(--color-text)]">{title}</div>
+      <div className="mt-1 text-body text-[var(--color-text-muted)] leading-snug flex-1">{body}</div>
       <div className={`mt-4 self-start inline-flex items-center gap-1.5 rounded-xl ${main
-        ? "h-11 px-5 text-[14px] font-semibold bg-[var(--color-accent)] text-[var(--color-accent-fg)] group-hover:bg-[var(--color-accent-hover)] shadow-[0_12px_24px_-12px_var(--color-accent)]"
-        : "h-9 px-3 text-[13px] font-semibold border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] group-hover:bg-[var(--color-surface-2)]"}`}>
+        ? "h-11 px-5 text-body font-medium bg-[var(--color-accent)] text-[var(--color-accent-fg)] group-hover:bg-[var(--color-accent-hover)] shadow-[0_12px_24px_-12px_var(--color-accent)]"
+        : "h-9 px-3 text-body font-medium border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] group-hover:bg-[var(--color-surface-2)]"}`}>
         {cta} <ArrowRight className="w-3.5 h-3.5" />
       </div>
     </button>

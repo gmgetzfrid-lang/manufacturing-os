@@ -504,7 +504,7 @@ export default function PdfRevisionDiff({
 
   // A switch on the charcoal: quiet, or a white pill while on (never orange).
   const toggleBtn = (active: boolean) =>
-    `inline-flex items-center gap-1.5 h-9 px-3 shrink-0 rounded-[10px] text-[13px] font-semibold transition-colors ${active
+    `inline-flex items-center gap-1.5 h-9 px-3 shrink-0 rounded-lg text-body font-semibold transition-colors ${active
       ? "bg-[var(--color-ink-fg)] text-[var(--color-ink)]"
       : "bg-[var(--color-ink-2)] text-[var(--color-text)] hover:bg-[var(--color-ink-line)]"}`;
 
@@ -520,12 +520,12 @@ export default function PdfRevisionDiff({
     <div className="surface-charcoal flex flex-col h-full bg-[var(--color-ink)] text-[var(--color-text)] select-none">
       {/* Header: what the colors mean, then the controls */}
       <div className="min-h-12 border-b border-[var(--color-border)] flex items-center justify-between gap-3 px-4 py-2 shrink-0 flex-wrap">
-        <div className="flex items-center gap-x-4 gap-y-1 text-[13px] flex-wrap text-[var(--color-text)]">
+        <div className="flex items-center gap-x-4 gap-y-1 text-body flex-wrap text-[var(--color-text)]">
           <span className="inline-flex items-center gap-1.5">{swatch(COLOR_UNCHANGED)} Unchanged</span>
           <span className="inline-flex items-center gap-1.5">{swatch(COLOR_REMOVED)} Removed · only in {baseLabel}</span>
           <span className="inline-flex items-center gap-1.5">{swatch(COLOR_ADDED)} Added · only in {compareLabel}</span>
           {regLabel && (
-            <span className="inline-flex items-center gap-1 text-[13px] text-[var(--color-text-muted)]" title="Registration warped the base layer (scale + shift) to line up with the compare layer before diffing">
+            <span className="inline-flex items-center gap-1 text-body text-[var(--color-text-muted)]" title="Registration warped the base layer (scale + shift) to line up with the compare layer before diffing">
               <Crosshair className="w-3 h-3" /> {regLabel}
             </span>
           )}
@@ -548,12 +548,12 @@ export default function PdfRevisionDiff({
           <button type="button" onClick={() => setAutoAlign((v) => !v)} aria-pressed={autoAlign} className={toggleBtn(autoAlign)} title="Register the two revisions (scale + shift from ink profiles) before diffing">
             <Crosshair className="w-4 h-4" />Auto-align
           </button>
-          <label className="flex items-center gap-1.5 text-[13px] font-semibold text-[var(--color-text-muted)]">
+          <label className="flex items-center gap-1.5 text-body font-medium text-[var(--color-text-muted)]">
             Precision
             <select
               value={tolerance}
               onChange={(e) => setTolerance(parseInt(e.target.value))}
-              className="h-9 rounded-[10px] bg-[var(--color-ink-2)] border border-[var(--color-ink-line)] px-2 text-[13px] font-semibold normal-case tracking-normal text-[var(--color-text)]"
+              className="h-9 rounded-lg bg-[var(--color-ink-2)] border border-[var(--color-ink-line)] px-2 text-body font-medium normal-case tracking-normal text-[var(--color-text)]"
               title="How far counterpart ink may sit and still count as unchanged (±1 / ±2 / ±5 px)"
             >
               <option value={0}>Strict</option>
@@ -606,14 +606,14 @@ export default function PdfRevisionDiff({
         {loading && (
           <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-[color-mix(in_srgb,var(--color-ink)_80%,transparent)]">
             <Loader2 className="w-8 h-8 animate-spin text-[var(--color-text-muted)] mb-2" />
-            <span className="text-[13px] text-[var(--color-text)]">Lining up the two revisions…</span>
+            <span className="text-body text-[var(--color-text)]">Lining up the two revisions…</span>
           </div>
         )}
         {error && (
           <div role="alert" className="absolute inset-0 z-10 flex flex-col items-center justify-center px-6 text-center">
             <AlertTriangle className="w-9 h-9 mb-2 text-rose-400" />
-            <span className="text-[14px] font-bold text-[var(--color-text)]">Couldn&apos;t compare these revisions</span>
-            <span className="text-[13px] mt-1 max-w-md text-[var(--color-text-muted)]">{error}</span>
+            <span className="text-body font-medium text-[var(--color-text)]">Couldn&apos;t compare these revisions</span>
+            <span className="text-body mt-1 max-w-md text-[var(--color-text-muted)]">{error}</span>
           </div>
         )}
         <div className="min-w-full min-h-full w-max flex items-center justify-center p-4">
@@ -631,12 +631,12 @@ export default function PdfRevisionDiff({
 
       {/* Footer: how much changed on this page */}
       {stats && !loading && !error && (
-        <div className="min-h-9 border-t border-[var(--color-border)] flex items-center flex-wrap px-4 py-1.5 text-[13px] tabular-nums shrink-0 gap-x-5 gap-y-0.5 text-[var(--color-text-muted)]">
+        <div className="min-h-9 border-t border-[var(--color-border)] flex items-center flex-wrap px-4 py-1.5 text-body tabular-nums shrink-0 gap-x-5 gap-y-0.5 text-[var(--color-text-muted)]">
           <span className="inline-flex items-center gap-1.5">{swatch(COLOR_ADDED)} {stats.addedPixels.toLocaleString()} px added ({pct(stats.addedPixels)}%)</span>
           <span className="inline-flex items-center gap-1.5">{swatch(COLOR_REMOVED)} {stats.removedPixels.toLocaleString()} px removed ({pct(stats.removedPixels)}%)</span>
           <span className="inline-flex items-center gap-1.5">{swatch(COLOR_UNCHANGED)} {stats.unchangedPixels.toLocaleString()} unchanged</span>
           {stats.addedPixels === 0 && stats.removedPixels === 0 && (
-            <span className="font-semibold text-emerald-300">No differences on this page.</span>
+            <span className="font-medium text-emerald-300">No differences on this page.</span>
           )}
         </div>
       )}

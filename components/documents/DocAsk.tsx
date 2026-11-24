@@ -421,7 +421,7 @@ export default function DocAsk(p: Props) {
             return <>Reminded {pendingAcks.length} {pendingAcks.length === 1 ? "person" : "people"} to acknowledge {label}.</>;
           })}>Remind {pendingAcks.length === 1 ? "them" : `all ${pendingAcks.length}`}</Button>
         )}
-        {pendingSigs.length > 0 && <span className="text-[14px] text-[var(--color-text-muted)]">Under Review and sign-off below you can bring in an alternate reviewer.</span>}
+        {pendingSigs.length > 0 && <span className="text-body text-[var(--color-text-muted)]">Under Review and sign-off below you can bring in an alternate reviewer.</span>}
       </NeededFromYou>
     );
   }

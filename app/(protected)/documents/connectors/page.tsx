@@ -49,7 +49,7 @@ async function load(orgId: string): Promise<ConnectorChecks> {
 }
 
 const href = (s: SheetRef) => `/documents/${s.libraryId}?doc=${s.id}`;
-const SheetLink = ({ s }: { s: SheetRef }) => <Link href={href(s)} className="font-bold text-[var(--color-text)] underline decoration-dotted underline-offset-2 hover:text-[var(--color-accent-text)] hover:decoration-solid">{s.label}</Link>;
+const SheetLink = ({ s }: { s: SheetRef }) => <Link href={href(s)} className="font-medium text-[var(--color-text)] underline decoration-dotted underline-offset-2 hover:text-[var(--color-accent-text)] hover:decoration-solid">{s.label}</Link>;
 
 export default function ConnectorChecksPage() {
   const { activeOrgId } = useRole();
@@ -167,16 +167,16 @@ export default function ConnectorChecksPage() {
       {checks && (
         <div className="space-y-4" data-connector-checks>
           <section>
-          <h2 className="font-display text-[20px] leading-tight font-semibold text-[var(--color-heading)] mb-3 inline-flex items-center gap-1.5">
+          <h2 className="font-display text-section leading-tight font-semibold text-[var(--color-heading)] mb-3 inline-flex items-center gap-1.5">
             {cur.label} <HelpTooltip>{cur.what}</HelpTooltip>
           </h2>
           <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
-            {cur.n === 0 ? <div className="px-4 py-4 text-[15px] text-[var(--color-text)]">Nothing to look at here{drawing ? ` on ${drawing}` : ""}.</div> : (
-              <ul className="divide-y divide-[var(--color-border)] text-[14px]">
+            {cur.n === 0 ? <div className="px-4 py-4 text-reading text-[var(--color-text)]">Nothing to look at here{drawing ? ` on ${drawing}` : ""}.</div> : (
+              <ul className="divide-y divide-[var(--color-border)] text-body">
                 {view === "missing" && rows.missing.map((m) => (
                   <li key={`${m.drawing}|${m.sheet}`} className="px-4 sm:px-5 py-3">
-                    <div className="text-[var(--color-text)]"><span className="font-display text-[16px] font-semibold tabular-nums">{m.drawing} sheet {m.sheet}</span> <span className="text-[var(--color-text-muted)]">is not on file</span></div>
-                    <ul className="mt-1 space-y-0.5 text-[13px] text-[var(--color-text-muted)]">
+                    <div className="text-[var(--color-text)]"><span className="font-display text-reading font-semibold tabular-nums">{m.drawing} sheet {m.sheet}</span> <span className="text-[var(--color-text-muted)]">is not on file</span></div>
+                    <ul className="mt-1 space-y-0.5 text-body text-[var(--color-text-muted)]">
                       {m.askedBy.map((a, i) => <li key={i}><SheetLink s={a.from} /> shows <b className="text-[var(--color-text)]">{a.tag}</b> {a.direction === "to" ? "going to" : "coming from"} it</li>)}
                     </ul>
                   </li>
@@ -184,20 +184,20 @@ export default function ConnectorChecksPage() {
                 {view === "tag" && rows.tag.map((t, i) => (
                   <li key={i} className="px-4 sm:px-5 py-3">
                     <div className="text-[var(--color-text)]"><SheetLink s={t.from} /> shows <b>{t.tag}</b> {t.direction === "to" ? "going to" : "coming from"} <SheetLink s={t.to} /></div>
-                    <div className="mt-0.5 text-[13px] text-[var(--color-text-muted)]">{t.tag} was not read on that sheet. On the drawing: <span className="font-display tabular-nums text-[var(--color-text)]">{t.raw}</span></div>
+                    <div className="mt-0.5 text-body text-[var(--color-text-muted)]">{t.tag} was not read on that sheet. On the drawing: <span className="font-display tabular-nums text-[var(--color-text)]">{t.raw}</span></div>
                   </li>
                 ))}
                 {view === "oneway" && rows.oneway.map((o, i) => (
                   <li key={i} className="px-4 sm:px-5 py-3">
                     <div className="text-[var(--color-text)]"><SheetLink s={o.from} /> {o.direction === "to" ? "sends" : "takes"} {o.count} line{o.count === 1 ? "" : "s"} {o.direction === "to" ? "to" : "from"} <SheetLink s={o.to} /> <span className="text-[var(--color-text-muted)]">({o.tags.join(", ")})</span></div>
-                    <div className="mt-0.5 text-[13px] text-[var(--color-text-muted)]">That sheet shows nothing {o.direction === "to" ? "coming from" : "going to"} it.</div>
+                    <div className="mt-0.5 text-body text-[var(--color-text-muted)]">That sheet shows nothing {o.direction === "to" ? "coming from" : "going to"} it.</div>
                   </li>
                 ))}
               </ul>
             )}
           </div>
           </section>
-          <p className="text-[13px] text-[var(--color-text-muted)]">
+          <p className="text-body text-[var(--color-text-muted)]">
             From what was read off each sheet. A tag the reader missed shows here as not on the sheet: the drawing settles it.
             {(checks.unchecked.noTarget + checks.unchecked.noSheetRecorded + checks.unchecked.targetNotRead) > 0 && (
               <span className="block mt-1">

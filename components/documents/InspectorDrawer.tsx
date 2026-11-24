@@ -54,7 +54,7 @@ export default function InspectorDrawer({ isOpen, onClose, children, title }: In
       >
         {/* Where you are, and the way out */}
         <div className="shrink-0 px-5 sm:px-7 pt-5 pb-1 flex items-center gap-3">
-          <div className="flex-1 min-w-0 truncate text-[14px] text-[var(--color-text-muted)]" title={title}>
+          <div className="flex-1 min-w-0 truncate text-body text-[var(--color-text-muted)]" title={title}>
             {title ?? "Document"}
           </div>
           <button

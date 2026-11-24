@@ -48,15 +48,15 @@ function useRecordWriter(): { write: RecordWriter | null; by: string | null } {
  *  chip, which shows it as 2:30 PM). */
 const clockOf = (at: number, tz: string) => toDateTimeInput(at, tz).slice(11, 16);
 
-const smallBtn = "px-1.5 py-1 text-[11px] font-semibold rounded hover:bg-[var(--color-surface-2)]";
+const smallBtn = "px-1.5 py-1 text-caption font-medium rounded hover:bg-[var(--color-surface-2)]";
 
 /** "Removed. Undo" - right after a removal, until dismissed. */
 function UndoLine({ text, onUndo, onDismiss }: { text: string; onUndo: () => void; onDismiss: () => void }) {
   return (
-    <div role="status" className="mt-1 flex items-center gap-2 border-l-2 border-[var(--color-border-strong)] pl-2 py-0.5 text-[11px] text-[var(--color-text)]">
+    <div role="status" className="mt-1 flex items-center gap-2 border-l-2 border-[var(--color-border-strong)] pl-2 py-0.5 text-caption text-[var(--color-text)]">
       <span className="min-w-0 flex-1 truncate">{text}</span>
-      <button type="button" onClick={onUndo} className="inline-flex items-center gap-1 px-2 py-1 rounded border border-[var(--color-border-strong)] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><RotateCcw className="w-3 h-3" /> Undo</button>
-      <button type="button" onClick={onDismiss} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Dismiss</button>
+      <button type="button" onClick={onUndo} className="inline-flex items-center gap-1 px-2 py-1 rounded border border-[var(--color-border-strong)] font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><RotateCcw className="w-3 h-3" /> Undo</button>
+      <button type="button" onClick={onDismiss} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Dismiss</button>
     </div>
   );
 }
@@ -97,7 +97,7 @@ export function DayPick({ value, onChange, tz, disabled, className = "" }: { val
   const [max] = useState(() => dayKey(Date.now(), tz));
   return (
     <input type="date" value={value ?? ""} max={max} disabled={disabled} onChange={(e) => onChange(e.target.value || null)} aria-label="The day it happened"
-      className={`h-8 pointer-coarse:h-11 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1.5 text-[12px] text-[var(--color-text)] ${className}`} />
+      className={`h-8 pointer-coarse:h-11 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1.5 text-caption text-[var(--color-text)] ${className}`} />
   );
 }
 
@@ -114,9 +114,9 @@ const clockIfNow = (shift: ShiftWindow, tz: string) => { const t = Date.now(); r
 
 /** A quiet Add/Save beside a line being typed: the report's one orange
  *  button is its Email / Print. */
-const addBtn = "inline-flex items-center justify-center gap-1 h-8 pointer-coarse:h-11 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] text-[13px] font-semibold disabled:opacity-50";
+const addBtn = "inline-flex items-center justify-center gap-1 h-8 pointer-coarse:h-11 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] text-body font-medium disabled:opacity-50";
 
-const inputCls = "h-8 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-control)] bg-[var(--color-surface)] px-2.5 text-[13px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] ";
+const inputCls = "h-8 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-control)] bg-[var(--color-surface)] px-2.5 text-body text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] ";
 
 /** "Safety incidents this shift: None / Report one" — in place of the old
  *  tick-box, with each one reported listed under it. */
@@ -179,13 +179,13 @@ export function IncidentsLine({ incidents, edit, print, shift, tz, T, onNone, on
     else if (write) void write(key, (rec) => restoreIncident(rec, x)).catch((e) => setMsg(sayError(e)));
     else onAdd({ at: x.at, kind: x.kind, text: x.text });
   };
-  const btn = (on: boolean) => `inline-flex items-center gap-1 h-8 pointer-coarse:h-11 px-3 text-[13px] font-semibold bg-[var(--color-surface)] ${on ? "text-[var(--color-text)] shadow-[inset_0_-2px_0_var(--color-current)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`;
+  const btn = (on: boolean) => `inline-flex items-center gap-1 h-8 pointer-coarse:h-11 px-3 text-body font-medium bg-[var(--color-surface)] ${on ? "text-[var(--color-text)] shadow-[inset_0_-2px_0_var(--color-current)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`;
   return (
-    <div className="text-[12px] min-w-0">
+    <div className="text-caption min-w-0">
       <div className="flex flex-wrap items-center gap-1.5">
         <b className="text-[var(--color-text)]">Safety incidents this shift:</b>
         {print || !edit ? (
-          <span className={items.length ? "font-bold text-[var(--state-overdue-text)]" : none ? "font-bold text-[var(--state-released-text)]" : "text-[var(--color-text-muted)]"}>
+          <span className={items.length ? "font-medium text-[var(--state-overdue-text)]" : none ? "font-medium text-[var(--state-released-text)]" : "text-[var(--color-text-muted)]"}>
             {items.length ? `${items.length} reported` : none ? "None" : "not recorded"}
           </span>
         ) : (
@@ -199,7 +199,7 @@ export function IncidentsLine({ incidents, edit, print, shift, tz, T, onNone, on
         <ul className="mt-1 space-y-0.5">
           {[...items].sort((a, b) => a.at - b.at).map((x) => (
             <li key={x.id} className={`flex items-baseline gap-1.5 ${editingId === x.id ? "rounded bg-[var(--color-surface-2)]" : ""}`}>
-              <span className="shrink-0 font-display tabular-nums text-[11px] text-[var(--color-text-muted)]">{T(x.at)}</span>
+              <span className="shrink-0 font-display tabular-nums text-caption text-[var(--color-text-muted)]">{T(x.at)}</span>
               <b className="shrink-0 whitespace-nowrap text-[var(--state-overdue-text)]">{x.kind}</b>
               <span className="min-w-0 break-words">{x.text}</span>
               {edit && !print && (
@@ -218,17 +218,17 @@ export function IncidentsLine({ incidents, edit, print, shift, tz, T, onNone, on
       {open && edit && !print && (
         <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
           <TimeChip value={clock} onChange={(v) => { setClock(v); setMsg(null); }} tz={tz} label="Time it happened" />
-          <button type="button" onClick={() => setClock(nowClock(tz))} className="h-8 pointer-coarse:h-11 px-2.5 rounded-lg border border-[var(--color-border-strong)] text-[13px] font-semibold">Now</button>
+          <button type="button" onClick={() => setClock(nowClock(tz))} className="h-8 pointer-coarse:h-11 px-2.5 rounded-lg border border-[var(--color-border-strong)] text-body font-medium">Now</button>
           <select value={kind} onChange={(e) => setKind(e.target.value as IncidentKind)} aria-label="Kind" className={`${inputCls} pr-6`}>
             {INCIDENT_KINDS.map((k) => <option key={k}>{k}</option>)}
           </select>
           <input value={text} onChange={(e) => { setText(e.target.value); setMsg(null); }} onKeyDown={(e) => { if (e.key === "Enter") add(); }} placeholder="What happened, who, what was done" aria-label="What happened" className={`${inputCls} flex-1 min-w-[180px]`} />
           <button type="button" onClick={add} className={addBtn}>{editingId ? "Save" : "Add"}</button>
-          {editingId && <button type="button" onClick={reset} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>}
-          {msg && <span className="basis-full text-[var(--state-overdue-text)] font-semibold">{msg}</span>}
+          {editingId && <button type="button" onClick={reset} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>}
+          {msg && <span className="basis-full text-[var(--state-overdue-text)] font-medium">{msg}</span>}
         </div>
       )}
-      {!open && msg && <div className="mt-1 text-[var(--state-overdue-text)] font-semibold">{msg}</div>}
+      {!open && msg && <div className="mt-1 text-[var(--state-overdue-text)] font-medium">{msg}</div>}
     </div>
   );
 }
@@ -312,14 +312,14 @@ export function ShiftNotesBox({ notes, edit, print, shift, tz, T, D, onAdd, onCl
     <div className="space-y-1">
       {sorted.length === 0 && (print || !edit) && Array.from({ length: print ? 4 : 3 }).map((_, i) => <div key={i} className="h-5 border-b border-dotted border-[var(--color-border-strong)]" />)}
       {sorted.length > 0 && (
-        <ul className={`space-y-0.5 ${print ? "text-[8pt]" : "text-[12px]"}`}>
+        <ul className={`space-y-0.5 ${print ? "text-[8pt]" : "text-caption"}`}>
           {sorted.map((n) => (
             <li key={`${n.shiftKey}:${n.id}`} className={`flex items-baseline gap-1.5 ${editing?.id === n.id ? "rounded bg-[var(--color-surface-2)]" : ""}`}>
-              <span className="font-display tabular-nums text-[11px] text-[var(--color-text-muted)] whitespace-nowrap">{n.from ? `${D(n.at)} ${T(n.at)}` : T(n.at)}</span>
+              <span className="font-display tabular-nums text-caption text-[var(--color-text-muted)] whitespace-nowrap">{n.from ? `${D(n.at)} ${T(n.at)}` : T(n.at)}</span>
               <span className="min-w-0 break-words">
                 {n.text}
-                {n.followUp && !n.cleared && <span className="ml-1.5 text-[11px] font-bold text-[var(--state-held-text)]">{n.from ? `follow-up, open since ${n.from}` : "follow-up"}</span>}
-                {n.followUp && n.cleared && <span className="ml-1.5 text-[11px] font-bold text-[var(--state-released-text)]">follow-up, cleared{n.cleared.by ? ` by ${n.cleared.by}` : ""}</span>}
+                {n.followUp && !n.cleared && <span className="ml-1.5 text-caption font-medium text-[var(--state-held-text)]">{n.from ? `follow-up, open since ${n.from}` : "follow-up"}</span>}
+                {n.followUp && n.cleared && <span className="ml-1.5 text-caption font-medium text-[var(--state-released-text)]">follow-up, cleared{n.cleared.by ? ` by ${n.cleared.by}` : ""}</span>}
               </span>
               {edit && !print && (
                 <span className="ml-auto flex gap-1 shrink-0">
@@ -343,12 +343,12 @@ export function ShiftNotesBox({ notes, edit, print, shift, tz, T, D, onAdd, onCl
       {edit && !print && (
         <div className="flex flex-wrap items-center gap-1.5 pt-1">
           <TimeChip value={clock} onChange={(v) => { setClock(v); setMsg(null); }} tz={tz} />
-          <button type="button" onClick={() => setClock(nowClock(tz))} className="h-8 pointer-coarse:h-11 px-2.5 rounded-lg border border-[var(--color-border-strong)] text-[13px] font-semibold">Now</button>
+          <button type="button" onClick={() => setClock(nowClock(tz))} className="h-8 pointer-coarse:h-11 px-2.5 rounded-lg border border-[var(--color-border-strong)] text-body font-medium">Now</button>
           <input value={text} onChange={(e) => { setText(e.target.value); setMsg(null); }} onKeyDown={(e) => { if (e.key === "Enter") add(); }} placeholder="What happened, or what needs doing" aria-label="Note" className={`${inputCls} flex-1 min-w-[160px]`} />
-          <label className="inline-flex items-center gap-1 text-[11px]"><input type="checkbox" checked={follow} onChange={(e) => setFollow(e.target.checked)} /> Follow-up</label>
+          <label className="inline-flex items-center gap-1 text-caption"><input type="checkbox" checked={follow} onChange={(e) => setFollow(e.target.checked)} /> Follow-up</label>
           <button type="button" onClick={add} className={addBtn}>{editing ? "Save" : "Add"}</button>
-          {editing && <button type="button" onClick={reset} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>}
-          {msg && <span className="basis-full text-[11px] text-[var(--state-overdue-text)] font-semibold">{msg}</span>}
+          {editing && <button type="button" onClick={reset} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>}
+          {msg && <span className="basis-full text-caption text-[var(--state-overdue-text)] font-medium">{msg}</span>}
         </div>
       )}
     </div>
@@ -361,13 +361,13 @@ export function AddCompany({ onAdd }: { onAdd: (name: string) => void }) {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const add = () => { if (name.trim()) { onAdd(name.trim()); setName(""); setOpen(false); } };
-  if (!open) return <button type="button" onClick={() => setOpen(true)} className="mt-1 text-[13px] text-[var(--color-accent-text)] hover:underline">+ Add a company</button>;
+  if (!open) return <button type="button" onClick={() => setOpen(true)} className="mt-1 text-body text-[var(--color-accent-text)] hover:underline">+ Add a company</button>;
   return (
     <div className="mt-1 flex items-center gap-1.5">
       <input autoFocus value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") add(); if (e.key === "Escape") setOpen(false); }}
         placeholder="Company or group" aria-label="Company or group" className={`${inputCls} flex-1 min-w-0`} />
       <button type="button" onClick={add} className={addBtn}>Add</button>
-      <button type="button" onClick={() => setOpen(false)} className="text-[11px] text-[var(--color-text-muted)]">Cancel</button>
+      <button type="button" onClick={() => setOpen(false)} className="text-caption text-[var(--color-text-muted)]">Cancel</button>
     </div>
   );
 }
@@ -379,20 +379,20 @@ export function TimeLogButton({ busy, msg, onExport, shiftLabel }: { busy: boole
     <span className="relative inline-flex">
       <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open} disabled={busy}
         title="Every work order and step with the time each thing was done: its own file for the project, not part of the update"
-        className="inline-flex items-center gap-1.5 h-9 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-60">
+        className="inline-flex items-center gap-1.5 h-10 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-60">
         <FileSpreadsheet className="w-3.5 h-3.5" /> {busy ? "Exporting…" : "Time log"}
       </button>
       {open && (
         <>
           <span className="fixed inset-0 z-[40]" onClick={() => setOpen(false)} aria-hidden />
-          <span className="absolute right-0 top-full mt-1 z-[41] w-64 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] shadow-lg p-1.5 flex flex-col text-[12px]">
-            <span className="px-2 pt-1 pb-1.5 text-[11px] text-[var(--color-text-muted)]">Excel file: every step and the time each thing was done.</span>
-            <button type="button" onClick={() => { setOpen(false); onExport("shift"); }} className="text-left px-2 py-1.5 rounded hover:bg-[var(--color-surface-2)] font-semibold">{shiftLabel}</button>
-            <button type="button" onClick={() => { setOpen(false); onExport("job"); }} className="text-left px-2 py-1.5 rounded hover:bg-[var(--color-surface-2)] font-semibold">Whole job to date</button>
+          <span className="absolute right-0 top-full mt-1 z-[41] w-64 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] shadow-lg p-1.5 flex flex-col text-caption">
+            <span className="px-2 pt-1 pb-1.5 text-caption text-[var(--color-text-muted)]">Excel file: every step and the time each thing was done.</span>
+            <button type="button" onClick={() => { setOpen(false); onExport("shift"); }} className="text-left px-2 py-1.5 rounded hover:bg-[var(--color-surface-2)] font-medium">{shiftLabel}</button>
+            <button type="button" onClick={() => { setOpen(false); onExport("job"); }} className="text-left px-2 py-1.5 rounded hover:bg-[var(--color-surface-2)] font-medium">Whole job to date</button>
           </span>
         </>
       )}
-      {msg && !open && <span role="status" className="absolute right-0 top-full mt-1 z-[39] whitespace-nowrap rounded bg-[var(--color-surface)] border border-[var(--color-border)] px-2 py-0.5 text-[11px] font-semibold text-[var(--color-text-muted)] shadow-sm">{msg}</span>}
+      {msg && !open && <span role="status" className="absolute right-0 top-full mt-1 z-[39] whitespace-nowrap rounded bg-[var(--color-surface)] border border-[var(--color-border)] px-2 py-0.5 text-caption font-medium text-[var(--color-text-muted)] shadow-sm">{msg}</span>}
     </span>
   );
 }

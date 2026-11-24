@@ -179,7 +179,7 @@ export default function IntelligencePage() {
     return () => { cancelled = true; };
   }, [activeOrgId, isAdmin]);
 
-  if (!activeOrgId) return <div className="p-8 text-[14px] text-[var(--color-text-muted)]">Pick a workspace to continue.</div>;
+  if (!activeOrgId) return <div className="p-8 text-body text-[var(--color-text-muted)]">Pick a workspace to continue.</div>;
 
   const s = status ?? EMPTY_STATUS;
   const coveragePct = s.chunksTotal > 0 ? Math.round((s.chunksEmbedded / s.chunksTotal) * 100) : 0;
@@ -246,12 +246,12 @@ export default function IntelligencePage() {
           {!!error && <ErrorNote error={error} title="Couldn't load the AI status." onRetry={() => window.location.reload()} />}
           {/* ── Is the machine on? Four checks, one ruled row each. ── */}
           <Card label={<span className="inline-flex items-baseline gap-2.5">Is it on {known.length === checks.length && <span className={`ui-count ${ready < checks.length ? "is-warn" : ""}`}>{ready} of {checks.length} ready</span>}</span>} pad={false} className="overflow-hidden">
-            <table className="w-full text-[15px]">
-              <thead className="bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text-muted)] text-left">
+            <table className="w-full text-body">
+              <thead className="bg-[var(--color-surface-2)] text-body text-[var(--color-text-muted)] text-left">
                 <tr>
-                  <th className="font-semibold px-4 h-10 w-[30%] sm:w-[22%]">Check</th>
-                  <th className="font-semibold px-4">State</th>
-                  <th className="font-semibold px-4 hidden sm:table-cell text-right">Fix</th>
+                  <th className="font-medium px-4 h-10 w-[30%] sm:w-[22%]">Check</th>
+                  <th className="font-medium px-4">State</th>
+                  <th className="font-medium px-4 hidden sm:table-cell text-right">Fix</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[var(--color-border)]">
@@ -270,24 +270,24 @@ export default function IntelligencePage() {
                   <li>
                     <Link href="/admin/proposed-links" className="flex items-center gap-4 px-4 py-3 hover:bg-[var(--color-surface-2)] transition-colors">
                       <span className="min-w-0 flex-1">
-                        <span className="flex items-center gap-2 text-[15px] font-semibold text-[var(--color-text)]"><span className="ui-pill is-warn">{badgeText(s.pendingProposals)}</span> Proposed connections to review</span>
-                        <span className="block text-[14px] text-[var(--color-text-muted)]">Approve or dismiss each, with its evidence.</span>
+                        <span className="flex items-center gap-2 text-reading font-medium text-[var(--color-text)]"><span className="ui-pill is-warn">{badgeText(s.pendingProposals)}</span> Proposed connections to review</span>
+                        <span className="block text-body text-[var(--color-text-muted)]">Approve or dismiss each, with its evidence.</span>
                       </span>
                       <ArrowRight aria-hidden className="w-4 h-4 text-[var(--color-text-muted)]" />
                     </Link>
                   </li>
                 ) : (
                   <li className="px-4 py-3 flex flex-wrap items-center gap-x-4 gap-y-1">
-                    <span className="flex-1 min-w-[14rem] text-[15px] text-[var(--color-text-muted)]">Nothing waits on you. New link proposals show up here as documents get read.</span>
-                    <Link href="/admin/proposed-links" className="text-[14px] font-semibold text-[var(--color-accent-text)] hover:underline underline-offset-2">Open Review</Link>
+                    <span className="flex-1 min-w-[14rem] text-reading text-[var(--color-text-muted)]">Nothing waits on you. New link proposals show up here as documents get read.</span>
+                    <Link href="/admin/proposed-links" className="text-body font-medium text-[var(--color-accent-text)] hover:underline underline-offset-2">Open Review</Link>
                   </li>
                 )}
                 {s.chunksTotal > 0 && s.chunksEmbedded < s.chunksTotal && !!s.embeddingKey && (
                   <li>
                     <Link href="/knowledge" className="flex items-center gap-4 px-4 py-3 hover:bg-[var(--color-surface-2)] transition-colors">
                       <span className="min-w-0 flex-1">
-                        <span className="flex items-center gap-2 text-[15px] font-semibold text-[var(--color-text)]"><span className="font-display tabular-nums">{coveragePct}%</span> of the meaning index built</span>
-                        <span className="block text-[14px] text-[var(--color-text-muted)]">{s.chunksEmbedded.toLocaleString()} of {s.chunksTotal.toLocaleString()} passages. Finish it from the library page.</span>
+                        <span className="flex items-center gap-2 text-reading font-medium text-[var(--color-text)]"><span className="font-display tabular-nums">{coveragePct}%</span> of the meaning index built</span>
+                        <span className="block text-body text-[var(--color-text-muted)]">{s.chunksEmbedded.toLocaleString()} of {s.chunksTotal.toLocaleString()} passages. Finish it from the library page.</span>
                       </span>
                       <ArrowRight className="w-4 h-4 text-[var(--color-text-muted)]" />
                     </Link>
@@ -298,23 +298,23 @@ export default function IntelligencePage() {
           </Card>
 
           <Card label={<span className="inline-flex items-baseline gap-2.5">Recent questions{s.recentAsks.length > 0 ? <span className="ui-count">{s.recentAsks.length}</span> : null}</span>} pad={false} className="overflow-hidden"
-            action={<Link href="/assistant" className="text-[14px] font-semibold text-[var(--color-accent-text)] hover:underline underline-offset-2">All conversations</Link>}>
+            action={<Link href="/assistant" className="text-body font-medium text-[var(--color-accent-text)] hover:underline underline-offset-2">All conversations</Link>}>
             {!s.countsKnown ? (
               <SkeletonRows rows={3} cols={2} sheet={false} what="recent questions" />
             ) : s.recentAsks.length === 0 ? (
               <div className="px-4 py-3 flex flex-wrap items-center gap-x-4 gap-y-2">
-                <p className="flex-1 min-w-[14rem] text-[15px] text-[var(--color-text-muted)]">Nobody has asked anything yet.</p>
-                <Link href={`/assistant?q=${encodeURIComponent("What do we have on E-101?")}`} className="inline-flex items-center gap-1.5 h-10 pointer-coarse:h-11 px-3.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+                <p className="flex-1 min-w-[14rem] text-reading text-[var(--color-text-muted)]">Nobody has asked anything yet.</p>
+                <Link href={`/assistant?q=${encodeURIComponent("What do we have on E-101?")}`} className="inline-flex items-center gap-1.5 h-10 pointer-coarse:h-11 px-3.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
                   Ask &ldquo;What do we have on E-101?&rdquo;
                 </Link>
               </div>
             ) : (
-              <table className="w-full text-[15px]">
-                <thead className="bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text-muted)] text-left">
+              <table className="w-full text-body">
+                <thead className="bg-[var(--color-surface-2)] text-body text-[var(--color-text-muted)] text-left">
                   <tr>
-                    <th className="font-semibold px-4 h-10">Question</th>
-                    <th className="font-semibold px-4 hidden sm:table-cell">Asked by</th>
-                    <th className="font-semibold px-4 hidden sm:table-cell whitespace-nowrap">When</th>
+                    <th className="font-medium px-4 h-10">Question</th>
+                    <th className="font-medium px-4 hidden sm:table-cell">Asked by</th>
+                    <th className="font-medium px-4 hidden sm:table-cell whitespace-nowrap">When</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[var(--color-border)]">
@@ -324,8 +324,8 @@ export default function IntelligencePage() {
                     <tr key={a.id} className="hover:bg-[var(--color-surface-2)] cursor-pointer" onClick={() => transitionPush(router, `/assistant?thread=${a.threadId ?? a.id}`)}>
                       <td className="px-4 py-3 max-w-0 w-full">
                         <div className="min-w-0">
-                          <Link href={`/assistant?thread=${a.threadId ?? a.id}`} onClick={(e) => e.stopPropagation()} className="block truncate font-semibold text-[var(--color-text)] hover:text-[var(--color-accent-text)]">{a.question}</Link>
-                          <span className="sm:hidden block text-[13px] text-[var(--color-text-muted)]">{(a.userName ?? "someone").split("@")[0]}, {when(a.at)}</span>
+                          <Link href={`/assistant?thread=${a.threadId ?? a.id}`} onClick={(e) => e.stopPropagation()} className="block truncate font-medium text-[var(--color-text)] hover:text-[var(--color-accent-text)]">{a.question}</Link>
+                          <span className="sm:hidden block text-body text-[var(--color-text-muted)]">{(a.userName ?? "someone").split("@")[0]}, {when(a.at)}</span>
                         </div>
                       </td>
                       <td className="px-4 py-3 hidden sm:table-cell whitespace-nowrap text-[var(--color-text-muted)]">{(a.userName ?? "someone").split("@")[0]}</td>
@@ -354,21 +354,21 @@ interface CheckRow {
 
 function CheckLine({ c }: { c: CheckRow }) {
   const fix = !c.pending && !c.unknown && !c.ok
-    ? <Link href={c.href} className="inline-flex items-center gap-1 text-[14px] font-semibold text-[var(--color-accent-text)] hover:underline underline-offset-2 whitespace-nowrap">{c.cta}</Link>
+    ? <Link href={c.href} className="inline-flex items-center gap-1 text-body font-medium text-[var(--color-accent-text)] hover:underline underline-offset-2 whitespace-nowrap">{c.cta}</Link>
     : null;
   return (
     <tr className="align-middle">
-      <td className="px-4 py-3 font-semibold text-[var(--color-text)]">{c.title}</td>
+      <td className="px-4 py-3 font-medium text-[var(--color-text)]">{c.title}</td>
       <td className="px-4 py-3">
         {c.pending ? (
           <span role="status" className="flex items-center gap-2.5"><span className="sr-only">Checking</span><Skeleton className="!w-16" /><Skeleton className="!w-56 max-w-full" /></span>
         ) : c.unknown ? (
-          <span className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[14px] pt-0.5">
+          <span className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-body pt-0.5">
             <span className="ui-pill is-muted">Unknown</span>
             <span className="text-[var(--color-text-muted)]">Couldn&apos;t check it right now. Reload to try again.</span>
           </span>
         ) : (
-          <span className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[14px] pt-0.5">
+          <span className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-body pt-0.5">
             <span className={`ui-pill ${c.ok ? "is-good" : "is-warn"}`}>{c.ok ? "Ready" : "Needs you"}</span>
             <span className={c.ok ? "text-[var(--color-text-muted)]" : "text-[var(--color-text)]"}>{c.ok ? c.okText : c.fixText}</span>
           </span>

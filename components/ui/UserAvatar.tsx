@@ -74,7 +74,7 @@ export default function UserAvatar({
   return (
     <span
       title={title ?? bestName ?? undefined}
-      className={`${radius} shrink-0 inline-flex items-center justify-center font-black text-white select-none border border-black/10 shadow-sm ${className ?? ""}`}
+      className={`${radius} shrink-0 inline-flex items-center justify-center font-semibold text-white select-none border border-black/10 shadow-sm ${className ?? ""}`}
       style={{ width: size, height: size, fontSize, backgroundColor: avatarToneOf(bestName) }}
       aria-label={bestName ?? "User"}
     >

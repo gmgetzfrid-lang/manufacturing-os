@@ -35,7 +35,7 @@ interface NotificationBellProps {
 
 /** A small labelled figure in the drop-down's summary line; zeros muted. */
 function Fact({ label, value, bad = false }: { label: string; value: number; bad?: boolean }) {
-  const tone = value === 0 ? "text-[var(--color-text-faint)]" : bad ? "font-semibold text-[var(--state-overdue-text)]" : "font-semibold text-[var(--color-text)]";
+  const tone = value === 0 ? "text-[var(--color-text-faint)]" : bad ? "font-medium text-[var(--state-overdue-text)]" : "font-medium text-[var(--color-text)]";
   return (
     <div className="inline-flex items-baseline gap-1.5">
       <dt className="text-[var(--color-text-muted)]">{label}</dt>
@@ -113,7 +113,7 @@ export default function NotificationBell({ collapsed, variant = "sidebar" }: Not
     ? `${decisions.toLocaleString()} waiting on you`
     : changed ? "Something new" : count > 0 ? `${count.toLocaleString()} to look at` : "Nothing new";
   const badge = decisions > 0
-    ? <span className={`ui-badge absolute ${isHeader ? "-top-0.5 -right-0.5 ring-2 ring-[var(--color-canvas)]" : collapsed ? "top-1 right-1" : "right-3 top-1/2 -translate-y-1/2"}`}>{badgeText(decisions)}</span>
+    ? <span key={decisions} className={`ui-badge absolute ${isHeader ? "-top-0.5 -right-0.5 ring-2 ring-[var(--color-canvas)]" : collapsed ? "top-1 right-1" : "right-3 top-1/2 -translate-y-1/2"}`}>{badgeText(decisions)}</span>
     : changed
       ? <span aria-hidden className={`absolute w-2 h-2 rounded-full bg-[var(--color-current)] ${isHeader ? "top-1.5 right-1.5 ring-2 ring-[var(--color-canvas)]" : collapsed ? "top-2 right-2" : "right-4 top-1/2 -translate-y-1/2"}`} />
       : null;
@@ -157,22 +157,22 @@ export default function NotificationBell({ collapsed, variant = "sidebar" }: Not
                 <h2 className="min-w-0 flex-1 font-display text-section font-semibold">
                   {count === 0 ? "All caught up." : `${count.toLocaleString()} ${count === 1 ? "thing needs" : "things need"} you.`}
                 </h2>
-                <Link href="/settings/notifications" onClick={() => setOpen(false)} className={`text-[14px] ${link}`}>Settings</Link>
+                <Link href="/settings/notifications" onClick={() => setOpen(false)} className={`text-body ${link}`}>Settings</Link>
               </div>
               {count > 0 && (
-                <dl className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-[13px]">
+                <dl className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-body">
                   <Fact label="Overdue" value={facts.overdue} bad />
                   <Fact label="Waiting on you" value={facts.yourTurn} />
                   <Fact label="Updates" value={facts.news} />
                 </dl>
               )}
-              {markError && <p role="alert" className="mt-1.5 text-[13px] font-semibold text-[var(--state-overdue-text)]">{markError}</p>}
+              {markError && <p role="alert" className="mt-1.5 text-body font-medium text-[var(--state-overdue-text)]">{markError}</p>}
             </div>
             <div className="flex-1 overflow-y-auto">
               {loading && items.length === 0 ? (
                 <SkeletonRows rows={4} cols={1} what="notifications" sheet={false} />
               ) : items.length === 0 ? (
-                <p className="px-4 py-5 text-[15px] text-[var(--color-text-muted)]">Nothing needs you.</p>
+                <p className="px-4 py-5 text-reading text-[var(--color-text-muted)]">Nothing needs you.</p>
               ) : (
                 <NeedsTable rows={rows} label="Notifications" seenAt={listSeen} onOpen={(r) => { void onItemOpen(r.notificationId); }} />
               )}
@@ -193,7 +193,7 @@ export default function NotificationBell({ collapsed, variant = "sidebar" }: Not
                 </button>
               )}
               <div className="flex-1" />
-              <button type="button" onClick={() => { setOpen(false); openCenter("all"); }} className={`text-[14px] font-semibold ${link}`}>See all</button>
+              <button type="button" onClick={() => { setOpen(false); openCenter("all"); }} className={`text-body font-medium ${link}`}>See all</button>
             </div>
         </div>
       )}

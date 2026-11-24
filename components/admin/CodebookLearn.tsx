@@ -64,7 +64,7 @@ export default function CodebookLearn({ orgId, uid, book, canWrite, onChanged, o
     );
   }
   if (readFailed) {
-    return <p className="mb-4 text-[13px] text-[var(--color-text-muted)]">Couldn&apos;t read your drawing numbers and tags for suggestions.</p>;
+    return <p className="mb-4 text-body text-[var(--color-text-muted)]">Couldn&apos;t read your drawing numbers and tags for suggestions.</p>;
   }
   // The library whose numbers fit best speaks for the site.
   const best = [...found.numbering].sort((a, b) => b.learned.fit - a.learned.fit)[0] ?? null;
@@ -103,8 +103,8 @@ export default function CodebookLearn({ orgId, uid, book, canWrite, onChanged, o
       {numberingNew && best && (
         <div className={card}>
           <div className="flex items-start gap-2 flex-wrap">
-            <div className="min-w-0 flex-1 basis-64 text-[15px] text-[var(--color-text)]">
-              <div className="text-[16px] font-semibold">Your drawing numbers already follow a pattern</div>
+            <div className="min-w-0 flex-1 basis-64 text-reading text-[var(--color-text)]">
+              <div className="text-reading font-medium">Your drawing numbers already follow a pattern</div>
               <p className="mt-1 text-[var(--color-text-muted)]">
                 <b className="text-[var(--color-text)]">{best.learned.fit} of {best.learned.total}</b> numbers in {best.library} read as: unit ({best.learned.segments[0].digits} digits), drawing type (2 digits), a size letter, then the drawing&rsquo;s number.
               </p>
@@ -114,7 +114,7 @@ export default function CodebookLearn({ orgId, uid, book, canWrite, onChanged, o
                 ))}
               </ul>
               {best.learned.uploadTails > 0 && (
-                <p className="mt-1 text-[14px] text-[var(--color-text-muted)]">
+                <p className="mt-1 text-body text-[var(--color-text-muted)]">
                   {best.learned.uploadTails} of these also end in a dash and digits (like <span className="font-display font-semibold tabular-nums">-7</span>). An upload added those to keep a repeated number apart. They are a count, not the sheet, and not part of your numbering. To take them off: Intelligence, Knowledge, open the library that reads these drawings, and press Correct in the Library health card at the top. Each sheet keeps its sheet number.
                 </p>
               )}
@@ -133,8 +133,8 @@ export default function CodebookLearn({ orgId, uid, book, canWrite, onChanged, o
       {found.letters.length > 0 && (
         <div className={card}>
           <div className="flex items-start gap-2 flex-wrap">
-            <div className="min-w-0 flex-1 basis-64 text-[15px] text-[var(--color-text)]">
-              <div className="text-[16px] font-semibold">Tag letters, from your equipment list</div>
+            <div className="min-w-0 flex-1 basis-64 text-reading text-[var(--color-text)]">
+              <div className="text-reading font-medium">Tag letters, from your equipment list</div>
               <p className="mt-1 text-[var(--color-text-muted)]">Each ID says the type (5530.29 is type 30) and each tag says the letter (E-22). A letter is listed only when it belongs to one type.</p>
               <ul className="mt-2 space-y-0.5">
                 {found.letters.map((r) => (

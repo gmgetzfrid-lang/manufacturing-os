@@ -43,7 +43,7 @@ const TotalsCtx = createContext<Map<string, number> | undefined>(undefined);
 
 function CountBadge({ n }: { n: number | undefined }) {
   if (n === undefined) return null;
-  return <span className={`ml-auto shrink-0 text-[12px] tabular-nums ${n ? "text-[var(--color-text-muted)]" : "text-[var(--color-text-faint)]"}`} title="Files here, including subfolders">{n.toLocaleString()}</span>;
+  return <span className={`ml-auto shrink-0 text-caption tabular-nums ${n ? "text-[var(--color-text-muted)]" : "text-[var(--color-text-faint)]"}`} title="Files here, including subfolders">{n.toLocaleString()}</span>;
 }
 
 interface FolderRailProps {
@@ -228,8 +228,8 @@ function FolderTree({
   useEffect(() => () => { if (spring.current) window.clearTimeout(spring.current.t); }, []);
 
   const currentParent = currentFolderId ? (byId.get(currentFolderId)?.parentId ?? null) : undefined;
-  const rowCls = (active: boolean) => `relative w-full flex items-center gap-1.5 h-9 pointer-coarse:h-11 pr-2 rounded-lg text-left text-[14px] transition-colors outline-offset-[-2px] ${
-    active ? "bg-[var(--color-surface-2)] text-[var(--color-text)] font-semibold" : "text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] hover:text-[var(--color-text)]"
+  const rowCls = (active: boolean) => `relative w-full flex items-center gap-1.5 h-9 pointer-coarse:h-11 pr-2 rounded-lg text-left text-body transition-colors outline-offset-[-2px] ${
+    active ? "bg-[var(--color-surface-2)] text-[var(--color-text)] font-medium" : "text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] hover:text-[var(--color-text)]"
   }`;
 
   return (
@@ -343,7 +343,7 @@ export default function FolderRail({
           title="Folders: point here to browse"
         >
           <PanelLeftOpen className="w-4 h-4" />
-          <span className="text-[12px] font-semibold leading-none" style={{ writingMode: "vertical-rl" }}>Folders</span>
+          <span className="text-caption font-medium leading-none" style={{ writingMode: "vertical-rl" }}>Folders</span>
         </div>
 
         <div className="w-6 h-px bg-[var(--color-border)] my-1" />
@@ -421,14 +421,14 @@ export default function FolderRail({
           <div className="h-full flex flex-col">
             <div className="pl-4 pr-2 h-12 border-b border-[var(--color-border)] flex items-center justify-between gap-2">
               <div className="min-w-0">
-                <div className="text-[12px] text-[var(--color-text-muted)]">Folders</div>
-                <div className="text-[14px] font-semibold text-[var(--color-text)] truncate">{libraryName}</div>
+                <div className="text-caption text-[var(--color-text-muted)]">Folders</div>
+                <div className="text-body font-medium text-[var(--color-text)] truncate">{libraryName}</div>
               </div>
               {isController && (
                 <button
                   type="button"
                   onClick={onCreateFolder}
-                  className="shrink-0 inline-flex items-center gap-1.5 h-8 px-2.5 rounded-lg text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors"
+                  className="shrink-0 inline-flex items-center gap-1.5 h-8 px-2.5 rounded-lg text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors"
                   title="New folder"
                 >
                   <FolderPlus className="w-4 h-4" /> New
@@ -455,7 +455,7 @@ export default function FolderRail({
               )}
 
               {!loading && folders.length === 0 && (
-                <p className="text-[13px] text-[var(--color-text-muted)] py-4 px-3">No folders yet.</p>
+                <p className="text-body text-[var(--color-text-muted)] py-4 px-3">No folders yet.</p>
               )}
             </div>
           </div>

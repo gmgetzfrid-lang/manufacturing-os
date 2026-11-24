@@ -323,7 +323,7 @@ export default function PermissionsDrawer(props: {
   const actionWord = (a: string) => ACTIONS.find((x) => x.key === a)?.label ?? a;
   const dirty = JSON.stringify({ i: inherit, v: visibility, r: rules }) !== JSON.stringify({ i: initial.inherit ?? true, v: initial.visibility ?? "normal", r: initial.rules ?? [] });
   const canAdd = showBulkSelector ? bulkRoles.length > 0 : subjectType === "role" ? true : !!subjectId.trim();
-  const h3 = "text-[16px] font-semibold text-[var(--color-text)]";
+  const h3 = "text-reading font-medium text-[var(--color-text)]";
 
   return (
     <div role="dialog" aria-modal="true" aria-label={`Permissions for ${nodeLabel}`} className="fixed inset-0 z-[400] flex justify-end">
@@ -331,7 +331,7 @@ export default function PermissionsDrawer(props: {
       <div className="relative h-full w-full max-w-[560px] bg-[var(--color-surface)] text-[var(--color-text)] ui-float sm:rounded-l-xl animate-in slide-in-from-right duration-300 motion-reduce:animate-none flex flex-col">
         <div className="flex items-start justify-between gap-3 px-5 sm:px-6 pt-5 pb-4 border-b border-[var(--color-border)] shrink-0">
           <div className="min-w-0">
-            <div className="text-[13px] text-[var(--color-text-muted)]">
+            <div className="text-body text-[var(--color-text-muted)]">
               Permissions · {nodeType === "collection" ? "folder" : nodeType}{!canEdit && <span className="text-[var(--color-text)]"> · read only</span>}
             </div>
             <h2 className="mt-1 font-display text-[24px] leading-tight font-semibold break-words">{nodeLabel}</h2>
@@ -345,7 +345,7 @@ export default function PermissionsDrawer(props: {
           {/* Who can find it, and whether the parent's rules apply. */}
           <section className="space-y-4">
             <div>
-              <div className="text-[14px] font-semibold text-[var(--color-text)] mb-1.5 inline-flex items-center gap-1.5">
+              <div className="text-body font-medium text-[var(--color-text)] mb-1.5 inline-flex items-center gap-1.5">
                 Visibility <HelpTooltip>Hidden: nobody finds it unless a rule below allows them.</HelpTooltip>
               </div>
               <div role="radiogroup" aria-label="Visibility" className={bandSeg}>
@@ -355,11 +355,11 @@ export default function PermissionsDrawer(props: {
                   </button>
                 ))}
               </div>
-              {visibility === "private" && <p className="mt-1.5 text-[13px] text-[var(--color-text-muted)]">Private now. Pick Normal or Hidden to change it.</p>}
+              {visibility === "private" && <p className="mt-1.5 text-body text-[var(--color-text-muted)]">Private now. Pick Normal or Hidden to change it.</p>}
             </div>
-            <label className="flex items-start gap-2.5 text-[15px] text-[var(--color-text)]">
+            <label className="flex items-start gap-2.5 text-reading text-[var(--color-text)]">
               <input type="checkbox" disabled={!canEdit} checked={inherit} onChange={(e) => setInherit(e.target.checked)} className="mt-1 h-4 w-4" />
-              <span>Follow the parent&apos;s rules<span className="block text-[13px] text-[var(--color-text-muted)]">The rules above this apply here, unless a rule below says otherwise.</span></span>
+              <span>Follow the parent&apos;s rules<span className="block text-body text-[var(--color-text-muted)]">The rules above this apply here, unless a rule below says otherwise.</span></span>
             </label>
           </section>
 
@@ -367,17 +367,17 @@ export default function PermissionsDrawer(props: {
           <section>
             <h3 className={`${h3} inline-flex items-center gap-1.5`}>Rules <span className="ui-count">{rules.length || ""}</span> <HelpTooltip>A deny rule always wins over an allow rule.</HelpTooltip></h3>
             {rules.length === 0 ? (
-              <p className="mt-2 text-[14px] text-[var(--color-text-muted)]">None here{inherit ? "; the parent's rules apply" : ""}.</p>
+              <p className="mt-2 text-body text-[var(--color-text-muted)]">None here{inherit ? "; the parent's rules apply" : ""}.</p>
             ) : (
               <ul className="mt-2 rounded-xl border border-[var(--color-border)] divide-y divide-[var(--color-border)]">
                 {rules.map((r, idx) => (
                   <li key={idx} className="flex items-start gap-3 px-3 py-2.5">
                     <div className="min-w-0 flex-1">
-                      <div className="text-[14px]">
-                        <span className={`font-semibold ${r.effect === "deny" ? "text-[var(--state-overdue-text)]" : "text-[var(--color-text)]"}`}>{r.effect === "deny" ? "Deny" : "Allow"}</span>{" "}
+                      <div className="text-body">
+                        <span className={`font-medium ${r.effect === "deny" ? "text-[var(--state-overdue-text)]" : "text-[var(--color-text)]"}`}>{r.effect === "deny" ? "Deny" : "Allow"}</span>{" "}
                         <span className="text-[var(--color-text)]">{r.subject.type === "org" ? subjectWord.org : `${subjectWord[r.subject.type]}: ${subjectLabel(r.subject.type, r.subject.id)}`}</span>
                       </div>
-                      <div className="text-[13px] text-[var(--color-text-muted)]">
+                      <div className="text-body text-[var(--color-text-muted)]">
                         {(r.actions || []).map(actionWord).join(", ")}
                         {r.expiresAt && <>. Until {toDateInput(r.expiresAt).replace("T", " ")}</>}
                       </div>
@@ -419,7 +419,7 @@ export default function PermissionsDrawer(props: {
                 )}
                 {showBulkSelector ? (
                   <div className="sm:col-span-2">
-                    <div className="text-[14px] font-semibold text-[var(--color-text)] mb-1.5">Roles</div>
+                    <div className="text-body font-medium text-[var(--color-text)] mb-1.5">Roles</div>
                     <div className="max-h-72 overflow-y-auto rounded-xl border border-[var(--color-border)]">
                       <RoleTreeSelector selected={bulkRoles} onChange={setBulkRoles} />
                     </div>
@@ -451,13 +451,13 @@ export default function PermissionsDrawer(props: {
                 )}
 
                 <div className="sm:col-span-2">
-                  <div className="text-[14px] font-semibold text-[var(--color-text)] mb-1.5">What they can do</div>
+                  <div className="text-body font-medium text-[var(--color-text)] mb-1.5">What they can do</div>
                   <div className="flex flex-wrap gap-1.5" role="group" aria-label="What they can do">
                     {ACTIONS.map((a) => {
                       const on = actions.includes(a.key);
                       return (
                         <button key={a.key} type="button" role="checkbox" aria-checked={on} onClick={() => toggleAction(a.key)} title={a.hint}
-                          className={`inline-flex items-center gap-1 h-8 pointer-coarse:h-10 px-2.5 rounded-md text-[13px] font-semibold border transition-colors ${on ? "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-text)]" : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border-strong)] hover:text-[var(--color-text)]"}`}>
+                          className={`inline-flex items-center gap-1 h-8 pointer-coarse:h-10 px-2.5 rounded-md text-body font-medium border transition-colors ${on ? "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-text)]" : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border-strong)] hover:text-[var(--color-text)]"}`}>
                           {on && <Check aria-hidden className="w-3.5 h-3.5" />}{a.label}
                         </button>
                       );
@@ -490,7 +490,7 @@ export default function PermissionsDrawer(props: {
         </div>
 
         <div className="shrink-0 px-5 sm:px-6 py-3.5 pb-[calc(14px+env(safe-area-inset-bottom))] border-t border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center justify-end gap-2 sm:rounded-bl-xl">
-          {canEdit && dirty && <span className="mr-auto text-[13px] text-[var(--color-text-muted)]">Not saved yet</span>}
+          {canEdit && dirty && <span className="mr-auto text-body text-[var(--color-text-muted)]">Not saved yet</span>}
           <Button variant="secondary" onClick={close} disabled={saving}>{canEdit ? "Cancel" : "Close"}</Button>
           {canEdit && (
             <Button onClick={() => void save()} loading={saving} disabled={!dirty} title={!dirty ? "Nothing changed yet" : undefined}>Save</Button>

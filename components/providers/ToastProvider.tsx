@@ -77,7 +77,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
             </div>
             
             <div className="flex-1 min-w-0">
-              <h4 className="text-sm font-bold text-[var(--color-text)]">
+              <h4 className="text-sm font-medium text-[var(--color-text)]">
                 {toast.title}
               </h4>
               {toast.message && (

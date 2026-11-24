@@ -14,7 +14,7 @@ import React from "react";
 import { ChevronDown, CircleAlert } from "lucide-react";
 
 export const controlClass =
-  "w-full h-10 pointer-coarse:h-11 px-3 text-[15px] max-sm:text-[16px] rounded-lg border border-[var(--color-border-control)] bg-[var(--color-surface)] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] aria-[invalid=true]:border-[var(--state-overdue)] transition-colors disabled:opacity-50 disabled:cursor-not-allowed";
+  "w-full h-10 pointer-coarse:h-11 px-3 text-reading rounded-lg border border-[var(--color-border-control)] bg-[var(--color-surface)] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] aria-[invalid=true]:border-[var(--state-overdue)] transition-colors disabled:opacity-50 disabled:cursor-not-allowed";
 
 export const Input = React.forwardRef<HTMLInputElement, React.InputHTMLAttributes<HTMLInputElement>>(
   function Input({ className = "", ...rest }, ref) {
@@ -44,7 +44,7 @@ export const Select = React.forwardRef<HTMLSelectElement, React.SelectHTMLAttrib
 /** The line under a field that says what's wrong and how to fix it. */
 export function FieldError({ id, children }: { id?: string; children: React.ReactNode }) {
   return (
-    <span id={id} role="alert" className="mt-1.5 flex items-start gap-1.5 text-[13px] font-semibold text-[var(--state-overdue-text)]">
+    <span id={id} role="alert" className="mt-1.5 flex items-start gap-1.5 text-body font-medium text-[var(--state-overdue-text)]">
       <CircleAlert aria-hidden className="w-4 h-4 shrink-0 mt-px" />
       <span>{children}</span>
     </span>
@@ -79,13 +79,13 @@ export function Field({
     : children;
   return (
     <label className={`block ${className}`}>
-      <span className="block text-[14px] font-semibold text-[var(--color-text)] mb-1.5">
+      <span className="block text-body font-medium text-[var(--color-text)] mb-1.5">
         {label}
       </span>
       {control}
       {error
         ? <FieldError id={noteId}>{error}</FieldError>
-        : hint && <span id={noteId} className="block text-[13px] text-[var(--color-text-muted)] mt-1.5">{hint}</span>}
+        : hint && <span id={noteId} className="block text-body text-[var(--color-text-muted)] mt-1.5">{hint}</span>}
     </label>
   );
 }

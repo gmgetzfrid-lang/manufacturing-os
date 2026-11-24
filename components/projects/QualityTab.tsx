@@ -130,8 +130,8 @@ export default function QualityTab({ orgId, projectId, canManage, canEditPunch, 
             ["Checklists complete", lists.length ? `${lists.filter((c) => c.status === "complete").length} of ${lists.length}` : "No checklists yet", "text-[var(--color-text)]", !!lists.length],
           ] as Array<[string, string, string, boolean]>).map(([k, v, tone, figure]) => (
             <div key={k} className="min-w-0">
-              <dt className="text-[13px] text-[var(--color-text-muted)]">{k}</dt>
-              <dd className={`mt-0.5 ${figure ? `font-display text-[20px] leading-tight font-semibold tabular-nums ${tone}` : "text-[15px] leading-[26px] text-[var(--color-text-muted)]"}`}>{v}</dd>
+              <dt className="text-body text-[var(--color-text-muted)]">{k}</dt>
+              <dd className={`mt-0.5 ${figure ? `font-display text-section leading-tight font-semibold tabular-nums ${tone}` : "text-reading leading-[26px] text-[var(--color-text-muted)]"}`}>{v}</dd>
             </div>
           ))}
         </dl>
@@ -154,8 +154,8 @@ export default function QualityTab({ orgId, projectId, canManage, canEditPunch, 
   );
 }
 
-const quietBtn = "inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50";
-const fieldCls = "h-9 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-[14px] ";
+const quietBtn = "inline-flex items-center gap-1 px-2 py-1 rounded text-caption font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50";
+const fieldCls = "h-9 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-body ";
 
 // ── Checklists ───────────────────────────────────────────────────────────
 
@@ -169,11 +169,11 @@ function ChecklistsSection({ orgId, projectId, canManage, actor, checklists, onC
   return (
     <section className="min-w-0">
       <div className="flex items-center gap-2.5 mb-2.5 min-h-8">
-        <h2 className="min-w-0 font-display text-[19px] leading-tight font-semibold text-[var(--color-text)]">Checklists: PSSR, MI, QA/QC</h2>
+        <h2 className="min-w-0 font-display text-section leading-tight font-semibold text-[var(--color-text)]">Checklists: PSSR, MI, QA/QC</h2>
         {canManage && (
           // Orange only while there's none yet and the form isn't open.
           <button onClick={() => setShowNew((v) => !v)} aria-expanded={showNew}
-            className={`ml-auto shrink-0 whitespace-nowrap inline-flex items-center gap-1.5 h-9 px-3.5 rounded-md text-[14px] font-semibold transition-colors ${none && !showNew ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]" : showNew ? "bg-[var(--color-surface-2)] text-[var(--color-text)] border border-[var(--color-border-strong)]" : "border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
+            className={`ml-auto shrink-0 whitespace-nowrap inline-flex items-center gap-1.5 h-10 px-3.5 rounded-md text-body font-medium transition-colors ${none && !showNew ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]" : showNew ? "bg-[var(--color-surface-2)] text-[var(--color-text)] border border-[var(--color-border-strong)]" : "border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
             <Plus className="w-3 h-3" /> New checklist
           </button>
         )}
@@ -188,7 +188,7 @@ function ChecklistsSection({ orgId, projectId, canManage, actor, checklists, onC
       {checklists.filter((c) => c.status !== "void").length === 0 ? (
         <div className="px-4 py-8 text-center">
           <ClipboardCheck className="w-7 h-7 mx-auto text-[var(--color-text-faint)] mb-2" />
-          <div className="text-[14px] font-bold text-[var(--color-text)]">No checklists yet</div>
+          <div className="text-body font-medium text-[var(--color-text)]">No checklists yet</div>
           <div className="text-xs text-[var(--color-text-muted)] mt-1 max-w-lg mx-auto">
             Upload your PSSR or QA/QC checklist (PDF) with New checklist. It&apos;s read into items you check off.
           </div>
@@ -315,21 +315,21 @@ export function NewChecklistFlow({ orgId, projectId, projectName, actor, onDone,
             <div className={`rounded-xl border-2 border-dashed border-[var(--color-border-strong)] bg-[var(--color-surface)] p-3 flex items-center gap-3 flex-wrap ${drag.ring}`}>
               <input ref={fileRef} type="file" accept="application/pdf,.pdf" className="hidden" onChange={(e) => void upload(e.target.files?.[0])} />
               <button type="button" onClick={() => fileRef.current?.click()} disabled={!!uploading || reading || !home?.place}
-                className={`h-9 inline-flex items-center gap-1.5 px-3.5 rounded-lg text-[12px] font-semibold disabled:opacity-50 ${home?.place ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]" : "border border-[var(--color-border-strong)] text-[var(--color-text)]"}`}>
+                className={`h-10 inline-flex items-center gap-1.5 px-3.5 rounded-lg text-caption font-medium disabled:opacity-50 ${home?.place ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]" : "border border-[var(--color-border-strong)] text-[var(--color-text)]"}`}>
                 {uploading || reading ? <Loader2 className="w-4 h-4 animate-spin" /> : <UploadCloud className="w-4 h-4" />} {uploading ? "Uploading…" : reading ? "Reading it…" : `Upload the ${kind === "pssr" ? "PSSR" : "checklist"} (PDF)`}
               </button>
               {(uploading || failed) && (
-                <span className="basis-full sm:basis-auto inline-flex items-center gap-2 min-w-0 text-[12px]">
+                <span className="basis-full sm:basis-auto inline-flex items-center gap-2 min-w-0 text-caption">
                   <FileThumb file={(uploading ?? failed)!} size={32} />
                   <span className="min-w-0 truncate text-[var(--color-text)]">{(uploading ?? failed)!.name} <span className="text-[var(--color-text-muted)]">· {fileSize((uploading ?? failed)!.size)}{uploading ? " · uploading…" : " · didn't upload"}</span></span>
                   {failed && !uploading && (
-                    <button type="button" onClick={() => void upload(failed)} className="shrink-0 h-8 inline-flex items-center gap-1.5 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[12px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+                    <button type="button" onClick={() => void upload(failed)} className="shrink-0 h-8 inline-flex items-center gap-1.5 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-caption font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
                       Try again
                     </button>
                   )}
                 </span>
               )}
-              <span className={`text-[12px] flex-1 min-w-48 ${drag.over ? "font-bold text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>{drag.over ? drag.say : <>Or drop it here. It&apos;s filed where you pick below, then read into items for you to check.</>}</span>
+              <span className={`text-caption flex-1 min-w-48 ${drag.over ? "font-medium text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>{drag.over ? drag.say : <>Or drop it here. It&apos;s filed where you pick below, then read into items for you to check.</>}</span>
               <div className="basis-full">
                 <ProjectFilePlace orgId={orgId} projectId={projectId} uid={actor.uid} canManage home={home} onChange={setHome} what={kind === "pssr" ? "the PSSR" : "the checklist"} />
               </div>
@@ -337,7 +337,7 @@ export function NewChecklistFlow({ orgId, projectId, projectName, actor, onDone,
           )}
           <div className="flex items-center gap-2 flex-wrap">
             {doc ? (
-              <span className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 py-1.5 text-xs font-bold text-[var(--color-text)]">
+              <span className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 py-1.5 text-xs font-medium text-[var(--color-text)]">
                 <FileText className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> {doc.label}
                 <button onClick={() => setDoc(null)} className="text-[var(--color-text-faint)] hover:text-[var(--state-overdue-text)]"><X className="w-3 h-3" /></button>
               </span>
@@ -356,17 +356,17 @@ export function NewChecklistFlow({ orgId, projectId, projectName, actor, onDone,
               ))}
             </select>
             <button onClick={() => void read()} disabled={!doc || reading || !!uploading}
-              className={`h-8 inline-flex items-center gap-1 px-3 rounded-lg text-[11px] font-semibold disabled:opacity-50 transition-colors ${doc ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]" : "border border-[var(--color-border-strong)] text-[var(--color-text)]"}`}
+              className={`h-8 inline-flex items-center gap-1 px-3 rounded-lg text-caption font-medium disabled:opacity-50 transition-colors ${doc ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]" : "border border-[var(--color-border-strong)] text-[var(--color-text)]"}`}
               title="Reads the pages into items you check before anything saves.">
               {reading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />} Read it
             </button>
-            <button onClick={onCancel} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>
+            <button onClick={onCancel} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>
           </div>
           {results.length > 0 && !doc && (
             <ul className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] divide-y divide-[var(--color-border)] overflow-hidden">
               {results.map((d) => (
                 <li key={d.id}>
-                  <button onClick={() => setDoc(d)} className="w-full px-3 py-1.5 text-left text-xs font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center gap-2">
+                  <button onClick={() => setDoc(d)} className="w-full px-3 py-1.5 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center gap-2">
                     <FileText className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> {d.label}
                   </button>
                 </li>
@@ -378,18 +378,18 @@ export function NewChecklistFlow({ orgId, projectId, projectName, actor, onDone,
         <>
           <div className="flex items-center gap-2 flex-wrap">
             <input value={title} onChange={(e) => setTitle(e.target.value)}
-              className="h-8 pointer-coarse:h-11 flex-1 min-w-48 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs font-bold" />
-            <span className="text-[11px] text-[var(--color-text-muted)]">Read {doc?.label ?? "it"}: found {proposed.length} item{proposed.length === 1 ? "" : "s"}. Remove any that aren&apos;t real items, then save.</span>
+              className="h-8 pointer-coarse:h-11 flex-1 min-w-48 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs font-medium" />
+            <span className="text-caption text-[var(--color-text-muted)]">Read {doc?.label ?? "it"}: found {proposed.length} item{proposed.length === 1 ? "" : "s"}. Remove any that aren&apos;t real items, then save.</span>
             <button onClick={() => void save()} disabled={saving || proposed.length === 0}
-              className="h-8 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-semibold hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
+              className="h-8 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-caption font-medium hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
               {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />} Save checklist
             </button>
-            <button onClick={() => setProposed(null)} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Back</button>
+            <button onClick={() => setProposed(null)} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Back</button>
           </div>
           <ul className="max-h-72 overflow-y-auto rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] divide-y divide-[var(--color-border)]">
             {proposed.map((p, i) => (
               <li key={i} className="px-3 py-1.5 flex items-start gap-2 text-xs">
-                {p.section && <span className="shrink-0 text-[13px] font-semibold text-[var(--color-text-faint)] mt-0.5">{p.section}</span>}
+                {p.section && <span className="shrink-0 text-body font-medium text-[var(--color-text-faint)] mt-0.5">{p.section}</span>}
                 <span className="flex-1 text-[var(--color-text)]">{p.text}</span>
                 <button onClick={() => setProposed(proposed.filter((_, j) => j !== i))}
                   className="shrink-0 text-[var(--color-text-faint)] hover:text-[var(--state-overdue-text)]"><X className="w-3 h-3" /></button>
@@ -514,13 +514,13 @@ function ChecklistCard({ orgId, projectId, checklist, canManage, actor, onChange
     <div>
       <button onClick={() => setOpen((v) => !v)} className="w-full px-4 py-3 flex items-center gap-2 text-left hover:bg-[var(--color-surface-2)]/40 transition-colors">
         <ChevronRight className={`w-4 h-4 text-[var(--color-text-faint)] ui-chevron${(open) ? " rotate-90" : ""}`} />
-        <span className="text-xs font-semibold text-[var(--color-text)]">{checklist.title}</span>
-        <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">{CHECKLIST_KIND_LABEL[checklist.kind]}</span>
+        <span className="text-xs font-medium text-[var(--color-text)]">{checklist.title}</span>
+        <span className="text-body font-medium text-[var(--color-text-muted)]">{CHECKLIST_KIND_LABEL[checklist.kind]}</span>
         {checklist.status === "complete" && (
-          <span className="inline-flex items-center gap-0.5 text-[11px] font-semibold text-[var(--state-released-text)]"><ShieldCheck className="w-3 h-3" /> Complete</span>
+          <span className="inline-flex items-center gap-0.5 text-caption font-medium text-[var(--state-released-text)]"><ShieldCheck className="w-3 h-3" /> Complete</span>
         )}
         {progress && checklist.status === "open" && (
-          <span className="ml-auto text-[11px] font-bold tabular-nums text-[var(--color-text-muted)]">
+          <span className="ml-auto text-caption font-medium tabular-nums text-[var(--color-text-muted)]">
             {progress.satisfied}/{progress.applicable} satisfied{progress.needsEvidence > 0 ? ` · ${progress.needsEvidence} need evidence` : ""}
           </span>
         )}
@@ -531,34 +531,34 @@ function ChecklistCard({ orgId, projectId, checklist, canManage, actor, onChange
           {canManage && checklist.status === "open" && (
             <div className="flex items-center gap-2 flex-wrap">
               <button onClick={() => void assess()} disabled={busy != null}
-                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-[var(--color-border-strong)] text-[11px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors"
+                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-[var(--color-border-strong)] text-caption font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors"
                 title="AI judges which items apply to THIS job, grounded on the project's purpose, SOW, schedule, and documents. You review before it applies.">
                 {busy === "assess" ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />} Which items apply to this job?
               </button>
               <button onClick={() => void sweep()} disabled={busy != null}
-                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-[var(--color-border-strong)] text-[11px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors"
+                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-[var(--color-border-strong)] text-caption font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors"
                 title="No AI: marks items satisfied that the record proves (accepted turnover, documents on file), with where it found it; the rest need evidence.">
                 {busy === "sweep" ? <Loader2 className="w-3 h-3 animate-spin" /> : <ListChecks className="w-3 h-3" />} Check evidence we already hold
               </button>
               <button onClick={() => void remove()} disabled={busy != null} title="Added by mistake? Take it off the list. It stays on the record, with Undo right after."
-                className="ml-auto inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--state-overdue-text)] hover:bg-[var(--state-overdue)] disabled:opacity-50 transition-colors">
+                className="ml-auto inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-caption font-medium text-[var(--color-text-muted)] hover:text-[var(--state-overdue-text)] hover:bg-[var(--state-overdue)] disabled:opacity-50 transition-colors">
                 {busy === "remove" ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />} Remove
               </button>
               <button onClick={() => void complete()} disabled={busy != null}
-                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-semibold hover:bg-[var(--color-accent-hover)] disabled:opacity-50 transition-colors">
+                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-caption font-medium hover:bg-[var(--color-accent-hover)] disabled:opacity-50 transition-colors">
                 {busy === "complete" ? <Loader2 className="w-3 h-3 animate-spin" /> : <ShieldCheck className="w-3 h-3" />} Mark complete
               </button>
             </div>
           )}
           {canManage && checklist.status === "complete" && (
             <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-[11px] text-[var(--color-text-muted)]">Complete: its items are locked. Reopen it to change one.</span>
+              <span className="text-caption text-[var(--color-text-muted)]">Complete: its items are locked. Reopen it to change one.</span>
               <button onClick={() => void remove()} disabled={busy != null}
-                className="ml-auto inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--state-overdue-text)] hover:bg-[var(--state-overdue)] disabled:opacity-50 transition-colors">
+                className="ml-auto inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-caption font-medium text-[var(--color-text-muted)] hover:text-[var(--state-overdue-text)] hover:bg-[var(--state-overdue)] disabled:opacity-50 transition-colors">
                 {busy === "remove" ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />} Remove
               </button>
               <button onClick={() => void reopen()} disabled={busy != null}
-                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-[var(--color-border-strong)] text-[11px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">
+                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-[var(--color-border-strong)] text-caption font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">
                 {busy === "reopen" ? <Loader2 className="w-3 h-3 animate-spin" /> : <RotateCcw className="w-3 h-3" />} Reopen
               </button>
             </div>
@@ -571,7 +571,7 @@ function ChecklistCard({ orgId, projectId, checklist, canManage, actor, onChange
               {sections.map(([section, secItems]) => (
                 <div key={section || "_"}>
                   {section && (
-                    <div className="px-3 py-1.5 bg-[var(--color-surface-2)]/60 text-[13px] font-semibold text-[var(--color-text-muted)]">
+                    <div className="px-3 py-1.5 bg-[var(--color-surface-2)]/60 text-body font-medium text-[var(--color-text-muted)]">
                       {section}
                     </div>
                   )}
@@ -620,19 +620,19 @@ function ChecklistItemRow({ orgId, projectId, item, canManage, actor, onChanged,
         <div className="min-w-0 flex-1">
           <div className="text-[var(--color-text)]">{item.text}</div>
           {item.aiRationale && (
-            <div className="mt-0.5 text-[11px] text-[var(--color-text-muted)]">
-              <span className="font-bold">Assessment:</span> {item.aiRationale}
+            <div className="mt-0.5 text-caption text-[var(--color-text-muted)]">
+              <span className="font-medium">Assessment:</span> {item.aiRationale}
             </div>
           )}
           {item.manualNote && (
-            <div className="mt-0.5 text-[11px] font-bold text-[var(--color-text)]">
+            <div className="mt-0.5 text-caption font-medium text-[var(--color-text)]">
               Human decision{item.updatedByName ? ` (${item.updatedByName})` : ""}: {item.manualNote}
             </div>
           )}
           {item.evidence.length > 0 && (
             <div className="mt-1 flex flex-wrap gap-1">
               {item.evidence.map((e, i) => (
-                <span key={i} className={`text-[11px] font-bold px-1.5 py-0.5 rounded border ${e.source === "auto" ? "border-[var(--state-released)] bg-[var(--state-released)]/[0.07] text-[var(--state-released-text)]" : "border-[var(--color-border-strong)] bg-[var(--color-surface-2)] text-[var(--color-text)] dark:text-[var(--color-text)]"}`}
+                <span key={i} className={`text-caption font-medium px-1.5 py-0.5 rounded border ${e.source === "auto" ? "border-[var(--state-released)] bg-[var(--state-released)]/[0.07] text-[var(--state-released-text)]" : "border-[var(--color-border-strong)] bg-[var(--color-surface-2)] text-[var(--color-text)] dark:text-[var(--color-text)]"}`}
                   title={e.source === "auto" ? "Found by the evidence sweep" : "Attached by a person"}>
                   {e.label}
                 </span>
@@ -644,23 +644,23 @@ function ChecklistItemRow({ orgId, projectId, item, canManage, actor, onChanged,
           <span className="shrink-0 flex items-center gap-1">
             {!na && item.status !== "satisfied" && (
               <button onClick={() => void override({ status: "satisfied" }, "Mark satisfied")}
-                className="px-1.5 py-0.5 rounded text-[11px] font-bold text-[var(--state-released-text)] hover:bg-[var(--state-released)]" title="Mark satisfied with your note on the record">✓ Satisfied</button>
+                className="px-1.5 py-0.5 rounded text-caption font-medium text-[var(--state-released-text)] hover:bg-[var(--state-released)]" title="Mark satisfied with your note on the record">✓ Satisfied</button>
             )}
             {!na && item.status === "satisfied" && (
               // One tap back to open. It stays human-decided, so the
               // evidence sweep won't green it again on its own.
               <button onClick={() => void override({ status: "open", manualNote: "Satisfied taken back: not done yet" }, null)}
-                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]" title="Not satisfied after all - back to open">
+                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-caption font-medium text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]" title="Not satisfied after all - back to open">
                 <RotateCcw className="w-3 h-3" /> Undo satisfied
               </button>
             )}
             {!na && (
               <button onClick={() => void override({ applicability: "na", status: "na" }, "Mark not applicable")}
-                className="px-1.5 py-0.5 rounded text-[11px] font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]" title="Not applicable to this job. Your reason goes on the record.">N/A</button>
+                className="px-1.5 py-0.5 rounded text-caption font-medium text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]" title="Not applicable to this job. Your reason goes on the record.">N/A</button>
             )}
             {na && (
               <button onClick={() => void override({ applicability: "applies", status: "open" }, "Reopen this item")}
-                className="px-1.5 py-0.5 rounded text-[11px] font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]">Reopen</button>
+                className="px-1.5 py-0.5 rounded text-caption font-medium text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]">Reopen</button>
             )}
           </span>
         )}
@@ -765,15 +765,15 @@ function TurnoverSection({ orgId, projectId, canManage, actor, items, jobKind, p
   return (
     <section className="min-w-0">
       <div className="flex items-center gap-2.5 mb-2.5 min-h-8 flex-wrap">
-        <h2 className="font-display text-[19px] leading-tight font-semibold text-[var(--color-text)]">Turnover package: QA/QC sign-off</h2>
+        <h2 className="font-display text-section leading-tight font-semibold text-[var(--color-text)]">Turnover package: QA/QC sign-off</h2>
         {progress.required > 0 && (
-          <span className="text-[13px] tabular-nums text-[var(--color-text-muted)]">
+          <span className="text-body tabular-nums text-[var(--color-text-muted)]">
             {progress.accepted}/{progress.required} accepted{progress.received > 0 ? `, ${progress.received} awaiting review` : ""}
           </span>
         )}
         {canManage && (
           <button onClick={() => void seed()} disabled={busy != null}
-            className="ml-auto inline-flex items-center gap-1.5 h-9 px-3.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors"
+            className="ml-auto inline-flex items-center gap-1.5 h-10 px-3.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors"
             title={`Adds the usual documents for a ${jobSizeWord(jobKind).toLowerCase()} (the ones already here are kept).`}>
             {busy === "seed" ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />} Add the usual list ({usual} for a {jobSizeWord(jobKind).toLowerCase()})
           </button>
@@ -797,19 +797,19 @@ function TurnoverSection({ orgId, projectId, canManage, actor, items, jobKind, p
           ) : (
             <li key={it.id} className="px-4 py-2.5 text-xs">
               <div className="flex items-center gap-2 flex-wrap">
-                <span className="font-bold text-[var(--color-text)]">{it.name}</span>
-                {!it.required && <span className="text-[11px] font-bold text-[var(--color-text-faint)]">optional</span>}
+                <span className="font-medium text-[var(--color-text)]">{it.name}</span>
+                {!it.required && <span className="text-caption font-medium text-[var(--color-text-faint)]">optional</span>}
                 <TurnoverChip status={it.status} />
-                {it.partyId && partyName.get(it.partyId) && <span className="text-[11px] text-[var(--color-text-muted)]">{partyName.get(it.partyId)}</span>}
+                {it.partyId && partyName.get(it.partyId) && <span className="text-caption text-[var(--color-text-muted)]">{partyName.get(it.partyId)}</span>}
                 {it.documentId && (
                   docs.get(it.documentId)
-                    ? <Link href={docs.get(it.documentId)!.href} className="inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-accent-text)] hover:underline"><Paperclip className="w-3 h-3" /> {docs.get(it.documentId)!.label}</Link>
-                    : <span className="inline-flex items-center gap-1 text-[11px] text-[var(--color-text-muted)]"><Paperclip className="w-3 h-3" /> document attached</span>
+                    ? <Link href={docs.get(it.documentId)!.href} className="inline-flex items-center gap-1 text-caption font-medium text-[var(--color-accent-text)] hover:underline"><Paperclip className="w-3 h-3" /> {docs.get(it.documentId)!.label}</Link>
+                    : <span className="inline-flex items-center gap-1 text-caption text-[var(--color-text-muted)]"><Paperclip className="w-3 h-3" /> document attached</span>
                 )}
                 {canManage && busy !== it.id && (
                   <span className="ml-auto flex items-center gap-1 flex-wrap">
                     {(it.status === "accepted" || it.status === "waived") && (
-                      <button onClick={() => void reopen(it)} className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]" title="Back into the review. The decision stays on the record.">
+                      <button onClick={() => void reopen(it)} className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-caption font-medium text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]" title="Back into the review. The decision stays on the record.">
                         <RotateCcw className="w-3 h-3" /> Reopen
                       </button>
                     )}
@@ -820,22 +820,22 @@ function TurnoverSection({ orgId, projectId, canManage, actor, items, jobKind, p
                       <Pencil className="w-3 h-3" /> Edit
                     </button>
                     {it.status === "open" && (
-                      <button onClick={() => void review(it, "received")} className="px-1.5 py-0.5 rounded text-[11px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">Received</button>
+                      <button onClick={() => void review(it, "received")} className="px-1.5 py-0.5 rounded text-caption font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">Received</button>
                     )}
                     {(it.status === "received" || it.status === "rejected") && (
-                      <button onClick={() => void review(it, "accepted")} className="px-1.5 py-0.5 rounded text-[11px] font-bold text-[var(--state-released-text)] hover:bg-[var(--state-released)]">Accept</button>
+                      <button onClick={() => void review(it, "accepted")} className="px-1.5 py-0.5 rounded text-caption font-medium text-[var(--state-released-text)] hover:bg-[var(--state-released)]">Accept</button>
                     )}
                     {it.status === "received" && (
-                      <button onClick={() => void review(it, "rejected")} className="px-1.5 py-0.5 rounded text-[11px] font-bold text-[var(--state-overdue-text)] hover:bg-[var(--state-overdue)]">Reject</button>
+                      <button onClick={() => void review(it, "rejected")} className="px-1.5 py-0.5 rounded text-caption font-medium text-[var(--state-overdue-text)] hover:bg-[var(--state-overdue)]">Reject</button>
                     )}
                     {(it.status === "open" || it.status === "received") && (
-                      <button onClick={() => void review(it, "waived")} className="px-1.5 py-0.5 rounded text-[11px] font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]">Waive</button>
+                      <button onClick={() => void review(it, "waived")} className="px-1.5 py-0.5 rounded text-caption font-medium text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]">Waive</button>
                     )}
                   </span>
                 )}
                 {busy === it.id && <Loader2 className="w-3 h-3 animate-spin text-[var(--color-text-muted)] ml-auto" />}
               </div>
-              <div className="mt-0.5 text-[11px] text-[var(--color-text-muted)]">
+              <div className="mt-0.5 text-caption text-[var(--color-text-muted)]">
                 {[
                   it.description,
                   it.reviewedByName ? `${it.status} by ${it.reviewedByName}${it.reviewedAt ? ` on ${new Date(it.reviewedAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}` : ""}` : null,
@@ -860,7 +860,7 @@ function TurnoverSection({ orgId, projectId, canManage, actor, items, jobKind, p
             placeholder="Add a required item, e.g. Torque records"
             className="h-8 pointer-coarse:h-11 flex-1 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
           <button onClick={() => { if (addName.trim()) void (async () => { const r = await addTurnoverItem({ orgId, projectId, name: addName, actor }); if (!r.ok) setErr(r.error ?? null); else { setAddName(""); onChanged(); } })(); }}
-            className="h-8 inline-flex items-center gap-1 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-[11px] font-semibold hover:bg-[var(--color-surface-2)]">
+            className="h-8 inline-flex items-center gap-1 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-caption font-medium hover:bg-[var(--color-surface-2)]">
             <Plus className="w-3 h-3" /> Add
           </button>
         </div>
@@ -896,22 +896,22 @@ function TurnoverEditor({ item, parties, actor, setErr, onCancel, onSaved }: {
   return (
     <div className="space-y-2 text-xs">
       <div className="flex items-center gap-2 flex-wrap">
-        <input value={name} onChange={(e) => setName(e.target.value)} aria-label="Name" autoFocus className={`${fieldCls} flex-1 min-w-48 font-bold`} />
+        <input value={name} onChange={(e) => setName(e.target.value)} aria-label="Name" autoFocus className={`${fieldCls} flex-1 min-w-48 font-medium`} />
         {pick.length > 0 && (
           <select value={partyId} onChange={(e) => setPartyId(e.target.value)} aria-label="Who owes it" className={fieldCls}>
             <option value="">Any contractor</option>
             {pick.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
           </select>
         )}
-        <label className="inline-flex items-center gap-1.5 text-[11px] font-bold text-[var(--color-text)]">
+        <label className="inline-flex items-center gap-1.5 text-caption font-medium text-[var(--color-text)]">
           <input type="checkbox" checked={required} onChange={(e) => setRequired(e.target.checked)} className="w-4 h-4" /> Required
         </label>
       </div>
       <input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="What it is, in plain words" aria-label="What it is" className={`${fieldCls} w-full`} />
       <div className="flex items-center justify-end gap-2">
-        <button onClick={onCancel} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>
+        <button onClick={onCancel} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>
         <button onClick={() => void save()} disabled={saving}
-          className="h-8 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-semibold hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
+          className="h-8 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-caption font-medium hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
           {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />} Save
         </button>
       </div>
@@ -960,14 +960,14 @@ function DocPicker({ orgId, busy, onPick, onClear, onCancel }: {
         <ul className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] divide-y divide-[var(--color-border)] overflow-hidden">
           {shown.map((d) => (
             <li key={d.id}>
-              <button onClick={() => onPick(d)} disabled={busy} className="w-full px-3 py-2 text-left text-xs font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center gap-2 disabled:opacity-50">
+              <button onClick={() => onPick(d)} disabled={busy} className="w-full px-3 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center gap-2 disabled:opacity-50">
                 <FileText className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> {d.label}
               </button>
             </li>
           ))}
         </ul>
       )}
-      <div className="text-[11px] text-[var(--color-text-faint)]">From document control. A submission through the contractor&apos;s link lands there once it&apos;s approved under Intake.</div>
+      <div className="text-caption text-[var(--color-text-faint)]">From document control. A submission through the contractor&apos;s link lands there once it&apos;s approved under Intake.</div>
     </div>
   );
 }
@@ -1034,9 +1034,9 @@ function PunchSection({ orgId, projectId, canManage, actor, items, parties, peop
   return (
     <section className="min-w-0">
       <div className="flex items-center gap-2.5 mb-2.5 min-h-8">
-        <h2 className="font-display text-[20px] leading-tight font-semibold text-[var(--color-text)]">Punch list</h2>
+        <h2 className="font-display text-section leading-tight font-semibold text-[var(--color-text)]">Punch list</h2>
         {open.length > 0 && (
-          <span className="ml-auto inline-flex items-center gap-1.5 text-[13px] font-semibold text-[var(--color-text)]"><span className="ui-count is-warn">{open.length}</span> open</span>
+          <span className="ml-auto inline-flex items-center gap-1.5 text-body font-medium text-[var(--color-text)]"><span className="ui-count is-warn">{open.length}</span> open</span>
         )}
       </div>
       <div className="bg-[var(--color-surface)] rounded-lg overflow-hidden border border-[var(--color-border)]">
@@ -1058,7 +1058,7 @@ function PunchSection({ orgId, projectId, canManage, actor, items, parties, peop
             </select>
           )}
           <button onClick={() => void add()} disabled={busy === "add"}
-            className="h-8 inline-flex items-center gap-1 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-[11px] font-semibold hover:bg-[var(--color-surface-2)] disabled:opacity-50">
+            className="h-8 inline-flex items-center gap-1 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-caption font-medium hover:bg-[var(--color-surface-2)] disabled:opacity-50">
             {busy === "add" ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />} Add
           </button>
         </div>
@@ -1083,24 +1083,24 @@ function PunchSection({ orgId, projectId, canManage, actor, items, parties, peop
             const where = [it.location, it.assignee ? `on it: ${it.assignee}` : null, it.partyId ? partyName.get(it.partyId) ?? null : null].filter(Boolean).join(" · ");
             return (
               <li key={it.id} className={`px-4 py-2 flex items-center gap-2 flex-wrap text-xs ${it.status !== "open" ? "opacity-55" : ""}`}>
-                <span className={`ui-pill !h-5 !px-2 !text-[12px] ${it.status === "done" ? "is-good" : it.status === "void" ? "is-muted" : overdue ? "is-bad" : "is-warn"}`}>{it.status === "done" ? "Done" : it.status === "void" ? "Void" : overdue ? "Late" : "Open"}</span>
+                <span className={`ui-pill !h-5 !px-2 !text-caption ${it.status === "done" ? "is-good" : it.status === "void" ? "is-muted" : overdue ? "is-bad" : "is-warn"}`}>{it.status === "done" ? "Done" : it.status === "void" ? "Void" : overdue ? "Late" : "Open"}</span>
                 <span className={`text-[var(--color-text)] ${it.status !== "open" ? "line-through" : ""}`}>{it.title}</span>
-                {where && <span className="text-[11px] text-[var(--color-text-muted)]">{where}</span>}
+                {where && <span className="text-caption text-[var(--color-text-muted)]">{where}</span>}
                 {it.dueDate && it.status === "open" && (
-                  <span className={`text-[11px] font-bold ${overdue ? "text-[var(--state-overdue-text)]" : "text-[var(--color-text-muted)]"}`}>
+                  <span className={`text-caption font-medium ${overdue ? "text-[var(--state-overdue-text)]" : "text-[var(--color-text-muted)]"}`}>
                     due {new Date(it.dueDate + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })}{overdue ? ", overdue" : ""}
                   </span>
                 )}
-                {it.createdByName && <span className="text-[11px] text-[var(--color-text-faint)]">by {it.createdByName}</span>}
+                {it.createdByName && <span className="text-caption text-[var(--color-text-faint)]">by {it.createdByName}</span>}
                 {canManage && it.status === "open" && busy !== it.id && (
                   <span className="ml-auto flex items-center gap-1">
                     <button onClick={() => setEditing(it.id)} className={quietBtn} title="Change what it is, where, when it's due, who's on it">
                       <Pencil className="w-3 h-3" /> Edit
                     </button>
                     <button onClick={() => void setStatus(it, "done")}
-                      className="px-2 py-1 rounded text-[11px] font-bold text-[var(--state-released-text)] hover:bg-[var(--state-released)]">Done</button>
+                      className="px-2 py-1 rounded text-caption font-medium text-[var(--state-released-text)] hover:bg-[var(--state-released)]">Done</button>
                     <button onClick={() => void voidItem(it)}
-                      className="p-1.5 rounded text-[11px] font-bold text-[var(--color-text-faint)] hover:text-[var(--state-overdue-text)] hover:bg-[var(--state-overdue)]" title="Void: not a real snag" aria-label="Void: not a real snag"><Ban className="w-3.5 h-3.5" /></button>
+                      className="p-1.5 rounded text-caption font-medium text-[var(--color-text-faint)] hover:text-[var(--state-overdue-text)] hover:bg-[var(--state-overdue)]" title="Void: not a real snag" aria-label="Void: not a real snag"><Ban className="w-3.5 h-3.5" /></button>
                   </span>
                 )}
                 {canManage && it.status !== "open" && busy !== it.id && (
@@ -1155,9 +1155,9 @@ function PunchEditor({ item, parties, people, actor, setErr, onCancel, onSaved }
         )}
       </div>
       <div className="flex items-center justify-end gap-2">
-        <button onClick={onCancel} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>
+        <button onClick={onCancel} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>
         <button onClick={() => void save()} disabled={saving}
-          className="h-8 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-semibold hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
+          className="h-8 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-caption font-medium hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
           {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />} Save
         </button>
       </div>

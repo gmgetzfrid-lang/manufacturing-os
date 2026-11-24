@@ -229,7 +229,7 @@ export default function SecureDocViewer({
       <div className="absolute inset-0 z-50 pointer-events-none overflow-hidden flex items-center justify-center">
         <div className="w-full h-full flex flex-col items-center justify-center opacity-[0.03] transform -rotate-12 select-none">
            {Array.from({ length: 10 }).map((_, i) => (
-             <div key={i} className="text-4xl font-semibold text-[var(--color-text)] whitespace-nowrap mb-24">
+             <div key={i} className="text-4xl font-medium text-[var(--color-text)] whitespace-nowrap mb-24">
                 {watermarkText || "UNCONTROLLED COPY"} | {viewerId} | {new Date().toLocaleDateString()}
              </div>
            ))}
@@ -240,23 +240,23 @@ export default function SecureDocViewer({
           panel, history drawer) already shows the title big, so it isn't
           repeated. */}
       <div className="h-9 border-b border-[var(--color-border)] flex items-center gap-2 px-3 shrink-0 z-50 min-w-0" title={title}>
-        <span className="font-display text-[15px] font-semibold tabular-nums text-[var(--color-text)] truncate">{docNumber}</span>
+        <span className="font-display text-reading font-semibold tabular-nums text-[var(--color-text)] truncate">{docNumber}</span>
         {rev && rev !== '-'
-          ? <span className="text-[13px] text-[var(--color-text-muted)] shrink-0">Rev <span className="font-display tabular-nums font-semibold text-[var(--color-text)]">{rev}</span></span>
-          : <span className="text-[13px] text-[var(--color-text-muted)] shrink-0">No revision set</span>}
+          ? <span className="text-body text-[var(--color-text-muted)] shrink-0">Rev <span className="font-display tabular-nums font-semibold text-[var(--color-text)]">{rev}</span></span>
+          : <span className="text-body text-[var(--color-text-muted)] shrink-0">No revision set</span>}
         <Lock className="w-3.5 h-3.5 text-[var(--color-text-muted)] shrink-0 ml-auto" aria-label="Print and save are off in this preview" />
       </div>
 
       {/* Print or save pressed: why nothing happened, said right here. */}
       {blockedNote && (
-        <div role="status" className="px-3 py-1.5 border-b border-[var(--color-border)] text-[13px] text-[var(--color-text)] shrink-0 z-50">
+        <div role="status" className="px-3 py-1.5 border-b border-[var(--color-border)] text-body text-[var(--color-text)] shrink-0 z-50">
           Print and save are off in this preview. Open the drawing and use Print or Download there: it stamps the copy.
         </div>
       )}
 
       {/* Someone else is mid-change on this document: a plain line. */}
       {lockHolder && (
-        <div className="px-3 py-1.5 border-b border-[var(--color-border)] flex items-center gap-2 text-[13px] text-amber-300 shrink-0 z-50">
+        <div className="px-3 py-1.5 border-b border-[var(--color-border)] flex items-center gap-2 text-body text-amber-300 shrink-0 z-50">
           <Lock className="w-3.5 h-3.5 shrink-0" />
           <span className="truncate">
             <b>{lockHolder.name || 'Another user'}</b> has this checked out
@@ -272,8 +272,8 @@ export default function SecureDocViewer({
         {kind === 'tap' ? (
           <div className="absolute inset-0 z-[5] flex flex-col items-center justify-center gap-2 p-4 text-center bg-[var(--color-surface-2)] text-[var(--color-text)]">
             <FileText aria-hidden className="w-8 h-8 text-[var(--color-text-muted)]" />
-            <p className="text-[15px] font-semibold break-words max-w-full">{shownName}</p>
-            <p className="text-[14px] text-[var(--color-text-muted)]">{[fileTypeName({ fileName: shownName, mime, path: url }), sizeWords(size)].filter(Boolean).join(', ')}. {tapToOpen ? 'Tap to open it full size.' : "This browser can't show a PDF inside the page."}</p>
+            <p className="text-reading font-medium break-words max-w-full">{shownName}</p>
+            <p className="text-body text-[var(--color-text-muted)]">{[fileTypeName({ fileName: shownName, mime, path: url }), sizeWords(size)].filter(Boolean).join(', ')}. {tapToOpen ? 'Tap to open it full size.' : "This browser can't show a PDF inside the page."}</p>
           </div>
         ) : kind === 'none' ? (
           // A file the browser can't show: what it is, and a Download that
@@ -283,16 +283,16 @@ export default function SecureDocViewer({
               <div className="flex items-start gap-3">
                 <FileText aria-hidden className="w-8 h-8 shrink-0 text-[var(--color-text-muted)]" />
                 <div className="min-w-0">
-                  <p className="text-[15px] font-semibold break-words">{shownName}</p>
-                  <p className="text-[14px] text-[var(--color-text-muted)]">{[fileTypeName({ fileName: shownName, mime, path: url }), sizeWords(size)].filter(Boolean).join(', ')}</p>
+                  <p className="text-reading font-medium break-words">{shownName}</p>
+                  <p className="text-body text-[var(--color-text-muted)]">{[fileTypeName({ fileName: shownName, mime, path: url }), sizeWords(size)].filter(Boolean).join(', ')}</p>
                 </div>
               </div>
-              <p className="mt-3 text-[14px] text-[var(--color-text-muted)]">This file type can&apos;t be shown here. Download it to open it in its own program.</p>
+              <p className="mt-3 text-body text-[var(--color-text-muted)]">This file type can&apos;t be shown here. Download it to open it in its own program.</p>
               <button type="button" onClick={() => void download()} disabled={saving}
-                className="mt-3 inline-flex items-center justify-center gap-2 h-10 pointer-coarse:h-11 px-4 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[15px] font-semibold text-[var(--color-text)] disabled:opacity-60">
+                className="mt-3 inline-flex items-center justify-center gap-2 h-10 pointer-coarse:h-11 px-4 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-reading font-medium text-[var(--color-text)] disabled:opacity-60">
                 {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />} Download
               </button>
-              {saveErr != null && <p role="alert" className="mt-2 text-[14px] text-[var(--state-overdue-text)]">The download didn&apos;t start. {friendlyError(saveErr)}</p>}
+              {saveErr != null && <p role="alert" className="mt-2 text-body text-[var(--state-overdue-text)]">The download didn&apos;t start. {friendlyError(saveErr)}</p>}
             </div>
           </div>
         ) : archivedInfo ? (
@@ -310,13 +310,13 @@ export default function SecureDocViewer({
         ) : loading ? (
           <div className="absolute inset-0 flex flex-col items-center justify-center text-[var(--color-text-muted)] z-20">
             <Loader2 className="w-7 h-7 animate-spin mb-2" />
-            <span className="text-[13px] font-semibold">Loading the preview…</span>
+            <span className="text-body font-medium">Loading the preview…</span>
           </div>
         ) : error ? (
           <div role="alert" className="absolute inset-0 flex flex-col items-center justify-center z-20 px-6 text-center">
             <AlertTriangle className="w-8 h-8 mb-3 text-rose-400" />
-            <h3 className="font-display text-[17px] font-semibold text-[var(--color-text)]">Couldn&apos;t open the preview</h3>
-            <p className="text-[13px] mt-1 text-[var(--color-text-muted)] max-w-md">{error}</p>
+            <h3 className="font-display text-section font-semibold text-[var(--color-text)]">Couldn&apos;t open the preview</h3>
+            <p className="text-body mt-1 text-[var(--color-text-muted)] max-w-md">{error}</p>
           </div>
         ) : blobUrl && kind === 'image' ? (
           // eslint-disable-next-line @next/next/no-img-element
@@ -330,7 +330,7 @@ export default function SecureDocViewer({
         ) : (
           <div className="flex flex-col items-center justify-center h-full text-[var(--color-text-muted)]">
             <XCircle className="w-8 h-8 mb-2 opacity-40" />
-            <p className="text-[13px]">No file to show.</p>
+            <p className="text-body">No file to show.</p>
           </div>
         )}
       </div>

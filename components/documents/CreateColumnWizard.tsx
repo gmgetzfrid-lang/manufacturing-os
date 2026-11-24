@@ -41,9 +41,9 @@ function FeatureMini({ icon, bg, title, body }: { icon: React.ReactNode; bg: str
     <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg p-2.5 shadow-sm">
       <div className="flex items-center gap-1.5 mb-1">
         <div className={`p-1 rounded ${bg}`}>{icon}</div>
-        <span className="text-[13px] font-semibold text-[var(--color-text)]">{title}</span>
+        <span className="text-body font-medium text-[var(--color-text)]">{title}</span>
       </div>
-      <p className="text-[13px] text-[var(--color-text-muted)] leading-snug">{body}</p>
+      <p className="text-body text-[var(--color-text-muted)] leading-snug">{body}</p>
     </div>
   );
 }
@@ -130,8 +130,8 @@ export default function CreateColumnWizard({ isOpen, onClose, onSave, initialTyp
         {/* HEADER */}
         <div className="px-6 py-4 border-b border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center justify-between">
           <div>
-            <h2 className="text-[15px] font-semibold text-[var(--color-text)]">{step === 1 ? "Add a column" : `Set up ${currentTypeLabel}`}</h2>
-            <p className="text-[13px] text-[var(--color-text-muted)]">{step === 1 ? "Choose the type of data to store." : "Define settings and validation."}</p>
+            <h2 className="text-reading font-medium text-[var(--color-text)]">{step === 1 ? "Add a column" : `Set up ${currentTypeLabel}`}</h2>
+            <p className="text-body text-[var(--color-text-muted)]">{step === 1 ? "Choose the type of data to store." : "Define settings and validation."}</p>
           </div>
           <button aria-label="Close" onClick={onClose} className="p-2 hover:bg-slate-200 rounded-lg text-[var(--color-text-muted)] transition-colors"><X className="w-5 h-5" /></button>
         </div>
@@ -153,8 +153,8 @@ export default function CreateColumnWizard({ isOpen, onClose, onSave, initialTyp
                       <Icon className="w-6 h-6" />
                     </div>
                     <div>
-                      <h3 className={`font-bold text-sm ${active ? 'text-[var(--color-text)]' : 'text-[var(--color-text)]'}`}>{t.label}</h3>
-                      <p className={`text-[13px] mt-1 ${active ? 'text-[var(--color-text)]' : 'text-[var(--color-text-muted)]'}`}>{t.desc}</p>
+                      <h3 className={`font-medium text-sm ${active ? 'text-[var(--color-text)]' : 'text-[var(--color-text)]'}`}>{t.label}</h3>
+                      <p className={`text-body mt-1 ${active ? 'text-[var(--color-text)]' : 'text-[var(--color-text-muted)]'}`}>{t.desc}</p>
                     </div>
                     {active && <CheckCircle2 className="w-5 h-5 text-[var(--color-text-muted)] ml-auto self-center" />}
                   </button>
@@ -165,17 +165,17 @@ export default function CreateColumnWizard({ isOpen, onClose, onSave, initialTyp
             <div className="space-y-6">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div>
-                  <label className="block text-sm font-bold text-[var(--color-text)] mb-2">Name <span className="text-[var(--state-overdue)]">*</span></label>
+                  <label className="block text-sm font-medium text-[var(--color-text)] mb-2">Name <span className="text-[var(--state-overdue)]">*</span></label>
                   <input 
                     value={label}
                     onChange={(e) => setLabel(e.target.value)}
-                    className="w-full px-4 py-2 border border-[var(--color-border)] rounded-xl focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none text-sm font-bold"
+                    className="w-full px-4 py-2 border border-[var(--color-border)] rounded-xl focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none text-sm font-medium"
                     placeholder="e.g. Due Date"
                     autoFocus
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-bold text-[var(--color-text)] mb-2">Description</label>
+                  <label className="block text-sm font-medium text-[var(--color-text)] mb-2">Description</label>
                   <input 
                     value={description}
                     onChange={(e) => setDescription(e.target.value)}
@@ -188,7 +188,7 @@ export default function CreateColumnWizard({ isOpen, onClose, onSave, initialTyp
               {/* TYPE SPECIFIC CONFIG */}
               {selectedType === 'select' && (
                 <div className="bg-[var(--color-surface-2)] p-4 rounded-xl border border-[var(--color-border)]">
-                  <label className="block text-[13px] font-semibold text-[var(--color-text-muted)] mb-3">Choices</label>
+                  <label className="block text-body font-medium text-[var(--color-text-muted)] mb-3">Choices</label>
                   <div className="space-y-2 mb-3">
                     {options.map((opt, idx) => (
                       <div key={idx} className="flex items-center gap-2">
@@ -224,12 +224,12 @@ export default function CreateColumnWizard({ isOpen, onClose, onSave, initialTyp
                     <div className="p-1.5 bg-[var(--color-surface-2)] rounded-lg">
                       <Tags className="w-4 h-4 text-[var(--color-text-muted)]" />
                     </div>
-                    <h4 className="text-sm font-semibold text-[var(--color-text)]">
+                    <h4 className="text-sm font-medium text-[var(--color-text)]">
                       This isn&apos;t just a tag column - it&apos;s connected to your Asset Registry
                     </h4>
                   </div>
 
-                  <p className="text-[13px] text-[var(--color-text-muted)] leading-relaxed mb-4">
+                  <p className="text-body text-[var(--color-text-muted)] leading-relaxed mb-4">
                     Every tag you add here is recognized as an equipment, instrument, valve, or other tracked asset.
                     Click any tag, anywhere in the library, and you instantly see that asset&apos;s full photo gallery.
                   </p>
@@ -256,21 +256,21 @@ export default function CreateColumnWizard({ isOpen, onClose, onSave, initialTyp
                   </div>
 
                   {/* Visual mockup: tag chip → carousel */}
-                  <div className="mt-4 pt-4 border-t border-[var(--color-border)] flex items-center gap-3 text-[13px] text-[var(--color-text-muted)]">
-                    <span className="inline-flex items-center gap-1 px-2 py-1 rounded bg-[var(--color-surface)] border border-[var(--color-border)] font-bold text-[var(--color-text)] shadow-sm">
+                  <div className="mt-4 pt-4 border-t border-[var(--color-border)] flex items-center gap-3 text-body text-[var(--color-text-muted)]">
+                    <span className="inline-flex items-center gap-1 px-2 py-1 rounded bg-[var(--color-surface)] border border-[var(--color-border)] font-medium text-[var(--color-text)] shadow-sm">
                       <Tags className="w-3 h-3 text-[var(--color-text-muted)]" />
                       FE-201
-                      <span className="ml-1 inline-flex items-center gap-0.5 px-1 py-px rounded bg-[var(--color-surface-2)] text-[var(--color-text)] text-[13px]">
+                      <span className="ml-1 inline-flex items-center gap-0.5 px-1 py-px rounded bg-[var(--color-surface-2)] text-[var(--color-text)] text-body">
                         <Camera className="w-2.5 h-2.5" /> 4
                       </span>
                     </span>
                     <span className="text-[var(--color-text-faint)]">→ click →</span>
-                    <span className="inline-flex items-center gap-1 px-2 py-1 rounded border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] text-[13px] font-bold">
+                    <span className="inline-flex items-center gap-1 px-2 py-1 rounded border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] text-body font-medium">
                       <ImageIcon className="w-3 h-3" /> Full-screen photo carousel
                     </span>
                   </div>
 
-                  <p className="text-[13px] text-[var(--color-text-muted)] mt-3 leading-relaxed">
+                  <p className="text-body text-[var(--color-text-muted)] mt-3 leading-relaxed">
                     <b>How to start:</b> Add tags here as you normally would (typing &quot;FE-201&quot; and pressing Enter).
                     The asset is auto-created in the registry. Then go to <b>Admin → Asset Registry</b> to upload photos.
                   </p>
@@ -280,15 +280,15 @@ export default function CreateColumnWizard({ isOpen, onClose, onSave, initialTyp
               {/* TAGS — reference kind: photos vs linked drawings */}
               {selectedType === 'tags' && (
                 <div className="bg-[var(--color-surface-2)] p-4 rounded-xl border border-[var(--color-border)]">
-                  <h4 className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-3 flex items-center"><MousePointerClick className="w-3 h-3 mr-2" /> What does clicking a tag open?</h4>
+                  <h4 className="text-body font-medium text-[var(--color-text-muted)] mb-3 flex items-center"><MousePointerClick className="w-3 h-3 mr-2" /> What does clicking a tag open?</h4>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                     <button type="button" onClick={() => setReferenceKind("photos")} className={`text-left p-3 rounded-lg border-2 transition-all ${referenceKind === "photos" ? 'border-[var(--color-text)] bg-[var(--color-surface-2)] ring-1 ring-[var(--color-main)]' : 'border-[var(--color-border)] hover:border-[var(--color-main)]/40'}`}>
-                      <div className="flex items-center gap-2 mb-1"><Camera className="w-4 h-4 text-[var(--color-text-muted)]" /><span className="text-sm font-bold text-[var(--color-text)]">Photos</span><span className="ml-auto text-[13px] font-semibold text-[var(--color-text-faint)]">Default</span></div>
-                      <p className="text-[13px] text-[var(--color-text-muted)] leading-snug">Asset Registry photo gallery: site photos of the equipment.</p>
+                      <div className="flex items-center gap-2 mb-1"><Camera className="w-4 h-4 text-[var(--color-text-muted)]" /><span className="text-sm font-medium text-[var(--color-text)]">Photos</span><span className="ml-auto text-body font-medium text-[var(--color-text-faint)]">Default</span></div>
+                      <p className="text-body text-[var(--color-text-muted)] leading-snug">Asset Registry photo gallery: site photos of the equipment.</p>
                     </button>
                     <button type="button" onClick={() => setReferenceKind("files")} className={`text-left p-3 rounded-lg border-2 transition-all ${referenceKind === "files" ? 'border-[var(--color-text)] bg-[var(--color-surface-2)] ring-1 ring-[var(--color-main)]' : 'border-[var(--color-border)] hover:border-[var(--color-main)]/40'}`}>
-                      <div className="flex items-center gap-2 mb-1"><FileText className="w-4 h-4 text-[var(--color-text-muted)]" /><span className="text-sm font-bold text-[var(--color-text)]">Linked drawings</span></div>
-                      <p className="text-[13px] text-[var(--color-text-muted)] leading-snug">Reference another document in the system: e.g. a circuit id → its isometric. Opens in a drawing viewer.</p>
+                      <div className="flex items-center gap-2 mb-1"><FileText className="w-4 h-4 text-[var(--color-text-muted)]" /><span className="text-sm font-medium text-[var(--color-text)]">Linked drawings</span></div>
+                      <p className="text-body text-[var(--color-text-muted)] leading-snug">Reference another document in the system: e.g. a circuit id → its isometric. Opens in a drawing viewer.</p>
                     </button>
                   </div>
                 </div>
@@ -296,7 +296,7 @@ export default function CreateColumnWizard({ isOpen, onClose, onSave, initialTyp
 
               {/* GENERAL OPTIONS */}
               <div className="bg-[var(--color-surface-2)] p-4 rounded-xl border border-[var(--color-border)]">
-                 <h4 className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-3 flex items-center"><Settings2 className="w-3 h-3 mr-2" /> More Options</h4>
+                 <h4 className="text-body font-medium text-[var(--color-text-muted)] mb-3 flex items-center"><Settings2 className="w-3 h-3 mr-2" /> More Options</h4>
                  <div className="space-y-3">
                    <label className="flex items-center justify-between cursor-pointer group">
                      <span className="text-sm font-medium text-[var(--color-text)]">Require that this column contains information</span>
@@ -317,7 +317,7 @@ export default function CreateColumnWizard({ isOpen, onClose, onSave, initialTyp
           {onOpenColumnManager ? (
             <button
               onClick={() => { onOpenColumnManager(); onClose(); }}
-              className="text-[13px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-accent-hover)] flex items-center gap-1 hover:underline"
+              className="text-body font-medium text-[var(--color-text-muted)] hover:text-[var(--color-accent-hover)] flex items-center gap-1 hover:underline"
               title="Manage existing columns: rename, reorder, hide, or delete"
             >
               <Settings2 className="w-3.5 h-3.5" /> Manage existing columns
@@ -325,15 +325,15 @@ export default function CreateColumnWizard({ isOpen, onClose, onSave, initialTyp
           ) : <div />}
           <div className="flex items-center gap-3">
           {step === 2 && (
-            <button onClick={() => setStep(1)} className="px-4 py-2 text-sm font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Back</button>
+            <button onClick={() => setStep(1)} className="px-4 py-2 text-sm font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Back</button>
           )}
-          <button onClick={onClose} className="px-4 py-2 text-sm font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] rounded-lg">Cancel</button>
+          <button onClick={onClose} className="px-4 py-2 text-sm font-medium text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] rounded-lg">Cancel</button>
           {step === 1 ? (
-            <button onClick={handleNext} className="px-6 py-2 bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-sm font-bold rounded-lg flex items-center">
+            <button onClick={handleNext} className="px-6 py-2 bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-sm font-medium rounded-lg flex items-center">
               Next <ArrowRight className="w-4 h-4 ml-2" />
             </button>
           ) : (
-            <button onClick={handleSave} className="px-6 py-2 bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-sm font-bold rounded-lg hover:bg-[var(--color-accent-hover)] flex items-center shadow-md ">
+            <button onClick={handleSave} className="px-6 py-2 bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-sm font-medium rounded-lg hover:bg-[var(--color-accent-hover)] flex items-center shadow-md ">
               Save Column
             </button>
           )}

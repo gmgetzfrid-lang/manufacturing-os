@@ -134,14 +134,14 @@ export default function DistributionAcks({
       {myPending && (
         <div className="rounded-xl border-2 border-[var(--color-border-strong)] bg-[var(--color-surface-2)] p-3 flex items-center gap-3 animate-in fade-in">
           <ClipboardCheck className="w-5 h-5 text-[var(--color-text-muted)] shrink-0" />
-          <div className="flex-1 min-w-0 text-[13px] text-[var(--color-text)]">
+          <div className="flex-1 min-w-0 text-body text-[var(--color-text)]">
             <b>{myPending.requestedByName || "Document Control"}</b> asked you to confirm you have{" "}
             <b>Rev {myPending.revLabel ?? currentRev ?? "?"}</b> of this document.
           </div>
           <button
             onClick={() => void handleAcknowledge()}
             disabled={acking}
-            className="shrink-0 inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-[13px] font-semibold border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] shadow disabled:opacity-50"
+            className="shrink-0 inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-body font-medium border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] shadow disabled:opacity-50"
           >
             {acking ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
             I have this revision
@@ -157,12 +157,12 @@ export default function DistributionAcks({
             className="w-full px-3.5 py-2.5 flex items-center gap-2 hover:bg-[var(--color-surface-2)] transition-colors"
           >
             <ClipboardCheck className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
-            <span className="text-[13px] font-bold text-[var(--color-text)]">Distribution confirmations</span>
+            <span className="text-body font-medium text-[var(--color-text)]">Distribution confirmations</span>
             <span className="ml-auto">
               {acks.length === 0 ? (
-                <span className="text-[13px] font-bold text-[var(--color-text-faint)]">none requested for Rev {currentRev ?? "-"}</span>
+                <span className="text-body font-medium text-[var(--color-text-faint)]">none requested for Rev {currentRev ?? "-"}</span>
               ) : (
-                <span className={`text-[13px] font-bold px-1.5 py-0.5 rounded-full ${
+                <span className={`text-body font-bold px-1.5 py-0.5 rounded-full ${
                   confirmed === acks.length ? "bg-[color-mix(in_srgb,var(--state-released)_10%,transparent)] text-[var(--state-released)]" : "bg-[var(--color-surface-2)] text-[var(--color-text)]"
                 }`}>
                   {confirmed} of {acks.length} confirmed
@@ -185,11 +185,11 @@ export default function DistributionAcks({
                   </div>
                   <div className="space-y-0.5">
                     {acks.map((a) => (
-                      <div key={a.id} className="flex items-center gap-2 text-[13px] py-0.5">
+                      <div key={a.id} className="flex items-center gap-2 text-body py-0.5">
                         {a.acknowledgedAt
                           ? <CheckCircle2 className="w-3 h-3 text-[var(--state-released)] shrink-0" />
                           : <Clock className="w-3 h-3 text-[var(--state-held)] shrink-0" />}
-                        <span className="font-bold text-[var(--color-text)] truncate">{shortName(a)}</span>
+                        <span className="font-medium text-[var(--color-text)] truncate">{shortName(a)}</span>
                         <span className="text-[var(--color-text-faint)] ml-auto shrink-0">
                           {a.acknowledgedAt
                             ? `confirmed ${new Date(a.acknowledgedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}`
@@ -205,18 +205,18 @@ export default function DistributionAcks({
                 <div className="flex items-center gap-2 pt-1">
                   <button
                     onClick={() => void openPicker()}
-                    className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg text-[13px] font-bold border border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
+                    className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg text-body font-medium border border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
                   >
                     <UserPlus className="w-3 h-3" /> Request confirmations…
                   </button>
                   {acks.some((a) => !a.acknowledgedAt) && (
                     reminded ? (
-                      <span className="text-[13px] font-bold text-[var(--state-released)]">Reminder sent ✓</span>
+                      <span className="text-body font-medium text-[var(--state-released)]">Reminder sent ✓</span>
                     ) : (
                       <button
                         onClick={() => void handleRemind()}
                         disabled={busy}
-                        className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg text-[13px] font-bold border border-[color-mix(in_srgb,var(--state-held)_40%,transparent)] text-[var(--state-held)] hover:bg-[color-mix(in_srgb,var(--state-held)_12%,transparent)] disabled:opacity-50"
+                        className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg text-body font-medium border border-[color-mix(in_srgb,var(--state-held)_40%,transparent)] text-[var(--state-held)] hover:bg-[color-mix(in_srgb,var(--state-held)_12%,transparent)] disabled:opacity-50"
                       >
                         <BellRing className="w-3 h-3" /> Remind the unconfirmed
                       </button>
@@ -229,7 +229,7 @@ export default function DistributionAcks({
               {showPicker && (
                 <div className="rounded-lg border border-[var(--color-border)] p-2 space-y-1.5">
                   <div className="flex items-center justify-between">
-                    <span className="text-[13px] font-semibold text-[var(--color-text-faint)]">
+                    <span className="text-body font-medium text-[var(--color-text-faint)]">
                       Who must confirm Rev {currentRev ?? "?"}?
                     </span>
                     <button onClick={() => setShowPicker(false)} className="p-0.5 rounded hover:bg-[var(--color-surface-2)]">
@@ -238,7 +238,7 @@ export default function DistributionAcks({
                   </div>
                   <div className="max-h-40 overflow-y-auto space-y-0.5">
                     {members.map((m) => (
-                      <label key={m.uid} className="flex items-center gap-2 px-1.5 py-1 rounded hover:bg-[var(--color-surface-2)] cursor-pointer text-[13px]">
+                      <label key={m.uid} className="flex items-center gap-2 px-1.5 py-1 rounded hover:bg-[var(--color-surface-2)] cursor-pointer text-body">
                         <input
                           type="checkbox"
                           checked={checked.has(m.uid)}
@@ -251,15 +251,15 @@ export default function DistributionAcks({
                           }}
                           className="rounded"
                         />
-                        <span className="font-bold text-[var(--color-text)]">{m.email?.split("@")[0] ?? m.uid.slice(0, 8)}</span>
-                        {m.role && <span className="text-[13px] text-[var(--color-text-faint)]">{m.role}</span>}
+                        <span className="font-medium text-[var(--color-text)]">{m.email?.split("@")[0] ?? m.uid.slice(0, 8)}</span>
+                        {m.role && <span className="text-body text-[var(--color-text-faint)]">{m.role}</span>}
                       </label>
                     ))}
                   </div>
                   <button
                     onClick={() => void handleRequest()}
                     disabled={busy || checked.size === 0}
-                    className="w-full inline-flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[13px] font-bold border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
+                    className="w-full inline-flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-lg text-body font-medium border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
                   >
                     {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <ClipboardCheck className="w-3 h-3" />}
                     Ask {checked.size || "…"} {checked.size === 1 ? "person" : "people"} to confirm

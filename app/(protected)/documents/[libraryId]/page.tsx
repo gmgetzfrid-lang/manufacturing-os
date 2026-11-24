@@ -225,7 +225,7 @@ import LibraryAsk from "@/components/documents/LibraryAsk";
 // above the staged tray when it shows (--staged-tray-h).
 const SELECTION_BAR_BOTTOM = "bottom-[calc(5rem_+_var(--staged-tray-h,0px))] sm:bottom-[calc(2.5rem_+_var(--staged-tray-h,0px))]";
 // A quiet button on the selection bar, tall enough to tap.
-const barBtn = "flex items-center gap-1.5 h-9 pointer-coarse:h-11 px-3 text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] rounded-lg transition-colors whitespace-nowrap";
+const barBtn = "flex items-center gap-1.5 h-10 pointer-coarse:h-11 px-3 text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] rounded-lg transition-colors whitespace-nowrap";
 
 const BUILTIN_COLUMNS = [
   { key: "title", label: "Title" },
@@ -3976,7 +3976,7 @@ export default function LibraryExplorerPage() {
     facts.push({ label: "Checked out", value: answerStats.out.toLocaleString(), tone: answerStats.out > 0 ? "warn" : undefined });
     return facts;
   })();
-  const libMenuItem = "w-full px-3 min-h-10 pointer-coarse:min-h-11 py-2 text-left text-[14px] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] focus-visible:bg-[var(--color-surface-2)] flex items-center gap-2.5";
+  const libMenuItem = "w-full px-3 min-h-10 pointer-coarse:min-h-11 py-2 text-left text-body text-[var(--color-text)] hover:bg-[var(--color-surface-2)] focus-visible:bg-[var(--color-surface-2)] flex items-center gap-2.5";
   const upTo = currentFolder?.parentId ? folderMap.get(currentFolder.parentId)?.name ?? "parent folder" : library.name;
 
   // The one orange action. On a phone it rides in the bottom bar, so its
@@ -4006,8 +4006,8 @@ export default function LibraryExplorerPage() {
                   className="w-full px-3 py-2.5 text-left hover:bg-[var(--color-surface-2)] flex items-start gap-2.5">
                   <UploadCloud className="w-4 h-4 mt-0.5 text-[var(--color-text-muted)] shrink-0" />
                   <span>
-                    <span className="block text-[14px] font-semibold">Files…</span>
-                    <span className="block text-[13px] text-[var(--color-text-muted)]">Pick one or many files</span>
+                    <span className="block text-body font-medium">Files…</span>
+                    <span className="block text-body text-[var(--color-text-muted)]">Pick one or many files</span>
                   </span>
                 </button>
                 <button role="menuitem"
@@ -4015,8 +4015,8 @@ export default function LibraryExplorerPage() {
                   className="w-full px-3 py-2.5 text-left hover:bg-[var(--color-surface-2)] flex items-start gap-2.5 border-t border-[var(--color-border)]">
                   <FolderUp className="w-4 h-4 mt-0.5 text-[var(--color-text-muted)] shrink-0" />
                   <span>
-                    <span className="block text-[14px] font-semibold">A whole folder…</span>
-                    <span className="block text-[13px] text-[var(--color-text-muted)]">
+                    <span className="block text-body font-medium">A whole folder…</span>
+                    <span className="block text-body text-[var(--color-text-muted)]">
                       {isController ? "Every subfolder and file keeps its place" : "Its files are added here (folders need Doc Control)"}
                     </span>
                   </span>
@@ -4079,7 +4079,7 @@ export default function LibraryExplorerPage() {
           revised here. */}
       {activeOrgId && uid && (
         <WatchButton orgId={activeOrgId} userId={uid} resourceType="library" resourceId={libraryId}
-          className="!h-10 pointer-coarse:!h-11 !px-3.5 !rounded-lg !border-[var(--color-border-strong)] !bg-[var(--color-surface)] hover:!bg-[var(--color-surface-2)] !text-[14px] !font-semibold !text-[var(--color-text)] [&_svg]:!w-4 [&_svg]:!h-4" />
+          className="!h-10 pointer-coarse:!h-11 !px-3.5 !rounded-lg !border-transparent !bg-transparent hover:!bg-[var(--color-surface-2)] !text-body !font-medium !text-[var(--color-text)] [&_svg]:!w-4 [&_svg]:!h-4" />
       )}
       {/* New folder: creating structure is as basic as adding files.
           Creates inside whatever folder you're viewing. */}
@@ -4104,7 +4104,7 @@ export default function LibraryExplorerPage() {
             >
               {libMenuGroups.filter((g) => g.items.length > 0).map((g, gi) => (
                 <div key={g.label} role="group" aria-label={g.label} className={gi > 0 ? "mt-1 pt-1 border-t border-[var(--color-border)]" : ""}>
-                  <div className="px-3 pt-1.5 pb-0.5 text-[12px] text-[var(--color-text-muted)]">{g.label}</div>
+                  <div className="px-3 pt-1.5 pb-0.5 text-caption text-[var(--color-text-muted)]">{g.label}</div>
                   {g.items.map((it) => (
                     <button key={it.key} type="button" role="menuitem" title={it.title} className={libMenuItem}
                       onClick={() => { setActionsMenuOpen(false); it.onClick(); }}>
@@ -4380,19 +4380,19 @@ export default function LibraryExplorerPage() {
               {(error || notice || staged.error) && (
                 <div className="mt-3 space-y-1.5">
                   {staged.error && (
-                    <div role="alert" className="text-[14px] text-[var(--color-text)] flex items-start gap-2"><CircleAlert aria-hidden className="w-4 h-4 mt-0.5 shrink-0 text-[var(--state-overdue)]" />
+                    <div role="alert" className="text-body text-[var(--color-text)] flex items-start gap-2"><CircleAlert aria-hidden className="w-4 h-4 mt-0.5 shrink-0 text-[var(--state-overdue)]" />
                       <span className="flex-1 min-w-0">{plainError(staged.error)}</span>
                       <button onClick={staged.dismissError} className="shrink-0 p-1 rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface)]" aria-label="Dismiss"><X className="w-3.5 h-3.5" /></button>
                     </div>
                   )}
                   {error && (
-                    <div role="alert" className="text-[14px] text-[var(--color-text)] flex items-start gap-2"><CircleAlert aria-hidden className="w-4 h-4 mt-0.5 shrink-0 text-[var(--state-overdue)]" />
+                    <div role="alert" className="text-body text-[var(--color-text)] flex items-start gap-2"><CircleAlert aria-hidden className="w-4 h-4 mt-0.5 shrink-0 text-[var(--state-overdue)]" />
                       <span className="flex-1 min-w-0">{plainError(error)}</span>
                       <button onClick={() => setError(null)} className="shrink-0 p-1 rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface)]" aria-label="Dismiss"><X className="w-3.5 h-3.5" /></button>
                     </div>
                   )}
                   {notice && (
-                    <div role="status" className="text-[14px] text-[var(--color-text)] flex items-start gap-2">
+                    <div role="status" className="text-body text-[var(--color-text)] flex items-start gap-2">
                       <Check className="w-4 h-4 mt-0.5 shrink-0 text-[var(--state-released)]" />
                       <span className="flex-1 min-w-0">{notice}</span>
                       <button onClick={() => setNotice(null)} className="shrink-0 p-1 rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface)]" aria-label="Dismiss"><X className="w-3.5 h-3.5" /></button>
@@ -4441,10 +4441,10 @@ export default function LibraryExplorerPage() {
                 <div className="absolute inset-0 z-[35] rounded-lg bg-[color-mix(in_srgb,var(--color-surface)_82%,transparent)] pointer-events-none" aria-live="polite">
                   <div className="sticky top-[38vh] flex flex-col items-center text-center px-4 py-8">
                     <UploadCloud className="w-8 h-8 text-[var(--color-text-muted)] mb-2" />
-                    <p className="text-[15px] font-bold text-[var(--color-text)]">
+                    <p className="text-reading font-medium text-[var(--color-text)]">
                       {fileDrag.say} to {currentFolder ? `"${currentFolder.name}"` : "this library"}
                     </p>
-                    <p className="text-[13px] text-[var(--color-text-muted)] mt-1">A dropped folder keeps its subfolders.</p>
+                    <p className="text-body text-[var(--color-text-muted)] mt-1">A dropped folder keeps its subfolders.</p>
                   </div>
                 </div>
               )}
@@ -4452,9 +4452,9 @@ export default function LibraryExplorerPage() {
               {/* FOLDERS: a compact table, one row per folder with its counts. */}
               {filteredFolders.length > 0 && (
                 <nav aria-labelledby="lib-folders-h">
-                  <h2 id="lib-folders-h" className="flex items-baseline gap-2 font-display text-[20px] leading-tight font-semibold text-[var(--color-heading)] mb-3">
+                  <h2 id="lib-folders-h" className="flex items-baseline gap-2 font-display text-section leading-tight font-semibold text-[var(--color-heading)] mb-3">
                     Folders
-                    <span className="font-sans text-[14px] font-normal tabular-nums text-[var(--color-text-muted)]">{filteredFolders.length.toLocaleString()}</span>
+                    <span className="font-sans text-body font-normal tabular-nums text-[var(--color-text-muted)]">{filteredFolders.length.toLocaleString()}</span>
                   </h2>
                   <FolderGrid
                     layout="list"
@@ -4586,7 +4586,7 @@ export default function LibraryExplorerPage() {
                   top right. Opened from the list's toolbar. */}
               {activeOrgId && mapOpen && (
                 <Card
-                  label={<>Map <span className="font-sans text-[14px] font-normal text-[var(--color-text-muted)]">{mapFolder.name}: its folders and files</span></>}
+                  label={<>Map <span className="font-sans text-body font-normal text-[var(--color-text-muted)]">{mapFolder.name}: its folders and files</span></>}
                   action={
                     <button type="button" onClick={() => setMapOpen(() => false)} className={heroQuiet}>
                       <X className="w-4 h-4" /> Hide map
@@ -4611,13 +4611,13 @@ export default function LibraryExplorerPage() {
             <section aria-labelledby="lib-docs-h" className="min-w-0">
               <div className="flex flex-wrap items-center gap-x-2 gap-y-2 mb-2.5 min-h-9">
                 <h2 id="lib-docs-h" className="flex items-baseline gap-2 min-w-0 mr-auto">
-                  <span className="font-display text-[20px] leading-tight font-semibold text-[var(--color-heading)]">{noun.many === "documents" ? "Documents" : library.name}</span>
-                  <span className="text-[14px] text-[var(--color-text-muted)] tabular-nums"
+                  <span className="font-display text-section leading-tight font-semibold text-[var(--color-heading)]">{noun.many === "documents" ? "Documents" : library.name}</span>
+                  <span className="text-body text-[var(--color-text-muted)] tabular-nums"
                     title="Documents filed directly in this folder">{filteredDocs.length.toLocaleString()} here</span>
                   {folderCounts && (() => {
                     const below = currentFolderId ? folderCounts.totals.get(currentFolderId) ?? 0 : folderCounts.libraryTotal;
                     return below > (folderCounts.direct.get(currentFolderId ?? null) ?? 0) && below !== filteredDocs.length ? (
-                      <span className="max-sm:hidden text-[14px] text-[var(--color-text-muted)] tabular-nums"
+                      <span className="max-sm:hidden text-body text-[var(--color-text-muted)] tabular-nums"
                         title={currentFolderId ? "Everything in this folder, including all subfolders" : "Every document in this library"}>
                         {below.toLocaleString()} {currentFolderId ? "with subfolders" : "in library"}
                       </span>
@@ -4626,7 +4626,7 @@ export default function LibraryExplorerPage() {
                 </h2>
 
                 {loadingUpload && (
-                  <div className="flex items-center gap-1.5 text-[13px] text-[var(--color-text-muted)]">
+                  <div className="flex items-center gap-1.5 text-body text-[var(--color-text-muted)]">
                     <Loader2 className="w-3.5 h-3.5 animate-spin" />
                     {uploadProgress
                       ? `Uploading ${uploadProgress.done} of ${uploadProgress.total}…`
@@ -4645,7 +4645,7 @@ export default function LibraryExplorerPage() {
                     placeholder="Filter this folder"
                     aria-label="Filter this folder by number, title, sheet or any field"
                     title="Number, title, sheet or any field"
-                    className="w-full h-10 pointer-coarse:h-11 pl-9 pr-9 text-[16px] sm:text-[14px] rounded-lg border border-[var(--color-border-control)] bg-[var(--color-surface)] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)]"
+                    className="w-full h-10 pointer-coarse:h-11 pl-9 pr-9 text-reading sm:text-body rounded-lg border border-[var(--color-border-control)] bg-[var(--color-surface)] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)]"
                   />
                   {search && (
                     <button
@@ -4702,34 +4702,34 @@ export default function LibraryExplorerPage() {
                           <div className="fixed inset-0 z-40" onClick={() => setViewMenuOpen(false)} />
                           <div className="absolute right-0 top-full mt-1.5 z-50 w-72 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl shadow-xl py-2">
                             <div className="px-3 pb-2 border-b border-[var(--color-border)]">
-                              <div className="text-[13px] font-semibold text-[var(--color-text)]">
+                              <div className="text-body font-medium text-[var(--color-text)]">
                                 {currentFolder ? `Folder: ${currentFolder.name}` : `Library: ${library?.name ?? ""}`}
                               </div>
-                              <div className="text-[13px] text-[var(--color-text-muted)] mt-0.5 leading-snug">
+                              <div className="text-body text-[var(--color-text-muted)] mt-0.5 leading-snug">
                                 Current: {docLayout === "details" ? "Details" : docLayout === "list" ? "List" : docLayout === "grid" ? "Grid" : "Thumbnails"} · sorted by {sortLabelFor(sortKey)} ({sortDir === "asc" ? "ascending" : "descending"})
                                 {isFolderDefaultSort ? " · saved default sort" : ""}
                               </div>
                             </div>
                             <button
                               onClick={() => { setViewMenuOpen(false); void saveViewDefault("user"); }}
-                              className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
+                              className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
                             >
                               <Pin className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
                               <span className="flex-1">
                                 Set as <b>my</b> default here
-                                <span className="block text-[13px] font-normal text-[var(--color-text-muted)]">Only you: wins over the org default</span>
+                                <span className="block text-body font-normal text-[var(--color-text-muted)]">Only you: wins over the org default</span>
                               </span>
                               {viewDefaults.hasUserRow && <Check className="w-3.5 h-3.5 text-[var(--state-released)]" />}
                             </button>
                             {isController && (
                               <button
                                 onClick={() => { setViewMenuOpen(false); void saveViewDefault("org"); }}
-                                className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
+                                className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
                               >
                                 <Shield className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
                                 <span className="flex-1">
                                   Set as <b>org-wide</b> default here
-                                  <span className="block text-[13px] font-normal text-[var(--color-text-muted)]">Everyone opens this folder like this</span>
+                                  <span className="block text-body font-normal text-[var(--color-text-muted)]">Everyone opens this folder like this</span>
                                 </span>
                                 {viewDefaults.hasOrgRow && <Check className="w-3.5 h-3.5 text-[var(--state-released)]" />}
                               </button>
@@ -4737,20 +4737,20 @@ export default function LibraryExplorerPage() {
                             {viewDefaults.hasUserRow && (
                               <button
                                 onClick={() => { setViewMenuOpen(false); void clearMyViewDefault(); }}
-                                className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-[13px] font-semibold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"
+                                className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-body font-medium text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"
                               >
                                 <X className="w-3.5 h-3.5" />
                                 <span className="flex-1">
                                   Clear my default (use org&apos;s)
-                                  <span className="block text-[13px] font-normal">Removes your saved layout, sort AND column setup here</span>
+                                  <span className="block text-body font-normal">Removes your saved layout, sort AND column setup here</span>
                                 </span>
                               </button>
                             )}
                             {/* Columns: where this folder's come from, and the
                                 choice of this folder or every folder. */}
                             <div className="mt-1.5 pt-2 border-t border-[var(--color-border)]">
-                              <div className="px-3 pb-1 text-[13px] font-semibold text-[var(--color-text)]">Columns</div>
-                              <div className="px-3 pb-1.5 text-[13px] text-[var(--color-text-muted)] leading-snug">
+                              <div className="px-3 pb-1 text-body font-medium text-[var(--color-text)]">Columns</div>
+                              <div className="px-3 pb-1.5 text-body text-[var(--color-text-muted)] leading-snug">
                                 {columnSource === "user" ? "This folder has your own columns."
                                   : columnSource === "org" ? "This folder has its own columns."
                                   : columnSource === "library" ? "This folder uses the library's columns."
@@ -4758,23 +4758,23 @@ export default function LibraryExplorerPage() {
                               </div>
                               <button
                                 onClick={() => { setViewMenuOpen(false); setShowColumnManager(true); }}
-                                className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
+                                className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
                               >
                                 <Columns className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
                                 <span className="flex-1">
                                   Choose and order columns
-                                  <span className="block text-[13px] font-normal text-[var(--color-text-muted)]">Show, hide and move them up or down</span>
+                                  <span className="block text-body font-normal text-[var(--color-text-muted)]">Show, hide and move them up or down</span>
                                 </span>
                               </button>
                               {isController && (
                                 <button
                                   onClick={() => { setViewMenuOpen(false); void applyColumnsToLibrary(activeColumns); }}
-                                  className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
+                                  className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
                                 >
                                   <LibraryIcon className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
                                   <span className="flex-1">
                                     Use these for every folder in this library
-                                    <span className="block text-[13px] font-normal text-[var(--color-text-muted)]">Everyone in your org, in every folder without its own columns</span>
+                                    <span className="block text-body font-normal text-[var(--color-text-muted)]">Everyone in your org, in every folder without its own columns</span>
                                   </span>
                                   {columnSource === "library" && <Check className="w-3.5 h-3.5 text-[var(--state-released)]" />}
                                 </button>
@@ -4782,12 +4782,12 @@ export default function LibraryExplorerPage() {
                               {canUseLibraryColumns && (
                                 <button
                                   onClick={() => { setViewMenuOpen(false); void followLibraryColumns(); }}
-                                  className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
+                                  className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
                                 >
                                   <RotateCcw className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
                                   <span className="flex-1">
                                     Use the library&apos;s columns here
-                                    <span className="block text-[13px] font-normal text-[var(--color-text-muted)]">{isController && colLevels.folder ? "Drops this folder's own columns for everyone" : "Drops your own columns in this folder"}</span>
+                                    <span className="block text-body font-normal text-[var(--color-text-muted)]">{isController && colLevels.folder ? "Drops this folder's own columns for everyone" : "Drops your own columns in this folder"}</span>
                                   </span>
                                 </button>
                               )}
@@ -4809,12 +4809,12 @@ export default function LibraryExplorerPage() {
             {/* This folder's columns differ from the library's: say so, with
                 the way back. */}
             {docLayout === "details" && canUseLibraryColumns && (
-              <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 mb-2 text-[13px] text-[var(--color-text-muted)]">
+              <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 mb-2 text-body text-[var(--color-text-muted)]">
                 <Columns className="w-3.5 h-3.5 text-[var(--color-text-faint)]" aria-hidden />
                 <span>{columnSource === "user" ? "You have your own columns in this folder" : "This folder has its own columns"}</span>
                 <span aria-hidden>·</span>
                 <button type="button" onClick={() => void followLibraryColumns()}
-                  className="font-semibold text-[var(--color-accent-text)] underline-offset-2 hover:underline rounded focus-visible:outline-2">
+                  className="font-medium text-[var(--color-accent-text)] underline-offset-2 hover:underline rounded focus-visible:outline-2">
                   Use the library&apos;s
                 </button>
               </div>
@@ -4842,20 +4842,20 @@ export default function LibraryExplorerPage() {
                   </div>
                 )}
                 {docStreamProgress !== null && (
-                  <div className="px-4 py-1.5 bg-[var(--color-surface-2)] border-b border-[var(--color-border)] text-[13px] text-[var(--color-text)] flex items-center gap-2">
+                  <div className="px-4 py-1.5 bg-[var(--color-surface-2)] border-b border-[var(--color-border)] text-body text-[var(--color-text)] flex items-center gap-2">
                     <Loader2 className="w-3 h-3 animate-spin" />
                     Loading the rest of this folder… <b>{docStreamProgress.toLocaleString()}</b> so far. Sorting covers everything once done.
                   </div>
                 )}
                 {docFetchHitCap && !loadingDocs && docStreamProgress === null && (
-                  <div className="mx-4 mt-2 border-l-2 border-[var(--state-held)] pl-3 py-0.5 text-[13px] text-[var(--state-held)]">
+                  <div className="mx-4 mt-2 border-l-2 border-[var(--state-held)] pl-3 py-0.5 text-body text-[var(--state-held)]">
                     Showing the first <b>10,000</b> documents, newest first. This folder holds more: filter or open a subfolder to narrow it.
                   </div>
                 )}
                 {!loadingDocs && filteredDocs.length === 0 && filteredFolders.length === 0 ? (
                   /* INTERACTIVE EMPTY STATE */
                   <div className="flex-1 flex flex-col items-center justify-center gap-3 p-12 text-center">
-                    <p className="text-[15px] text-[var(--color-text)]">Nothing filed here yet. Drop files or a folder on this page to add them.</p>
+                    <p className="text-reading text-[var(--color-text)]">Nothing filed here yet. Drop files or a folder on this page to add them.</p>
                     <button type="button" onClick={() => fileInputRef.current?.click()} className={heroQuiet}>
                       <UploadCloud className="w-4 h-4" /> Choose files
                     </button>
@@ -4868,7 +4868,7 @@ export default function LibraryExplorerPage() {
                     {loadingDocs && sortedDocs.length === 0 ? (
                       <SkeletonRows rows={6} cols={0} what="documents" sheet={false} />
                     ) : sortedDocs.length === 0 ? (
-                      <div className="text-center text-[14px] text-[var(--color-text-muted)] py-8">No documents match.</div>
+                      <div className="text-center text-body text-[var(--color-text-muted)] py-8">No documents match.</div>
                     ) : sortedDocs.map((doc) => {
                       const out = isDocumentCheckedOut(doc);
                       const showTitle = !!doc.title && !!doc.documentNumber && doc.title !== doc.documentNumber;
@@ -4892,14 +4892,14 @@ export default function LibraryExplorerPage() {
                             className={`flex-1 min-w-0 text-left pl-4 pr-1 pt-3 ${tags.length ? "pb-1.5" : "pb-3"} active:bg-[var(--color-surface-2)] hover:bg-[var(--color-surface-2)] block`}
                           >
                             <span className="flex items-center gap-3">
-                              <span className="ui-id flex-1 min-w-0 truncate text-[17px] leading-snug">{doc.documentNumber || doc.title || doc.name || "-"}</span>
+                              <span className="ui-id flex-1 min-w-0 truncate text-section leading-snug">{doc.documentNumber || doc.title || doc.name || "-"}</span>
                               {doc.status && <StatusTag status={doc.status} className="shrink-0" />}
                             </span>
-                            <span className="mt-0.5 flex items-center gap-x-3 text-[13px] text-[var(--color-text-muted)] min-w-0">
+                            <span className="mt-0.5 flex items-center gap-x-3 text-body text-[var(--color-text-muted)] min-w-0">
                               {showTitle && <span className="truncate min-w-0">{doc.title}</span>}
                               <span className="shrink-0">Rev <span className="font-display tabular-nums font-semibold text-[var(--color-text)]">{shownRevision(doc.rev, uploadedName(doc)) || "-"}</span></span>
                               {out
-                                ? <span className="shrink-0 font-semibold text-[var(--state-held)] truncate">Checked out{doc.checkedOutBy === uid ? " by you" : doc.checkedOutByName ? ` by ${doc.checkedOutByName}` : ""}</span>
+                                ? <span className="shrink-0 font-medium text-[var(--state-held)] truncate">Checked out{doc.checkedOutBy === uid ? " by you" : doc.checkedOutByName ? ` by ${doc.checkedOutByName}` : ""}</span>
                                 : <span className="shrink-0">{humanDate(doc.updatedAt)}</span>}
                             </span>
                           </button>
@@ -4975,8 +4975,8 @@ export default function LibraryExplorerPage() {
                     onClick={(e) => { if (e.target === e.currentTarget) clearSelection(); }}
                     onMouseDown={handleMarqueeMouseDown}
                   >
-                    <table className="w-full text-left text-[14px] table-fixed" style={{ minWidth: tableMinWidth }}>
-                      <thead className="text-[13px] text-[var(--color-text-muted)] font-semibold border-b border-[var(--color-border)]">
+                    <table className="w-full text-left text-body table-fixed" style={{ minWidth: tableMinWidth }}>
+                      <thead className="text-body text-[var(--color-text-muted)] font-medium border-b border-[var(--color-border)]">
                         <tr>
                           <th className={`px-3 ${headerPad}`} style={{ width: "36px" }}>
                             <input
@@ -5063,7 +5063,7 @@ export default function LibraryExplorerPage() {
                           </tr>
                         ) : sortedDocs.length === 0 ? (
                           <tr>
-                            <td colSpan={activeColumns.length + 5} className="px-6 py-10 text-center text-[var(--color-text-muted)] text-[14px]">
+                            <td colSpan={activeColumns.length + 5} className="px-6 py-10 text-center text-[var(--color-text-muted)] text-body">
                               No documents match your search.
                             </td>
                           </tr>
@@ -5192,11 +5192,11 @@ export default function LibraryExplorerPage() {
                                       <td key={colKey} className={`px-3 ${rowPad}`}>
                                         <div className="min-w-0">
                                           {!hasSeparateDocNum && docRecord.documentNumber && (
-                                            <div className="ui-id text-[15px] truncate leading-tight">
+                                            <div className="ui-id text-reading truncate leading-tight">
                                               {docRecord.documentNumber}
                                             </div>
                                           )}
-                                          <div className={`truncate leading-tight ${hasSeparateDocNum || !docRecord.documentNumber ? "text-[14px] text-[var(--color-text)]" : "text-[13px] text-[var(--color-text-muted)] mt-0.5"}`}>
+                                          <div className={`truncate leading-tight ${hasSeparateDocNum || !docRecord.documentNumber ? "text-body text-[var(--color-text)]" : "text-body text-[var(--color-text-muted)] mt-0.5"}`}>
                                             {docRecord.title || docRecord.name || "Untitled"}
                                           </div>
                                         </div>
@@ -5235,7 +5235,7 @@ export default function LibraryExplorerPage() {
                                               onBlur={() => { if (!savingDocNum) void saveInlineDocNumber(docRecord.id!, editingDocNumValue); }}
                                               disabled={savingDocNum}
                                               aria-label="Document number"
-                                              className={`w-full font-display text-[15px] font-semibold tabular-nums px-1.5 py-0.5 rounded border ${editingDocNumError ? "border-[var(--state-overdue)]" : "border-[var(--color-border-strong)]"} bg-[var(--color-surface)]`}
+                                              className={`w-full font-display text-reading font-semibold tabular-nums px-1.5 py-0.5 rounded border ${editingDocNumError ? "border-[var(--state-overdue)]" : "border-[var(--color-border-strong)]"} bg-[var(--color-surface)]`}
                                             />
                                             {savingDocNum && <Loader2 className="w-3 h-3 animate-spin text-[var(--color-text-muted)] shrink-0" />}
                                           </div>
@@ -5244,7 +5244,7 @@ export default function LibraryExplorerPage() {
                                             {/* The number opens the document (the click is the row's). */}
                                             <button
                                               type="button"
-                                              className="ui-id min-w-0 truncate text-left text-[15px] rounded focus-visible:outline-2"
+                                              className="ui-id min-w-0 truncate text-left text-reading rounded focus-visible:outline-2"
                                               title={`Open ${docRecord.documentNumber || "this document"}`}
                                             >
                                               {docRecord.documentNumber || "-"}
@@ -5266,7 +5266,7 @@ export default function LibraryExplorerPage() {
                                           </div>
                                         )}
                                         {isEditing && editingDocNumError && (
-                                          <div className="text-[13px] text-[var(--state-overdue)] mt-0.5 max-w-[20ch] leading-tight">{editingDocNumError}</div>
+                                          <div className="text-body text-[var(--state-overdue)] mt-0.5 max-w-[20ch] leading-tight">{editingDocNumError}</div>
                                         )}
                                       </td>
                                     );
@@ -5274,7 +5274,7 @@ export default function LibraryExplorerPage() {
 
                                   // Generic cell: truncate to prevent overflow. Revs read as identifiers.
                                   return (
-                                    <td key={colKey} className={`px-3 ${rowPad} text-[var(--color-text)] text-[14px] truncate ${colKey === "rev" ? "font-display text-[15px] font-semibold tabular-nums" : ""}`}>
+                                    <td key={colKey} className={`px-3 ${rowPad} text-[var(--color-text)] text-body truncate ${colKey === "rev" ? "font-display text-reading font-semibold tabular-nums" : ""}`}>
                                       <div className="truncate">{renderDocCell(docRecord, colKey)}</div>
                                     </td>
                                   );
@@ -5415,7 +5415,7 @@ export default function LibraryExplorerPage() {
       {isController && selectedFolderIds.size > 0 && selectedDocIds.size === 0 && (
         <div className={`fixed left-1/2 -translate-x-1/2 z-40 ${SELECTION_BAR_BOTTOM}`}>
           <div className="ui-float flex items-center gap-2 pl-4 pr-2 py-2 bg-[var(--color-surface)] text-[var(--color-text)] rounded-xl border border-[var(--color-border)]">
-            <span className="text-[14px] font-semibold tabular-nums">{selectedFolderIds.size} folder{selectedFolderIds.size === 1 ? "" : "s"} selected</span>
+            <span className="text-body font-medium tabular-nums">{selectedFolderIds.size} folder{selectedFolderIds.size === 1 ? "" : "s"} selected</span>
             <div className="h-5 w-px bg-[var(--color-border)] mx-1" />
             <button onClick={() => setSelectedFolderIds(new Set())} className={barBtn}>
               Clear
@@ -5442,7 +5442,7 @@ export default function LibraryExplorerPage() {
         <div
           className="ui-float flex flex-wrap items-center justify-center gap-x-1 gap-y-1 pl-4 pr-2 py-2 bg-[var(--color-surface)] text-[var(--color-text)] rounded-xl border border-[var(--color-border)]"
         >
-          <span className="pr-1 text-[14px] font-semibold whitespace-nowrap tabular-nums">{selectedDocIds.size} selected</span>
+          <span className="pr-1 text-body font-medium whitespace-nowrap tabular-nums">{selectedDocIds.size} selected</span>
           <button
             onClick={() => setSelectedDocIds(new Set())}
             className={`${barBtn} !text-[var(--color-text-muted)]`}
@@ -5453,7 +5453,7 @@ export default function LibraryExplorerPage() {
           {/* One orange (Move), the rest quiet, the rare ones under More. */}
           <button
             onClick={() => setShowBulkMoveModal(true)}
-            className="flex items-center gap-1.5 h-9 pointer-coarse:h-11 px-3.5 text-[14px] font-semibold rounded-lg transition-colors bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] whitespace-nowrap"
+            className="flex items-center gap-1.5 h-10 pointer-coarse:h-11 px-3.5 text-body font-medium rounded-lg transition-colors bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] whitespace-nowrap"
             title="Move all selected documents to a folder"
           >
             <ArrowRight className="w-4 h-4" /> Move to…
@@ -5480,7 +5480,7 @@ export default function LibraryExplorerPage() {
             <Briefcase className="w-4 h-4" /> Check out
           </button>
           {bulkDeleting && (
-            <span role="status" className="flex items-center gap-1.5 px-2 text-[14px] font-semibold text-[var(--color-text-muted)] tabular-nums">
+            <span role="status" className="flex items-center gap-1.5 px-2 text-body font-medium text-[var(--color-text-muted)] tabular-nums">
               <Loader2 className="w-4 h-4 animate-spin" /> Deleting {bulkDeleting.done} of {bulkDeleting.total}…
             </span>
           )}
@@ -5499,16 +5499,16 @@ export default function LibraryExplorerPage() {
                   {/* Opens upward: the bar sits at the bottom of the screen. */}
                   <div role="menu" className="ui-float ui-float-in absolute right-0 bottom-full mb-2 z-50 w-52 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] py-1 origin-bottom-right">
                     <button role="menuitem" onClick={() => { setBulkMoreOpen(false); setShowBulkEdit(true); }}
-                      className="w-full flex items-center gap-2.5 px-3 min-h-10 text-left text-[14px] hover:bg-[var(--color-surface-2)]">
+                      className="w-full flex items-center gap-2.5 px-3 min-h-10 text-left text-body hover:bg-[var(--color-surface-2)]">
                       <Pencil className="w-4 h-4 text-[var(--color-text-faint)]" /> Edit fields on all
                     </button>
                     <button role="menuitem" onClick={() => { setBulkMoreOpen(false); void handleBulkArchive(); }}
-                      className="w-full flex items-center gap-2.5 px-3 min-h-10 text-left text-[14px] hover:bg-[var(--color-surface-2)]">
+                      className="w-full flex items-center gap-2.5 px-3 min-h-10 text-left text-body hover:bg-[var(--color-surface-2)]">
                       <Archive className="w-4 h-4 text-[var(--color-text-faint)]" /> Archive
                     </button>
                     <div className="my-1 h-px bg-[var(--color-border)]" />
                     <button role="menuitem" onClick={() => { setBulkMoreOpen(false); void handleBulkDelete(); }}
-                      className="w-full flex items-center gap-2.5 px-3 min-h-10 text-left text-[14px] text-[var(--state-overdue-text)] hover:bg-[var(--color-surface-2)]">
+                      className="w-full flex items-center gap-2.5 px-3 min-h-10 text-left text-body text-[var(--state-overdue-text)] hover:bg-[var(--color-surface-2)]">
                       <Trash2 className="w-4 h-4" /> Delete…
                     </button>
                   </div>
@@ -5721,13 +5721,13 @@ export default function LibraryExplorerPage() {
                 <div className="fixed inset-0 z-[250] flex items-center justify-center bg-slate-900/40 backdrop-blur-[2px] p-4">
                   <div className="w-full max-w-sm rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] shadow-2xl p-5 text-center">
                     <Loader2 className="w-8 h-8 text-[var(--color-text-muted)] animate-spin mx-auto mb-3" />
-                    <p className="text-base font-semibold text-[var(--color-text)]">Reading your folder…</p>
+                    <p className="text-base font-medium text-[var(--color-text)]">Reading your folder…</p>
                     <p className="text-sm text-[var(--color-text)] mt-1">
                       <b>{readingDrop.toLocaleString()}</b> file{readingDrop === 1 ? "" : "s"} found
                     </p>
                     <ReadingHint startedAt={readingStartRef.current} />
                     <button onClick={() => { readingCancelledRef.current = true; setReadingDrop(null); }}
-                      className="mt-3 px-3 py-1.5 rounded-lg text-[13px] font-bold border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]">
+                      className="mt-3 px-3 py-1.5 rounded-lg text-body font-medium border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]">
                       Cancel
                     </button>
                   </div>
@@ -5955,13 +5955,13 @@ export default function LibraryExplorerPage() {
             onClose={() => setTrashFolders(null)} />
             <div className="max-h-80 overflow-y-auto p-3 space-y-1.5">
               {trashFolders.length === 0 ? (
-                <div className="text-center text-[13px] text-[var(--color-text-faint)] py-8">Nothing in the trash.</div>
+                <div className="text-center text-body text-[var(--color-text-faint)] py-8">Nothing in the trash.</div>
               ) : trashFolders.map((f) => (
                 <div key={f.id} className="flex items-center gap-3 px-3 py-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)]/40">
                   <Trash2 className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" />
                   <div className="flex-1 min-w-0">
-                    <div className="text-[13px] font-bold text-[var(--color-text)] truncate">{f.name}</div>
-                    <div className="text-[13px] text-[var(--color-text-muted)] truncate">
+                    <div className="text-body font-medium text-[var(--color-text)] truncate">{f.name}</div>
+                    <div className="text-body text-[var(--color-text-muted)] truncate">
                       {f.pathNames.length > 1 ? `${f.pathNames.slice(0, -1).join(" / ")} · ` : ""}
                       deleted {new Date(f.deletedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })} · purges {new Date(f.purgeAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
                     </div>
@@ -5969,7 +5969,7 @@ export default function LibraryExplorerPage() {
                   <button
                     onClick={() => void restoreFromTrash(f.id)}
                     disabled={trashBusy === f.id}
-                    className="shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[13px] font-bold border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-all"
+                    className="shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-body font-medium border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-all"
                   >
                     {trashBusy === f.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <ArchiveRestore className="w-3 h-3" />}
                     Restore
@@ -6042,12 +6042,12 @@ function LibraryNumberingModal({ orgId, libraryId, onClose }: {
     <Modal onClose={onClose} size="sm" zIndex={95}>
         <ModalHeader icon={Hash} title="Auto-numbering" subtitle="Uploads with a blank number get the next one. A typed number always wins." onClose={onClose} />
         {loadErr ? (
-          <p role="alert" className="m-5 border-l-2 border-[var(--state-overdue)] pl-3 text-[14px] text-[var(--state-overdue-text)]">{plainError(loadErr)}</p>
+          <p role="alert" className="m-5 border-l-2 border-[var(--state-overdue)] pl-3 text-body text-[var(--state-overdue-text)]">{plainError(loadErr)}</p>
         ) : cfg === null ? (
           <div className="p-6 text-center text-sm text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin inline" /> Loading the numbering settings…</div>
         ) : (
           <div className="p-5 space-y-3">
-            <label className="flex items-center gap-2 text-sm font-bold text-[var(--color-text)] cursor-pointer">
+            <label className="flex items-center gap-2 text-sm font-medium text-[var(--color-text)] cursor-pointer">
               <input type="checkbox" checked={cfg.enabled}
                 onChange={(e) => setCfg({ ...cfg, enabled: e.target.checked })}
                 className="w-4 h-4 accent-[var(--color-main)]" />
@@ -6055,24 +6055,24 @@ function LibraryNumberingModal({ orgId, libraryId, onClose }: {
             </label>
             <div className="grid grid-cols-3 gap-2">
               <div className="col-span-1">
-                <label className="text-[13px] font-semibold text-[var(--color-text)]">Prefix</label>
+                <label className="text-body font-medium text-[var(--color-text)]">Prefix</label>
                 <input value={cfg.prefix} onChange={(e) => setCfg({ ...cfg, prefix: e.target.value })}
                   placeholder="PROC-" className="mt-1 w-full px-2.5 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm font-display tabular-nums" />
               </div>
               <div>
-                <label className="text-[13px] font-semibold text-[var(--color-text)]">Digits</label>
+                <label className="text-body font-medium text-[var(--color-text)]">Digits</label>
                 <input type="number" min={1} max={8} value={cfg.pad}
                   onChange={(e) => setCfg({ ...cfg, pad: Math.max(1, Math.min(8, Number(e.target.value) || 4)) })}
                   className="mt-1 w-full px-2.5 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm" />
               </div>
               <div>
-                <label className="text-[13px] font-semibold text-[var(--color-text)]">Next #</label>
+                <label className="text-body font-medium text-[var(--color-text)]">Next #</label>
                 <input type="number" min={1} value={cfg.next_number}
                   onChange={(e) => setCfg({ ...cfg, next_number: Math.max(1, Number(e.target.value) || 1) })}
                   className="mt-1 w-full px-2.5 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm" />
               </div>
             </div>
-            <div className="text-[13px] text-[var(--color-text-muted)]">
+            <div className="text-body text-[var(--color-text-muted)]">
               Next issued number: <span className="font-display font-semibold tabular-nums text-[var(--color-text)]">{preview}</span>
             </div>
             {err && <p role="alert" className={fieldError}>{plainError(err)}</p>}
@@ -6099,7 +6099,7 @@ function ReadingHint({ startedAt }: { startedAt: number }) {
   }, []);
   const secs = Math.max(0, Math.round((now - startedAt) / 1000));
   return (
-    <div className="mt-2 text-[13px] text-[var(--color-text-muted)]">
+    <div className="mt-2 text-body text-[var(--color-text-muted)]">
       <div>{secs}s. The upload window opens once every file is found.</div>
       {secs >= 15 && (
         <p className="mt-2 text-left border-l-2 border-[var(--state-held)] pl-2.5 text-[var(--state-held)]">

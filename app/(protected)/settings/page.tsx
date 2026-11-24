@@ -52,8 +52,8 @@ function Rows({ rows }: { rows: Row[] }) {
         <li key={r.href}>
           <Link href={r.href} className="group flex items-center gap-4 px-4 sm:px-5 min-h-[60px] py-3 hover:bg-[var(--color-surface-2)] transition-colors">
             <span className="min-w-0 flex-1">
-              <span className="block text-[15px] font-semibold text-[var(--color-text)]">{r.name}</span>
-              <span className="block text-[13px] text-[var(--color-text-muted)]">{r.what}</span>
+              <span className="block text-reading font-medium text-[var(--color-text)]">{r.name}</span>
+              <span className="block text-body text-[var(--color-text-muted)]">{r.what}</span>
             </span>
             <ChevronRight aria-hidden className="w-4 h-4 shrink-0 text-[var(--color-text-faint)] group-hover:text-[var(--color-text)] group-hover:translate-x-0.5 transition-transform motion-reduce:transition-none" />
           </Link>
@@ -75,8 +75,8 @@ export default function SettingsPage() {
           <Rows rows={YOURS} />
           <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 sm:px-5 py-3">
             <span className="min-w-0 flex-1">
-              <span className="block text-[15px] font-semibold text-[var(--color-text)]">Light or dark</span>
-              <span className="block text-[13px] text-[var(--color-text-muted)]">Just for you, on this device</span>
+              <span className="block text-reading font-medium text-[var(--color-text)]">Light or dark</span>
+              <span className="block text-body text-[var(--color-text-muted)]">Just for you, on this device</span>
             </span>
             <div role="radiogroup" aria-label="Light or dark" className={bandSeg}>
               {(["light", "dark"] as const).map((m) => (

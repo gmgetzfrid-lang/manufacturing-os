@@ -39,12 +39,12 @@ function ByUnit({ list, limit = 400 }: { list: PlanAsset[]; limit?: number }) {
   return (
     <div className="space-y-1.5">
       {[...units.entries()].map(([u, l]) => (
-        <p key={u} className="text-[13px] leading-relaxed">
-          <span className="font-semibold">{u ? `Unit ${u}` : "No unit"}:</span>{" "}
+        <p key={u} className="text-body leading-relaxed">
+          <span className="font-medium">{u ? `Unit ${u}` : "No unit"}:</span>{" "}
           <span className="text-[var(--color-text-muted)] tabular-nums">{l.map(label).join(", ")}</span>
         </p>
       ))}
-      {list.length > limit && <p className="text-[13px] text-[var(--color-text-muted)]">and {list.length - limit} more</p>}
+      {list.length > limit && <p className="text-body text-[var(--color-text-muted)]">and {list.length - limit} more</p>}
     </div>
   );
 }
@@ -53,8 +53,8 @@ function ByUnit({ list, limit = 400 }: { list: PlanAsset[]; limit?: number }) {
 function Row({ n, title, children, tone }: { n: number; title: React.ReactNode; children?: React.ReactNode; tone?: "bad" | "good" }) {
   const head = (
     <span className="flex items-baseline gap-3 min-w-0">
-      <span className={`font-display text-[20px] font-semibold tabular-nums w-14 shrink-0 text-right ${n === 0 ? "text-[var(--color-text-faint)]" : tone === "bad" ? "text-[var(--state-overdue-text)]" : "text-[var(--color-heading)]"}`}>{n.toLocaleString()}</span>
-      <span className="text-[15px] text-[var(--color-text)]">{title}</span>
+      <span className={`font-display text-section font-semibold tabular-nums w-14 shrink-0 text-right ${n === 0 ? "text-[var(--color-text-faint)]" : tone === "bad" ? "text-[var(--state-overdue-text)]" : "text-[var(--color-heading)]"}`}>{n.toLocaleString()}</span>
+      <span className="text-reading text-[var(--color-text)]">{title}</span>
     </span>
   );
   if (!children || n === 0) return <div className="py-2.5 border-b border-[var(--color-border)] last:border-0">{head}</div>;
@@ -62,7 +62,7 @@ function Row({ n, title, children, tone }: { n: number; title: React.ReactNode; 
     <details className="group py-2.5 border-b border-[var(--color-border)] last:border-0">
       <summary className="flex items-center justify-between gap-3 cursor-pointer list-none [&::-webkit-details-marker]:hidden">
         {head}
-        <span className="shrink-0 inline-flex items-center gap-1 text-[13px] font-semibold text-[var(--color-accent-text)]">
+        <span className="shrink-0 inline-flex items-center gap-1 text-body font-medium text-[var(--color-accent-text)]">
           <span className="group-open:hidden">Show</span><span className="hidden group-open:inline">Hide</span>
           <ChevronRight className="ui-chevron w-3.5 h-3.5 group-open:rotate-90" aria-hidden />
         </span>
@@ -159,7 +159,7 @@ export default function EquipmentStartOver({ orgId, onClose, onChanged }: { orgI
   if (stage.k === "loading") {
     body = error
       ? <Problem retry={() => void load(keepEdited)}>Couldn&apos;t work out what would change. {error}</Problem>
-      : <div><p className="mb-3 text-[14px] text-[var(--color-text-muted)]">Working out what would change.</p><SkeletonText lines={4} /></div>;
+      : <div><p className="mb-3 text-body text-[var(--color-text-muted)]">Working out what would change.</p><SkeletonText lines={4} /></div>;
     footer = <button type="button" className={btnQuiet} onClick={onClose}>Cancel</button>;
   } else if (stage.k === "preview" || stage.k === "running") {
     const p = stage.p;
@@ -174,8 +174,8 @@ export default function EquipmentStartOver({ orgId, onClose, onChanged }: { orgI
         <Row n={merged} tone="bad" title={<>{merged === 1 ? "copy" : "copies"} of equipment already listed. <b>Merged</b> into the one that stays, photos and files with it.</>}>
           <ul className="space-y-1">
             {p.plan.merges.map((m) => (
-              <li key={m.keep.id} className="text-[13px]">
-                <span className="font-semibold tabular-nums">{label(m.keep)}</span>
+              <li key={m.keep.id} className="text-body">
+                <span className="font-medium tabular-nums">{label(m.keep)}</span>
                 <span className="text-[var(--color-text-muted)]">{m.keep.unitCode ? `, unit ${m.keep.unitCode}` : ""}: keeps the one {m.keep.origin === "manual" ? "you added" : m.keep.code ? "with the ID" : "with photos"}{(() => { const ph = m.drop.reduce((n, d) => n + d.photos, 0), fl = m.drop.reduce((n, d) => n + d.files, 0); const t = and([ph > 0 && plural(ph, "photo"), fl > 0 && plural(fl, "file")]); return t ? `, ${t} ${ph + fl === 1 ? "moves" : "move"}` : ""; })()}</span>
               </li>
             ))}
@@ -184,7 +184,7 @@ export default function EquipmentStartOver({ orgId, onClose, onChanged }: { orgI
         <Row n={p.drawings.entries} tone="bad" title={<>equipment {p.drawings.entries === 1 ? "entry" : "entries"} the reader wrote on {plural(p.drawings.list.length, "drawing")}, and {plural(p.drawings.links, "link")} it drew. <b>Taken off.</b> What people typed stays.</>}>
           <ul className="space-y-1">
             {p.drawings.list.slice(0, 300).map((d) => (
-              <li key={d.documentId} className="text-[13px]"><span className="font-semibold">{d.label}</span><span className="text-[var(--color-text-muted)] tabular-nums">: {d.removed.length ? d.removed.join(", ") : `${plural(d.links, "link")} only`}</span></li>
+              <li key={d.documentId} className="text-body"><span className="font-medium">{d.label}</span><span className="text-[var(--color-text-muted)] tabular-nums">: {d.removed.length ? d.removed.join(", ") : `${plural(d.links, "link")} only`}</span></li>
             ))}
           </ul>
         </Row>
@@ -193,8 +193,8 @@ export default function EquipmentStartOver({ orgId, onClose, onChanged }: { orgI
           <Row n={p.plan.unsure.length} title={p.plan.unsure.length === 1 ? "tag left for you to sort out in its unit." : "tags left for you to sort out in their units."}>
             <ul className="space-y-1">
               {p.plan.unsure.map((u, i) => (
-                <li key={i} className="text-[13px]">
-                  <span className="font-semibold">{u.tag}</span>
+                <li key={i} className="text-body">
+                  <span className="font-medium">{u.tag}</span>
                   <span className="text-[var(--color-text-muted)]">{u.unitCode ? `, unit ${u.unitCode}` : ""}: {u.why === "ids" ? `listed with ${u.ids.length} IDs (${u.ids.join(", ")}), and a copy with none` : `added by hand more than once (${u.ids.join(", ")})`}</span>
                 </li>
               ))}
@@ -202,13 +202,13 @@ export default function EquipmentStartOver({ orgId, onClose, onChanged }: { orgI
           </Row>
         )}
         {p.totals.edited > 0 && (
-          <label className="mt-3 flex items-center gap-2 text-[14px] cursor-pointer">
+          <label className="mt-3 flex items-center gap-2 text-body cursor-pointer">
             <input type="checkbox" checked={keepEdited} disabled={busy} className="w-4 h-4 accent-[var(--color-accent)]"
               onChange={(e) => { setKeepEdited(e.target.checked); void load(e.target.checked); }} />
             Keep the {plural(p.totals.edited, "record")} changed after the reader added {p.totals.edited === 1 ? "it" : "them"}
           </label>
         )}
-        {nothing && <p className="mt-3 text-[14px] text-[var(--color-text-muted)]">Nothing to clear. You can still read the drawings again.</p>}
+        {nothing && <p className="mt-3 text-body text-[var(--color-text-muted)]">Nothing to clear. You can still read the drawings again.</p>}
       </div>
     );
     footer = (
@@ -230,8 +230,8 @@ export default function EquipmentStartOver({ orgId, onClose, onChanged }: { orgI
   } else if (stage.k === "done") {
     const r = stage.r;
     body = (
-      <div className="space-y-2 text-[15px]">
-        <p className="inline-flex items-center gap-2 font-semibold"><CheckCircle2 className="w-4 h-4 text-[var(--state-released)]" /> Started over.</p>
+      <div className="space-y-2 text-reading">
+        <p className="inline-flex items-center gap-2 font-medium"><CheckCircle2 className="w-4 h-4 text-[var(--state-released)]" /> Started over.</p>
         <p>{(() => {
           const t = and([
             `removed ${plural(r.removed, "record")}`,
@@ -240,9 +240,9 @@ export default function EquipmentStartOver({ orgId, onClose, onChanged }: { orgI
           ]);
           return `${t.charAt(0).toUpperCase()}${t.slice(1)}.`;
         })()}</p>
-        {r.skipped.length > 0 && <p className="text-[14px] text-[var(--color-text-muted)]">Left as they were: {r.skipped.slice(0, 6).join("; ")}{r.skipped.length > 6 ? ` and ${r.skipped.length - 6} more` : ""}.</p>}
+        {r.skipped.length > 0 && <p className="text-body text-[var(--color-text-muted)]">Left as they were: {r.skipped.slice(0, 6).join("; ")}{r.skipped.length > 6 ? ` and ${r.skipped.length - 6} more` : ""}.</p>}
         {error && <Problem>{error}</Problem>}
-        <p className="text-[14px] text-[var(--color-text-muted)]">Next, read the drawings again: equipment is matched by its ID first, then by its tag in the unit.</p>
+        <p className="text-body text-[var(--color-text-muted)]">Next, read the drawings again: equipment is matched by its ID first, then by its tag in the unit.</p>
       </div>
     );
     footer = (
@@ -255,14 +255,14 @@ export default function EquipmentStartOver({ orgId, onClose, onChanged }: { orgI
     const so = stage.so;
     const reading = stage.k === "reading";
     body = (
-      <div className="space-y-2 text-[15px]">
-        <p className="inline-flex items-center gap-2 font-semibold">
+      <div className="space-y-2 text-reading">
+        <p className="inline-flex items-center gap-2 font-medium">
           {reading ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4 text-[var(--state-released)]" />}
           {reading ? (stopping ? "Stopping after this batch" : "Reading the drawings again") : so.libraries === 0 ? "No drawings have been read yet." : so.left > 0 ? "Stopped. What was read so far stays." : "Drawings read again."}
         </p>
         <p className="tabular-nums">{plural(so.applied, "drawing")} matched, {plural(so.assets, "record")} added{so.left ? `, ${so.left.toLocaleString()} to go` : ""}.</p>
         {error && <Problem>{error}</Problem>}
-        {!reading && so.libraries === 0 && <p className="text-[14px] text-[var(--color-text-muted)]">Read them first in Intelligence, then come back.</p>}
+        {!reading && so.libraries === 0 && <p className="text-body text-[var(--color-text-muted)]">Read them first in Intelligence, then come back.</p>}
       </div>
     );
     // While it reads, the same spot holds Stop (it ends after the batch in

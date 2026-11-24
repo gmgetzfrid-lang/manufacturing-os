@@ -33,8 +33,8 @@ const VARIANTS: Record<ButtonVariant, string> = {
   danger: "bg-[var(--color-surface)] text-[var(--state-overdue-text)] border-[var(--color-border-strong)] hover:bg-[color-mix(in_srgb,var(--state-overdue)_6%,var(--color-surface))] hover:border-[color-mix(in_srgb,var(--state-overdue)_45%,var(--color-border-strong))] shadow-[var(--shadow-control)] active:shadow-none disabled:shadow-none",
 };
 const SIZES: Record<ButtonSize, string> = {
-  sm: "h-8 pointer-coarse:h-10 px-3 text-[13px] gap-1.5",
-  md: "h-10 pointer-coarse:h-11 px-4 text-[15px] gap-2",
+  sm: "h-8 pointer-coarse:h-10 px-3 text-body gap-1.5",
+  md: "h-10 pointer-coarse:h-11 px-4 text-reading gap-2",
 };
 
 /** How long the done state shows before the button goes back. */
@@ -74,7 +74,7 @@ export function Button({
       {...rest}
       disabled={disabled || loading}
       aria-busy={loading || undefined}
-      className={`relative inline-flex items-center justify-center whitespace-nowrap font-semibold rounded-lg border transition-[color,background-color,border-color,box-shadow] disabled:opacity-50 disabled:cursor-not-allowed ${loading ? "disabled:opacity-80 cursor-progress" : ""} ${SIZES[size]} ${VARIANTS[variant]} ${className}`}
+      className={`ui-press relative inline-flex items-center justify-center whitespace-nowrap font-medium rounded-lg border transition-[color,background-color,border-color,box-shadow,transform] disabled:opacity-50 disabled:cursor-not-allowed ${loading ? "disabled:opacity-80 cursor-progress" : ""} ${SIZES[size]} ${VARIANTS[variant]} ${className}`}
     >
       {/* Both labels share one cell, so the button keeps its width. */}
       <span className="grid">
@@ -83,7 +83,7 @@ export function Button({
           {children}
         </span>
         <span aria-hidden={!showDone} className={`[grid-area:1/1] inline-flex items-center justify-center gap-1.5 ${showDone ? "" : "invisible"}`}>
-          <Check aria-hidden className={iconCls} />{doneLabel}
+          <Check aria-hidden className={`${iconCls} ui-check-draw`} />{doneLabel}
         </span>
       </span>
       <span className="sr-only" aria-live="polite">{showDone ? doneLabel : ""}</span>

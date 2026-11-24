@@ -123,7 +123,7 @@ export default function HoldStrip({
 
   return (
     <div className="bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] p-4 space-y-3">
-      <div className="text-[13px] font-semibold text-[var(--color-text-faint)] flex items-center justify-between">
+      <div className="text-body font-medium text-[var(--color-text-faint)] flex items-center justify-between">
         <span className="flex items-center gap-1.5">
           <AlertOctagon className="w-3 h-3" /> Holds
           <HelpTooltip>
@@ -132,7 +132,7 @@ export default function HoldStrip({
           <IsoGuidance topic="hold" />
         </span>
         {holds.length > 0 && (
-          <span className={`text-[13px] font-display tabular-nums ${holds.length > 0 ? "text-[var(--state-held)] bg-[color-mix(in_srgb,var(--state-held)_12%,transparent)] border-[color-mix(in_srgb,var(--state-held)_40%,transparent)]" : "text-[var(--color-text-muted)] bg-[var(--color-surface-2)] border-[var(--color-border)]"} border px-1.5 py-0.5 rounded`}>
+          <span className={`text-body font-display tabular-nums ${holds.length > 0 ? "text-[var(--state-held)] bg-[color-mix(in_srgb,var(--state-held)_12%,transparent)] border-[color-mix(in_srgb,var(--state-held)_40%,transparent)]" : "text-[var(--color-text-muted)] bg-[var(--color-surface-2)] border-[var(--color-border)]"} border px-1.5 py-0.5 rounded`}>
             {holds.length} active
           </span>
         )}
@@ -141,11 +141,11 @@ export default function HoldStrip({
       {loading ? (
         <div className="text-xs text-[var(--color-text-muted)] flex items-center gap-1.5"><Loader2 className="w-3 h-3 animate-spin" /> Loading…</div>
       ) : error ? (
-        <div role="alert" className="text-[13px] text-[var(--state-overdue)] border-l-2 border-[var(--state-overdue)] pl-2 flex items-start gap-1.5">
+        <div role="alert" className="text-body text-[var(--state-overdue)] border-l-2 border-[var(--state-overdue)] pl-2 flex items-start gap-1.5">
           <AlertTriangle className="w-3 h-3 mt-0.5 shrink-0" /> {error}
         </div>
       ) : holds.length === 0 ? (
-        <div className="text-[13px] text-[var(--color-text-muted)] italic">No active holds.</div>
+        <div className="text-body text-[var(--color-text-muted)] italic">No active holds.</div>
       ) : (
         <div className="space-y-2">
           {holds.map((h) => <ActiveHoldRow
@@ -165,7 +165,7 @@ export default function HoldStrip({
 
       {canEdit && (
         <div className="pt-1 border-t border-[var(--color-border)] space-y-2">
-          <div className="text-[13px] font-semibold text-[var(--color-text-muted)] ">Place hold</div>
+          <div className="text-body font-medium text-[var(--color-text-muted)] ">Place hold</div>
           <div className="flex flex-wrap gap-1.5">
             {PREDEFINED_HOLD_REASONS.map((r) => (
               <span key={r} className="inline-flex items-center gap-0.5">
@@ -173,7 +173,7 @@ export default function HoldStrip({
                   onClick={() => onOpen(r)}
                   disabled={busy || heldReasons.has(r)}
                   title={heldReasons.has(r) ? "Already on hold for this reason" : `Place hold: ${r}`}
-                  className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[13px] font-bold bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] border border-[var(--color-border)] transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                  className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-body font-medium bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] border border-[var(--color-border)] transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                 >
                   <Plus className="w-3 h-3" /> {r}
                 </button>
@@ -183,7 +183,7 @@ export default function HoldStrip({
             <button
               onClick={() => setOtherDraft(otherDraft === null ? "" : null)}
               disabled={busy}
-              className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[13px] font-bold bg-[var(--color-surface-2)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] border border-[var(--color-border)] transition-colors"
+              className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-body font-medium bg-[var(--color-surface-2)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] border border-[var(--color-border)] transition-colors"
             >
               <Plus className="w-3 h-3" /> Other…
             </button>
@@ -195,13 +195,13 @@ export default function HoldStrip({
                 value={otherDraft}
                 onChange={(e) => setOtherDraft(e.target.value)}
                 placeholder="Custom hold reason"
-                className="flex-1 text-[13px] border border-[var(--color-border-strong)] rounded px-2 py-1"
+                className="flex-1 text-body border border-[var(--color-border-strong)] rounded px-2 py-1"
                 autoFocus
               />
               <button
                 onClick={() => otherDraft && onOpen(otherDraft)}
                 disabled={!otherDraft?.trim() || busy}
-                className="inline-flex items-center gap-1 px-2 py-1 rounded text-[13px] font-bold bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] transition-colors disabled:opacity-40"
+                className="inline-flex items-center gap-1 px-2 py-1 rounded text-body font-medium bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] transition-colors disabled:opacity-40"
               >
                 <Check className="w-3 h-3" /> Add
               </button>
@@ -276,18 +276,18 @@ function ActiveHoldRow({
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5">
             <Lock className="w-3 h-3 text-[var(--state-held)] shrink-0" />
-            <span className="text-[13px] font-bold text-[var(--state-held)]">{hold.reason}</span>
+            <span className="text-body font-medium text-[var(--state-held)]">{hold.reason}</span>
           </div>
-          <div className="mt-1 text-[13px] text-[var(--color-text-muted)] flex items-center gap-2 flex-wrap">
+          <div className="mt-1 text-body text-[var(--color-text-muted)] flex items-center gap-2 flex-wrap">
             <span className="inline-flex items-center gap-0.5">
               <Clock className="w-2.5 h-2.5" />
               {ageDays === 0 ? "today" : `${ageDays}d`}
-              {isLate && <span className="ml-1 font-bold text-[var(--state-overdue)]">(+{lateDays}d late)</span>}
+              {isLate && <span className="ml-1 font-medium text-[var(--state-overdue)]">(+{lateDays}d late)</span>}
             </span>
             {hold.openedByName && <span>by {hold.openedByName}</span>}
           </div>
           {hold.notes && (
-            <div className="mt-1 text-[13px] text-[var(--color-text)] whitespace-pre-wrap">{hold.notes}</div>
+            <div className="mt-1 text-body text-[var(--color-text)] whitespace-pre-wrap">{hold.notes}</div>
           )}
         </div>
         <div className="shrink-0 flex items-center gap-1">
@@ -297,7 +297,7 @@ function ActiveHoldRow({
             onClick={() => void printCard()}
             disabled={busy}
             title="Print a HOLD card for the field. Scanning its code shows whether the hold is still active"
-            className="text-[13px] font-bold text-[var(--state-overdue)] hover:text-[var(--state-overdue)] bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] hover:bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] border border-[color-mix(in_srgb,var(--state-overdue)_35%,transparent)] px-1.5 py-1 rounded inline-flex items-center gap-1 transition-colors disabled:opacity-40"
+            className="text-body font-medium text-[var(--state-overdue)] hover:text-[var(--state-overdue)] bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] hover:bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] border border-[color-mix(in_srgb,var(--state-overdue)_35%,transparent)] px-1.5 py-1 rounded inline-flex items-center gap-1 transition-colors disabled:opacity-40"
           >
             <Printer className="w-3 h-3" /> Card
           </button>
@@ -305,7 +305,7 @@ function ActiveHoldRow({
             <button
               onClick={onStartRelease}
               disabled={busy}
-              className="text-[13px] font-bold text-[var(--state-released)] hover:text-[var(--state-released)] bg-[color-mix(in_srgb,var(--state-released)_10%,transparent)] hover:bg-[color-mix(in_srgb,var(--state-released)_10%,transparent)] border border-[color-mix(in_srgb,var(--state-released)_35%,transparent)] px-1.5 py-1 rounded inline-flex items-center gap-1 transition-colors disabled:opacity-40"
+              className="text-body font-medium text-[var(--state-released)] hover:text-[var(--state-released)] bg-[color-mix(in_srgb,var(--state-released)_10%,transparent)] hover:bg-[color-mix(in_srgb,var(--state-released)_10%,transparent)] border border-[color-mix(in_srgb,var(--state-released)_35%,transparent)] px-1.5 py-1 rounded inline-flex items-center gap-1 transition-colors disabled:opacity-40"
             >
               <Check className="w-3 h-3" /> Release
             </button>
@@ -319,13 +319,13 @@ function ActiveHoldRow({
             value={releaseReasonDraft}
             onChange={(e) => setReleaseReasonDraft(e.target.value)}
             placeholder="Resolution (optional)"
-            className="flex-1 text-[13px] border border-[var(--color-border-strong)] rounded px-2 py-1"
+            className="flex-1 text-body border border-[var(--color-border-strong)] rounded px-2 py-1"
             autoFocus
           />
           <button
             onClick={onConfirmRelease}
             disabled={busy}
-            className="inline-flex items-center gap-1 px-2 py-1 rounded text-[13px] font-bold border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] transition-colors disabled:opacity-40"
+            className="inline-flex items-center gap-1 px-2 py-1 rounded text-body font-medium border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] transition-colors disabled:opacity-40"
           >
             <Check className="w-3 h-3" /> Release
           </button>

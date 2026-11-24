@@ -224,7 +224,7 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
       {state === "loading" ? (
         <Skeleton className="!w-6 !h-6 !rounded-full shrink-0 mt-0.5" />
       ) : (
-        <span aria-hidden className={`w-6 h-6 rounded-full grid place-items-center shrink-0 font-display text-[13px] font-semibold mt-0.5 border-[1.5px] ${
+        <span aria-hidden className={`w-6 h-6 rounded-full grid place-items-center shrink-0 font-display text-body font-semibold mt-0.5 border-[1.5px] ${
           state === "done" ? "border-[var(--state-released)] text-[var(--state-released-text)]"
           : state === "review" ? "border-[var(--state-held)] text-[var(--state-held-text)]"
           : "text-[var(--color-text-muted)] border-[var(--color-border-strong)]"
@@ -234,11 +234,11 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
       )}
       <div className="flex-1 min-w-0 basis-[220px]">
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-[15px] font-semibold text-[var(--color-text)]">{title}</span>
+          <span className="text-reading font-medium text-[var(--color-text)]">{title}</span>
           {state === "done" && <span className="sr-only">(done)</span>}
           {state === "review" && <StatusTag tone="warn">Needs review</StatusTag>}
         </div>
-        <div className="text-[14px] text-[var(--color-text-muted)] mt-0.5">{children}</div>
+        <div className="text-body text-[var(--color-text-muted)] mt-0.5">{children}</div>
       </div>
       {action && <div className="shrink-0 max-sm:pl-9">{action}</div>}
     </li>
@@ -276,7 +276,7 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
                 <ul className="mt-1 space-y-1.5">
                   {drift.deadSources.map((s) => (
                     <li key={s.id} className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                      <span className="flex-1 min-w-0">Watched folder no longer exists: <span className="font-semibold text-[var(--color-text)]">{s.sourceName}</span></span>
+                      <span className="flex-1 min-w-0">Watched folder no longer exists: <span className="font-medium text-[var(--color-text)]">{s.sourceName}</span></span>
                       {status?.canManage && (
                         <button type="button" onClick={() => void dropDeadSource(s.id)} disabled={syncing} className={btnRow}>
                           <Trash2 className="w-3.5 h-3.5" /> Remove link
@@ -294,7 +294,7 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
                   {drift.newMatches.map((f) => (
                     <li key={f.id} className="flex flex-wrap items-center gap-x-3 gap-y-1">
                       <span className="flex-1 min-w-0">
-                        New folder looks like this area&apos;s: <span className="font-semibold text-[var(--color-text)]">{f.libraryName} / {f.pathNames.join(" / ")}</span>
+                        New folder looks like this area&apos;s: <span className="font-medium text-[var(--color-text)]">{f.libraryName} / {f.pathNames.join(" / ")}</span>
                         <span className="tabular-nums"> ({f.docCount} doc{f.docCount === 1 ? "" : "s"})</span>
                       </span>
                       {status?.canManage && (
@@ -512,10 +512,10 @@ function AreaKnowledgeWizard({ orgId, userId, userName, unit, status, onClose, o
         onClick={(e) => e.stopPropagation()}>
         <div className="flex items-start gap-2 px-5 py-4 border-b border-[var(--color-border)] shrink-0">
           <div className="flex-1 min-w-0">
-            <h2 className="font-display text-[20px] font-semibold text-[var(--color-text)]">
+            <h2 className="font-display text-section font-semibold text-[var(--color-text)]">
               {bound ? `Review ${unit.label}'s knowledge` : `Set up ${unit.label}'s knowledge`}
             </h2>
-            <p className="text-[14px] text-[var(--color-text-muted)]">
+            <p className="text-body text-[var(--color-text-muted)]">
               Pick the folders to watch. Folders matching &ldquo;{unit.label}&rdquo; or {unit.code} are checked for you.
             </p>
           </div>
@@ -533,7 +533,7 @@ function AreaKnowledgeWizard({ orgId, userId, userName, unit, status, onClose, o
                 <label key={l.id} className="flex items-center gap-2.5 px-3 min-h-10 hover:bg-[var(--color-surface-2)] cursor-pointer">
                   <input type="radio" name="area-kl" checked={libChoice === l.id} onChange={() => setLibChoice(l.id)} className="accent-[var(--color-accent)]" />
                   <BookOpen className="w-4 h-4 text-[var(--color-text-muted)]" />
-                  <span className="text-[15px] font-semibold text-[var(--color-text)] flex-1 min-w-0 truncate">{l.name}</span>
+                  <span className="text-reading font-medium text-[var(--color-text)] flex-1 min-w-0 truncate">{l.name}</span>
                   {bound?.id === l.id && <StatusTag tone="none">Current</StatusTag>}
                 </label>
               ))}
@@ -542,7 +542,7 @@ function AreaKnowledgeWizard({ orgId, userId, userName, unit, status, onClose, o
                 <Plus className="w-4 h-4 text-[var(--color-text-muted)]" />
                 <input value={newName} onChange={(e) => { setNewName(e.target.value); setLibChoice("__new"); }}
                   aria-label="New library name"
-                  className={`flex-1 min-w-0 h-9 text-[14px] ${fieldBox}`}
+                  className={`flex-1 min-w-0 h-9 text-body ${fieldBox}`}
                   placeholder={`${unit.label} Knowledge`} />
               </label>
             </div>
@@ -554,10 +554,10 @@ function AreaKnowledgeWizard({ orgId, userId, userName, unit, status, onClose, o
               <div className={label}>Already watched</div>
               <ul className="rounded-md border border-[var(--color-border)] divide-y divide-[var(--color-border)]">
                 {status.sources.map((s) => (
-                  <li key={s.id} className="flex items-center gap-2.5 px-3 min-h-10 text-[14px]">
+                  <li key={s.id} className="flex items-center gap-2.5 px-3 min-h-10 text-body">
                     <Check className="w-4 h-4 text-[var(--state-released)] shrink-0" />
-                    <span className="flex-1 min-w-0 truncate font-semibold text-[var(--color-text)]">{s.name}</span>
-                    <span className="text-[13px] text-[var(--color-text-muted)]">{s.type === "library" ? "Whole library" : "Folder"}</span>
+                    <span className="flex-1 min-w-0 truncate font-medium text-[var(--color-text)]">{s.name}</span>
+                    <span className="text-body text-[var(--color-text-muted)]">{s.type === "library" ? "Whole library" : "Folder"}</span>
                   </li>
                 ))}
               </ul>
@@ -570,7 +570,7 @@ function AreaKnowledgeWizard({ orgId, userId, userName, unit, status, onClose, o
             {browse === null ? (
               <SkeletonRows rows={4} cols={0} what="folders" />
             ) : foldersByLib.length === 0 ? (
-              <div className="text-[14px] text-[var(--color-text-muted)]">
+              <div className="text-body text-[var(--color-text-muted)]">
                 No document libraries yet. <Link href="/documents" className={link}>Make them in Documents</Link> first.
               </div>
             ) : (
@@ -579,12 +579,12 @@ function AreaKnowledgeWizard({ orgId, userId, userName, unit, status, onClose, o
                   const libWatched = watchedIds.has(libId);
                   return (
                   <div key={libId}>
-                    <label className={`flex items-center gap-2.5 min-h-9 text-[15px] font-semibold text-[var(--color-text)] cursor-pointer ${libWatched ? "opacity-50" : ""}`}>
+                    <label className={`flex items-center gap-2.5 min-h-9 text-reading font-medium text-[var(--color-text)] cursor-pointer ${libWatched ? "opacity-50" : ""}`}>
                       <input type="checkbox" disabled={libWatched}
                         checked={libWatched || checked.has(`library:${libId}`)}
                         onChange={() => toggle(`library:${libId}`)} className="w-4 h-4 accent-[var(--color-accent)]" />
                       <FolderOpen className="w-4 h-4 text-[var(--color-text-muted)]" /> {g.libraryName}
-                      <span className="text-[13px] font-normal text-[var(--color-text-muted)]">
+                      <span className="text-body font-normal text-[var(--color-text-muted)]">
                         {libWatched ? "Whole library, already watched" : "Whole library"}
                       </span>
                     </label>
@@ -595,7 +595,7 @@ function AreaKnowledgeWizard({ orgId, userId, userName, unit, status, onClose, o
                         // covers every folder inside it.
                         const watched = libWatched || watchedIds.has(f.id);
                         return (
-                          <label key={f.id} className={`flex items-center gap-2.5 min-h-8 text-[14px] cursor-pointer ${watched ? "opacity-50" : ""}`}>
+                          <label key={f.id} className={`flex items-center gap-2.5 min-h-8 text-body cursor-pointer ${watched ? "opacity-50" : ""}`}>
                             <input type="checkbox" disabled={watched}
                               checked={watched || checked.has(`folder:${f.id}`)}
                               onChange={() => toggle(`folder:${f.id}`)} className="w-4 h-4 accent-[var(--color-accent)]" />
@@ -609,7 +609,7 @@ function AreaKnowledgeWizard({ orgId, userId, userName, unit, status, onClose, o
                         );
                       })}
                       {g.folders.length === 0 && (
-                        <div className="text-[13px] text-[var(--color-text-muted)] py-1">No folders. Link the whole library above.</div>
+                        <div className="text-body text-[var(--color-text-muted)] py-1">No folders. Link the whole library above.</div>
                       )}
                     </div>
                   </div>
@@ -625,7 +625,7 @@ function AreaKnowledgeWizard({ orgId, userId, userName, unit, status, onClose, o
         </div>
 
         <div className="px-5 py-4 border-t border-[var(--color-border)] shrink-0 flex flex-wrap items-center gap-2">
-          <span className="flex-1 basis-[200px] text-[13px] text-[var(--color-text-muted)]">
+          <span className="flex-1 basis-[200px] text-body text-[var(--color-text-muted)]">
             New files, revisions and deletions in watched folders sync automatically.
           </span>
           <button type="button" onClick={onClose} className={btnQuiet}>Cancel</button>

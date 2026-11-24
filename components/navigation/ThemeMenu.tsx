@@ -51,26 +51,26 @@ export default function ThemeMenu() {
             style={{ top: pos.top, right: pos.right }}
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="text-[13px] font-semibold text-[var(--color-text-faint)] mb-2">Appearance</div>
+            <div className="text-body font-medium text-[var(--color-text-faint)] mb-2">Appearance</div>
 
             {/* Light / Dark segmented toggle */}
             <div className="grid grid-cols-2 gap-1 p-0.5 rounded-xl bg-[var(--color-surface-2)] border border-[var(--color-border)]">
               <button
                 onClick={() => mode !== "light" && toggleMode()}
-                className={`inline-flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-xs font-bold transition-colors ${mode === "light" ? "bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm" : "text-[var(--color-text-muted)]"}`}
+                className={`inline-flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${mode === "light" ? "bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm" : "text-[var(--color-text-muted)]"}`}
               >
                 <Sun className="w-3.5 h-3.5" /> Light
               </button>
               <button
                 onClick={() => mode !== "dark" && toggleMode()}
-                className={`inline-flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-xs font-bold transition-colors ${mode === "dark" ? "bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm" : "text-[var(--color-text-muted)]"}`}
+                className={`inline-flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${mode === "dark" ? "bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm" : "text-[var(--color-text-muted)]"}`}
               >
                 <Moon className="w-3.5 h-3.5" /> Dark
               </button>
             </div>
 
             <div className="mt-3 pt-3 border-t border-[var(--color-border)]">
-              <div className="text-[13px] font-semibold text-[var(--color-text-faint)] mb-2">Colors</div>
+              <div className="text-body font-medium text-[var(--color-text-faint)] mb-2">Colors</div>
               <PalettePicker value={palette} onChange={setPalette}
                 lockedNote={paletteLocked ? "Your workspace sets these colors. An admin can change them in Branding." : undefined} />
             </div>

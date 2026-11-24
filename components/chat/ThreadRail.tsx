@@ -66,7 +66,7 @@ export default function ThreadRail(p: RailProps) {
               value={q} onChange={(e) => setQ(e.target.value)}
               placeholder="Search conversations"
               aria-label="Search conversations"
-              className="w-full h-9 pl-8 pr-2 text-[14px] rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none focus:border-[var(--color-main)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40"
+              className="w-full h-9 pl-8 pr-2 text-body rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none focus:border-[var(--color-main)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40"
             />
           </div>
           <button onClick={p.onNew} title="New conversation" aria-label="New conversation"
@@ -85,7 +85,7 @@ export default function ThreadRail(p: RailProps) {
           <div className="shrink-0 flex items-end gap-4 border-b border-[var(--color-border)]" role="group" aria-label="Whose conversations">
             {([[false, "Everyone"], [true, "Mine"]] as const).map(([m, label]) => (
               <button key={label} type="button" onClick={() => setMine(m)} aria-pressed={mine === m}
-                className={`h-8 pointer-coarse:h-11 -mb-px border-b-2 text-[14px] transition-colors ${mine === m ? "border-[var(--color-current)] font-semibold text-[var(--color-text)]" : "border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
+                className={`h-8 pointer-coarse:h-11 -mb-px border-b-2 text-body transition-colors ${mine === m ? "border-[var(--color-current)] font-medium text-[var(--color-text)]" : "border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
                 {label}
               </button>
             ))}
@@ -106,7 +106,7 @@ export default function ThreadRail(p: RailProps) {
         ) : p.loading && p.threads.length === 0 ? (
           <SkeletonRows rows={4} cols={0} sheet={false} what="conversations" />
         ) : filtered.length === 0 ? (
-          <p className="px-3 py-6 text-center text-[14px] text-[var(--color-text-muted)]">
+          <p className="px-3 py-6 text-center text-body text-[var(--color-text-muted)]">
             {p.threads.length === 0
               ? "No conversations yet. Ask the first question."
               : "Nothing matches."}
@@ -127,7 +127,7 @@ export default function ThreadRail(p: RailProps) {
               <div className="mt-3">
                 <button onClick={() => setSettledOpen((v) => !v)}
                   aria-expanded={settledOpen}
-                  className="w-full flex items-center gap-1.5 px-3 py-1.5 text-[13px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+                  className="w-full flex items-center gap-1.5 px-3 py-1.5 text-body font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
                   <ChevronRight className={`w-3.5 h-3.5 ui-chevron${(settledOpen) ? " rotate-90" : ""}`} />
                   Settled <span className="ui-count">{settled.length}</span>
                 </button>
@@ -144,7 +144,7 @@ export default function ThreadRail(p: RailProps) {
 function Section({ label, count, children }: { label: string; count: number; children: React.ReactNode }) {
   return (
     <div className="mt-3">
-      <div className="px-3 pb-1.5 flex items-center gap-1.5 text-[13px] font-semibold text-[var(--color-heading)]">
+      <div className="px-3 pb-1.5 flex items-center gap-1.5 text-body font-medium text-[var(--color-heading)]">
         {label} <span className="ui-count">{count}</span>
       </div>
       <div className="divide-y divide-[var(--color-border)] border-y border-[var(--color-border)]">{children}</div>
@@ -188,7 +188,7 @@ function Row({ t, p }: { t: ChatThread; p: RailProps }) {
             onBlur={commitRename}
             onKeyDown={(e) => { if (e.key === "Enter") commitRename(); if (e.key === "Escape") { setTitle(t.title); setRenaming(false); } }}
             aria-label="Conversation name"
-            className="w-full h-9 px-2 text-[14px] rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] focus:outline-none focus:border-[var(--color-main)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40"
+            className="w-full h-9 px-2 text-body rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] focus:outline-none focus:border-[var(--color-main)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40"
           />
         </div>
       ) : (
@@ -198,11 +198,11 @@ function Row({ t, p }: { t: ChatThread; p: RailProps }) {
           <span aria-hidden className={`ui-icon-tile is-sm row-span-2 ${active ? "is-solid" : ""}`}><Icon className="w-4 h-4" /></span>
           <button onClick={() => p.onOpen(t)} aria-current={active ? "page" : undefined}
             className="min-w-0 text-left after:absolute after:inset-0 after:content-['']">
-            <span className={`block text-[14px] truncate ${active ? "font-semibold text-[var(--color-accent-text)]" : "font-medium text-[var(--color-text)]"}`}>
+            <span className={`block text-body truncate ${active ? "font-medium text-[var(--color-accent-text)]" : "font-medium text-[var(--color-text)]"}`}>
               {t.title || "Untitled"}
             </span>
           </button>
-          <div className="mt-1 flex items-center gap-2 min-w-0 text-[13px] text-[var(--color-text-muted)]">
+          <div className="mt-1 flex items-center gap-2 min-w-0 text-body text-[var(--color-text-muted)]">
             <span className="shrink-0">{who}</span>
             {libName && (p.onFilterLibrary && t.libraryId && p.libraryFilter?.id !== t.libraryId ? (
               <button type="button" onClick={() => p.onFilterLibrary?.(t.libraryId!)}
@@ -245,7 +245,7 @@ function MenuItem({ icon: Icon, label, onClick, danger }: {
 }) {
   return (
     <button onClick={onClick} role="menuitem"
-      className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-md text-[14px] font-medium transition-colors ${danger
+      className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-md text-body font-medium transition-colors ${danger
         ? "text-[var(--state-overdue)] hover:bg-[var(--color-surface-2)]"
         : "text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
       <Icon className="w-3.5 h-3.5" /> {label}

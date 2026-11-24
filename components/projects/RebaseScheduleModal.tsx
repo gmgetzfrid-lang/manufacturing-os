@@ -110,8 +110,8 @@ export default function RebaseScheduleModal({
               <CalendarClock className="w-5 h-5 text-[var(--color-text-muted)]" />
             </div>
             <div className="min-w-0">
-              <h2 className="text-[15px] font-bold text-[var(--color-text)]">Rebase schedule</h2>
-              <div className="text-[11px] text-[var(--color-text-muted)] truncate">
+              <h2 className="text-reading font-medium text-[var(--color-text)]">Rebase schedule</h2>
+              <div className="text-caption text-[var(--color-text-muted)] truncate">
                 Move every task to a new start date. {projectName && <>Project: <b>{projectName}</b>.</>}
               </div>
             </div>
@@ -128,7 +128,7 @@ export default function RebaseScheduleModal({
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="text-[12px] font-semibold text-[var(--color-text-muted)]">New start date</label>
+              <label className="text-caption font-medium text-[var(--color-text-muted)]">New start date</label>
               <input
                 type="date"
                 value={target}
@@ -137,7 +137,7 @@ export default function RebaseScheduleModal({
               />
             </div>
             <div>
-              <label className="text-[12px] font-semibold text-[var(--color-text-muted)]">Start time ({tzAbbrev(tz)})</label>
+              <label className="text-caption font-medium text-[var(--color-text-muted)]">Start time ({tzAbbrev(tz)})</label>
               <input
                 type="time"
                 value={targetTime}
@@ -158,14 +158,14 @@ export default function RebaseScheduleModal({
           {/* Preview */}
           {currentAnchorIso ? (
             <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)] p-3 text-xs">
-              <div className="font-semibold text-[var(--color-text)] mb-1 text-[13px]">Preview</div>
+              <div className="font-medium text-[var(--color-text)] mb-1 text-body">Preview</div>
               <div className="flex items-center gap-2 text-[var(--color-text)]">
                 <span className="font-display tabular-nums">{fmtInTz(currentAnchorIso, tz, { dateStyle: "medium", timeStyle: "short" })}</span>
                 <ArrowRight className="w-3 h-3 text-[var(--color-text-muted)]" />
                 <span className="font-display tabular-nums font-bold">{previewDelta ? fmtInTz(previewDelta.newA, tz, { dateStyle: "medium", timeStyle: "short" }) : "-"}</span>
               </div>
               {previewDelta && (
-                <div className={`mt-1 text-[11px] font-bold ${
+                <div className={`mt-1 text-caption font-bold ${
                   previewDelta.days > 0 ? "text-[var(--state-held-text)]" : previewDelta.days < 0 ? "text-[var(--state-released-text)]" : "text-[var(--color-text-muted)]"
                 }`}>
                   Shift: {previewDelta.days > 0 ? "+" : ""}{previewDelta.days} day{Math.abs(previewDelta.days) === 1 ? "" : "s"}
@@ -182,7 +182,7 @@ export default function RebaseScheduleModal({
 
           {result && (
             <div className={`pl-3 py-1 border-l-2 ${result.errors.length > 0 ? "border-[var(--state-overdue)]" : "border-[var(--state-released)]"}`}>
-              <div className="flex items-center gap-2 font-bold text-sm">
+              <div className="flex items-center gap-2 font-medium text-sm">
                 {result.errors.length > 0
                   ? <><AlertTriangle className="w-4 h-4 text-[var(--state-overdue-text)]" /> Rebased with errors</>
                   : <><CheckCircle2 className="w-4 h-4 text-[var(--state-released-text)]" /> Schedule rebased</>}
@@ -208,7 +208,7 @@ export default function RebaseScheduleModal({
           <button
             onClick={submit}
             disabled={busy || !target || !currentAnchorIso || !!result}
-            className="inline-flex items-center gap-1.5 text-sm font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] px-4 py-2 rounded-lg shadow-sm disabled:opacity-40 transition-colors"
+            className="inline-flex items-center gap-1.5 text-sm font-medium text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] px-4 py-2 rounded-lg shadow-sm disabled:opacity-40 transition-colors"
           >
             {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <CalendarClock className="w-4 h-4" />}
             Rebase schedule

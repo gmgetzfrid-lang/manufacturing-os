@@ -693,7 +693,7 @@ function GraphPageInner() {
         back={cameBack ? { onClick: () => router.back(), label: `Back to ${homeLabel}` } : undefined}>
         <DocViewTabs hrefs={tableHref ? { "/documents": tableHref } : undefined} />
         {error && (
-          <div role="alert" className="mt-3 text-[14px] flex items-center gap-2 text-[var(--color-text)]">
+          <div role="alert" className="mt-3 text-body flex items-center gap-2 text-[var(--color-text)]">
             <AlertTriangle className={`w-4 h-4 shrink-0 ${data ? "text-[var(--state-held)]" : "text-[var(--state-overdue)]"}`} /> <span className="flex-1">{plainError(error)}</span>
             <button onClick={() => { setError(null); void refresh(); }} className="text-[var(--color-accent-text)] hover:underline">Retry</button>
             <button aria-label="Dismiss" onClick={() => setError(null)} className="w-8 h-8 grid place-items-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface)]"><X className="w-4 h-4" /></button>
@@ -704,14 +704,14 @@ function GraphPageInner() {
       <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-[320px_1fr_380px] rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
         {/* ── Left: search, drives, aliases ───────────────────────────── */}
         <aside className="border-b lg:border-b-0 lg:border-r border-[var(--color-border)] bg-[var(--color-surface)] flex flex-col min-h-0 min-w-0 h-[55vh] lg:h-auto">
-          <div role="tablist" aria-label="Find, links, drives and aliases" className="flex gap-4 px-3 border-b border-[var(--color-border)] text-[14px]">
+          <div role="tablist" aria-label="Find, links, drives and aliases" className="flex gap-4 px-3 border-b border-[var(--color-border)] text-body">
             {([["search", "Find"], ["links", "Links"], ["drives", "Drives"], ["aliases", "Aliases"]] as const).map(([k, label]) => (
               <button key={k} type="button" role="tab" aria-selected={panel === k} onClick={() => setPanel(k)}
-                className={`-mb-px h-10 pointer-coarse:h-11 inline-flex items-center gap-1.5 border-b-2 whitespace-nowrap ${panel === k ? "border-[var(--color-current)] text-[var(--color-text)] font-semibold" : "border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
+                className={`-mb-px h-10 pointer-coarse:h-11 inline-flex items-center gap-1.5 border-b-2 whitespace-nowrap ${panel === k ? "border-[var(--color-current)] text-[var(--color-text)] font-medium" : "border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
                 {label}
-                {k === "drives" && listings.length > 0 && <span className="text-[13px] font-normal tabular-nums text-[var(--color-text-muted)]">{badgeText(listings.length)}</span>}
-                {k === "links" && (data?.edges.length ?? 0) > 0 && <span className="text-[13px] font-normal tabular-nums text-[var(--color-text-muted)]">{badgeText(data!.edges.length)}</span>}
-                {k === "aliases" && aliases.length > 0 && <span className="text-[13px] font-normal tabular-nums text-[var(--color-text-muted)]">{badgeText(aliases.length)}</span>}
+                {k === "drives" && listings.length > 0 && <span className="text-body font-normal tabular-nums text-[var(--color-text-muted)]">{badgeText(listings.length)}</span>}
+                {k === "links" && (data?.edges.length ?? 0) > 0 && <span className="text-body font-normal tabular-nums text-[var(--color-text-muted)]">{badgeText(data!.edges.length)}</span>}
+                {k === "aliases" && aliases.length > 0 && <span className="text-body font-normal tabular-nums text-[var(--color-text-muted)]">{badgeText(aliases.length)}</span>}
               </button>
             ))}
           </div>
@@ -719,16 +719,16 @@ function GraphPageInner() {
             {panel === "search" && (
               <>
                 <form onSubmit={(e) => { e.preventDefault(); runSearch(query); }} className="space-y-2">
-                  <label htmlFor="graph-find" className="block text-[14px] font-semibold text-[var(--color-text)]">Say what you&apos;re after</label>
+                  <label htmlFor="graph-find" className="block text-body font-medium text-[var(--color-text)]">Say what you&apos;re after</label>
                   <textarea
                     id="graph-find"
                     value={query} onChange={(e) => setQuery(e.target.value)}
                     onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); runSearch(query); } }}
                     rows={3} placeholder="U1-A for the born heater pilot valve in 2018"
-                    className="w-full text-[16px] sm:text-[14px] rounded-lg border border-[var(--color-border-control)] bg-[var(--color-surface)] px-3 py-2"
+                    className="w-full text-reading sm:text-body rounded-lg border border-[var(--color-border-control)] bg-[var(--color-surface)] px-3 py-2"
                   />
                   <div className="flex gap-2">
-                    <button type="submit" disabled={loading} className="flex-1 inline-flex items-center justify-center gap-1.5 h-10 pointer-coarse:h-11 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[15px] font-semibold px-3 hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
+                    <button type="submit" disabled={loading} className="flex-1 inline-flex items-center justify-center gap-1.5 h-10 pointer-coarse:h-11 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-reading font-medium px-3 hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
                       {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />} Find
                     </button>
                     {parsed && (
@@ -739,30 +739,30 @@ function GraphPageInner() {
 
                 {parsed && (
                   <div className="space-y-1.5">
-                    <div className="text-[13px] font-semibold text-[var(--color-text-muted)] flex items-center gap-1">
+                    <div className="text-body font-medium text-[var(--color-text-muted)] flex items-center gap-1">
                       What I understood <Info className="w-3 h-3" />
                     </div>
                     <div className="flex flex-wrap gap-1">
                       {parsed.chips.map((c, i) => (
                         <span key={i} title={c.via === "alias" ? `Through a taught alias (${Math.round(c.confidence * 100)}% trusted)` : c.via === "codebook" ? "From the Site Codebook" : "Typed"}
-                          className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[13px] font-semibold ${CHIP_STYLE[c.kind]}`}>
+                          className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-body font-medium ${CHIP_STYLE[c.kind]}`}>
                           <span className="opacity-60">{c.kind === "identifier" ? "#" : c.kind === "unit" ? "unit" : c.kind === "year" ? "yr" : c.kind === "phrase" ? "“”" : c.kind === "doctype" ? "type" : ""}</span>
                           {c.label}
                           {c.via !== "typed" && <span className="opacity-60">· {c.via}</span>}
                           <button aria-label="Remove" onClick={() => removeChip(c)} className="opacity-50 hover:opacity-100"><X className="w-3 h-3" /></button>
                         </span>
                       ))}
-                      {parsed.chips.length === 0 && <span className="text-[13px] text-[var(--color-text-muted)]">Nothing to search on - add a tag, a word or a year.</span>}
+                      {parsed.chips.length === 0 && <span className="text-body text-[var(--color-text-muted)]">Nothing to search on - add a tag, a word or a year.</span>}
                     </div>
                     {parsed.identifiers.length > 0 && (
-                      <div className="text-[13px] text-[var(--color-text-muted)]">
+                      <div className="text-body text-[var(--color-text-muted)]">
                         Also matching {parsed.identifiers.map((c) => tagVariants(c.value).filter((v) => v !== c.label).join(", ")).join("; ")}
                       </div>
                     )}
                   </div>
                 )}
 
-                <div className="text-[13px] text-[var(--color-text-muted)] inline-flex items-center gap-1.5">
+                <div className="text-body text-[var(--color-text-muted)] inline-flex items-center gap-1.5">
                   How it ranks
                   <HelpTooltip>
                     <span className="block">Codes, words and phrases in the name count most; the folder chain counts less.</span>
@@ -770,7 +770,7 @@ function GraphPageInner() {
                     <span className="block mt-1">A folder naming a <em>different</em> codebook unit is ranked down. A year off is a nudge, not a wall. Empty files and OS junk are ditched.</span>
                   </HelpTooltip>
                 </div>
-                {data?.truncations.map((t, i) => <div key={i} className="text-[13px] text-[var(--state-held)]">{t}</div>)}
+                {data?.truncations.map((t, i) => <div key={i} className="text-body text-[var(--state-held)]">{t}</div>)}
               </>
             )}
 
@@ -790,7 +790,7 @@ function GraphPageInner() {
         {/* ── Centre: the map ─────────────────────────────────────────── */}
         <main className="relative min-h-0 min-w-0 h-[60vh] lg:h-auto bg-[var(--color-canvas)]">
           {loading && data && (
-            <div className="absolute bottom-3 left-3 z-10 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)]/95 px-2.5 py-1 text-[13px] inline-flex items-center gap-1.5 shadow-sm">
+            <div className="absolute bottom-3 left-3 z-10 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)]/95 px-2.5 py-1 text-body inline-flex items-center gap-1.5 shadow-sm">
               <RefreshCw className="w-3 h-3 animate-spin" /> {snapAt ? `Showing the map from ${Math.max(1, Math.round((Date.now() - snapAt) / 60000))} min ago while the fresh one loads` : "Refreshing…"}
             </div>
           )}
@@ -802,18 +802,18 @@ function GraphPageInner() {
             <FileGraph ref={graphRef} visible={visible} collapsed={collapsed} upNode={upNode} sameBytes={sameBytesById} lit={lit} ranks={ranks} activeId={activeHit?.entry.id ?? null} selectedId={selectedId} onSelect={(id) => { setSelectedId(id); if (id) setSelSat(null); }} onDrill={drill} onUp={up} onOpen={openEntry}
               satellites={satellites} onSatellite={(sat) => setSelSat(sat)} filedLinks={filedLinks} />
           )}
-          <div className="absolute top-3 left-3 right-3 flex items-start justify-between gap-2 text-[13px] pointer-events-none">
+          <div className="absolute top-3 left-3 right-3 flex items-start justify-between gap-2 text-body pointer-events-none">
             <div className="flex flex-wrap items-center gap-1 pointer-events-auto">
               <span className="grid place-items-center w-7 h-7 rounded-md bg-[var(--color-surface)]/95 border border-[var(--color-border)]">
                 <HelpTooltip placement="bottom">Click a folder to explore it, a file for details. Double-click to open. Arrow keys step through results; Esc goes up.</HelpTooltip>
               </span>
-              <button onClick={() => drill(null)} className={`rounded-md border px-2 py-1 inline-flex items-center gap-1 font-semibold whitespace-nowrap ${focusId || unitView ? "bg-[var(--color-surface)]/90 border-[var(--color-border)]" : "bg-[var(--color-surface)] border-[var(--color-text-muted)] ring-1 ring-[var(--color-text-muted)]"}`}>
+              <button onClick={() => drill(null)} className={`rounded-md border px-2 py-1 inline-flex items-center gap-1 font-medium whitespace-nowrap ${focusId || unitView ? "bg-[var(--color-surface)]/90 border-[var(--color-border)]" : "bg-[var(--color-surface)] border-[var(--color-text-muted)] ring-1 ring-[var(--color-text-muted)]"}`}>
                 <Waypoints className="w-3.5 h-3.5" /> Whole estate
               </button>
               {unitView && homeUnit && !focusId && (
                 <>
                   <ChevronRight className="w-3 h-3 opacity-50" />
-                  <span className="rounded-md border px-2 py-1 inline-flex items-center gap-1 font-semibold whitespace-nowrap bg-[var(--color-surface)] border-[var(--color-text)] ring-1 ring-[var(--color-text)]">
+                  <span className="rounded-md border px-2 py-1 inline-flex items-center gap-1 font-medium whitespace-nowrap bg-[var(--color-surface)] border-[var(--color-text)] ring-1 ring-[var(--color-text)]">
                     <Factory className="w-3.5 h-3.5" /> Unit {homeUnit}
                   </span>
                 </>
@@ -821,7 +821,7 @@ function GraphPageInner() {
               {crumbs.map((c, i) => (
                 <React.Fragment key={c.id}>
                   <ChevronRight className="w-3 h-3 opacity-50" />
-                  <button onClick={() => drill(c.id)} className={`rounded-md border px-2 py-1 inline-flex items-center gap-1 font-semibold max-w-[220px] bg-[var(--color-surface)]/95 ${i === crumbs.length - 1 ? "border-[var(--color-text)] ring-1 ring-[var(--color-text)]" : "border-[var(--color-border)]"}`}>
+                  <button onClick={() => drill(c.id)} className={`rounded-md border px-2 py-1 inline-flex items-center gap-1 font-medium max-w-[220px] bg-[var(--color-surface)]/95 ${i === crumbs.length - 1 ? "border-[var(--color-text)] ring-1 ring-[var(--color-text)]" : "border-[var(--color-border)]"}`}>
                     <FileTypeIcon type={c.type} className="w-3.5 h-3.5" /> <span className="truncate">{c.label}</span>
                   </button>
                 </React.Fragment>
@@ -836,11 +836,11 @@ function GraphPageInner() {
               )}
               {controller && activeOrgId && focusId?.startsWith("lib:") && !selectedEntry && (
                 <button onClick={() => setSetupLib(focusId.slice(4))} title="Say what each level of folders is (operating area, equipment type, equipment) and everything filed underneath inherits it"
-                  className="ml-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] px-2 py-1 font-semibold inline-flex items-center gap-1 hover:bg-[var(--color-surface-2)]"><Factory className="w-3 h-3" /> Set up as equipment library</button>
+                  className="ml-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] px-2 py-1 font-medium inline-flex items-center gap-1 hover:bg-[var(--color-surface-2)]"><Factory className="w-3 h-3" /> Set up as equipment library</button>
               )}
               {selectedEntry && (
                 <button onClick={() => { setSelectedId(null); setSelSat(null); }} title="Stop focusing on this file (Esc)"
-                  className="ml-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] px-2 py-1 font-semibold inline-flex items-center gap-1">
+                  className="ml-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] px-2 py-1 font-medium inline-flex items-center gap-1">
                   <ChevronLeft className="w-3 h-3" /> Back · Esc
                 </button>
               )}
@@ -852,7 +852,7 @@ function GraphPageInner() {
                   <span className="inline-flex items-center gap-0.5 p-0.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] shadow-sm">
                     {scopes.map((o) => (
                       <button key={o.key} type="button" role="radio" aria-checked={scopeNow === o.key} onClick={() => pickScope(o.key)} title={o.title}
-                        className={`h-8 px-2.5 rounded text-[13px] font-semibold whitespace-nowrap transition-colors ${scopeNow === o.key ? "bg-[var(--color-main)] text-white" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
+                        className={`h-8 px-2.5 rounded text-body font-medium whitespace-nowrap transition-colors ${scopeNow === o.key ? "bg-[var(--color-main)] text-white" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
                         {o.label}
                       </button>
                     ))}
@@ -868,7 +868,7 @@ function GraphPageInner() {
               )}
               <button onClick={() => setShowEstate((v) => !v)} title="Green counts of equipment on every file and folder; click a file to see its equipment around it"
                 aria-pressed={showEstate}
-                className={`rounded-md border px-2 py-1 inline-flex items-center gap-1 ${showEstate ? "bg-[var(--color-surface-2)] border-[var(--color-text-muted)] ring-1 ring-[var(--color-text-muted)] font-semibold" : "bg-[var(--color-surface)]/90 border-[var(--color-border)]"}`}>
+                className={`rounded-md border px-2 py-1 inline-flex items-center gap-1 ${showEstate ? "bg-[var(--color-surface-2)] border-[var(--color-text-muted)] ring-1 ring-[var(--color-text-muted)] font-medium" : "bg-[var(--color-surface)]/90 border-[var(--color-border)]"}`}>
                 <Factory className="w-3 h-3" /> Units &amp; equipment
               </button>
               {focusId && <button onClick={up} className="rounded-md bg-[var(--color-surface)]/90 border border-[var(--color-border)] px-2 py-1 inline-flex items-center gap-1"><Minus className="w-3 h-3" /> Up</button>}
@@ -883,7 +883,7 @@ function GraphPageInner() {
               )}
             </div>
           </div>
-          <div className="absolute bottom-3 left-3 right-3 flex flex-wrap gap-1.5 text-[13px]">
+          <div className="absolute bottom-3 left-3 right-3 flex flex-wrap gap-1.5 text-body">
             {[CONTAINER_TYPES.library, CONTAINER_TYPES.folder, CONTAINER_TYPES.drive, fileTypeOf("x.pdf"), fileTypeOf("x.dwg"), fileTypeOf("x.xlsx"), fileTypeOf("x.docx"), fileTypeOf("x.xml"), fileTypeOf("x.png")].map((t) => (
               <span key={t.key + t.ext} className="inline-flex items-center gap-1 rounded-md bg-[var(--color-surface)]/90 border border-[var(--color-border)] px-1.5 py-0.5"><FileTypeIcon type={t} className="w-3.5 h-3.5" /> {t.label}</span>
             ))}
@@ -898,14 +898,14 @@ function GraphPageInner() {
               <button onClick={() => jumpTo(activeIdx - 1)} className="rounded-md border border-[var(--color-border)] p-1 hover:bg-[var(--color-canvas)]" title="Previous result (←)"><ChevronLeft className="w-4 h-4" /></button>
               <button onClick={() => jumpTo(activeIdx)} className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 hover:bg-[var(--color-canvas)]" title="Centre on this result">
                 <Crosshair className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
-                <span className="font-bold tabular-nums">{activeIdx + 1}</span><span className="text-[var(--color-text-muted)]">/ {hits.length}</span>
-                <span className={`rounded-full border px-1.5 py-px text-[13px] font-bold ${VERDICT_STYLE[activeHit.verdict]}`}>{VERDICT_LABEL[activeHit.verdict]} · {activeHit.score}</span>
+                <span className="font-medium tabular-nums">{activeIdx + 1}</span><span className="text-[var(--color-text-muted)]">/ {hits.length}</span>
+                <span className={`rounded-full border px-1.5 py-px text-body font-medium ${VERDICT_STYLE[activeHit.verdict]}`}>{VERDICT_LABEL[activeHit.verdict]} · {activeHit.score}</span>
                 <FileTypeIcon type={fileTypeOf(activeHit.entry.name)} className="w-3.5 h-3.5" />
-                <span className="font-semibold max-w-[260px] truncate">{activeHit.entry.name}</span>
+                <span className="font-medium max-w-[260px] truncate">{activeHit.entry.name}</span>
               </button>
               <button onClick={() => jumpTo(activeIdx + 1)} className="rounded-md border border-[var(--color-border)] p-1 hover:bg-[var(--color-canvas)]" title="Next result (→)"><ChevronRight className="w-4 h-4" /></button>
               {activeHit.entry.href && (
-                <button onClick={() => openEntry(activeHit.entry.id)} disabled={viewerLoading === activeHit.entry.id} className="ml-1 inline-flex items-center gap-1 rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] px-2 py-1 font-bold disabled:opacity-60" title="Open (Enter)">
+                <button onClick={() => openEntry(activeHit.entry.id)} disabled={viewerLoading === activeHit.entry.id} className="ml-1 inline-flex items-center gap-1 rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] px-2 py-1 font-medium disabled:opacity-60" title="Open (Enter)">
                   {viewerLoading === activeHit.entry.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ExternalLink className="w-3.5 h-3.5" />} Open
                 </button>
               )}
@@ -944,15 +944,15 @@ function GraphPageInner() {
             {parsed ? (
               <>
                 <div className="flex items-center justify-between mb-2">
-                  <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">
+                  <div className="text-body font-medium text-[var(--color-text-muted)]">
                     {hits.length} candidate{hits.length === 1 ? "" : "s"}{focusId ? " here" : ""}
                   </div>
-                  <div className="text-[13px] text-[var(--color-text-muted)]">
+                  <div className="text-body text-[var(--color-text-muted)]">
                     {hits.filter((h) => h.verdict === "strong").length} strong · {hits.filter((h) => h.verdict === "possible").length} possible
                   </div>
                 </div>
                 {hiddenHits > 0 && (
-                  <button onClick={() => drill(null)} className="mb-2 w-full text-left rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1.5 text-[13px] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+                  <button onClick={() => drill(null)} className="mb-2 w-full text-left rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1.5 text-body text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
                     {hiddenHits} more candidate{hiddenHits === 1 ? "" : "s"} outside {crumbs[crumbs.length - 1]?.label ?? "this folder"} - show the whole estate
                   </button>
                 )}
@@ -964,9 +964,9 @@ function GraphPageInner() {
                       onUnit={(code) => { const next = query.includes(code) ? query : `${query} ${code}`.trim(); setQuery(next); runSearch(next); }} />
                   </div>
                 )}
-                {finding && <div className="mb-2 text-[13px] text-[var(--color-text-muted)] inline-flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" /> Checking tags, drawings, text and work in flight…</div>}
+                {finding && <div className="mb-2 text-body text-[var(--color-text-muted)] inline-flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" /> Checking tags, drawings, text and work in flight…</div>}
                 {serverFind && serverFind.hidden.count > 0 && (
-                  <div className="mb-2 text-[13px] text-[var(--color-text-muted)]">
+                  <div className="mb-2 text-body text-[var(--color-text-muted)]">
                     {serverFind.hidden.count} hidden because you asked for a different type: {Object.entries(serverFind.hidden.byType).map(([t, n]) => `${n} ${t}`).join(", ")}.
                   </div>
                 )}
@@ -990,7 +990,7 @@ function GraphPageInner() {
                         if (!list.length) return null;
                         return (
                           <div key={g.key}>
-                            <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mt-2 mb-1">{g.label} · {g.ids.length}</div>
+                            <div className="text-body font-medium text-[var(--color-text-muted)] mt-2 mb-1">{g.label} · {g.ids.length}</div>
                             <div className="space-y-2">{list.map(card)}</div>
                           </div>
                         );
@@ -998,22 +998,22 @@ function GraphPageInner() {
                     }
                     return hits.slice(0, 80).map(card);
                   })()}
-                  {hits.length > 80 && !(serverFind && serverFind.groups.length > 1) && <div className="text-[13px] text-[var(--color-text-muted)]">…and {hits.length - 80} weaker candidates.</div>}
+                  {hits.length > 80 && !(serverFind && serverFind.groups.length > 1) && <div className="text-body text-[var(--color-text-muted)]">…and {hits.length - 80} weaker candidates.</div>}
                 </div>
                 {serverFind && (
                   <div className="mt-4 space-y-3 border-t border-[var(--color-border)] pt-3">
                     <div>
-                      <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-1 inline-flex items-center gap-1"><Activity className="w-3 h-3" /> Happening now</div>
+                      <div className="text-body font-medium text-[var(--color-text-muted)] mb-1 inline-flex items-center gap-1"><Activity className="w-3 h-3" /> Happening now</div>
                       <ActivityPanel activity={serverFind.activity} compact />
                     </div>
                     <CoverageLine coverage={serverFind.coverage} onReadFolder={controller ? askToRead : undefined} />
-                    {serverFind.notes.map((n, i) => <div key={i} className="text-[13px] text-[var(--state-held)]">{n}</div>)}
+                    {serverFind.notes.map((n, i) => <div key={i} className="text-body text-[var(--state-held)]">{n}</div>)}
                   </div>
                 )}
               </>
             ) : (
-              <div className="text-[14px] text-[var(--color-text-muted)] space-y-1.5">
-                <div className="font-display text-[17px] font-semibold text-[var(--color-text)]">Nothing searched yet</div>
+              <div className="text-body text-[var(--color-text-muted)] space-y-1.5">
+                <div className="font-display text-section font-semibold text-[var(--color-text)]">Nothing searched yet</div>
                 <div className="inline-flex items-center gap-1.5">
                   Ask it like you would ask a colleague.
                   <HelpTooltip>
@@ -1041,7 +1041,7 @@ function GraphPageInner() {
         <div className="fixed inset-0 z-[70] bg-black/85 flex items-center justify-center p-6" onClick={() => setLightbox(null)}>
           <div className="max-w-5xl max-h-full flex flex-col items-center gap-2" onClick={(e) => e.stopPropagation()}>
             <SignedImg path={lightbox.file_url} alt={lightbox.caption ?? ""} className="max-h-[80vh] max-w-full rounded-xl object-contain shadow-2xl" placeholder={<Loader2 className="w-6 h-6 animate-spin text-white" />} />
-            <div className="text-[13px] text-white/80">{lightbox.caption || "Photo"}{lightbox.captured_at ? ` · ${new Date(lightbox.captured_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}` : ""}</div>
+            <div className="text-body text-white/80">{lightbox.caption || "Photo"}{lightbox.captured_at ? ` · ${new Date(lightbox.captured_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}` : ""}</div>
           </div>
           <button aria-label="Close" onClick={() => setLightbox(null)} className="absolute top-4 right-4 text-white/80 hover:text-white"><X className="w-6 h-6" /></button>
         </div>
@@ -1057,18 +1057,18 @@ function GraphPageInner() {
       {readAsk && (
         <div className="fixed inset-0 z-50 grid place-items-center bg-black/50" onClick={() => !readAsk.busy && setReadAsk(null)}>
           <div className="w-[28rem] max-w-[92vw] rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] shadow-xl p-4 space-y-3" onClick={(e) => e.stopPropagation()}>
-            <div className="text-sm font-semibold inline-flex items-center gap-2"><Eye className="w-4 h-4 text-[var(--state-released)]" /> Read the contents of {readAsk.folder.path || "this library"}</div>
-            <div className="text-[13px] text-[var(--color-text-muted)]">{readAsk.folder.count} file{readAsk.folder.count === 1 ? "" : "s"} here have never been read. Linking the folder as a source of a knowledge library reads them: text pages cost nothing, scanned or SHX pages use vision on the cheap tier within your monthly cap, and every tag read becomes a link. Nothing outside the folder is touched.</div>
+            <div className="text-sm font-medium inline-flex items-center gap-2"><Eye className="w-4 h-4 text-[var(--state-released)]" /> Read the contents of {readAsk.folder.path || "this library"}</div>
+            <div className="text-body text-[var(--color-text-muted)]">{readAsk.folder.count} file{readAsk.folder.count === 1 ? "" : "s"} here have never been read. Linking the folder as a source of a knowledge library reads them: text pages cost nothing, scanned or SHX pages use vision on the cheap tier within your monthly cap, and every tag read becomes a link. Nothing outside the folder is touched.</div>
             {readAsk.libs.length > 0 && (
               <select value={readAsk.pick} onChange={(e) => setReadAsk({ ...readAsk, pick: e.target.value })} className="w-full text-sm rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] px-2 py-1.5">
                 {readAsk.libs.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
               </select>
             )}
-            {readAsk.note && <div className="text-[13px] text-[var(--color-text)]">{readAsk.note}{readAsk.pick && readAsk.note.startsWith("Linked") && <> <Link href={`/knowledge/${readAsk.pick}`} className="text-[var(--color-accent-text)] hover:underline">Open the library →</Link></>}</div>}
+            {readAsk.note && <div className="text-body text-[var(--color-text)]">{readAsk.note}{readAsk.pick && readAsk.note.startsWith("Linked") && <> <Link href={`/knowledge/${readAsk.pick}`} className="text-[var(--color-accent-text)] hover:underline">Open the library →</Link></>}</div>}
             <div className="flex justify-end gap-2">
               <button onClick={() => setReadAsk(null)} disabled={readAsk.busy} className="rounded-lg border border-[var(--color-border)] px-3 py-1.5 text-sm">Close</button>
               {!readAsk.note?.startsWith("Linked") && readAsk.libs.length > 0 && (
-                <button onClick={linkAndRead} disabled={readAsk.busy || !readAsk.pick} className="inline-flex items-center gap-1 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] px-3 py-1.5 text-sm font-bold disabled:opacity-60">{readAsk.busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Eye className="w-4 h-4" />} Link and read</button>
+                <button onClick={linkAndRead} disabled={readAsk.busy || !readAsk.pick} className="inline-flex items-center gap-1 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] px-3 py-1.5 text-sm font-medium disabled:opacity-60">{readAsk.busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Eye className="w-4 h-4" />} Link and read</button>
               )}
             </div>
           </div>
@@ -1100,11 +1100,11 @@ function GraphPageInner() {
 function PathCrumbs({ entry }: { entry: IndexEntry }) {
   const parts = entry.source === "listing" ? [entry.listingName ?? "Drive", ...entry.path] : [entry.libraryName ?? "Library", ...entry.path];
   return (
-    <div className="flex flex-wrap items-center gap-0.5 text-[13px] text-[var(--color-text-muted)]">
+    <div className="flex flex-wrap items-center gap-0.5 text-body text-[var(--color-text-muted)]">
       {parts.map((p, i) => (
         <React.Fragment key={i}>
           {i > 0 && <ChevronRight className="w-3 h-3 opacity-50" />}
-          <span className={i === 0 ? "text-[var(--color-text)] font-semibold" : ""}>{p}</span>
+          <span className={i === 0 ? "text-[var(--color-text)] font-medium" : ""}>{p}</span>
         </React.Fragment>
       ))}
     </div>
@@ -1113,7 +1113,7 @@ function PathCrumbs({ entry }: { entry: IndexEntry }) {
 
 function EvidenceList({ hit }: { hit: RankedHit }) {
   return (
-    <ul className="mt-1.5 space-y-0.5 text-[13px]">
+    <ul className="mt-1.5 space-y-0.5 text-body">
       {hit.evidence.map((e, i) => (
         <li key={i} className={`flex items-start gap-1.5 ${e.delta > 0 ? "text-[var(--state-released)]" : e.delta < 0 ? "text-[var(--state-overdue)]" : "text-[var(--color-text-muted)]"}`}>
           <span className="w-8 shrink-0 text-right font-display tabular-nums tabular-nums">{e.delta > 0 ? `+${Math.round(e.delta)}` : e.delta < 0 ? Math.round(e.delta) : "·"}</span>
@@ -1134,13 +1134,13 @@ function HitCard({ hit, rank, active, relations, pages, onReveal, onOpen, onPage
       <div className="flex items-start gap-2">
         <button onClick={onReveal} className="flex-1 text-left min-w-0">
           <div className="flex items-center gap-1.5">
-            <span className={`shrink-0 w-5 h-5 rounded-full grid place-items-center text-[13px] font-semibold ${active ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "bg-slate-800 text-white"}`}>{rank}</span>
-            <span className={`shrink-0 rounded-full border px-1.5 py-px text-[13px] font-bold ${VERDICT_STYLE[hit.verdict]}`}>{VERDICT_LABEL[hit.verdict]} · {hit.score}</span>
+            <span className={`shrink-0 w-5 h-5 rounded-full grid place-items-center text-body font-medium ${active ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "bg-slate-800 text-white"}`}>{rank}</span>
+            <span className={`shrink-0 rounded-full border px-1.5 py-px text-body font-medium ${VERDICT_STYLE[hit.verdict]}`}>{VERDICT_LABEL[hit.verdict]} · {hit.score}</span>
             <FileTypeIcon type={fileTypeOf(e.name)} className="w-4 h-4 shrink-0" />
-            <span className="text-sm font-semibold truncate">{e.name}</span>
-            {e.read?.status === "ready" && <span title={`Content read by AI (${e.read.pages} pages)`} className="shrink-0 inline-flex items-center gap-0.5 text-[var(--state-released)] px-1 text-[13px] font-bold"><Eye className="w-3 h-3" /> read</span>}
+            <span className="text-sm font-medium truncate">{e.name}</span>
+            {e.read?.status === "ready" && <span title={`Content read by AI (${e.read.pages} pages)`} className="shrink-0 inline-flex items-center gap-0.5 text-[var(--state-released)] px-1 text-body font-medium"><Eye className="w-3 h-3" /> read</span>}
           </div>
-          {e.title && e.title !== e.name && <div className="text-[13px] text-[var(--color-text-muted)] truncate">{e.title}</div>}
+          {e.title && e.title !== e.name && <div className="text-body text-[var(--color-text-muted)] truncate">{e.title}</div>}
           <PathCrumbs entry={e} />
           {relations && <RelationChips relations={relations} onPage={onPage} />}
           {pages && <PageHits pages={pages} onPage={(p) => onPageHit?.(p)} />}
@@ -1164,11 +1164,11 @@ function SelectedCard({ entry, hit, sameBytes, onClose, onReveal, onOpen, orgId,
     <div className="p-3 border-b border-[var(--color-border)] bg-[var(--color-surface-2)]">
       <div className="flex items-start gap-2">
         <div className="flex-1 min-w-0">
-          <div className="text-sm font-bold truncate flex items-center gap-1.5"><FileTypeIcon type={fileTypeOf(entry.name)} className="w-4 h-4 shrink-0" /> <span className="truncate">{entry.name}</span></div>
-          <div className="text-[13px] text-[var(--color-text-muted)]">{fileTypeOf(entry.name).label}</div>
-          {entry.title && entry.title !== entry.name && <div className="text-[13px] text-[var(--color-text-muted)] truncate">{entry.title}</div>}
+          <div className="text-sm font-medium truncate flex items-center gap-1.5"><FileTypeIcon type={fileTypeOf(entry.name)} className="w-4 h-4 shrink-0" /> <span className="truncate">{entry.name}</span></div>
+          <div className="text-body text-[var(--color-text-muted)]">{fileTypeOf(entry.name).label}</div>
+          {entry.title && entry.title !== entry.name && <div className="text-body text-[var(--color-text-muted)] truncate">{entry.title}</div>}
           <PathCrumbs entry={entry} />
-          <div className="mt-1 flex flex-wrap gap-1 text-[13px] text-[var(--color-text-muted)]">
+          <div className="mt-1 flex flex-wrap gap-1 text-body text-[var(--color-text-muted)]">
             {entry.number && <span className="rounded bg-[var(--color-surface)] border border-[var(--color-border)] px-1">{entry.number}{entry.rev ? ` rev ${entry.rev}` : ""}</span>}
             {entry.status && <span className="rounded bg-[var(--color-surface)] border border-[var(--color-border)] px-1">{entry.status}</span>}
             {entry.years.length > 0 && <span className="rounded bg-[var(--color-surface)] border border-[var(--color-border)] px-1">dated {entry.years.join(", ")}</span>}
@@ -1182,9 +1182,9 @@ function SelectedCard({ entry, hit, sameBytes, onClose, onReveal, onOpen, orgId,
       </div>
       {entry.href && (
         <div className="mt-2 flex items-center gap-3">
-          <button onClick={onOpen} className="inline-flex items-center gap-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] px-2 py-1 text-xs font-bold"><ExternalLink className="w-3.5 h-3.5" /> Open</button>
-          <Link href={entry.href} className="text-[13px] font-semibold text-[var(--color-text-muted)] hover:underline">Go to it in the library</Link>
-          <Link href={globalGraphHref(entry.id)} className="text-xs font-semibold text-[var(--color-text-muted)] hover:underline inline-flex items-center gap-1"><Globe className="w-3 h-3" /> Global view</Link>
+          <button onClick={onOpen} className="inline-flex items-center gap-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] px-2 py-1 text-xs font-medium"><ExternalLink className="w-3.5 h-3.5" /> Open</button>
+          <Link href={entry.href} className="text-body font-medium text-[var(--color-text-muted)] hover:underline">Go to it in the library</Link>
+          <Link href={globalGraphHref(entry.id)} className="text-xs font-medium text-[var(--color-text-muted)] hover:underline inline-flex items-center gap-1"><Globe className="w-3 h-3" /> Global view</Link>
         </div>
       )}
       {entry.source === "listing" && (
@@ -1195,8 +1195,8 @@ function SelectedCard({ entry, hit, sameBytes, onClose, onReveal, onOpen, orgId,
       )}
       {sameBytes.length > 0 && (
         <div className="mt-2">
-          <div className="text-[13px] font-bold text-[var(--state-overdue)]">Same bytes in {sameBytes.length + 1} places</div>
-          <ul className="text-[13px] space-y-0.5">
+          <div className="text-body font-medium text-[var(--state-overdue)]">Same bytes in {sameBytes.length + 1} places</div>
+          <ul className="text-body space-y-0.5">
             {sameBytes.map((s) => (
               <li key={s.id}><button onClick={() => onReveal(s.id)} className="text-left hover:underline">{[s.libraryName, ...s.path, s.name].filter(Boolean).join(" / ")}</button></li>
             ))}
@@ -1280,35 +1280,35 @@ function EntityPanel({ orgId, sat, data, entryById, nodeById, serverFind: liveFi
       <div className="flex items-start gap-2">
         <span className="w-8 h-8 rounded-full grid place-items-center text-white shrink-0" style={{ background: sat.color }}><Icon className="w-4 h-4" /></span>
         <div className="min-w-0 flex-1">
-          <div className="text-[13px] text-[var(--color-text-muted)] flex items-center gap-1 flex-wrap">
+          <div className="text-body text-[var(--color-text-muted)] flex items-center gap-1 flex-wrap">
             {unit && kind !== "unit" ? <><button onClick={() => onNarrow(unit.code)} className="text-[var(--color-accent-text)] hover:underline">{unit.label}</button><ChevronRight className="w-3 h-3" /></> : null}
-            <span className="font-bold" style={{ color: sat.color }}>{kind === "asset" ? "Equipment" : kind === "unit" ? "Unit" : kind === "project" ? "Project" : "Tag read off the drawings"}</span>
+            <span className="font-medium" style={{ color: sat.color }}>{kind === "asset" ? "Equipment" : kind === "unit" ? "Unit" : kind === "project" ? "Project" : "Tag read off the drawings"}</span>
           </div>
-          <div className="text-base font-semibold leading-tight">{sat.label}</div>
-          {asset?.description && <div className="text-[13px] text-[var(--color-text-muted)]">{asset.description}</div>}
+          <div className="text-base font-medium leading-tight">{sat.label}</div>
+          {asset?.description && <div className="text-body text-[var(--color-text-muted)]">{asset.description}</div>}
           {about && (about.typeName || about.code || about.location) && (
-            <div className="mt-0.5 flex flex-wrap gap-1 text-[13px]">
+            <div className="mt-0.5 flex flex-wrap gap-1 text-body">
               {about.typeName && <span className="rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-1">{about.typeName}</span>}
               {about.code && <span className="rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-1 font-display tabular-nums">site code {about.code}</span>}
               {about.location && <span className="rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-1">{about.location}</span>}
             </div>
           )}
-          {kind === "tag" && <div className="text-[13px] text-[var(--color-text-muted)]">Not in the equipment registry yet. Connect everything puts it there.</div>}
+          {kind === "tag" && <div className="text-body text-[var(--color-text-muted)]">Not in the equipment registry yet. Connect everything puts it there.</div>}
         </div>
         <button aria-label="Close" onClick={onClose} className="opacity-60 hover:opacity-100"><X className="w-4 h-4" /></button>
       </div>
       {about?.callout && (about.callout.name || about.callout.details) && (
-        <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1.5 text-[13px]">
-          <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">As printed on the drawing</div>
-          {about.callout.name && <div className="font-semibold">{about.callout.name}</div>}
-          {about.callout.details && <div className="text-[13px] text-[var(--color-text-muted)]">{about.callout.details}</div>}
-          {about.callout.sheet && <div className="text-[13px] text-[var(--color-text-faint)]">{about.callout.sheet}{about.callout.page ? `, page ${about.callout.page}` : ""}</div>}
+        <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1.5 text-body">
+          <div className="text-body font-medium text-[var(--color-text-muted)]">As printed on the drawing</div>
+          {about.callout.name && <div className="font-medium">{about.callout.name}</div>}
+          {about.callout.details && <div className="text-body text-[var(--color-text-muted)]">{about.callout.details}</div>}
+          {about.callout.sheet && <div className="text-body text-[var(--color-text-faint)]">{about.callout.sheet}{about.callout.page ? `, page ${about.callout.page}` : ""}</div>}
         </div>
       )}
       {asset && (
         <div>
-          {photoList === null ? <div className="text-[13px] text-[var(--color-text-muted)] inline-flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" /> photos…</div>
-            : photoList.length === 0 ? <div className="text-[13px] text-[var(--color-text-muted)] inline-flex items-center gap-1"><ImageIcon className="w-3 h-3" /> No photos on file</div>
+          {photoList === null ? <div className="text-body text-[var(--color-text-muted)] inline-flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" /> photos…</div>
+            : photoList.length === 0 ? <div className="text-body text-[var(--color-text-muted)] inline-flex items-center gap-1"><ImageIcon className="w-3 h-3" /> No photos on file</div>
             : (
               <div className="flex flex-wrap gap-1.5">
                 {photoList.slice(0, 8).map((p) => (
@@ -1316,27 +1316,27 @@ function EntityPanel({ orgId, sat, data, entryById, nodeById, serverFind: liveFi
                     <SignedImg path={p.file_url} alt="" className="w-full h-full object-cover" placeholder={<ImageIcon className="w-4 h-4 m-auto text-[var(--color-text-faint)]" />} />
                   </button>
                 ))}
-                {photoList.length > 8 && <div className="w-20 h-20 rounded-lg border border-dashed border-[var(--color-border)] grid place-items-center text-[13px] text-[var(--color-text-muted)]">+{photoList.length - 8}</div>}
+                {photoList.length > 8 && <div className="w-20 h-20 rounded-lg border border-dashed border-[var(--color-border)] grid place-items-center text-body text-[var(--color-text-muted)]">+{photoList.length - 8}</div>}
               </div>
             )}
         </div>
       )}
       <div>
-        <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-1">{rows.length} on file</div>
-        {rows.length === 0 && <div className="text-[13px] text-[var(--color-text-muted)]">Nothing is linked to it yet.</div>}
+        <div className="text-body font-medium text-[var(--color-text-muted)] mb-1">{rows.length} on file</div>
+        {rows.length === 0 && <div className="text-body text-[var(--color-text-muted)]">Nothing is linked to it yet.</div>}
         <ul className="space-y-1 max-h-72 overflow-y-auto">
           {rows.slice(0, 60).map((r) => {
             const entry = entryById.get(r.id);
             return (
-              <li key={r.id} className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1.5 text-[13px] flex items-center gap-2">
+              <li key={r.id} className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1.5 text-body flex items-center gap-2">
                 {entry ? <FileTypeIcon type={fileTypeOf(entry.name)} className="w-3.5 h-3.5 shrink-0" /> : <Tag className="w-3.5 h-3.5 shrink-0 text-[var(--color-text-faint)]" />}
                 <button onClick={() => onReveal(r.id)} className="min-w-0 flex-1 text-left hover:underline">
-                  <div className="font-bold truncate">{r.name}</div>
-                  <div className="text-[13px] text-[var(--color-text-muted)]">{r.how}</div>
+                  <div className="font-medium truncate">{r.name}</div>
+                  <div className="text-body text-[var(--color-text-muted)]">{r.how}</div>
                 </button>
                 {r.isDoc && entry && (r.page
-                  ? <button onClick={() => onOpenAtPage(r.id, r.page!, r.tag)} className="shrink-0 rounded-md border border-[var(--color-border)] px-1.5 py-0.5 text-[13px] font-semibold inline-flex items-center gap-1"><Eye className="w-3 h-3" /> Sheet {r.page}</button>
-                  : <button onClick={() => onOpen(r.id)} className="shrink-0 rounded-md border border-[var(--color-border)] px-1.5 py-0.5 text-[13px] font-semibold inline-flex items-center gap-1"><Eye className="w-3 h-3" /> Open</button>)}
+                  ? <button onClick={() => onOpenAtPage(r.id, r.page!, r.tag)} className="shrink-0 rounded-md border border-[var(--color-border)] px-1.5 py-0.5 text-body font-medium inline-flex items-center gap-1"><Eye className="w-3 h-3" /> Sheet {r.page}</button>
+                  : <button onClick={() => onOpen(r.id)} className="shrink-0 rounded-md border border-[var(--color-border)] px-1.5 py-0.5 text-body font-medium inline-flex items-center gap-1"><Eye className="w-3 h-3" /> Open</button>)}
               </li>
             );
           })}
@@ -1344,14 +1344,14 @@ function EntityPanel({ orgId, sat, data, entryById, nodeById, serverFind: liveFi
       </div>
       {mine && (mine.activity.tickets.length + mine.activity.checkouts.length + mine.activity.markups.length + mine.activity.holds.length + mine.activity.projects.length + mine.activity.milestones.length) > 0 && (
         <div>
-          <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-1">Work around it now</div>
+          <div className="text-body font-medium text-[var(--color-text-muted)] mb-1">Work around it now</div>
           <ActivityPanel activity={mine.activity} compact />
         </div>
       )}
       <div className="flex flex-wrap gap-1">
-        {kind === "unit" && <button onClick={() => onNarrow(sat.id.slice(7))} className="rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-0.5 text-[13px] font-semibold inline-flex items-center gap-1"><Search className="w-3 h-3" /> Search within this unit</button>}
-        {sat.href && <Link href={sat.href} className="rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-0.5 text-[13px] font-semibold inline-flex items-center gap-1"><ExternalLink className="w-3 h-3" /> Full page</Link>}
-        <Link href={globalGraphHref(sat.id)} className="rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-0.5 text-[13px] font-semibold inline-flex items-center gap-1"><Globe className="w-3 h-3" /> Global graph</Link>
+        {kind === "unit" && <button onClick={() => onNarrow(sat.id.slice(7))} className="rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-0.5 text-body font-medium inline-flex items-center gap-1"><Search className="w-3 h-3" /> Search within this unit</button>}
+        {sat.href && <Link href={sat.href} className="rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-0.5 text-body font-medium inline-flex items-center gap-1"><ExternalLink className="w-3 h-3" /> Full page</Link>}
+        <Link href={globalGraphHref(sat.id)} className="rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-0.5 text-body font-medium inline-flex items-center gap-1"><Globe className="w-3 h-3" /> Global graph</Link>
       </div>
     </div>
   );
@@ -1380,36 +1380,36 @@ function LinksPanel({ orgId, edges, units, estateMissing, onReveal, onConnect, c
     if (id.startsWith("term:")) return { label: `"${id.slice(5).toLowerCase()}"` };
     return labels.get(id) ?? { label: "…" };
   };
-  if (estateMissing) return <div className="space-y-3"><div className="text-[13px] text-[var(--state-held)]">Estate links are off until migration 20261020 is applied.</div><EstateReadiness key={readinessKey} orgId={orgId} /></div>;
+  if (estateMissing) return <div className="space-y-3"><div className="text-body text-[var(--state-held)]">Estate links are off until migration 20261020 is applied.</div><EstateReadiness key={readinessKey} orgId={orgId} /></div>;
   return (
     <div className="space-y-3">
       {onConnect && <SuspectEquipment orgId={orgId} refreshKey={readinessKey} />}
       {onConnect && <RunsPanel key={readinessKey} orgId={orgId} />}
       <EstateReadiness key={readinessKey} orgId={orgId} onConnect={onConnect} connecting={connecting} />
-      <div className="text-[13px] text-[var(--color-text-muted)]">What the estate knows about where things belong - every link with its reason. Provable ones came from the codebook, drawing numbers and ancestry; the rest were approved in Review.</div>
+      <div className="text-body text-[var(--color-text-muted)]">What the estate knows about where things belong - every link with its reason. Provable ones came from the codebook, drawing numbers and ancestry; the rest were approved in Review.</div>
       <div className="flex flex-wrap gap-1">
-        <button onClick={() => setFilter("all")} className={`rounded-full border px-2 py-0.5 text-[13px] font-semibold ${filter === "all" ? "bg-[var(--color-surface)] text-[var(--color-text)] ring-1 ring-[var(--color-text-muted)] shadow-sm border-transparent" : "border-[var(--color-border)]"}`}>all {edges.length}</button>
+        <button onClick={() => setFilter("all")} className={`rounded-full border px-2 py-0.5 text-body font-medium ${filter === "all" ? "bg-[var(--color-surface)] text-[var(--color-text)] ring-1 ring-[var(--color-text-muted)] shadow-sm border-transparent" : "border-[var(--color-border)]"}`}>all {edges.length}</button>
         {[...counts.entries()].sort((a, b) => b[1] - a[1]).map(([t, n]) => (
-          <button key={t} onClick={() => setFilter(t)} className={`rounded-full border px-2 py-0.5 text-[13px] font-semibold ${filter === t ? "bg-[var(--color-surface)] text-[var(--color-text)] ring-1 ring-[var(--color-text-muted)] shadow-sm border-transparent" : "border-[var(--color-border)]"}`}>{EDGE_WORDS[t] ?? t} {n}</button>
+          <button key={t} onClick={() => setFilter(t)} className={`rounded-full border px-2 py-0.5 text-body font-medium ${filter === t ? "bg-[var(--color-surface)] text-[var(--color-text)] ring-1 ring-[var(--color-text-muted)] shadow-sm border-transparent" : "border-[var(--color-border)]"}`}>{EDGE_WORDS[t] ?? t} {n}</button>
         ))}
       </div>
-      {edges.length === 0 && <div className="text-[13px] text-[var(--color-text-muted)]">No links yet. Add your units to the Site Codebook, then press &ldquo;Resolve links&rdquo; above the map.</div>}
+      {edges.length === 0 && <div className="text-body text-[var(--color-text-muted)]">No links yet. Add your units to the Site Codebook, then press &ldquo;Resolve links&rdquo; above the map.</div>}
       <ul className="space-y-1">
         {shown.map((e, i) => {
           const a = L(e.a), b = L(e.b);
           const canReveal = e.a.startsWith("folder:") || e.a.startsWith("doc:");
           return (
-            <li key={i} className="rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] px-2 py-1.5 text-[13px]">
+            <li key={i} className="rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] px-2 py-1.5 text-body">
               <div className="flex flex-wrap items-center gap-x-1">
-                {canReveal ? <button onClick={() => onReveal(e.a)} className="font-bold hover:underline text-left">{a.label}</button> : <span className="font-bold">{a.label}</span>}
+                {canReveal ? <button onClick={() => onReveal(e.a)} className="font-medium hover:underline text-left">{a.label}</button> : <span className="font-medium">{a.label}</span>}
                 <span className="text-[var(--color-text-muted)]">{EDGE_WORDS[e.type] ?? e.type}</span>
-                {b.href ? <Link href={b.href} className="font-bold hover:underline">{b.label}</Link> : <span className="font-bold">{b.label}</span>}
+                {b.href ? <Link href={b.href} className="font-medium hover:underline">{b.label}</Link> : <span className="font-medium">{b.label}</span>}
               </div>
-              <div className="text-[13px] text-[var(--color-text-muted)]">{e.summary}</div>
+              <div className="text-body text-[var(--color-text-muted)]">{e.summary}</div>
             </li>
           );
         })}
-        {edges.length > shown.length && <li className="text-[13px] text-[var(--color-text-muted)]">…and {edges.length - shown.length} more. Filter by type to see them.</li>}
+        {edges.length > shown.length && <li className="text-body text-[var(--color-text-muted)]">…and {edges.length - shown.length} more. Filter by type to see them.</li>}
       </ul>
     </div>
   );
@@ -1443,14 +1443,14 @@ function DrivesPanel({ orgId, controller, listings, uid, userEmail, systemHashes
 
   return (
     <div className="space-y-3">
-      <div className="text-[13px] text-[var(--color-text-muted)]">
+      <div className="text-body text-[var(--color-text-muted)]">
         A drive the system doesn&apos;t hold. Paste the output of <code>tree /f</code>, <code>dir /s</code>, <code>tree</code>, one path per line - or the JSON from <code>node scripts/thor-scan.mjs</code>, which adds sizes, dates and hashes so files already in the system are identified by their bytes. Names and paths only - nothing is copied.
       </div>
-      {storeState.listingsLocal && <div className="text-[13px] text-[var(--state-held)] flex items-center gap-1"><AlertTriangle className="w-3 h-3" /> Saved in this browser only until the finder migration is applied.</div>}
+      {storeState.listingsLocal && <div className="text-body text-[var(--state-held)] flex items-center gap-1"><AlertTriangle className="w-3 h-3" /> Saved in this browser only until the finder migration is applied.</div>}
       {listings.map((l) => (
-        <div key={l.id} className="rounded-lg border border-[var(--color-border)] p-2 text-[13px] flex items-start gap-2">
+        <div key={l.id} className="rounded-lg border border-[var(--color-border)] p-2 text-body flex items-start gap-2">
           <button onClick={() => onReveal(`drive:${l.id}`)} className="flex-1 text-left">
-            <div className="font-bold flex items-center gap-1"><HardDrive className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> {l.name}</div>
+            <div className="font-medium flex items-center gap-1"><HardDrive className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> {l.name}</div>
             <div className="text-[var(--color-text-muted)]">{l.fileCount} files · {l.folders.length} folders{l.format ? ` · ${l.format}` : ""}</div>
           </button>
           {controller && <button onClick={() => remove(l)} className="opacity-50 hover:opacity-100"><Trash2 className="w-3.5 h-3.5" /></button>}
@@ -1461,9 +1461,9 @@ function DrivesPanel({ orgId, controller, listings, uid, userEmail, systemHashes
           <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Drive name, e.g. Thor drive"
             className="w-full text-sm rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] px-2 py-1.5" />
           <textarea value={text} onChange={(e) => setText(e.target.value)} rows={8} placeholder={"T:\\Crude\\Heaters\\born-u1a.pdf\nT:\\Transmix\\U1A.pdf"}
-            className="w-full text-[13px] font-mono rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] px-2 py-1.5" />
+            className="w-full text-body font-mono rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] px-2 py-1.5" />
           {preview && (
-            <div className="text-[13px] text-[var(--color-text-muted)] space-y-1">
+            <div className="text-body text-[var(--color-text-muted)] space-y-1">
               <div>Read as <b>{preview.format}</b>: {preview.files.length} files, {preview.folders.length} folders.</div>
               {preview.warnings.map((w, i) => <div key={i} className="text-[var(--state-held)]">{w}</div>)}
               {preview.files.length > 0 && (() => {
@@ -1480,13 +1480,13 @@ function DrivesPanel({ orgId, controller, listings, uid, userEmail, systemHashes
               })()}
             </div>
           )}
-          {err && <div className="text-[13px] text-[var(--state-overdue)]">{err}</div>}
-          <button onClick={save} disabled={busy || !preview?.files.length} className="w-full inline-flex items-center justify-center gap-1 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-sm font-bold px-3 py-1.5 disabled:opacity-50">
+          {err && <div className="text-body text-[var(--state-overdue)]">{err}</div>}
+          <button onClick={save} disabled={busy || !preview?.files.length} className="w-full inline-flex items-center justify-center gap-1 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-sm font-medium px-3 py-1.5 disabled:opacity-50">
             {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />} Add listing
           </button>
         </div>
       ) : (
-        <div className="text-[13px] text-[var(--color-text-muted)]">Only Admin and Document Control can add drive listings.</div>
+        <div className="text-body text-[var(--color-text-muted)]">Only Admin and Document Control can add drive listings.</div>
       )}
     </div>
   );
@@ -1517,20 +1517,20 @@ function AliasesPanel({ orgId, controller, aliases, uid, userEmail, units, onCha
 
   return (
     <div className="space-y-3">
-      <div className="text-[13px] text-[var(--color-text-muted)]">
+      <div className="text-body text-[var(--color-text-muted)]">
         What people say versus what the files say. &ldquo;born&rdquo; means the crude unit. &ldquo;the north furnace&rdquo; is F-101. Teaching one makes it work in every search; opening results through it raises its trust.
       </div>
-      {storeState.aliasesLocal && <div className="text-[13px] text-[var(--state-held)] flex items-center gap-1"><AlertTriangle className="w-3 h-3" /> Saved in this browser only until the finder migration is applied.</div>}
+      {storeState.aliasesLocal && <div className="text-body text-[var(--state-held)] flex items-center gap-1"><AlertTriangle className="w-3 h-3" /> Saved in this browser only until the finder migration is applied.</div>}
       {aliases.map((a) => (
-        <div key={a.id} className="rounded-lg border border-[var(--color-border)] p-2 text-[13px] flex items-start gap-2">
+        <div key={a.id} className="rounded-lg border border-[var(--color-border)] p-2 text-body flex items-start gap-2">
           <div className="flex-1 min-w-0">
-            <div className="font-bold">&ldquo;{a.term}&rdquo; <span className="font-normal text-[var(--color-text-muted)]">means</span> {a.means}</div>
+            <div className="font-medium">&ldquo;{a.term}&rdquo; <span className="font-normal text-[var(--color-text-muted)]">means</span> {a.means}</div>
             <div className="text-[var(--color-text-muted)]">{a.kind} · {Math.round(aliasConfidence(a) * 100)}% trusted · {a.hits} opened{a.misses ? ` · ${a.misses} removed` : ""}{a.createdByName ? ` · ${a.createdByName}` : ""}</div>
           </div>
           {controller && <button onClick={() => remove(a)} className="opacity-50 hover:opacity-100"><Trash2 className="w-3.5 h-3.5" /></button>}
         </div>
       ))}
-      {aliases.length === 0 && <div className="text-[13px] text-[var(--color-text-muted)]">No aliases taught yet.</div>}
+      {aliases.length === 0 && <div className="text-body text-[var(--color-text-muted)]">No aliases taught yet.</div>}
       {controller ? (
         <div className="space-y-2 pt-2 border-t border-[var(--color-border)]">
           <input value={term} onChange={(e) => setTerm(e.target.value)} placeholder="What people say: born"
@@ -1549,13 +1549,13 @@ function AliasesPanel({ orgId, controller, aliases, uid, userEmail, units, onCha
             <input value={means} onChange={(e) => setMeans(e.target.value)} placeholder={kind === "equipment" ? "The tag - F-101" : "What the files say: crude"}
               className="w-full text-sm rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] px-2 py-1.5" />
           )}
-          {err && <div className="text-[13px] text-[var(--state-overdue)]">{err}</div>}
-          <button onClick={add} disabled={busy || !term.trim() || !means.trim()} className="w-full inline-flex items-center justify-center gap-1 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-sm font-bold px-3 py-1.5 disabled:opacity-50">
+          {err && <div className="text-body text-[var(--state-overdue)]">{err}</div>}
+          <button onClick={add} disabled={busy || !term.trim() || !means.trim()} className="w-full inline-flex items-center justify-center gap-1 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-sm font-medium px-3 py-1.5 disabled:opacity-50">
             {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />} Teach alias
           </button>
         </div>
       ) : (
-        <div className="text-[13px] text-[var(--color-text-muted)]">Only Admin and Document Control can teach aliases.</div>
+        <div className="text-body text-[var(--color-text-muted)]">Only Admin and Document Control can teach aliases.</div>
       )}
     </div>
   );

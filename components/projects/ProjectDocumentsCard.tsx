@@ -158,18 +158,18 @@ export default function ProjectDocumentsCard({ orgId, projectId, canManage, uid,
   };
 
   return (
-    <Card pad={false} className="overflow-hidden" label={<>Project documents <span className="ml-1 text-[15px] font-normal tabular-nums text-[var(--color-text-muted)]">{rows.length}</span></>}
+    <Card pad={false} className="overflow-hidden" label={<>Project documents <span className="ml-1 text-reading font-normal tabular-nums text-[var(--color-text-muted)]">{rows.length}</span></>}
       action={canManage ? (
         <button
           onClick={() => { setAttachOpen((v) => !v); setQ(""); setResults([]); }}
           aria-expanded={attachOpen}
-          className={`inline-flex items-center gap-1.5 h-9 px-3.5 rounded-md text-[14px] font-semibold whitespace-nowrap transition-colors ${attachOpen ? "border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] text-[var(--color-text)]" : "bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]"}`}
+          className={`inline-flex items-center gap-1.5 h-10 px-3.5 rounded-md text-body font-medium whitespace-nowrap transition-colors ${attachOpen ? "border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] text-[var(--color-text)]" : "bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]"}`}
         >
           <Plus className="w-3.5 h-3.5" /> Attach<span className="max-sm:hidden"> document</span>
         </button>
       ) : undefined}>
 
-      {err && <div role="alert" className="mx-4 sm:mx-5 mt-3 text-[14px] font-semibold text-[var(--state-overdue)]">{err}</div>}
+      {err && <div role="alert" className="mx-4 sm:mx-5 mt-3 text-body font-medium text-[var(--state-overdue)]">{err}</div>}
 
       {attachOpen && canManage && (
         <div className="px-4 sm:px-5 py-3 border-b border-[var(--color-border)] bg-[var(--color-surface-2)]">
@@ -181,11 +181,11 @@ export default function ProjectDocumentsCard({ orgId, projectId, canManage, uid,
               placeholder="Search documents by number or title…"
               autoFocus
               aria-label="Search documents"
-              className="h-10 w-full rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] pl-8 pr-2 text-[15px]"
+              className="h-10 w-full rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] pl-8 pr-2 text-reading"
             />
           </div>
-          {searching && <div className="mt-1.5 text-[13px] text-[var(--color-text-muted)]">Searching…</div>}
-          {!searching && q.trim().length >= 2 && results.length === 0 && <div className="mt-1.5 text-[13px] text-[var(--color-text-muted)]">No documents match &ldquo;{q.trim()}&rdquo;.</div>}
+          {searching && <div className="mt-1.5 text-body text-[var(--color-text-muted)]">Searching…</div>}
+          {!searching && q.trim().length >= 2 && results.length === 0 && <div className="mt-1.5 text-body text-[var(--color-text-muted)]">No documents match &ldquo;{q.trim()}&rdquo;.</div>}
           {results.length > 0 && (
             <ul className="mt-1.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] divide-y divide-[var(--color-border)] overflow-hidden">
               {results.filter((r) => !rows.some((x) => x.docId === r.id)).map((r) => (
@@ -193,7 +193,7 @@ export default function ProjectDocumentsCard({ orgId, projectId, canManage, uid,
                   <button
                     onClick={() => void attach(r)}
                     disabled={busy === r.id}
-                    className="w-full text-left px-3 py-2 text-[14px] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors"
+                    className="w-full text-left px-3 py-2 text-body text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors"
                   >
                     {r.label}
                   </button>
@@ -207,18 +207,18 @@ export default function ProjectDocumentsCard({ orgId, projectId, canManage, uid,
       {loading ? (
         <SkeletonRows rows={3} cols={2} what="the project's documents" sheet={false} />
       ) : rows.length === 0 ? (
-        <div className="px-4 sm:px-5 py-4 text-[15px] text-[var(--color-text-muted)]">
+        <div className="px-4 sm:px-5 py-4 text-reading text-[var(--color-text-muted)]">
           None linked yet. <HelpTooltip>A document checked out under this project links itself here{canManage ? ". Attach document links one by hand" : ""}.</HelpTooltip>
         </div>
       ) : (
-        <table className="w-full text-[15px]">
-          <thead className="max-sm:hidden bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text-muted)] text-left">
+        <table className="w-full text-body">
+          <thead className="max-sm:hidden bg-[var(--color-surface-2)] text-body text-[var(--color-text-muted)] text-left">
             <tr className="border-y border-[var(--color-border)]">
-              <th scope="col" className="font-semibold px-4 h-10">Document</th>
-              <th scope="col" className="font-semibold px-4 w-[80px]">Rev</th>
-              <th scope="col" className="font-semibold px-4 hidden md:table-cell">Status</th>
-              <th scope="col" className="font-semibold px-4 hidden md:table-cell">Linked by</th>
-              <th scope="col" className="font-semibold px-4 hidden lg:table-cell">Last activity</th>
+              <th scope="col" className="font-medium px-4 h-10">Document</th>
+              <th scope="col" className="font-medium px-4 w-[80px]">Rev</th>
+              <th scope="col" className="font-medium px-4 hidden md:table-cell">Status</th>
+              <th scope="col" className="font-medium px-4 hidden md:table-cell">Linked by</th>
+              <th scope="col" className="font-medium px-4 hidden lg:table-cell">Last activity</th>
               <th scope="col" className="px-4 w-[1%]"><span className="sr-only">Actions</span></th>
             </tr>
           </thead>
@@ -236,7 +236,7 @@ export default function ProjectDocumentsCard({ orgId, projectId, canManage, uid,
                   <td className="sm:px-4 sm:py-3">{r.rev ? <span className="ui-tag">Rev {r.rev}</span> : <span className="text-[var(--color-text-faint)]">-</span>}</td>
                   <td className="px-4 py-3 hidden md:table-cell">{r.status ? <span className={`ui-pill ${docPill(r.status)}`}>{r.status}</span> : <span className="text-[var(--color-text-faint)]">-</span>}</td>
                   <td className="px-4 py-3 hidden md:table-cell" title={badge.hint}><span className="ui-tag is-more">{badge.label}</span></td>
-                  <td className="px-4 py-3 hidden lg:table-cell text-[14px] text-[var(--color-text-muted)] whitespace-nowrap">{r.lastSeenAt ? new Date(r.lastSeenAt).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "-"}</td>
+                  <td className="px-4 py-3 hidden lg:table-cell text-body text-[var(--color-text-muted)] whitespace-nowrap">{r.lastSeenAt ? new Date(r.lastSeenAt).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "-"}</td>
                   <td className="sm:px-4 sm:py-2 whitespace-nowrap">
                     {canManage && (
                       <button

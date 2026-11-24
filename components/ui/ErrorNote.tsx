@@ -36,12 +36,12 @@ export function ErrorNote({
   const todo = next ?? f.next;
   if (compact) {
     return (
-      <p role="alert" className={`flex flex-wrap items-baseline gap-x-2 gap-y-1 text-[14px] ${className}`}>
+      <p role="alert" className={`flex flex-wrap items-baseline gap-x-2 gap-y-1 text-body ${className}`}>
         <CircleAlert aria-hidden className="w-4 h-4 shrink-0 self-center text-[var(--state-overdue)]" />
-        <span className="font-semibold text-[var(--color-text)]">{what}</span>
+        <span className="font-medium text-[var(--color-text)]">{what}</span>
         <span className="text-[var(--color-text-muted)]">{todo}</span>
         {onRetry && (
-          <button type="button" onClick={onRetry} className="font-semibold text-[var(--color-accent-text)] hover:underline underline-offset-2">
+          <button type="button" onClick={onRetry} className="font-medium text-[var(--color-accent-text)] hover:underline underline-offset-2">
             {retryLabel}
           </button>
         )}
@@ -52,12 +52,12 @@ export function ErrorNote({
     <div role="alert" className={`flex items-start gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3.5 ${className}`}>
       <CircleAlert aria-hidden className="w-5 h-5 shrink-0 mt-0.5 text-[var(--state-overdue)]" />
       <div className="min-w-0 flex-1">
-        <p className="text-[15px] font-semibold text-[var(--color-text)]">{what}</p>
-        <p className="mt-0.5 text-[14px] text-[var(--color-text-muted)]">{todo}</p>
+        <p className="text-reading font-medium text-[var(--color-text)]">{what}</p>
+        <p className="mt-0.5 text-body text-[var(--color-text-muted)]">{todo}</p>
       </div>
       {onRetry && (
         <button type="button" onClick={onRetry}
-          className="shrink-0 inline-flex items-center gap-1.5 h-9 pointer-coarse:h-11 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
+          className="shrink-0 inline-flex items-center gap-1.5 h-10 pointer-coarse:h-11 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
           <RotateCcw aria-hidden className="w-3.5 h-3.5" />{retryLabel}
         </button>
       )}

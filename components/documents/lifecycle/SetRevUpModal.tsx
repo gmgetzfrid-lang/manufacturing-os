@@ -135,8 +135,8 @@ export default function SetRevUpModal(props: SetRevUpModalProps) {
           <div className="flex items-center gap-2">
             <Repeat2 className="w-5 h-5 text-[var(--state-released)]" />
             <div>
-              <h2 className="font-semibold text-[var(--color-text)]">Bump Set Revision</h2>
-              <div className="text-[13px] text-[var(--color-text-muted)] mt-0.5">Every active sheet in this set, in one operation.</div>
+              <h2 className="font-medium text-[var(--color-text)]">Bump Set Revision</h2>
+              <div className="text-body text-[var(--color-text-muted)] mt-0.5">Every active sheet in this set, in one operation.</div>
             </div>
           </div>
           <button aria-label="Close" onClick={onCancel} className="p-1.5 rounded hover:bg-slate-200 text-[var(--color-text-muted)]">
@@ -147,12 +147,12 @@ export default function SetRevUpModal(props: SetRevUpModalProps) {
         <div className="p-5 space-y-4">
           {/* Shared metadata */}
           <div className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-lg p-3 space-y-2">
-            <div className="text-[13px] font-semibold text-[var(--color-text)] ">Shared across all sheets</div>
+            <div className="text-body font-medium text-[var(--color-text)] ">Shared across all sheets</div>
             <div className="grid grid-cols-2 gap-2">
-              <select value={issueType ?? ""} onChange={(e) => setIssueType(e.target.value as DocumentVersion["issueType"])} className="text-[13px] border border-[var(--color-border-strong)] rounded px-2 py-1.5 bg-[var(--color-surface)]">
+              <select value={issueType ?? ""} onChange={(e) => setIssueType(e.target.value as DocumentVersion["issueType"])} className="text-body border border-[var(--color-border-strong)] rounded px-2 py-1.5 bg-[var(--color-surface)]">
                 {ISSUE_TYPES.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
               </select>
-              <select value={changeType ?? ""} onChange={(e) => setChangeType(e.target.value as DocumentVersion["changeType"])} className="text-[13px] border border-[var(--color-border-strong)] rounded px-2 py-1.5 bg-[var(--color-surface)]">
+              <select value={changeType ?? ""} onChange={(e) => setChangeType(e.target.value as DocumentVersion["changeType"])} className="text-body border border-[var(--color-border-strong)] rounded px-2 py-1.5 bg-[var(--color-surface)]">
                 {CHANGE_TYPES.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
               </select>
             </div>
@@ -162,37 +162,37 @@ export default function SetRevUpModal(props: SetRevUpModalProps) {
               onChange={(e) => setSharedChangeLog(e.target.value)}
               rows={2}
               placeholder='Shared change narrative (required) - applied to every sheet in this set.'
-              className="w-full text-[13px] border border-[var(--color-border-strong)] rounded px-2 py-1.5"
+              className="w-full text-body border border-[var(--color-border-strong)] rounded px-2 py-1.5"
             />
           </div>
 
           {/* Sheets */}
           <div>
-            <div className="text-[13px] font-semibold text-[var(--color-text)] mb-1">Sheets ({sheets.length})</div>
+            <div className="text-body font-medium text-[var(--color-text)] mb-1">Sheets ({sheets.length})</div>
             {loading ? (
-              <div className="flex items-center gap-2 text-[13px] text-[var(--color-text-muted)] py-4 justify-center">
+              <div className="flex items-center gap-2 text-body text-[var(--color-text-muted)] py-4 justify-center">
                 <Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading sheets…
               </div>
             ) : sheets.length === 0 ? (
-              <div className="text-[13px] text-[var(--color-text-muted)] italic py-6 text-center border border-dashed border-[var(--color-border)] rounded">
+              <div className="text-body text-[var(--color-text-muted)] italic py-6 text-center border border-dashed border-[var(--color-border)] rounded">
                 No active sheets in this set.
               </div>
             ) : (
               <div className="border border-[var(--color-border)] rounded-lg divide-y divide-[var(--color-border)] max-h-96 overflow-y-auto">
                 {sheets.map((s, i) => (
-                  <div key={s.doc.id} className="px-3 py-2 grid grid-cols-12 gap-2 items-center text-[13px]">
+                  <div key={s.doc.id} className="px-3 py-2 grid grid-cols-12 gap-2 items-center text-body">
                     <div className="col-span-3 min-w-0">
                       <div className="font-display font-semibold tabular-nums text-[var(--color-text)] truncate">{s.doc.documentNumber || "-"}</div>
-                      <div className="text-[13px] text-[var(--color-text-muted)] truncate">{s.doc.title || s.doc.name}</div>
+                      <div className="text-body text-[var(--color-text-muted)] truncate">{s.doc.title || s.doc.name}</div>
                     </div>
                     <div className="col-span-2 font-display tabular-nums text-[var(--color-text-muted)]">Rev {s.doc.rev || "-"}</div>
                     <div className="col-span-2">
                       <input value={s.newRevLabel} onChange={(e) => updateSheet(i, { newRevLabel: e.target.value })}
-                        className="w-full text-[13px] border border-[var(--color-border-strong)] rounded px-1.5 py-1 font-display tabular-nums"
+                        className="w-full text-body border border-[var(--color-border-strong)] rounded px-1.5 py-1 font-display tabular-nums"
                         placeholder="New rev" />
                     </div>
                     <div className="col-span-5">
-                      <PdfDrop onFile={(f) => updateSheet(i, { file: f })} file={s.file} className="p-1 text-[13px]">
+                      <PdfDrop onFile={(f) => updateSheet(i, { file: f })} file={s.file} className="p-1 text-body">
                         {s.file ? (
                           <span className="inline-flex items-center gap-1.5 text-[var(--color-text)] min-w-0 text-left">
                             <FileThumb file={s.file} size={24} />
@@ -212,7 +212,7 @@ export default function SetRevUpModal(props: SetRevUpModalProps) {
           </div>
 
           {result && (
-            <div className="text-[13px] space-y-1">
+            <div className="text-body space-y-1">
               <div className="text-[var(--state-released)]">Published: <b>{result.succeeded}</b></div>
               {result.sentForReview > 0 && (
                 <div className="text-[var(--color-text)]">Sent for pre-publish review (not yet live): <b>{result.sentForReview}</b></div>
@@ -224,7 +224,7 @@ export default function SetRevUpModal(props: SetRevUpModalProps) {
                     {result.failed.map((f, i) => <li key={i}>{f.documentNumber}: {f.error}</li>)}
                   </ul>
                   <button type="button" disabled={busy} onClick={() => void submit(result.failed.map((f) => f.documentId))}
-                    className="mt-2 h-9 px-3.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[13px] font-semibold hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
+                    className="mt-2 h-9 px-3.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-body font-medium hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
                     Try {result.failed.length === 1 ? "that one" : `those ${result.failed.length}`} again
                   </button>
                 </div>
@@ -233,7 +233,7 @@ export default function SetRevUpModal(props: SetRevUpModalProps) {
           )}
 
           {error && (
-            <div className="flex items-start gap-2 text-[13px] border-l-2 border-[var(--state-overdue)] pl-3 text-[var(--state-overdue)]">
+            <div className="flex items-start gap-2 text-body border-l-2 border-[var(--state-overdue)] pl-3 text-[var(--state-overdue)]">
               <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" /> {error}
             </div>
           )}
@@ -241,7 +241,7 @@ export default function SetRevUpModal(props: SetRevUpModalProps) {
 
         <div className="px-5 py-3 border-t border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center justify-end gap-2">
           <button onClick={onCancel} disabled={busy} className="text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5">Cancel</button>
-          <button onClick={() => void submit()} disabled={!valid || busy || loading} className="inline-flex items-center gap-1.5 text-sm font-bold bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] px-3 py-1.5 rounded disabled:opacity-40">
+          <button onClick={() => void submit()} disabled={!valid || busy || loading} className="inline-flex items-center gap-1.5 text-sm font-medium bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] px-3 py-1.5 rounded disabled:opacity-40">
             {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
             Bump All
           </button>

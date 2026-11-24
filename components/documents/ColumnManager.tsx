@@ -199,8 +199,8 @@ export default function ColumnManager(props: {
       <div className="w-full max-w-2xl rounded-lg bg-[var(--color-surface)] shadow-2xl border border-[var(--color-border)] overflow-hidden animate-in fade-in zoom-in-95">
         <div className="px-5 py-4 border-b border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center justify-between">
           <div>
-            <div className="text-sm font-bold text-[var(--color-text)]">Columns</div>
-            <div className="text-[13px] text-[var(--color-text-muted)]">
+            <div className="text-sm font-medium text-[var(--color-text)]">Columns</div>
+            <div className="text-body text-[var(--color-text-muted)]">
               {isController ? "Show, hide, order, rename or remove columns." : "Show, hide and order the columns."}{" "}
               {source === "library" ? "This folder uses the library's columns."
                 : source === "user" ? "This folder has your own columns."
@@ -217,7 +217,7 @@ export default function ColumnManager(props: {
         </div>
 
         {isController && onRenameColumn && (
-          <div className="px-5 py-2 bg-[var(--color-surface-2)] border-b border-[var(--color-border)] text-[13px] text-[var(--color-text)] flex items-start gap-2">
+          <div className="px-5 py-2 bg-[var(--color-surface-2)] border-b border-[var(--color-border)] text-body text-[var(--color-text)] flex items-start gap-2">
             <Pencil className="w-3 h-3 text-[var(--color-text-muted)] mt-0.5 shrink-0" />
             <span>
               <b>Tip:</b> Every column has a <Pencil className="inline w-2.5 h-2.5 align-baseline" /> pencil to rename, including the built-in ones (e.g. <i>Doc No</i> → <i>Sheet No</i>). Renames affect the displayed label only, the underlying data is untouched.
@@ -229,9 +229,9 @@ export default function ColumnManager(props: {
           <div className="px-5 pt-4 pb-3 border-b border-[var(--color-border)]">
             <div className="flex items-center gap-2 mb-1">
               <KeyRound className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
-              <span className="text-[13px] font-bold text-[var(--color-text)]">What makes a document unique in this library?</span>
+              <span className="text-body font-medium text-[var(--color-text)]">What makes a document unique in this library?</span>
             </div>
-            <div className="text-[13px] text-[var(--color-text-muted)] mb-2">
+            <div className="text-body text-[var(--color-text-muted)] mb-2">
               Pick the field(s) that, taken together, must be different for two documents to coexist. Default is just <i>Document Number</i>. Add <i>Sheet</i> to let many sheets share one number. Tick none to turn uniqueness off.
             </div>
             <div className="flex flex-wrap gap-1.5">
@@ -241,7 +241,7 @@ export default function ColumnManager(props: {
                   <button
                     key={col.key}
                     onClick={() => toggleUniq(col.key)}
-                    className={`px-2.5 py-1 rounded-full text-[13px] font-bold border transition ${
+                    className={`px-2.5 py-1 rounded-full text-body font-bold border transition ${
                       on
                         ? "bg-[color-mix(in_srgb,var(--state-held)_12%,transparent)] border-[var(--state-held)] text-[var(--state-held)]"
                         : "bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"
@@ -257,7 +257,7 @@ export default function ColumnManager(props: {
 
         <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="border border-[var(--color-border)] rounded-xl p-3">
-            <div className="text-[13px] font-bold text-[var(--color-text-muted)] mb-2">
+            <div className="text-body font-medium text-[var(--color-text-muted)] mb-2">
               Columns <span className="font-normal text-[var(--color-text-faint)]">- click a row to show / hide it</span>
             </div>
             <div className="space-y-1 max-h-[320px] overflow-auto">
@@ -283,7 +283,7 @@ export default function ColumnManager(props: {
                           }}
                           autoFocus
                           disabled={savingRename}
-                          className="flex-1 min-w-0 px-3 py-2 rounded-lg border border-[var(--color-main)]/40 bg-[var(--color-surface)] text-sm font-bold text-[var(--color-text)] outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]"
+                          className="flex-1 min-w-0 px-3 py-2 rounded-lg border border-[var(--color-main)]/40 bg-[var(--color-surface)] text-sm font-medium text-[var(--color-text)] outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]"
                         />
                         <button
                           onClick={() => void saveRename()}
@@ -342,8 +342,8 @@ export default function ColumnManager(props: {
                 );
               })}
               {renameError && (
-                <div className="mt-3 text-[13px] border-l-2 border-[var(--state-overdue)] pl-3 text-[var(--state-overdue)]">
-                  <div className="font-semibold text-[13px] mb-1">Rename failed</div>
+                <div className="mt-3 text-body border-l-2 border-[var(--state-overdue)] pl-3 text-[var(--state-overdue)]">
+                  <div className="font-medium text-body mb-1">Rename failed</div>
                   {renameError}
                 </div>
               )}
@@ -352,8 +352,8 @@ export default function ColumnManager(props: {
 
           <div className="border border-[var(--color-border)] rounded-xl p-3">
             <div className="flex items-center justify-between mb-2">
-              <div className="text-[13px] font-bold text-[var(--color-text-muted)]">Visible order</div>
-              <div className="text-[13px] text-[var(--color-text-faint)]">Drag a row, or use the arrows</div>
+              <div className="text-body font-medium text-[var(--color-text-muted)]">Visible order</div>
+              <div className="text-body text-[var(--color-text-faint)]">Drag a row, or use the arrows</div>
             </div>
             <div className="space-y-1 max-h-[320px] overflow-auto">
               {options.map((col, idx) => {
@@ -386,8 +386,8 @@ export default function ColumnManager(props: {
                       <div className="flex items-center min-w-0 gap-1.5">
                         <GripVertical className="h-4 w-4 text-[var(--color-text-faint)] cursor-grab active:cursor-grabbing shrink-0" />
                         <div className="min-w-0">
-                          <div className="text-sm font-semibold text-[var(--color-text)] truncate">{col.label}</div>
-                          <div className="text-[13px] text-[var(--color-text-muted)]">{col.key}</div>
+                          <div className="text-sm font-medium text-[var(--color-text)] truncate">{col.label}</div>
+                          <div className="text-body text-[var(--color-text-muted)]">{col.key}</div>
                         </div>
                       </div>
                       <div className="flex items-center gap-1 shrink-0">
@@ -424,7 +424,7 @@ export default function ColumnManager(props: {
         <div className="px-5 pb-4">
           {onApplyToLibrary ? (
             <fieldset>
-              <legend className="text-[13px] font-bold text-[var(--color-text-muted)] mb-2">Use these columns for</legend>
+              <legend className="text-body font-medium text-[var(--color-text-muted)] mb-2">Use these columns for</legend>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 {([
                   { key: "folder" as const, title: "This folder", sub: `Just for you, in ${folderName || "this folder"}` },
@@ -440,14 +440,14 @@ export default function ColumnManager(props: {
                       onChange={() => setTarget(o.key)}
                       className="mt-0.5 w-3.5 h-3.5 accent-[var(--color-main)]" />
                     <span className="min-w-0">
-                      <span className="block text-[14px] font-semibold text-[var(--color-text)]">{o.title}</span>
-                      <span className="block text-[13px] text-[var(--color-text-muted)] leading-snug">{o.sub}</span>
+                      <span className="block text-body font-medium text-[var(--color-text)]">{o.title}</span>
+                      <span className="block text-body text-[var(--color-text-muted)] leading-snug">{o.sub}</span>
                     </span>
                   </label>
                 ))}
               </div>
               {target === "library" && otherFoldersWithOwn > 0 && (
-                <label className="mt-2 flex items-start gap-2 text-[13px] text-[var(--color-text)] cursor-pointer">
+                <label className="mt-2 flex items-start gap-2 text-body text-[var(--color-text)] cursor-pointer">
                   <input type="checkbox" checked={switchFolders} onChange={(e) => setSwitchFolders(e.target.checked)}
                     className="mt-0.5 w-3.5 h-3.5 accent-[var(--color-main)]" />
                   <span>
@@ -458,37 +458,37 @@ export default function ColumnManager(props: {
               )}
             </fieldset>
           ) : (
-            <div className="text-[13px] text-[var(--color-text-muted)]">
+            <div className="text-body text-[var(--color-text-muted)]">
               Saved for you, in {folderName || "this folder"}.
             </div>
           )}
           {onUseLibrary && (
-            <div className="mt-3 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[13px] text-[var(--color-text-muted)]">
+            <div className="mt-3 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-body text-[var(--color-text-muted)]">
               <Columns className="w-3.5 h-3.5 text-[var(--color-text-faint)]" aria-hidden />
               <span>{source === "user" ? "You have your own columns in this folder" : "This folder has its own columns"}</span>
               <span aria-hidden>·</span>
               <button type="button" onClick={() => void switchToLibrary()} disabled={applying}
-                className="font-semibold text-[var(--color-accent-text)] underline-offset-2 hover:underline disabled:opacity-50">
+                className="font-medium text-[var(--color-accent-text)] underline-offset-2 hover:underline disabled:opacity-50">
                 Use the library&apos;s
               </button>
             </div>
           )}
           {applyError && (
-            <div role="alert" className="mt-2 text-[13px] text-[var(--state-overdue)]">{applyError}</div>
+            <div role="alert" className="mt-2 text-body text-[var(--state-overdue)]">{applyError}</div>
           )}
         </div>
 
         <div className="px-5 py-4 border-t border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center justify-end gap-2">
           <button
             onClick={onClose}
-            className="px-4 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-sm font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
+            className="px-4 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-sm font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
           >
             Cancel
           </button>
           <button
             onClick={() => void apply()}
             disabled={applying}
-            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-sm font-bold disabled:opacity-60"
+            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-sm font-medium disabled:opacity-60"
           >
             {applying && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
             {target === "library" && onApplyToLibrary ? "Use for every folder" : "Apply"}

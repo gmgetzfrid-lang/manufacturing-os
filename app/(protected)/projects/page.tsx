@@ -304,16 +304,16 @@ export default function ProjectsPage() {
         ) : error ? (
           <ErrorNote title="Couldn't load projects." next={error} onRetry={() => void refresh()} />
         ) : yours && allProjects.length > 0 && scopedAll.length === 0 ? (
-          <p className="text-[15px] text-[var(--color-text)]">
+          <p className="text-reading text-[var(--color-text)]">
             You&apos;re not on any project yet.{" "}
-            <button type="button" onClick={() => setScope("all")} className="font-semibold text-[var(--color-accent-text)] hover:underline underline-offset-2">See all projects</button>
+            <button type="button" onClick={() => setScope("all")} className="font-medium text-[var(--color-accent-text)] hover:underline underline-offset-2">See all projects</button>
           </p>
         ) : scopedProjects.length === 0 ? (
           filterActive && (tabCounts.all ?? 0) > 0 ? (
-            <p className="text-[15px] text-[var(--color-text-muted)]">
+            <p className="text-reading text-[var(--color-text-muted)]">
               {searchQ ? <>No project named &ldquo;{searchQ}&rdquo;{statusFilter !== "all" ? ` in ${statusFilter}` : ""}.</> : `No ${statusFilter} projects.`}
               {" "}
-              <button type="button" onClick={() => { setSearch(""); setStatusFilter("all"); }} className="font-semibold text-[var(--color-accent-text)] hover:underline underline-offset-2">
+              <button type="button" onClick={() => { setSearch(""); setStatusFilter("all"); }} className="font-medium text-[var(--color-accent-text)] hover:underline underline-offset-2">
                 Clear filters
               </button>
             </p>
@@ -329,10 +329,10 @@ export default function ProjectsPage() {
                   label={<button type="button" onClick={() => toggleFold(g.key)} aria-expanded={open}
                     className="inline-flex items-center gap-2 -ml-1 pl-1 pr-2 rounded-lg hover:bg-[color-mix(in_srgb,var(--color-text)_6%,transparent)]">
                     <ChevronDown aria-hidden className={`ui-chevron w-4 h-4 text-[var(--color-text-muted)] ${open ? "" : "-rotate-90"}`} />
-                    {g.label} <span className="text-[15px] font-normal tabular-nums text-[var(--color-text-muted)]">{g.items.length}</span>
+                    {g.label} <span className="text-reading font-normal tabular-nums text-[var(--color-text-muted)]">{g.items.length}</span>
                   </button>}>
                   {open ? <ProjectTable projects={g.items} factsOf={factsOf} /> : (
-                    <button type="button" onClick={() => toggleFold(g.key)} className="w-full px-4 h-11 text-left text-[14px] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]">
+                    <button type="button" onClick={() => toggleFold(g.key)} className="w-full px-4 h-11 text-left text-body text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]">
                       {g.items.length} project{g.items.length === 1 ? "" : "s"} folded away. Show them.
                     </button>
                   )}
@@ -340,12 +340,12 @@ export default function ProjectsPage() {
               );
             })}
             {shownCount === 0 && (
-              <p className="text-[15px] text-[var(--color-text-muted)]">No projects on that unit.{" "}
-                <button type="button" onClick={() => setUnitPick("")} className="font-semibold text-[var(--color-accent-text)] hover:underline underline-offset-2">Show all units</button>
+              <p className="text-reading text-[var(--color-text-muted)]">No projects on that unit.{" "}
+                <button type="button" onClick={() => setUnitPick("")} className="font-medium text-[var(--color-accent-text)] hover:underline underline-offset-2">Show all units</button>
               </p>
             )}
             {groups.some((g) => g.label === "Other projects") && (
-              <p className="text-[13px] text-[var(--color-text-muted)]">A project goes under its kind from its name, or from Setup › Project type.</p>
+              <p className="text-body text-[var(--color-text-muted)]">A project goes under its kind from its name, or from Setup › Project type.</p>
             )}
           </>
         )}
@@ -424,7 +424,7 @@ function ProgressBar({ f, className = "" }: { f: RowFacts; className?: string })
       <span className="relative h-2 w-24 rounded-full bg-[var(--color-accent-soft)] overflow-hidden" role="progressbar" aria-valuenow={pr.pct} aria-valuemin={0} aria-valuemax={100} aria-label="Work done">
         <span className="absolute inset-y-0 left-0 rounded-full" style={{ width: `${Math.min(100, Math.max(0, pr.pct))}%`, background: fill }} />
       </span>
-      <span className="font-display text-[15px] font-semibold tabular-nums text-[var(--color-text)]">{pr.pct}%</span>
+      <span className="font-display text-reading font-semibold tabular-nums text-[var(--color-text)]">{pr.pct}%</span>
     </span>
   );
 }
@@ -440,15 +440,15 @@ function ProjectTable({ projects, factsOf }: { projects: Project[]; factsOf: (p:
   return (
     <>
       {/* Desk: a ruled table. */}
-      <table className="max-sm:hidden w-full text-[14px]">
-        <thead className="bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text-muted)] text-left">
+      <table className="max-sm:hidden w-full text-body">
+        <thead className="bg-[var(--color-surface-2)] text-body text-[var(--color-text-muted)] text-left">
           <tr className="border-b border-[var(--color-border)]">
-            <th scope="col" className="font-semibold px-4 h-10">Project</th>
-            <th scope="col" className="font-semibold px-4 w-[120px]">Status</th>
-            <th scope="col" className="font-semibold px-4 w-[190px]">Phase / progress</th>
-            <th scope="col" className="font-semibold px-4 w-[150px]">Due</th>
-            <th scope="col" className="font-semibold px-4 w-[210px] hidden lg:table-cell">Owner</th>
-            <th scope="col" className="font-semibold px-4 w-[130px] hidden md:table-cell">Last activity</th>
+            <th scope="col" className="font-medium px-4 h-10">Project</th>
+            <th scope="col" className="font-medium px-4 w-[120px]">Status</th>
+            <th scope="col" className="font-medium px-4 w-[190px]">Phase / progress</th>
+            <th scope="col" className="font-medium px-4 w-[150px]">Due</th>
+            <th scope="col" className="font-medium px-4 w-[210px] hidden lg:table-cell">Owner</th>
+            <th scope="col" className="font-medium px-4 w-[130px] hidden md:table-cell">Last activity</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-[var(--color-border)]">
@@ -457,29 +457,29 @@ function ProjectTable({ projects, factsOf }: { projects: Project[]; factsOf: (p:
               <td className="px-4 py-3 relative">
                 {f.late && <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] bg-[var(--state-overdue)]" />}
                 <div className="flex items-baseline gap-2 min-w-0">
-                  <Link href={href} className="min-w-0 font-semibold text-[var(--color-text)] hover:text-[var(--color-accent-text)]">{p.name}</Link>
-                  {p.visibility === "private" && <span className="shrink-0 inline-flex items-center gap-1 text-[13px] text-[var(--color-text-muted)]"><Lock className="w-3 h-3" /> Private</span>}
-                  {p.mocReference && <CopyId value={p.mocReference} label="MOC number" className="shrink-0 text-[14px]" />}
+                  <Link href={href} className="min-w-0 font-medium text-[var(--color-text)] hover:text-[var(--color-accent-text)]">{p.name}</Link>
+                  {p.visibility === "private" && <span className="shrink-0 inline-flex items-center gap-1 text-body text-[var(--color-text-muted)]"><Lock className="w-3 h-3" /> Private</span>}
+                  {p.mocReference && <CopyId value={p.mocReference} label="MOC number" className="shrink-0 text-body" />}
                 </div>
-                {p.description && <p className="mt-0.5 text-[13px] text-[var(--color-text-muted)] line-clamp-1">{p.description}</p>}
+                {p.description && <p className="mt-0.5 text-body text-[var(--color-text-muted)] line-clamp-1">{p.description}</p>}
               </td>
               <td className="px-4 py-3"><StatusTag status={p.status} late={f.late} workDone={!!f.progress && f.progress.pct >= 100} /></td>
               <td className="px-4 py-3">
-                {f.progress ? <ProgressBar f={f} /> : f.progress === null ? <span className="text-[14px] text-[var(--color-text-muted)]">No schedule yet</span> : null}
-                {f.phaseNote && <div className="mt-0.5 text-[13px] text-[var(--color-text-muted)]">{f.phaseNote}</div>}
+                {f.progress ? <ProgressBar f={f} /> : f.progress === null ? <span className="text-body text-[var(--color-text-muted)]">No schedule yet</span> : null}
+                {f.phaseNote && <div className="mt-0.5 text-body text-[var(--color-text-muted)]">{f.phaseNote}</div>}
               </td>
               <td className="px-4 py-3">
                 {f.dueDay ? (
                   <>
                     <div className="font-display font-semibold tabular-nums text-[var(--color-text)]">{f.dueDay}</div>
-                    {f.dueNote && <div className={`text-[13px] ${f.late && (f.due?.kind === "past target" || f.due?.kind === "ended") ? "text-[var(--state-overdue)] font-semibold" : "text-[var(--color-text-muted)]"}`}>{f.dueNote}</div>}
+                    {f.dueNote && <div className={`text-body ${f.late && (f.due?.kind === "past target" || f.due?.kind === "ended") ? "text-[var(--state-overdue)] font-medium" : "text-[var(--color-text-muted)]"}`}>{f.dueNote}</div>}
                   </>
                 ) : null}
               </td>
               <td className="px-4 py-3 hidden lg:table-cell">
-                <span className="block max-w-[200px] truncate text-[14px] text-[var(--color-text)]" title={p.ownerUserName}>{p.ownerUserName || null}</span>
+                <span className="block max-w-[200px] truncate text-body text-[var(--color-text)]" title={p.ownerUserName}>{p.ownerUserName || null}</span>
               </td>
-              <td className="px-4 py-3 hidden md:table-cell text-[14px] text-[var(--color-text-muted)] whitespace-nowrap">{formatRelative(p.lastActivityAt)}</td>
+              <td className="px-4 py-3 hidden md:table-cell text-body text-[var(--color-text-muted)] whitespace-nowrap">{formatRelative(p.lastActivityAt)}</td>
             </tr>
           ))}
         </tbody>
@@ -491,17 +491,17 @@ function ProjectTable({ projects, factsOf }: { projects: Project[]; factsOf: (p:
             {f.late && <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] bg-[var(--state-overdue)]" />}
             <Link href={href} className="block px-4 py-3 active:bg-[var(--color-surface-2)]">
               <div className="flex items-start gap-3">
-                <span className="min-w-0 flex-1 font-semibold text-[15px] leading-snug text-[var(--color-text)]">
+                <span className="min-w-0 flex-1 font-medium text-reading leading-snug text-[var(--color-text)]">
                   {p.name}
                   {p.visibility === "private" && <Lock className="inline w-3 h-3 ml-1.5 -mt-0.5 text-[var(--color-text-muted)]" aria-label="Private" />}
                 </span>
                 <StatusTag status={p.status} late={f.late} workDone={!!f.progress && f.progress.pct >= 100} />
               </div>
-              <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-[13px] text-[var(--color-text-muted)]">
+              <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-body text-[var(--color-text-muted)]">
                 {f.progress && <ProgressBar f={f} />}
                 {f.progress === null && <span>No schedule yet</span>}
                 {f.phaseNote && <span>{f.phaseNote}</span>}
-                {f.dueDay && <span className={f.late && (f.due?.kind === "past target" || f.due?.kind === "ended") ? "text-[var(--state-overdue)] font-semibold" : ""}>{f.due?.kind === "starts" ? "Starts" : f.due?.kind === "ended" ? "Ended" : "Due"} {f.dueDay}</span>}
+                {f.dueDay && <span className={f.late && (f.due?.kind === "past target" || f.due?.kind === "ended") ? "text-[var(--state-overdue)] font-medium" : ""}>{f.due?.kind === "starts" ? "Starts" : f.due?.kind === "ended" ? "Ended" : "Due"} {f.dueDay}</span>}
               </div>
             </Link>
           </li>
@@ -515,7 +515,7 @@ function ProjectTable({ projects, factsOf }: { projects: Project[]; factsOf: (p:
 function EmptyState({ onNew }: { onNew: () => void }) {
   return (
     <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-8 flex flex-wrap items-center gap-x-4 gap-y-3">
-      <p className="flex-1 min-w-[220px] text-[15px] text-[var(--color-text)]">A project holds a job&apos;s schedule, shift reports, costs and close-out.</p>
+      <p className="flex-1 min-w-[220px] text-reading text-[var(--color-text)]">A project holds a job&apos;s schedule, shift reports, costs and close-out.</p>
       <button type="button" onClick={onNew} className={heroQuiet}><Plus className="w-4 h-4" /> New project</button>
     </div>
   );

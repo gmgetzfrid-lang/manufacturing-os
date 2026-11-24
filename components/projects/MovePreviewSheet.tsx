@@ -98,7 +98,7 @@ export default function MovePreviewSheet({ targets, allTasks, deltaDays, onCance
       <div className="relative w-full max-w-md bg-[var(--color-surface)] rounded-2xl shadow-2xl ring-1 ring-slate-900/10 overflow-hidden animate-in fade-in zoom-in-95" onClick={(e) => e.stopPropagation()}>
         <div className="px-5 py-3.5 border-b border-[var(--color-border)] flex items-center gap-2">
           <CalendarRange className="w-4 h-4 text-[var(--color-text-muted)]" />
-          <h2 className="font-bold text-[var(--color-text)] text-[15px] flex-1 min-w-0 truncate">
+          <h2 className="font-medium text-[var(--color-text)] text-reading flex-1 min-w-0 truncate">
             Move {multi ? `${targets.length} tasks` : `“${primary.name}”`} {absDays} day{absDays === 1 ? "" : "s"} {dir}
           </h2>
           <button onClick={onCancel} aria-label="Close" className="p-1 rounded hover:bg-[var(--color-surface)] text-[var(--color-text-muted)] transition-colors"><XIcon className="w-4 h-4" /></button>
@@ -134,14 +134,14 @@ export default function MovePreviewSheet({ targets, allTasks, deltaDays, onCance
                 <Clock className="w-4 h-4 shrink-0 mt-0.5" />
                 <div>
                   <span>Extending the finish by {absDays} day{absDays === 1 ? "" : "s"}; the start stays.</span>
-                  <div className="mt-1 text-[11px] opacity-80">Planned work hours stay as entered. Change them on the task if the job itself grew.</div>
+                  <div className="mt-1 text-caption opacity-80">Planned work hours stay as entered. Change them on the task if the job itself grew.</div>
                 </div>
               </div>
             )}
           </div>
 
           {pushed.length > 0 && (
-            <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] p-2.5 text-[12px] text-[var(--color-text)]">
+            <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] p-2.5 text-caption text-[var(--color-text)]">
               <b>Also moves:</b> linked step{pushed.length === 1 ? "" : "s"} that can&apos;t start until this finishes: {pushed.slice(0, 6).join(", ")}{pushed.length > 6 ? ` and ${pushed.length - 6} more` : ""}.
             </div>
           )}
@@ -149,16 +149,16 @@ export default function MovePreviewSheet({ targets, allTasks, deltaDays, onCance
           {warnings.length > 0 && (
             <div className="border-l-2 border-[var(--state-held)] pl-3 space-y-1">
               {warnings.map((wn, i) => (
-                <div key={i} className="flex items-start gap-1.5 text-[12px] text-[var(--state-held-text)]">
+                <div key={i} className="flex items-start gap-1.5 text-caption text-[var(--state-held-text)]">
                   <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" /> {wn}
                 </div>
               ))}
-              <div className="text-[11px] text-[var(--color-text-muted)] pl-5">You can still go ahead.</div>
+              <div className="text-caption text-[var(--color-text-muted)] pl-5">You can still go ahead.</div>
             </div>
           )}
 
           {primary.status && (
-            <div className="text-[11px] text-[var(--color-text-faint)]">
+            <div className="text-caption text-[var(--color-text-faint)]">
               Defaulted to <b className="text-[var(--color-text-muted)]">{defaultMode === "extend" ? "taking longer" : "shift the date"}</b> because {multi ? "the selection includes" : "this is"} {statusWord(primary.status, multi, targets)}.
             </div>
           )}
@@ -166,7 +166,7 @@ export default function MovePreviewSheet({ targets, allTasks, deltaDays, onCance
 
         <div className="px-5 py-3 border-t border-[var(--color-border)] bg-slate-50/60 dark:bg-[var(--color-surface-2)] flex items-center justify-end gap-2">
           <button onClick={onCancel} disabled={busy} className="text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5 transition-colors">Cancel</button>
-          <button autoFocus onClick={() => onConfirm(mode)} disabled={busy} className="inline-flex items-center gap-1.5 text-sm font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] px-4 py-2 rounded-lg disabled:opacity-40 transition-colors">
+          <button autoFocus onClick={() => onConfirm(mode)} disabled={busy} className="inline-flex items-center gap-1.5 text-sm font-medium text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] px-4 py-2 rounded-lg disabled:opacity-40 transition-colors">
             {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <CalendarRange className="w-4 h-4" />}
             {mode === "extend" ? "Extend" : "Shift"} {multi ? `${targets.length} tasks` : "task"}
           </button>
@@ -183,8 +183,8 @@ function ModeCard({ active, disabled, onClick, title, body }: {
   const ring = active ? "border-[var(--color-text)] ring-1 ring-[var(--color-text)] bg-[var(--color-surface-2)]" : "border-[var(--color-border)] hover:border-[var(--color-border-strong)] bg-[var(--color-surface)]";
   return (
     <button onClick={onClick} disabled={disabled} aria-pressed={active} className={`text-left rounded-xl border p-3 transition-all disabled:opacity-40 disabled:cursor-not-allowed ${ring}`}>
-      <div className="text-[13px] font-bold text-[var(--color-text)]">{title}</div>
-      <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5 leading-snug">{body}</div>
+      <div className="text-body font-medium text-[var(--color-text)]">{title}</div>
+      <div className="text-caption text-[var(--color-text-muted)] mt-0.5 leading-snug">{body}</div>
     </button>
   );
 }

@@ -720,7 +720,7 @@ export default function RequestPortal() {
     const on = sortConfig.field === field;
     const Arrow = on ? (sortConfig.direction === 'asc' ? ArrowUp : ArrowDown) : ArrowUpDown;
     return (
-      <th className={`font-semibold px-4 h-10 whitespace-nowrap ${className}`} aria-sort={on ? (sortConfig.direction === 'asc' ? 'ascending' : 'descending') : undefined}>
+      <th className={`font-medium px-4 h-10 whitespace-nowrap ${className}`} aria-sort={on ? (sortConfig.direction === 'asc' ? 'ascending' : 'descending') : undefined}>
         <button type="button" onClick={() => handleSort(field)} className={`group/sort inline-flex items-center gap-1 hover:text-[var(--color-text)] ${on ? 'text-[var(--color-text)]' : ''}`}>
           {label}<Arrow aria-hidden className={`w-3.5 h-3.5 transition-opacity ${on ? '' : 'opacity-0 group-hover/sort:opacity-100 group-focus-visible/sort:opacity-100'}`} />
         </button>
@@ -728,7 +728,7 @@ export default function RequestPortal() {
     );
   };
   const tableHead = (
-    <thead className="bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text-muted)] text-left">
+    <thead className="bg-[var(--color-surface-2)] text-body text-[var(--color-text-muted)] text-left">
       <tr>
         <th className="w-11 pl-4 h-10 rounded-tl-xl">
           <input type="checkbox" aria-label="Select all on this page" checked={allOnPage} onChange={handleSelectAll} className="w-4 h-4 rounded border-[var(--color-border-strong)] cursor-pointer align-middle" />
@@ -736,10 +736,10 @@ export default function RequestPortal() {
         {sortHead('ticketId', 'Request')}
         {sortHead('title', 'Title and last change', 'w-full min-w-[240px]')}
         {sortHead('status', 'Stage')}
-        <th className="font-semibold px-4 h-10 whitespace-nowrap hidden md:table-cell">Waiting on</th>
+        <th className="font-medium px-4 h-10 whitespace-nowrap hidden md:table-cell">Waiting on</th>
         {sortHead('targetCompletionAt', 'Due')}
         {sortHead('priority', 'Priority', 'hidden xl:table-cell')}
-        <th className="font-semibold px-4 h-10 whitespace-nowrap hidden 2xl:table-cell">Requester</th>
+        <th className="font-medium px-4 h-10 whitespace-nowrap hidden 2xl:table-cell">Requester</th>
         {sortHead('lastModified', 'Updated', 'hidden lg:table-cell')}
         <th className="pr-3 h-10 rounded-tr-xl"><span className="sr-only">Comments and actions</span></th>
       </tr>
@@ -799,7 +799,7 @@ export default function RequestPortal() {
                 className={`${heroQuiet} max-sm:px-3 ${isFilterPanelOpen ? 'bg-[var(--color-surface-2)]' : ''}`}>
                 <SlidersHorizontal aria-hidden className="w-4 h-4" /><span className="max-sm:sr-only">More filters</span>{extraChips.length > 0 && <span className="font-normal tabular-nums text-[var(--color-text-muted)]">{extraChips.length}</span>}
               </button>
-              {filtersOn && <button type="button" onClick={() => { clearAllFilters(); setCurrentPage(1); }} className="h-10 px-1 text-[14px] font-semibold text-[var(--color-accent-text)] hover:underline underline-offset-2">Clear filters</button>}
+              {filtersOn && <button type="button" onClick={() => { clearAllFilters(); setCurrentPage(1); }} className="h-10 px-1 text-body font-medium text-[var(--color-accent-text)] hover:underline underline-offset-2">Clear filters</button>}
             </div>
           </div>
 
@@ -807,7 +807,7 @@ export default function RequestPortal() {
             <ul aria-label="Other filters on" className="flex flex-wrap gap-2">
               {extraChips.map((c) => (
                 <li key={c.key}>
-                  <button type="button" onClick={c.clear} aria-label={`Remove filter: ${c.label}`} className="ui-tag !font-sans !font-semibold gap-1.5">
+                  <button type="button" onClick={c.clear} aria-label={`Remove filter: ${c.label}`} className="ui-tag !font-sans !font-medium gap-1.5">
                     {c.label}<X aria-hidden className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
                   </button>
                 </li>
@@ -818,7 +818,7 @@ export default function RequestPortal() {
           {isFilterPanelOpen && (
             <div id="req-more-filters" className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 grid grid-cols-1 lg:grid-cols-[auto_auto_1fr] gap-x-8 gap-y-4 items-start">
               <div className="min-w-0">
-                <div className="text-[14px] font-semibold text-[var(--color-text)] mb-1.5">Request type</div>
+                <div className="text-body font-medium text-[var(--color-text)] mb-1.5">Request type</div>
                 <div className={bandSeg} role="group" aria-label="Request type">
                   <button type="button" onClick={() => setFilters({ ...filters, type: 'ALL' })} aria-pressed={filters.type === 'ALL'} className={bandSegItem(filters.type === 'ALL')}>All</button>
                   {typeOptions.map(({ v, l }) => (
@@ -827,7 +827,7 @@ export default function RequestPortal() {
                 </div>
               </div>
               <div className="min-w-0">
-                <div className="text-[14px] font-semibold text-[var(--color-text)] mb-1.5">Last activity</div>
+                <div className="text-body font-medium text-[var(--color-text)] mb-1.5">Last activity</div>
                 <div className={bandSeg} role="group" aria-label="Last activity">
                   {([['all', 'Any time'], ['today', 'Today'], ['week', 'This week'], ['month', 'This month']] as const).map(([v, l]) => (
                     <button key={v} type="button" onClick={() => setFilters({ ...filters, dateRange: v })} aria-pressed={filters.dateRange === v} className={bandSegItem(filters.dateRange === v)}>{l}</button>
@@ -835,16 +835,16 @@ export default function RequestPortal() {
                 </div>
               </div>
               <fieldset className="min-w-0">
-                <legend className="text-[14px] font-semibold text-[var(--color-text)] mb-1.5">Also show</legend>
-                <label className="flex items-center gap-2 min-h-9 text-[15px] text-[var(--color-text)] cursor-pointer">
+                <legend className="text-body font-medium text-[var(--color-text)] mb-1.5">Also show</legend>
+                <label className="flex items-center gap-2 min-h-9 text-reading text-[var(--color-text)] cursor-pointer">
                   <input type="checkbox" checked={filters.priority === 'urgent'} onChange={(e) => setFilters({ ...filters, priority: e.target.checked ? 'urgent' : 'all' })} className="w-4 h-4 rounded border-[var(--color-border-strong)]" />
                   Urgent and RFI only
                 </label>
-                <label className={`flex items-center gap-2 min-h-9 text-[15px] cursor-pointer ${filters.status === 'ALL' ? 'text-[var(--color-text-muted)]' : 'text-[var(--color-text)]'}`}>
+                <label className={`flex items-center gap-2 min-h-9 text-reading cursor-pointer ${filters.status === 'ALL' ? 'text-[var(--color-text-muted)]' : 'text-[var(--color-text)]'}`}>
                   <input type="checkbox" checked={showClosed || filters.status === 'ALL'} disabled={filters.status === 'ALL'} onChange={(e) => setShowClosed(e.target.checked)} aria-describedby="req-closed-hint" className="w-4 h-4 rounded border-[var(--color-border-strong)]" />
                   Closed requests too
                 </label>
-                <p id="req-closed-hint" className="text-[13px] text-[var(--color-text-muted)]">{filters.status === 'ALL' ? 'Any stage already includes closed ones.' : 'Adds closed requests to the stage you picked.'}</p>
+                <p id="req-closed-hint" className="text-body text-[var(--color-text-muted)]">{filters.status === 'ALL' ? 'Any stage already includes closed ones.' : 'Adds closed requests to the stage you picked.'}</p>
               </fieldset>
             </div>
           )}
@@ -854,7 +854,7 @@ export default function RequestPortal() {
       <PageBody className="!space-y-3">
         {selectedTicketIds.size > 0 && (
           <div className="flex flex-wrap items-center gap-2 rounded-xl border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-4 py-2">
-            <span className="text-[15px] font-semibold text-[var(--color-text)] mr-2 tabular-nums">{selectedTicketIds.size} selected</span>
+            <span className="text-reading font-medium text-[var(--color-text)] mr-2 tabular-nums">{selectedTicketIds.size} selected</span>
             <Button variant="secondary" onClick={handleBulkUrgencyToggle} loading={processingBulk}><Zap className="w-4 h-4" /> Mark urgent</Button>
             <Button variant="secondary" onClick={handleBulkArchive} loading={processingBulk}><Archive className="w-4 h-4" /> Close</Button>
             <div className="flex-1" />
@@ -872,7 +872,7 @@ export default function RequestPortal() {
           ) : (
             <>
               <div className="max-sm:hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
-                <table className="w-full text-[14px]">
+                <table className="w-full text-body">
                   {tableHead}
                   {teamBoard.map((b) => (
                     <tbody key={b.id || 'pool'} className="divide-y divide-[var(--color-border)] border-t border-[var(--color-border-strong)]">
@@ -909,7 +909,7 @@ export default function RequestPortal() {
           )
         ) : (
           <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
-            <table className="w-full text-[14px] max-sm:hidden">
+            <table className="w-full text-body max-sm:hidden">
               {tableHead}
               <tbody className="divide-y divide-[var(--color-border)]">
                 {paginatedTickets.map((t) => <RequestRow key={t.id} {...rowProps(t)} />)}
@@ -919,11 +919,11 @@ export default function RequestPortal() {
               {paginatedTickets.map((t) => <RequestItem key={t.id} {...rowProps(t)} />)}
             </ul>
             {filteredTickets.length > 10 && (
-              <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-2.5 border-t border-[var(--color-border)] text-[13px] text-[var(--color-text-muted)]">
+              <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-2.5 border-t border-[var(--color-border)] text-body text-[var(--color-text-muted)]">
                 <div className="flex items-center gap-3">
                   <span className="tabular-nums">{(currentPage - 1) * itemsPerPage + 1} to {Math.min(currentPage * itemsPerPage, filteredTickets.length)} of {filteredTickets.length}</span>
                   <label className="sr-only" htmlFor="req-per-page">Rows per page</label>
-                  <select id="req-per-page" value={itemsPerPage} onChange={(e) => { setItemsPerPage(Number(e.target.value)); setCurrentPage(1); }} className="h-8 pointer-coarse:h-11 px-2 rounded-lg border border-[var(--color-border-control)] bg-[var(--color-surface)] text-[13px] text-[var(--color-text)]">
+                  <select id="req-per-page" value={itemsPerPage} onChange={(e) => { setItemsPerPage(Number(e.target.value)); setCurrentPage(1); }} className="h-8 pointer-coarse:h-11 px-2 rounded-lg border border-[var(--color-border-control)] bg-[var(--color-surface)] text-body text-[var(--color-text)]">
                     {[10, 25, 50, 100].map((n) => <option key={n} value={n}>{n} per page</option>)}
                   </select>
                 </div>
@@ -970,7 +970,7 @@ function MetaFilter({ on, onClick, title, children }: { on?: boolean; onClick?: 
   if (!onClick) return <span>{children}</span>;
   return (
     <button type="button" onClick={onClick} aria-pressed={on} title={title}
-      className={`rounded hover:text-[var(--color-accent-text)] hover:underline underline-offset-2 ${on ? 'font-semibold text-[var(--color-accent-text)] underline' : ''}`}>
+      className={`rounded hover:text-[var(--color-accent-text)] hover:underline underline-offset-2 ${on ? 'font-medium text-[var(--color-accent-text)] underline' : ''}`}>
       {children}
     </button>
   );
@@ -981,7 +981,7 @@ function DueText({ t }: { t: Ticket }) {
   const late = isPastDue(t);
   const soon = !late && isNearingDue(t);
   return (
-    <span className={`tabular-nums whitespace-nowrap ${late ? 'font-semibold text-[var(--state-overdue-text)]' : soon ? 'font-semibold text-[var(--state-held-text)]' : 'text-[var(--color-text)]'}`}>
+    <span className={`tabular-nums whitespace-nowrap ${late ? 'font-medium text-[var(--state-overdue-text)]' : soon ? 'font-medium text-[var(--state-held-text)]' : 'text-[var(--color-text)]'}`}>
       {fmtDay(t.targetCompletionAt)}{late && <span className="sr-only"> (overdue)</span>}{soon && <span className="sr-only"> (due soon)</span>}
     </span>
   );
@@ -1003,7 +1003,7 @@ function ChangeLine({ t, withTime = false }: { t: Ticket; withTime?: boolean }) 
   if (!lc) return null;
   const when = withTime && lc.at ? relTime(lc.at) : '';
   return (
-    <span className="block truncate text-[13px] text-[var(--color-text-muted)]">
+    <span className="block truncate text-body text-[var(--color-text-muted)]">
       {lc.what}{lc.who ? ` by ${lc.who}` : ''}{when ? `, ${/^\d|^[A-Z][a-z]{2} \d/.test(when) ? when : when.toLowerCase()}` : ''}
     </span>
   );
@@ -1034,16 +1034,16 @@ function RequestRow({ ticket: t, actionNeeded, unread, selected, onToggle, onOpe
       <td className="px-4 py-3 align-top whitespace-nowrap">
         <div className="relative flex items-center">
           {unread && <span className="absolute -left-3 ui-dot !w-1.5 !h-1.5 !bg-[var(--color-main)]" title="New updates" aria-label="New updates" />}
-          <CopyId value={t.ticketId} label="request number" className="text-[15px]" />
+          <CopyId value={t.ticketId} label="request number" className="text-reading" />
         </div>
-        <div className="mt-0.5 text-[13px] text-[var(--color-text-muted)] flex items-center gap-1.5">
+        <div className="mt-0.5 text-body text-[var(--color-text-muted)] flex items-center gap-1.5">
           {t.requestType && <MetaFilter onClick={onType} on={typeOn} title={typeOn ? 'Show every type' : `Show only ${t.requestType} requests`}>{t.requestType}</MetaFilter>}
           {t.requestType && t.unit && <span aria-hidden>·</span>}
           {t.unit && <MetaFilter onClick={onUnit} on={unitOn} title={unitOn ? 'Show every unit' : `Show only unit ${t.unit}`}>Unit {t.unit}</MetaFilter>}
         </div>
       </td>
       <td className="px-4 py-3 align-top max-w-0">
-        <Link href={`/requests/${t.id}`} onClick={onLink} className={`block line-clamp-2 text-[15px] leading-snug text-[var(--color-text)] hover:text-[var(--color-accent-text)] ${unread ? 'font-semibold' : ''}`}>{t.title}</Link>
+        <Link href={`/requests/${t.id}`} onClick={onLink} className={`block line-clamp-2 text-reading leading-snug text-[var(--color-text)] hover:text-[var(--color-accent-text)] ${unread ? 'font-medium' : ''}`}>{t.title}</Link>
         <ChangeLine t={t} />
         {t.archivedAt && <span className="mt-1 inline-block"><StatusTag tone="none">Files archived</StatusTag></span>}
       </td>
@@ -1058,7 +1058,7 @@ function RequestRow({ ticket: t, actionNeeded, unread, selected, onToggle, onOpe
       <td className="pr-3 py-2 align-top">
         <div className="flex items-center justify-end gap-1">
           {comments > 0 && (
-            <span className="inline-flex items-center gap-1 text-[13px] tabular-nums text-[var(--color-text-muted)]" title={`${comments} comment${comments === 1 ? '' : 's'}`}>
+            <span className="inline-flex items-center gap-1 text-body tabular-nums text-[var(--color-text-muted)]" title={`${comments} comment${comments === 1 ? '' : 's'}`}>
               <MessageCircle aria-hidden className="w-3.5 h-3.5" />{comments}<span className="sr-only"> comments</span>
             </span>
           )}
@@ -1080,13 +1080,13 @@ function RequestItem({ ticket: t, actionNeeded, unread, menu, onLink }: RowProps
       <div className="flex-1 min-w-0 pl-4 pr-1 py-3">
         <div className="flex items-center gap-2">
           {unread && <span className="ui-dot !w-1.5 !h-1.5 !bg-[var(--color-main)]" aria-label="New updates" />}
-          <CopyId value={t.ticketId} label="request number" className="relative z-[1] text-[15px] min-w-0" />
+          <CopyId value={t.ticketId} label="request number" className="relative z-[1] text-reading min-w-0" />
           <span className="flex-1" />
           <StatusTag tone={stageTone(t.status)} plain>{stageLabel(t.status)}</StatusTag>
         </div>
-        <Link href={`/requests/${t.id}`} onClick={onLink} className={`block mt-0.5 text-[15px] text-[var(--color-text)] line-clamp-2 after:absolute after:inset-0 after:content-[''] ${unread ? 'font-semibold' : ''}`}>{t.title}</Link>
-        <div className="mt-1 text-[13px] text-[var(--color-text-muted)] flex flex-wrap gap-x-3">
-          <span>Waiting on {actionNeeded ? <span className="font-semibold text-[var(--state-held-text)]">you</span> : (who ?? 'nobody')}</span>
+        <Link href={`/requests/${t.id}`} onClick={onLink} className={`block mt-0.5 text-reading text-[var(--color-text)] line-clamp-2 after:absolute after:inset-0 after:content-[''] ${unread ? 'font-medium' : ''}`}>{t.title}</Link>
+        <div className="mt-1 text-body text-[var(--color-text-muted)] flex flex-wrap gap-x-3">
+          <span>Waiting on {actionNeeded ? <span className="font-medium text-[var(--state-held-text)]">you</span> : (who ?? 'nobody')}</span>
           {t.targetCompletionAt && <span>Due <DueText t={t} /></span>}
         </div>
         <ChangeLine t={t} withTime />
@@ -1127,11 +1127,11 @@ function DrafterHead({ b }: { b: DrafterGroup }) {
         {b.id === null
           ? <span className="w-7 h-7 rounded-full grid place-items-center border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-muted)]"><Inbox aria-hidden className="w-3.5 h-3.5" /></span>
           : <UserAvatar uid={b.id} name={b.name} size={28} rounded="full" />}
-        <span className="text-[16px] font-semibold text-[var(--color-text)] truncate">{b.name}</span>
+        <span className="text-reading font-medium text-[var(--color-text)] truncate">{b.name}</span>
       </span>
       {parts.filter(([, n], i) => i === 0 || n > 0).map(([label, n, bad]) => (
-        <span key={label} className="text-[13px] text-[var(--color-text-muted)]">
-          {label} <span className={`font-semibold tabular-nums ${bad ? 'text-[var(--state-overdue-text)]' : 'text-[var(--color-text)]'}`}>{n}</span>
+        <span key={label} className="text-body text-[var(--color-text-muted)]">
+          {label} <span className={`font-medium tabular-nums ${bad ? 'text-[var(--state-overdue-text)]' : 'text-[var(--color-text)]'}`}>{n}</span>
         </span>
       ))}
     </div>
@@ -1142,7 +1142,7 @@ function DrafterHead({ b }: { b: DrafterGroup }) {
 function EmptySheet({ line, action }: { line: string; action?: React.ReactNode }) {
   return (
     <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-10 text-center">
-      <p className="text-[15px] text-[var(--color-text)]">{line}</p>
+      <p className="text-reading text-[var(--color-text)]">{line}</p>
       {action && <div className="mt-4 flex justify-center">{action}</div>}
     </div>
   );

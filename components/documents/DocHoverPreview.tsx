@@ -64,7 +64,7 @@ export default function DocHoverPreview({
           style={{ left: pos.left, top: pos.top }}
         >
           <DocThumb documentId={documentId} filePath={filePath} width={previewWidth} />
-          {label && <div className="mt-1.5 max-w-[240px] text-[13px] font-bold text-[var(--color-text-muted)] truncate px-0.5">{label}</div>}
+          {label && <div className="mt-1.5 max-w-[240px] text-body font-medium text-[var(--color-text-muted)] truncate px-0.5">{label}</div>}
         </div>,
         document.body,
       )}

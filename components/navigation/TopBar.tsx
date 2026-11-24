@@ -85,8 +85,8 @@ export default function TopBar({ onOpenMobileNav }: { onOpenMobileNav?: () => vo
           className="hidden sm:inline-flex items-center gap-2 h-9 w-60 lg:w-80 pl-3 pr-1.5 rounded-lg bg-[var(--color-surface)] border border-[var(--color-border-strong)] hover:border-[var(--color-border-control)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors group"
         >
           <Search className="w-3.5 h-3.5" />
-          <span className="flex-1 min-w-0 truncate text-left text-[14px] pr-1">Search documents, tags, requests</span>
-          <kbd className="inline-flex items-center gap-0.5 px-1.5 py-0.5 bg-[var(--color-surface-2)] group-hover:bg-[var(--color-border)] rounded text-[11px] font-mono text-[var(--color-text-muted)] font-bold">
+          <span className="flex-1 min-w-0 truncate text-left text-body pr-1">Search documents, tags, requests</span>
+          <kbd className="inline-flex items-center gap-0.5 px-1.5 py-0.5 bg-[var(--color-surface-2)] group-hover:bg-[var(--color-border)] rounded text-caption font-mono text-[var(--color-text-muted)] font-medium">
             <Command className="w-2.5 h-2.5" />K
           </kbd>
         </button>

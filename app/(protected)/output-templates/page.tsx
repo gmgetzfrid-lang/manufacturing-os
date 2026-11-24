@@ -106,7 +106,7 @@ export default function OutputTemplatesPage() {
       ) : templates.length === 0 ? (
         loadError != null ? null : (
           <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-10 text-center">
-            <p className="text-[15px] text-[var(--color-text)]">
+            <p className="text-reading text-[var(--color-text)]">
               {isController
                 ? "Upload a blank Word file with {placeholders} where the content goes. New template starts one."
                 : "Admin or Doc Control set templates up here."}
@@ -115,17 +115,17 @@ export default function OutputTemplatesPage() {
         )
       ) : (
         <section aria-labelledby="ot-templates">
-          <h2 id="ot-templates" className="font-display text-[20px] leading-tight font-semibold text-[var(--color-text)] mb-3">
+          <h2 id="ot-templates" className="font-display text-section leading-tight font-semibold text-[var(--color-text)] mb-3">
             Templates <span className="ui-count">{templates.length}</span>
           </h2>
           <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
-            <table className="w-full text-[14px] max-md:block">
-              <thead className="bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text-muted)] text-left max-md:hidden">
+            <table className="w-full text-body max-md:block">
+              <thead className="bg-[var(--color-surface-2)] text-body text-[var(--color-text-muted)] text-left max-md:hidden">
                 <tr>
-                  <th className="font-semibold px-4 h-10">Template</th>
-                  <th className="font-semibold px-4 w-44">Makes</th>
-                  <th className="font-semibold px-4 text-right w-28">Fill points</th>
-                  <th className="font-semibold px-4 text-right w-28 hidden lg:table-cell">Examples</th>
+                  <th className="font-medium px-4 h-10">Template</th>
+                  <th className="font-medium px-4 w-44">Makes</th>
+                  <th className="font-medium px-4 text-right w-28">Fill points</th>
+                  <th className="font-medium px-4 text-right w-28 hidden lg:table-cell">Examples</th>
                   <th className="w-44"><span className="sr-only">Actions</span></th>
                 </tr>
               </thead>
@@ -138,14 +138,14 @@ export default function OutputTemplatesPage() {
                     <div className="flex items-center gap-2.5 min-w-0">
                       <span className="shrink-0 text-[var(--color-text-faint)]" aria-hidden>{t.kind === "xlsx" ? <Table2 className="w-4 h-4" /> : <FileText className="w-4 h-4" />}</span>
                       {isController
-                        ? <button type="button" onClick={() => setEditing(t)} className="text-left text-[15px] font-semibold text-[var(--color-text)] truncate hover:text-[var(--color-accent-text)]">{t.name}</button>
-                        : <span className="text-[15px] font-semibold text-[var(--color-text)] truncate">{t.name}</span>}
+                        ? <button type="button" onClick={() => setEditing(t)} className="text-left text-reading font-medium text-[var(--color-text)] truncate hover:text-[var(--color-accent-text)]">{t.name}</button>
+                        : <span className="text-reading font-medium text-[var(--color-text)] truncate">{t.name}</span>}
                     </div>
                     {!t.templateFileKey ? (
                       <div className="pl-[26px] mt-0.5"><span className="ui-pill is-warn">Needs its template file</span></div>
-                    ) : t.description && <div className="pl-[26px] text-[13px] text-[var(--color-text-muted)] truncate max-w-[60ch]">{t.description}</div>}
+                    ) : t.description && <div className="pl-[26px] text-body text-[var(--color-text-muted)] truncate max-w-[60ch]">{t.description}</div>}
                     {/* Phone: the facts under the name. */}
-                    <div className="md:hidden pl-[26px] mt-0.5 flex flex-wrap gap-x-3 text-[13px] text-[var(--color-text-muted)]">
+                    <div className="md:hidden pl-[26px] mt-0.5 flex flex-wrap gap-x-3 text-body text-[var(--color-text-muted)]">
                       <span>{MODE_LABEL[t.mode] ?? t.mode}</span>
                       <span>{t.placeholders.length} fill point{t.placeholders.length === 1 ? "" : "s"}</span>
                     </div>
@@ -153,7 +153,7 @@ export default function OutputTemplatesPage() {
                   <td className="px-4 py-3 max-md:hidden">
                     <span className="text-[var(--color-text)]">{MODE_LABEL[t.mode] ?? t.mode}</span>
                     {t.placeholders.some((p) => p.kind === "ai") && (
-                      <span className="mt-0.5 flex whitespace-nowrap text-[13px] text-[var(--color-text-muted)] items-center gap-1"><Sparkles aria-hidden className="w-3 h-3" /> AI writes some parts</span>
+                      <span className="mt-0.5 flex whitespace-nowrap text-body text-[var(--color-text-muted)] items-center gap-1"><Sparkles aria-hidden className="w-3 h-3" /> AI writes some parts</span>
                     )}
                   </td>
                   <td className="px-4 py-3 text-right tabular-nums max-md:hidden">{t.placeholders.length}</td>
@@ -163,7 +163,7 @@ export default function OutputTemplatesPage() {
                     <div className="flex items-center gap-1 justify-end">
                       <button type="button" onClick={() => setGenerating(t)} disabled={!t.templateFileKey}
                         title={!t.templateFileKey ? "Add the template file first (Edit)" : `Make documents from ${t.name}`}
-                        className={`${heroQuiet} h-8 pointer-coarse:h-11 px-3 text-[13px]`}>
+                        className={`${heroQuiet} h-8 pointer-coarse:h-11 px-3 text-body`}>
                         Generate
                       </button>
                       {isController && (
@@ -186,25 +186,25 @@ export default function OutputTemplatesPage() {
 
       {generations.length > 0 && (
         <section aria-labelledby="ot-runs">
-          <h2 id="ot-runs" className="font-display text-[20px] leading-tight font-semibold text-[var(--color-text)] mb-3">Recent runs <span className="ui-count">{generations.length}</span></h2>
+          <h2 id="ot-runs" className="font-display text-section leading-tight font-semibold text-[var(--color-text)] mb-3">Recent runs <span className="ui-count">{generations.length}</span></h2>
           <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
-            <table className="w-full text-[14px]">
-              <thead className="bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text-muted)] text-left max-md:hidden">
+            <table className="w-full text-body">
+              <thead className="bg-[var(--color-surface-2)] text-body text-[var(--color-text-muted)] text-left max-md:hidden">
                 <tr>
-                  <th className="font-semibold px-4 h-10">Template</th>
-                  <th className="font-semibold px-4 text-right w-28">Documents</th>
-                  <th className="font-semibold px-4 hidden lg:table-cell">From</th>
-                  <th className="font-semibold px-4 hidden lg:table-cell">By</th>
-                  <th className="font-semibold px-4 w-28">Filed</th>
-                  <th className="font-semibold px-4 w-44">When</th>
+                  <th className="font-medium px-4 h-10">Template</th>
+                  <th className="font-medium px-4 text-right w-28">Documents</th>
+                  <th className="font-medium px-4 hidden lg:table-cell">From</th>
+                  <th className="font-medium px-4 hidden lg:table-cell">By</th>
+                  <th className="font-medium px-4 w-28">Filed</th>
+                  <th className="font-medium px-4 w-44">When</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[var(--color-border)]">
               {generations.map((g) => (
                 <tr key={g.id} className="max-md:block max-md:px-4 max-md:py-2.5">
-                  <td className="md:px-4 md:py-2.5 font-semibold text-[var(--color-text)] max-md:block">
+                  <td className="md:px-4 md:py-2.5 font-medium text-[var(--color-text)] max-md:block">
                     {g.templateName ?? "Template"}
-                    <span className="md:hidden block font-normal text-[13px] text-[var(--color-text-muted)]">
+                    <span className="md:hidden block font-normal text-body text-[var(--color-text-muted)]">
                       {g.documentCount} document{g.documentCount === 1 ? "" : "s"}{g.filedCount > 0 ? `, ${g.filedCount} filed` : ""}, {fmtWhen(g.createdAt)}{g.createdBy ? ` by ${g.createdBy}` : ""}
                     </span>
                   </td>

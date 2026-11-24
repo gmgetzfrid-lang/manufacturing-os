@@ -119,7 +119,7 @@ export const FILL = "flex-1 min-h-0 flex flex-col";
 export const SCROLL = "flex-1 min-h-0 overflow-y-auto pr-1 -mr-1";
 
 export function BodyShell({ children }: { children: React.ReactNode }) {
-  return <div className="text-[15px] text-[var(--color-text-muted)]">{children}</div>;
+  return <div className="text-reading text-[var(--color-text-muted)]">{children}</div>;
 }
 
 /** A body loading: skeleton rows in place of its list (no spinner, no
@@ -130,12 +130,12 @@ export function Skeleton({ rows = 3 }: { rows?: number }) {
 
 /** Honest empty-state for a chart slot. */
 export function Quiet({ label }: { label: string }) {
-  return <div className="text-[13px] text-[var(--color-text-muted)] py-1.5">{label}</div>;
+  return <div className="text-body text-[var(--color-text-muted)] py-1.5">{label}</div>;
 }
 
 export function Empty({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex-1 py-4 text-[15px] text-[var(--color-text-muted)]">
+    <div className="flex-1 py-4 text-reading text-[var(--color-text-muted)]">
       {children}
     </div>
   );
@@ -157,14 +157,14 @@ export function Tabs<T extends string>({ value, onChange, options, className = "
         const on = o.value === value;
         return (
           <button key={o.value} role="tab" aria-selected={on} type="button" onClick={() => onChange(o.value)}
-            className={`shrink-0 inline-flex items-center gap-1.5 h-9 pointer-coarse:h-11 border-b-2 text-[14px] whitespace-nowrap transition-colors ${
+            className={`shrink-0 inline-flex items-center gap-1.5 h-9 pointer-coarse:h-11 border-b-2 text-body whitespace-nowrap transition-colors ${
               on
-                ? "border-[var(--color-current)] font-semibold text-[var(--color-text)]"
+                ? "border-[var(--color-current)] font-medium text-[var(--color-text)]"
                 : "border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
             }`}>
             {o.label}
             {o.count !== undefined && (
-              <span className={`text-[13px] font-normal tabular-nums ${o.count === 0 ? "text-[var(--color-text-faint)]" : "text-[var(--color-text-muted)]"}`}>{o.count}</span>
+              <span className={`text-body font-normal tabular-nums ${o.count === 0 ? "text-[var(--color-text-faint)]" : "text-[var(--color-text-muted)]"}`}>{o.count}</span>
             )}
           </button>
         );
@@ -198,7 +198,7 @@ export function SearchField({ value, onChange, onSubmit, placeholder, title, aut
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
         aria-label={placeholder}
-        className="ui-field-bare flex-1 min-w-0 bg-transparent text-[14px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] outline-none"
+        className="ui-field-bare flex-1 min-w-0 bg-transparent text-body text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] outline-none"
       />
     </form>
   );

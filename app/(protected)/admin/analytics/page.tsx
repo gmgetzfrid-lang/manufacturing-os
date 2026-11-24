@@ -391,11 +391,11 @@ export default function AnalyticsPage() {
                       {selectedTickets.map((item, idx) => (
                         <tr key={idx} className={`${tbl.tr} max-sm:flex max-sm:flex-col`}>
                           <td className={`${tbl.td} align-top max-sm:pb-1`}>
-                            <CopyId value={item.ticketId} label="request number" className="text-[15px]" />
-                            <Link href={`/requests/${item.id}`} target="_blank" className="block text-[14px] text-[var(--color-text-muted)] line-clamp-2 hover:text-[var(--color-accent-text)] hover:underline underline-offset-2">{item.ticketTitle}</Link>
+                            <CopyId value={item.ticketId} label="request number" className="text-reading" />
+                            <Link href={`/requests/${item.id}`} target="_blank" className="block text-body text-[var(--color-text-muted)] line-clamp-2 hover:text-[var(--color-accent-text)] hover:underline underline-offset-2">{item.ticketTitle}</Link>
                           </td>
-                          <td className={`${tbl.td} align-top max-sm:py-1 text-[15px] text-[var(--color-text)]`}>&ldquo;{item.commentText}&rdquo;</td>
-                          <td className={`${tbl.td} align-top max-sm:pt-1 text-[14px] text-[var(--color-text-muted)] whitespace-nowrap`}>{item.reportedBy.split('@')[0]}<br className="max-sm:hidden" /><span className="sm:hidden">, </span>{item.date}</td>
+                          <td className={`${tbl.td} align-top max-sm:py-1 text-reading text-[var(--color-text)]`}>&ldquo;{item.commentText}&rdquo;</td>
+                          <td className={`${tbl.td} align-top max-sm:pt-1 text-body text-[var(--color-text-muted)] whitespace-nowrap`}>{item.reportedBy.split('@')[0]}<br className="max-sm:hidden" /><span className="sm:hidden">, </span>{item.date}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -418,17 +418,17 @@ export default function AnalyticsPage() {
                   <UserAvatar uid={userProfile.metric.uid} name={userProfile.metric.name} size={44} rounded="full" />
                   <div className="min-w-0">
                     <h2 className="font-display text-[26px] leading-none font-semibold text-[var(--color-text)] truncate">{userProfile.metric.name}</h2>
-                    <p className="mt-1 text-[14px] text-[var(--color-text-muted)]">{viewMode === 'drafter' ? 'Drafter' : 'Requester'}, {plural(userProfile.metric.totalAssigned, "request")}</p>
+                    <p className="mt-1 text-body text-[var(--color-text-muted)]">{viewMode === 'drafter' ? 'Drafter' : 'Requester'}, {plural(userProfile.metric.totalAssigned, "request")}</p>
                   </div>
                 </div>
                 <dl className="flex gap-6">
                   <div>
-                    <dt className="text-[13px] text-[var(--color-text-muted)]">Average revisions</dt>
-                    <dd className="font-display text-[20px] leading-tight font-semibold tabular-nums text-[var(--color-text)]">{userProfile.metric.avgRevisions.toFixed(1)}</dd>
+                    <dt className="text-body text-[var(--color-text-muted)]">Average revisions</dt>
+                    <dd className="font-display text-section leading-tight font-semibold tabular-nums text-[var(--color-text)]">{userProfile.metric.avgRevisions.toFixed(1)}</dd>
                   </div>
                   <div>
-                    <dt className="text-[13px] text-[var(--color-text-muted)]">Sent back</dt>
-                    <dd className={`font-display text-[20px] leading-tight font-semibold tabular-nums ${userProfile.metric.revisionRate > 0.3 ? 'text-[var(--state-held-text)]' : 'text-[var(--color-text)]'}`}>{formatPercent(userProfile.metric.revisionRate)}</dd>
+                    <dt className="text-body text-[var(--color-text-muted)]">Sent back</dt>
+                    <dd className={`font-display text-section leading-tight font-semibold tabular-nums ${userProfile.metric.revisionRate > 0.3 ? 'text-[var(--state-held-text)]' : 'text-[var(--color-text)]'}`}>{formatPercent(userProfile.metric.revisionRate)}</dd>
                   </div>
                 </dl>
               </div>
@@ -442,7 +442,7 @@ export default function AnalyticsPage() {
                 <Section label="Why it came back">
                   <div className={`${sheet} p-4`}>
                     {userProfile.causes.length === 0 ? (
-                      <p className="text-[15px] text-[var(--color-text-muted)]">No revisions recorded.</p>
+                      <p className="text-reading text-[var(--color-text-muted)]">No revisions recorded.</p>
                     ) : (
                       <RankBars items={userProfile.causes.map((c) => ({ label: c.reason, value: c.count, note: formatPercent(c.percent) }))} />
                     )}
@@ -451,7 +451,7 @@ export default function AnalyticsPage() {
 
                 <Section label="Requests sent back" count={userProfile.tickets.length}>
                   {userProfile.tickets.length === 0 ? (
-                    <div className={`${sheet} p-6 text-center text-[15px] text-[var(--color-text-muted)]`}>Nothing was sent back.</div>
+                    <div className={`${sheet} p-6 text-center text-reading text-[var(--color-text-muted)]`}>Nothing was sent back.</div>
                   ) : (
                     <div className={`${tbl.wrap} max-h-[420px] overflow-y-auto`}>
                       <table className={tbl.table}>
@@ -462,11 +462,11 @@ export default function AnalyticsPage() {
                           {userProfile.tickets.map(t => (
                             <tr key={t.id} className={tbl.tr}>
                               <td className={tbl.td}>
-                                <CopyId value={t.ticketId} label="request number" className="text-[15px]" />
-                                <Link href={`/requests/${t.id}`} target="_blank" className="block text-[14px] text-[var(--color-text-muted)] truncate max-w-[40ch] hover:text-[var(--color-accent-text)] hover:underline underline-offset-2">{t.title}</Link>
+                                <CopyId value={t.ticketId} label="request number" className="text-reading" />
+                                <Link href={`/requests/${t.id}`} target="_blank" className="block text-body text-[var(--color-text-muted)] truncate max-w-[40ch] hover:text-[var(--color-accent-text)] hover:underline underline-offset-2">{t.title}</Link>
                               </td>
                               <td className={`${tbl.td} max-sm:hidden`}><StatusTag tone="none">{t.status === 'CLOSED' ? 'Closed' : 'Open'}</StatusTag></td>
-                              <td className={`${tbl.td} text-right font-semibold tabular-nums`}>{t.revisionCount}</td>
+                              <td className={`${tbl.td} text-right font-medium tabular-nums`}>{t.revisionCount}</td>
                             </tr>
                           ))}
                         </tbody>
@@ -504,9 +504,9 @@ export default function AnalyticsPage() {
           </div>
         }>
           <figure className={`${sheet} p-4 sm:p-5`}>
-            <figcaption className="text-[14px] text-[var(--color-text-muted)] mb-3 tabular-nums">
+            <figcaption className="text-body text-[var(--color-text-muted)] mb-3 tabular-nums">
               {periodTotal > 0 ? `${plural(periodTotal, "request")} in this range, by ${rangeWord}.` : `By ${rangeWord}.`}
-              {metrics.volumeData[peakIdx]?.count > 0 && <> Most: <b className="font-semibold text-[var(--color-text)]">{metrics.volumeData[peakIdx].count}</b> in {metrics.volumeData[peakIdx].label}.</>}
+              {metrics.volumeData[peakIdx]?.count > 0 && <> Most: <b className="font-medium text-[var(--color-text)]">{metrics.volumeData[peakIdx].count}</b> in {metrics.volumeData[peakIdx].label}.</>}
             </figcaption>
             {/* Bars from zero. The latest {rangeWord} in the brand, the rest gray;
                 each bar carries its own count, so no axis or legend is needed. */}
@@ -514,14 +514,14 @@ export default function AnalyticsPage() {
             <div className="relative h-52 flex items-end gap-1 sm:gap-2 border-b border-[var(--color-border-strong)]" role="img"
               aria-label={metrics.volumeData.map((d) => `${d.label}: ${d.count}`).join(", ")}>
               {periodTotal === 0 && (
-                <span aria-hidden className="absolute inset-0 grid place-items-center text-[14px] text-[var(--color-text-muted)]">No new requests in this range.</span>
+                <span aria-hidden className="absolute inset-0 grid place-items-center text-body text-[var(--color-text-muted)]">No new requests in this range.</span>
               )}
               {metrics.volumeData.map((d, i) => {
                 const latest = i === lastIdx;
                 return (
                   <div key={i} className="flex-1 min-w-0 h-full flex flex-col justify-end items-center" title={`${d.label}: ${plural(d.count, "request")}`}>
                     {d.count > 0 && (metrics.volumeData.length <= 12 || latest || i === peakIdx) && (
-                      <span className={`text-[12px] tabular-nums mb-1 ${latest ? "font-semibold text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>{d.count}</span>
+                      <span className={`text-caption tabular-nums mb-1 ${latest ? "font-medium text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>{d.count}</span>
                     )}
                     <div className="w-full max-w-[44px] rounded-t-[3px] min-h-px transition-[height] duration-300 motion-reduce:transition-none"
                       style={{ height: `${(d.count / maxVol) * 85}%`, background: latest ? "var(--color-main)" : "var(--viz-neutral)" }} />
@@ -531,23 +531,23 @@ export default function AnalyticsPage() {
             </div>
             <div className="flex gap-1 sm:gap-2 mt-1.5" aria-hidden>
               {metrics.volumeData.map((d, i) => (
-                <span key={i} className={`flex-1 min-w-0 text-center text-[12px] truncate ${i === lastIdx ? "font-semibold text-[var(--color-text)]" : "text-[var(--color-text-muted)]"} ${metrics.volumeData.length > 12 && i % 5 !== 0 && i !== lastIdx ? "invisible" : ""}`}>{d.label}</span>
+                <span key={i} className={`flex-1 min-w-0 text-center text-caption truncate ${i === lastIdx ? "font-medium text-[var(--color-text)]" : "text-[var(--color-text-muted)]"} ${metrics.volumeData.length > 12 && i % 5 !== 0 && i !== lastIdx ? "invisible" : ""}`}>{d.label}</span>
               ))}
             </div>
           </figure>
         </Section>
 
-        <Section label="Why work came back" action={<span className="text-[13px] text-[var(--color-text-muted)] tabular-nums">{plural(totalRevisions, "revision")}</span>}>
+        <Section label="Why work came back" action={<span className="text-body text-[var(--color-text-muted)] tabular-nums">{plural(totalRevisions, "revision")}</span>}>
           {metrics.rootCauseData.length === 0 ? (
-            <div className={`${sheet} px-4 py-8 text-center text-[15px] text-[var(--color-text-muted)]`}>Nothing has been sent back yet.</div>
+            <div className={`${sheet} px-4 py-8 text-center text-reading text-[var(--color-text-muted)]`}>Nothing has been sent back yet.</div>
           ) : (
             <ul className={`${sheet} divide-y divide-[var(--color-border)] overflow-hidden`}>
               {metrics.rootCauseData.map((item, i) => (
                 <li key={i}>
                   <button type="button" onClick={() => setSelectedReason(item.reason)} className="w-full text-left px-4 py-2.5 hover:bg-[var(--color-surface-2)] transition-colors group">
-                    <div className="flex justify-between gap-2 text-[14px] text-[var(--color-text)] mb-1.5">
-                      <span className="inline-flex items-center gap-1 min-w-0"><span className="truncate font-semibold">{item.reason}</span><ChevronRight aria-hidden className="w-3.5 h-3.5 shrink-0 text-[var(--color-text-faint)] group-hover:translate-x-0.5 transition-transform motion-reduce:transition-none" /></span>
-                      <span className="shrink-0 tabular-nums"><b className="font-semibold">{item.count}</b> <span className="text-[var(--color-text-muted)]">{formatPercent(item.percentage)}</span></span>
+                    <div className="flex justify-between gap-2 text-body text-[var(--color-text)] mb-1.5">
+                      <span className="inline-flex items-center gap-1 min-w-0"><span className="truncate font-medium">{item.reason}</span><ChevronRight aria-hidden className="w-3.5 h-3.5 shrink-0 text-[var(--color-text-faint)] group-hover:translate-x-0.5 transition-transform motion-reduce:transition-none" /></span>
+                      <span className="shrink-0 tabular-nums"><b className="font-medium">{item.count}</b> <span className="text-[var(--color-text-muted)]">{formatPercent(item.percentage)}</span></span>
                     </div>
                     <div className="w-full bg-[var(--viz-track)] h-2 rounded-full overflow-hidden">
                       <div className="h-full rounded-full" style={{ width: `${Math.max(2, item.percentage * 100)}%`, background: i === 0 ? "var(--color-main)" : "var(--viz-neutral)" }} />
@@ -589,18 +589,18 @@ export default function AnalyticsPage() {
                 return (
                   <tr key={d.uid} onClick={() => setSelectedUser(d.uid)} className={`${tbl.tr} cursor-pointer`}>
                     <td className={tbl.td}>
-                      <button type="button" onClick={(e) => { e.stopPropagation(); setSelectedUser(d.uid); }} className="inline-flex items-center gap-3 font-semibold text-[var(--color-text)] hover:text-[var(--color-accent-text)] text-left">
+                      <button type="button" onClick={(e) => { e.stopPropagation(); setSelectedUser(d.uid); }} className="inline-flex items-center gap-3 font-medium text-[var(--color-text)] hover:text-[var(--color-accent-text)] text-left">
                         <UserAvatar uid={d.uid} name={d.name} size={30} rounded="full" />
                         {d.name}
                       </button>
                     </td>
                     <td className={`${tbl.td} text-right`}>{d.totalAssigned}</td>
                     <td className={`${tbl.td} text-right max-sm:hidden`}>{d.completed}</td>
-                    <td className={`${tbl.td} text-right max-md:hidden ${d.avgRevisions > 2 ? 'font-semibold text-[var(--state-held-text)]' : ''}`}>{d.avgRevisions.toFixed(1)}</td>
-                    <td className={`${tbl.td} text-right ${d.revisionRate > 0.3 ? 'font-semibold text-[var(--state-held-text)]' : ''}`}>{formatPercent(d.revisionRate)}</td>
+                    <td className={`${tbl.td} text-right max-md:hidden ${d.avgRevisions > 2 ? 'font-medium text-[var(--state-held-text)]' : ''}`}>{d.avgRevisions.toFixed(1)}</td>
+                    <td className={`${tbl.td} text-right ${d.revisionRate > 0.3 ? 'font-medium text-[var(--state-held-text)]' : ''}`}>{formatPercent(d.revisionRate)}</td>
                     <td className={`${tbl.td} text-right max-md:hidden whitespace-nowrap`}>
-                      <span className={score < 60 ? 'font-semibold text-[var(--state-overdue-text)]' : 'text-[var(--color-text)]'}>{score.toFixed(0)}</span>
-                      <span className="text-[13px] text-[var(--color-text-muted)]"> of 100</span>
+                      <span className={score < 60 ? 'font-medium text-[var(--state-overdue-text)]' : 'text-[var(--color-text)]'}>{score.toFixed(0)}</span>
+                      <span className="text-body text-[var(--color-text-muted)]"> of 100</span>
                     </td>
                   </tr>
                 );
@@ -623,9 +623,9 @@ function RankBars({ items }: { items: Array<{ label: string; value: number; note
     <ul className="space-y-3">
       {items.map((it, i) => (
         <li key={`${it.label}-${i}`}>
-          <div className="flex justify-between gap-2 text-[14px] text-[var(--color-text)] mb-1">
+          <div className="flex justify-between gap-2 text-body text-[var(--color-text)] mb-1">
             <span className="truncate">{it.label}</span>
-            <span className="shrink-0 tabular-nums"><b className="font-semibold">{it.value}</b>{it.note && <span className="text-[var(--color-text-muted)]"> {it.note}</span>}</span>
+            <span className="shrink-0 tabular-nums"><b className="font-medium">{it.value}</b>{it.note && <span className="text-[var(--color-text-muted)]"> {it.note}</span>}</span>
           </div>
           <div className="w-full bg-[var(--viz-track)] h-2 rounded-full overflow-hidden">
             <div className="h-full rounded-full" style={{ width: `${Math.max(2, (it.value / max) * 100)}%`, background: i === 0 ? "var(--color-main)" : "var(--viz-neutral)" }} />

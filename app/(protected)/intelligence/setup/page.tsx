@@ -34,7 +34,7 @@ export default function IntelligenceSetupPage() {
     return () => { cancelled = true; };
   }, [activeOrgId, reloadTick]);
 
-  if (!activeOrgId) return <div className="p-8 text-[14px] text-[var(--color-text-muted)]">Pick a workspace to continue.</div>;
+  if (!activeOrgId) return <div className="p-8 text-body text-[var(--color-text-muted)]">Pick a workspace to continue.</div>;
 
   const answer = loadError ? "Couldn't load your AI setup."
     : !data ? "AI setup"
@@ -96,7 +96,7 @@ export default function IntelligenceSetupPage() {
               body="Checks every table the AI features expect and names any migration still to run." />
           )}
           {!isController && (
-            <p className="px-4 py-3 text-[15px] text-[var(--color-text-muted)]">
+            <p className="px-4 py-3 text-reading text-[var(--color-text-muted)]">
               Admin or Doc Control manage the org-level setup (playbooks, codebook).
             </p>
           )}
@@ -113,8 +113,8 @@ function SetupLink({ href, title, body }: {
   return (
     <Link href={href} className="group flex items-start gap-3 px-4 py-3 hover:bg-[var(--color-surface-2)] transition-colors">
       <div className="flex-1 min-w-0">
-        <div className="text-[15px] font-semibold text-[var(--color-text)] group-hover:text-[var(--color-accent-text)]">{title}</div>
-        <p className="text-[14px] text-[var(--color-text-muted)]">{body}</p>
+        <div className="text-reading font-medium text-[var(--color-text)] group-hover:text-[var(--color-accent-text)]">{title}</div>
+        <p className="text-body text-[var(--color-text-muted)]">{body}</p>
       </div>
       <ArrowRight aria-hidden className="w-4 h-4 text-[var(--color-text-muted)] group-hover:text-[var(--color-accent-text)] mt-1.5 shrink-0" />
     </Link>

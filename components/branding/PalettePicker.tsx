@@ -145,10 +145,10 @@ export default function PalettePicker({ value, onChange, disabled = false, logoB
         <span className={`relative h-16 w-full rounded-lg grid place-items-center transition-shadow ${on ? "ring-[3px] ring-[var(--color-text)] ring-offset-2 ring-offset-[var(--color-surface)]" : off ? "ring-1 ring-black/10 opacity-30" : "ring-1 ring-black/10 group-hover:ring-2 group-hover:ring-[var(--color-text-faint)]"}`}
           style={{ background: hex, color: role === "accent" ? acc.fg : "#ffffff" }}>
           {on && <span className="absolute top-1.5 right-1.5 w-6 h-6 rounded-full grid place-items-center shadow-sm" style={{ background: "#ffffff", color: "#1f2733" }}><Check className="w-4 h-4" strokeWidth={3} /></span>}
-          {target && <span className="inline-flex items-center gap-1 text-[13px] font-semibold"><ArrowLeftRight className="w-4 h-4" /> Swap</span>}
+          {target && <span className="inline-flex items-center gap-1 text-body font-medium"><ArrowLeftRight className="w-4 h-4" /> Swap</span>}
         </span>
-        <span className={`mt-1.5 text-[13px] font-semibold leading-tight ${off ? "text-[var(--color-text-muted)]" : "text-[var(--color-text)]"}`}>{label}</span>
-        <span className="mt-0.5 text-[12px] leading-tight text-[var(--color-text-muted)] tabular-nums">{off ? "Light menu" : hex}</span>
+        <span className={`mt-1.5 text-body font-medium leading-tight ${off ? "text-[var(--color-text-muted)]" : "text-[var(--color-text)]"}`}>{label}</span>
+        <span className="mt-0.5 text-caption leading-tight text-[var(--color-text-muted)] tabular-nums">{off ? "Light menu" : hex}</span>
       </button>
     );
   };
@@ -164,7 +164,7 @@ export default function PalettePicker({ value, onChange, disabled = false, logoB
           <span className="flex-1" style={{ background: signalScale(p.primary)[600] }} />
           <span className="w-[24%]" style={{ background: pa.fill }} />
         </span>
-        <span className="flex-1 min-w-0 text-[14px] font-semibold text-[var(--color-text)] truncate">{p.name}</span>
+        <span className="flex-1 min-w-0 text-body font-medium text-[var(--color-text)] truncate">{p.name}</span>
         {on && <Check className="w-4 h-4 text-[var(--color-text)] shrink-0" />}
       </button>
     );
@@ -175,14 +175,14 @@ export default function PalettePicker({ value, onChange, disabled = false, logoB
   return (
     <div className="space-y-5">
       <PalettePreview palette={value} />
-      {lockedNote ? <p className="text-[13px] text-[var(--color-text-muted)]">{lockedNote}</p> : (
+      {lockedNote ? <p className="text-body text-[var(--color-text-muted)]">{lockedNote}</p> : (
         <>
           <div onKeyDown={(e) => { if (e.key === "Escape" && sel) { e.stopPropagation(); setSel(null); } }}>
-            <h3 className="text-[14px] font-semibold text-[var(--color-text)] mb-2">{onLogo ? "From your logo" : "Your colors"}</h3>
+            <h3 className="text-body font-medium text-[var(--color-text)] mb-2">{onLogo ? "From your logo" : "Your colors"}</h3>
             <div className="grid grid-cols-3 gap-2.5">
               {ROLES.map(swatch)}
             </div>
-            <p aria-live="polite" className="mt-2.5 text-[13px] text-[var(--color-text-muted)]">
+            <p aria-live="polite" className="mt-2.5 text-body text-[var(--color-text-muted)]">
               {tooClose ? "Too close to the header color, so the button uses the opposite."
                 : sel ? "Tap another color to swap, or pick one here."
                 : "Tap a color to change it, or tap two to swap."}
@@ -212,13 +212,13 @@ export default function PalettePicker({ value, onChange, disabled = false, logoB
                 <button type="button" disabled={disabled} onClick={tryAnother} className={`${btnQuiet} h-10`}>
                   <RefreshCw className="w-4 h-4" /> Try another
                 </button>
-                {match >= 0 && <span aria-live="polite" className="px-1 text-[13px] font-semibold tabular-nums text-[var(--color-text-muted)]">{match + 1} of {suggestions.length}</span>}
+                {match >= 0 && <span aria-live="polite" className="px-1 text-body font-medium tabular-nums text-[var(--color-text-muted)]">{match + 1} of {suggestions.length}</span>}
                 {match !== 0 && <button type="button" disabled={disabled} onClick={() => show(0)} className={`${btnQuiet} h-10`}>Best fit</button>}
               </div>
             )}
           </div>
           <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-            <span className="text-[14px] font-semibold text-[var(--color-text)]">Side menu</span>
+            <span className="text-body font-medium text-[var(--color-text)]">Side menu</span>
             <div role="radiogroup" aria-label="Side menu" className={bandSeg}>
               {(["deep", "light"] as const).map((k) => (
                 <button key={k} type="button" role="radio" aria-checked={side === k} disabled={disabled}
@@ -230,7 +230,7 @@ export default function PalettePicker({ value, onChange, disabled = false, logoB
             </div>
           </div>
           <div className="@container">
-            <h3 className="text-[14px] font-semibold text-[var(--color-text)] mb-2">Ready-made pairs</h3>
+            <h3 className="text-body font-medium text-[var(--color-text)] mb-2">Ready-made pairs</h3>
             <div className="grid grid-cols-1 @md:grid-cols-2 gap-1.5">
               {PALETTE_PRESETS.map(pairSwatch)}
             </div>
@@ -244,7 +244,7 @@ export default function PalettePicker({ value, onChange, disabled = false, logoB
                 onChange={(e) => { const f = e.target.files?.[0]; if (f) void readLogo(f); e.currentTarget.value = ""; }} />
             </div>
           )}
-          {note && <p role="status" className="text-[13px] text-[var(--color-text-muted)]">{note}</p>}
+          {note && <p role="status" className="text-body text-[var(--color-text-muted)]">{note}</p>}
         </>
       )}
     </div>

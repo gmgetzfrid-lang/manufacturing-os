@@ -36,15 +36,15 @@ export interface Cell {
  *  optional hint. Two across on a phone, one row on a desk. */
 export function Cells({ cells, size = "lg" }: { cells: Cell[]; size?: "lg" | "sm" }) {
   // Section-sized figures (the page has one hero number; panels never shout).
-  const big = size === "lg" ? "text-[20px]" : "text-[18px]";
+  const big = size === "lg" ? "text-section" : "text-section";
   return (
     <dl className={`grid grid-cols-2 ${cells.length >= 4 ? "md:grid-cols-4" : cells.length === 3 ? "md:grid-cols-3" : ""} [&>div]:border-[var(--color-border)] max-md:[&>div:nth-child(2n)]:border-l md:[&>div+div]:border-l max-md:[&>div:nth-child(n+3)]:border-t`}>
       {cells.map((c, i) => (
         <div key={i} className="min-w-0 px-4 sm:px-5 py-3.5">
-          <dt className="text-[13px] text-[var(--color-text-muted)] truncate">{c.label}</dt>
+          <dt className="text-body text-[var(--color-text-muted)] truncate">{c.label}</dt>
           <dd className={`font-display ${big} leading-tight mt-0.5 font-semibold tabular-nums ${c.value === 0 || c.value === "0" ? "text-[var(--color-text-faint)]" : TONE_TEXT[c.tone ?? "none"]}`}>{c.value}</dd>
           {c.bar !== undefined && <Bar className="mt-1.5" segments={[{ key: "done", value: c.bar, color: "var(--color-main)" }]} total={100} thin />}
-          {c.hint && <dd className="mt-0.5 text-[13px] leading-snug text-[var(--color-text-muted)]">{c.hint}</dd>}
+          {c.hint && <dd className="mt-0.5 text-body leading-snug text-[var(--color-text-muted)]">{c.hint}</dd>}
         </div>
       ))}
     </dl>
@@ -84,8 +84,8 @@ export function Note({ tone = "none", title, children, action, className = "" }:
   return (
     <div role={tone === "bad" ? "alert" : undefined} className={`relative pl-4 flex flex-wrap items-start gap-x-4 gap-y-2 ${className}`}>
       <span aria-hidden className={`absolute left-0 inset-y-0 w-[3px] rounded-full ${TONE_RULE[tone]}`} />
-      <div className="min-w-0 flex-1 basis-[280px] text-[14px] leading-snug text-[var(--color-text-muted)]">
-        {title && <div className={`font-semibold ${tone === "none" ? "text-[var(--color-text)]" : TONE_TEXT[tone]}`}>{title}</div>}
+      <div className="min-w-0 flex-1 basis-[280px] text-body leading-snug text-[var(--color-text-muted)]">
+        {title && <div className={`font-medium ${tone === "none" ? "text-[var(--color-text)]" : TONE_TEXT[tone]}`}>{title}</div>}
         {children}
       </div>
       {action && <div className="shrink-0">{action}</div>}

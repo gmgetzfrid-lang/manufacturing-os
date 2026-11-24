@@ -116,7 +116,7 @@ export default function EditOverlapBanner({
             className="flex items-start gap-2.5 pl-3 py-1 border-l-2 border-[var(--state-held)] text-[var(--state-held)]"
           >
             <Users className="w-4 h-4 mt-0.5 shrink-0" />
-            <div className="flex-1 min-w-0 text-[13px] leading-relaxed">
+            <div className="flex-1 min-w-0 text-body leading-relaxed">
               <b>{row.documentLabel}:</b>{" "}
               {onlyMine ? (
                 <>you and <b>{otherNames.join(", ")}</b> both have active edit work on this document</>
@@ -124,15 +124,15 @@ export default function EditOverlapBanner({
                 <><b>{[...new Set(row.intents.map((i) => i.userName || "someone"))].join(", ")}</b> all have active edit work on this document</>
               )}
               {" "}({sourcesByUser.join("; ")}). Talk now: the second one to publish will be stopped.
-              {nudgeErr.has(row.documentId) && <span className="block text-[var(--state-overdue)] font-bold">The heads-up didn&apos;t send. Try again.</span>}
+              {nudgeErr.has(row.documentId) && <span className="block text-[var(--state-overdue)] font-medium">The heads-up didn&apos;t send. Try again.</span>}
             </div>
             <div className="flex items-center gap-1.5 shrink-0">
               {nudged.has(row.documentId) ? (
-                <span className="text-[13px] font-bold text-[var(--state-released)]">Heads-up sent</span>
+                <span className="text-body font-medium text-[var(--state-released)]">Heads-up sent</span>
               ) : (
                 <button
                   onClick={() => void sendHeadsUp(row)}
-                  className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[13px] font-bold border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
+                  className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-body font-medium border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
                   title="Send an in-app heads-up to everyone involved"
                 >
                   <BellRing className="w-3 h-3" /> Send heads-up

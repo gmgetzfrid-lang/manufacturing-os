@@ -67,11 +67,11 @@ export default function AliasPanel({
   return (
     <section className="min-w-0">
       <div className="flex items-end gap-2 mb-3 min-h-8">
-        <h2 className="font-display text-[20px] leading-tight font-semibold text-[var(--color-text)]">Also known as</h2>
+        <h2 className="font-display text-section leading-tight font-semibold text-[var(--color-text)]">Also known as</h2>
         {rows && rows.length > 0 && <span className="ui-count">{rows.length}</span>}
       </div>
       <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 sm:p-5 space-y-3">
-      <p className="text-[14px] text-[var(--color-text-muted)]">
+      <p className="text-body text-[var(--color-text-muted)]">
         Nicknames, old tags before a renumber, vendor names.
       </p>
       {rows === null && <SkeletonText lines={1} />}
@@ -109,7 +109,7 @@ export default function AliasPanel({
             aria-label="Another name for this equipment"
             enterKeyHint="done"
             autoComplete="off"
-            className="flex-1 min-w-0 h-10 pointer-coarse:h-11 px-3 border border-[var(--color-border-control)] rounded-lg text-[15px] max-sm:text-[16px] bg-[var(--color-surface)] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)]"
+            className="flex-1 min-w-0 h-10 pointer-coarse:h-11 px-3 border border-[var(--color-border-control)] rounded-lg text-reading bg-[var(--color-surface)] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)]"
           />
           <Button type="submit" variant="secondary" loading={busy} disabled={!draft.trim()}>
             <Plus aria-hidden className="w-4 h-4" /> Add
@@ -118,7 +118,7 @@ export default function AliasPanel({
       )}
 
       {rows && rows.length === 0 && !canManage && !loadFailed && (
-        <div className="text-[14px] text-[var(--color-text-muted)]">No other names recorded.</div>
+        <div className="text-body text-[var(--color-text-muted)]">No other names recorded.</div>
       )}
       {error && <ErrorNote compact title={error} next="" />}
       </div>

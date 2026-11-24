@@ -35,7 +35,7 @@ function FileDrop({ file, onFile, hint, accept, disabled }: { file: File | null;
   return (
     <label {...drag.bind} className={`flex items-center gap-3 rounded-xl border border-dashed border-[var(--color-border-control)] px-3 py-3 min-h-16 cursor-pointer hover:bg-[var(--color-surface-2)] ${drag.ring}`}>
       {file ? <FileThumb file={file} size={36} /> : <UploadCloud aria-hidden className="w-5 h-5 text-[var(--color-text-faint)] shrink-0" />}
-      <span className="min-w-0 flex-1 text-[15px] [overflow-wrap:anywhere]">
+      <span className="min-w-0 flex-1 text-reading [overflow-wrap:anywhere]">
         {drag.over ? <b className="text-[var(--color-text)]">{drag.say}</b>
           : file ? <><b className="text-[var(--color-text)]">{file.name}</b> <span className="text-[var(--color-text-muted)]">· {sizeOf(file.size)}</span></>
             : <span className="text-[var(--color-text-muted)]">{hint}</span>}
@@ -101,8 +101,8 @@ const field = kitField;
 function SendNote({ msg }: { msg: { tone: "ok" | "err"; text: string } | null }) {
   if (!msg) return null;
   return msg.tone === "ok"
-    ? <p role="status" className="flex items-start gap-1.5 text-[14px] text-[var(--color-text)]"><CheckCircle2 aria-hidden className="w-4 h-4 mt-0.5 shrink-0 text-[var(--state-released)]" />{msg.text}</p>
-    : <p role="alert" className="flex items-start gap-1.5 text-[14px] font-semibold text-[var(--state-overdue-text)]"><CircleAlert aria-hidden className="w-4 h-4 mt-0.5 shrink-0" />{msg.text}</p>;
+    ? <p role="status" className="flex items-start gap-1.5 text-body text-[var(--color-text)]"><CheckCircle2 aria-hidden className="w-4 h-4 mt-0.5 shrink-0 text-[var(--state-released)]" />{msg.text}</p>
+    : <p role="alert" className="flex items-start gap-1.5 text-body font-medium text-[var(--state-overdue-text)]"><CircleAlert aria-hidden className="w-4 h-4 mt-0.5 shrink-0" />{msg.text}</p>;
 }
 const plural = (n: number, one: string) => `${n} ${one}${n === 1 ? "" : "s"}`;
 
@@ -191,7 +191,7 @@ export default function IntakePortal({ params }: { params: Promise<{ token: stri
     return (
       <Shell kicker="Submission portal" title={state === "revoked" ? "This link is turned off." : state === "expired" ? "This link has expired." : state === "notfound" ? "Link not found." : "Couldn't open the link."}>
         <Card>
-          <p className="text-[14px] text-[var(--color-text)]">{text}</p>
+          <p className="text-body text-[var(--color-text)]">{text}</p>
           {state === "error" && <button type="button" onClick={() => { setState("loading"); void refresh(); }} className={`${heroQuiet} mt-3`}>Try again</button>}
         </Card>
       </Shell>
@@ -221,9 +221,9 @@ export default function IntakePortal({ params }: { params: Promise<{ token: stri
     return (
       <Shell kicker={<>Quote submission · {data.projectName}{data.orgName ? ` · ${data.orgName}` : ""}</>}
         title={quotes.length ? <>{plural(quotes.length, "quote")} sent.{reviewing ? <span className="text-[var(--color-ink-muted)]"> {reviewing} under review.</span> : null}</> : "No quote sent yet."}
-        sub={<>Submitting as <b className="font-semibold text-[var(--color-text)]">{data.companyName}</b>{data.rfqGroup ? <>, for <b className="font-semibold text-[var(--color-text)]">{data.rfqGroup}</b></> : null}</>}>
+        sub={<>Submitting as <b className="font-medium text-[var(--color-text)]">{data.companyName}</b>{data.rfqGroup ? <>, for <b className="font-medium text-[var(--color-text)]">{data.rfqGroup}</b></> : null}</>}>
         <Card label="Send your quote" className="space-y-3">
-          <p className="text-[15px] text-[var(--color-text-muted)]">
+          <p className="text-reading text-[var(--color-text-muted)]">
             Upload your quote as a PDF with your price breakdown, labor hours and crew size, and any exclusions. Bids are compared on all three.
           </p>
           <FileDrop file={file} onFile={(f) => { setFile(f); setMsg(null); }} accept=".pdf,application/pdf" disabled={busy} hint="Drop your quote here or choose it (PDF, up to 100 MB)" />
@@ -238,14 +238,14 @@ export default function IntakePortal({ params }: { params: Promise<{ token: stri
         </Card>
 
         <Card label="Your submitted quotes" pad={false}>
-          {quotes.length === 0 && <p className="px-4 sm:px-5 py-4 text-[15px] text-[var(--color-text-muted)]">Nothing yet. Your first quote shows here with its status.</p>}
+          {quotes.length === 0 && <p className="px-4 sm:px-5 py-4 text-reading text-[var(--color-text-muted)]">Nothing yet. Your first quote shows here with its status.</p>}
           <ul className="divide-y divide-[var(--color-border)]">
             {quotes.map((q) => (
-              <li key={q.id} className="flex items-center gap-3 px-4 sm:px-5 py-3 text-[15px]">
+              <li key={q.id} className="flex items-center gap-3 px-4 sm:px-5 py-3 text-reading">
                 <FileText aria-hidden className="w-4 h-4 text-[var(--color-text-faint)] shrink-0" />
                 <span className="min-w-0 flex-1">
-                  <span className="block font-semibold text-[var(--color-text)] truncate">{q.fileName}</span>
-                  {q.submittedAt && <span className="block text-[13px] text-[var(--color-text-muted)]">Sent {new Date(q.submittedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</span>}
+                  <span className="block font-medium text-[var(--color-text)] truncate">{q.fileName}</span>
+                  {q.submittedAt && <span className="block text-body text-[var(--color-text-muted)]">Sent {new Date(q.submittedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</span>}
                 </span>
                 {q.status === "awarded"
                   ? <StatusTag tone="good">Awarded</StatusTag>
@@ -255,7 +255,7 @@ export default function IntakePortal({ params }: { params: Promise<{ token: stri
               </li>
             ))}
           </ul>
-          <p className="px-4 sm:px-5 py-3 border-t border-[var(--color-border)] text-[13px] text-[var(--color-text-muted)]">Quotes go straight to {data.orgName ?? "the client"}&apos;s bid comparison. This portal is upload-only.</p>
+          <p className="px-4 sm:px-5 py-3 border-t border-[var(--color-border)] text-body text-[var(--color-text-muted)]">Quotes go straight to {data.orgName ?? "the client"}&apos;s bid comparison. This portal is upload-only.</p>
         </Card>
       </Shell>
     );
@@ -269,7 +269,7 @@ export default function IntakePortal({ params }: { params: Promise<{ token: stri
       : "Nothing submitted yet.";
   return (
     <Shell kicker={<>Drawing &amp; file submission · {data.projectName}{data.orgName ? ` · ${data.orgName}` : ""}</>} title={answer}
-      sub={<>Submitting as <b className="font-semibold text-[var(--color-text)]">{data.companyName}</b>. {data.allowAutoSupersede ? "Trusted: your revisions publish at once." : "Submissions are reviewed before they become current."}</>}>
+      sub={<>Submitting as <b className="font-medium text-[var(--color-text)]">{data.companyName}</b>. {data.allowAutoSupersede ? "Trusted: your revisions publish at once." : "Submissions are reviewed before they become current."}</>}>
 
       {/* Submit form */}
       <Card label="Send a file">
@@ -310,7 +310,7 @@ export default function IntakePortal({ params }: { params: Promise<{ token: stri
       {/* Redlines requested: collision tickets waiting on their markups */}
       {(data.redlineRequests?.length ?? 0) > 0 && (
         <Card label="Redlines requested">
-          <p className="text-[15px] text-[var(--color-text-muted)] mb-2">
+          <p className="text-reading text-[var(--color-text-muted)] mb-2">
             One of your sheets conflicts with existing drawings. Upload your markups here: they go straight to the drafting request.
           </p>
           <ul className="divide-y divide-[var(--color-border)]">
@@ -325,14 +325,14 @@ export default function IntakePortal({ params }: { params: Promise<{ token: stri
 
       {/* Their register */}
       <Card label="Your submissions on this project" pad={false}>
-        {data.items.length === 0 && <p className="px-4 sm:px-5 py-4 text-[15px] text-[var(--color-text-muted)]">Nothing yet. Your first submission shows here.</p>}
+        {data.items.length === 0 && <p className="px-4 sm:px-5 py-4 text-reading text-[var(--color-text-muted)]">Nothing yet. Your first submission shows here.</p>}
         <ul className="divide-y divide-[var(--color-border)]">
           {data.items.map((i) => (
-            <li key={i.docId} className="flex items-center gap-3 px-4 sm:px-5 py-3 text-[15px]">
+            <li key={i.docId} className="flex items-center gap-3 px-4 sm:px-5 py-3 text-reading">
               <FileText aria-hidden className="w-4 h-4 text-[var(--color-text-faint)] shrink-0" />
               <span className="min-w-0 flex-1">
-                <span className="block font-semibold text-[var(--color-text)] truncate">{i.label}</span>
-                <span className="block text-[13px] text-[var(--color-text-muted)]">Rev {i.rev ?? "none"}{i.updatedAt ? `, ${new Date(i.updatedAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}` : ""}</span>
+                <span className="block font-medium text-[var(--color-text)] truncate">{i.label}</span>
+                <span className="block text-body text-[var(--color-text-muted)]">Rev {i.rev ?? "none"}{i.updatedAt ? `, ${new Date(i.updatedAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}` : ""}</span>
               </span>
               {i.pendingReview
                 ? <StatusTag tone="warn">In review</StatusTag>
@@ -342,7 +342,7 @@ export default function IntakePortal({ params }: { params: Promise<{ token: stri
             </li>
           ))}
         </ul>
-        <p className="px-4 sm:px-5 py-3 border-t border-[var(--color-border)] text-[13px] text-[var(--color-text-muted)]">Every submission is recorded with your company name on {data.orgName ?? "the client"}&apos;s revision history. This portal is upload-only.</p>
+        <p className="px-4 sm:px-5 py-3 border-t border-[var(--color-border)] text-body text-[var(--color-text-muted)]">Every submission is recorded with your company name on {data.orgName ?? "the client"}&apos;s revision history. This portal is upload-only.</p>
       </Card>
     </Shell>
   );
@@ -353,11 +353,11 @@ export default function IntakePortal({ params }: { params: Promise<{ token: stri
 function RedlineRow({ r, busy, failed, onFile }: { r: RedlineRequest; busy: boolean; failed: { file: File; error: string } | null; onFile: (f: File) => void }) {
   const drag = useFileDrag((fs) => onFile(fs[0]), busy);
   return (
-    <li {...drag.bind} className={`py-3 text-[14px] ${drag.ring}`}>
+    <li {...drag.bind} className={`py-3 text-body ${drag.ring}`}>
       <div className="flex items-center gap-x-3 gap-y-2 flex-wrap">
         <span className="min-w-0 flex-1 basis-[220px]">
-          <span className="block font-semibold text-[15px] text-[var(--color-text)]">{r.title}</span>
-          <span className="block text-[13px] text-[var(--color-text-muted)] tabular-nums">{r.ticketNumber ?? ""}{r.docLabel ? `, ${r.docLabel}` : ""}</span>
+          <span className="block font-medium text-reading text-[var(--color-text)]">{r.title}</span>
+          <span className="block text-body text-[var(--color-text-muted)] tabular-nums">{r.ticketNumber ?? ""}{r.docLabel ? `, ${r.docLabel}` : ""}</span>
         </span>
         <label className={`${heroQuiet} cursor-pointer ${busy ? "opacity-50 pointer-events-none" : ""}`}>
           {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <UploadCloud className="w-4 h-4" />}
@@ -369,8 +369,8 @@ function RedlineRow({ r, busy, failed, onFile }: { r: RedlineRequest; busy: bool
         <div className="mt-1.5 flex items-center gap-2">
           <FileThumb file={failed.file} size={28} />
           <span className="min-w-0 flex-1">
-            <span className="block truncate font-semibold text-[var(--color-text)]">{failed.file.name} <span className="font-normal text-[var(--color-text-muted)]">{sizeOf(failed.file.size)}</span></span>
-            <span role="alert" className="block text-[13px] text-[var(--state-overdue-text)]">Didn&apos;t go through. {failed.error}</span>
+            <span className="block truncate font-medium text-[var(--color-text)]">{failed.file.name} <span className="font-normal text-[var(--color-text-muted)]">{sizeOf(failed.file.size)}</span></span>
+            <span role="alert" className="block text-body text-[var(--state-overdue-text)]">Didn&apos;t go through. {failed.error}</span>
           </span>
           <button type="button" onClick={() => onFile(failed.file)} className={`${heroQuiet} h-8 shrink-0`}>Try again</button>
         </div>

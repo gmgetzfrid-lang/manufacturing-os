@@ -856,9 +856,9 @@ export default function StorageBackupPage() {
       <PageBody>
       {error && stats && <Problem retry={() => void load()}>{error}</Problem>}
       {lastArchiveId && (
-        <p role="status" className="text-[14px] text-[var(--color-text)] flex items-start gap-2">
+        <p role="status" className="text-body text-[var(--color-text)] flex items-start gap-2">
           <CheckCircle2 aria-hidden className="w-4 h-4 shrink-0 mt-0.5 text-[var(--state-released)]" />
-          <span>Saved as archive <CopyId value={lastArchiveId} label="archive ID" />. Store it at <span className="font-mono text-[13px] break-all">{archiveRoot ? subfolder(archiveRoot, "full-backups") : "<root>/full-backups/"}{lastArchiveId}.zip</span>. Quote this ID if anyone needs a file it holds.</span>
+          <span>Saved as archive <CopyId value={lastArchiveId} label="archive ID" />. Store it at <span className="font-mono text-body break-all">{archiveRoot ? subfolder(archiveRoot, "full-backups") : "<root>/full-backups/"}{lastArchiveId}.zip</span>. Quote this ID if anyone needs a file it holds.</span>
         </p>
       )}
 
@@ -873,13 +873,13 @@ export default function StorageBackupPage() {
             <div className={`${sheet} divide-y divide-[var(--color-border)]`}>
               <FormRow label="Storage limit" hint={isRealQuota ? "Admins are alerted at 70% and 90%." : "A guide until you set your plan's real limit."}>
                 <div className="@xl:pt-1 flex items-center gap-x-4 gap-y-2 flex-wrap">
-                  <span className="font-display text-[20px] font-semibold tabular-nums text-[var(--color-text)]">{fmtBytes(budgetBytes)}</span>
+                  <span className="font-display text-section font-semibold tabular-nums text-[var(--color-text)]">{fmtBytes(budgetBytes)}</span>
                   <StatusTag tone={health === "crit" ? "bad" : health === "warn" ? "warn" : "none"}>{health === "crit" ? "Act now" : health === "warn" ? "Plan a backup" : "Healthy"}</StatusTag>
                   {canPurge && (editingQuota ? (
                     <form className="inline-flex items-center gap-2 flex-wrap" onSubmit={(e) => { e.preventDefault(); void saveQuota(); }}>
-                      <label className="text-[14px] text-[var(--color-text-muted)]" htmlFor="quota-gb">Limit in GB</label>
+                      <label className="text-body text-[var(--color-text-muted)]" htmlFor="quota-gb">Limit in GB</label>
                       <input id="quota-gb" value={quotaDraft} onChange={(e) => setQuotaDraft(e.target.value)} inputMode="decimal" placeholder="10"
-                        className={`${fieldBox} h-9 pointer-coarse:h-11 w-24 text-[15px] max-sm:text-[16px] tabular-nums`} />
+                        className={`${fieldBox} h-9 pointer-coarse:h-11 w-24 text-reading tabular-nums`} />
                       <Button size="sm" variant="secondary" type="submit" loading={savingQuota}>Save</Button>
                       <button type="button" onClick={() => { setEditingQuota(false); setQuotaDraft(quotaBytes ? String(Math.round((quotaBytes / (1024 ** 3)) * 10) / 10) : ""); }} className={btnLink}>Cancel</button>
                     </form>
@@ -891,12 +891,12 @@ export default function StorageBackupPage() {
                 </div>
               </FormRow>
               <FormRow label="Database" hint="Postgres">
-                <div className="@xl:pt-1"><span className="font-display text-[20px] font-semibold tabular-nums">{fmtBytes(stats.db.totalBytes)}</span> <span className="text-[14px] text-[var(--color-text-muted)]">in {plural(tables.length, "table")}</span></div>
+                <div className="@xl:pt-1"><span className="font-display text-section font-semibold tabular-nums">{fmtBytes(stats.db.totalBytes)}</span> <span className="text-body text-[var(--color-text-muted)]">in {plural(tables.length, "table")}</span></div>
               </FormRow>
               <FormRow label="Files" hint={stats.r2Real ? "Cloudflare R2, measured" : "Cloudflare R2, estimated"}>
                 <div className="@xl:pt-1">
-                  <span className="font-display text-[20px] font-semibold tabular-nums">{stats.r2Real ? fmtBytes(stats.r2Real.bytes) : `~${fmtBytes(stats.r2Estimate.totalBytes)}`}</span>{" "}
-                  <span className="text-[14px] text-[var(--color-text-muted)]">
+                  <span className="font-display text-section font-semibold tabular-nums">{stats.r2Real ? fmtBytes(stats.r2Real.bytes) : `~${fmtBytes(stats.r2Estimate.totalBytes)}`}</span>{" "}
+                  <span className="text-body text-[var(--color-text-muted)]">
                     {stats.r2Real
                       ? `${plural(stats.r2Real.objects, "file")}, measured ${new Date(stats.generatedAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}`
                       : `${plural(stats.r2Estimate.versionCount, "revision")}, ${plural(stats.r2Estimate.photoCount, "photo")}`}
@@ -910,20 +910,20 @@ export default function StorageBackupPage() {
                 can't see knowledge PDFs, templates or orphans. Say so: an
                 estimate that never moves looks exactly like a wrong number. */}
             {!stats.r2Real && (
-              <p role="alert" className="mt-3 text-[14px] text-[var(--color-text)] flex items-start gap-2">
+              <p role="alert" className="mt-3 text-body text-[var(--color-text)] flex items-start gap-2">
                 <AlertTriangle aria-hidden className="w-4 h-4 mt-0.5 shrink-0 text-[var(--state-held)]" />
                 <span>
-                  <b className="font-semibold">The file total is an estimate, not a measurement.</b> Measuring the bucket failed, so it
+                  <b className="font-medium">The file total is an estimate, not a measurement.</b> Measuring the bucket failed, so it
                   only counts document revisions and asset photos, not knowledge PDFs, request attachments, output templates or orphaned files.
                   {stats.r2Error && <> {said(stats.r2Error, "Why it failed:")}</>}
                 </span>
               </p>
             )}
             {stats.r2Real?.truncated && (
-              <p className="mt-3 text-[14px] text-[var(--color-text)] flex items-start gap-2">
+              <p className="mt-3 text-body text-[var(--color-text)] flex items-start gap-2">
                 <AlertTriangle aria-hidden className="w-4 h-4 mt-0.5 shrink-0 text-[var(--state-held)]" />
                 <span>
-                  <b className="font-semibold">Measuring stopped early, so the real total is higher.</b> The bucket has more than 500,000
+                  <b className="font-medium">Measuring stopped early, so the real total is higher.</b> The bucket has more than 500,000
                   files. Treat {fmtBytes(stats.r2Real.bytes)} as the least it could be.
                 </span>
               </p>
@@ -933,14 +933,14 @@ export default function StorageBackupPage() {
               {/* WHERE the bytes are: the receipt behind the total. */}
               {stats.r2Real && (stats.r2Real.segments?.length ?? 0) > 0 && (
                 <Disclosure title="Where the files are" meta={plural(stats.r2Real.segments!.length, "place")}>
-                  <table className="w-full text-[14px] tabular-nums">
+                  <table className="w-full text-body tabular-nums">
                     <thead className="sr-only"><tr><th>Where</th><th>Share</th><th>Size</th><th>Files</th><th>Newest</th></tr></thead>
                     <tbody className="divide-y divide-[var(--color-border)]">
                       {stats.r2Real.segments!.map((s) => {
                         const share = stats.r2Real!.bytes > 0 ? Math.round((s.bytes / stats.r2Real!.bytes) * 100) : 0;
                         return (
                           <tr key={s.label}>
-                            <td className="py-2 pr-3 font-semibold text-[var(--color-text)]">{s.label}</td>
+                            <td className="py-2 pr-3 font-medium text-[var(--color-text)]">{s.label}</td>
                             <td className="py-2 pr-3 w-[30%] max-sm:hidden">
                               <div className="h-1.5 rounded-full bg-[var(--color-surface-2)] overflow-hidden">
                                 <div className="h-full rounded-full bg-[var(--color-text-faint)]" style={{ width: `${Math.max(1, share)}%` }} />
@@ -954,7 +954,7 @@ export default function StorageBackupPage() {
                       })}
                     </tbody>
                   </table>
-                  <p className="mt-2 text-[13px] text-[var(--color-text-muted)]">
+                  <p className="mt-2 text-body text-[var(--color-text-muted)]">
                     These add up to the measured total. If a batch you just uploaded is missing, its row&apos;s newest date shows whether the files landed.
                   </p>
                 </Disclosure>
@@ -978,18 +978,18 @@ export default function StorageBackupPage() {
                       <label className="block">
                         <span className={label}>Files (GB)</span>
                         <input value={r2LimitDraft} onChange={(e) => setR2LimitDraft(e.target.value)} inputMode="decimal"
-                          className={`${fieldBox} h-10 pointer-coarse:h-11 w-28 text-[15px] max-sm:text-[16px] tabular-nums`} />
+                          className={`${fieldBox} h-10 pointer-coarse:h-11 w-28 text-reading tabular-nums`} />
                       </label>
                       <label className="block">
                         <span className={label}>Database (MB)</span>
                         <input value={dbLimitDraft} onChange={(e) => setDbLimitDraft(e.target.value)} inputMode="decimal"
-                          className={`${fieldBox} h-10 pointer-coarse:h-11 w-28 text-[15px] max-sm:text-[16px] tabular-nums`} />
+                          className={`${fieldBox} h-10 pointer-coarse:h-11 w-28 text-reading tabular-nums`} />
                       </label>
                       <Button variant="secondary" type="submit" loading={savingLimits}>Save limits</Button>
                       <button type="button" onClick={() => setEditingLimits(false)} className={`${btnLink} h-10`}>Cancel</button>
                     </form>
                   ) : (
-                    <p className="mt-3 text-[13px] text-[var(--color-text-muted)]">
+                    <p className="mt-3 text-body text-[var(--color-text-muted)]">
                       Use is measured. The limits are your hosting plan&apos;s
                       {stats.freeTier.source === "settings" ? ", set by an admin here." : ": the free tiers until changed (R2 10 GB, Supabase 500 MB)."}{" "}
                       <button type="button" onClick={() => {
@@ -1008,11 +1008,11 @@ export default function StorageBackupPage() {
 
           {/* ── Free up space ─────────────────────────────────────────────── */}
           {canPurge ? (
-            <Section label="Free up space" action={<span className="text-[13px] text-[var(--color-text-muted)]">Your workspace only</span>}>
+            <Section label="Free up space" action={<span className="text-body text-[var(--color-text-muted)]">Your workspace only</span>}>
               <div className="space-y-3">
                 {/* Purge: disposable rows only. */}
                 <Panel title="Old byproducts" help="Rows the app makes as it works (logs, previews, old notices). Records are never touched. A purge is written to the audit log."
-                  control={<label className="inline-flex items-center gap-2 text-[13px] text-[var(--color-text-muted)]">Older than
+                  control={<label className="inline-flex items-center gap-2 text-body text-[var(--color-text-muted)]">Older than
                     <select value={purgeDays} onChange={(e) => setPurgeDays(Number(e.target.value))} className={small}>
                       {[30, 90, 180, 365].map((d) => <option key={d} value={d}>{d} days</option>)}
                     </select></label>}>
@@ -1027,7 +1027,7 @@ export default function StorageBackupPage() {
                         <tbody className={tbl.tbody}>
                           {preview!.targets.map((t) => (
                             <tr key={t.table} title={t.reason}>
-                              <td className="px-4 py-2"><div className="font-semibold text-[var(--color-text)]">{t.label}</div><div className="text-[13px] text-[var(--color-text-muted)] font-mono truncate">{t.table}</div></td>
+                              <td className="px-4 py-2"><div className="font-medium text-[var(--color-text)]">{t.label}</div><div className="text-body text-[var(--color-text-muted)] font-mono truncate">{t.table}</div></td>
                               <td className="px-4 py-2 text-right">{fmtNum(t.rows)}</td>
                               <td className="px-4 py-2 text-right text-[var(--color-text-muted)]">≈{fmtBytes(t.estBytes)}</td>
                             </tr>
@@ -1038,9 +1038,9 @@ export default function StorageBackupPage() {
                   ) : null}
                   {readErrors.purge == null && (
                     <div className="mt-3 flex items-center justify-between gap-3 flex-wrap">
-                      <p className="text-[14px] text-[var(--color-text-muted)]">
+                      <p className="text-body text-[var(--color-text-muted)]">
                         {preview && preview.totalRows > 0
-                          ? <>Frees about <b className="font-semibold text-[var(--color-text)]">{fmtBytes(preview.totalEstBytes)}</b> across {plural(preview.totalRows, "row")}.</>
+                          ? <>Frees about <b className="font-medium text-[var(--color-text)]">{fmtBytes(preview.totalEstBytes)}</b> across {plural(preview.totalRows, "row")}.</>
                           : preview ? `Nothing older than ${purgeDays} days to purge.` : ""}
                       </p>
                       {preview && preview.totalRows > 0 && (
@@ -1055,7 +1055,7 @@ export default function StorageBackupPage() {
 
                 {/* The shed: older revision files go to an offline archive. */}
                 <Panel title="Older revision files" help={`Keeps the last ${shedKeep} revisions of every document live and moves the files of older ones into one offline archive. Each revision's record, checksum and reason stay; only the file moves. The current revision is never touched.`}
-                  control={<label className="inline-flex items-center gap-2 text-[13px] text-[var(--color-text-muted)]">Keep the last
+                  control={<label className="inline-flex items-center gap-2 text-body text-[var(--color-text-muted)]">Keep the last
                     <select value={shedKeep} onChange={(e) => setShedKeep(Number(e.target.value))} className={small}>
                       {[3, 5, 10, 20].map((d) => <option key={d} value={d}>{d} revisions</option>)}
                     </select></label>}>
@@ -1065,9 +1065,9 @@ export default function StorageBackupPage() {
                     <SkeletonRows rows={1} cols={1} what="older revisions" sheet={false} />
                   ) : shedPreview.selectedCount > 0 ? (
                     <div className="flex items-center justify-between gap-3 flex-wrap">
-                      <p className="text-[14px] text-[var(--color-text-muted)]">
-                        <b className="font-semibold text-[var(--color-text)]">{plural(shedPreview.selectedCount, "older file")}</b>, about <b className="font-semibold text-[var(--color-text)]">{fmtBytes(shedPreview.reclaimableBytes)}</b>.
-                        {(shedPreview.remainingCount ?? 0) > 0 && <> <span className="text-[var(--state-held-text)] font-semibold">{fmtNum(shedPreview.remainingCount!)} more</span> past one archive&apos;s size limit; build again after reclaiming.</>}
+                      <p className="text-body text-[var(--color-text-muted)]">
+                        <b className="font-medium text-[var(--color-text)]">{plural(shedPreview.selectedCount, "older file")}</b>, about <b className="font-medium text-[var(--color-text)]">{fmtBytes(shedPreview.reclaimableBytes)}</b>.
+                        {(shedPreview.remainingCount ?? 0) > 0 && <> <span className="text-[var(--state-held-text)] font-medium">{fmtNum(shedPreview.remainingCount!)} more</span> past one archive&apos;s size limit; build again after reclaiming.</>}
                         {archiveRoot && <> Save to <span className="font-mono break-all">{subfolder(archiveRoot, "data")}&lt;id&gt;.zip</span></>}
                       </p>
                       <button type="button" onClick={() => void produceArchive()} disabled={shedBusy} className={btnQuiet}>
@@ -1075,7 +1075,7 @@ export default function StorageBackupPage() {
                       </button>
                     </div>
                   ) : (
-                    <p className="text-[14px] text-[var(--color-text-muted)]">No document has more than {shedKeep} revisions, so there&apos;s nothing older to archive.</p>
+                    <p className="text-body text-[var(--color-text-muted)]">No document has more than {shedKeep} revisions, so there&apos;s nothing older to archive.</p>
                   )}
                   {pendingArchive && (
                     <PendingStep
@@ -1089,7 +1089,7 @@ export default function StorageBackupPage() {
 
                 {/* Closed requests go to an offline archive; a stub stays. */}
                 <Panel title="Long-closed requests" help="Moves long-closed requests (comments, history and attachments) into one offline archive and leaves a small stub in the list. Opening a stub asks for the archive, and one restore brings it all back. Only closed or canceled requests; open ones are never touched."
-                  control={<label className="inline-flex items-center gap-2 text-[13px] text-[var(--color-text-muted)]">Closed over
+                  control={<label className="inline-flex items-center gap-2 text-body text-[var(--color-text-muted)]">Closed over
                     <select value={ticketDays} onChange={(e) => setTicketDays(Number(e.target.value))} className={small}>
                       {[90, 180, 365, 730].map((d) => <option key={d} value={d}>{d} days</option>)}
                     </select></label>}>
@@ -1099,8 +1099,8 @@ export default function StorageBackupPage() {
                     <SkeletonRows rows={1} cols={1} what="closed requests" sheet={false} />
                   ) : ticketPreview.selectedCount > 0 ? (
                     <div className="flex items-center justify-between gap-3 flex-wrap">
-                      <p className="text-[14px] text-[var(--color-text-muted)]">
-                        <b className="font-semibold text-[var(--color-text)]">{plural(ticketPreview.selectedCount, "closed request")}</b>, about <b className="font-semibold text-[var(--color-text)]">{fmtBytes(ticketPreview.reclaimableBytes)}</b> of attachments.
+                      <p className="text-body text-[var(--color-text-muted)]">
+                        <b className="font-medium text-[var(--color-text)]">{plural(ticketPreview.selectedCount, "closed request")}</b>, about <b className="font-medium text-[var(--color-text)]">{fmtBytes(ticketPreview.reclaimableBytes)}</b> of attachments.
                         {archiveRoot && <> Save to <span className="font-mono break-all">{subfolder(archiveRoot, "data")}&lt;id&gt;.zip</span></>}
                       </p>
                       <button type="button" onClick={() => void produceTicketArchive()} disabled={ticketBusy} className={btnQuiet}>
@@ -1108,7 +1108,7 @@ export default function StorageBackupPage() {
                       </button>
                     </div>
                   ) : (
-                    <p className="text-[14px] text-[var(--color-text-muted)]">No request has been closed longer than {ticketDays} days.</p>
+                    <p className="text-body text-[var(--color-text-muted)]">No request has been closed longer than {ticketDays} days.</p>
                   )}
                   {pendingTicketArchive && (
                     <PendingStep
@@ -1119,7 +1119,7 @@ export default function StorageBackupPage() {
                       onReclaim={() => void commitTicketArchive()} onDiscard={() => void cancelPending(pendingTicketArchive.archiveId, "ticket")} />
                   )}
                   <div className="mt-4 pt-3 border-t border-[var(--color-border)] flex items-center justify-between gap-3 flex-wrap">
-                    <p className="text-[14px] text-[var(--color-text-muted)]">Bringing closed requests back? Restore them from the saved archive.</p>
+                    <p className="text-body text-[var(--color-text-muted)]">Bringing closed requests back? Restore them from the saved archive.</p>
                     <label className={`${btnQuiet} cursor-pointer ${ticketRestoreBusy ? "opacity-50 pointer-events-none" : ""}`}>
                       {ticketRestoreBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <FolderArchive className="w-4 h-4" />} Restore from archive
                       <input type="file" accept=".zip" className="sr-only" disabled={ticketRestoreBusy}
@@ -1130,8 +1130,8 @@ export default function StorageBackupPage() {
                     <div className="mt-2 flex items-center gap-2.5">
                       <FileThumb file={ticketRestoreFile} size={32} />
                       <span className="min-w-0 flex-1">
-                        <span className="block text-[14px] font-semibold text-[var(--color-text)] truncate">{ticketRestoreFile.name}</span>
-                        <span className="block text-[13px] text-[var(--color-text-muted)]">
+                        <span className="block text-body font-medium text-[var(--color-text)] truncate">{ticketRestoreFile.name}</span>
+                        <span className="block text-body text-[var(--color-text-muted)]">
                           {fmtBytes(ticketRestoreFile.size)}
                           {ticketRestoreBusy && <span className="inline-flex items-center gap-1 ml-2"><Loader2 aria-hidden className="w-3 h-3 animate-spin" /> Uploading and restoring</span>}
                         </span>
@@ -1141,7 +1141,7 @@ export default function StorageBackupPage() {
                       )}
                     </div>
                   )}
-                  {ticketRestoreMsg && <p role="status" className={`mt-2 text-[14px] font-semibold ${ticketRestoreMsg.warn ? "text-[var(--state-held-text)]" : "text-[var(--color-text)]"}`}>{ticketRestoreMsg.text}</p>}
+                  {ticketRestoreMsg && <p role="status" className={`mt-2 text-body font-medium ${ticketRestoreMsg.warn ? "text-[var(--state-held-text)]" : "text-[var(--color-text)]"}`}>{ticketRestoreMsg.text}</p>}
                 </Panel>
 
                 {/* Orphaned files: bucket objects nothing references. */}
@@ -1150,20 +1150,20 @@ export default function StorageBackupPage() {
                     {orphanBusy === "scan" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />} {orphanScan ? "Scan again" : "Scan"}
                   </button>}>
                   {orphanMsg && (
-                    <p role="status" className={`text-[14px] font-semibold ${orphanMsg.warn ? "text-[var(--state-held-text)]" : "text-[var(--color-text)]"}`}>{orphanMsg.text}</p>
+                    <p role="status" className={`text-body font-medium ${orphanMsg.warn ? "text-[var(--state-held-text)]" : "text-[var(--color-text)]"}`}>{orphanMsg.text}</p>
                   )}
-                  {!orphanScan && !orphanMsg && <p className="text-[14px] text-[var(--color-text-muted)]">Scan to find files nothing uses.</p>}
+                  {!orphanScan && !orphanMsg && <p className="text-body text-[var(--color-text-muted)]">Scan to find files nothing uses.</p>}
                   {orphanScan && (
                     orphanScan.orphans.length === 0 ? (
-                      <p className="text-[14px] text-[var(--color-text)]">
+                      <p className="text-body text-[var(--color-text)]">
                         All {fmtNum(orphanScan.totalObjects)} files in storage are in use.
                         {orphanScan.skippedYoung > 0 && <span className="text-[var(--color-text-muted)]"> {orphanScan.skippedYoung} too new to judge yet.</span>}
                       </p>
                     ) : (
                       <div className="space-y-2">
                         <div className="flex items-center gap-3 flex-wrap">
-                          <span className="font-display text-[20px] font-semibold tabular-nums text-[var(--color-text)]">{fmtBytes(orphanScan.orphanBytes)}</span>
-                          <span className="text-[14px] text-[var(--color-text-muted)]">
+                          <span className="font-display text-section font-semibold tabular-nums text-[var(--color-text)]">{fmtBytes(orphanScan.orphanBytes)}</span>
+                          <span className="text-body text-[var(--color-text-muted)]">
                             in {plural(orphanScan.orphans.length, "orphaned file")}; {fmtNum(orphanScan.referencedKeys)} files in use checked
                             {orphanScan.skippedYoung > 0 && `, ${orphanScan.skippedYoung} under 7 days old skipped`}
                           </span>
@@ -1172,11 +1172,11 @@ export default function StorageBackupPage() {
                             Delete them
                           </button>
                         </div>
-                        <ul className="max-h-40 overflow-y-auto rounded-lg border border-[var(--color-border)] divide-y divide-[var(--color-border)] text-[13px]">
+                        <ul className="max-h-40 overflow-y-auto rounded-lg border border-[var(--color-border)] divide-y divide-[var(--color-border)] text-body">
                           {orphanScan.orphans.slice(0, 50).map((o) => (
                             <li key={o.key} className="px-3 py-1.5 flex items-center gap-2">
                               <span className="truncate flex-1 font-mono text-[var(--color-text-muted)]" title={o.key}>{o.key}</span>
-                              <span className="shrink-0 tabular-nums font-semibold text-[var(--color-text)]">{fmtBytes(o.size)}</span>
+                              <span className="shrink-0 tabular-nums font-medium text-[var(--color-text)]">{fmtBytes(o.size)}</span>
                             </li>
                           ))}
                           {orphanScan.orphans.length > 50 && (
@@ -1190,7 +1190,7 @@ export default function StorageBackupPage() {
               </div>
             </Section>
           ) : (
-            <p className="text-[14px] text-[var(--color-text-muted)] flex items-center gap-2">
+            <p className="text-body text-[var(--color-text-muted)] flex items-center gap-2">
               <Lock aria-hidden className="w-4 h-4 shrink-0" /> Only Admin and Doc Control can free up space. You can still see use and download backups.
             </p>
           )}
@@ -1204,7 +1204,7 @@ export default function StorageBackupPage() {
               count={catalog.length}
               action={<button type="button" onClick={() => void loadCatalog()} title="Check again" aria-label="Check the archives again" className={btnIcon}><RefreshCw className="w-4 h-4" /></button>}>
               {catalogMsg && (
-                <p role="status" className={`mb-3 text-[14px] font-semibold flex items-start gap-1.5 ${catalogMsg.warn ? "text-[var(--state-held-text)]" : "text-[var(--color-text)]"}`}>
+                <p role="status" className={`mb-3 text-body font-medium flex items-start gap-1.5 ${catalogMsg.warn ? "text-[var(--state-held-text)]" : "text-[var(--color-text)]"}`}>
                   {catalogMsg.warn ? <AlertTriangle aria-hidden className="w-4 h-4 mt-0.5 shrink-0" /> : <CheckCircle2 aria-hidden className="w-4 h-4 mt-0.5 shrink-0 text-[var(--state-released)]" />}
                   {catalogMsg.text}
                 </p>
@@ -1234,22 +1234,22 @@ export default function StorageBackupPage() {
                       return (
                         <tr key={row.archiveId} className={`${tbl.tr} max-md:grid max-md:grid-cols-[minmax(0,1fr)_auto] max-md:gap-x-2 max-md:py-2`}>
                           <td className={`${tbl.td} max-md:py-1`}>
-                            <CopyId value={row.archiveId} label="archive ID" className="font-mono text-[13px]" />
-                            {copiedArchiveId === row.archiveId && <span className="ml-2 text-[12px] text-[var(--color-text-muted)]">Save path copied</span>}
-                            <div className="text-[13px] text-[var(--color-text-muted)]">{row.kind === "full" ? "Full backup" : isTicket ? "Closed requests" : "Revision files"}</div>
+                            <CopyId value={row.archiveId} label="archive ID" className="font-mono text-body" />
+                            {copiedArchiveId === row.archiveId && <span className="ml-2 text-caption text-[var(--color-text-muted)]">Save path copied</span>}
+                            <div className="text-body text-[var(--color-text-muted)]">{row.kind === "full" ? "Full backup" : isTicket ? "Closed requests" : "Revision files"}</div>
                           </td>
                           <td className={`${tbl.td} max-md:col-span-2 max-md:row-start-2 max-md:py-0.5`}>
                             <StatusTag tone={st.tone}>{st.word}</StatusTag>
                             {row.status === "pending" && (
-                              <div className="text-[13px] text-[var(--color-text-muted)] mt-0.5">{row.docPending > 0 ? plural(row.docPending, "revision") : plural(row.ticketPending, "request")} waiting</div>
+                              <div className="text-body text-[var(--color-text-muted)] mt-0.5">{row.docPending > 0 ? plural(row.docPending, "revision") : plural(row.ticketPending, "request")} waiting</div>
                             )}
                           </td>
                           <td className={`${tbl.td} max-md:col-span-2 max-md:row-start-3 max-md:py-0.5 text-[var(--color-text-muted)]`}>
                             {row.createdAt ? shortDateTime(row.createdAt) : <span className="text-[var(--color-text-faint)]">Not recorded</span>}
-                            {row.createdByEmail && <div className="text-[13px] truncate max-w-[24ch]">{row.createdByEmail}</div>}
+                            {row.createdByEmail && <div className="text-body truncate max-w-[24ch]">{row.createdByEmail}</div>}
                           </td>
                           <td className={`${tbl.td} max-md:col-span-2 max-md:row-start-4 max-md:py-0.5 md:text-right whitespace-nowrap`}>
-                            {row.fileCount > 0 ? <>{fmtBytes(row.totalBytes)}<div className="text-[13px] text-[var(--color-text-muted)]">{plural(row.fileCount, "file")}</div></> : <span className="text-[var(--color-text-faint)]">None</span>}
+                            {row.fileCount > 0 ? <>{fmtBytes(row.totalBytes)}<div className="text-body text-[var(--color-text-muted)]">{plural(row.fileCount, "file")}</div></> : <span className="text-[var(--color-text-faint)]">None</span>}
                           </td>
                           <td className={`${tbl.td} max-md:col-start-2 max-md:row-start-1 max-md:py-1 text-right whitespace-nowrap`}>
                             <span className="inline-flex items-center gap-1">
@@ -1283,12 +1283,12 @@ export default function StorageBackupPage() {
               {canPurge && (
                 <FormRow label="Archive folder" hint="Where your team keeps backups. Anyone asked for an archived file is pointed here.">
                   {!editingLoc && archiveRoot ? (
-                    <div className="@xl:pt-1 text-[14px] min-w-0">
+                    <div className="@xl:pt-1 text-body min-w-0">
                       <div className="flex items-start gap-3">
                         <span className="font-mono break-all text-[var(--color-text)] flex-1 min-w-0">{archiveRoot}</span>
                         <button type="button" onClick={() => setEditingLoc(true)} className={btnLink}>Change</button>
                       </div>
-                      <dl className="mt-1.5 grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-[13px] text-[var(--color-text-muted)]">
+                      <dl className="mt-1.5 grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-body text-[var(--color-text-muted)]">
                         <dt>Full backups</dt><dd className="font-mono break-all">{subfolder(archiveRoot, "full-backups")}</dd>
                         <dt>Space-saver</dt><dd className="font-mono break-all">{subfolder(archiveRoot, "data")}</dd>
                         {finderNote && <><dt>Finder note</dt><dd>{finderNote}</dd></>}
@@ -1308,7 +1308,7 @@ export default function StorageBackupPage() {
                           className={field} />
                       </label>
                       {locDraft.trim() && (
-                        <p className="text-[13px] text-[var(--color-text-muted)] break-all">People will be told: <span className="font-mono">{subfolder(locDraft, "data")}&lt;archive-id&gt;.zip</span>{noteDraft.trim() ? <> ({noteDraft.trim()})</> : null}</p>
+                        <p className="text-body text-[var(--color-text-muted)] break-all">People will be told: <span className="font-mono">{subfolder(locDraft, "data")}&lt;archive-id&gt;.zip</span>{noteDraft.trim() ? <> ({noteDraft.trim()})</> : null}</p>
                       )}
                       <div className="flex items-center gap-3">
                         <Button variant="secondary" type="submit" loading={savingLoc} disabled={!locDraft.trim()}>Save folder</Button>
@@ -1340,14 +1340,14 @@ export default function StorageBackupPage() {
           <Section label="Details">
             <div className="space-y-2">
               <Disclosure title="Database by kind" meta={`${fmtBytes(byCat.purge ?? 0)} can go`}>
-                <table className="w-full text-[14px] tabular-nums">
-                  <thead className="text-left text-[13px] text-[var(--color-text-muted)]"><tr><th className="font-semibold pb-1.5 pr-3">Kind</th><th className="font-semibold pb-1.5 pr-3 text-right">Size</th><th className="font-semibold pb-1.5 max-sm:hidden">What it is</th></tr></thead>
+                <table className="w-full text-body tabular-nums">
+                  <thead className="text-left text-body text-[var(--color-text-muted)]"><tr><th className="font-medium pb-1.5 pr-3">Kind</th><th className="font-medium pb-1.5 pr-3 text-right">Size</th><th className="font-medium pb-1.5 max-sm:hidden">What it is</th></tr></thead>
                   <tbody className="divide-y divide-[var(--color-border)]">
                     {(["purge", "archive", "reference"] as DataClass[]).map((cat) => (
                       <tr key={cat}>
-                        <td className="py-2 pr-3 font-semibold whitespace-nowrap">{CATEGORY_LABEL[cat]}</td>
+                        <td className="py-2 pr-3 font-medium whitespace-nowrap">{CATEGORY_LABEL[cat]}</td>
                         <td className="py-2 pr-3 text-right whitespace-nowrap">{fmtBytes(byCat[cat] ?? 0)}</td>
-                        <td className="py-2 text-[13px] text-[var(--color-text-muted)] max-sm:hidden">{CATEGORY_BLURB[cat]}</td>
+                        <td className="py-2 text-body text-[var(--color-text-muted)] max-sm:hidden">{CATEGORY_BLURB[cat]}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -1357,10 +1357,10 @@ export default function StorageBackupPage() {
               {stats.dedup && stats.dedup.totalVersions > 0 && (
                 <Disclosure title="Duplicate revision files" meta={`~${fmtBytes(stats.dedup.reclaimableBytes)}`}>
                   <dl className="flex flex-wrap gap-x-8 gap-y-2">
-                    <div><dt className="text-[13px] text-[var(--color-text-muted)]">Stored more than once</dt><dd className="text-[16px] font-semibold tabular-nums">~{fmtBytes(stats.dedup.reclaimableBytes)}</dd></div>
-                    <div><dt className="text-[13px] text-[var(--color-text-muted)]">Files stored 2 or more times</dt><dd className="text-[16px] font-semibold tabular-nums">{fmtNum(stats.dedup.dupGroups)}</dd></div>
+                    <div><dt className="text-body text-[var(--color-text-muted)]">Stored more than once</dt><dd className="text-reading font-medium tabular-nums">~{fmtBytes(stats.dedup.reclaimableBytes)}</dd></div>
+                    <div><dt className="text-body text-[var(--color-text-muted)]">Files stored 2 or more times</dt><dd className="text-reading font-medium tabular-nums">{fmtNum(stats.dedup.dupGroups)}</dd></div>
                   </dl>
-                  <p className="mt-2 text-[13px] text-[var(--color-text-muted)]">Identical files are each stored on their own. This is measured only; nothing here changes them.</p>
+                  <p className="mt-2 text-body text-[var(--color-text-muted)]">Identical files are each stored on their own. This is measured only; nothing here changes them.</p>
                 </Disclosure>
               )}
 
@@ -1368,46 +1368,46 @@ export default function StorageBackupPage() {
                 {stats.ai ? (
                   <>
                     <dl className="flex flex-wrap gap-x-8 gap-y-2">
-                      <div><dt className="text-[13px] text-[var(--color-text-muted)]">Last 24 hours</dt><dd className="text-[16px] font-semibold tabular-nums">{plural(stats.ai.last24h, "call")}</dd></div>
-                      <div><dt className="text-[13px] text-[var(--color-text-muted)]">Last 30 days</dt><dd className="text-[16px] font-semibold tabular-nums">{plural(stats.ai.last30d, "call")}</dd></div>
+                      <div><dt className="text-body text-[var(--color-text-muted)]">Last 24 hours</dt><dd className="text-reading font-medium tabular-nums">{plural(stats.ai.last24h, "call")}</dd></div>
+                      <div><dt className="text-body text-[var(--color-text-muted)]">Last 30 days</dt><dd className="text-reading font-medium tabular-nums">{plural(stats.ai.last30d, "call")}</dd></div>
                     </dl>
-                    <p className="mt-2 text-[13px] text-[var(--color-text-muted)]">The shared key&apos;s free tier allows about 10 calls a minute and 1,000 a day, for everyone together.</p>
+                    <p className="mt-2 text-body text-[var(--color-text-muted)]">The shared key&apos;s free tier allows about 10 calls a minute and 1,000 a day, for everyone together.</p>
                   </>
                 ) : (
-                  <p className="text-[14px] text-[var(--color-text-muted)]">AI use isn&apos;t counted yet. Apply migration <span className="font-mono">20260806</span>.</p>
+                  <p className="text-body text-[var(--color-text-muted)]">AI use isn&apos;t counted yet. Apply migration <span className="font-mono">20260806</span>.</p>
                 )}
               </Disclosure>
 
               <Disclosure title="Tables by size" meta={plural(tables.length, "table")}>
                 {ticketRow && (
-                  <p className="mb-2 text-[13px] text-[var(--color-text-muted)]">
-                    <b className="font-semibold text-[var(--color-text)]">Why &ldquo;{ticketRow.name}&rdquo; is heavy per row:</b> {ticketRow.reason}
+                  <p className="mb-2 text-body text-[var(--color-text-muted)]">
+                    <b className="font-medium text-[var(--color-text)]">Why &ldquo;{ticketRow.name}&rdquo; is heavy per row:</b> {ticketRow.reason}
                   </p>
                 )}
-                <table className="w-full text-[14px] tabular-nums">
-                  <thead className="text-left text-[13px] text-[var(--color-text-muted)]">
+                <table className="w-full text-body tabular-nums">
+                  <thead className="text-left text-body text-[var(--color-text-muted)]">
                     <tr>
-                      <th className="font-semibold pb-1.5 pr-3">Table</th>
-                      <th className="font-semibold pb-1.5 pr-3 max-sm:hidden">Kind</th>
-                      <th className="font-semibold pb-1.5 pr-3 w-[28%] max-md:hidden"><span className="sr-only">Share</span></th>
-                      <th className="font-semibold pb-1.5 pr-3 text-right">Size</th>
-                      <th className="font-semibold pb-1.5 text-right">Rows</th>
+                      <th className="font-medium pb-1.5 pr-3">Table</th>
+                      <th className="font-medium pb-1.5 pr-3 max-sm:hidden">Kind</th>
+                      <th className="font-medium pb-1.5 pr-3 w-[28%] max-md:hidden"><span className="sr-only">Share</span></th>
+                      <th className="font-medium pb-1.5 pr-3 text-right">Size</th>
+                      <th className="font-medium pb-1.5 text-right">Rows</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-[var(--color-border)]">
                     {tables.slice(0, 30).map((t) => (
                       <tr key={t.name} title={`${CATEGORY_LABEL[t.category]}: ${t.reason}`}>
                         <td className="py-1.5 pr-3 max-w-0 w-[40%]">
-                          <span className="block font-mono text-[13px] text-[var(--color-text)] truncate">{t.name}</span>
-                          {t.grower && <span className="text-[12px] font-semibold text-[var(--state-held-text)]">Grows fast</span>}
+                          <span className="block font-mono text-body text-[var(--color-text)] truncate">{t.name}</span>
+                          {t.grower && <span className="text-caption font-medium text-[var(--state-held-text)]">Grows fast</span>}
                         </td>
-                        <td className="py-1.5 pr-3 text-[13px] text-[var(--color-text-muted)] whitespace-nowrap max-sm:hidden">{CATEGORY_LABEL[t.category]}</td>
+                        <td className="py-1.5 pr-3 text-body text-[var(--color-text-muted)] whitespace-nowrap max-sm:hidden">{CATEGORY_LABEL[t.category]}</td>
                         <td className="py-1.5 pr-3 max-md:hidden">
                           <div className="h-1.5 rounded-full bg-[var(--color-surface-2)] overflow-hidden">
                             <div className="h-full rounded-full bg-[var(--color-text-faint)]" style={{ width: `${maxBytes > 0 ? Math.max(2, (t.bytes / maxBytes) * 100) : 0}%` }} />
                           </div>
                         </td>
-                        <td className="py-1.5 pr-3 text-right whitespace-nowrap font-semibold">{fmtBytes(t.bytes)}</td>
+                        <td className="py-1.5 pr-3 text-right whitespace-nowrap font-medium">{fmtBytes(t.bytes)}</td>
                         <td className="py-1.5 text-right whitespace-nowrap text-[var(--color-text-muted)]">{fmtNum(t.rows)}</td>
                       </tr>
                     ))}
@@ -1415,7 +1415,7 @@ export default function StorageBackupPage() {
                 </table>
               </Disclosure>
             </div>
-            <p className="mt-3 text-[12px] text-[var(--color-text-muted)]">{stats.note} Measured {shortDateTime(stats.generatedAt)}.</p>
+            <p className="mt-3 text-caption text-[var(--color-text-muted)]">{stats.note} Measured {shortDateTime(stats.generatedAt)}.</p>
           </Section>
         </>
       )}
@@ -1430,7 +1430,7 @@ function Panel({ title, help, control, children }: { title: string; help?: React
   return (
     <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 sm:p-5">
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 mb-3">
-        <h3 className="inline-flex items-center gap-1.5 text-[16px] font-semibold text-[var(--color-text)]">{title}{help && <HelpTooltip>{help}</HelpTooltip>}</h3>
+        <h3 className="inline-flex items-center gap-1.5 text-reading font-medium text-[var(--color-text)]">{title}{help && <HelpTooltip>{help}</HelpTooltip>}</h3>
         {control}
       </div>
       {children}
@@ -1442,8 +1442,8 @@ function Panel({ title, help, control, children }: { title: string; help?: React
 function Meter({ label: text, used, limit, pct, tone, bar }: { label: string; used: number; limit: number; pct: number; tone: Tone; bar: string }) {
   return (
     <div>
-      <div className="flex items-center justify-between gap-3 text-[14px] mb-1">
-        <span className="font-semibold text-[var(--color-text)]">{text}</span>
+      <div className="flex items-center justify-between gap-3 text-body mb-1">
+        <span className="font-medium text-[var(--color-text)]">{text}</span>
         <span className={`tabular-nums ${toneText(tone)} ${tone === "none" ? "!text-[var(--color-text-muted)]" : "font-semibold"}`}>{fmtBytes(used)} of {fmtBytes(limit)}, {pct}%</span>
       </div>
       <div className="h-2 rounded-full bg-[var(--color-surface-2)] overflow-hidden">
@@ -1463,7 +1463,7 @@ function PendingStep({ archiveId, folder, what, bytes, busy, onReclaim, onDiscar
     <div className="mt-4 relative pl-4">
       <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] rounded-full bg-[var(--state-held)]" />
       <StatusTag tone="warn">Step 2 of 2: reclaim the space</StatusTag>
-      <p className="mt-1 text-[14px] text-[var(--color-text)]">
+      <p className="mt-1 text-body text-[var(--color-text)]">
         First save <span className="font-mono">{archiveId}.zip</span> to <span className="font-mono break-all">{folder}</span>. {what}
       </p>
       <div className="mt-2 flex items-center gap-4 flex-wrap">

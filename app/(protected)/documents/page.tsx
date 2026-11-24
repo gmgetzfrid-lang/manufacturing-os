@@ -312,7 +312,7 @@ export default function DocumentsHomePage() {
 
   const emptyState = (
     <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-6 flex flex-wrap items-center gap-x-4 gap-y-3">
-      <p className="flex-1 min-w-[16rem] text-[15px] text-[var(--color-text)]">
+      <p className="flex-1 min-w-[16rem] text-reading text-[var(--color-text)]">
         {isController ? "No libraries yet. Libraries hold your drawings, procedures and standards." : "No libraries you can open yet. Doc Control or an Admin can give you access."}
       </p>
       {isController && <Link href="/admin/libraries" className={heroQuiet}>Set up a library</Link>}
@@ -331,13 +331,13 @@ export default function DocumentsHomePage() {
   // Under 640 px each row is a card with the same facts.
   const libraryRows = (list: UiLibrary[]) => (
     <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
-      <table className="w-full text-[14px]">
-        <thead className="text-[13px] text-[var(--color-text-muted)] text-left max-sm:hidden border-b border-[var(--color-border)]">
+      <table className="w-full text-body">
+        <thead className="text-body text-[var(--color-text-muted)] text-left max-sm:hidden border-b border-[var(--color-border)]">
           <tr>
-            <th className="font-semibold px-4 h-10">Library</th>
-            <th className="font-semibold px-4 text-right w-28">Documents</th>
-            <th className="font-semibold px-4 w-64 max-lg:hidden">Last change</th>
-            <th className="font-semibold px-4 w-44">Access</th>
+            <th className="font-medium px-4 h-10">Library</th>
+            <th className="font-medium px-4 text-right w-28">Documents</th>
+            <th className="font-medium px-4 w-64 max-lg:hidden">Last change</th>
+            <th className="font-medium px-4 w-44">Access</th>
             <th className="w-14"><span className="sr-only">Actions</span></th>
           </tr>
         </thead>
@@ -358,7 +358,7 @@ export default function DocumentsHomePage() {
                   <span className="ui-id">{last.number}</span>
                   {last.rev ? <span className="text-[var(--color-text-muted)]"> rev <span className="ui-id text-[var(--color-text)]">{last.rev}</span></span> : null}
                 </span>
-                <span className="shrink-0 text-[13px] text-[var(--color-text-muted)] tabular-nums">{humanDate(last.at)}</span>
+                <span className="shrink-0 text-body text-[var(--color-text-muted)] tabular-nums">{humanDate(last.at)}</span>
               </span>
             ) : null;
             return (
@@ -375,18 +375,18 @@ export default function DocumentsHomePage() {
                       <span className="flex items-center gap-1.5">
                         <Link href={`/documents/${lib._id}`}
                           onClick={(e) => { e.stopPropagation(); onTransitionClick(e, () => openLib(lib._id!)); if (!e.defaultPrevented) setPendingLibId(lib._id!); }}
-                          className="truncate text-[16px] font-semibold text-[var(--color-text)] group-hover:text-[var(--color-accent-text)] hover:underline underline-offset-2">
+                          className="truncate text-reading font-medium text-[var(--color-text)] group-hover:text-[var(--color-accent-text)] hover:underline underline-offset-2">
                           {lib.name}
                         </Link>
                         {isPending && <Loader2 aria-label="Opening" className="w-3.5 h-3.5 shrink-0 animate-spin text-[var(--color-text-faint)]" />}
                       </span>
-                      {lib.description && <span className="block text-[13px] text-[var(--color-text-muted)] truncate">{lib.description}</span>}
+                      {lib.description && <span className="block text-body text-[var(--color-text-muted)] truncate">{lib.description}</span>}
                       {/* Phone: the facts under the name. */}
-                      <span className="sm:hidden flex flex-wrap items-center gap-x-3 gap-y-0.5 mt-1 text-[13px] text-[var(--color-text-muted)]">
+                      <span className="sm:hidden flex flex-wrap items-center gap-x-3 gap-y-0.5 mt-1 text-body text-[var(--color-text-muted)]">
                         {n != null && <span className="tabular-nums">{n.toLocaleString()} document{n === 1 ? "" : "s"}</span>}
                         {access}
                       </span>
-                      {last && <span className="sm:hidden flex mt-0.5 text-[13px] min-w-0">{lastLine}</span>}
+                      {last && <span className="sm:hidden flex mt-0.5 text-body min-w-0">{lastLine}</span>}
                     </span>
                   </span>
                 </td>
@@ -505,8 +505,8 @@ export default function DocumentsHomePage() {
           <>
             {filtered.length > 0 && (
               <section>
-                <h2 className="flex items-baseline gap-2 font-display text-[20px] leading-tight font-semibold text-[var(--color-heading)] mb-3">
-                  Libraries <span className="font-sans text-[14px] font-normal tabular-nums text-[var(--color-text-muted)]">{filtered.length}</span>
+                <h2 className="flex items-baseline gap-2 font-display text-section leading-tight font-semibold text-[var(--color-heading)] mb-3">
+                  Libraries <span className="font-sans text-body font-normal tabular-nums text-[var(--color-text-muted)]">{filtered.length}</span>
                 </h2>
                 {libraryRows(filtered)}
               </section>
@@ -519,15 +519,15 @@ export default function DocumentsHomePage() {
           </>
         ) : listLoading ? (
           <section>
-            <h2 className="font-display text-[20px] leading-tight font-semibold text-[var(--color-heading)] mb-3">Libraries</h2>
+            <h2 className="font-display text-section leading-tight font-semibold text-[var(--color-heading)] mb-3">Libraries</h2>
             <SkeletonRows rows={4} cols={3} what="libraries" />
           </section>
         ) : libraries.length === 0 ? (error ? (
           <ErrorNote error={error} title="The libraries didn't load." onRetry={() => void fetchLibraries()} />
         ) : emptyState) : (
           <section>
-            <h2 className="flex items-baseline gap-2 font-display text-[20px] leading-tight font-semibold text-[var(--color-heading)] mb-3">
-              Libraries <span className="font-sans text-[14px] font-normal tabular-nums text-[var(--color-text-muted)]">{libraries.length}</span>
+            <h2 className="flex items-baseline gap-2 font-display text-section leading-tight font-semibold text-[var(--color-heading)] mb-3">
+              Libraries <span className="font-sans text-body font-normal tabular-nums text-[var(--color-text-muted)]">{libraries.length}</span>
             </h2>
             {libraryRows(libraries)}
           </section>
@@ -606,25 +606,25 @@ function LibraryAdminMenu({
         <>
           <div className="fixed inset-0 z-[5]" onClick={(e) => { e.stopPropagation(); onClose(); }} />
           <div role="menu" className="ui-float ui-float-in absolute right-0 top-full mt-1 w-60 text-left bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] rounded-xl overflow-hidden z-[10] origin-top-right py-1">
-            <div className="px-3 pt-1.5 pb-1 text-[12px] text-[var(--color-text-muted)] truncate">{libName}</div>
+            <div className="px-3 pt-1.5 pb-1 text-caption text-[var(--color-text-muted)] truncate">{libName}</div>
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); onClose(); onCustomize(); }}
-              role="menuitem" className="w-full text-left flex items-center gap-2.5 px-3 min-h-10 text-[14px] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
+              role="menuitem" className="w-full text-left flex items-center gap-2.5 px-3 min-h-10 text-body text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
             >
               <Palette className="w-4 h-4 text-[var(--color-text-faint)]" /> Customize appearance
             </button>
             <Link
               href={`/admin/libraries?lib=${libId}`}
               onClick={(e) => { e.stopPropagation(); onClose(); }}
-              role="menuitem" className="flex items-center gap-2.5 px-3 min-h-10 text-[14px] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
+              role="menuitem" className="flex items-center gap-2.5 px-3 min-h-10 text-body text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
             >
               <Settings className="w-4 h-4 text-[var(--color-text-faint)]" /> Name and columns
             </Link>
             <Link
               href={`/admin/permissions?lib=${libId}`}
               onClick={(e) => { e.stopPropagation(); onClose(); }}
-              role="menuitem" className="flex items-center gap-2.5 px-3 min-h-10 text-[14px] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
+              role="menuitem" className="flex items-center gap-2.5 px-3 min-h-10 text-body text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
             >
               <KeyRound className="w-4 h-4 text-[var(--color-text-faint)]" /> Who can open it
             </Link>
@@ -636,7 +636,7 @@ function LibraryAdminMenu({
                 onDelete();
               }}
               disabled={deleting}
-              role="menuitem" className="w-full text-left flex items-center gap-2.5 px-3 min-h-10 mt-1 text-[14px] text-[var(--state-overdue-text)] hover:bg-[var(--color-surface-2)] border-t border-[var(--color-border)] disabled:opacity-50"
+              role="menuitem" className="w-full text-left flex items-center gap-2.5 px-3 min-h-10 mt-1 text-body text-[var(--state-overdue-text)] hover:bg-[var(--color-surface-2)] border-t border-[var(--color-border)] disabled:opacity-50"
             >
               {deleting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
               {deleting ? "Deleting…" : "Delete library"}

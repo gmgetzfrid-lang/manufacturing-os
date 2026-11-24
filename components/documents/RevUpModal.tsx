@@ -89,7 +89,7 @@ const CHANGE_TYPES: { value: NonNullable<DocumentVersion["changeType"]>; label: 
 ];
 
 const inputClass =
-  "w-full px-2.5 py-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] text-[var(--color-text)]";
+  "w-full px-2.5 py-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body text-[var(--color-text)]";
 
 export default function RevUpModal({
   isOpen, onClose, doc, libraryId, folderPath,
@@ -412,8 +412,8 @@ export default function RevUpModal({
               <ChevronRight className="w-4 h-4 rotate-180" />
             </button>
             <div className="flex-1 min-w-0">
-              <div className="text-sm font-semibold text-[var(--state-held)] inline-flex items-center gap-1.5"><AlertTriangle className="w-4 h-4" /> This document changed while you were working</div>
-              <div className="text-[13px] text-[var(--color-text-muted)] truncate">
+              <div className="text-sm font-medium text-[var(--state-held)] inline-flex items-center gap-1.5"><AlertTriangle className="w-4 h-4" /> This document changed while you were working</div>
+              <div className="text-body text-[var(--color-text-muted)] truncate">
                 {doc.documentNumber || doc.title || doc.name}
               </div>
             </div>
@@ -429,12 +429,12 @@ export default function RevUpModal({
               {conflict.currentAt ? <> on <b>{new Date(conflict.currentAt).toLocaleString()}</b></> : null}
               {" "}while you were working.
               {conflict.currentChangeLog && (
-                <span className="block mt-1 text-[13px] italic text-[var(--color-text-muted)]">
+                <span className="block mt-1 text-body italic text-[var(--color-text-muted)]">
                   Their change: &ldquo;{conflict.currentChangeLog}&rdquo;
                 </span>
               )}
             </div>
-            <p className="text-[13px] text-[var(--color-text-muted)]">
+            <p className="text-body text-[var(--color-text-muted)]">
               Your file is based on <b>Rev {myBaseVersion?.revisionLabel ?? doc.rev ?? "?"}</b> and doesn&apos;t have their changes.
               <b> Nothing was published.</b> Add their change to your CAD file, then publish on top of Rev {conflict.currentRev}.
             </p>
@@ -448,30 +448,30 @@ export default function RevUpModal({
               >
                 <Diff className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
                 <div>
-                  <div className="text-[13px] font-bold text-[var(--color-text)]">View what changed</div>
-                  <div className="text-[13px] text-[var(--color-text-muted)]">Visual diff: your base → their Rev {conflict.currentRev}</div>
+                  <div className="text-body font-medium text-[var(--color-text)]">View what changed</div>
+                  <div className="text-body text-[var(--color-text-muted)]">Visual diff: your base → their Rev {conflict.currentRev}</div>
                 </div>
               </button>
               <div className="p-3 rounded-xl border-2 border-[var(--color-border)]">
                 <div className="flex items-center gap-2">
                   <MessageSquare className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
-                  <div className="text-[13px] font-bold text-[var(--color-text)]">
+                  <div className="text-body font-medium text-[var(--color-text)]">
                     Message {conflict.currentByName || "them"} in the document thread
                   </div>
                 </div>
                 {msgSent ? (
-                  <div className="mt-2 text-[13px] font-bold text-[var(--state-released)]">Sent to the document thread.</div>
+                  <div className="mt-2 text-body font-medium text-[var(--state-released)]">Sent to the document thread.</div>
                 ) : (
                   <div className="mt-2 flex gap-1.5">
                     <input
                       value={conflictMsg}
                       onChange={(e) => setConflictMsg(e.target.value)}
                       placeholder="Your note, or leave blank for a short heads-up"
-                      className="flex-1 px-2 py-1.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px]"
+                      className="flex-1 px-2 py-1.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body"
                     />
                     <button
                       onClick={handleSendConflictMessage}
-                      className="px-2.5 py-1.5 rounded-lg text-[13px] font-bold text-[var(--color-text)] border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)]"
+                      className="px-2.5 py-1.5 rounded-lg text-body font-medium text-[var(--color-text)] border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)]"
                     >
                       Send
                     </button>
@@ -485,18 +485,18 @@ export default function RevUpModal({
               {!showBranchInput ? (
                 <button
                   onClick={() => setShowBranchInput(true)}
-                  className="flex items-center gap-2 text-[13px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+                  className="flex items-center gap-2 text-body font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
                 >
                   <GitBranch className="w-3.5 h-3.5" />
                   I still need to publish my file: save it as a branch…
                 </button>
               ) : (
                 <div className="space-y-2">
-                  <div className="flex items-center gap-2 text-[13px] font-bold text-[var(--color-text)]">
+                  <div className="flex items-center gap-2 text-body font-medium text-[var(--color-text)]">
                     <GitBranch className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
                     Save as a branch
                   </div>
-                  <div className="text-[13px] text-[var(--color-text-muted)] leading-relaxed">
+                  <div className="text-body text-[var(--color-text-muted)] leading-relaxed">
                     Your file is saved but does <b>not</b> become the current revision. It stays an open item for
                     Doc Control and both of you until it is merged into a later revision or withdrawn.
                   </div>
@@ -510,14 +510,14 @@ export default function RevUpModal({
                   <div className="flex justify-end gap-2">
                     <button
                       onClick={() => { setShowBranchInput(false); setBranchReason(""); }}
-                      className="px-2.5 py-1.5 rounded-lg text-[13px] font-bold border border-[var(--color-border)]"
+                      className="px-2.5 py-1.5 rounded-lg text-body font-medium border border-[var(--color-border)]"
                     >
                       Cancel
                     </button>
                     <button
                       onClick={() => doPublish(true)}
                       disabled={submitting || branchReason.trim().length < 5}
-                      className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[13px] font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50"
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-body font-medium text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50"
                     >
                       {submitting ? <Loader2 className="w-3 h-3 animate-spin" /> : <GitBranch className="w-3 h-3" />}
                       Save branch
@@ -528,14 +528,14 @@ export default function RevUpModal({
             </div>
 
             {error && (
-              <p role="alert" className="border-l-2 border-[var(--state-overdue)] pl-3 text-[13px] text-[var(--state-overdue)]">{error}</p>
+              <p role="alert" className="border-l-2 border-[var(--state-overdue)] pl-3 text-body text-[var(--state-overdue)]">{error}</p>
             )}
           </div>
 
           <div className="px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-end">
             <button
               onClick={() => { setConflict(null); onClose(); }}
-              className="px-3 py-2 rounded-lg text-[13px] font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
+              className="px-3 py-2 rounded-lg text-body font-medium text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
             >
               Close, I&apos;ll talk to them first
             </button>
@@ -565,8 +565,8 @@ export default function RevUpModal({
             <ArrowUpFromLine className="w-5 h-5 text-[var(--color-text-muted)]" />
           </div>
           <div className="flex-1 min-w-0">
-            <div className="text-sm font-semibold text-[var(--color-text)]">Publish a new revision</div>
-            <div className="text-[13px] text-[var(--color-text-muted)] truncate">
+            <div className="text-sm font-medium text-[var(--color-text)]">Publish a new revision</div>
+            <div className="text-body text-[var(--color-text-muted)] truncate">
               {doc.documentNumber || doc.title || doc.name}, now at Rev {doc.rev || "-"}
             </div>
           </div>
@@ -578,7 +578,7 @@ export default function RevUpModal({
         <div className="px-6 py-5 space-y-5 max-h-[70vh] overflow-y-auto">
           {/* File drop zone */}
           <div>
-            <label className="text-[13px] font-semibold text-[var(--color-text)] ">New PDF</label>
+            <label className="text-body font-medium text-[var(--color-text)] ">New PDF</label>
             <div
               {...pdfDrag.bind}
               onClick={() => fileInputRef.current?.click()}
@@ -589,13 +589,13 @@ export default function RevUpModal({
               } ${pdfDrag.ring}`}
             >
               {pdfDrag.over ? (
-                <div className="text-sm font-bold text-[var(--color-text)] text-center">{pdfDrag.say}</div>
+                <div className="text-sm font-medium text-[var(--color-text)] text-center">{pdfDrag.say}</div>
               ) : file ? (
                 <div className="flex items-center gap-3 text-left">
                   <FileThumb file={file} />
                   <div className="min-w-0 flex-1">
-                    <div className="text-sm font-semibold text-[var(--color-text)] truncate">{file.name}</div>
-                    <div className="text-[13px] text-[var(--color-text-muted)]">{formatSize(file.size)} · tap to pick another</div>
+                    <div className="text-sm font-medium text-[var(--color-text)] truncate">{file.name}</div>
+                    <div className="text-body text-[var(--color-text-muted)]">{formatSize(file.size)} · tap to pick another</div>
                   </div>
                 </div>
               ) : (
@@ -636,7 +636,7 @@ export default function RevUpModal({
               ))}
             </select>
             {baseVersionId !== "none" && baseVersionId !== (doc.currentVersionId ?? "none") && (
-              <p className="mt-1.5 border-l-2 border-[var(--state-held)] pl-2 text-[13px] text-[var(--state-held)]">
+              <p className="mt-1.5 border-l-2 border-[var(--state-held)] pl-2 text-body text-[var(--state-held)]">
                 That isn&apos;t the current revision, so publishing will stop and show what changed since.
               </p>
             )}
@@ -668,7 +668,7 @@ export default function RevUpModal({
               chosen change type (Minor/Correction) bypasses the gate. The
               default dropdown value must never silently decide governance. */}
           {reviewControl && reviewControl.mode !== "none" && effMode === "none" && (
-            <p className="border-l-2 border-[var(--state-held)] pl-3 text-[13px] text-[var(--state-held)]">
+            <p className="border-l-2 border-[var(--state-held)] pl-3 text-body text-[var(--state-held)]">
               A <b>{changeType}</b> change skips this library&apos;s reviewers. If it&apos;s more than that, set Change Type to <b>Major</b>.
             </p>
           )}
@@ -676,7 +676,7 @@ export default function RevUpModal({
           {/* Pre-publish review banner — this library gates revisions behind
               reviewer sign-off. A Minor/Correction change escapes the gate. */}
           {effMode !== "none" && (
-            <div className="text-[13px] text-[var(--color-text)] space-y-2">
+            <div className="text-body text-[var(--color-text)] space-y-2">
               <div className="flex items-start gap-2">
                 <ShieldCheck className="w-4 h-4 mt-0.5 shrink-0 text-[var(--color-text-muted)]" />
                 <span>
@@ -686,7 +686,7 @@ export default function RevUpModal({
                 </span>
               </div>
               {effMode === "publisher_choice" && (
-                <label className="flex items-center gap-2 font-bold cursor-pointer">
+                <label className="flex items-center gap-2 font-medium cursor-pointer">
                   <input type="checkbox" checked={routeThroughReview} onChange={(e) => setRouteThroughReview(e.target.checked)} />
                   Route this revision through review
                 </label>
@@ -727,7 +727,7 @@ export default function RevUpModal({
               change type on a drawing waives the MOC — say so, so a real
               process change doesn't slip out under last week's setting. */}
           {docClass === "drawing" && isMinorLike && (
-            <p className="border-l-2 border-[var(--state-held)] pl-2 text-[13px] text-[var(--state-held)]">
+            <p className="border-l-2 border-[var(--state-held)] pl-2 text-body text-[var(--state-held)]">
               No MOC needed for a <b>{changeType}</b> drawing change. If it changes the process, set Change Type to <b>Major</b>.
             </p>
           )}
@@ -739,7 +739,7 @@ export default function RevUpModal({
           <button
             type="button"
             onClick={() => setShowMore((v) => !v)}
-            className="w-full flex items-center justify-between px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] text-[13px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+            className="w-full flex items-center justify-between px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] text-body font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
           >
             <span>More: sign-offs, MOC, effective date, CAD file</span>
             <span>{showMore ? "▲" : "▼"}</span>
@@ -786,13 +786,13 @@ export default function RevUpModal({
               } ${srcDrag.ring}`}
             >
               {srcDrag.over ? (
-                <div className="text-[13px] font-bold text-[var(--color-text)] text-center">{srcDrag.say}</div>
+                <div className="text-body font-medium text-[var(--color-text)] text-center">{srcDrag.say}</div>
               ) : sourceFile ? (
-                <div className="flex items-center gap-2.5 text-[13px] text-left">
+                <div className="flex items-center gap-2.5 text-body text-left">
                   <FileThumb file={sourceFile} size={32} />
                   <span className="min-w-0 flex-1">
-                    <span className="block font-semibold text-[var(--color-text)] truncate">{sourceFile.name}</span>
-                    <span className="block text-[13px] text-[var(--color-text-muted)]">{formatSize(sourceFile.size)}</span>
+                    <span className="block font-medium text-[var(--color-text)] truncate">{sourceFile.name}</span>
+                    <span className="block text-body text-[var(--color-text-muted)]">{formatSize(sourceFile.size)}</span>
                   </span>
                   <button aria-label="Remove file"
                     onClick={(e) => { e.stopPropagation(); setSourceFile(null); }}
@@ -801,7 +801,7 @@ export default function RevUpModal({
                   ><X className="w-3 h-3" /></button>
                 </div>
               ) : (
-                <div className="flex items-center justify-center gap-2 text-[13px] text-[var(--color-text-muted)]">
+                <div className="flex items-center justify-center gap-2 text-body text-[var(--color-text-muted)]">
                   <FileBox className="w-3.5 h-3.5" />
                   Drop the DWG or zip here, or tap to pick it (optional)
                 </div>
@@ -822,7 +822,7 @@ export default function RevUpModal({
               their checkout open; they're notified and pointed to the new rev. */}
           {lockedByOther && (
             <div className="border-l-2 border-[var(--state-held)] pl-3 space-y-2">
-              <div className="flex items-start gap-2 text-[13px] text-[var(--state-held)]">
+              <div className="flex items-start gap-2 text-body text-[var(--state-held)]">
                 <Lock className="w-4 h-4 mt-0.5 shrink-0" />
                 <span>
                   <b>{doc.checkedOutByName || "Another user"}</b> has this checked out. They stay checked
@@ -830,7 +830,7 @@ export default function RevUpModal({
                 </span>
               </div>
               <div>
-                <label className="text-[13px] font-semibold text-[var(--color-text)] ">
+                <label className="text-body font-medium text-[var(--color-text)] ">
                   Note to {doc.checkedOutByName || "the checkout holder"} *
                 </label>
                 <textarea
@@ -845,13 +845,13 @@ export default function RevUpModal({
           )}
 
           {error && (
-            <p role="alert" className="border-l-2 border-[var(--state-overdue)] pl-3 text-[13px] text-[var(--state-overdue)]">{error}</p>
+            <p role="alert" className="border-l-2 border-[var(--state-overdue)] pl-3 text-body text-[var(--state-overdue)]">{error}</p>
           )}
         </div>
 
         {/* Footer */}
         <div className="px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-between gap-2">
-          <div className="text-[13px] text-[var(--color-text-muted)]">
+          <div className="text-body text-[var(--color-text-muted)]">
             Rev <b>{doc.rev || "-"}</b> to {willReview
               ? <b className="text-[var(--color-text)]">{revisionLabel || "?"}A (in review)</b>
               : <b className="text-[var(--color-text)]">Rev {revisionLabel || "?"}</b>}
@@ -860,14 +860,14 @@ export default function RevUpModal({
             <button
               onClick={onClose}
               disabled={submitting}
-              className="px-3 py-2 rounded-lg text-[13px] font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
+              className="px-3 py-2 rounded-lg text-body font-medium text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
             >
               Cancel
             </button>
             <button
               onClick={() => doPublish(false)}
               disabled={submitting || !file}
-              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-[13px] font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-body font-medium text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50"
             >
               {submitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ChevronRight className="w-3.5 h-3.5" />}
               {submitting ? (willReview ? "Sending…" : "Publishing…") : (willReview ? "Send for review" : "Publish revision")}
@@ -888,11 +888,11 @@ function formatSize(bytes: number): string {
 function Field({ label, hint, isoTopic, children }: { label: string; hint?: string; isoTopic?: import("@/components/ui/IsoGuidance").IsoTopic | undefined; children: React.ReactNode }) {
   return (
     <div>
-      <label className="text-[13px] font-semibold text-[var(--color-text)] inline-flex items-center gap-1">
+      <label className="text-body font-medium text-[var(--color-text)] inline-flex items-center gap-1">
         {label}
         {isoTopic && <IsoGuidance topic={isoTopic} />}
       </label>
-      {hint && <div className="text-[13px] text-[var(--color-text-muted)] mt-0.5">{hint}</div>}
+      {hint && <div className="text-body text-[var(--color-text-muted)] mt-0.5">{hint}</div>}
       <div className="mt-1">{children}</div>
     </div>
   );

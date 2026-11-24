@@ -78,7 +78,7 @@ export default function WorkflowDiagramModal({
       >
         <div className="flex items-start gap-2 px-5 sm:px-6 pt-5 pb-4 border-b border-[var(--color-border)]">
           <div className="flex-1 min-w-0">
-            <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">How a drafting request flows</div>
+            <div className="text-body font-medium text-[var(--color-text-muted)]">How a drafting request flows</div>
             <h2 className="mt-1.5 font-display text-[24px] leading-tight font-semibold text-[var(--color-text)]">
               {currentIdx >= 0 ? `Step ${currentIdx + 1} of ${MAIN_FLOW.length}: ${MAIN_FLOW[currentIdx].label}.` : BRANCHES.find((b) => b.status === current)?.label ?? "Seven steps, start to close."}
             </h2>
@@ -95,16 +95,16 @@ export default function WorkflowDiagramModal({
               return (
                 <li key={stage.status} className="relative flex gap-3 pb-4 last:pb-0" aria-current={tone === "current" ? "step" : undefined}>
                   {!last && <span aria-hidden className={`absolute left-[9px] top-5 bottom-0 w-0.5 ${tone === "done" ? "bg-[var(--color-text)]" : "bg-[var(--color-border)]"}`} />}
-                  <span className={`relative z-10 mt-0.5 w-5 h-5 rounded-full shrink-0 grid place-items-center text-[11px] font-black ${
+                  <span className={`relative z-10 mt-0.5 w-5 h-5 rounded-full shrink-0 grid place-items-center text-caption font-semibold ${
                     tone === "done" ? "bg-[var(--color-text)] text-[var(--color-surface)]"
                       : tone === "current" ? "border-2 border-[var(--color-text)] bg-[var(--color-surface)] text-[var(--color-text)]"
                         : "border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text-faint)]"}`}>{i + 1}</span>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
-                      <span className={`text-[14px] font-bold ${tone === "upcoming" ? "text-[var(--color-text-muted)]" : "text-[var(--color-text)]"}`}>{stage.label}</span>
-                      {stage.status === current && <span className="ml-auto text-[13px] font-semibold text-[var(--color-text)]">You are here</span>}
+                      <span className={`text-body font-medium ${tone === "upcoming" ? "text-[var(--color-text-muted)]" : "text-[var(--color-text)]"}`}>{stage.label}</span>
+                      {stage.status === current && <span className="ml-auto text-body font-medium text-[var(--color-text)]">You are here</span>}
                     </div>
-                    <p className="text-[13px] text-[var(--color-text-muted)] mt-0.5 leading-relaxed">{stage.blurb}</p>
+                    <p className="text-body text-[var(--color-text-muted)] mt-0.5 leading-relaxed">{stage.blurb}</p>
                   </div>
                 </li>
               );
@@ -114,16 +114,16 @@ export default function WorkflowDiagramModal({
           <div className="mt-5 pt-4 border-t border-[var(--color-border)]">
             <div className="flex items-center gap-1.5 mb-2">
               <RotateCcw className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
-              <h3 className="text-[13px] font-semibold text-[var(--color-text-muted)]">Branches and exits</h3>
+              <h3 className="text-body font-medium text-[var(--color-text-muted)]">Branches and exits</h3>
             </div>
             <div className="divide-y divide-[var(--color-border)]">
               {BRANCHES.map((b) => (
                 <div key={b.status} className="py-2.5">
                   <div className="flex items-center gap-2">
-                    <span className="text-[14px] font-bold text-[var(--color-text)]">{b.label}</span>
-                    {b.status === current && <span className="ml-auto text-[13px] font-semibold text-[var(--color-text)]">You are here</span>}
+                    <span className="text-body font-medium text-[var(--color-text)]">{b.label}</span>
+                    {b.status === current && <span className="ml-auto text-body font-medium text-[var(--color-text)]">You are here</span>}
                   </div>
-                  <p className="text-[13px] text-[var(--color-text-muted)] mt-0.5 leading-relaxed">{b.blurb}</p>
+                  <p className="text-body text-[var(--color-text-muted)] mt-0.5 leading-relaxed">{b.blurb}</p>
                 </div>
               ))}
             </div>

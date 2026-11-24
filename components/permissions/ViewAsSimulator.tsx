@@ -137,8 +137,8 @@ export default function ViewAsSimulator({ canEdit = false }: { canEdit?: boolean
     }));
   }, [who, policy]);
 
-  const sub = "text-[14px] font-semibold text-[var(--color-text)] mb-2";
-  const note = "mt-2 text-[13px] text-[var(--color-text-muted)]";
+  const sub = "text-body font-medium text-[var(--color-text)] mb-2";
+  const note = "mt-2 text-body text-[var(--color-text-muted)]";
   return (
     <Section
       label={<>View as <HelpTooltip>See what any member can see and do, using the same checks the app enforces. Delegate a single action to one person here, too.</HelpTooltip></>}
@@ -150,7 +150,7 @@ export default function ViewAsSimulator({ canEdit = false }: { canEdit?: boolean
       }
     >
       {!who ? (
-        <div className={`${sheet} px-4 py-6 text-center text-[15px] text-[var(--color-text-muted)]`}>Pick a person to see what they can see and do.</div>
+        <div className={`${sheet} px-4 py-6 text-center text-reading text-[var(--color-text-muted)]`}>Pick a person to see what they can see and do.</div>
       ) : (
         <div className={`${sheet} divide-y divide-[var(--color-border)]`}>
           <div className="p-4 sm:p-5 grid grid-cols-1 lg:grid-cols-[minmax(0,62fr)_minmax(0,38fr)] gap-x-8 gap-y-6">
@@ -158,9 +158,9 @@ export default function ViewAsSimulator({ canEdit = false }: { canEdit?: boolean
               <h3 className={sub}>Actions {who.name} can take <span className="font-normal text-[var(--color-text-muted)] tabular-nums">{caps.filter((c) => c.ok).length} of {caps.length}</span></h3>
               <ul className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1">
                 {caps.map(({ def, ok }) => (
-                  <li key={def.id} className={`text-[14px] flex items-start gap-2 ${ok ? "text-[var(--color-text)]" : "text-[var(--color-text-faint)]"}`}>
+                  <li key={def.id} className={`text-body flex items-start gap-2 ${ok ? "text-[var(--color-text)]" : "text-[var(--color-text-faint)]"}`}>
                     {ok ? <Check aria-label="Can" className="w-4 h-4 mt-0.5 text-[var(--state-released)] shrink-0" /> : <Minus aria-label="Can't" className="w-4 h-4 mt-0.5 shrink-0" />}
-                    <span>{def.label} <span className="text-[13px] text-[var(--color-text-faint)]">{def.area}</span></span>
+                    <span>{def.label} <span className="text-body text-[var(--color-text-faint)]">{def.area}</span></span>
                   </li>
                 ))}
               </ul>
@@ -175,8 +175,8 @@ export default function ViewAsSimulator({ canEdit = false }: { canEdit?: boolean
                   const viaIdx = canPublishViaIndex(l.aclIndex, principal);
                   const publishes = isControllerRole(principal.role) || (viaIdx !== null ? viaIdx : canPublishOnLibrary({ principal, libraryAcl: l.acl ?? undefined }));
                   return (
-                    <li key={l.id} className="py-1.5 flex items-center gap-2 text-[14px]">
-                      <span className="font-semibold text-[var(--color-text)] truncate flex-1 min-w-0">{l.name}</span>
+                    <li key={l.id} className="py-1.5 flex items-center gap-2 text-body">
+                      <span className="font-medium text-[var(--color-text)] truncate flex-1 min-w-0">{l.name}</span>
                       {sees
                         ? <span className="inline-flex items-center gap-1 text-[var(--color-text)]"><Eye aria-hidden className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> Sees</span>
                         : <span className="inline-flex items-center gap-1 text-[var(--color-text-muted)]"><EyeOff aria-hidden className="w-3.5 h-3.5" /> Hidden</span>}
@@ -184,7 +184,7 @@ export default function ViewAsSimulator({ canEdit = false }: { canEdit?: boolean
                     </li>
                   );
                 })}
-                {libs.length === 0 && <li className="py-1.5 text-[14px] text-[var(--color-text-muted)]">No libraries yet.</li>}
+                {libs.length === 0 && <li className="py-1.5 text-body text-[var(--color-text-muted)]">No libraries yet.</li>}
               </ul>
               <p className={note}>Folder and document rules narrow this inside each library; open one&apos;s permissions to check. Owning a document, folder or library also lets them publish there.</p>
             </div>
@@ -195,14 +195,14 @@ export default function ViewAsSimulator({ canEdit = false }: { canEdit?: boolean
             <div>
               <h3 className={sub}>Actions delegated to {who.name}</h3>
               {personalGrants.length === 0 ? (
-                <p className="text-[14px] text-[var(--color-text-muted)]">None. Everything they can do comes from their role{contentRules.length ? " and the content rules beside this" : ""}.</p>
+                <p className="text-body text-[var(--color-text-muted)]">None. Everything they can do comes from their role{contentRules.length ? " and the content rules beside this" : ""}.</p>
               ) : (
                 <ul className="divide-y divide-[var(--color-border)] rounded-lg border border-[var(--color-border)]">
                   {personalGrants.map((g) => (
-                    <li key={g.cap} className="px-3 py-2 flex items-center gap-3 text-[14px]">
+                    <li key={g.cap} className="px-3 py-2 flex items-center gap-3 text-body">
                       <span className="min-w-0 flex-1">
-                        <span className={`font-semibold ${grantActive(g) ? "text-[var(--color-text)]" : "text-[var(--color-text-faint)] line-through"}`}>{capLabel(g.cap)}</span>
-                        <span className="block text-[13px] text-[var(--color-text-muted)]">
+                        <span className={`font-medium ${grantActive(g) ? "text-[var(--color-text)]" : "text-[var(--color-text-faint)] line-through"}`}>{capLabel(g.cap)}</span>
+                        <span className="block text-body text-[var(--color-text-muted)]">
                           {g.expiresAt ? `Until ${shortDate(g.expiresAt)}${grantActive(g) ? "" : ", ended"}` : "Until taken back"}
                           {g.note ? `. ${g.note}` : ""}
                         </span>
@@ -231,9 +231,9 @@ export default function ViewAsSimulator({ canEdit = false }: { canEdit?: boolean
                   </Field>
                   <div className="sm:col-span-2 flex flex-wrap items-center gap-3">
                     <Button type="submit" variant="secondary" loading={grantBusy}>Delegate</Button>
-                    <span className="text-[13px] text-[var(--color-text-muted)]">Only adds to what {who.name} can do; nobody else loses anything.</span>
+                    <span className="text-body text-[var(--color-text-muted)]">Only adds to what {who.name} can do; nobody else loses anything.</span>
                   </div>
-                  {grantErr && <p role="alert" className="sm:col-span-2 text-[14px] font-semibold text-[var(--state-overdue-text)]">{grantErr}</p>}
+                  {grantErr && <p role="alert" className="sm:col-span-2 text-body font-medium text-[var(--state-overdue-text)]">{grantErr}</p>}
                 </form>
               )}
             </div>
@@ -241,14 +241,14 @@ export default function ViewAsSimulator({ canEdit = false }: { canEdit?: boolean
             <div>
               <h3 className={sub}>Library rules that name them</h3>
               {contentRules.length === 0 ? (
-                <p className="text-[14px] text-[var(--color-text-muted)]">None. Their access comes from role defaults, visibility, or team and role rules. To add a rule for one person, open a library, folder or document under Content permissions.</p>
+                <p className="text-body text-[var(--color-text-muted)]">None. Their access comes from role defaults, visibility, or team and role rules. To add a rule for one person, open a library, folder or document under Content permissions.</p>
               ) : (
                 <ul className="divide-y divide-[var(--color-border)]">
                   {contentRules.map((r, i) => (
-                    <li key={i} className="py-1.5 text-[14px]">
-                      <span className="font-semibold text-[var(--color-text)]">{r.node}</span>{" "}
-                      <span className={r.effect === "deny" ? "font-semibold text-[var(--state-overdue-text)]" : "text-[var(--color-text)]"}>{r.effect === "deny" ? "Denied" : "Allowed"}</span>
-                      <span className="block text-[13px] text-[var(--color-text-muted)]">{r.actions}{r.expiresAt ? `, until ${shortDate(r.expiresAt)}` : ""}</span>
+                    <li key={i} className="py-1.5 text-body">
+                      <span className="font-medium text-[var(--color-text)]">{r.node}</span>{" "}
+                      <span className={r.effect === "deny" ? "font-medium text-[var(--state-overdue-text)]" : "text-[var(--color-text)]"}>{r.effect === "deny" ? "Denied" : "Allowed"}</span>
+                      <span className="block text-body text-[var(--color-text-muted)]">{r.actions}{r.expiresAt ? `, until ${shortDate(r.expiresAt)}` : ""}</span>
                     </li>
                   ))}
                 </ul>

@@ -209,8 +209,8 @@ export default function CsvImportModal({
         <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center gap-3">
           <div className="p-2 rounded-lg bg-[var(--color-surface-2)] text-[var(--color-text)]"><FileText className="w-5 h-5" /></div>
           <div className="flex-1 min-w-0">
-            <div className="text-sm font-semibold text-[var(--color-text)]">Import documents from CSV</div>
-            <div className="text-[13px] text-[var(--color-text-muted)]">Bulk-create records (no files attached yet). Use this for backfilling legacy registers.</div>
+            <div className="text-sm font-medium text-[var(--color-text)]">Import documents from CSV</div>
+            <div className="text-body text-[var(--color-text-muted)]">Bulk-create records (no files attached yet). Use this for backfilling legacy registers.</div>
           </div>
           <button aria-label="Close" onClick={onClose} className="p-2 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-faint)] hover:text-[var(--color-text)]">
             <X className="w-4 h-4" />
@@ -219,14 +219,14 @@ export default function CsvImportModal({
 
         <div className="px-5 py-4 space-y-4 max-h-[70vh] overflow-y-auto">
           {error && (
-            <div className="text-[13px] flex items-start gap-2 border-l-2 border-[var(--state-overdue)] pl-3 text-[var(--state-overdue)]">
+            <div className="text-body flex items-start gap-2 border-l-2 border-[var(--state-overdue)] pl-3 text-[var(--state-overdue)]">
               <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> {error}
             </div>
           )}
 
           {step === "paste" && (
             <div className="space-y-2">
-              <label className="text-[13px] font-semibold text-[var(--color-text)] ">Paste CSV</label>
+              <label className="text-body font-medium text-[var(--color-text)] ">Paste CSV</label>
               <textarea
                 value={raw}
                 onChange={(e) => setRaw(e.target.value)}
@@ -234,22 +234,22 @@ export default function CsvImportModal({
                 rows={10}
                 className="w-full px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-xs font-mono"
               />
-              <div className="text-[13px] text-[var(--color-text-muted)]">First row = column headers. Commas separate values; wrap a value in &quot;double quotes&quot; if it contains commas. The next step maps your columns to library fields.</div>
+              <div className="text-body text-[var(--color-text-muted)]">First row = column headers. Commas separate values; wrap a value in &quot;double quotes&quot; if it contains commas. The next step maps your columns to library fields.</div>
             </div>
           )}
 
           {step === "map" && (
             <div className="space-y-3">
-              <div className="text-[13px] font-semibold text-[var(--color-text)] ">Map columns</div>
-              <div className="text-[13px] text-[var(--color-text-muted)]">Detected {rows.length} data row{rows.length === 1 ? "" : "s"} across {headers.length} columns.</div>
+              <div className="text-body font-medium text-[var(--color-text)] ">Map columns</div>
+              <div className="text-body text-[var(--color-text-muted)]">Detected {rows.length} data row{rows.length === 1 ? "" : "s"} across {headers.length} columns.</div>
               <div className="space-y-2">
                 {allFields.map((f) => (
                   <div key={f.key} className="flex items-center gap-2">
-                    <div className="w-44 text-[13px] font-bold text-[var(--color-text)]">{f.label}</div>
+                    <div className="w-44 text-body font-medium text-[var(--color-text)]">{f.label}</div>
                     <select
                       value={mapping[f.key] ?? ""}
                       onChange={(e) => setMapping({ ...mapping, [f.key]: e.target.value })}
-                      className="flex-1 px-2 py-1.5 rounded border border-[var(--color-border)] bg-[var(--color-surface)] text-[13px]"
+                      className="flex-1 px-2 py-1.5 rounded border border-[var(--color-border)] bg-[var(--color-surface)] text-body"
                     >
                       <option value="">- skip -</option>
                       {headers.map((h, i) => <option key={i} value={h}>{h}</option>)}
@@ -262,13 +262,13 @@ export default function CsvImportModal({
 
           {step === "preview" && (
             <div>
-              <div className="text-[13px] font-semibold text-[var(--color-text)] mb-2">Preview (first 10)</div>
+              <div className="text-body font-medium text-[var(--color-text)] mb-2">Preview (first 10)</div>
               <div className="rounded-lg border border-[var(--color-border)] overflow-auto">
-                <table className="w-full text-[13px]">
+                <table className="w-full text-body">
                   <thead className="bg-[var(--color-surface-2)] border-b border-[var(--color-border)]">
                     <tr>
                       {allFields.filter((f) => mapping[f.key]).map((f) => (
-                        <th key={f.key} className="text-left px-2 py-1.5 font-semibold text-[var(--color-text)] text-[13px]">
+                        <th key={f.key} className="text-left px-2 py-1.5 font-medium text-[var(--color-text)] text-body">
                           {f.label.replace(/\*/g, "").trim()}
                         </th>
                       ))}
@@ -286,19 +286,19 @@ export default function CsvImportModal({
                   </tbody>
                 </table>
               </div>
-              {rows.length > 10 && <div className="text-[13px] text-[var(--color-text-muted)] mt-1">+ {rows.length - 10} more row{rows.length - 10 === 1 ? "" : "s"} will be imported.</div>}
+              {rows.length > 10 && <div className="text-body text-[var(--color-text-muted)] mt-1">+ {rows.length - 10} more row{rows.length - 10 === 1 ? "" : "s"} will be imported.</div>}
             </div>
           )}
 
           {step === "done" && result && (
             <div className="space-y-2">
-              <div className="rounded-lg bg-[color-mix(in_srgb,var(--state-released)_10%,transparent)] border border-[color-mix(in_srgb,var(--state-released)_35%,transparent)] p-3 text-[13px] text-[var(--state-released)] flex items-start gap-2">
+              <div className="rounded-lg bg-[color-mix(in_srgb,var(--state-released)_10%,transparent)] border border-[color-mix(in_srgb,var(--state-released)_35%,transparent)] p-3 text-body text-[var(--state-released)] flex items-start gap-2">
                 <CheckCircle2 className="w-4 h-4 mt-0.5 shrink-0" />
                 Imported <b>{result.ok}</b> document record{result.ok === 1 ? "" : "s"}.
               </div>
               {result.failed.length > 0 && (
-                <div className="text-[13px] border-l-2 border-[var(--state-overdue)] pl-3 text-[var(--state-overdue)]">
-                  <div className="font-bold flex items-center gap-1.5 mb-1"><AlertTriangle className="w-4 h-4" /> {result.failed.length} failed</div>
+                <div className="text-body border-l-2 border-[var(--state-overdue)] pl-3 text-[var(--state-overdue)]">
+                  <div className="font-medium flex items-center gap-1.5 mb-1"><AlertTriangle className="w-4 h-4" /> {result.failed.length} failed</div>
                   <ul className="ml-5 list-disc space-y-0.5">
                     {result.failed.slice(0, 8).map((f, i) => (
                       <li key={i}>Row {f.row}: {f.reason}</li>
@@ -307,7 +307,7 @@ export default function CsvImportModal({
                   </ul>
                 </div>
               )}
-              <div className="text-[13px] text-[var(--color-text-muted)]">No files were uploaded. Use the regular upload flow to attach PDFs to each record.</div>
+              <div className="text-body text-[var(--color-text-muted)]">No files were uploaded. Use the regular upload flow to attach PDFs to each record.</div>
             </div>
           )}
         </div>
@@ -316,27 +316,27 @@ export default function CsvImportModal({
           {step !== "paste" && step !== "done" && (
             <button
               onClick={() => setStep(step === "preview" ? "map" : "paste")}
-              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-[13px] font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-body font-medium text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
             >
               <ArrowLeft className="w-3.5 h-3.5" /> Back
             </button>
           )}
           <div className="ml-auto flex items-center gap-2">
-            <button onClick={onClose} className="px-3 py-2 rounded-lg text-[13px] font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]">
+            <button onClick={onClose} className="px-3 py-2 rounded-lg text-body font-medium text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]">
               {step === "done" ? "Close" : "Cancel"}
             </button>
             {step === "paste" && (
-              <button onClick={parseCsv} disabled={!raw.trim()} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-[13px] font-bold disabled:opacity-50">
+              <button onClick={parseCsv} disabled={!raw.trim()} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-body font-medium disabled:opacity-50">
                 Continue <ChevronRight className="w-3.5 h-3.5" />
               </button>
             )}
             {step === "map" && (
-              <button onClick={goPreview} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-[13px] font-bold">
+              <button onClick={goPreview} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-body font-medium">
                 Preview <ChevronRight className="w-3.5 h-3.5" />
               </button>
             )}
             {step === "preview" && (
-              <button onClick={commit} disabled={busy} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-[13px] font-bold disabled:opacity-50">
+              <button onClick={commit} disabled={busy} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-body font-medium disabled:opacity-50">
                 {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
                 {busy ? "Importing…" : `Import ${rows.length} record${rows.length === 1 ? "" : "s"}`}
               </button>

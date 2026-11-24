@@ -75,9 +75,9 @@ export default function MentionsPanel({ orgId, assetId, tag }: Props) {
   return (
     <section className="min-w-0">
       <div className="flex flex-wrap items-end gap-x-3 gap-y-1 mb-3 min-h-8">
-        <h2 className="font-display text-[20px] leading-tight font-semibold text-[var(--color-text)]">Mentioned in</h2>
+        <h2 className="font-display text-section leading-tight font-semibold text-[var(--color-text)]">Mentioned in</h2>
         {docs && docs.length > 0 && (
-          <span className="text-[14px] text-[var(--color-text-muted)] tabular-nums">
+          <span className="text-body text-[var(--color-text-muted)] tabular-nums">
             {total} mention{total === 1 ? "" : "s"} in {docs.length} document{docs.length === 1 ? "" : "s"}
           </span>
         )}
@@ -89,7 +89,7 @@ export default function MentionsPanel({ orgId, assetId, tag }: Props) {
       {!!error && <ErrorNote compact className="px-4 py-4" error={error} title="Couldn't load the mentions." onRetry={() => setAttempt((n) => n + 1)} />}
 
       {docs !== null && docs.length === 0 && !error && (
-        <p className="px-4 py-4 text-[14px] text-[var(--color-text-muted)]">
+        <p className="px-4 py-4 text-body text-[var(--color-text-muted)]">
           Nothing indexed mentions <span className="font-display font-semibold tabular-nums text-[var(--color-text)]">{tag}</span> yet. Only documents cleared for indexing are read; an admin runs the mention reader from the graph page.
         </p>
       )}
@@ -122,11 +122,11 @@ function DocRow({ doc }: { doc: MentionedDocument }) {
       >
         <div className="flex items-center gap-2">
           <ChevronRight aria-hidden className={`ui-chevron w-4 h-4 shrink-0 text-[var(--color-text-muted)] ${open ? "rotate-90" : ""}`} />
-          <span className="text-[14px] font-semibold text-[var(--color-text)] truncate flex-1">{doc.documentName}</span>
-          <span className="text-[13px] text-[var(--color-text-muted)] shrink-0 tabular-nums">{doc.totalMentions} on {pageCount} page{pageCount === 1 ? "" : "s"}</span>
+          <span className="text-body font-medium text-[var(--color-text)] truncate flex-1">{doc.documentName}</span>
+          <span className="text-body text-[var(--color-text-muted)] shrink-0 tabular-nums">{doc.totalMentions} on {pageCount} page{pageCount === 1 ? "" : "s"}</span>
         </div>
         {!open && lead && (
-          <p className="mt-1 ml-6 text-[14px] text-[var(--color-text-muted)] line-clamp-2">
+          <p className="mt-1 ml-6 text-body text-[var(--color-text-muted)] line-clamp-2">
             &ldquo;{lead.snippet}&rdquo;
           </p>
         )}
@@ -139,10 +139,10 @@ function DocRow({ doc }: { doc: MentionedDocument }) {
             const body = (
               <>
                 <div className="flex items-center gap-2">
-                  <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">
+                  <span className="text-body font-medium text-[var(--color-text-muted)]">
                     Page {m.page}
                   </span>
-                  <span className="text-[13px] text-[var(--color-text-faint)]">
+                  <span className="text-body text-[var(--color-text-faint)]">
                     {m.count}× · matched &ldquo;{m.matchedText}&rdquo;
                   </span>
                   {m.confidence < 0.9 && (
@@ -150,7 +150,7 @@ function DocRow({ doc }: { doc: MentionedDocument }) {
                   )}
                   {href && <ExternalLink className="w-3 h-3 text-[var(--color-text-faint)] ml-auto shrink-0" />}
                 </div>
-                <p className="mt-0.5 text-[14px] text-[var(--color-text)]">&ldquo;{m.snippet}&rdquo;</p>
+                <p className="mt-0.5 text-body text-[var(--color-text)]">&ldquo;{m.snippet}&rdquo;</p>
               </>
             );
             return (

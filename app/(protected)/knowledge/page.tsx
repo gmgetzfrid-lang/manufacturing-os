@@ -121,9 +121,9 @@ export default function KnowledgePage() {
         // A warning is a row with its status on the edge.
         <div className="relative pl-4 py-1 flex flex-wrap items-center gap-x-4 gap-y-2">
           <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] rounded-full bg-[var(--state-held)]" />
-          <p className="min-w-0 flex-1 basis-72 text-[15px] text-[var(--color-text)]">
+          <p className="min-w-0 flex-1 basis-72 text-reading text-[var(--color-text)]">
             <AlertTriangle className="inline w-4 h-4 -mt-0.5 mr-1.5 text-[var(--state-held)]" />
-            <span className="font-semibold">No AI key yet, so questions can&apos;t run.</span>{" "}
+            <span className="font-medium">No AI key yet, so questions can&apos;t run.</span>{" "}
             <span className="text-[var(--color-text-muted)]">Libraries still build and index. The key owner pays the provider directly.</span>
           </p>
           <button type="button" className={heroQuiet} onClick={() => setShowSettings(true)}>Add a key</button>
@@ -138,7 +138,7 @@ export default function KnowledgePage() {
       ) : libraries.length === 0 ? (
         <Card>
           <div className="flex flex-wrap items-center gap-x-4 gap-y-3">
-            <p className="flex-1 min-w-[16rem] text-[15px] text-[var(--color-text-muted)]">
+            <p className="flex-1 min-w-[16rem] text-reading text-[var(--color-text-muted)]">
               {isController
                 ? "Make a library, drop your standards and engineering-practice PDFs in, and ask it questions instead of reading 400 pages."
                 : "Admin or Doc Control can make libraries of standards and reference PDFs that everyone can then ask."}
@@ -149,13 +149,13 @@ export default function KnowledgePage() {
       ) : (
         // The libraries as one ruled table: the whole row opens it.
         <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
-          <table className="w-full text-[15px] tabular-nums">
-            <thead className="bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text-muted)] text-left max-sm:hidden">
+          <table className="w-full text-body tabular-nums">
+            <thead className="bg-[var(--color-surface-2)] text-body text-[var(--color-text-muted)] text-left max-sm:hidden">
               <tr>
-                <th className="font-semibold px-4 h-10">Library</th>
-                <th className="font-semibold px-4 text-right whitespace-nowrap">Documents</th>
-                <th className="font-semibold px-4 hidden sm:table-cell">Status</th>
-                <th className="font-semibold px-4 hidden md:table-cell">Added</th>
+                <th className="font-medium px-4 h-10">Library</th>
+                <th className="font-medium px-4 text-right whitespace-nowrap">Documents</th>
+                <th className="font-medium px-4 hidden sm:table-cell">Status</th>
+                <th className="font-medium px-4 hidden md:table-cell">Added</th>
                 <th className="px-4 hidden sm:table-cell"><span className="sr-only">Ask</span></th>
               </tr>
             </thead>
@@ -167,24 +167,24 @@ export default function KnowledgePage() {
                   <tr key={lib.id} onClick={() => transitionPush(router, `/knowledge/${lib.id}`)} className="hover:bg-[var(--color-surface-2)] cursor-pointer align-top">
                     <td className="px-4 py-3 min-w-0">
                       <Link href={`/knowledge/${lib.id}`} onClick={(e) => e.stopPropagation()}
-                        className="text-[16px] font-semibold text-[var(--color-text)] hover:text-[var(--color-accent-text)]">
+                        className="text-reading font-medium text-[var(--color-text)] hover:text-[var(--color-accent-text)]">
                         {lib.name}
                       </Link>
                       {lib.description && (
-                        <p className="mt-0.5 text-[14px] text-[var(--color-text-muted)] line-clamp-1 max-w-[70ch]">{lib.description}</p>
+                        <p className="mt-0.5 text-body text-[var(--color-text-muted)] line-clamp-1 max-w-[70ch]">{lib.description}</p>
                       )}
-                      <p className="sm:hidden mt-0.5 text-[13px] text-[var(--color-text-muted)]">{n === 0 ? "Empty" : `${n.toLocaleString()} ${n === 1 ? "document" : "documents"}`} · added {when(lib.createdAt)}</p>
+                      <p className="sm:hidden mt-0.5 text-body text-[var(--color-text-muted)]">{n === 0 ? "Empty" : `${n.toLocaleString()} ${n === 1 ? "document" : "documents"}`} · added {when(lib.createdAt)}</p>
                     </td>
                     <td className={`px-4 py-3 text-right whitespace-nowrap max-sm:hidden ${n === 0 ? "text-[var(--color-text-faint)]" : "text-[var(--color-text)]"}`}>{n.toLocaleString()}</td>
                     <td className="px-4 py-3 hidden sm:table-cell whitespace-nowrap">
                       <span className={`ui-pill ${n === 0 ? "is-muted" : "is-good"}`}>{n === 0 ? "Empty" : "Ready to ask"}</span>
                     </td>
-                    <td className="px-4 py-3 hidden md:table-cell whitespace-nowrap text-[14px] text-[var(--color-text-muted)]">{when(lib.createdAt)}{by ? ` by ${by}` : ""}</td>
+                    <td className="px-4 py-3 hidden md:table-cell whitespace-nowrap text-body text-[var(--color-text-muted)]">{when(lib.createdAt)}{by ? ` by ${by}` : ""}</td>
                     {/* Straight to asking this library. */}
                     <td className="px-4 py-3 text-right whitespace-nowrap hidden sm:table-cell">
                       {n > 0 && (
                         <Link href={`/assistant?library=${lib.id}`} onClick={(e) => e.stopPropagation()}
-                          className="text-[14px] font-semibold text-[var(--color-accent-text)] hover:underline underline-offset-2">Ask it</Link>
+                          className="text-body font-medium text-[var(--color-accent-text)] hover:underline underline-offset-2">Ask it</Link>
                       )}
                     </td>
                   </tr>
@@ -201,15 +201,15 @@ export default function KnowledgePage() {
             <ModalHeader title="New knowledge library" onClose={creating ? undefined : () => setShowCreate(false)} />
             <ModalBody className="space-y-4">
               <label className="block">
-                <span className="block text-[14px] font-semibold text-[var(--color-text)] mb-1.5">Name</span>
+                <span className="block text-body font-medium text-[var(--color-text)] mb-1.5">Name</span>
                 <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Engineering standards and practices" autoFocus autoComplete="off" />
               </label>
               <label className="block">
-                <span className="block text-[14px] font-semibold text-[var(--color-text)] mb-1.5">Description <span className="font-normal text-[var(--color-text-muted)]">(optional)</span></span>
+                <span className="block text-body font-medium text-[var(--color-text)] mb-1.5">Description <span className="font-normal text-[var(--color-text-muted)]">(optional)</span></span>
                 <Textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={2}
                   placeholder="e.g. API and company standards for piping and vessels" />
               </label>
-              {createError && <p role="alert" className="text-[14px] font-semibold text-[var(--state-overdue-text)]">Not made. {createError}</p>}
+              {createError && <p role="alert" className="text-body font-medium text-[var(--state-overdue-text)]">Not made. {createError}</p>}
             </ModalBody>
             <ModalFooter>
                 <Button variant="secondary" onClick={() => setShowCreate(false)} disabled={creating}>Cancel</Button>

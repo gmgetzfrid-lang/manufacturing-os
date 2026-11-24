@@ -391,7 +391,7 @@ function AssetsPageInner() {
   // Cells after the name, in the columns of the grid in use.
   const COLS_LAND = ["max-sm:hidden text-right", "max-sm:hidden text-right", "max-lg:hidden min-w-0", ""];
   const GRID_LAND = "grid-cols-[minmax(0,1fr)_32px] sm:grid-cols-[minmax(0,1fr)_88px_112px_32px] lg:grid-cols-[minmax(0,1fr)_88px_112px_minmax(0,260px)_32px]";
-  const COLS_HUB = ["max-lg:hidden min-w-0 truncate text-[14px] text-[var(--color-text-muted)]", "max-sm:hidden", "max-lg:hidden min-w-0", ""];
+  const COLS_HUB = ["max-lg:hidden min-w-0 truncate text-body text-[var(--color-text-muted)]", "max-sm:hidden", "max-lg:hidden min-w-0", ""];
   const GRID_HUB = "grid-cols-[minmax(0,1fr)_32px] sm:grid-cols-[minmax(0,1fr)_112px_32px] lg:grid-cols-[minmax(0,1fr)_minmax(0,180px)_112px_minmax(0,240px)_32px]";
   const cells = (cols: string[], first: React.ReactNode, rest: React.ReactNode[]) => (
     <>
@@ -400,13 +400,13 @@ function AssetsPageInner() {
     </>
   );
   const muted = (n: number, word?: string) => n > 0
-    ? <span className="text-[14px] tabular-nums text-[var(--color-text)]">{n.toLocaleString()}{word ? ` ${word}` : ""}</span>
-    : <span className="text-[14px] tabular-nums text-[var(--color-text-faint)]">0</span>;
+    ? <span className="text-body tabular-nums text-[var(--color-text)]">{n.toLocaleString()}{word ? ` ${word}` : ""}</span>
+    : <span className="text-body tabular-nums text-[var(--color-text-faint)]">0</span>;
   const changeLine = (list: Asset[]) => {
     const c = lastChange(list);
     if (!c) return null;
     return (
-      <span className="block truncate text-[13px] text-[var(--color-text-muted)]" title={`Last change: ${c.text}`}>
+      <span className="block truncate text-body text-[var(--color-text-muted)]" title={`Last change: ${c.text}`}>
         <span className="font-display font-semibold tabular-nums text-[var(--color-text)]">{c.a.tag}</span> {c.text}
       </span>
     );
@@ -414,8 +414,8 @@ function AssetsPageInner() {
   const photosText = (a: Asset) => {
     const n = photoCounts.get(a.id) || 0;
     return n > 0
-      ? <span className="text-[14px] text-[var(--color-text)] tabular-nums">{plural(n, "photo")}</span>
-      : <span className="text-[14px] text-[var(--color-text-faint)]">No photos</span>;
+      ? <span className="text-body text-[var(--color-text)] tabular-nums">{plural(n, "photo")}</span>
+      : <span className="text-body text-[var(--color-text-faint)]">No photos</span>;
   };
   // One equipment row: the tag (click to copy) and what it is; the row
   // opens its page; everything else is in its menu.
@@ -431,9 +431,9 @@ function AssetsPageInner() {
           </button>
         )}
         <div className="min-w-0">
-          <CopyId value={a.tag} label="tag" className="text-[15px]" />
-          {what && <div className="text-[13px] text-[var(--color-text-muted)] truncate">{what}</div>}
-          <div className="sm:hidden text-[13px] text-[var(--color-text-muted)] truncate">{(photoCounts.get(a.id) || 0) > 0 ? plural(photoCounts.get(a.id) || 0, "photo") : "No photos"}{a.location ? ` · ${a.location}` : ""}</div>
+          <CopyId value={a.tag} label="tag" className="text-reading" />
+          {what && <div className="text-body text-[var(--color-text-muted)] truncate">{what}</div>}
+          <div className="sm:hidden text-body text-[var(--color-text-muted)] truncate">{(photoCounts.get(a.id) || 0) > 0 ? plural(photoCounts.get(a.id) || 0, "photo") : "No photos"}{a.location ? ` · ${a.location}` : ""}</div>
         </div>
       </div>
     );
@@ -442,8 +442,8 @@ function AssetsPageInner() {
       key: `a:${a.id}`, level, ancestors, label: `${a.tag}${a.description ? `, ${a.description}` : ""}`,
       onActivate: () => openAsset(a),
       cells: opts.landing
-        ? cells(cols, name, [null, photosText(a), <span key="c" className="block truncate text-[13px] text-[var(--color-text-muted)]">{assetChange(a)}</span>, menu])
-        : cells(cols, name, [a.location ?? "", photosText(a), <span key="c" className="block truncate text-[13px] text-[var(--color-text-muted)]">{assetChange(a)}</span>, menu]),
+        ? cells(cols, name, [null, photosText(a), <span key="c" className="block truncate text-body text-[var(--color-text-muted)]">{assetChange(a)}</span>, menu])
+        : cells(cols, name, [a.location ?? "", photosText(a), <span key="c" className="block truncate text-body text-[var(--color-text-muted)]">{assetChange(a)}</span>, menu]),
     };
   };
   // A long branch shows the first rows, then one row that shows more.
@@ -455,7 +455,7 @@ function AssetsPageInner() {
       out.push({
         key: `${parentKey}/more`, level, ancestors, label: `Show ${more} more`,
         onActivate: () => setLimits((m) => new Map(m).set(parentKey, max + more)),
-        cells: cells(cols, <span className="text-[14px] font-semibold text-[var(--color-accent-text)]">Show {more.toLocaleString()} more <span className="font-normal text-[var(--color-text-muted)]">of {list.length.toLocaleString()}</span></span>, []),
+        cells: cells(cols, <span className="text-body font-medium text-[var(--color-accent-text)]">Show {more.toLocaleString()} more <span className="font-normal text-[var(--color-text-muted)]">of {list.length.toLocaleString()}</span></span>, []),
       });
     }
     return out;
@@ -481,7 +481,7 @@ function AssetsPageInner() {
       cells: cells(COLS_LAND, (
         <div className="min-w-0">
           {head.name}
-          <div className="sm:hidden text-[13px] text-[var(--color-text-muted)] truncate">{plural(list.length, "piece")}{noPhotos > 0 ? `, ${noPhotos.toLocaleString()} without photos` : ""}</div>
+          <div className="sm:hidden text-body text-[var(--color-text-muted)] truncate">{plural(list.length, "piece")}{noPhotos > 0 ? `, ${noPhotos.toLocaleString()} without photos` : ""}</div>
         </div>
       ), [muted(list.length), muted(noPhotos), changeLine(list), head.menu && head.menu.length > 0 ? <RowMenu items={head.menu} label="More for this area" /> : null]),
     }];
@@ -494,7 +494,7 @@ function AssetsPageInner() {
         key: tkey, level: 1, ancestors: [key], expandable: true, open: topen,
         pending: pendingOf(tkey, topen, g.list.length, deferredOpen.has(tkey)),
         label: `${g.name}, ${g.list.length}`,
-        cells: cells(COLS_LAND, <span className="text-[14px] text-[var(--color-text)]">{g.name}</span>, [muted(g.list.length), muted(gNoPhotos), changeLine(g.list), null]),
+        cells: cells(COLS_LAND, <span className="text-body text-[var(--color-text)]">{g.name}</span>, [muted(g.list.length), muted(gNoPhotos), changeLine(g.list), null]),
       });
       if (topen && deferredOpen.has(tkey)) rows.push(...branchRows(tkey, g.list, 2, [key, tkey], COLS_LAND, { landing: true }));
     }
@@ -505,7 +505,7 @@ function AssetsPageInner() {
     for (const s of unitSummaries) {
       const inUnit = assets.filter((a) => a.unit_code === s.unit.code);
       landingRows.push(...unitBranch(`u:${s.unit.code}`, s.unit.code, inUnit, {
-        name: <><span className="font-semibold text-[15px] text-[var(--color-text)]">{s.unit.label}</span> <span className="ml-1.5 text-[13px] text-[var(--color-text-muted)] tabular-nums">Unit {s.unit.code}</span>{s.links.length > 0 && <span className="max-sm:hidden ml-2 text-[13px] text-[var(--color-text-muted)]">· {plural(s.links.length, "library", "libraries")} pinned</span>}</>,
+        name: <><span className="font-medium text-reading text-[var(--color-text)]">{s.unit.label}</span> <span className="ml-1.5 text-body text-[var(--color-text-muted)] tabular-nums">Unit {s.unit.code}</span>{s.links.length > 0 && <span className="max-sm:hidden ml-2 text-body text-[var(--color-text-muted)]">· {plural(s.links.length, "library", "libraries")} pinned</span>}</>,
         aria: `${s.unit.label}, unit ${s.unit.code}`,
         activate: () => openUnit(s.unit.code),
         menu: [
@@ -518,7 +518,7 @@ function AssetsPageInner() {
     for (const [code] of unknownUnits) {
       const inUnit = assets.filter((a) => a.unit_code === code);
       landingRows.push(...unitBranch(`u:${code}`, code, inUnit, {
-        name: <><span className="font-semibold text-[15px] text-[var(--color-text)]">Unit {code}</span> <span className="ml-1.5 text-[13px] text-[var(--color-text-muted)]">Not in the Site Codebook yet</span></>,
+        name: <><span className="font-medium text-reading text-[var(--color-text)]">Unit {code}</span> <span className="ml-1.5 text-body text-[var(--color-text-muted)]">Not in the Site Codebook yet</span></>,
         aria: `Unit ${code}, not in the Site Codebook yet`, edge: "warn",
         activate: () => openUnit(code),
         menu: canEditLinks ? [{ icon: <BookMarked className="w-4 h-4" />, label: "Add it to the Site Codebook", onClick: () => router.push("/admin/codebook") }] : undefined,
@@ -526,7 +526,7 @@ function AssetsPageInner() {
     }
     if (unitCounts.unassigned > 0) {
       landingRows.push(...unitBranch("u:__unassigned", null, assets.filter((a) => !a.unit_code), {
-        name: <><span className="font-semibold text-[15px] text-[var(--color-text)]">No operating area</span> <span className="ml-1.5 text-[13px] text-[var(--color-text-muted)]">Waiting to be filed</span></>,
+        name: <><span className="font-medium text-reading text-[var(--color-text)]">No operating area</span> <span className="ml-1.5 text-body text-[var(--color-text-muted)]">Waiting to be filed</span></>,
         aria: "No operating area, waiting to be filed", edge: "warn",
         activate: () => openUnit("__unassigned"),
       }));
@@ -551,13 +551,13 @@ function AssetsPageInner() {
         onActivate: g.list.length === 0 ? addHere : undefined,
         cells: cells(COLS_HUB, (
           <div className="min-w-0">
-            <span className="font-semibold text-[15px] text-[var(--color-text)]">{g.typeId === "__none" ? "No type yet" : g.name}</span>
-            <span className="ml-2 text-[13px] text-[var(--color-text-muted)] tabular-nums">{g.list.length.toLocaleString()}</span>
-            {cb && <span className="max-sm:hidden ml-2 text-[13px] text-[var(--color-text-muted)]" title={`Site Codebook equipment-type code ${cb.code}`}>· code <span className="ui-id">{cb.code}</span>{cb.prefixes.length > 0 ? `, tags ${cb.prefixes.join(", ")}` : ""}</span>}
-            {g.typeId === "__none" && g.list.length > 0 && <div className="text-[13px] text-[var(--color-text-muted)]">Pick a type in each row&apos;s menu, or sort them from the codebook below.</div>}
-            {g.list.length === 0 && <div className="text-[13px] text-[var(--color-text-muted)]">None in this area yet.{addHere ? " Add the first." : ""}</div>}
+            <span className="font-medium text-reading text-[var(--color-text)]">{g.typeId === "__none" ? "No type yet" : g.name}</span>
+            <span className="ml-2 text-body text-[var(--color-text-muted)] tabular-nums">{g.list.length.toLocaleString()}</span>
+            {cb && <span className="max-sm:hidden ml-2 text-body text-[var(--color-text-muted)]" title={`Site Codebook equipment-type code ${cb.code}`}>· code <span className="ui-id">{cb.code}</span>{cb.prefixes.length > 0 ? `, tags ${cb.prefixes.join(", ")}` : ""}</span>}
+            {g.typeId === "__none" && g.list.length > 0 && <div className="text-body text-[var(--color-text-muted)]">Pick a type in each row&apos;s menu, or sort them from the codebook below.</div>}
+            {g.list.length === 0 && <div className="text-body text-[var(--color-text-muted)]">None in this area yet.{addHere ? " Add the first." : ""}</div>}
           </div>
-        ), [null, g.list.length > 0 ? <span key="p" className="text-[14px] text-[var(--color-text-muted)] tabular-nums">{gNoPhotos > 0 ? `${gNoPhotos.toLocaleString()} without` : "All have photos"}</span> : null, changeLine(g.list), addHere ? <RowMenu items={[{ icon: <Plus className="w-4 h-4" />, label: `Add equipment to ${g.typeId === "__none" ? "this area" : g.name}`, onClick: addHere }]} label={`More for ${g.name}`} /> : null]),
+        ), [null, g.list.length > 0 ? <span key="p" className="text-body text-[var(--color-text-muted)] tabular-nums">{gNoPhotos > 0 ? `${gNoPhotos.toLocaleString()} without` : "All have photos"}</span> : null, changeLine(g.list), addHere ? <RowMenu items={[{ icon: <Plus className="w-4 h-4" />, label: `Add equipment to ${g.typeId === "__none" ? "this area" : g.name}`, onClick: addHere }]} label={`More for ${g.name}`} /> : null]),
       });
       if (open && !deferredClosed.has(tkey) && g.list.length > 0) hubRows.push(...branchRows(tkey, g.list, 1, [tkey], COLS_HUB));
     }
@@ -681,7 +681,7 @@ function AssetsPageInner() {
                     onChanged={() => { void loadCodebook(activeOrgId).then(setBook); }}
                   />
                 ) : (
-                  <p className="text-[14px] text-[var(--color-text-muted)]">Unit {unitFilter} is on equipment but not in the Site Codebook yet. Add it there to pin its libraries.</p>
+                  <p className="text-body text-[var(--color-text-muted)]">Unit {unitFilter} is on equipment but not in the Site Codebook yet. Add it there to pin its libraries.</p>
                 )}
               </Section>
             )}
@@ -734,7 +734,7 @@ function AssetsPageInner() {
             flat registry. The unit-first view lights up the moment units exist. */}
         {book.units.length === 0 && isAdmin && !loading && assets.length > 0 && (
           <Section label="Group by unit">
-            <p className="text-[15px] text-[var(--color-text-muted)]">
+            <p className="text-reading text-[var(--color-text-muted)]">
               Name your units in the Site Codebook (20 = Crude, 25 = DHT) and this list groups itself by unit, then equipment type.{" "}
               <Link href="/admin/codebook" className={link}>Set up the codebook</Link>
             </p>
@@ -747,8 +747,8 @@ function AssetsPageInner() {
             loud button; the dialog previews and confirms. */}
         {canEditEquipment && !unitFilter && !loading && assets.length > 0 && (
           <div className="pt-6 border-t border-[var(--color-border)] flex items-center gap-x-4 gap-y-2 flex-wrap">
-            <p className="text-[14px] text-[var(--color-text-muted)] max-w-[62ch] flex-1 min-w-[16rem]">
-              <span className="font-semibold text-[var(--color-text)]">Start over from the drawings.</span> Clears what the drawing reader added and reads the drawings again. What people added stays.
+            <p className="text-body text-[var(--color-text-muted)] max-w-[62ch] flex-1 min-w-[16rem]">
+              <span className="font-medium text-[var(--color-text)]">Start over from the drawings.</span> Clears what the drawing reader added and reads the drawings again. What people added stays.
             </p>
             <button type="button" className={btnDanger} onClick={() => setStartOverOpen(true)}>
               <RotateCcw className="w-4 h-4" /> Start over
@@ -757,7 +757,7 @@ function AssetsPageInner() {
         )}
 
         {!canEditEquipment && (
-          <p className="px-1 text-[13px] text-[var(--color-text-muted)] flex items-start gap-2">
+          <p className="px-1 text-body text-[var(--color-text-muted)] flex items-start gap-2">
             <Lock className="w-3.5 h-3.5 mt-0.5 shrink-0" />
             <span>Only admins add or change equipment. You can browse it{isAdmin ? ", print labels and add photos" : " and view photos"}. Ask an admin to add what&apos;s missing.</span>
           </p>
@@ -904,7 +904,7 @@ function UnitResources({ orgId, unitCode, links, canEdit, onChanged }: {
   if (links.length === 0) {
     return (
       <div className={`${sheet} px-4 sm:px-5 py-4 flex items-center gap-x-4 gap-y-3 flex-wrap`}>
-        <p className="flex-1 min-w-[14rem] text-[14px] text-[var(--color-text-muted)]">
+        <p className="flex-1 min-w-[14rem] text-body text-[var(--color-text-muted)]">
           {canEdit ? "Pin the libraries this unit works from: P&IDs, operating manuals, unit data." : "No libraries pinned to this unit yet."}
         </p>
         {canEdit && (
@@ -926,8 +926,8 @@ function UnitResources({ orgId, unitCode, links, canEdit, onChanged }: {
               className="flex-1 min-w-0 flex items-center gap-3 px-4 sm:px-5 py-3">
               <FolderOpen aria-hidden className="w-4 h-4 shrink-0 text-[var(--color-text-faint)]" />
               <span className="min-w-0">
-                <span className="block text-[15px] font-semibold text-[var(--color-text)] truncate">{l.label}</span>
-                <span className="block text-[13px] text-[var(--color-text-muted)] truncate">{l.libraryName}{l.folderName ? ` / ${l.folderName}` : ""}</span>
+                <span className="block text-reading font-medium text-[var(--color-text)] truncate">{l.label}</span>
+                <span className="block text-body text-[var(--color-text-muted)] truncate">{l.libraryName}{l.folderName ? ` / ${l.folderName}` : ""}</span>
               </span>
             </Link>
             {canEdit && (
@@ -1129,7 +1129,7 @@ function UnassignedAssignPanel({ assets, book, userId, onAssigned }: {
         </Button>
       ) : undefined}>
       <div className={`${sheet} overflow-hidden`}>
-        <p className="px-4 sm:px-5 py-3 text-[14px] text-[var(--color-text-muted)] border-b border-[var(--color-border)]">
+        <p className="px-4 sm:px-5 py-3 text-body text-[var(--color-text-muted)] border-b border-[var(--color-border)]">
           Where its drawings say which unit, it&apos;s picked already. The site code fills in.
         </p>
         <ul className="divide-y divide-[var(--color-border)]">
@@ -1138,7 +1138,7 @@ function UnassignedAssignPanel({ assets, book, userId, onAssigned }: {
             const choice = choices.get(a.id) ?? "";
             return (
               <li key={a.id} className="flex items-center gap-x-3 gap-y-2 px-4 sm:px-5 py-2.5 flex-wrap">
-                <CopyId value={a.tag} label="tag" className="w-24 shrink-0 text-[15px]" />
+                <CopyId value={a.tag} label="tag" className="w-24 shrink-0 text-reading" />
                 <select
                   value={choice}
                   onChange={(e) => setChoices((prev) => new Map(prev).set(a.id, e.target.value))}
@@ -1151,7 +1151,7 @@ function UnassignedAssignPanel({ assets, book, userId, onAssigned }: {
                     <option key={u.code} value={u.code}>{u.code} · {u.label}</option>
                   ))}
                 </select>
-                <span className="text-[13px] text-[var(--color-text-muted)] flex-1 min-w-[120px]">
+                <span className="text-body text-[var(--color-text-muted)] flex-1 min-w-[120px]">
                   {hint
                     ? <>Its drawings say <span className="font-display font-semibold tabular-nums text-[var(--color-text)]">{hint.unitCode}</span> ({plural(hint.drawings, "linked drawing")})</>
                     : a.description || ""}
@@ -1166,7 +1166,7 @@ function UnassignedAssignPanel({ assets, book, userId, onAssigned }: {
           })}
         </ul>
         {assets.length > shown.length && (
-          <div className="px-4 sm:px-5 py-3 border-t border-[var(--color-border)] text-[13px] text-[var(--color-text-muted)]">Showing the first {shown.length} of {assets.length}. File these and the next ones come up.</div>
+          <div className="px-4 sm:px-5 py-3 border-t border-[var(--color-border)] text-body text-[var(--color-text-muted)]">Showing the first {shown.length} of {assets.length}. File these and the next ones come up.</div>
         )}
       </div>
     </Section>
@@ -1239,11 +1239,11 @@ function UnitDocuments({ assetIds, assets }: { assetIds: string[]; assets: Asset
               <Link href={`/documents/${d.libraryId}?doc=${d.documentId}`}
                 className="flex items-center gap-3 px-4 sm:px-5 py-3 hover:bg-[var(--color-surface-2)] transition-colors">
                 <FileText aria-hidden className="w-4 h-4 text-[var(--color-text-faint)] shrink-0" />
-                <div className="flex-1 min-w-0 text-[14px] truncate">
+                <div className="flex-1 min-w-0 text-body truncate">
                   <span className="ui-id">{d.documentNumber || "No number"}</span>
                   {d.title && <span className="text-[var(--color-text-muted)]"> · {d.title}</span>}
                 </div>
-                <div className="max-sm:hidden shrink-0 max-w-[45%] truncate text-[13px] text-[var(--color-text-muted)] tabular-nums">
+                <div className="max-sm:hidden shrink-0 max-w-[45%] truncate text-body text-[var(--color-text-muted)] tabular-nums">
                   {d.tags.slice(0, 6).join(", ")}{d.tags.length > 6 ? ` and ${d.tags.length - 6} more` : ""}
                 </div>
               </Link>
@@ -1251,7 +1251,7 @@ function UnitDocuments({ assetIds, assets }: { assetIds: string[]; assets: Asset
           ))}
         </ul>
         {rows.length > 12 && (
-          <div className="px-4 sm:px-5 py-3 border-t border-[var(--color-border)] flex items-center justify-between text-[14px]">
+          <div className="px-4 sm:px-5 py-3 border-t border-[var(--color-border)] flex items-center justify-between text-body">
             <span className="text-[var(--color-text-muted)] tabular-nums">{shown.length} of {rows.length} shown</span>
             <button type="button" onClick={() => setExpanded((v) => !v)} className={btnLink}>
               {expanded ? "Show fewer" : `Show ${rows.length - shown.length} more`}
@@ -1268,7 +1268,7 @@ function UnitDocuments({ assetIds, assets }: { assetIds: string[]; assets: Asset
 function EmptyState({ onCreate, hasAny, onClear }: { onCreate?: () => void; hasAny: boolean; onClear?: () => void }) {
   return (
     <div className={`${sheet} px-5 py-6 flex items-center gap-x-4 gap-y-3 flex-wrap`}>
-      <p className="flex-1 min-w-[16rem] text-[15px] text-[var(--color-text-muted)]">
+      <p className="flex-1 min-w-[16rem] text-reading text-[var(--color-text-muted)]">
         {hasAny
           ? "Nothing matches. Try another tag or clear the filters."
           : "Start with one piece of equipment: a pump, instrument, valve, anything with a tag."}
@@ -1450,7 +1450,7 @@ function AssetEditDrawer({
       <div onClick={(e) => e.stopPropagation()} className="relative ml-auto w-full max-w-xl bg-[var(--color-surface)] ui-float sm:rounded-l-xl flex flex-col h-dvh">
         <div className="px-5 sm:px-6 pt-5 pb-4 border-b border-[var(--color-border)] shrink-0">
           <div className="flex items-center gap-2">
-            <div className="min-w-0 truncate text-[14px] text-[var(--color-text-muted)]">
+            <div className="min-w-0 truncate text-body text-[var(--color-text-muted)]">
               Operating areas{(asset?.unit_code ?? preset?.unitCode) ? ` · Unit ${asset?.unit_code ?? preset?.unitCode}` : ""}{isCreate ? " · New asset" : ""}
             </div>
             <div className="flex-1" />
@@ -1470,7 +1470,7 @@ function AssetEditDrawer({
           <h2 className="mt-2 font-display text-[26px] leading-tight font-semibold text-[var(--color-text)] break-words">
             {isCreate ? (tag.trim() || "New asset") : asset ? <CopyId value={asset.tag} label="tag" /> : null}
           </h2>
-          <p className="mt-1 text-[15px] text-[var(--color-text-muted)]">
+          <p className="mt-1 text-reading text-[var(--color-text-muted)]">
             {isCreate ? "Its tag, type and where it is." : <>{types.find((t) => t.id === asset?.type_id)?.name ?? "No type yet"} · {plural(photos.length, "photo")}{linkedDocs ? ` · ${plural(linkedDocs.length, "document")}` : ""}{asset ? ` · ${assetChange(asset)}` : ""}</>}
           </p>
         </div>
@@ -1497,7 +1497,7 @@ function AssetEditDrawer({
                 className="font-display tabular-nums"
               />
               {tag && (
-                <div className="text-[13px] text-[var(--color-text-muted)] mt-1.5">Found in search as <span className="font-display tabular-nums">{normalizeTag(tag)}</span></div>
+                <div className="text-body text-[var(--color-text-muted)] mt-1.5">Found in search as <span className="font-display tabular-nums">{normalizeTag(tag)}</span></div>
               )}
             </div>
             <div>
@@ -1538,7 +1538,7 @@ function AssetEditDrawer({
           {!isCreate && asset && (
             <div>
               <div className="flex items-end gap-3 mb-3">
-                <h3 className="font-display text-[20px] leading-tight font-semibold text-[var(--color-text)]">Photos <span className="ui-count">{photos.length}</span></h3>
+                <h3 className="font-display text-section leading-tight font-semibold text-[var(--color-text)]">Photos <span className="ui-count">{photos.length}</span></h3>
                 <span className="flex-1" />
                 {photos.length > 0 && (
                   <button type="button" onClick={() => onOpenCarousel(asset)} className={btnLink}>Open photos</button>
@@ -1552,7 +1552,7 @@ function AssetEditDrawer({
               {photosFailed ? (
                 <ErrorNote compact title="Couldn't load the photos." next="Close this and open it again." />
               ) : photos.length === 0 ? (
-                <p className="text-[14px] text-[var(--color-text-muted)]">No photos yet. A photo of the nameplate helps the field find it.</p>
+                <p className="text-body text-[var(--color-text-muted)]">No photos yet. A photo of the nameplate helps the field find it.</p>
               ) : (
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                   {photos.map((p) => {
@@ -1562,12 +1562,12 @@ function AssetEditDrawer({
                         <SignedImg path={p.file_url} alt={p.caption || ""} className="w-full h-full object-cover" />
                         {/* Date and status on one strip along the bottom of the photo. */}
                         <div className="absolute bottom-0 inset-x-0 px-1.5 py-1 bg-black/65">
-                          <div className="text-[13px] font-mono flex items-center gap-1 text-white">
+                          <div className="text-body font-mono flex items-center gap-1 text-white">
                             <span className={age.category === "stale" ? "text-red-300" : age.category === "aging" ? "text-amber-300" : ""}>
                               {p.captured_at ? new Date(p.captured_at).toLocaleDateString() : "No date"}
                             </span>
                             {p.status !== "current" && (
-                              <span className={`ml-auto font-sans font-semibold ${p.status === "needs_verification" ? "text-amber-300" : "text-red-300"}`}>
+                              <span className={`ml-auto font-sans font-medium ${p.status === "needs_verification" ? "text-amber-300" : "text-red-300"}`}>
                                 {p.status === "needs_verification" ? "Check" : "Old"}
                               </span>
                             )}
@@ -1605,7 +1605,7 @@ function AssetEditDrawer({
           {!isCreate && asset && (
             <div>
               <div className="flex items-end gap-3 mb-3 flex-wrap">
-                <h3 className="font-display text-[20px] leading-tight font-semibold text-[var(--color-text)]">Linked documents {linkedDocs && <span className="ui-count">{linkedDocs.length}</span>}</h3>
+                <h3 className="font-display text-section leading-tight font-semibold text-[var(--color-text)]">Linked documents {linkedDocs && <span className="ui-count">{linkedDocs.length}</span>}</h3>
                 <span className="flex-1" />
                 <Link href={`/graph?focus=${encodeURIComponent(`asset:${asset.id}`)}`} className={btnLink}>
                   <Waypoints className="w-4 h-4" /> See on graph
@@ -1621,7 +1621,7 @@ function AssetEditDrawer({
               ) : docsFailed ? (
                 <ErrorNote compact title="Couldn't load the linked documents." onRetry={refreshDocs} />
               ) : linkedDocs.length === 0 ? (
-                <p className="text-[14px] text-[var(--color-text-muted)]">No documents name this equipment yet.</p>
+                <p className="text-body text-[var(--color-text-muted)]">No documents name this equipment yet.</p>
               ) : (
                 <ul className="rounded-xl border border-[var(--color-border)] divide-y divide-[var(--color-border)] max-h-64 overflow-auto">
                   {linkedDocs.map((d) => (
@@ -1640,11 +1640,11 @@ function AssetEditDrawer({
                       >
                         <FileText aria-hidden className="w-4 h-4 text-[var(--color-text-faint)] shrink-0" />
                         <div className="flex-1 min-w-0">
-                          <div className="text-[14px] text-[var(--color-text)] truncate">
+                          <div className="text-body text-[var(--color-text)] truncate">
                             <span className="ui-id">{d.documentNumber || "No number"}</span> {d.title && <span className="text-[var(--color-text-muted)]">· {d.title}</span>}
                           </div>
                           {d.tagText && (
-                            <div className="text-[13px] text-[var(--color-text-muted)] truncate">Named as {d.tagText}</div>
+                            <div className="text-body text-[var(--color-text-muted)] truncate">Named as {d.tagText}</div>
                           )}
                         </div>
                       </Link>
@@ -1658,7 +1658,7 @@ function AssetEditDrawer({
           {/* Quick notes (edit mode only) */}
           {!isCreate && asset && userId && (
             <div>
-              <h3 className="mb-3 font-display text-[20px] leading-tight font-semibold text-[var(--color-text)]">Notes</h3>
+              <h3 className="mb-3 font-display text-section leading-tight font-semibold text-[var(--color-text)]">Notes</h3>
               <QuickNoteComposer
                 orgId={orgId}
                 userId={userId}
@@ -1829,7 +1829,7 @@ function AddCategoryModal({ orgId, userId, existingTypeCodes, onClose, onCreated
               <input id="cat-code" value={typeCode} onChange={(e) => setTypeCode(e.target.value)} placeholder="02" autoComplete="off" className={`${field} font-display tabular-nums`} />
             </div>
           </div>
-          <p className="text-[13px] text-[var(--color-text-muted)]">No numbering system? Leave both blank. You can add them later.</p>
+          <p className="text-body text-[var(--color-text-muted)]">No numbering system? Leave both blank. You can add them later.</p>
         </form>
         {error && <Problem className="mt-3">{error}</Problem>}
       </ModalBody>

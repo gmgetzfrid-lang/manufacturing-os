@@ -49,8 +49,8 @@ export function RemoveStepDialog({ m, under, userId, userName, userEmail, onDele
       <div className="w-full sm:max-w-md bg-[var(--color-surface)] rounded-t-2xl sm:rounded-2xl shadow-2xl p-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:pb-4 space-y-3" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-start gap-2">
           <div className="min-w-0 flex-1">
-            <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">Take it off the schedule</div>
-            <div className="mt-0.5 text-[15px] font-bold text-[var(--color-text)] break-words">{what}</div>
+            <div className="text-body font-medium text-[var(--color-text-muted)]">Take it off the schedule</div>
+            <div className="mt-0.5 text-reading font-medium text-[var(--color-text)] break-words">{what}</div>
           </div>
           <button type="button" onClick={onClose} aria-label="Close" className="-mr-1.5 w-8 h-8 shrink-0 inline-flex items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
         </div>
@@ -62,15 +62,15 @@ export function RemoveStepDialog({ m, under, userId, userName, userEmail, onDele
             <button type="button" onClick={onDelete} className={`${choice} hover:bg-transparent`}>
               <Trash2 className="w-5 h-5 mt-0.5 text-[var(--state-overdue-text)] shrink-0" />
               <span>
-                <b className="block text-[14px] text-[var(--color-text)]">Delete it</b>
-                <span className="block text-[12px] text-[var(--color-text-muted)]">Put in by mistake. Gone, with its comments and progress. Undo right after brings it back.</span>
+                <b className="block text-body text-[var(--color-text)]">Delete it</b>
+                <span className="block text-caption text-[var(--color-text-muted)]">Put in by mistake. Gone, with its comments and progress. Undo right after brings it back.</span>
               </span>
             </button>
             <button type="button" onClick={() => setCancelling(true)} className={`${choice} hover:bg-transparent`}>
               <Ban className="w-5 h-5 mt-0.5 text-[var(--state-held-text)] shrink-0" />
               <span>
-                <b className="block text-[14px] text-[var(--color-text)]">Cancel it</b>
-                <span className="block text-[12px] text-[var(--color-text-muted)]">Planned, but not done on this job. Kept on the close-out report as cancelled, with why and where it went.</span>
+                <b className="block text-body text-[var(--color-text)]">Cancel it</b>
+                <span className="block text-caption text-[var(--color-text-muted)]">Planned, but not done on this job. Kept on the close-out report as cancelled, with why and where it went.</span>
               </span>
             </button>
           </div>

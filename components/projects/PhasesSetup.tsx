@@ -65,7 +65,7 @@ export function usePhasePick(projectId: string | null | undefined, phases: Proje
 /** All phases or one: the schedule, reports and costs follow it. */
 export function PhaseBar({ phases, pick, onPick, onEdit }: { phases: ProjectPhase[]; pick: string | null; onPick: (id: string | null) => void; onEdit?: () => void }) {
   if (!phases.length) return null;
-  const seg = (on: boolean) => `shrink-0 inline-flex items-center gap-1.5 h-9 px-3 text-[13px] font-bold border-r last:border-r-0 border-[var(--color-border-strong)] ${on ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30" : "bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`;
+  const seg = (on: boolean) => `shrink-0 inline-flex items-center gap-1.5 h-9 px-3 text-body font-medium border-r last:border-r-0 border-[var(--color-border-strong)] ${on ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30" : "bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`;
   return (
     <div className="flex items-center gap-2 mb-4 min-w-0">
       <div className="inline-flex max-w-full overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden rounded-lg border border-[var(--color-border-strong)]" role="group" aria-label="Phase">
@@ -74,11 +74,11 @@ export function PhaseBar({ phases, pick, onPick, onEdit }: { phases: ProjectPhas
           <button key={p.id} type="button" aria-pressed={pick === p.id} onClick={() => onPick(p.id)} className={seg(pick === p.id)} title={phaseDates(p)}>
             <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: phaseColor(i) }} />
             {p.name}
-            <span className={`font-medium text-[12px] max-sm:hidden ${pick === p.id ? "opacity-80" : "text-[var(--color-text-muted)]"}`}>{phaseDates(p)}</span>
+            <span className={`font-medium text-caption max-sm:hidden ${pick === p.id ? "opacity-80" : "text-[var(--color-text-muted)]"}`}>{phaseDates(p)}</span>
           </button>
         ))}
       </div>
-      {onEdit && <button type="button" onClick={onEdit} className="h-9 px-3 rounded-lg border border-[var(--color-border-strong)] text-[12px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] inline-flex items-center gap-1.5"><Layers className="w-4 h-4" /> Phases</button>}
+      {onEdit && <button type="button" onClick={onEdit} className="h-10 px-3 rounded-lg border border-[var(--color-border-strong)] text-caption font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] inline-flex items-center gap-1.5"><Layers className="w-4 h-4" /> Phases</button>}
     </div>
   );
 }
@@ -105,7 +105,7 @@ function SplitBar({ phases, total, onShares }: { phases: ProjectPhase[]; total: 
     <div className="select-none touch-none" onPointerMove={onMove} onPointerUp={() => { drag.current = null; }} onPointerCancel={() => { drag.current = null; }}>
       <div ref={bar} className="relative h-12 rounded-xl overflow-hidden flex">
         {phases.map((p, i) => (
-          <div key={p.id} className="h-full flex items-center justify-center text-[var(--color-surface)] text-[12px] font-bold whitespace-nowrap overflow-hidden px-1" style={{ width: `${p.share}%`, background: phaseColor(i) }}>
+          <div key={p.id} className="h-full flex items-center justify-center text-[var(--color-surface)] text-caption font-medium whitespace-nowrap overflow-hidden px-1" style={{ width: `${p.share}%`, background: phaseColor(i) }}>
             {p.share >= 12 ? `${p.name} · ${p.share}% · ${money(phaseAmount(total, p.share))}` : p.share >= 5 ? `${p.share}%` : ""}
           </div>
         ))}
@@ -229,22 +229,22 @@ export function PhasesSetup({ orgId, projectId, projectName, phases: saved, uid,
     finally { setBusy(false); }
   };
 
-  const input = "h-9 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-[13px] text-[var(--color-text)]";
+  const input = "h-9 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-body text-[var(--color-text)]";
   return (
     <Modal onClose={onClose} size="xl" dismissable={!busy}>
       <ModalHeader icon={Layers} title="Phases" subtitle="One project, one AFE, split into phases: each with its own dates, schedule, reports and share of the budget." onClose={onClose} />
       <ModalBody className="space-y-5">
 
         <label className="block">
-          <span className="block mb-1 text-[13px] font-semibold text-[var(--color-text-muted)]">Project name</span>
+          <span className="block mb-1 text-body font-medium text-[var(--color-text-muted)]">Project name</span>
           <input value={name} onChange={(e) => setName(e.target.value)} className={`${input} w-full max-w-lg`} />
         </label>
 
         <div>
-          <span className="block mb-1 text-[13px] font-semibold text-[var(--color-text-muted)]">AFE{afe?.number ? ` ${afe.number}` : ""}</span>
+          <span className="block mb-1 text-body font-medium text-[var(--color-text-muted)]">AFE{afe?.number ? ` ${afe.number}` : ""}</span>
           <div className="flex items-center gap-2 flex-wrap">
             <input value={afeDraft} onChange={(e) => setAfeDraft(e.target.value)} inputMode="decimal" placeholder={linesTotal ? money(linesTotal) : "$0"} aria-label="AFE amount" className={`${input} w-44`} />
-            <span className="text-[12px] text-[var(--color-text-muted)]">
+            <span className="text-caption text-[var(--color-text-muted)]">
               {afe?.authorized != null ? "Authorized amount, split between the phases below."
                 : linesTotal ? `No AFE amount entered: splitting the budget lines' total, ${money(linesTotal)}. Type the AFE amount to split it instead.`
                   : "Type the AFE amount to split it."}
@@ -253,26 +253,26 @@ export function PhasesSetup({ orgId, projectId, projectName, phases: saved, uid,
         </div>
 
         <div>
-          <div className="grid grid-cols-[minmax(0,1.4fr)_repeat(2,minmax(0,1fr))_80px_110px_36px] gap-2 items-end pb-1.5 max-sm:hidden text-[13px] font-semibold text-[var(--color-text-muted)]">
+          <div className="grid grid-cols-[minmax(0,1.4fr)_repeat(2,minmax(0,1fr))_80px_110px_36px] gap-2 items-end pb-1.5 max-sm:hidden text-body font-medium text-[var(--color-text-muted)]">
             <span>Phase</span><span>Starts</span><span>Finishes</span><span className="text-right">Share</span><span className="text-right">Budget</span><span />
           </div>
           <div className="space-y-2 max-sm:space-y-0 max-sm:divide-y max-sm:divide-[var(--color-border)] max-sm:border-y max-sm:border-[var(--color-border)]">
             {phases.map((p, i) => (
               <div key={p.id} className="grid grid-cols-2 sm:grid-cols-[minmax(0,1.4fr)_repeat(2,minmax(0,1fr))_80px_110px_36px] gap-2 items-center max-sm:py-3">
                 <div className="col-span-2 sm:col-span-1 flex items-center gap-2 min-w-0">
-                  <span className="w-6 h-6 rounded-full shrink-0 text-[var(--color-surface)] text-[12px] font-semibold flex items-center justify-center" style={{ background: phaseColor(i) }}>{i + 1}</span>
-                  <input value={p.name} onChange={(e) => edit(i, { name: e.target.value })} aria-label={`Phase ${i + 1} name`} className={`${input} min-w-0 flex-1 font-bold`} />
+                  <span className="w-6 h-6 rounded-full shrink-0 text-[var(--color-surface)] text-caption font-medium flex items-center justify-center" style={{ background: phaseColor(i) }}>{i + 1}</span>
+                  <input value={p.name} onChange={(e) => edit(i, { name: e.target.value })} aria-label={`Phase ${i + 1} name`} className={`${input} min-w-0 flex-1 font-medium`} />
                 </div>
                 <input type="date" value={p.start ?? ""} onChange={(e) => edit(i, { start: e.target.value || null })} aria-label={`${p.name} starts`} className={input} />
                 <input type="date" value={p.end ?? ""} min={p.start ?? undefined} onChange={(e) => edit(i, { end: e.target.value || null })} aria-label={`${p.name} finishes`} className={input} />
                 <div className="relative">
                   <input value={String(p.share)} inputMode="decimal" aria-label={`${p.name} share`} onChange={(e) => { const v = Number(e.target.value.replace(/[%\s]/g, "")); if (Number.isFinite(v)) shares(setShare(phases.map((x) => x.share), i, v)); }}
                     className={`${input} w-full text-right pr-6`} />
-                  <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[12px] text-[var(--color-text-muted)]">%</span>
+                  <span className="absolute right-2 top-1/2 -translate-y-1/2 text-caption text-[var(--color-text-muted)]">%</span>
                 </div>
                 <input key={`${p.id}:${p.share}:${total}`} defaultValue={money(phaseAmount(total, p.share))} inputMode="decimal" aria-label={`${p.name} budget`}
                   onBlur={(e) => { const v = parseMoney(e.target.value); if (v != null && total > 0) shares(setShare(phases.map((x) => x.share), i, shareOfAmount(total, v))); }}
-                  className={`${input} w-full text-right font-bold`} />
+                  className={`${input} w-full text-right font-medium`} />
                 <button type="button" onClick={() => void remove(i)} disabled={phases.length <= 1} aria-label={`Remove ${p.name}`} className="justify-self-end w-9 h-9 rounded-lg text-[var(--color-text-faint)] hover:text-[var(--state-overdue-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-30 flex items-center justify-center"><Trash2 className="w-4 h-4" /></button>
               </div>
             ))}
@@ -282,28 +282,28 @@ export function PhasesSetup({ orgId, projectId, projectName, phases: saved, uid,
         {phases.length > 1 && (
           <div>
             <div className="flex items-baseline justify-between gap-2 mb-2">
-              <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Split the {afe?.authorized != null ? "AFE" : "budget"}: drag the line</span>
-              <button type="button" onClick={() => shares(evenShares(phases.length))} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Split evenly</button>
+              <span className="text-body font-medium text-[var(--color-text-muted)]">Split the {afe?.authorized != null ? "AFE" : "budget"}: drag the line</span>
+              <button type="button" onClick={() => shares(evenShares(phases.length))} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Split evenly</button>
             </div>
             <SplitBar phases={phases} total={total} onShares={shares} />
-            <p className="mt-2 text-[12px] text-[var(--color-text-muted)]">Or type a % or $ above. It always adds up to 100%{total ? ` of ${money(total)}` : ""}.</p>
+            <p className="mt-2 text-caption text-[var(--color-text-muted)]">Or type a % or $ above. It always adds up to 100%{total ? ` of ${money(total)}` : ""}.</p>
           </div>
         )}
 
         <div className="flex items-center gap-2 flex-wrap">
-          <button type="button" onClick={add} className="inline-flex items-center gap-1.5 h-9 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><Plus className="w-4 h-4" /> Add phase</button>
+          <button type="button" onClick={add} className="inline-flex items-center gap-1.5 h-10 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><Plus className="w-4 h-4" /> Add phase</button>
         </div>
         {phases.length > 1 && (
-          <p className="text-[12px] text-[var(--color-text-muted)] border-t border-[var(--color-border)] pt-3">
+          <p className="text-caption text-[var(--color-text-muted)] border-t border-[var(--color-border)] pt-3">
             The schedule already on the project is <b className="text-[var(--color-text)]">{phases[0].name}</b>. For {phases.slice(1).map((p) => p.name).join(", ")}: pick it at the top of the project, then Plan › Import its schedule. Each phase is tracked on its own; All phases is the whole project.
           </p>
         )}
-        {err && <div role="alert" className="text-[12px] font-semibold text-[var(--state-overdue-text)]">{err}</div>}
+        {err && <div role="alert" className="text-caption font-medium text-[var(--state-overdue-text)]">{err}</div>}
       </ModalBody>
       <ModalFooter>
-        {problems.length > 0 && <span className="mr-auto text-[12px] text-[var(--state-held-text)]">{problems[0]}</span>}
-        <button type="button" onClick={onClose} disabled={busy} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>
-        <button type="button" onClick={() => void save()} disabled={busy || problems.length > 0} className="inline-flex items-center gap-1.5 h-9 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[13px] font-bold hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
+        {problems.length > 0 && <span className="mr-auto text-caption text-[var(--state-held-text)]">{problems[0]}</span>}
+        <button type="button" onClick={onClose} disabled={busy} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>
+        <button type="button" onClick={() => void save()} disabled={busy || problems.length > 0} className="inline-flex items-center gap-1.5 h-10 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-body font-medium hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
           {busy && <Loader2 className="w-4 h-4 animate-spin" />} Save phases
         </button>
       </ModalFooter>

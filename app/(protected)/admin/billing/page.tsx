@@ -124,14 +124,14 @@ export default function BillingPage() {
 
       <PageBody>
         {checkoutResult === "success" && (
-          <p role="status" className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[15px]">
-            <span className="inline-flex items-center gap-1.5 font-semibold text-[var(--color-text)]"><Check aria-hidden className="w-4 h-4 text-[var(--state-released)]" /> Subscription started.</span>
+          <p role="status" className="flex flex-wrap items-center gap-x-3 gap-y-1 text-reading">
+            <span className="inline-flex items-center gap-1.5 font-medium text-[var(--color-text)]"><Check aria-hidden className="w-4 h-4 text-[var(--state-released)]" /> Subscription started.</span>
             <span className="text-[var(--color-text-muted)]">Your status can take a few seconds to update.</span>
             <button type="button" onClick={() => void refresh()} className={link}>Refresh now</button>
           </p>
         )}
         {checkoutResult === "canceled" && (
-          <p className="text-[15px] text-[var(--color-text-muted)]">Checkout canceled. No payment was taken.</p>
+          <p className="text-reading text-[var(--color-text-muted)]">Checkout canceled. No payment was taken.</p>
         )}
         {error && <Problem>{error}</Problem>}
 
@@ -140,7 +140,7 @@ export default function BillingPage() {
         ) : !info ? (
           <ErrorNote title="Couldn't load your subscription." onRetry={() => void refresh()} />
         ) : !isAuthorized ? (
-          <p className="text-[15px] text-[var(--color-text-muted)] inline-flex items-center gap-2"><Lock aria-hidden className="w-4 h-4" /> Admin and Manager manage billing.</p>
+          <p className="text-reading text-[var(--color-text-muted)] inline-flex items-center gap-2"><Lock aria-hidden className="w-4 h-4" /> Admin and Manager manage billing.</p>
         ) : null}
 
         {/* Plans side by side on one sheet */}
@@ -179,12 +179,12 @@ function Plan({
   return (
     <div className="p-5 flex flex-col">
       <div className="flex items-baseline justify-between gap-2">
-        <h3 className="font-display text-[20px] font-semibold text-[var(--color-text)]">{name}</h3>
-        {featured && <span className="text-[13px] text-[var(--color-text-muted)]">Most picked</span>}
+        <h3 className="font-display text-section font-semibold text-[var(--color-text)]">{name}</h3>
+        {featured && <span className="text-body text-[var(--color-text-muted)]">Most picked</span>}
       </div>
-      <div className="text-[14px] text-[var(--color-text-muted)]">{tagline}</div>
-      <div className="mt-3 font-display text-[28px] leading-none font-semibold tabular-nums text-[var(--color-text)]">{price}{price !== "Contact" && <span className="font-sans text-[14px] font-normal text-[var(--color-text-muted)]"> a month</span>}</div>
-      <ul className="mt-4 space-y-1.5 text-[15px] flex-1 text-[var(--color-text)]">
+      <div className="text-body text-[var(--color-text-muted)]">{tagline}</div>
+      <div className="mt-3 font-display text-[28px] leading-none font-semibold tabular-nums text-[var(--color-text)]">{price}{price !== "Contact" && <span className="font-sans text-body font-normal text-[var(--color-text-muted)]"> a month</span>}</div>
+      <ul className="mt-4 space-y-1.5 text-reading flex-1 text-[var(--color-text)]">
         {features.map((f) => (
           <li key={f} className="flex items-start gap-2">
             <Check aria-hidden className="w-4 h-4 shrink-0 mt-0.5 text-[var(--color-text-muted)]" />

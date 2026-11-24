@@ -53,13 +53,13 @@ function ruleCount(acl: AccessControl | null): number {
 
 /** Hidden or private: a muted icon and a word (it isn't an alarm). */
 function Vis({ v }: { v: string }) {
-  if (v === "private") return <span className="inline-flex items-center gap-1 text-[13px] text-[var(--color-text-muted)] shrink-0"><Lock aria-hidden className="w-3.5 h-3.5" /> Private</span>;
-  if (v === "hidden") return <span className="inline-flex items-center gap-1 text-[13px] text-[var(--color-text-muted)] shrink-0"><EyeOff aria-hidden className="w-3.5 h-3.5" /> Hidden</span>;
+  if (v === "private") return <span className="inline-flex items-center gap-1 text-body text-[var(--color-text-muted)] shrink-0"><Lock aria-hidden className="w-3.5 h-3.5" /> Private</span>;
+  if (v === "hidden") return <span className="inline-flex items-center gap-1 text-body text-[var(--color-text-muted)] shrink-0"><EyeOff aria-hidden className="w-3.5 h-3.5" /> Hidden</span>;
   return null;
 }
 
 function Rules({ n }: { n: number }) {
-  return n > 0 ? <span className="text-[13px] text-[var(--color-text-muted)] whitespace-nowrap tabular-nums">{plural(n, "rule")}</span> : null;
+  return n > 0 ? <span className="text-body text-[var(--color-text-muted)] whitespace-nowrap tabular-nums">{plural(n, "rule")}</span> : null;
 }
 
 export default function PermissionsConsolePage() {
@@ -179,8 +179,8 @@ export default function PermissionsConsolePage() {
           <ErrorNote error={loadError} title="Couldn't load libraries and folders." onRetry={() => void refresh()} />
         ) : libs.length === 0 ? (
           <div className={`${tbl.wrap} px-4 py-8 text-center`}>
-            <p className="text-[15px] text-[var(--color-text)]">Permissions are set per library. Make a library first.</p>
-            <Link href="/admin/libraries" className={`${link} mt-1.5 inline-block font-semibold`}>Go to Libraries</Link>
+            <p className="text-reading text-[var(--color-text)]">Permissions are set per library. Make a library first.</p>
+            <Link href="/admin/libraries" className={`${link} mt-1.5 inline-block font-medium`}>Go to Libraries</Link>
           </div>
         ) : (
           <div role="tree" aria-label="Libraries, folders and documents" onKeyDown={onTreeKeyDown} className={`${tbl.wrap} divide-y divide-[var(--color-border)]`}>
@@ -190,8 +190,8 @@ export default function PermissionsConsolePage() {
                 <details key={lib.id} className="group/lib" open={libs.length <= 3}>
                   <summary role="treeitem" aria-selected={false} className="group/row cursor-pointer list-none [&::-webkit-details-marker]:hidden flex items-center gap-2.5 px-4 min-h-12 select-none hover:bg-[var(--color-surface-2)]">
                     <ChevronRight aria-hidden className="ui-chevron w-4 h-4 shrink-0 text-[var(--color-text-muted)] group-open/lib:rotate-90" />
-                    <span className="font-semibold text-[var(--color-text)] truncate">{lib.name}</span>
-                    <span className="text-[13px] text-[var(--color-text-muted)] max-sm:hidden whitespace-nowrap">{plural(libFolders.length, "folder")}</span>
+                    <span className="font-medium text-[var(--color-text)] truncate">{lib.name}</span>
+                    <span className="text-body text-[var(--color-text-muted)] max-sm:hidden whitespace-nowrap">{plural(libFolders.length, "folder")}</span>
                     <Vis v={lib.visibility} />
                     <Rules n={ruleCount(lib.acl)} />
                     {editBtn(() => openDrawer("library", lib, lib.name, []), false, `${canEdit ? "Edit" : "View"} permissions for ${lib.name}`)}
@@ -203,7 +203,7 @@ export default function PermissionsConsolePage() {
                         <summary role="treeitem" aria-selected={false} className="group/row cursor-pointer list-none [&::-webkit-details-marker]:hidden flex items-center gap-2 pl-4 pr-4 min-h-10 pointer-coarse:min-h-11 select-none border-t border-[var(--color-border)] hover:bg-[var(--color-surface-2)]">
                           <ChevronRight aria-hidden className="ui-chevron w-3.5 h-3.5 shrink-0 text-[var(--color-text-muted)] group-open/fold:rotate-90" />
                           <FolderOpen aria-hidden className="w-4 h-4 shrink-0 text-[var(--color-text-faint)]" />
-                          <span className="text-[14px] text-[var(--color-text)] truncate">{f.name}</span>
+                          <span className="text-body text-[var(--color-text)] truncate">{f.name}</span>
                           <Vis v={f.visibility} />
                           <Rules n={ruleCount(f.acl)} />
                           {editBtn(() => openDrawer("collection", f, f.name, [lib.acl ?? undefined]), true, `${canEdit ? "Edit" : "View"} permissions for ${f.name}`)}
@@ -213,23 +213,23 @@ export default function PermissionsConsolePage() {
                           {(docsByFolder.get(f.id) ?? []).map((d) => (
                             <div key={d.id} role="treeitem" aria-selected={false} tabIndex={-1} data-tree-row className="group/row flex items-center gap-2 pl-4 pr-4 min-h-10 pointer-coarse:min-h-11 border-t border-[var(--color-border)] hover:bg-[var(--color-surface-2)] focus:bg-[var(--color-surface-2)]">
                               <FileText aria-hidden className="w-4 h-4 shrink-0 text-[var(--color-text-faint)]" />
-                              <span className="ui-id text-[14px] truncate">{d.name}</span>
+                              <span className="ui-id text-body truncate">{d.name}</span>
                               <Vis v={d.visibility} />
                               <Rules n={ruleCount(d.acl)} />
                               {editBtn(() => openDrawer("document", d, d.name, [lib.acl ?? undefined, f.acl ?? undefined]), true, `${canEdit ? "Edit" : "View"} permissions for ${d.name}`)}
                             </div>
                           ))}
                           {docsFailed.has(f.id) && (
-                            <p role="alert" className="pl-4 py-2 border-t border-[var(--color-border)] text-[14px] text-[var(--state-overdue-text)]">Couldn&apos;t load this folder&apos;s documents. Close it and open it again.</p>
+                            <p role="alert" className="pl-4 py-2 border-t border-[var(--color-border)] text-body text-[var(--state-overdue-text)]">Couldn&apos;t load this folder&apos;s documents. Close it and open it again.</p>
                           )}
                           {docsByFolder.has(f.id) && (docsByFolder.get(f.id) ?? []).length === 0 && (
-                            <p className="pl-4 py-2 border-t border-[var(--color-border)] text-[13px] text-[var(--color-text-muted)]">No documents directly in this folder.</p>
+                            <p className="pl-4 py-2 border-t border-[var(--color-border)] text-body text-[var(--color-text-muted)]">No documents directly in this folder.</p>
                           )}
                         </div>
                       </details>
                     ))}
                     {libFolders.length === 0 && (
-                      <p className="pl-4 py-2 border-t border-[var(--color-border)] text-[13px] text-[var(--color-text-muted)]">No folders.</p>
+                      <p className="pl-4 py-2 border-t border-[var(--color-border)] text-body text-[var(--color-text-muted)]">No folders.</p>
                     )}
                   </div>
                 </details>

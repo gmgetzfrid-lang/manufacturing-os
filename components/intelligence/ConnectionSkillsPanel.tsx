@@ -91,14 +91,14 @@ export default function ConnectionSkillsPanel() {
   return (
     <Section
       label={<span className="inline-flex items-center gap-2">Connection skills
-        {rules && rules.length > 0 && <span className="inline-flex items-center gap-1 font-sans text-[14px] font-normal text-[var(--color-text-muted)]">{enabledCount} of {rules.length} on</span>}
-        <span className="font-sans font-normal text-[14px] leading-snug"><HelpTooltip>
+        {rules && rules.length > 0 && <span className="inline-flex items-center gap-1 font-sans text-body font-normal text-[var(--color-text-muted)]">{enabledCount} of {rules.length} on</span>}
+        <span className="font-sans font-normal text-body leading-snug"><HelpTooltip>
           The detectors Find connections runs: the built-ins, and ones you write for your own numbering (work orders, permit numbers, ISO sheets).
         </HelpTooltip></span>
       </span>}
       action={rules !== null ? (
         <div className="flex items-center gap-3">
-          <Link href="/intelligence/skills" className={`${link} text-[14px] inline-flex items-center gap-1`}>Skill library <ArrowUpRight className="w-3.5 h-3.5" /></Link>
+          <Link href="/intelligence/skills" className={`${link} text-body inline-flex items-center gap-1`}>Skill library <ArrowUpRight className="w-3.5 h-3.5" /></Link>
           <button type="button" onClick={() => setWizardOpen(true)} className={btnQuiet}><Plus className="w-4 h-4" /> New skill</button>
         </div>
       ) : undefined}
@@ -107,10 +107,10 @@ export default function ConnectionSkillsPanel() {
       {rules === null ? (
         <div className={`${sheet} px-4 py-4 flex flex-wrap items-center gap-x-3 gap-y-1`}>
           <Pill tone="warn">Not set up</Pill>
-          <span className="text-[14px] text-[var(--color-text-muted)]">Run the connection-skills migration to write your own detectors.</span>
+          <span className="text-body text-[var(--color-text-muted)]">Run the connection-skills migration to write your own detectors.</span>
         </div>
       ) : rules.length === 0 ? (
-        <div className={`${sheet} px-4 py-4 text-[14px] text-[var(--color-text-muted)]`}>No skills yet. New skill teaches the engine your numbering.</div>
+        <div className={`${sheet} px-4 py-4 text-body text-[var(--color-text-muted)]`}>No skills yet. New skill teaches the engine your numbering.</div>
       ) : (
         <div className={tbl.wrap}>
           <table className={tbl.table}>
@@ -134,9 +134,9 @@ export default function ConnectionSkillsPanel() {
                     <td className={`${tbl.td} max-md:py-1 align-top min-w-0`}>
                       <div className="flex items-center gap-2.5 min-w-0">
                         
-                        <span className={`font-semibold ${r.enabled ? "text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>{r.name}</span>
+                        <span className={`font-medium ${r.enabled ? "text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>{r.name}</span>
                       </div>
-                      {r.description && <div className="text-[14px] text-[var(--color-text-muted)] line-clamp-1 max-w-[70ch]" title={r.description}>{r.description}</div>}
+                      {r.description && <div className="text-body text-[var(--color-text-muted)] line-clamp-1 max-w-[70ch]" title={r.description}>{r.description}</div>}
                       {(r.config?.patterns?.length ?? 0) > 0 && (
                         <div className="flex items-center gap-1 flex-wrap mt-1">
                           {r.config.patterns!.slice(0, 4).map((p) => (
@@ -145,7 +145,7 @@ export default function ConnectionSkillsPanel() {
                           {r.config.patterns!.length > 4 && <span className="ui-tag is-more !h-6" title={r.config.patterns!.slice(4).join("\n")}>+{r.config.patterns!.length - 4}</span>}
                         </div>
                       )}
-                      <div className="md:hidden mt-0.5 text-[13px] text-[var(--color-text-muted)]">{kind}, {who.toLowerCase()}</div>
+                      <div className="md:hidden mt-0.5 text-body text-[var(--color-text-muted)]">{kind}, {who.toLowerCase()}</div>
                     </td>
                     <td className={`${tbl.td} align-top max-md:hidden whitespace-nowrap`}><span className="ui-tag">{kind}</span></td>
                     <td className={`${tbl.td} align-top max-lg:hidden whitespace-nowrap`}>
@@ -175,7 +175,7 @@ export default function ConnectionSkillsPanel() {
                           </span>
                         </button>
                       ) : (
-                        <span className="text-[14px] text-[var(--color-text-muted)]">{r.enabled ? "On" : "Off"}</span>
+                        <span className="text-body text-[var(--color-text-muted)]">{r.enabled ? "On" : "Off"}</span>
                       )}
                     </td>
                     <td className={`${tbl.td} max-md:py-1 max-md:pl-1 align-top`}>

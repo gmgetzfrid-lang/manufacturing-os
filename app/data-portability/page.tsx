@@ -52,7 +52,7 @@ function TwoCol({ head, rows }: { head: [string, string]; rows: Array<[string, s
         <tbody className={tbl.tbody}>
           {rows.map(([a, b]) => (
             <tr key={a} className="max-sm:flex max-sm:flex-col max-sm:py-2">
-              <td className={`${tbl.td} max-sm:py-0.5 font-semibold text-[var(--color-text)]`}>{a}</td>
+              <td className={`${tbl.td} max-sm:py-0.5 font-medium text-[var(--color-text)]`}>{a}</td>
               <td className={`${tbl.td} max-sm:py-0.5 text-[var(--color-text-muted)]`}>{b}</td>
             </tr>
           ))}
@@ -102,17 +102,17 @@ export default function DataPortabilityPage() {
           </Section>
 
           <div className="flex flex-wrap items-center gap-x-6 gap-y-3 pt-6 border-t border-[var(--color-border-strong)]">
-            <p className="text-[15px] text-[var(--color-text-muted)]">Have an account? Check the promise against your own data.</p>
+            <p className="text-reading text-[var(--color-text-muted)]">Have an account? Check the promise against your own data.</p>
             <Link href="/admin/data-export" className={btnQuiet}>Open Data export</Link>
             <a
               href="https://github.com/gmgetzfrid-lang/manufacturing-os/blob/master/supabase/schema.sql"
               target="_blank"
               rel="noopener noreferrer"
-              className={`inline-flex items-center gap-1 text-[15px] ${link}`}
+              className={`inline-flex items-center gap-1 text-reading ${link}`}
             >
               View the database schema <ExternalLink className="w-3.5 h-3.5" />
             </a>
-            <span className="sm:ml-auto text-[13px] text-[var(--color-text-muted)]">Last updated May 29, 2026</span>
+            <span className="sm:ml-auto text-body text-[var(--color-text-muted)]">Last updated May 29, 2026</span>
           </div>
         </PageBody>
       </main>

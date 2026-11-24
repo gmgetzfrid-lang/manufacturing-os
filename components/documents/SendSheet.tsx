@@ -110,8 +110,8 @@ function SettingRow({ icon: Icon, title, help, on, onChange, disabled }: {
     >
       <Icon className="w-5 h-5 mt-0.5 shrink-0 text-[var(--color-text-muted)]" />
       <div className="flex-1 min-w-0">
-        <div className="text-[15px] font-semibold text-[var(--color-text)]">{title}</div>
-        <div className="text-[13px] leading-snug text-[var(--color-text-muted)] mt-0.5">{help}</div>
+        <div className="text-reading font-medium text-[var(--color-text)]">{title}</div>
+        <div className="text-body leading-snug text-[var(--color-text-muted)] mt-0.5">{help}</div>
       </div>
       <div onClick={(e) => e.stopPropagation()} className="pt-0.5">
         <Switch on={on} onChange={onChange} label={title} disabled={disabled} />
@@ -267,10 +267,10 @@ export default function SendSheet({ orgId, docs, markedUp, markedUpIds, onClose 
         <div className="flex items-start gap-3 px-5 pt-3 sm:pt-4 pb-3 border-b border-[var(--color-border)] shrink-0">
           <div className="min-w-0 flex-1">
             <h2 id="send-sheet-title" className="font-display text-[21px] leading-tight font-semibold truncate">{title}</h2>
-            {sub && <p className="text-[14px] text-[var(--color-text-muted)] mt-0.5 truncate">{sub}</p>}
+            {sub && <p className="text-body text-[var(--color-text-muted)] mt-0.5 truncate">{sub}</p>}
             {!single && (
               <button type="button" onClick={() => setListOpen((v) => !v)} aria-expanded={listOpen}
-                className="mt-1 inline-flex items-center gap-1 text-[14px] font-semibold text-[var(--color-accent-text)] hover:underline underline-offset-2">
+                className="mt-1 inline-flex items-center gap-1 text-body font-medium text-[var(--color-accent-text)] hover:underline underline-offset-2">
                 {listOpen ? "Hide the list" : docs.length > 4 ? `Show all ${docs.length}` : "Show the list"}
                 <ChevronDown className={`w-4 h-4 transition-transform ${listOpen ? "rotate-180" : ""}`} />
               </button>
@@ -285,11 +285,11 @@ export default function SendSheet({ orgId, docs, markedUp, markedUpIds, onClose 
           {!single && listOpen && (
             <ul className="px-5 py-2 border-b border-[var(--color-border)] divide-y divide-[var(--color-border)] bg-[var(--color-surface-2)]">
               {docs.map((d) => (
-                <li key={d.id} className="py-2 flex items-baseline gap-3 text-[14px] min-w-0">
-                  <span className="font-semibold shrink-0 tabular-nums">{docName(d)}</span>
+                <li key={d.id} className="py-2 flex items-baseline gap-3 text-body min-w-0">
+                  <span className="font-medium shrink-0 tabular-nums">{docName(d)}</span>
                   <span className="text-[var(--color-text-muted)] truncate flex-1 min-w-0">{d.documentNumber ? d.title : ""}</span>
                   {d.rev && <span className="shrink-0 text-[var(--color-text-muted)]">Rev {d.rev}</span>}
-                  {markedHere.some((m) => m.id === d.id) && <span className="shrink-0 text-[13px] font-semibold text-[var(--color-accent-text)]">Marked up</span>}
+                  {markedHere.some((m) => m.id === d.id) && <span className="shrink-0 text-body font-medium text-[var(--color-accent-text)]">Marked up</span>}
                 </li>
               ))}
             </ul>
@@ -298,7 +298,7 @@ export default function SendSheet({ orgId, docs, markedUp, markedUpIds, onClose 
           <div className="px-5 py-4">
             {step === "who" && (
               <div>
-                <h3 className="text-[17px] font-semibold mb-3">Who is it for?</h3>
+                <h3 className="text-section font-semibold mb-3">Who is it for?</h3>
                 <div className="grid gap-3">
                   <ChoiceButton
                     icon={Link2}
@@ -318,13 +318,13 @@ export default function SendSheet({ orgId, docs, markedUp, markedUpIds, onClose 
 
             {step === "inside" && (
               <div>
-                <h3 className="text-[17px] font-semibold">{docs.length === 1 ? "The link to this document" : "The links to these documents"}</h3>
-                <p className="text-[14px] text-[var(--color-text-muted)] mt-1">They sign in and see the live document.</p>
+                <h3 className="text-section font-semibold">{docs.length === 1 ? "The link to this document" : "The links to these documents"}</h3>
+                <p className="text-body text-[var(--color-text-muted)] mt-1">They sign in and see the live document.</p>
                 <textarea
                   readOnly value={appLinks} rows={Math.min(docs.length, 6)}
                   onFocus={(e) => e.currentTarget.select()}
                   aria-label={docs.length === 1 ? "Link" : "Links"}
-                  className={`mt-3 w-full py-2.5 text-[14px] leading-relaxed resize-none ${field.replace("h-10", "")} whitespace-pre overflow-x-auto`}
+                  className={`mt-3 w-full py-2.5 text-body leading-relaxed resize-none ${field.replace("h-10", "")} whitespace-pre overflow-x-auto`}
                 />
                 <div className="mt-3 grid grid-cols-2 gap-2">
                   <a href={insideEmailFor(docs, appLinks)} className={`${btnQuiet} h-11`}>
@@ -339,9 +339,9 @@ export default function SendSheet({ orgId, docs, markedUp, markedUpIds, onClose 
 
             {step === "settings" && (
               <form onSubmit={(e) => { e.preventDefault(); void create(); }} id="send-settings">
-                <h3 className="text-[17px] font-semibold">Set up the link</h3>
+                <h3 className="text-section font-semibold">Set up the link</h3>
                 <div className="mt-3">
-                  <label htmlFor="send-recipient" className="block text-[14px] font-semibold">Name or company</label>
+                  <label htmlFor="send-recipient" className="block text-body font-medium">Name or company</label>
                   <input
                     id="send-recipient" ref={nameRef} value={recipient} disabled={!!busy} maxLength={120}
                     onChange={(e) => { setRecipient(e.target.value); if (e.target.value.trim()) setRecipientMissing(false); }}
@@ -349,25 +349,25 @@ export default function SendSheet({ orgId, docs, markedUp, markedUpIds, onClose 
                     aria-invalid={recipientMissing} aria-describedby="send-recipient-help"
                     className={`mt-1.5 ${field} h-11 ${recipientMissing ? "border-[var(--state-overdue)]" : ""}`}
                   />
-                  <p id="send-recipient-help" className={`mt-1 text-[13px] ${recipientMissing ? "text-[var(--state-overdue)] font-semibold" : "text-[var(--color-text-muted)]"}`}>
+                  <p id="send-recipient-help" className={`mt-1 text-body ${recipientMissing ? "text-[var(--state-overdue)] font-medium" : "text-[var(--color-text-muted)]"}`}>
                     {recipientMissing ? "Say who it's for. It's printed on every page they see." : "Printed on every page they see."}
                   </p>
                 </div>
 
                 <div className="mt-4">
-                  <div className="text-[14px] font-semibold" id="send-days">Link works for</div>
+                  <div className="text-body font-medium" id="send-days">Link works for</div>
                   <div role="radiogroup" aria-labelledby="send-days" className="mt-1.5 grid grid-cols-3 gap-1 p-1 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface-2)]">
                     {([1, 7, 30] as Days[]).map((d) => (
                       <button
                         key={d} type="button" role="radio" aria-checked={days === d} disabled={!!busy}
                         onClick={() => setDays(d)}
-                        className={`h-10 rounded-md text-[15px] font-semibold transition-colors ${days === d ? "bg-[var(--color-surface)] text-[var(--color-text)] ring-1 ring-[var(--color-border-strong)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}
+                        className={`h-10 rounded-md text-reading font-medium transition-colors ${days === d ? "bg-[var(--color-surface)] text-[var(--color-text)] ring-1 ring-[var(--color-border-strong)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}
                       >
                         {d === 1 ? "1 day" : `${d} days`}
                       </button>
                     ))}
                   </div>
-                  <p className="mt-1 text-[13px] text-[var(--color-text-muted)]">Until {untilPreview}.</p>
+                  <p className="mt-1 text-body text-[var(--color-text-muted)]">Until {untilPreview}.</p>
                 </div>
 
                 <div className="mt-2 divide-y divide-[var(--color-border)] border-y border-[var(--color-border)]">
@@ -389,7 +389,7 @@ export default function SendSheet({ orgId, docs, markedUp, markedUpIds, onClose 
                   )}
                 </div>
 
-                <p className="mt-3 flex items-start gap-2 text-[13px] text-[var(--color-text-muted)]">
+                <p className="mt-3 flex items-start gap-2 text-body text-[var(--color-text-muted)]">
                   <ShieldCheck className="w-4 h-4 mt-0.5 shrink-0" />
                   <span>Every page is stamped UNCONTROLLED with the revision and a QR code to check it is still current. Each open is logged.</span>
                 </p>
@@ -453,8 +453,8 @@ function ChoiceButton({ icon: Icon, title, body, onClick }: {
     >
       <span className="ui-icon-tile shrink-0"><Icon className="w-[18px] h-[18px]" /></span>
       <span className="flex-1 min-w-0">
-        <span className="block text-[16px] font-semibold text-[var(--color-text)]">{title}</span>
-        <span className="block text-[14px] leading-snug text-[var(--color-text-muted)] mt-1">{body}</span>
+        <span className="block text-reading font-medium text-[var(--color-text)]">{title}</span>
+        <span className="block text-body leading-snug text-[var(--color-text-muted)] mt-1">{body}</span>
       </span>
       <ChevronLeft className="w-5 h-5 rotate-180 mt-2.5 shrink-0 text-[var(--color-text-faint)] group-hover:text-[var(--color-text)]" />
     </button>
@@ -526,8 +526,8 @@ function MadeStep({ made, docs, until, withCode, copied, copy, showQr, setShowQr
 
   return (
     <div>
-      <h3 className="text-[17px] font-semibold">How to send</h3>
-      <p className="text-[14px] text-[var(--color-text-muted)] mt-1">
+      <h3 className="text-section font-semibold">How to send</h3>
+      <p className="text-body text-[var(--color-text-muted)] mt-1">
         For {made.recipient}. {until ? `Works until ${until}.` : ""}
         {made.markedUp > 0 ? ` ${made.markedUp === docs.length ? (docs.length === 1 ? "It's your marked-up copy." : "All are your marked-up copies.") : `${made.markedUp} ${made.markedUp === 1 ? "is your marked-up copy" : "are your marked-up copies"}.`}` : ""}
       </p>
@@ -535,7 +535,7 @@ function MadeStep({ made, docs, until, withCode, copied, copy, showQr, setShowQr
       <div className="mt-3 flex items-stretch gap-2">
         <input
           readOnly value={made.url} aria-label="Link" onFocus={(e) => e.currentTarget.select()}
-          className={`${field} h-11 text-[14px] min-w-0 flex-1`}
+          className={`${field} h-11 text-body min-w-0 flex-1`}
         />
         <button type="button" onClick={() => void copy("made", made.url)} className={`${btnPrimary} h-11 shrink-0 min-w-[104px]`}>
           {copied === "made" ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
@@ -544,14 +544,14 @@ function MadeStep({ made, docs, until, withCode, copied, copy, showQr, setShowQr
       </div>
 
       <div className="mt-3 grid grid-cols-3 gap-2">
-        <a href={emailFor(docs, made.url, until, withCode)} className={`${btnQuiet} h-14 flex-col gap-1 text-[13px]`}>
+        <a href={emailFor(docs, made.url, until, withCode)} className={`${btnQuiet} h-14 flex-col gap-1 text-body`}>
           <Mail className="w-5 h-5" /> Email
         </a>
-        <a href={smsFor(docs, made.url)} className={`${btnQuiet} h-14 flex-col gap-1 text-[13px]`}>
+        <a href={smsFor(docs, made.url)} className={`${btnQuiet} h-14 flex-col gap-1 text-body`}>
           <MessageSquare className="w-5 h-5" /> Text
         </a>
         <button type="button" onClick={() => setShowQr(!showQr)} aria-expanded={showQr}
-          className={`${btnQuiet} h-14 flex-col gap-1 text-[13px] ${showQr ? "!border-[var(--color-main)] !bg-[var(--color-surface-2)]" : ""}`}>
+          className={`${btnQuiet} h-14 flex-col gap-1 text-body ${showQr ? "!border-[var(--color-main)] !bg-[var(--color-surface-2)]" : ""}`}>
           <QrCode className="w-5 h-5" /> QR code
         </button>
       </div>
@@ -562,7 +562,7 @@ function MadeStep({ made, docs, until, withCode, copied, copy, showQr, setShowQr
             // eslint-disable-next-line @next/next/no-img-element
             ? <img src={qr} alt="QR code for the link" className="w-[260px] h-[260px] max-w-full bg-white rounded-md" />
             : <div className="w-[260px] h-[260px] flex items-center justify-center text-[var(--color-text-muted)]"><Loader2 className="w-5 h-5 animate-spin" /></div>}
-          <p className="mt-2 text-[13px] text-[var(--color-text-muted)] text-center">They scan it with a phone camera to open the link.</p>
+          <p className="mt-2 text-body text-[var(--color-text-muted)] text-center">They scan it with a phone camera to open the link.</p>
           <div className="mt-3 grid grid-cols-2 gap-2 w-full max-w-[320px]">
             <button type="button" onClick={downloadQr} disabled={!qr} className={`${btnQuiet} h-11`}><Download className="w-4 h-4" /> Download PNG</button>
             <button type="button" onClick={printQr} disabled={!qr} className={`${btnQuiet} h-11`}><Printer className="w-4 h-4" /> Print</button>
@@ -572,7 +572,7 @@ function MadeStep({ made, docs, until, withCode, copied, copy, showQr, setShowQr
 
       {made.code && (
         <div className="mt-4 rounded-lg border-2 border-[var(--color-border-strong)] bg-[var(--color-surface-2)] p-4">
-          <div className="text-[14px] font-semibold text-[var(--color-text-muted)]">Code</div>
+          <div className="text-body font-medium text-[var(--color-text-muted)]">Code</div>
           <div className="mt-1 flex items-center gap-3 flex-wrap">
             <span className="text-[36px] leading-none font-bold tracking-[0.14em] tabular-nums text-[var(--color-text)] select-all" aria-label={`Code ${made.code.split("").join(" ")}`}>
               {made.code.slice(0, 3)}<span className="inline-block w-3" />{made.code.slice(3)}
@@ -583,8 +583,8 @@ function MadeStep({ made, docs, until, withCode, copied, copy, showQr, setShowQr
               {copied === "code" ? "Copied" : "Copy"}
             </button>
           </div>
-          <p className="mt-2 text-[14px] font-semibold text-[var(--color-text)]">Send the code a different way than the link (call or text).</p>
-          <p className="mt-0.5 text-[13px] text-[var(--color-text-muted)]">It isn&apos;t shown again after you close this. Ten wrong tries lock the link.</p>
+          <p className="mt-2 text-body font-medium text-[var(--color-text)]">Send the code a different way than the link (call or text).</p>
+          <p className="mt-0.5 text-body text-[var(--color-text-muted)]">It isn&apos;t shown again after you close this. Ten wrong tries lock the link.</p>
         </div>
       )}
     </div>
@@ -606,13 +606,13 @@ function SentLinks({ links, error, retry, docs, copied, copy, turningOff, onTurn
   const [now] = useState(() => Date.now());
   return (
     <section className="px-5 pt-4 pb-5 border-t border-[var(--color-border)]" aria-labelledby="send-sent-title">
-      <h3 id="send-sent-title" className="text-[15px] font-semibold">Links already sent for {docs.length === 1 ? "this" : "these"}</h3>
+      <h3 id="send-sent-title" className="text-reading font-medium">Links already sent for {docs.length === 1 ? "this" : "these"}</h3>
       {links === null && !error && (
-        <div className="mt-2 text-[14px] text-[var(--color-text-muted)] inline-flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Looking…</div>
+        <div className="mt-2 text-body text-[var(--color-text-muted)] inline-flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Looking…</div>
       )}
       {error && <Problem className="mt-2" retry={retry} error={error} />}
       {links && links.length === 0 && !error && (
-        <p className="mt-1 text-[14px] text-[var(--color-text-muted)]">None yet.</p>
+        <p className="mt-1 text-body text-[var(--color-text-muted)]">None yet.</p>
       )}
       {links && links.length > 0 && (
         <ul className="mt-2 divide-y divide-[var(--color-border)] border-y border-[var(--color-border)]">
@@ -635,16 +635,16 @@ function SentLinks({ links, error, retry, docs, copied, copy, turningOff, onTurn
                 <div className="flex items-start gap-x-3 gap-y-2 flex-wrap sm:flex-nowrap">
                   <div className="min-w-0 basis-full sm:basis-auto sm:flex-1">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <span className="text-[15px] font-semibold truncate max-w-full">{l.recipient || "No name given"}</span>
+                      <span className="text-reading font-medium truncate max-w-full">{l.recipient || "No name given"}</span>
                       <StatusTag tone={status.tone}>{status.text}</StatusTag>
-                      {justMade === l.id && <span className="text-[13px] text-[var(--color-text-muted)]">Just made</span>}
+                      {justMade === l.id && <span className="text-body text-[var(--color-text-muted)]">Just made</span>}
                     </div>
-                    <div className="mt-0.5 text-[13px] text-[var(--color-text-muted)]">
+                    <div className="mt-0.5 text-body text-[var(--color-text-muted)]">
                       Made {shortDateTime(l.createdAt)}{l.createdByName && !l.mine ? ` by ${l.createdByName}` : ""}
                       {l.revokedAt ? `. Turned off ${shortDateTime(l.revokedAt)}` : l.expiresAt ? `. ${expired ? "Expired" : "Expires"} ${shortDateTime(l.expiresAt)}` : ""}
                       {l.locked && !l.revokedAt ? ". Too many wrong codes" : ""}
                     </div>
-                    <p className="mt-0.5 text-[13px] text-[var(--color-text-muted)]">
+                    <p className="mt-0.5 text-body text-[var(--color-text-muted)]">
                       <Eye className="inline w-3.5 h-3.5 mr-1 align-[-2px]" />
                       {l.accessCount === 0 ? "Not opened yet" : `Opened ${plural(l.accessCount, "time")}${l.accessLastAt ? `, last ${shortDateTime(l.accessLastAt)}` : ""}`}
                       {` · ${facts}`}
@@ -658,7 +658,7 @@ function SentLinks({ links, error, retry, docs, copied, copy, turningOff, onTurn
                           {copied === `l:${l.id}` ? "Copied" : "Copy link"}
                         </button>
                       )}
-                      <button type="button" onClick={() => onTurnOff(l)} disabled={turningOff === l.id} className={`${btnDanger} h-10 text-[13px] px-3`}>
+                      <button type="button" onClick={() => onTurnOff(l)} disabled={turningOff === l.id} className={`${btnDanger} h-10 text-body px-3`}>
                         {turningOff === l.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
                         Turn off
                       </button>

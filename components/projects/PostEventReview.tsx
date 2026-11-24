@@ -73,11 +73,11 @@ import { sayError } from "@/components/projects/sayError";
 import { SubTabs } from "@/components/projects/SubTabs";
 import { SkeletonRows } from "@/components/ui/Skeleton";
 
-const btn = "inline-flex items-center justify-center gap-1.5 h-10 sm:h-9 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] whitespace-nowrap disabled:opacity-50 transition-colors";
-const pri = "inline-flex items-center justify-center gap-1.5 h-10 sm:h-9 px-3.5 rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[14px] font-semibold hover:bg-[var(--color-accent-hover)] whitespace-nowrap disabled:opacity-50 transition-colors";
-const field = "w-full rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 py-1.5 text-[14px] text-[var(--color-text)]";
-const label = "text-[12px] font-semibold text-[var(--color-text-muted)]";
-const link = "text-[13px] font-semibold text-[var(--color-accent-text)] hover:underline disabled:opacity-50";
+const btn = "inline-flex items-center justify-center gap-1.5 h-10 sm:h-10 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] whitespace-nowrap disabled:opacity-50 transition-colors";
+const pri = "inline-flex items-center justify-center gap-1.5 h-10 sm:h-10 px-3.5 rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-body font-medium hover:bg-[var(--color-accent-hover)] whitespace-nowrap disabled:opacity-50 transition-colors";
+const field = "w-full rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 py-1.5 text-body text-[var(--color-text)]";
+const label = "text-caption font-medium text-[var(--color-text-muted)]";
+const link = "text-body font-medium text-[var(--color-accent-text)] hover:underline disabled:opacity-50";
 const box = "rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] p-4 sm:p-5";
 
 /** Lesson versions already written this session (see the effect in the review). */
@@ -396,7 +396,7 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
     },
     words: (rowKey, close) => {
       const f = review.findings.find((x) => x.key === rowKey);
-      if (!f) return <p className="text-[14px] text-[var(--color-text-muted)]">That line&apos;s finding isn&apos;t in this review any more.</p>;
+      if (!f) return <p className="text-body text-[var(--color-text-muted)]">That line&apos;s finding isn&apos;t in this review any more.</p>;
       return <FindingForm key={f.key} title={`Change: ${f.title}`} init={f} pickCategory={f.source === "person"} busy={busy === `edit:${f.key}`} onCancel={close} onSave={(e, cat) => { saveEdit(f, e, cat); close(); }} />;
     },
   } : null;
@@ -446,7 +446,7 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
     <div className="space-y-4" data-post-event-review>
       <div className="min-w-0" data-review-head>
         <div className="flex items-end gap-x-3 gap-y-2 flex-wrap min-h-8">
-          <h2 className="font-display text-[19px] leading-tight font-semibold text-[var(--color-text)]">Post-event review{phase ? ` · ${phase.name}` : ""}</h2>
+          <h2 className="font-display text-section leading-tight font-semibold text-[var(--color-text)]">Post-event review{phase ? ` · ${phase.name}` : ""}</h2>
           <div className="flex-1" />
           <div className="flex gap-1.5 items-center">
           <button type="button" onClick={() => setViewing(true)} disabled={!m.steps} className={pri}><Presentation className="w-4 h-4" /> View slides</button>
@@ -465,21 +465,21 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
             onChange={(id) => { setPhaseId(id); setAdding(false); }}
             items={phases.map((p) => ({ id: p.id, label: p.name }))} />
         )}
-        {(busy === "slides" || busy === "word") && <p role="status" className="mt-2 text-[13px] text-[var(--color-text-muted)]"><Loader2 className="w-3.5 h-3.5 animate-spin inline mr-1.5" />Making the {busy === "word" ? "Word report" : "PowerPoint"}</p>}
-        {err && <div role="alert" className="mt-2 text-[13px] font-semibold text-[var(--state-overdue)]">{err}</div>}
-        {msg && <div role="status" className="mt-2 text-[13px] font-semibold text-[var(--state-held)]">{msg}</div>}
-        {held && !viewing && <div role="status" className="mt-2 flex items-center gap-2 flex-wrap text-[13px] font-semibold text-[var(--color-text)]" data-file-ready><span className="min-w-0 flex-1 basis-40">The file is ready.</span><button type="button" onClick={() => void saveHeld()} className={btn}><Download className="w-4 h-4" /> Save file</button></div>}
+        {(busy === "slides" || busy === "word") && <p role="status" className="mt-2 text-body text-[var(--color-text-muted)]"><Loader2 className="w-3.5 h-3.5 animate-spin inline mr-1.5" />Making the {busy === "word" ? "Word report" : "PowerPoint"}</p>}
+        {err && <div role="alert" className="mt-2 text-body font-medium text-[var(--state-overdue)]">{err}</div>}
+        {msg && <div role="status" className="mt-2 text-body font-medium text-[var(--state-held)]">{msg}</div>}
+        {held && !viewing && <div role="status" className="mt-2 flex items-center gap-2 flex-wrap text-body font-medium text-[var(--color-text)]" data-file-ready><span className="min-w-0 flex-1 basis-40">The file is ready.</span><button type="button" onClick={() => void saveHeld()} className={btn}><Download className="w-4 h-4" /> Save file</button></div>}
       </div>
       {viewing && viewSpecs && <ReviewSlides slides={viewSpecs} name={`${phase?.name ?? projectName} post-event review`} onClose={() => setViewing(false)} onDownload={() => void download("slides")} downloading={busy === "slides"} ready={held ? { name: held.name, onSave: () => void saveHeld() } : null} look={slideLook} template={tpl?.name ?? null}
         deck={useTpl ? screen.deck : null} deckState={useTpl ? screen.state : null} choice={tpl ? { on: useTpl, set: (on) => void chooseSlides(on) } : null} edit={slideEdit} />}
 
       {carried.map(({ phase: p, actions }) => (
         <section key={p.id} className={box} data-review-carried={p.id}>
-          <b className="block text-[14px] text-[var(--color-text)]">Open actions from the {p.name} review: {actions.length}</b>
+          <b className="block text-body text-[var(--color-text)]">Open actions from the {p.name} review: {actions.length}</b>
           <ul className="mt-2 space-y-2">
             {actions.map((a) => (
-              <li key={a.key} className="flex gap-3 items-start text-[14px] text-[var(--color-text)]">
-                <div className="min-w-0 flex-1"><b className="block leading-snug">{a.what}</b><span className="text-[12px] text-[var(--color-text-muted)]">Owner: {a.who || "not set"} · By: {a.by || "not set"}</span></div>
+              <li key={a.key} className="flex gap-3 items-start text-body text-[var(--color-text)]">
+                <div className="min-w-0 flex-1"><b className="block leading-snug">{a.what}</b><span className="text-caption text-[var(--color-text-muted)]">Owner: {a.who || "not set"} · By: {a.by || "not set"}</span></div>
                 {canManage && <button type="button" disabled={!!busy} onClick={() => void closeCarried(p.id, a.key)} className={btn}><Check className="w-4 h-4" /> Done</button>}
               </li>
             ))}
@@ -487,50 +487,50 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
         </section>
       ))}
 
-      {!m.steps ? <div className={`${box} text-[14px] text-[var(--color-text-muted)]`}>No schedule{phase ? ` for ${phase.name}` : ""} yet, so there is nothing to review.</div> : <>
+      {!m.steps ? <div className={`${box} text-body text-[var(--color-text-muted)]`}>No schedule{phase ? ` for ${phase.name}` : ""} yet, so there is nothing to review.</div> : <>
         <section className={box} data-review-answer>
-          <h3 className="font-display text-[19px] sm:text-[22px] font-semibold leading-snug text-[var(--color-text)]"><Tags text={pt.headline} /></h3>
-          <dl className="mt-3 grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-2.5 text-[13px]">
-            <div><dt className="text-[var(--color-text-muted)]">Baseline finish</dt><dd className="font-semibold text-[15px] text-[var(--color-text)]">{at(m.baselineFinish)}</dd></div>
-            <div><dt className="text-[var(--color-text-muted)]">Actual finish</dt><dd className="font-semibold text-[15px] text-[var(--color-text)]">{at(m.actualFinish)}</dd></div>
-            <div className="col-span-2 sm:col-span-1"><dt className="text-[var(--color-text-muted)]">Against the baseline</dt><dd className={`font-semibold text-[15px] ${m.varianceH == null ? "text-[var(--color-text)]" : m.varianceH >= 1 ? "text-[var(--state-overdue)]" : "text-[var(--state-released)]"}`}>{m.varianceH == null ? `${m.steps - m.stepsDone} of ${m.steps} activities still open` : Math.abs(m.varianceH) < 1 ? "On the baseline finish" : `${Math.abs(m.varianceH)} h ${m.varianceH > 0 ? "late" : "early"}`}</dd></div>
+          <h3 className="font-display text-section sm:text-[22px] font-semibold leading-snug text-[var(--color-text)]"><Tags text={pt.headline} /></h3>
+          <dl className="mt-3 grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-2.5 text-body">
+            <div><dt className="text-[var(--color-text-muted)]">Baseline finish</dt><dd className="font-medium text-reading text-[var(--color-text)]">{at(m.baselineFinish)}</dd></div>
+            <div><dt className="text-[var(--color-text-muted)]">Actual finish</dt><dd className="font-medium text-reading text-[var(--color-text)]">{at(m.actualFinish)}</dd></div>
+            <div className="col-span-2 sm:col-span-1"><dt className="text-[var(--color-text-muted)]">Against the baseline</dt><dd className={`font-medium text-reading ${m.varianceH == null ? "text-[var(--color-text)]" : m.varianceH >= 1 ? "text-[var(--state-overdue)]" : "text-[var(--state-released)]"}`}>{m.varianceH == null ? `${m.steps - m.stepsDone} of ${m.steps} activities still open` : Math.abs(m.varianceH) < 1 ? "On the baseline finish" : `${Math.abs(m.varianceH)} h ${m.varianceH > 0 ? "late" : "early"}`}</dd></div>
           </dl>
           {late && review.lateBars.length > 0 && (
             <div className="mt-5">
-              <h4 className="text-[15px] font-semibold text-[var(--color-text)]">Where the {m.varianceH} h went</h4>
-              <p className="mb-2.5 text-[12px] text-[var(--color-text-muted)]">Each piece of the late finish and the finding that explains it. A bar goes to its finding.</p>
+              <h4 className="text-reading font-medium text-[var(--color-text)]">Where the {m.varianceH} h went</h4>
+              <p className="mb-2.5 text-caption text-[var(--color-text-muted)]">Each piece of the late finish and the finding that explains it. A bar goes to its finding.</p>
               <LateHours bars={review.lateBars} late={m.varianceH!} onPick={go} />
             </div>
           )}
-          {!m.done && <p className="mt-3 text-[12px] text-[var(--color-text-muted)]">{m.steps - m.stepsDone} of {m.steps} activities are not done yet, so these numbers are to date.</p>}
+          {!m.done && <p className="mt-3 text-caption text-[var(--color-text-muted)]">{m.steps - m.stepsDone} of {m.steps} activities are not done yet, so these numbers are to date.</p>}
         </section>
 
         <section className="space-y-3" data-review-findings>
           <div className="flex items-baseline gap-x-3 gap-y-0.5 flex-wrap px-0.5">
-            <h3 className="font-display text-[17px] font-semibold text-[var(--color-text)]">What the records show</h3>
-            {main.length > 0 && late && <span className="text-[12px] text-[var(--color-text-muted)]">Most hours of the late finish first</span>}
+            <h3 className="font-display text-section font-semibold text-[var(--color-text)]">What the records show</h3>
+            {main.length > 0 && late && <span className="text-caption text-[var(--color-text-muted)]">Most hours of the late finish first</span>}
           </div>
           {adding && <div className={box}><FindingForm title="Add a finding of your own" draftKey={`review-add:${projectId}:${scope}`} pickCategory busy={busy === "add"} onCancel={() => setAdding(false)} onSave={(e, c) => addFinding(e, c ?? "execution")} /></div>}
-          {main.length === 0 && <div className={`${box} text-[14px] text-[var(--color-text-muted)]`}>Nothing in the records calls for a change.</div>}
+          {main.length === 0 && <div className={`${box} text-body text-[var(--color-text-muted)]`}>Nothing in the records calls for a change.</div>}
           {main.map(card)}
           {went.length > 0 && (
             <section className={box} data-review-well>
-              <h4 className="text-[14px] font-semibold text-[var(--color-text)]">What went well</h4>
-              <ul className="mt-1.5 space-y-1 text-[14px] text-[var(--color-text)] list-disc pl-5">{went.map((f) => <li key={f.key}><b>{f.title}.</b> {f.observation.split("\n")[0]}</li>)}</ul>
+              <h4 className="text-body font-medium text-[var(--color-text)]">What went well</h4>
+              <ul className="mt-1.5 space-y-1 text-body text-[var(--color-text)] list-disc pl-5">{went.map((f) => <li key={f.key}><b>{f.title}.</b> {f.observation.split("\n")[0]}</li>)}</ul>
             </section>
           )}
           {quiet.length > 0 && (
             <details className={`${box} !py-3`} data-review-quiet>
-              <summary className="cursor-pointer text-[14px] font-semibold text-[var(--color-text)]">Also checked, did not move the finish ({quiet.length})</summary>
+              <summary className="cursor-pointer text-body font-medium text-[var(--color-text)]">Also checked, did not move the finish ({quiet.length})</summary>
               <div className="mt-3 space-y-3">{quiet.map(card)}</div>
             </details>
           )}
           {out.length > 0 && (
             <details className={`${box} !py-3`} data-review-out>
-              <summary className="cursor-pointer text-[14px] font-semibold text-[var(--color-text)]">Taken out of the review ({out.length})</summary>
+              <summary className="cursor-pointer text-body font-medium text-[var(--color-text)]">Taken out of the review ({out.length})</summary>
               <ul className="mt-2 space-y-2">
                 {out.map((f) => (
-                  <li key={f.key} className="flex items-start gap-3 text-[14px]">
+                  <li key={f.key} className="flex items-start gap-3 text-body">
                     <div className="min-w-0 flex-1"><b className="block text-[var(--color-text)]">{f.title}</b><span className="text-[var(--color-text-muted)]">{f.notRight ? `Not right: ${f.notRight}` : "Taken out."}{f.by ? ` (${f.by})` : ""}</span></div>
                     {canManage && <button type="button" disabled={!!busy} onClick={() => putBack(f)} className={btn}><RotateCcw className="w-4 h-4" /> Put back</button>}
                   </li>
@@ -541,19 +541,19 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
         </section>
 
         <section className={box} data-review-plan>
-          <h3 className="font-display text-[17px] font-semibold text-[var(--color-text)]">What we change next time</h3>
+          <h3 className="font-display text-section font-semibold text-[var(--color-text)]">What we change next time</h3>
           {bk.actions.length ? (
             <ol className="mt-3 space-y-4">
               {bk.actions.map((a) => <ActionLine key={a.key} a={a} kind={typeIn} busy={busy === `plan:${a.key}` || busy === `done:${a.key}`} canManage={canManage} onPlan={(patch) => setPlan(a.keys, patch)} onDone={(d) => setDone(a.keys, d)} onGo={() => go(a.key)} />)}
             </ol>
-          ) : <p className="mt-1 text-[14px] text-[var(--color-text-muted)]">Nothing in the records calls for a change.</p>}
+          ) : <p className="mt-1 text-body text-[var(--color-text-muted)]">Nothing in the records calls for a change.</p>}
         </section>
 
         <details className={`${box} !py-3`} data-review-definitions>
-          <summary className="cursor-pointer text-[14px] font-semibold text-[var(--color-text)]">How each number is counted</summary>
+          <summary className="cursor-pointer text-body font-medium text-[var(--color-text)]">How each number is counted</summary>
           <div className="mt-2 overflow-x-auto">
-            <table className="w-full text-[13px] border-collapse">
-              <tbody>{review.definitions.map((d) => <tr key={d.measure} className="border-b last:border-b-0 border-[var(--color-border)] align-top"><th scope="row" className="text-left font-semibold pr-3 py-1.5 text-[var(--color-text)] whitespace-nowrap">{d.measure}</th><td className="py-1.5 text-[var(--color-text)]">{d.means}</td></tr>)}</tbody>
+            <table className="w-full text-body border-collapse">
+              <tbody>{review.definitions.map((d) => <tr key={d.measure} className="border-b last:border-b-0 border-[var(--color-border)] align-top"><th scope="row" className="text-left font-medium pr-3 py-1.5 text-[var(--color-text)] whitespace-nowrap">{d.measure}</th><td className="py-1.5 text-[var(--color-text)]">{d.means}</td></tr>)}</tbody>
             </table>
           </div>
         </details>
@@ -578,50 +578,50 @@ function FindingCard({ f, tz, lateH, canManage, busy, action, questions, answers
   const L = f.load;
   return (
     <article data-finding={f.key} className={`${box} scroll-mt-4`}>
-      <div className="flex items-center gap-2 flex-wrap text-[12px]">
+      <div className="flex items-center gap-2 flex-wrap text-caption">
         <span className={label}>{areaOf(f.category).name}</span>
         {lateH != null && (f.finishH > 0
-          ? <span className="inline-flex items-center gap-1.5 font-semibold text-[var(--state-overdue-text)] tabular-nums" data-finish-hours><span aria-hidden className="w-[7px] h-[7px] rounded-full bg-[var(--state-overdue)]" />{f.finishH} h of the {lateH} h late finish</span>
+          ? <span className="inline-flex items-center gap-1.5 font-medium text-[var(--state-overdue-text)] tabular-nums" data-finish-hours><span aria-hidden className="w-[7px] h-[7px] rounded-full bg-[var(--state-overdue)]" />{f.finishH} h of the {lateH} h late finish</span>
           : f.moved === 0 ? <span className="inline-flex items-center gap-1.5 text-[var(--color-text-muted)]"><span aria-hidden className="w-[7px] h-[7px] rounded-full bg-[var(--color-text-faint)]" />Did not move the finish</span> : null)}
-        {f.source === "person" && <span className="font-semibold px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text-muted)]">Written in the review{f.by ? ` by ${f.by}` : ""}</span>}
-        {f.source === "job" && <span className="font-semibold px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text-muted)]">{f.where}</span>}
+        {f.source === "person" && <span className="font-medium px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text-muted)]">Written in the review{f.by ? ` by ${f.by}` : ""}</span>}
+        {f.source === "job" && <span className="font-medium px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text-muted)]">{f.where}</span>}
       </div>
-      <h4 className="mt-1 text-[16px] font-semibold leading-snug text-[var(--color-text)]"><Tags text={f.title} /></h4>
-      {head && <p className="mt-1 text-[14px] leading-relaxed text-[var(--color-text)]" data-finding-headline>{head}</p>}
-      {showEffect && <p className="mt-1 text-[13px] font-semibold text-[var(--color-text)]" data-finding-effect>{f.effect}</p>}
+      <h4 className="mt-1 text-reading font-medium leading-snug text-[var(--color-text)]"><Tags text={f.title} /></h4>
+      {head && <p className="mt-1 text-body leading-relaxed text-[var(--color-text)]" data-finding-headline>{head}</p>}
+      {showEffect && <p className="mt-1 text-body font-medium text-[var(--color-text)]" data-finding-effect>{f.effect}</p>}
 
       {L && <LoadBody L={L} tz={tz} canManage={canManage} busy={busy} onCrews={onCrews} />}
       {f.idle && (
         <div className="mt-3" data-idle>
           <IdleBars groups={f.idle.groups.slice(0, 8)} />
-          {f.idle.groups.length > 8 && <p className="mt-1 text-[12px] text-[var(--color-text-muted)]">And {f.idle.groups.length - 8} more in the jobs below.</p>}
+          {f.idle.groups.length > 8 && <p className="mt-1 text-caption text-[var(--color-text-muted)]">And {f.idle.groups.length - 8} more in the jobs below.</p>}
         </div>
       )}
-      {rest.length > 0 && <ul className="mt-2 space-y-1 text-[14px] text-[var(--color-text)] list-disc pl-5">{rest.map((l, i) => <li key={i}>{l}</li>)}</ul>}
-      {f.info.length > 0 && <ul className="mt-2 space-y-1 text-[13px] text-[var(--color-text)]">{f.info.map((l, i) => <li key={i} className="border-l-2 border-[var(--color-border-strong)] pl-2">{l}</li>)}</ul>}
+      {rest.length > 0 && <ul className="mt-2 space-y-1 text-body text-[var(--color-text)] list-disc pl-5">{rest.map((l, i) => <li key={i}>{l}</li>)}</ul>}
+      {f.info.length > 0 && <ul className="mt-2 space-y-1 text-body text-[var(--color-text)]">{f.info.map((l, i) => <li key={i} className="border-l-2 border-[var(--color-border-strong)] pl-2">{l}</li>)}</ul>}
 
       {questions.map((q) => <QuestionLine key={q.key} q={q} said={answers[q.key]?.note ?? ""} canManage={canManage} busy={busy === `q:${q.key}`} onSave={(t) => onAnswer(q, t)} />)}
 
       {(f.jobs?.rows.length || (f.evidence.length > 0 && f.source !== "job")) ? (
         <details className="mt-3 group" data-finding-jobs>
-          <summary className="cursor-pointer list-none inline-flex items-center gap-1 text-[13px] font-semibold text-[var(--color-accent-text)]"><ChevronDown className="w-4 h-4 transition-transform group-open:rotate-180" />The jobs ({f.jobs?.rows.length ?? f.evidence.length})</summary>
-          {f.jobs ? <JobsTable head={f.jobs.head} rows={f.jobs.rows} /> : <ul className="mt-2 space-y-1 text-[12px] text-[var(--color-text)] list-disc pl-5">{f.evidence.map((e, i) => <li key={i}>{e}</li>)}</ul>}
+          <summary className="cursor-pointer list-none inline-flex items-center gap-1 text-body font-medium text-[var(--color-accent-text)]"><ChevronDown className="w-4 h-4 transition-transform group-open:rotate-180" />The jobs ({f.jobs?.rows.length ?? f.evidence.length})</summary>
+          {f.jobs ? <JobsTable head={f.jobs.head} rows={f.jobs.rows} /> : <ul className="mt-2 space-y-1 text-caption text-[var(--color-text)] list-disc pl-5">{f.evidence.map((e, i) => <li key={i}>{e}</li>)}</ul>}
         </details>
       ) : null}
 
       {(f.ask || action != null) && f.rating !== "none" && f.rating !== "strength" && (
-        <p className="mt-3 text-[13px] text-[var(--color-text)]"><span className={label}>Next time </span>{f.ask}{action != null && <span className="text-[var(--color-text-muted)]"> (action {action})</span>}</p>
+        <p className="mt-3 text-body text-[var(--color-text)]"><span className={label}>Next time </span>{f.ask}{action != null && <span className="text-[var(--color-text-muted)]"> (action {action})</span>}</p>
       )}
       {canManage && (
         <div className="mt-3 flex items-center gap-2 flex-wrap">
           <div role="group" aria-label="Is this finding right?" className="inline-flex rounded-md border border-[var(--color-border-strong)] overflow-hidden">
             <button type="button" disabled={!!busy} onClick={() => { setWhy(null); if (f.auto) onKeep(); }} aria-pressed={why == null}
               title={f.auto ? "It is in the review. Keep also puts it in the lessons register." : "Kept, and in the lessons register."}
-              className={`inline-flex items-center gap-1.5 h-10 sm:h-9 px-3 text-[14px] font-semibold bg-[var(--color-surface)] ${why == null ? "text-[var(--color-text)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
+              className={`inline-flex items-center gap-1.5 h-10 sm:h-9 px-3 text-body font-medium bg-[var(--color-surface)] ${why == null ? "text-[var(--color-text)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
               {busy === `keep:${f.key}` ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} {f.auto ? "Keep" : "Kept"}
             </button>
             <button type="button" disabled={!!busy} onClick={() => setWhy("")} aria-pressed={why != null}
-              className={`inline-flex items-center gap-1.5 h-10 sm:h-9 px-3 text-[14px] font-semibold border-l border-[var(--color-border-strong)] bg-[var(--color-surface)] ${why != null ? "text-[var(--color-text)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
+              className={`inline-flex items-center gap-1.5 h-10 sm:h-9 px-3 text-body font-medium border-l border-[var(--color-border-strong)] bg-[var(--color-surface)] ${why != null ? "text-[var(--color-text)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
               <X className="w-4 h-4" /> Not right
             </button>
           </div>
@@ -647,24 +647,24 @@ function LoadBody({ L, tz, canManage, busy, onCrews }: { L: PartyLoad; tz: strin
   return (
     <div className="mt-3" data-load={L.party}>
       <LoadChart load={L} tz={tz} />
-      <div className="mt-2 text-[13px] text-[var(--color-text)]" data-planned-at-once>
+      <div className="mt-2 text-body text-[var(--color-text)]" data-planned-at-once>
         <span>{plannedWord(L, tz)}</span>{" "}
         {canManage && edit == null && <button type="button" className={link} onClick={() => setEdit(String(L.planned.n))}>Set {L.party}&apos;s crews</button>}
         {edit != null && (
           <form className="mt-1.5 flex items-center gap-1.5 flex-wrap" onSubmit={(e) => { e.preventDefault(); const n = Math.round(Number(edit)); if (n >= 1 && n <= 50) { onCrews(L.party, n); setEdit(null); } }}>
-            <label className="inline-flex items-center gap-1.5 text-[13px]">Jobs {L.party} can work at once
+            <label className="inline-flex items-center gap-1.5 text-body">Jobs {L.party} can work at once
               <input autoFocus type="number" inputMode="numeric" min={1} max={50} value={edit} onChange={(e) => setEdit(e.target.value)} className={`${field} !w-20 h-10 pointer-coarse:h-11 sm:h-9 !py-0`} />
             </label>
             <button type="submit" disabled={saving || !(Number(edit) >= 1 && Number(edit) <= 50)} className={btn}>{saving ? <Loader2 className="w-4 h-4 animate-spin" /> : null} Save</button>
             {L.planned.from === "set" && <button type="button" className={link} onClick={() => { onCrews(L.party, null); setEdit(null); }}>Use the schedule&apos;s {L.planned.sched}</button>}
             <button type="button" className={link} onClick={() => setEdit(null)}>Cancel</button>
-            <span className="basis-full text-[12px] text-[var(--color-text-muted)]">Kept with {L.party}&apos;s staffing settings for this phase. The review counts again with it.</span>
+            <span className="basis-full text-caption text-[var(--color-text-muted)]">Kept with {L.party}&apos;s staffing settings for this phase. The review counts again with it.</span>
           </form>
         )}
       </div>
       {jobs.length > 0 && (
         <div className="mt-4">
-          <h5 className="mb-1.5 text-[13px] font-semibold text-[var(--color-text)]">{L.waited.length ? `The jobs that waited for ${L.party}, and what they held up` : `${L.party}'s ready jobs with nobody on them`}</h5>
+          <h5 className="mb-1.5 text-body font-medium text-[var(--color-text)]">{L.waited.length ? `The jobs that waited for ${L.party}, and what they held up` : `${L.party}'s ready jobs with nobody on them`}</h5>
           <LoadStrip load={L} jobs={jobs} held={L.waited.length ? L.down.held : L.downIdle.held} tz={tz} />
         </div>
       )}
@@ -676,7 +676,7 @@ function LoadBody({ L, tz, canManage, busy, onCrews }: { L: PartyLoad; tz: strin
 function QuestionLine({ q, said, canManage, busy, onSave }: { q: Question; said: string; canManage: boolean; busy: boolean; onSave: (t: string) => void }) {
   const [text, setText] = useState<string | null>(null);
   return (
-    <div className="mt-3 rounded-md bg-[var(--color-surface-2)] px-3 py-2 text-[13px]" data-question={q.key}>
+    <div className="mt-3 rounded-md bg-[var(--color-surface-2)] px-3 py-2 text-body" data-question={q.key}>
       <span className="text-[var(--color-text)]">{q.ask}</span>{" "}
       {said && text == null && <span className="text-[var(--color-text-muted)]">Answered.</span>}
       {canManage && text == null && <button type="button" className={link} onClick={() => setText(said)}>{said ? "Change the answer" : "Answer (optional)"}</button>}
@@ -695,9 +695,9 @@ function QuestionLine({ q, said, canManage, busy, onSave }: { q: Question; said:
 function JobsTable({ head, rows }: { head: string[]; rows: string[][] }) {
   return (
     <div className="mt-2 rounded-lg border border-[var(--color-border)] overflow-x-auto max-w-full">
-      <table className="w-full min-w-[640px] text-[12px] border-collapse">
-        <thead><tr>{head.map((h) => <th key={h} scope="col" className="text-left px-2.5 py-2 bg-[var(--color-surface-2)] font-semibold text-[var(--color-text-muted)] border-b border-[var(--color-border)] whitespace-nowrap">{h}</th>)}</tr></thead>
-        <tbody>{rows.map((r, i) => <tr key={i} className="border-b last:border-b-0 border-[var(--color-border)] align-top">{r.map((c, n) => <td key={n} className={`px-2.5 py-1.5 text-[var(--color-text)] ${n === 0 ? "font-semibold" : ""}`}>{c.split("\n").map((t, k) => <span key={k} className={k ? "block text-[var(--color-text-muted)]" : "block"}>{t}</span>)}</td>)}</tr>)}</tbody>
+      <table className="w-full min-w-[640px] text-caption border-collapse">
+        <thead><tr>{head.map((h) => <th key={h} scope="col" className="text-left px-2.5 py-2 bg-[var(--color-surface-2)] font-medium text-[var(--color-text-muted)] border-b border-[var(--color-border)] whitespace-nowrap">{h}</th>)}</tr></thead>
+        <tbody>{rows.map((r, i) => <tr key={i} className="border-b last:border-b-0 border-[var(--color-border)] align-top">{r.map((c, n) => <td key={n} className={`px-2.5 py-1.5 text-[var(--color-text)] ${n === 0 ? "font-medium" : ""}`}>{c.split("\n").map((t, k) => <span key={k} className={k ? "block text-[var(--color-text-muted)]" : "block"}>{t}</span>)}</td>)}</tr>)}</tbody>
       </table>
     </div>
   );
@@ -707,15 +707,15 @@ function JobsTable({ head, rows }: { head: string[]; rows: string[][] }) {
 function ActionLine({ a, kind, busy, canManage, onPlan, onDone, onGo }: { a: Action; kind: string | null; busy: boolean; canManage: boolean; onPlan: (p: { owner?: string; due?: string }) => void; onDone: (done: boolean) => void; onGo: () => void }) {
   return (
     <li className={`flex gap-3 text-[var(--color-text)] ${a.done ? "opacity-60" : ""}`} data-conclusion={a.key}>
-      <span className="shrink-0 w-7 h-7 rounded-full bg-[var(--color-surface-2)] text-[var(--color-text)] text-[13px] font-semibold flex items-center justify-center">{a.n}</span>
+      <span className="shrink-0 w-7 h-7 rounded-full bg-[var(--color-surface-2)] text-[var(--color-text)] text-body font-medium flex items-center justify-center">{a.n}</span>
       <div className="min-w-0 flex-1">
-        <b className="block text-[15px] leading-snug">{a.what}{a.done ? " (done)" : ""}</b>
-        {a.benefit && <p className="mt-0.5 text-[14px] text-[var(--color-text)]">{a.benefit}</p>}
-        <div className="mt-1 flex items-center gap-x-2 gap-y-1 flex-wrap text-[12px] text-[var(--color-text-muted)]">
+        <b className="block text-reading leading-snug">{a.what}{a.done ? " (done)" : ""}</b>
+        {a.benefit && <p className="mt-0.5 text-body text-[var(--color-text)]">{a.benefit}</p>}
+        <div className="mt-1 flex items-center gap-x-2 gap-y-1 flex-wrap text-caption text-[var(--color-text-muted)]">
           <span>{a.areaName} · {appliesWord(a.applies, kind)}</span>
           <button type="button" className={link} onClick={onGo}>See the finding</button>
         </div>
-        <div className="mt-1 flex items-center gap-x-3 gap-y-1 flex-wrap text-[13px]">
+        <div className="mt-1 flex items-center gap-x-3 gap-y-1 flex-wrap text-body">
           <InlineValue name="Owner" value={a.who} canManage={canManage} busy={busy} onSave={(v) => onPlan({ owner: v })} />
           <InlineValue name="By" value={a.by} canManage={canManage} busy={busy} onSave={(v) => onPlan({ due: v })} />
           {canManage && <button type="button" disabled={busy} className={link} onClick={() => onDone(!a.done)}>{a.done ? "Not done" : "Mark done"}</button>}
@@ -770,8 +770,8 @@ function FindingForm({ title, init, pickCategory, busy, onSave, onCancel, draftK
   const ok = !!(e.title ?? "").trim() && !!(e.observation ?? "").trim();
   return (
     <div className="space-y-2.5">
-      <b className="block text-[14px] text-[var(--color-text)]">{title}</b>
-      {draft.restored && <p className="text-[12px] text-[var(--color-text-muted)]">What you were writing is back.</p>}
+      <b className="block text-body text-[var(--color-text)]">{title}</b>
+      {draft.restored && <p className="text-caption text-[var(--color-text-muted)]">What you were writing is back.</p>}
       <div className="grid gap-2.5 sm:grid-cols-2">
         {pickCategory && <label className="block"><span className={label}>Area</span><select value={category} onChange={(ev) => setCategory(ev.target.value as CategoryId)} className={`${field} mt-0.5`}>{AREAS.map((a) => <option key={a.id} value={AREA_CATEGORY[a.id]}>{a.name}</option>)}</select></label>}
         <label className="block"><span className={label}>What it is</span><select value={e.rating} onChange={(ev) => setE((x) => ({ ...x, rating: ev.target.value as Rating }))} className={`${field} mt-0.5`}>{RATING_PICK.map(([r, w]) => <option key={r} value={r}>{w}</option>)}</select></label>
@@ -793,7 +793,7 @@ function FindingForm({ title, init, pickCategory, busy, onSave, onCancel, draftK
       <div className="flex gap-1.5 flex-wrap">
         <button type="button" disabled={!ok || busy} onClick={() => onSave(e, pickCategory ? category : undefined)} className={pri}>{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} Save</button>
         <button type="button" onClick={onCancel} className={btn}>Cancel</button>
-        {!ok && <span className="text-[12px] text-[var(--color-text-muted)] self-center">Needs the finding and what happened.</span>}
+        {!ok && <span className="text-caption text-[var(--color-text-muted)] self-center">Needs the finding and what happened.</span>}
       </div>
     </div>
   );

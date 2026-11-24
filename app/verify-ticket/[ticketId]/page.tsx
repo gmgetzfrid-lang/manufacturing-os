@@ -104,19 +104,19 @@ export default function VerifyTicketPage() {
         {loading ? (
           <div className="text-white/90">
             <Loader2 className="w-14 h-14 mx-auto animate-spin mb-4" />
-            <div className="text-[13px] font-semibold ">Checking revision…</div>
+            <div className="text-body font-medium ">Checking revision…</div>
           </div>
         ) : error ? (
           <div className="text-white/90">
             <ShieldQuestion className="w-16 h-16 mx-auto mb-4 opacity-80" />
             <h1 className="text-[34px] leading-[1.05] tracking-[-0.02em] font-bold mb-3">Can&apos;t verify this code.</h1>
-            <p className="text-[15px] opacity-90">{error}</p>
-            <p className="text-[13px] opacity-70 mt-4">
+            <p className="text-reading opacity-90">{error}</p>
+            <p className="text-body opacity-70 mt-4">
               If this QR came from an issued deliverable, contact the requester before using the copy.
             </p>
             <button
               onClick={() => void check()}
-              className="mt-6 inline-flex items-center gap-2 h-11 px-4 rounded-lg bg-white/15 hover:bg-white/25 text-[15px] font-semibold"
+              className="mt-6 inline-flex items-center gap-2 h-11 px-4 rounded-lg bg-white/15 hover:bg-white/25 text-reading font-medium"
             >
               <RefreshCw className="w-4 h-4" /> Try again
             </button>
@@ -132,33 +132,33 @@ export default function VerifyTicketPage() {
               <AlertTriangle className="w-24 h-24 mx-auto text-white mb-4 animate-in zoom-in duration-300" strokeWidth={2.5} />
             )}
             <h1 className="text-[40px] font-bold text-white leading-[1.03] tracking-[-0.03em] mb-3">{ui.headline}</h1>
-            <p className="text-white/90 text-[15px] font-semibold mb-6">{ui.sub(result)}</p>
+            <p className="text-white/90 text-reading font-medium mb-6">{ui.sub(result)}</p>
 
             {/* The facts card */}
             <div className="bg-[var(--color-surface)] rounded-xl ui-float p-5 text-left space-y-3">
               <div>
-                <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">Drafting ticket</div>
-                <div className="text-[15px] font-semibold text-[var(--color-text)] ui-id">{result.ticketNumber ?? "-"}</div>
-                {result.title && <div className="text-[13px] text-[var(--color-text-muted)] mt-0.5">{result.title}</div>}
-                {result.unit && <div className="text-[12px] text-[var(--color-text-muted)] mt-0.5">Unit {result.unit}</div>}
+                <div className="text-body font-medium text-[var(--color-text-muted)]">Drafting ticket</div>
+                <div className="text-reading font-medium text-[var(--color-text)] ui-id">{result.ticketNumber ?? "-"}</div>
+                {result.title && <div className="text-body text-[var(--color-text-muted)] mt-0.5">{result.title}</div>}
+                {result.unit && <div className="text-caption text-[var(--color-text-muted)] mt-0.5">Unit {result.unit}</div>}
               </div>
               <div className="grid grid-cols-2 gap-3 pt-3 border-t border-[var(--color-border)]">
                 <div>
-                  <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">This copy</div>
-                  <div className={`text-[15px] font-semibold ${result.verdict === "current" ? "text-[var(--state-released-text)]" : result.verdict === "superseded" ? "text-[var(--state-overdue-text)]" : "text-[var(--state-held-text)]"}`}>
+                  <div className="text-body font-medium text-[var(--color-text-muted)]">This copy</div>
+                  <div className={`text-reading font-medium ${result.verdict === "current" ? "text-[var(--state-released-text)]" : result.verdict === "superseded" ? "text-[var(--state-overdue-text)]" : "text-[var(--state-held-text)]"}`}>
                     Rev {result.printedRev ?? "?"}
                   </div>
                 </div>
                 <div>
-                  <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">
+                  <div className="text-body font-medium text-[var(--color-text-muted)]">
                     {result.inReview ? "In review now" : "Latest issue"}
                   </div>
-                  <div className="text-[15px] font-semibold text-[var(--color-text)]">Rev {result.currentRev ?? "?"}</div>
-                  <div className="text-[12px] text-[var(--color-text-muted)]">activity {fmt(result.lastActivityAt)}</div>
+                  <div className="text-reading font-medium text-[var(--color-text)]">Rev {result.currentRev ?? "?"}</div>
+                  <div className="text-caption text-[var(--color-text-muted)]">activity {fmt(result.lastActivityAt)}</div>
                 </div>
               </div>
               {result.verdict !== "current" && (
-                <div className="pt-3 border-t border-[var(--color-border)] text-[13px] text-[var(--color-text)] leading-relaxed">
+                <div className="pt-3 border-t border-[var(--color-border)] text-body text-[var(--color-text)] leading-relaxed">
                   {result.verdict === "superseded"
                     ? "Get the current issued deliverable from the ticket requester before performing any work from this copy. Mark it “SUPERSEDED” or destroy it."
                     : "Check with the ticket requester or project manager before relying on this copy."}
@@ -166,12 +166,12 @@ export default function VerifyTicketPage() {
               )}
             </div>
 
-            <div className="mt-5 text-[12px] text-white/70">
+            <div className="mt-5 text-caption text-white/70">
               Checked {new Date(result.checkedAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })} by the drafting portal.
             </div>
             <button
               onClick={() => void check()}
-              className="mt-3 inline-flex items-center gap-1.5 h-11 px-4 rounded-lg bg-white/15 hover:bg-white/25 text-white text-[15px] font-semibold"
+              className="mt-3 inline-flex items-center gap-1.5 h-11 px-4 rounded-lg bg-white/15 hover:bg-white/25 text-white text-reading font-medium"
             >
               <RefreshCw className="w-3 h-3" /> Check again
             </button>

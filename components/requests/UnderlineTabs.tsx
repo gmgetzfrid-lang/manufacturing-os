@@ -9,6 +9,7 @@
 import React from "react";
 import { flushSync } from "react-dom";
 import { withViewTransition } from "@/lib/viewTransition";
+import { TabGlide } from "@/components/ui/TabGlide";
 
 export interface UnderlineTab<K extends string> { key: K; label: React.ReactNode; count?: number; icon?: React.ComponentType<{ className?: string }> }
 
@@ -39,10 +40,10 @@ export default function UnderlineTabs<K extends string>({
     refs.current[to]?.focus();
     pick(tabs[to].key);
   };
-  const text = size === "lg" ? "font-display text-[20px] leading-tight" : "text-[14px]";
+  const text = size === "lg" ? "font-display text-section leading-tight" : "text-body";
   return (
     <div role="tablist" aria-label={label}
-      className={`flex items-end gap-5 min-w-0 max-w-full overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden ${className}`}>
+      className={`relative tab-glide flex items-end gap-5 min-w-0 max-w-full overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden ${className}`}>
       {tabs.map((t, i) => {
         const on = t.key === value;
         const Icon = t.icon;
@@ -53,16 +54,17 @@ export default function UnderlineTabs<K extends string>({
             tabIndex={on ? 0 : -1}
             onClick={() => pick(t.key)} onKeyDown={(e) => onKey(e, i)}
             className={`shrink-0 whitespace-nowrap inline-flex items-center gap-1.5 ${size === "lg" ? "pb-1.5" : "h-10 pointer-coarse:h-11"} border-b-2 transition-colors ${text} ${
-              on ? "border-[var(--color-current)] text-[var(--color-text)] font-semibold" : "border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-border-strong)]"
+              on ? "border-[var(--color-current)] text-[var(--color-text)] font-medium" : "border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-border-strong)]"
             }`}>
             {Icon && <Icon className="w-4 h-4" />}
             {t.label}
             {typeof t.count === "number" && t.count > 0 && (
-              <span className="font-sans text-[13px] font-normal tabular-nums text-[var(--color-text-muted)]">{t.count.toLocaleString()}</span>
+              <span className="font-sans text-body font-normal tabular-nums text-[var(--color-text-muted)]">{t.count.toLocaleString()}</span>
             )}
           </button>
         );
       })}
+      <TabGlide id={`tabs:${label}`} />
     </div>
   );
 }

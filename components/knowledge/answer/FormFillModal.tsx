@@ -77,24 +77,24 @@ export default function FormFillModal({ orgId, documentId, formName, question, a
         {busy === "draft" && (
           <div className="py-16 flex flex-col items-center gap-2.5 text-center text-[var(--color-text-muted)]" aria-busy="true" aria-live="polite">
             <Loader2 className="w-6 h-6 animate-spin text-[var(--color-text-muted)]" />
-            <div className="text-[15px] font-bold text-[var(--color-text)]">Drafting every field from the answer and its proof…</div>
-            <div className="text-[13px]">Names, signatures and numbers are left for you, never made up.</div>
+            <div className="text-reading font-medium text-[var(--color-text)]">Drafting every field from the answer and its proof…</div>
+            <div className="text-body">Names, signatures and numbers are left for you, never made up.</div>
           </div>
         )}
         {error && (
-          <div role="alert" className="flex items-start gap-2 text-[14px] font-semibold text-[var(--state-overdue)]">
+          <div role="alert" className="flex items-start gap-2 text-body font-medium text-[var(--state-overdue)]">
             <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> <span>{draft ? "That didn't work: " : "Couldn't draft the form: "}{error}</span>
           </div>
         )}
         {draft && (
           <>
             {draft.notes && (
-              <p className="flex items-start gap-2 text-[14px] leading-relaxed text-[var(--color-text-muted)]">
+              <p className="flex items-start gap-2 text-body leading-relaxed text-[var(--color-text-muted)]">
                 <Sparkles className="w-4 h-4 mt-0.5 shrink-0" /> <span>{draft.notes}</span>
               </p>
             )}
             {missing.length > 0 && (
-              <p className="flex items-start gap-2 text-[14px] text-[var(--state-held)]">
+              <p className="flex items-start gap-2 text-body text-[var(--state-held)]">
                 <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0 text-[var(--state-held)]" />
                 <span><b>{missing.length} field{missing.length === 1 ? "" : "s"} need you:</b> {missing.slice(0, 8).map((f) => f.label).join(", ")}{missing.length > 8 ? "…" : ""}</span>
               </p>
@@ -109,15 +109,15 @@ export default function FormFillModal({ orgId, documentId, formName, question, a
         )}
       </ModalBody>
       <ModalFooter>
-        <span className="mr-auto text-[13px] text-[var(--color-text-muted)] max-sm:hidden">Check every field before you submit it.</span>
+        <span className="mr-auto text-body text-[var(--color-text-muted)] max-sm:hidden">Check every field before you submit it.</span>
         {draft && (
           <button type="button" onClick={() => void copyAll()}
-            className="inline-flex items-center gap-1.5 h-10 text-[13px] font-bold px-3.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-border-strong)]">
+            className="inline-flex items-center gap-1.5 h-10 text-body font-medium px-3.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-border-strong)]">
             {copied ? <Check className="w-4 h-4 text-[var(--state-released)]" /> : <Copy className="w-4 h-4" />} {copied ? "Copied" : "Copy as text"}
           </button>
         )}
         <button type="button" onClick={() => void download()} disabled={!draft || busy !== null}
-          className="inline-flex items-center gap-1.5 h-10 text-[14px] font-semibold px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)] shadow-[0_10px_20px_-12px_var(--color-accent)] disabled:opacity-50 disabled:shadow-none">
+          className="inline-flex items-center gap-1.5 h-10 text-body font-medium px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)] shadow-[0_10px_20px_-12px_var(--color-accent)] disabled:opacity-50 disabled:shadow-none">
           {busy === "download" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />} {busy === "download" ? "Filling the PDF…" : "Download filled PDF"}
         </button>
       </ModalFooter>
@@ -132,17 +132,17 @@ function FieldInput({ field: f, value, onChange, needsYou }: {
   const ring = needsYou
     ? "border-[var(--state-held)] bg-[color-mix(in_srgb,var(--state-held)_12%,transparent)]"
     : "border-[var(--color-border)] bg-[var(--color-surface)]";
-  const base = `w-full rounded-lg border px-3 py-2 text-[14px] text-[var(--color-text)] focus:outline-none focus:border-[var(--color-border-strong)] focus:ring-2 focus:ring-[var(--color-border)] ${ring}`;
+  const base = `w-full rounded-lg border px-3 py-2 text-body text-[var(--color-text)] focus:outline-none focus:border-[var(--color-border-strong)] focus:ring-2 focus:ring-[var(--color-border)] ${ring}`;
   return (
     <div className="py-3">
-      <label htmlFor={id} className="flex items-center gap-2 text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5">
+      <label htmlFor={id} className="flex items-center gap-2 text-body font-medium text-[var(--color-text-muted)] mb-1.5">
         {f.label}
-        {needsYou && <span className="text-[13px] font-semibold text-[var(--state-held)]">· needs you</span>}
+        {needsYou && <span className="text-body font-medium text-[var(--state-held)]">· needs you</span>}
       </label>
       {f.kind === "long" ? (
         <textarea id={id} value={value} onChange={(e) => onChange(e.target.value)} rows={Math.min(14, Math.max(4, Math.ceil(value.length / 90)))} className={`${base} leading-relaxed`} />
       ) : f.kind === "check" ? (
-        <label className="inline-flex items-center gap-2 text-[14px] text-[var(--color-text)]">
+        <label className="inline-flex items-center gap-2 text-body text-[var(--color-text)]">
           <input id={id} type="checkbox" checked={/^(y|yes|true|x|checked|on|1)$/i.test(value)} onChange={(e) => onChange(e.target.checked ? "Yes" : "")} className="w-4 h-4 accent-[var(--color-main)]" />
           {f.label}
         </label>

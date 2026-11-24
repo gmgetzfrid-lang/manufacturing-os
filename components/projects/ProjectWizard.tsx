@@ -347,7 +347,7 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
   // A row of inputs that wraps on a phone; each input 16 px there.
   const rowIn = `${fieldCls} !w-auto min-w-0`;
   const removeBtn = "shrink-0 w-9 h-9 pointer-coarse:w-11 pointer-coarse:h-11 inline-flex items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--state-overdue-text)] hover:bg-[var(--color-surface-2)]";
-  const addLink = "inline-flex items-center gap-1.5 min-h-9 pointer-coarse:min-h-11 text-[14px] font-semibold text-[var(--color-accent-text)] hover:underline underline-offset-2";
+  const addLink = "inline-flex items-center gap-1.5 min-h-9 pointer-coarse:min-h-11 text-body font-medium text-[var(--color-accent-text)] hover:underline underline-offset-2";
   const choice = (on: boolean) => `rounded-lg border text-left transition-colors ${on ? "border-[var(--color-current)] ring-1 ring-inset ring-[var(--color-current)] bg-[var(--color-surface)]" : "border-[var(--color-border-strong)] hover:border-[var(--color-border-control)] bg-[var(--color-surface)]"}`;
   const guessedKind = projectTypeOf(null, name);
   const kindNow = kindPick ?? (isDefaultType(guessedKind) ? (jobKind === "capital" ? "Capital project" : "Other") : guessedKind.word);
@@ -367,9 +367,9 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
         <div className="px-6 pt-4 pb-4 border-b border-[var(--color-border)]">
           <div className="flex items-start gap-3">
             <div className="flex-1 min-w-0">
-              <h2 id="new-project-title" className="font-display text-[20px] font-semibold text-[var(--color-text)]">New project</h2>
-              <p className="mt-0.5 text-[14px] text-[var(--color-text-muted)]">
-                <span className="max-sm:hidden font-semibold text-[var(--color-text)]">Step {step + 1} of {PATH.length}: {PATH[step]}. </span>
+              <h2 id="new-project-title" className="font-display text-section font-semibold text-[var(--color-text)]">New project</h2>
+              <p className="mt-0.5 text-body text-[var(--color-text-muted)]">
+                <span className="max-sm:hidden font-medium text-[var(--color-text)]">Step {step + 1} of {PATH.length}: {PATH[step]}. </span>
                 {step === REVIEW ? "Check it, then make the project." : step === 0 ? "Only this step is needed." : "Optional: skip it and it comes back on the project."}
                 {draft.restored && step === 0 ? " What you typed before is back." : ""}
               </p>
@@ -409,7 +409,7 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
                 <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Kind of project">
                   {[...PROJECT_TYPES.map((t) => t.word), "Other"].map((w) => (
                     <button key={w} type="button" role="radio" aria-checked={kindNow === w} onClick={() => setKindPick(w)}
-                      className={`${choice(kindNow === w)} inline-flex items-center gap-1.5 h-9 pointer-coarse:h-11 px-3 text-[14px] ${kindNow === w ? "font-semibold text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>
+                      className={`${choice(kindNow === w)} inline-flex items-center gap-1.5 h-9 pointer-coarse:h-11 px-3 text-body ${kindNow === w ? "font-medium text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>
                       {kindNow === w && <Check className="w-4 h-4 text-[var(--color-current)]" />}{w}
                     </button>
                   ))}
@@ -420,8 +420,8 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
                 <div className="grid sm:grid-cols-3 gap-2" role="radiogroup" aria-label="Job size">
                   {JOB_KINDS.map((k) => (
                     <button key={k.v} type="button" role="radio" aria-checked={jobKind === k.v} onClick={() => setJobKind(k.v)} className={`${choice(jobKind === k.v)} p-3`}>
-                      <div className="text-[14px] font-semibold text-[var(--color-text)]">{k.label}</div>
-                      <div className="text-[13px] leading-snug text-[var(--color-text-muted)] mt-0.5">{k.hint}</div>
+                      <div className="text-body font-medium text-[var(--color-text)]">{k.label}</div>
+                      <div className="text-body leading-snug text-[var(--color-text-muted)] mt-0.5">{k.hint}</div>
                     </button>
                   ))}
                 </div>
@@ -442,13 +442,13 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
               <div>
                 <span className={labelCls}>Plant time zone</span>
                 <TimeZoneSelect value={timezone} onChange={setTimezone} />
-                <p className="mt-1.5 text-[13px] text-[var(--color-text-muted)]">Everyone on the project sees days, times and shifts in this zone.</p>
+                <p className="mt-1.5 text-body text-[var(--color-text-muted)]">Everyone on the project sees days, times and shifts in this zone.</p>
               </div>
               <fieldset>
                 <legend className={labelCls}>Who can see it</legend>
                 <div className="flex flex-wrap gap-x-6 gap-y-1">
                   {([["public", "Everyone in the workspace"], ["private", "Members only"]] as const).map(([v, l]) => (
-                    <label key={v} className={`inline-flex items-center gap-2 min-h-9 pointer-coarse:min-h-11 text-[14px] cursor-pointer ${visibility === v ? "font-semibold text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>
+                    <label key={v} className={`inline-flex items-center gap-2 min-h-9 pointer-coarse:min-h-11 text-body cursor-pointer ${visibility === v ? "font-medium text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>
                       <input type="radio" name="np-visibility" checked={visibility === v} onChange={() => setVisibility(v)} className="w-4 h-4 accent-[var(--color-current)]" />{l}
                     </label>
                   ))}
@@ -471,7 +471,7 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
                 {goals.length > 0 && (
                   <ul className="mb-2 divide-y divide-[var(--color-border)] border-y border-[var(--color-border)]">
                     {goals.map((g, i) => (
-                      <li key={i} className="flex items-center gap-2 py-1.5 text-[14px]">
+                      <li key={i} className="flex items-center gap-2 py-1.5 text-body">
                         <span className="flex-1 text-[var(--color-text)]">{g}</span>
                         <button type="button" onClick={() => setGoals(goals.filter((_, j) => j !== i))} aria-label={`Remove goal: ${g}`} className={removeBtn}><X className="w-4 h-4" /></button>
                       </li>
@@ -502,9 +502,9 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
             <>
               <StepIntro text="Pick the Summary of Work from document control. Not uploaded yet? Skip and add it later." />
               {sowDoc ? (
-                <div className="flex items-center gap-3 rounded-lg border border-[var(--color-border-strong)] px-3 py-2.5 text-[14px]">
+                <div className="flex items-center gap-3 rounded-lg border border-[var(--color-border-strong)] px-3 py-2.5 text-body">
                   <FileText className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
-                  <span className="font-semibold text-[var(--color-text)] truncate">{sowDoc.label}</span>
+                  <span className="font-medium text-[var(--color-text)] truncate">{sowDoc.label}</span>
                   <button type="button" onClick={() => setSowDoc(null)} className={`ml-auto ${addLink}`}>Change</button>
                 </div>
               ) : (
@@ -521,7 +521,7 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
                     <ul className="mt-2 rounded-lg border border-[var(--color-border)] divide-y divide-[var(--color-border)] overflow-hidden">
                       {sowResults.map((d) => (
                         <li key={d.id}>
-                          <button type="button" onClick={() => setSowDoc(d)} className="w-full px-3 min-h-10 pointer-coarse:min-h-11 text-left text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center gap-2">
+                          <button type="button" onClick={() => setSowDoc(d)} className="w-full px-3 min-h-10 pointer-coarse:min-h-11 text-left text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center gap-2">
                             <FileText className="w-4 h-4 text-[var(--color-text-faint)]" /> {d.label}
                           </button>
                         </li>
@@ -620,10 +620,10 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
 
           {step === REVIEW && (
             // Every answer, each with a way back to its step.
-            <dl className="divide-y divide-[var(--color-border)] border-y border-[var(--color-border)] text-[14px]">
+            <dl className="divide-y divide-[var(--color-border)] border-y border-[var(--color-border)] text-body">
               {([
                 [0, "Basics", <>
-                  <span className="block font-semibold text-[var(--color-text)]">{name.trim() || "No name yet"}</span>
+                  <span className="block font-medium text-[var(--color-text)]">{name.trim() || "No name yet"}</span>
                   <span className="block text-[var(--color-text-muted)]">{description.trim() || "No description yet"}</span>
                   <span className="block text-[var(--color-text-muted)]">{[kindNow, JOB_KINDS.find((k) => k.v === jobKind)?.label, moc.trim() ? `MOC ${moc.trim()}` : null, targetDate ? `Target ${targetDate}` : null, visibility === "private" ? "Members only" : "Everyone in the workspace", timezone].filter(Boolean).join(" · ")}</span>
                 </>],
@@ -638,7 +638,7 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
                 [5, "Team & contractors", partyLines.length ? <span className="text-[var(--color-text)]">{partyLines.map((p) => p.name.trim()).join(", ")}</span> : null],
               ] as Array<[number, string, React.ReactNode]>).map(([i, label, body]) => (
                 <div key={label} className="py-3 grid grid-cols-[minmax(0,9rem)_minmax(0,1fr)_auto] max-sm:grid-cols-[minmax(0,1fr)_auto] gap-x-4 gap-y-1">
-                  <dt className="font-semibold text-[var(--color-text)]">{label}</dt>
+                  <dt className="font-medium text-[var(--color-text)]">{label}</dt>
                   <dd className="min-w-0 max-sm:col-span-2 max-sm:row-start-2">{body ?? <span className="text-[var(--color-text-muted)]">Skipped. It comes back on the project to fill in.</span>}</dd>
                   <dd className="max-sm:col-start-2 max-sm:row-start-1 justify-self-end -my-2"><button type="button" onClick={() => { setError(null); setStep(i); }} className={addLink} aria-label={`Change ${label}`}>Change</button></dd>
                 </div>
@@ -657,7 +657,7 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
             </Button>
           )}
           <span className="ml-auto flex flex-wrap items-center justify-end gap-x-3 gap-y-2">
-            {blocked && <span className="text-[13px] text-[var(--color-text-muted)]" id="np-next-why">{blocked}</span>}
+            {blocked && <span className="text-body text-[var(--color-text-muted)]" id="np-next-why">{blocked}</span>}
             {step > 0 && step < REVIEW && stepKey && !stepHasContent[stepKey] && (
               <Button variant="ghost" onClick={() => next(true)} disabled={busy}>Skip for now</Button>
             )}
@@ -676,7 +676,7 @@ function rows<T>(arr: T[], i: number, patch: Partial<T>): T[] {
 }
 
 function StepIntro({ text }: { text: string }) {
-  return <p className="text-[14px] text-[var(--color-text-muted)]">{text}</p>;
+  return <p className="text-body text-[var(--color-text-muted)]">{text}</p>;
 }
 
 function FromDocSummary({ result, onClear }: { result: BudgetReadResult; onClear: () => void }) {
@@ -690,29 +690,29 @@ function FromDocSummary({ result, onClear }: { result: BudgetReadResult; onClear
     d.goals.length ? `${d.goals.length} goal${d.goals.length === 1 ? "" : "s"}` : null,
   ].filter(Boolean);
   return (
-    <div className="rounded-lg border border-[var(--color-border-strong)] px-3 py-2.5 text-[14px]">
+    <div className="rounded-lg border border-[var(--color-border-strong)] px-3 py-2.5 text-body">
       <div className="flex items-start gap-2">
         <Sparkles className="w-4 h-4 text-[var(--color-text-muted)] shrink-0 mt-0.5" />
         <div className="min-w-0 flex-1">
-          <div className="font-semibold text-[var(--color-text)]">
+          <div className="font-medium text-[var(--color-text)]">
             Prefilled from {[d.docType, d.docNumber].filter(Boolean).join(" ") || result.source.fileName}
             {d.authorizedAmount != null ? ` · ${fmtMoney(d.authorizedAmount, cur)} authorized` : ""}
           </div>
-          <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5">
+          <div className="text-caption text-[var(--color-text-muted)] mt-0.5">
             {bits.length ? `Found ${bits.join(", ")}. ` : ""}Check each step. What you had typed was kept.
           </div>
           {!recon.balanced && recon.unallocated != null && (
-            <div className="text-[11px] font-bold text-[var(--state-held-text)] mt-0.5">
+            <div className="text-caption font-medium text-[var(--state-held-text)] mt-0.5">
               Lines total {fmtMoney(recon.linesTotal, cur)}: {fmtMoney(Math.abs(recon.unallocated), cur)} {recon.unallocated > 0 ? "short of" : "over"} the authorized amount.
             </div>
           )}
           {result.blankPages.length > 0 && (
-            <div className="text-[11px] font-bold text-[var(--state-held-text)] mt-0.5">
+            <div className="text-caption font-medium text-[var(--state-held-text)] mt-0.5">
               Page{result.blankPages.length === 1 ? "" : "s"} {result.blankPages.join(", ")} came through blank (scanner compression). Anything only there wasn&apos;t read.
             </div>
           )}
           {recon.overBudgetBy != null && recon.overBudgetBy > 0 && (
-            <div className="text-[11px] font-bold text-[var(--state-held-text)] mt-0.5">
+            <div className="text-caption font-medium text-[var(--state-held-text)] mt-0.5">
               {fmtMoney(recon.overBudgetBy, cur)} over the approved budget it cites{d.varianceNote ? `: ${d.varianceNote}` : "."}
             </div>
           )}
@@ -730,7 +730,7 @@ function BudgetTotal({ rows, authorized, currency }: {
   if (total <= 0) return null;
   const off = authorized != null && Math.abs(authorized - total) > Math.max(1, authorized * 0.005);
   return (
-    <span className={`ml-auto text-[11px] font-bold tabular-nums ${off ? "text-[var(--state-held-text)]" : "text-[var(--color-text-muted)]"}`}>
+    <span className={`ml-auto text-caption font-medium tabular-nums ${off ? "text-[var(--state-held-text)]" : "text-[var(--color-text-muted)]"}`}>
       Total {fmtMoney(total, currency)}{authorized != null ? ` of ${fmtMoney(authorized, currency)} authorized` : ""}
     </span>
   );

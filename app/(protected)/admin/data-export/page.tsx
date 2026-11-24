@@ -230,12 +230,12 @@ export default function DataExportPage() {
             { label: "Destinations", value: destinations.length },
             { label: "Exports", value: runs.length },
           ] : undefined}
-          tools={<Link href="/data-portability" target="_blank" className={`text-[14px] inline-flex items-center gap-1 ${link}`}>Our data promise <ExternalLink aria-hidden className="w-3.5 h-3.5" /></Link>}
+          tools={<Link href="/data-portability" target="_blank" className={`text-body inline-flex items-center gap-1 ${link}`}>Our data promise <ExternalLink aria-hidden className="w-3.5 h-3.5" /></Link>}
         />
 
         <PageBody>
         {!isAuthorized && (
-          <p className="text-[15px] text-[var(--color-text-muted)] flex items-start gap-2">
+          <p className="text-reading text-[var(--color-text-muted)] flex items-start gap-2">
             <Lock aria-hidden className="w-4 h-4 mt-0.5 shrink-0" /> Only Admin, Manager and Doc Control manage data exports.
           </p>
         )}
@@ -260,21 +260,21 @@ export default function DataExportPage() {
                       <div className="h-full rounded-full bg-[var(--color-text)] transition-[width] duration-300 motion-reduce:transition-none"
                         style={{ width: `${progressPct ?? 5}%` }} />
                     </div>
-                    <p className="text-[13px] text-[var(--color-text-muted)] tabular-nums truncate">
+                    <p className="text-body text-[var(--color-text-muted)] tabular-nums truncate">
                       {backupProgress.phase === "envelope" && "Step 1 of 3: reading every table"}
                       {backupProgress.phase === "files" &&
                         `Step 2 of 3: file ${(backupProgress.filesDone + 1).toLocaleString()} of ${backupProgress.filesTotal.toLocaleString()}, ${(backupProgress.bytesDone / 1048576).toFixed(0)} MB, part ${backupProgress.part}` +
                         (backupProgress.currentPath ? `: ${backupProgress.currentPath.split("/").pop()}` : "")}
                       {backupProgress.phase === "finalizing" && `Step 3 of 3: packing part ${backupProgress.part}`}
                     </p>
-                    <p className="text-[13px] text-[var(--color-text-muted)]">You can keep working; the corner card follows it. Keep this tab open.</p>
+                    <p className="text-body text-[var(--color-text-muted)]">You can keep working; the corner card follows it. Keep this tab open.</p>
                     {backupProgress.errors.length > 0 && (
                       <StatusTag tone="warn">{plural(backupProgress.errors.length, "file")} didn&apos;t make it so far. They&apos;re listed in backup-report.json.</StatusTag>
                     )}
                   </div>
                 )}
                 {backupProgress?.phase === "done" && !busyZip && (
-                  <p role="status" className="mt-2 text-[14px] text-[var(--color-text)]">Backup complete: {plural(backupProgress.part, "part")}, every file checked (SHA-256).</p>
+                  <p role="status" className="mt-2 text-body text-[var(--color-text)]">Backup complete: {plural(backupProgress.part, "part")}, every file checked (SHA-256).</p>
                 )}
               </FormRow>
               <FormRow label="Records only" hint="Every record as JSON, with a list of files whose links work for 24 hours.">
@@ -295,8 +295,8 @@ export default function DataExportPage() {
               <SkeletonRows rows={2} cols={3} what="destinations" />
             ) : destinations.length === 0 ? (
               <div className={`${sheet} px-4 py-6 text-center`}>
-                <p className="text-[15px] text-[var(--color-text)]">Nothing is pushed out on a schedule yet.</p>
-                <button type="button" onClick={() => setCreating(true)} className={`${link} mt-1.5 font-semibold`}>Add a destination</button>
+                <p className="text-reading text-[var(--color-text)]">Nothing is pushed out on a schedule yet.</p>
+                <button type="button" onClick={() => setCreating(true)} className={`${link} mt-1.5 font-medium`}>Add a destination</button>
               </div>
             ) : (
               <div className={tbl.wrap}>
@@ -340,7 +340,7 @@ export default function DataExportPage() {
             {loading && runs.length === 0 ? (
               <SkeletonRows rows={3} cols={3} what="export history" />
             ) : runs.length === 0 ? (
-              <div className={`${sheet} px-4 py-6 text-center text-[15px] text-[var(--color-text-muted)]`}>Every export, by hand or on a schedule, shows here.</div>
+              <div className={`${sheet} px-4 py-6 text-center text-reading text-[var(--color-text-muted)]`}>Every export, by hand or on a schedule, shows here.</div>
             ) : (
               <div className={tbl.wrap}>
                 <table className={tbl.table}>
@@ -415,30 +415,30 @@ function DestinationRow({
       <td className={`${tbl.td} relative align-top max-md:py-1`}>
         {failed && <RowEdge tone="bad" />}
         <div className="flex items-baseline gap-x-2 gap-y-0.5 flex-wrap">
-          <span className="font-semibold text-[var(--color-text)]">{dest.name}</span>
-          <span className="text-[13px] text-[var(--color-text-muted)]">{TYPE_WORD[dest.destination_type]}{dest.include_files ? "" : ", records only"}</span>
+          <span className="font-medium text-[var(--color-text)]">{dest.name}</span>
+          <span className="text-body text-[var(--color-text-muted)]">{TYPE_WORD[dest.destination_type]}{dest.include_files ? "" : ", records only"}</span>
           {!dest.enabled && <StatusTag tone="none">Turned off</StatusTag>}
         </div>
-        <div className="mt-0.5 text-[13px] text-[var(--color-text-muted)] truncate max-w-[52ch]" title={target ?? undefined}>{target}{dest.retention_days ? `, kept ${dest.retention_days} days` : ""}</div>
-        {dest.last_run_error && <p className="mt-1 text-[13px] font-semibold text-[var(--state-overdue-text)]">{pushError(dest.last_run_error, "The last push failed.")}</p>}
+        <div className="mt-0.5 text-body text-[var(--color-text-muted)] truncate max-w-[52ch]" title={target ?? undefined}>{target}{dest.retention_days ? `, kept ${dest.retention_days} days` : ""}</div>
+        {dest.last_run_error && <p className="mt-1 text-body font-medium text-[var(--state-overdue-text)]">{pushError(dest.last_run_error, "The last push failed.")}</p>}
         {testResult && (
-          <p role="status" className="mt-1 text-[13px]">
-            {testResult.ok ? <StatusTag tone="good" colored={false}>Connection works</StatusTag> : <span className="font-semibold text-[var(--state-overdue-text)]">{pushError(testResult.error, "The test failed.")}</span>}
+          <p role="status" className="mt-1 text-body">
+            {testResult.ok ? <StatusTag tone="good" colored={false}>Connection works</StatusTag> : <span className="font-medium text-[var(--state-overdue-text)]">{pushError(testResult.error, "The test failed.")}</span>}
           </p>
         )}
       </td>
-      <td className={`${tbl.td} align-top max-md:col-span-2 max-md:row-start-2 max-md:py-0.5 whitespace-nowrap text-[14px] text-[var(--color-text)]`}>
+      <td className={`${tbl.td} align-top max-md:col-span-2 max-md:row-start-2 max-md:py-0.5 whitespace-nowrap text-body text-[var(--color-text)]`}>
         {scheduleWords(dest)}
-        <div className="lg:hidden text-[13px] text-[var(--color-text-muted)]">
+        <div className="lg:hidden text-body text-[var(--color-text-muted)]">
           {dest.last_run_at ? `Last ${shortDateTime(dest.last_run_at)}${failed ? ", failed" : ""}` : "Not run yet"}
         </div>
       </td>
       <td className={`${tbl.td} align-top max-lg:hidden whitespace-nowrap`}>
         {dest.last_run_at
           ? <StatusTag tone={failed ? "bad" : "none"} colored={failed}>{failed ? "Failed " : ""}{shortDateTime(dest.last_run_at)}</StatusTag>
-          : <span className="text-[14px] text-[var(--color-text-muted)]">Not yet</span>}
+          : <span className="text-body text-[var(--color-text-muted)]">Not yet</span>}
       </td>
-      <td className={`${tbl.td} align-top max-lg:hidden whitespace-nowrap text-[14px] text-[var(--color-text-muted)]`}>{dest.next_run_at ? shortDateTime(dest.next_run_at) : <span className="text-[var(--color-text-faint)]">By hand</span>}</td>
+      <td className={`${tbl.td} align-top max-lg:hidden whitespace-nowrap text-body text-[var(--color-text-muted)]`}>{dest.next_run_at ? shortDateTime(dest.next_run_at) : <span className="text-[var(--color-text-faint)]">By hand</span>}</td>
       <td className={`${tbl.td} align-top max-md:col-start-2 max-md:row-start-1 max-md:py-1`}>
         <div className="flex items-center justify-end gap-1">
           <button type="button" onClick={onRun} disabled={busy} className={btnRow}>
@@ -480,25 +480,25 @@ function RunRow({ run }: { run: Run }) {
   const st = RUN_STATUS[run.status] ?? { tone: "none" as Tone, word: run.status };
   return (
     <tr className={`${tbl.tr} max-md:grid max-md:grid-cols-[minmax(0,1fr)_auto] max-md:py-1.5`}>
-      <td className={`${tbl.td} relative align-top max-md:py-0.5 whitespace-nowrap text-[14px] text-[var(--color-text)]`}>
+      <td className={`${tbl.td} relative align-top max-md:py-0.5 whitespace-nowrap text-body text-[var(--color-text)]`}>
         {run.status === "failed" && <RowEdge tone="bad" />}
         {shortDateTime(at)}
-        {run.duration_ms ? <div className="text-[13px] text-[var(--color-text-muted)]">Took {duration(run.duration_ms)}</div> : null}
+        {run.duration_ms ? <div className="text-body text-[var(--color-text-muted)]">Took {duration(run.duration_ms)}</div> : null}
       </td>
       <td className={`${tbl.td} align-top max-md:col-span-2 max-md:row-start-2 max-md:py-0.5`}>
-        <span className="font-semibold text-[var(--color-text)]">{run.destination_name || "Direct download"}</span>
-        {run.trigger_type && <span className="ml-1.5 text-[13px] text-[var(--color-text-muted)]">{TRIGGER_WORD[run.trigger_type] ?? run.trigger_type}</span>}
-        {run.destination_path && <div className="text-[13px] text-[var(--color-text-muted)] truncate max-w-[48ch]" title={run.destination_path}>{run.destination_path}</div>}
-        {run.error_message && <p className="mt-0.5 text-[13px] font-semibold text-[var(--state-overdue-text)]">{pushError(run.error_message)}</p>}
+        <span className="font-medium text-[var(--color-text)]">{run.destination_name || "Direct download"}</span>
+        {run.trigger_type && <span className="ml-1.5 text-body text-[var(--color-text-muted)]">{TRIGGER_WORD[run.trigger_type] ?? run.trigger_type}</span>}
+        {run.destination_path && <div className="text-body text-[var(--color-text-muted)] truncate max-w-[48ch]" title={run.destination_path}>{run.destination_path}</div>}
+        {run.error_message && <p className="mt-0.5 text-body font-medium text-[var(--state-overdue-text)]">{pushError(run.error_message)}</p>}
       </td>
       <td className={`${tbl.td} align-top max-md:col-start-2 max-md:row-start-1 max-md:py-0.5 whitespace-nowrap`}>
         <StatusTag tone={st.tone} colored={st.tone === "bad"}>{run.status === "running" && <Loader2 aria-hidden className="w-3.5 h-3.5 animate-spin" />}{st.word}</StatusTag>
       </td>
-      <td className={`${tbl.td} align-top max-lg:hidden text-[14px] text-[var(--color-text-muted)]`}>{run.triggered_by_email ?? (run.trigger_type === "scheduled" ? "Schedule" : "")}</td>
-      <td className={`${tbl.td} align-top max-md:col-span-2 max-md:row-start-3 max-md:py-0.5 md:text-right text-[14px] text-[var(--color-text-muted)] whitespace-nowrap`}>
+      <td className={`${tbl.td} align-top max-lg:hidden text-body text-[var(--color-text-muted)]`}>{run.triggered_by_email ?? (run.trigger_type === "scheduled" ? "Schedule" : "")}</td>
+      <td className={`${tbl.td} align-top max-md:col-span-2 max-md:row-start-3 max-md:py-0.5 md:text-right text-body text-[var(--color-text-muted)] whitespace-nowrap`}>
         {run.total_bytes != null && <span className="text-[var(--color-text)] tabular-nums">{formatBytes(run.total_bytes)}</span>}
         {(run.total_rows != null || run.file_count != null) && (
-          <div className="tabular-nums text-[13px]">{[run.total_rows != null ? plural(run.total_rows, "row") : "", run.file_count != null ? plural(run.file_count, "file") : ""].filter(Boolean).join(", ")}</div>
+          <div className="tabular-nums text-body">{[run.total_rows != null ? plural(run.total_rows, "row") : "", run.file_count != null ? plural(run.file_count, "file") : ""].filter(Boolean).join(", ")}</div>
         )}
       </td>
     </tr>
@@ -595,7 +595,7 @@ function DestinationModal({
         </Field>
 
         <div>
-          <span className="block text-[14px] font-semibold text-[var(--color-text)] mb-1.5">Where to</span>
+          <span className="block text-body font-medium text-[var(--color-text)] mb-1.5">Where to</span>
           <div role="radiogroup" aria-label="Where to" className={bandSeg}>
             {(["s3", "r2", "webhook"] as const).map((t) => (
               <button key={t} type="button" role="radio" aria-checked={type === t} onClick={() => setType(t)} className={bandSegItem(type === t)}>
@@ -640,7 +640,7 @@ function DestinationModal({
         )}
 
         <div>
-          <span className="block text-[14px] font-semibold text-[var(--color-text)] mb-1.5">How often</span>
+          <span className="block text-body font-medium text-[var(--color-text)] mb-1.5">How often</span>
           <div role="radiogroup" aria-label="How often" className={bandSeg}>
             {(["manual", "daily", "weekly", "monthly"] as const).map((s) => (
               <button key={s} type="button" role="radio" aria-checked={schedule === s} onClick={() => setSchedule(s)} className={bandSegItem(schedule === s)}>
@@ -671,23 +671,23 @@ function DestinationModal({
         )}
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-start">
-          <label className="flex items-start gap-2.5 text-[15px] text-[var(--color-text)] min-h-11 pt-2">
+          <label className="flex items-start gap-2.5 text-reading text-[var(--color-text)] min-h-11 pt-2">
             <input type="checkbox" className="mt-1 w-4 h-4" checked={includeFiles} onChange={(e) => setIncludeFiles(e.target.checked)} />
-            <span>Include the files<span className="block text-[13px] text-[var(--color-text-muted)]">PDFs and DWGs, not only records</span></span>
+            <span>Include the files<span className="block text-body text-[var(--color-text-muted)]">PDFs and DWGs, not only records</span></span>
           </label>
           <Field label="Keep exports for (days)" hint="Older exports in your bucket are deleted. Blank keeps them all.">
             <Input type="number" inputMode="numeric" min={1} value={retentionDays === "" ? "" : retentionDays} onChange={(e) => setRetentionDays(e.target.value === "" ? "" : Number(e.target.value))} />
           </Field>
         </div>
 
-        <label className="flex items-center gap-2.5 text-[15px] text-[var(--color-text)]">
+        <label className="flex items-center gap-2.5 text-reading text-[var(--color-text)]">
           <input type="checkbox" className="w-4 h-4" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} /> Turned on
         </label>
 
-        {error && <p role="alert" className="text-[14px] font-semibold text-[var(--state-overdue-text)]">{error}</p>}
+        {error && <p role="alert" className="text-body font-medium text-[var(--state-overdue-text)]">{error}</p>}
       </ModalBody>
       <ModalFooter>
-        {missing && <span className="mr-auto text-[13px] text-[var(--color-text-muted)]">{missing}</span>}
+        {missing && <span className="mr-auto text-body text-[var(--color-text-muted)]">{missing}</span>}
         <Button variant="secondary" onClick={onClose} disabled={busy}>Cancel</Button>
         <Button onClick={() => void save()} loading={busy} disabled={!!missing}>
           {mode === "create" ? "Add destination" : "Save changes"}

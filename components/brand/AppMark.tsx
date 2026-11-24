@@ -31,7 +31,7 @@ export function AppMark({ size = 32, ring = false, className = "", title }: {
 }
 
 /** The logo and the app's name. */
-export function AppLogo({ size = 32, ring = false, nameClass = "text-[19px]" }: { size?: number; ring?: boolean; nameClass?: string }) {
+export function AppLogo({ size = 32, ring = false, nameClass = "text-section" }: { size?: number; ring?: boolean; nameClass?: string }) {
   return (
     <span className="inline-flex items-center gap-2.5">
       <AppMark size={size} ring={ring} />

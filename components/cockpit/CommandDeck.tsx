@@ -97,7 +97,7 @@ export function CommandDeck({
               <Download className="w-4 h-4" />
             </button>
             {rows.length > 0 && (
-              <button type="button" onClick={() => openCenter("all")} className={`ml-2 text-[14px] font-semibold ${link}`}>
+              <button type="button" onClick={() => openCenter("all")} className={`ml-2 text-body font-medium ${link}`}>
                 {more > 0 ? `Show all ${rows.length.toLocaleString()}` : "Show all"}
               </button>
             )}
@@ -109,25 +109,25 @@ export function CommandDeck({
         {rows.length > 0 ? (
           <NeedsTable rows={rows} limit={SHOWN} seenAt={seenAt} onOpen={(r) => { if (r.notificationId) onOpenItem?.(r.notificationId); }} />
         ) : (
-          <p className="px-4 py-4 text-[15px] text-[var(--color-text-muted)]">
+          <p className="px-4 py-4 text-reading text-[var(--color-text-muted)]">
             {focus ?? "No requests, reviews or alerts are waiting on you."}
           </p>
         )}
         {more > 0 && (
-          <div className="border-t border-[var(--color-border)] px-4 py-2.5 text-[13px] text-[var(--color-text-muted)]">
+          <div className="border-t border-[var(--color-border)] px-4 py-2.5 text-body text-[var(--color-text-muted)]">
             Showing {SHOWN} of {rows.length.toLocaleString()}, late ones first.
           </div>
         )}
       </div>
       {/* The three main tools, with their live counts: quiet text. */}
-      <ul aria-label="Your tools" className="mt-3 flex flex-wrap gap-x-6 gap-y-1.5 text-[14px]">
+      <ul aria-label="Your tools" className="mt-3 flex flex-wrap gap-x-6 gap-y-1.5 text-body">
         {tools.map((t) => {
           const v = pillars.loaded ? t.value ?? 0 : null;
           return (
             <li key={t.href}>
               <Link href={t.href} className="group inline-flex items-baseline gap-1.5 text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
                 <span className="group-hover:underline underline-offset-2">{t.label}</span>
-                <span className={`font-semibold tabular-nums ${v === null || v === 0 ? "text-[var(--color-text-faint)]" : t.bad ? "text-[var(--state-overdue-text)]" : "text-[var(--color-text)]"}`}>{v === null ? "–" : v.toLocaleString()}</span>
+                <span className={`font-medium tabular-nums ${v === null || v === 0 ? "text-[var(--color-text-faint)]" : t.bad ? "text-[var(--state-overdue-text)]" : "text-[var(--color-text)]"}`}>{v === null ? "–" : v.toLocaleString()}</span>
                 {t.note && <span className={t.bad ? "text-[var(--state-overdue-text)]" : ""}>({t.note})</span>}
               </Link>
             </li>

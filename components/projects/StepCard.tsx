@@ -99,14 +99,14 @@ function scrollParentOf(el: HTMLElement): HTMLElement {
 }
 // Buttons: one filled (the step's next move), the rest white with a ruled
 // edge; small icon buttons fill on hover.
-const SEC = "inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors";
-const PRI = "inline-flex items-center justify-center gap-1.5 h-8 px-3.5 rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[13px] font-semibold hover:bg-[var(--color-accent-hover)] disabled:opacity-50 transition-colors";
+const SEC = "inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors";
+const PRI = "inline-flex items-center justify-center gap-1.5 h-8 px-3.5 rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-body font-medium hover:bg-[var(--color-accent-hover)] disabled:opacity-50 transition-colors";
 const ICON_BASE = "inline-flex items-center justify-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors";
 const ICON = `${ICON_BASE} w-7 h-7`;
 const ICON_SM = `${ICON_BASE} w-6 h-6`;
 const SEG_ON = "bg-[var(--color-surface)] text-[var(--color-text)] shadow-[0_1px_2px_rgb(31_39_51/0.15)] ring-1 ring-[var(--color-border-strong)]";
 const SEG_OFF = "text-[var(--color-text-muted)] hover:text-[var(--color-text)]";
-const LINK = "text-[13px] text-[var(--color-accent-text)] hover:underline";
+const LINK = "text-body text-[var(--color-accent-text)] hover:underline";
 const hoursWords = (h: number) => (h < 1 ? `${Math.max(1, Math.round(h * 60))} min` : `${Math.round(h * 10) / 10} h`);
 const ms = (v: unknown) => (v == null ? NaN : v instanceof Date ? v.getTime() : typeof v === "number" ? v : Date.parse(String(v)));
 const H = 3_600_000;
@@ -656,7 +656,7 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
   };
   const pickLabel = action === "start" || action === "resume" ? "Started" : action === "finish" ? "Finished" : action === "hold" ? "Stopped" : action === "edit" ? "Finished" : "When";
   return (
-    <div ref={rootRef} className="px-3 pb-3 pl-7 space-y-2.5 bg-[var(--color-surface)] text-[14px]">
+    <div ref={rootRef} className="px-3 pb-3 pl-7 space-y-2.5 bg-[var(--color-surface)] text-body">
       {found && (
         // Added after the plan: said on a line of its own, marked by a rule, not a box.
         <div className="border-l-[3px] border-[var(--color-border-strong)] pl-2.5 py-0.5 text-[var(--color-text)]">
@@ -665,26 +665,26 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
               <div className="inline-flex items-center gap-0.5 p-0.5 rounded-md bg-[var(--color-surface-2)] ring-1 ring-inset ring-[var(--color-border)]" role="group" aria-label="What kind of work">
                 {(["discovery", "added"] as const).map((x) => (
                   <button key={x} type="button" aria-pressed={foundEdit.kind === x} onClick={() => { setFoundEdit({ ...foundEdit, kind: x }); setFoundMsg(null); }}
-                    className={`h-7 px-3 rounded text-[13px] font-semibold ${foundEdit.kind === x ? SEG_ON : SEG_OFF}`}>{ADDED[x].word}</button>
+                    className={`h-7 px-3 rounded text-body font-medium ${foundEdit.kind === x ? SEG_ON : SEG_OFF}`}>{ADDED[x].word}</button>
                 ))}
               </div>
               <label className="block">
-                <span className="block mb-1 text-[13px] font-semibold text-[var(--color-text-muted)]">{ADDED[foundEdit.kind].what}</span>
+                <span className="block mb-1 text-body font-medium text-[var(--color-text-muted)]">{ADDED[foundEdit.kind].what}</span>
                 <input value={foundEdit.what} onChange={(e) => { setFoundEdit({ ...foundEdit, what: e.target.value }); setFoundMsg(null); }} aria-label={ADDED[foundEdit.kind].what}
-                  className="h-9 pointer-coarse:h-11 w-full rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[14px] text-[var(--color-text)]" />
+                  className="h-9 pointer-coarse:h-11 w-full rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-body text-[var(--color-text)]" />
               </label>
               <div>
-                <span className="block mb-1 text-[13px] font-semibold text-[var(--color-text-muted)]">Work order #</span>
+                <span className="block mb-1 text-body font-medium text-[var(--color-text-muted)]">Work order #</span>
                 <div className="flex flex-wrap items-center gap-1.5">
                   <input value={foundEdit.wo} onChange={(e) => { setFoundEdit({ ...foundEdit, wo: e.target.value }); setFoundMsg(null); }} aria-label="Work order number" placeholder="e.g. 310990"
-                    className="h-9 pointer-coarse:h-11 w-36 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 font-display tabular-nums text-[14px] text-[var(--color-text)]" />
+                    className="h-9 pointer-coarse:h-11 w-36 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 font-display tabular-nums text-body text-[var(--color-text)]" />
                   {!m.workOrderRef?.trim() && wo && foundEdit.wo.trim() !== wo && (
                     <button type="button" onClick={() => setFoundEdit({ ...foundEdit, wo })} className={SEC}>Same as the task: {wo}</button>
                   )}
                 </div>
               </div>
               <DateTimePicker label={`When was it ${ADDED[foundEdit.kind].found}?`} value={foundEdit.at} onChange={(v) => { setFoundEdit({ ...foundEdit, at: v }); setFoundMsg(null); }} tz={tz} times={times} />
-              {foundMsg && <div role="alert" className="font-semibold text-[var(--state-overdue)]">{foundMsg}</div>}
+              {foundMsg && <div role="alert" className="font-medium text-[var(--state-overdue)]">{foundMsg}</div>}
               <div className="flex items-center gap-2">
                 <button type="button" onClick={() => void saveFound()} disabled={foundBusy} className={PRI}>{foundBusy ? "Saving…" : "Save"}</button>
                 <button type="button" onClick={() => setFoundEdit(null)} className={SEC}>Cancel</button>
@@ -693,34 +693,34 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
           ) : (
             <>
               <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                <span className="min-w-0 flex-1"><span className="font-semibold">{ADDED[kindOf(found)].word}</span>{Number.isFinite(found.foundAt) ? `, ${ADDED[kindOf(found)].found} ${when(found.foundAt)}` : ""}: “{found.what}”
-                  {!m.workOrderRef?.trim() && <span className="ml-1.5 font-semibold text-[var(--state-held)]">No WO # of its own yet.</span>}</span>
+                <span className="min-w-0 flex-1"><span className="font-medium">{ADDED[kindOf(found)].word}</span>{Number.isFinite(found.foundAt) ? `, ${ADDED[kindOf(found)].found} ${when(found.foundAt)}` : ""}: “{found.what}”
+                  {!m.workOrderRef?.trim() && <span className="ml-1.5 font-medium text-[var(--state-held)]">No WO # of its own yet.</span>}</span>
                 {canEdit && m.projectId && <button type="button" onClick={() => { setFoundEdit({ kind: kindOf(found), what: found.what, at: toDateTimeInput(found.foundAt, tz), wo: m.workOrderRef ?? "" }); setFoundMsg(null); }} aria-label={`Edit the ${ADDED[kindOf(found)].lower}`} title="Edit" className={ICON}><Pencil className="w-3.5 h-3.5" /></button>}
                 {canEdit && m.projectId && <button type="button" onClick={() => void removeFound()} disabled={foundBusy} aria-label={`Delete the ${ADDED[kindOf(found)].lower}`} title="Put in by mistake: every step it added, gone for good" className={`${ICON} hover:text-[var(--state-overdue)]`}>{foundBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}</button>}
               </div>
-              {foundMsg && <div role="alert" className="font-semibold text-[var(--state-overdue)]">{foundMsg}</div>}
+              {foundMsg && <div role="alert" className="font-medium text-[var(--state-overdue)]">{foundMsg}</div>}
             </>
           )}
         </div>
       )}
-      {m.description?.trim() && <div className="text-[13px] text-[var(--color-text-muted)] line-clamp-2 break-words">{m.description.trim()}</div>}
+      {m.description?.trim() && <div className="text-body text-[var(--color-text-muted)] line-clamp-2 break-words">{m.description.trim()}</div>}
       {/* What it is and when, as labeled cells: plan against actual. */}
       <dl className="flex flex-wrap gap-x-8 gap-y-2">
-        {wo && <div><dt className="text-[13px] text-[var(--color-text-muted)]">Work order</dt><dd className="ui-id">WO {wo}</dd></div>}
-        <div><dt className="text-[13px] text-[var(--color-text-muted)]">Crew</dt><dd className="text-[var(--color-text)]">{planned ? <span className="ui-tag">{planned}</span> : "-"}
-          {m.actualParty?.trim() && m.actualParty.trim() !== planned && <div className="text-[13px] font-semibold">done by {m.actualParty.trim()}</div>}</dd></div>
-        <div><dt className="text-[13px] text-[var(--color-text-muted)]">Hours</dt><dd className="font-display tabular-nums text-[var(--color-text)]">{allotted} h</dd></div>
+        {wo && <div><dt className="text-body text-[var(--color-text-muted)]">Work order</dt><dd className="ui-id">WO {wo}</dd></div>}
+        <div><dt className="text-body text-[var(--color-text-muted)]">Crew</dt><dd className="text-[var(--color-text)]">{planned ? <span className="ui-tag">{planned}</span> : "-"}
+          {m.actualParty?.trim() && m.actualParty.trim() !== planned && <div className="text-body font-medium">done by {m.actualParty.trim()}</div>}</dd></div>
+        <div><dt className="text-body text-[var(--color-text-muted)]">Hours</dt><dd className="font-display tabular-nums text-[var(--color-text)]">{allotted} h</dd></div>
       </dl>
-      <table className="text-[14px]">
-        <thead><tr className="text-[13px] text-[var(--color-text-muted)]"><th /><th className={`${cell} text-left font-semibold`}>Start</th><th className={`${cell} text-left font-semibold`}>Finish</th></tr></thead>
+      <table className="text-body">
+        <thead><tr className="text-body text-[var(--color-text-muted)]"><th /><th className={`${cell} text-left font-medium`}>Start</th><th className={`${cell} text-left font-medium`}>Finish</th></tr></thead>
         <tbody>
-          <tr><td className={`${cell} text-[13px] text-[var(--color-text-muted)]`}>Plan</td><td className={cell}>{Number.isFinite(ps) ? when(ps) : "-"}</td><td className={cell}>{Number.isFinite(pf) ? when(pf) : "-"}</td></tr>
-          <tr className="font-semibold"><td className={`${cell} text-[13px] font-normal text-[var(--color-text-muted)]`}>Actual</td><td className={cell}>{Number.isFinite(as) ? when(as) : "-"}</td><td className={cell}>{Number.isFinite(af) ? when(af) : held ? (m.status === "blocked" ? "blocked" : "on hold") : started ? `${pct}%` : "-"}</td></tr>
+          <tr><td className={`${cell} text-body text-[var(--color-text-muted)]`}>Plan</td><td className={cell}>{Number.isFinite(ps) ? when(ps) : "-"}</td><td className={cell}>{Number.isFinite(pf) ? when(pf) : "-"}</td></tr>
+          <tr className="font-medium"><td className={`${cell} text-body font-normal text-[var(--color-text-muted)]`}>Actual</td><td className={cell}>{Number.isFinite(as) ? when(as) : "-"}</td><td className={cell}>{Number.isFinite(af) ? when(af) : held ? (m.status === "blocked" ? "blocked" : "on hold") : started ? `${pct}%` : "-"}</td></tr>
         </tbody>
       </table>
-      {tag && <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[13px] font-semibold ${tag.tone}`}>{tag.t}</span>}
+      {tag && <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-body font-medium ${tag.tone}`}>{tag.t}</span>}
       {held && m.statusReason && <div className="border-l-[3px] border-[var(--state-held)] pl-2.5 text-[var(--color-text)]">“{m.statusReason}”</div>}
-      {saved && <div role="status" className="inline-flex items-center gap-1.5 font-semibold text-[var(--state-released)]"><Check className="w-4 h-4" /> {saved}</div>}
+      {saved && <div role="status" className="inline-flex items-center gap-1.5 font-medium text-[var(--state-released)]"><Check className="w-4 h-4" /> {saved}</div>}
 
       {(main || more.length > 0 || (canEdit && m.id)) && !action && (
         <div className="flex flex-wrap items-center gap-2">
@@ -755,13 +755,13 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
             <div className="inline-flex items-center gap-0.5 p-0.5 rounded-md bg-[var(--color-surface-2)] ring-1 ring-inset ring-[var(--color-border)]" role="group" aria-label="On hold or blocked">
               {([["on_hold", "On hold"], ["blocked", "Blocked"]] as const).map(([k, l]) => (
                 <button key={k} type="button" aria-pressed={holdKind === k} onClick={() => setHoldKind(k)}
-                  className={`h-7 px-3 rounded text-[13px] font-semibold ${holdKind === k ? SEG_ON : SEG_OFF}`}>{l}</button>
+                  className={`h-7 px-3 rounded text-body font-medium ${holdKind === k ? SEG_ON : SEG_OFF}`}>{l}</button>
               ))}
             </div>
           )}
           {action === "edit" && (
             <div className="space-y-2.5">
-              <div className="text-[13px] text-[var(--color-text-muted)]">Every time on this step, in the order it happened. Change any of them, then Save once.</div>
+              <div className="text-body text-[var(--color-text-muted)]">Every time on this step, in the order it happened. Change any of them, then Save once.</div>
               {timed.map((e) => (
                 <DateTimePicker key={e.key} label={`${e.text}${e.said[0] ? `: ${e.said[0].text}` : ""}`} value={fixAll[e.key] ?? ""}
                   onChange={(v) => { setFixAll((x) => ({ ...x, [e.key]: v })); setMsg(null); }} tz={tz} times={times} showNow={false}
@@ -780,36 +780,36 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
           )}
           {(action === "start" || action === "resume" || action === "progress" || action === "finish") && (
             <div className="flex flex-wrap items-center gap-1.5">
-              <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Resource</span>
+              <span className="text-body font-medium text-[var(--color-text-muted)]">Resource</span>
               {byOther ? (
                 <input value={by} onChange={(e) => { setBy(e.target.value); setMsg(null); }} autoFocus placeholder="Crew or company" aria-label="Resource"
-                  className="h-9 pointer-coarse:h-11 flex-1 min-w-[10rem] rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[14px]" />
+                  className="h-9 pointer-coarse:h-11 flex-1 min-w-[10rem] rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-body" />
               ) : (
                 <select value={by} onChange={(e) => { if (e.target.value === "__other__") { setByOther(true); setBy(""); } else setBy(e.target.value); setMsg(null); }} aria-label="Resource"
-                  className="h-9 pointer-coarse:h-11 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[14px] font-semibold text-[var(--color-text)]">
+                  className="h-9 pointer-coarse:h-11 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-body font-medium text-[var(--color-text)]">
                   {[...new Set([doer, planned, ...crewChoices].filter(Boolean))].map((c) => <option key={c} value={c}>{c}{c === planned && doer !== planned ? " (planned)" : ""}</option>)}
                   {!doer && <option value="">No crew named</option>}
                   <option value={"__other__"}>Other…</option>
                 </select>
               )}
-              {by.trim() && by.trim() !== planned && <span className="text-[13px] text-[var(--color-text-muted)]">planned: {planned || "no crew"}</span>}
+              {by.trim() && by.trim() !== planned && <span className="text-body text-[var(--color-text-muted)]">planned: {planned || "no crew"}</span>}
             </div>
           )}
           {action !== "edit" && (
             <input value={note} onChange={(e) => { setNote(e.target.value); setMsg(null); }} onKeyDown={(e) => { if (e.key === "Enter") void save(); }}
               placeholder={action === "hold" ? "Why? (required)" : action === "reopen" ? "Why reopen? (required)" : action === "comment" ? "The comment" : "Comment (optional)"} aria-label="Comment" autoFocus={action === "comment"}
-              className="h-9 pointer-coarse:h-11 w-full rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[14px]" />
+              className="h-9 pointer-coarse:h-11 w-full rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-body" />
           )}
           {hours < -0.05 && !done && (action === "start" || action === "progress" || action === "finish" || action === "resume") && (
             showWhy
               ? <input value={why} onChange={(e) => setWhy(e.target.value)} placeholder="Why it's behind (optional)" aria-label="Why it's behind"
-                className="h-9 pointer-coarse:h-11 w-full rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[14px]" />
+                className="h-9 pointer-coarse:h-11 w-full rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-body" />
               : <button type="button" onClick={() => setShowWhy(true)} className={`self-start ${LINK}`}>Add why it&apos;s behind</button>
           )}
-          {msg && <div role="alert" className="font-semibold text-[var(--state-overdue)]">{msg}</div>}
+          {msg && <div role="alert" className="font-medium text-[var(--state-overdue)]">{msg}</div>}
           {ampmAsk && (
             <div role="alert" className="border-l-[3px] border-[var(--state-held)] pl-2.5 py-0.5 space-y-1.5">
-              <div className="font-semibold text-[var(--color-text)]">{ampmAsk.says} Did you mean {ampmAsk.use}?</div>
+              <div className="font-medium text-[var(--color-text)]">{ampmAsk.says} Did you mean {ampmAsk.use}?</div>
               <div className="flex flex-wrap gap-2">
                 <button type="button" disabled={busy} onClick={() => { const a = ampmAsk; setAmpmAsk(null); a.fix(); }}
                   className={SEC}>Use {ampmAsk.use}</button>
@@ -820,7 +820,7 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
           )}
           {aheadAsk && (
             <div role="alert" className="border-l-[3px] border-[var(--state-held)] pl-2.5 py-0.5 space-y-1.5">
-              <div className="font-semibold text-[var(--color-text)]">{aheadAsk}</div>
+              <div className="font-medium text-[var(--color-text)]">{aheadAsk}</div>
               <button type="button" disabled={busy} onClick={() => { aheadOk.current = true; setAheadAsk(null); void save(); }}
                 className={SEC}>Yes, save it</button>
             </div>
@@ -834,14 +834,14 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
 
       <div className="border-t border-[var(--color-border)] pt-2">
         <div className="flex items-baseline justify-between gap-2 mb-0.5">
-          <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">History</span>
-          {toSet > 0 && <span className="text-[13px] font-semibold text-[var(--state-held)]">{toSet === 1 ? "1 time" : `${toSet} times`} to set</span>}
+          <span className="text-body font-medium text-[var(--color-text-muted)]">History</span>
+          {toSet > 0 && <span className="text-body font-medium text-[var(--state-held)]">{toSet === 1 ? "1 time" : `${toSet} times`} to set</span>}
           {canEdit && onUpdate && (started || history.length > 0) && (
             <button type="button" onClick={() => void startOver()} disabled={busy} title="Back to not started: every time, %, hold and comment removed" className={`ml-auto ${SEC.replace("h-8", "h-7").replace("text-[var(--color-text)]", "text-[var(--state-overdue)]")}`}>Start over</button>
           )}
         </div>
-        {resetMsg && <div role="alert" className="mb-1 font-semibold text-[var(--state-overdue)]">{resetMsg}</div>}
-        {history.length === 0 ? <div className="text-[13px] text-[var(--color-text-muted)]">Nothing yet.</div> : (
+        {resetMsg && <div role="alert" className="mb-1 font-medium text-[var(--state-overdue)]">{resetMsg}</div>}
+        {history.length === 0 ? <div className="text-body text-[var(--color-text-muted)]">Nothing yet.</div> : (
           <>
             {hidden > 0 && <button type="button" onClick={() => setAllHistory(true)} className={`mb-0.5 ${LINK}`}>Show {hidden} earlier</button>}
             <ol>
@@ -849,17 +849,17 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
                 const sh = shiftOf(x.sort), head = i === 0 || shiftOf(shown[i - 1].sort).key !== sh.key;
                 const editable = canEditEntry(x);
                 const time = x.unsure === "unset" ? "set time" : x.unsure === "order" ? `⚠ ${when(x.at)}` : clock(x.at);
-                const timeCls = x.unsure === "unset" ? "rounded-full px-2 py-px text-[12px] font-semibold bg-[color-mix(in_srgb,var(--state-held)_14%,transparent)] text-[var(--state-held)]"
-                  : x.unsure === "order" ? "font-semibold text-[var(--state-held)]" : "font-display tabular-nums text-[var(--color-text-muted)]";
+                const timeCls = x.unsure === "unset" ? "rounded-full px-2 py-px text-caption font-medium bg-[color-mix(in_srgb,var(--state-held)_14%,transparent)] text-[var(--state-held)]"
+                  : x.unsure === "order" ? "font-medium text-[var(--state-held)]" : "font-display tabular-nums text-[var(--color-text-muted)]";
                 const tip = x.unsure === "unset" ? "When it happened wasn't saved - tap to set it" : x.unsure === "order" ? "This time is after what came next - check it" : undefined;
                 return (
-                  <li key={x.key} className="text-[13px] break-words">
-                    {head && <div className="mt-2 mb-0.5 text-[13px] font-semibold text-[var(--color-text)]">{sh.label}</div>}
+                  <li key={x.key} className="text-body break-words">
+                    {head && <div className="mt-2 mb-0.5 text-body font-medium text-[var(--color-text)]">{sh.label}</div>}
                     <div className="py-0.5 pl-2.5 border-l-2 border-[var(--color-border)]">
                       {x.unsure && editable
                         ? <button type="button" onClick={() => openFix(x)} title={tip} className={`mr-1.5 whitespace-nowrap ${timeCls}`}>{time}</button>
                         : <span title={tip} className={`mr-1.5 whitespace-nowrap ${timeCls}`}>{time}</span>}
-                      {x.text && <span className="font-semibold text-[var(--color-text)]">{x.text}</span>}
+                      {x.text && <span className="font-medium text-[var(--color-text)]">{x.text}</span>}
                       {x.said.map((c, k) => <span key={k} className="text-[var(--color-text)]">{x.text || k > 0 ? " - " : ""}{c.text}</span>)}
                       {editable && fixing !== x.key && <button type="button" onClick={() => openFix(x)} aria-label={`Edit ${x.text || "this comment"}`} title="Edit" className={`ml-1 align-middle ${ICON_SM}`}><Pencil className="w-3.5 h-3.5" /></button>}
                       {editable && fixing !== x.key && removable(x) && (
@@ -870,15 +870,15 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
                       )}
                     </div>
                     {fixing === x.key && (
-                      <div className="mt-1 mb-2 ml-2 border-l-2 border-[var(--color-border-strong)] pl-2.5 py-1 space-y-2 text-[14px]">
+                      <div className="mt-1 mb-2 ml-2 border-l-2 border-[var(--color-border-strong)] pl-2.5 py-1 space-y-2 text-body">
                         {x.pct != null && fixPct != null && <PctSlider value={fixPct} was={x.pct} onChange={(v) => { setFixPct(v); setFixMsg(null); }} disabled={fixBusy} />}
                         {canFix(x) && <DateTimePicker label="When it happened" value={fixV} onChange={(v) => { setFixV(v); setFixMsg(null); }} tz={tz} times={times} showNow={false} disabled={fixBusy} />}
                         {(x.comment || onUpdate) && (
                           <input value={fixText} onChange={(e) => { setFixText(e.target.value); setFixMsg(null); }} onKeyDown={(e) => { if (e.key === "Enter") void saveFix(x); }}
                             placeholder={x.comment ? undefined : "Add a comment (optional)"} aria-label="Comment" disabled={fixBusy}
-                            className="h-9 pointer-coarse:h-11 w-full rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[14px]" />
+                            className="h-9 pointer-coarse:h-11 w-full rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-body" />
                         )}
-                        {fixMsg && <div role="alert" className="font-semibold text-[var(--state-overdue)]">{fixMsg}</div>}
+                        {fixMsg && <div role="alert" className="font-medium text-[var(--state-overdue)]">{fixMsg}</div>}
                         <div className="flex items-center gap-2">
                           {/* One orange: while an update above is open, its Save has it. */}
                           <button type="button" onClick={() => void saveFix(x)} disabled={fixBusy} className={action ? SEC : PRI}>{fixBusy ? "Saving…" : "Save"}</button>
@@ -888,7 +888,7 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
                               {removable(x) === "change" ? "Take back" : "Remove"}
                             </button>
                           ) : x.logId != null && (
-                            <span className="ml-auto text-[13px] text-[var(--color-text-muted)]">A start, finish or hold comes off only when it&apos;s the latest, or with Start over.</span>
+                            <span className="ml-auto text-body text-[var(--color-text-muted)]">A start, finish or hold comes off only when it&apos;s the latest, or with Start over.</span>
                           )}
                         </div>
                       </div>
@@ -903,7 +903,7 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
       </div>
 
       {canEdit && onMoveDays && m.id && !started && (
-        <div className="flex items-center gap-1 text-[13px] text-[var(--color-text-muted)]">
+        <div className="flex items-center gap-1 text-body text-[var(--color-text-muted)]">
           Move the plan a day
           <button type="button" onClick={() => onMoveDays(m.id!, -1)} title="1 day earlier" aria-label="Move the plan 1 day earlier" className={ICON}><ChevronLeft className="w-4 h-4" /></button>
           <button type="button" onClick={() => onMoveDays(m.id!, 1)} title="1 day later" aria-label="Move the plan 1 day later" className={ICON}><ChevronRight className="w-4 h-4" /></button>

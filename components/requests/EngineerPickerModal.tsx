@@ -173,17 +173,17 @@ export default function EngineerPickerModal({
 
         <ModalBody className="space-y-4">
           <div>
-            <div className="text-[14px] font-semibold text-[var(--color-text)]">Engineer</div>
+            <div className="text-body font-medium text-[var(--color-text)]">Engineer</div>
             <div className="mt-1.5 max-h-64 overflow-y-auto rounded-xl border border-[var(--color-border)]">
               {loading ? (
                 <SkeletonRows rows={3} cols={1} what="engineers" sheet={false} />
               ) : loadError ? (
-                <p role="alert" className="p-4 text-[15px] text-[var(--color-text)]"><span className="font-semibold">The engineers didn&apos;t load.</span> <span className="text-[var(--color-text-muted)]">{loadError}</span></p>
+                <p role="alert" className="p-4 text-reading text-[var(--color-text)]"><span className="font-medium">The engineers didn&apos;t load.</span> <span className="text-[var(--color-text-muted)]">{loadError}</span></p>
               ) : filtered.length === 0 ? (
-                <div className="p-4 text-[15px] text-[var(--color-text-muted)] text-center">
-                  <p className="font-semibold text-[var(--color-text)]">No active engineers in this workspace.</p>
-                  <p className="mt-1 text-[13px]">An admin can invite one, or give an existing member an Engineer role.</p>
-                  <a href="/admin/users" className="inline-block mt-2 text-[15px] text-[var(--color-accent-text)] hover:underline underline-offset-2">Open Users</a>
+                <div className="p-4 text-reading text-[var(--color-text-muted)] text-center">
+                  <p className="font-medium text-[var(--color-text)]">No active engineers in this workspace.</p>
+                  <p className="mt-1 text-body">An admin can invite one, or give an existing member an Engineer role.</p>
+                  <a href="/admin/users" className="inline-block mt-2 text-reading text-[var(--color-accent-text)] hover:underline underline-offset-2">Open Users</a>
                 </div>
               ) : (
                 <div className="divide-y divide-[var(--color-border)]">
@@ -202,14 +202,14 @@ export default function EngineerPickerModal({
                       />
                       <User aria-hidden className="w-4 h-4 shrink-0 text-[var(--color-text-faint)]" />
                       <div className="flex-1 min-w-0">
-                        <div className="text-[15px] font-semibold text-[var(--color-text)] truncate">{eng.name}</div>
-                        <div className="text-[13px] text-[var(--color-text-muted)] truncate">{eng.email}</div>
+                        <div className="text-reading font-medium text-[var(--color-text)] truncate">{eng.name}</div>
+                        <div className="text-body text-[var(--color-text-muted)] truncate">{eng.email}</div>
                       </div>
                       <div className="flex items-center gap-1.5 shrink-0">
-                        <span className="text-[13px] text-[var(--color-text-muted)]">{eng.role}</span>
+                        <span className="text-body text-[var(--color-text-muted)]">{eng.role}</span>
                         <span
                           title={`${eng.workload} open ticket${eng.workload === 1 ? "" : "s"}`}
-                          className={`inline-flex items-center gap-1 text-[13px] font-semibold tabular-nums ${eng.workload < 3 ? "text-[var(--color-text-muted)]" : "text-[var(--state-held-text)]"}`}
+                          className={`inline-flex items-center gap-1 text-body font-medium tabular-nums ${eng.workload < 3 ? "text-[var(--color-text-muted)]" : "text-[var(--state-held-text)]"}`}
                         >
                           <Inbox className="w-3 h-3" /> {eng.workload}
                         </span>
@@ -219,12 +219,12 @@ export default function EngineerPickerModal({
                 </div>
               )}
             </div>
-            <div className="text-[13px] text-[var(--color-text-muted)] mt-1.5">Fewest open requests first.</div>
+            <div className="text-body text-[var(--color-text-muted)] mt-1.5">Fewest open requests first.</div>
           </div>
 
           {requireComment && (
             <div>
-              <label className="text-[14px] font-semibold text-[var(--color-text)]">{commentLabel.replace(/\s*\*$/, "")}</label>
+              <label className="text-body font-medium text-[var(--color-text)]">{commentLabel.replace(/\s*\*$/, "")}</label>
               <Textarea
                 value={comment}
                 onChange={(e) => setComment(e.target.value)}
@@ -236,7 +236,7 @@ export default function EngineerPickerModal({
           )}
 
           {error && (
-            <p role="alert" className="flex items-start gap-1.5 text-[13px] font-semibold text-[var(--state-overdue-text)]"><CircleAlert aria-hidden className="w-4 h-4 shrink-0 mt-px" />{error}</p>
+            <p role="alert" className="flex items-start gap-1.5 text-body font-medium text-[var(--state-overdue-text)]"><CircleAlert aria-hidden className="w-4 h-4 shrink-0 mt-px" />{error}</p>
           )}
         </ModalBody>
 

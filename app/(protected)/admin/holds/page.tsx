@@ -150,8 +150,8 @@ export default function HoldsPage() {
           <ErrorNote error={error} title="Couldn't load the holds." onRetry={busy ? undefined : () => void refresh()} />
         ) : (
           <div className={`${sheet} px-5 py-8 text-center`}>
-            <p className="text-[15px] text-[var(--color-text)]">A hold is placed from a document&apos;s side panel, for example while waiting on sign-off or vendor data.</p>
-            <Link href="/documents" className={`${link} mt-1.5 inline-block font-semibold`}>Open Documents</Link>
+            <p className="text-reading text-[var(--color-text)]">A hold is placed from a document&apos;s side panel, for example while waiting on sign-off or vendor data.</p>
+            <Link href="/documents" className={`${link} mt-1.5 inline-block font-medium`}>Open Documents</Link>
           </div>
         )
       ) : (
@@ -183,23 +183,23 @@ export default function HoldsPage() {
                           <RowEdge tone={lateDays > 0 ? "bad" : "warn"} />
                           {meta ? (
                             <Link href={`/documents/${meta.libraryId}?doc=${h.documentId}`} className="group block min-w-0">
-                              {meta.documentNumber && <span className="ui-id text-[16px] group-hover:text-[var(--color-accent-text)] group-hover:underline underline-offset-[3px]">{meta.documentNumber}</span>}
-                              {meta.title && meta.title !== meta.documentNumber && <span className="block text-[14px] text-[var(--color-text-muted)] truncate max-w-[42ch]">{meta.title}</span>}
+                              {meta.documentNumber && <span className="ui-id text-reading group-hover:text-[var(--color-accent-text)] group-hover:underline underline-offset-[3px]">{meta.documentNumber}</span>}
+                              {meta.title && meta.title !== meta.documentNumber && <span className="block text-body text-[var(--color-text-muted)] truncate max-w-[42ch]">{meta.title}</span>}
                             </Link>
                           ) : (
                             <span className="text-[var(--color-text-muted)]">Document not found</span>
                           )}
                         </td>
                         <td className={`${tbl.td} max-sm:col-span-2 max-sm:row-start-2 max-sm:py-1`}>
-                          <span className="text-[14px] font-semibold text-[var(--color-text)]">{h.reason}</span>
-                          <span className="sm:hidden ml-2 text-[13px] text-[var(--color-text-muted)]">{ageDays === 0 ? "since today" : `${ageDays} d`}{lateDays > 0 && <span className="font-semibold text-[var(--state-overdue-text)]">, {lateDays} d past the expected release</span>}</span>
+                          <span className="text-body font-medium text-[var(--color-text)]">{h.reason}</span>
+                          <span className="sm:hidden ml-2 text-body text-[var(--color-text-muted)]">{ageDays === 0 ? "since today" : `${ageDays} d`}{lateDays > 0 && <span className="font-medium text-[var(--state-overdue-text)]">, {lateDays} d past the expected release</span>}</span>
                         </td>
                         <td className={`${tbl.td} max-sm:hidden text-right whitespace-nowrap`}>
-                          <span className="font-semibold tabular-nums" title={`Since ${shortDate(h.openedAt as string)}`}>{ageDays === 0 ? "Since today" : `${ageDays} d`}</span>
-                          {lateDays > 0 && <span className="block text-[13px] font-semibold text-[var(--state-overdue-text)]">{lateDays} d past expected</span>}
+                          <span className="font-medium tabular-nums" title={`Since ${shortDate(h.openedAt as string)}`}>{ageDays === 0 ? "Since today" : `${ageDays} d`}</span>
+                          {lateDays > 0 && <span className="block text-body font-medium text-[var(--state-overdue-text)]">{lateDays} d past expected</span>}
                         </td>
                         <td className={`${tbl.td} max-lg:hidden text-[var(--color-text-muted)]`}>{h.openedByName ?? ""}</td>
-                        <td className={`${tbl.td} max-xl:hidden text-[14px] text-[var(--color-text-muted)] max-w-[32ch]`}><span className="line-clamp-2">{h.notes ?? ""}</span></td>
+                        <td className={`${tbl.td} max-xl:hidden text-body text-[var(--color-text-muted)] max-w-[32ch]`}><span className="line-clamp-2">{h.notes ?? ""}</span></td>
                         {canRelease && (
                           <td className={`${tbl.td} max-sm:col-start-2 max-sm:row-start-1 text-right`}>
                             {releasingId !== h.id && (
@@ -220,7 +220,7 @@ export default function HoldsPage() {
                                 placeholder="How it was resolved (optional)"
                                 aria-label="How it was resolved"
                                 onKeyDown={(e) => { if (e.key === "Enter" && !busy) void onRelease(h.id!); }}
-                                className={`${fieldBox} h-10 pointer-coarse:h-11 text-[15px] max-sm:text-[16px] flex-1 min-w-[220px]`}
+                                className={`${fieldBox} h-10 pointer-coarse:h-11 text-reading flex-1 min-w-[220px]`}
                                 autoFocus
                               />
                               <Button onClick={() => void onRelease(h.id!)} loading={busy}>Release hold</Button>
@@ -246,11 +246,11 @@ export default function HoldsPage() {
           <div className={`${sheet} divide-y divide-[var(--color-border)]`}>
             {totalByReason.map((r, i) => (
               <div key={r.reason} className="flex items-center gap-4 px-4 py-2.5">
-                <div className="w-48 max-sm:w-32 shrink-0 truncate text-[14px] text-[var(--color-text)]">{r.reason}</div>
+                <div className="w-48 max-sm:w-32 shrink-0 truncate text-body text-[var(--color-text)]">{r.reason}</div>
                 <div className="flex-1 bg-[var(--viz-track)] rounded-full h-2 overflow-hidden">
                   <div className="h-full rounded-full" style={{ width: `${Math.max(2, (r.count / maxBarCount) * 100)}%`, background: i === 0 ? "var(--color-main)" : "var(--viz-neutral)" }} />
                 </div>
-                <div className="w-10 text-right text-[14px] font-semibold tabular-nums">{r.count}</div>
+                <div className="w-10 text-right text-body font-medium tabular-nums">{r.count}</div>
               </div>
             ))}
           </div>

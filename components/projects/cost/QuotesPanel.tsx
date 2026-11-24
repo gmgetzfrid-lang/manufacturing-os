@@ -123,10 +123,10 @@ export default function QuotesPanel({ orgId, projectId, canManage, actor, accoun
       {section !== "invoices" && (<>
       <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap">
         <ScanSearch className="w-4 h-4 text-[var(--color-text-muted)]" />
-        <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Quotes &amp; bid tabulation</span>
+        <span className="text-body font-medium text-[var(--color-text-muted)]">Quotes &amp; bid tabulation</span>
         {canManage && (
           <button onClick={() => setShowLinks((v) => !v)}
-            className="ml-auto inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-[var(--color-border-strong)] text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
+            className="ml-auto inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-[var(--color-border-strong)] text-caption font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
             <Link2 className="w-3 h-3" /> Quote links for contractors
           </button>
         )}
@@ -144,7 +144,7 @@ export default function QuotesPanel({ orgId, projectId, canManage, actor, accoun
       {groups.length === 0 ? (
         <div className="px-4 py-8 text-center">
           <FileText className="w-7 h-7 mx-auto text-[var(--color-text-faint)] mb-2" />
-          <div className="text-[14px] font-bold text-[var(--color-text)]">No quotes yet</div>
+          <div className="text-body font-medium text-[var(--color-text)]">No quotes yet</div>
           <div className="text-xs text-[var(--color-text-muted)] mt-1 max-w-lg mx-auto">
             Upload the quotes vendors sent you. Quotes with the same RFQ group are compared side by side.
           </div>
@@ -237,7 +237,7 @@ function InvoicesSection({ orgId, projectId, canManage, actor, accounts, parties
         <ul className="mt-1 space-y-0.5 text-xs">
           {ready.map((r) => (
             <li key={r.doc.id}>
-              <span className="font-bold text-[var(--color-text)]">{r.doc.vendorName ?? "Vendor"}</span>
+              <span className="font-medium text-[var(--color-text)]">{r.doc.vendorName ?? "Vendor"}</span>
               {r.doc.docNumber ? ` ${r.doc.docNumber}` : ""}: {fmtMoney(r.doc.totalAmount ?? 0)} → {accountName(r.suggestion!.accountId)}
             </li>
           ))}
@@ -259,10 +259,10 @@ function InvoicesSection({ orgId, projectId, canManage, actor, accounts, parties
     <div className={framed ? "border-t border-[var(--color-border)]" : undefined}>
       <div className="px-4 py-2.5 flex items-center gap-2 flex-wrap">
         <Receipt className="w-4 h-4 text-[var(--color-text-muted)]" />
-        <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Invoices</span>
+        <span className="text-body font-medium text-[var(--color-text-muted)]">Invoices</span>
         {canManage && ready.length > 0 && (
           <button onClick={() => void postReady()} disabled={!!batch}
-            className="ml-auto inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-semibold hover:bg-[var(--color-accent-hover)] disabled:opacity-50 transition-colors"
+            className="ml-auto inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-caption font-medium hover:bg-[var(--color-accent-hover)] disabled:opacity-50 transition-colors"
             title="Invoices whose vendor maps to exactly one budget line, with a readable total and no duplicate on file.">
             {batch ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
             {batch ?? `Post ${ready.length} matched`}
@@ -273,7 +273,7 @@ function InvoicesSection({ orgId, projectId, canManage, actor, accounts, parties
         <InvoiceDrop orgId={orgId} projectId={projectId} actor={actor} onDone={onChanged} setErr={setErr} />
       )}
       {rows.length === 0 ? (
-        <div className="px-4 pb-4 text-[11px] italic text-[var(--color-text-faint)]">No invoices uploaded yet.</div>
+        <div className="px-4 pb-4 text-caption italic text-[var(--color-text-faint)]">No invoices uploaded yet.</div>
       ) : (
         <ul className="divide-y divide-[var(--color-border)] border-t border-[var(--color-border)]">
           {rows.map(({ doc, lines, suggestion, duplicate }) => {
@@ -286,14 +286,14 @@ function InvoicesSection({ orgId, projectId, canManage, actor, accounts, parties
                   <button onClick={() => setOpen(isOpen ? null : doc.id)} className="text-[var(--color-text-faint)] hover:text-[var(--color-text)]" title="What the AI read">
                     <ChevronRight className={`w-3.5 h-3.5 ui-chevron${(isOpen) ? " rotate-90" : ""}`} />
                   </button>
-                  <span className="font-bold text-[var(--color-text)] truncate">{doc.vendorName ?? doc.fileName ?? "Invoice"}</span>
+                  <span className="font-medium text-[var(--color-text)] truncate">{doc.vendorName ?? doc.fileName ?? "Invoice"}</span>
                   <PreviewButton file={fileOfDoc(doc)} />
-                  {doc.docNumber && <span className="font-display tabular-nums text-[11px] text-[var(--color-text-muted)]">{doc.docNumber}</span>}
-                  {doc.docDate && <span className="text-[11px] text-[var(--color-text-muted)]">{doc.docDate}</span>}
-                  {doc.totalAmount != null && <span className="font-semibold tabular-nums text-[var(--color-text)]">{fmtMoney(doc.totalAmount, doc.currency ?? "USD")}</span>}
+                  {doc.docNumber && <span className="font-display tabular-nums text-caption text-[var(--color-text-muted)]">{doc.docNumber}</span>}
+                  {doc.docDate && <span className="text-caption text-[var(--color-text-muted)]">{doc.docDate}</span>}
+                  {doc.totalAmount != null && <span className="font-medium tabular-nums text-[var(--color-text)]">{fmtMoney(doc.totalAmount, doc.currency ?? "USD")}</span>}
                   <StatusChip status={doc.status} />
                   {duplicate && (doc.status === "draft" || doc.status === "parsed") && (
-                    <span className="inline-flex items-center gap-1 text-[13px] font-semibold px-1.5 py-0.5 rounded border border-[var(--state-overdue)] bg-[var(--state-overdue)] text-[var(--state-overdue-text)]"
+                    <span className="inline-flex items-center gap-1 text-body font-medium px-1.5 py-0.5 rounded border border-[var(--state-overdue)] bg-[var(--state-overdue)] text-[var(--state-overdue-text)]"
                       title={`Same vendor and ${duplicate.docNumber ? "invoice number" : "amount and date"} as ${duplicate.fileName ?? "another invoice"} (${COST_DOC_STATUS_LABEL[duplicate.status as CostDocument["status"]]?.toLowerCase() ?? duplicate.status}).`}>
                       <CopyIcon className="w-2.5 h-2.5" /> possible duplicate
                     </span>
@@ -302,7 +302,7 @@ function InvoicesSection({ orgId, projectId, canManage, actor, accounts, parties
                     <>
                       <ReadButton busy={busy === doc.id} onClick={() => void readDoc(doc)} />
                       <button onClick={() => void typeTotal(doc)}
-                        className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">type total</button>
+                        className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">type total</button>
                     </>
                   )}
                   {canManage && doc.status === "parsed" && (
@@ -319,11 +319,11 @@ function InvoicesSection({ orgId, projectId, canManage, actor, accounts, parties
                     <CorrectButton onClick={() => setCorrecting(doc.id)} />
                   )}
                   {doc.status === "posted" && onLine && (
-                    <span className="text-[11px] text-[var(--color-text-muted)]">on {accounts.find((a) => a.id === onLine)?.name ?? "a budget line"}</span>
+                    <span className="text-caption text-[var(--color-text-muted)]">on {accounts.find((a) => a.id === onLine)?.name ?? "a budget line"}</span>
                   )}
                   {canManage && doc.status === "posted" && moving !== doc.id && accounts.length > 1 && (
                     <button onClick={() => setMoving(doc.id)} title="Posted to the wrong budget line? Move it. The old entry stays on the record, struck through."
-                      className="inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-[var(--color-border-strong)] text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+                      className="inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-[var(--color-border-strong)] text-caption font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
                       <ArrowRightLeft className="w-3 h-3" /> Move to line
                     </button>
                   )}
@@ -331,7 +331,7 @@ function InvoicesSection({ orgId, projectId, canManage, actor, accounts, parties
                     <span className="inline-flex items-center gap-1.5">
                       <PostControls accounts={accounts.filter((a) => a.id !== onLine)} busy={busy === doc.id}
                         onPost={(accountId) => move(doc, onLine, accountId)} label="Move here" />
-                      <button onClick={() => setMoving(null)} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>
+                      <button onClick={() => setMoving(null)} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>
                     </span>
                   )}
                   {canManage && (doc.status === "draft" || doc.status === "parsed") && (
@@ -344,7 +344,7 @@ function InvoicesSection({ orgId, projectId, canManage, actor, accounts, parties
                 )}
                 {isOpen && (
                   <div className="mt-2 ml-6 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)]/40 px-3 py-2 space-y-1">
-                    <div className="text-[11px] text-[var(--color-text-muted)] flex flex-wrap gap-x-3">
+                    <div className="text-caption text-[var(--color-text-muted)] flex flex-wrap gap-x-3">
                       <span>File: {doc.fileName ?? "-"}</span>
                       {typeof p.poNumber === "string" && p.poNumber && <span>PO {p.poNumber}</span>}
                       {typeof p.dueDate === "string" && p.dueDate && <span>Due {p.dueDate}</span>}
@@ -352,16 +352,16 @@ function InvoicesSection({ orgId, projectId, canManage, actor, accounts, parties
                       {typeof p.tax === "number" && <span>Tax {fmtMoney(p.tax)}</span>}
                     </div>
                     {lines.length > 0 ? (
-                      <ul className="text-[11px]">
+                      <ul className="text-caption">
                         {lines.map((l, i) => (
                           <li key={i} className="flex gap-2">
                             <span className="flex-1 text-[var(--color-text)]">{l.description}</span>
-                            {l.total != null && <span className="tabular-nums font-bold">{fmtMoney(l.total)}</span>}
+                            {l.total != null && <span className="tabular-nums font-medium">{fmtMoney(l.total)}</span>}
                           </li>
                         ))}
                       </ul>
                     ) : (
-                      <div className="text-[11px] italic text-[var(--color-text-faint)]">{doc.status === "draft" ? "Not read yet." : "No line detail was printed (or readable)."}</div>
+                      <div className="text-caption italic text-[var(--color-text-faint)]">{doc.status === "draft" ? "Not read yet." : "No line detail was printed (or readable)."}</div>
                     )}
                   </div>
                 )}
@@ -446,8 +446,8 @@ function InvoiceDrop({ orgId, projectId, actor, onDone, setErr }: {
             <li key={j.key} className="px-2.5 py-1.5 flex items-center gap-2 text-xs">
               <FileThumb file={j.file} size={28} />
               <span className="min-w-0 flex-1">
-                <span className="block truncate font-bold text-[var(--color-text)]">{j.file.name} <span className="font-normal text-[var(--color-text-muted)]">· {fileSize(j.file.size)}</span></span>
-                <span className={`block truncate text-[11px] ${j.state === "failed" ? "font-semibold text-[var(--state-overdue-text)]" : j.state === "done" ? "text-[var(--state-released-text)]" : "text-[var(--color-text-muted)]"}`}>
+                <span className="block truncate font-medium text-[var(--color-text)]">{j.file.name} <span className="font-normal text-[var(--color-text-muted)]">· {fileSize(j.file.size)}</span></span>
+                <span className={`block truncate text-caption ${j.state === "failed" ? "font-medium text-[var(--state-overdue-text)]" : j.state === "done" ? "text-[var(--state-released-text)]" : "text-[var(--color-text-muted)]"}`}>
                   {j.state === "waiting" ? "Waiting…" : j.state === "uploading" ? "Uploading…" : j.state === "reading" ? "Reading…" : j.state === "done" ? "Read" : j.error}
                 </span>
               </span>
@@ -455,7 +455,7 @@ function InvoiceDrop({ orgId, projectId, actor, onDone, setErr }: {
               {j.state === "done" && <CheckCircle2 className="w-3.5 h-3.5 text-[var(--state-released-text)] shrink-0" />}
               {j.state === "failed" && (
                 <>
-                  <button type="button" onClick={() => void retry(j)} className="shrink-0 h-7 px-2.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[11px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">Try again</button>
+                  <button type="button" onClick={() => void retry(j)} className="shrink-0 h-7 px-2.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-caption font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">Try again</button>
                   <button type="button" onClick={() => setJobs((js) => js.filter((x) => x.key !== j.key))} aria-label={`Remove ${j.file.name} from the list`} className="shrink-0 p-1 text-[var(--color-text-faint)] hover:text-[var(--color-text)]"><X className="w-3.5 h-3.5" /></button>
                 </>
               )}
@@ -463,7 +463,7 @@ function InvoiceDrop({ orgId, projectId, actor, onDone, setErr }: {
           ))}
         </ul>
       )}
-      {!working && doneCount > 0 && <div className="text-[11px] text-[var(--color-text-muted)]">{doneCount} read. Check each below before it posts.</div>}
+      {!working && doneCount > 0 && <div className="text-caption text-[var(--color-text-muted)]">{doneCount} read. Check each below before it posts.</div>}
     </div>
   );
 }
@@ -551,10 +551,10 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, parties, companie
     <div>
       <button onClick={() => setOpen((v) => !v)} className="w-full px-4 py-2.5 flex items-center gap-2 text-left hover:bg-[var(--color-surface-2)]/40 transition-colors">
         <ChevronRight className={`w-4 h-4 text-[var(--color-text-faint)] ui-chevron${(open) ? " rotate-90" : ""}`} />
-        <span className="text-xs font-semibold text-[var(--color-text)]">{group}</span>
-        <span className="text-[11px] text-[var(--color-text-muted)]">{groupDocs.length} bid{groupDocs.length === 1 ? "" : "s"}</span>
+        <span className="text-xs font-medium text-[var(--color-text)]">{group}</span>
+        <span className="text-caption text-[var(--color-text-muted)]">{groupDocs.length} bid{groupDocs.length === 1 ? "" : "s"}</span>
         {awarded && (
-          <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-[var(--state-released-text)]">
+          <span className="inline-flex items-center gap-1 text-caption font-medium text-[var(--state-released-text)]">
             <Trophy className="w-3 h-3" /> Awarded to {awarded.vendorName ?? "vendor"}
           </span>
         )}
@@ -563,7 +563,7 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, parties, companie
       {open && (
         <div className="px-4 pb-4 space-y-2">
           {awarded && canManage && (
-            <div className="flex items-center gap-2 flex-wrap rounded-lg border border-[var(--state-released)] bg-[var(--state-released)]/[0.05] px-3 py-2 text-[11px]">
+            <div className="flex items-center gap-2 flex-wrap rounded-lg border border-[var(--state-released)] bg-[var(--state-released)]/[0.05] px-3 py-2 text-caption">
               <Trophy className="w-3.5 h-3.5 text-[var(--state-released-text)] shrink-0" />
               <span className="text-[var(--color-text)]">
                 Awarded to <b>{awarded.vendorName ?? "vendor"}</b>
@@ -572,21 +572,21 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, parties, companie
               </span>
               <button onClick={() => void unaward(awarded)} disabled={busy === awarded.id}
                 title="Void the commitment it posted and bring the other bids back"
-                className="ml-auto inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[11px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">
+                className="ml-auto inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-caption font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">
                 {busy === awarded.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <RotateCcw className="w-3 h-3" />} Undo award
               </button>
             </div>
           )}
           {unread.length > 0 && (
-            <div className="flex items-center gap-2 flex-wrap text-[11px] text-[var(--color-text-muted)]">
+            <div className="flex items-center gap-2 flex-wrap text-caption text-[var(--color-text-muted)]">
               <AlertTriangle className="w-3.5 h-3.5 text-[var(--state-held-text)]" />
               {unread.length} quote{unread.length === 1 ? "" : "s"} not read yet:
               {unread.map((d) => (
                 <span key={d.id} className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--color-border-strong)] px-2 py-1">
-                  <span className="font-bold text-[var(--color-text)] max-w-40 truncate">{d.vendorName ?? d.fileName}</span>
+                  <span className="font-medium text-[var(--color-text)] max-w-40 truncate">{d.vendorName ?? d.fileName}</span>
                   <PreviewButton file={fileOfDoc(d)} />
                   {canManage && <ReadButton busy={busy === d.id} onClick={() => void readDoc(d)} />}
-                  {canManage && <button onClick={() => void typeTotal(d)} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">type total</button>}
+                  {canManage && <button onClick={() => void typeTotal(d)} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">type total</button>}
                   {bidTools(d)}
                 </span>
               ))}
@@ -597,7 +597,7 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, parties, companie
             <div className="overflow-x-auto rounded-xl border border-[var(--color-border)]">
               <table className="w-full text-xs">
                 <thead>
-                  <tr className="text-left text-[13px] font-semibold text-[var(--color-text-muted)] border-b border-[var(--color-border)]">
+                  <tr className="text-left text-body font-medium text-[var(--color-text-muted)] border-b border-[var(--color-border)]">
                     <th className="px-3 py-2">Bidder</th>
                     <th className="px-3 py-2 text-right">Price</th>
                     <th className="px-3 py-2 text-right" title="Labor hours the bid offers">Labor hrs</th>
@@ -618,33 +618,33 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, parties, companie
                       <React.Fragment key={e.quoteId}>
                         <tr className={isAwarded ? "bg-[var(--state-released)]/[0.05]" : isDeclined ? "opacity-55" : undefined}>
                           <td className="px-3 py-2">
-                            <span className="font-bold text-[var(--color-text)]">{e.vendorName}</span>
+                            <span className="font-medium text-[var(--color-text)]">{e.vendorName}</span>
                             <PreviewButton file={fileOfDoc(doc)} className="ml-1" />
                             {known && (
                               <Link href={`/companies/${known.id}`}
-                                className="ml-1.5 inline-flex items-center gap-1 text-[11px] font-bold px-1.5 py-0.5 rounded border border-[var(--color-border-strong)] text-[var(--color-text-muted)] hover:text-[var(--color-accent-text)] hover:border-[var(--color-accent-ring)] transition-colors"
+                                className="ml-1.5 inline-flex items-center gap-1 text-caption font-medium px-1.5 py-0.5 rounded border border-[var(--color-border-strong)] text-[var(--color-text-muted)] hover:text-[var(--color-accent-text)] hover:border-[var(--color-accent-ring)] transition-colors"
                                 title="In your Known Companies registry - open their full record"
                                 onClick={(ev) => ev.stopPropagation()}>
                                 known{known.qualityManualScore != null ? ` · QM ${Math.round(known.qualityManualScore)}%` : ""}
                               </Link>
                             )}
                             {known?.status === "do_not_use" && (
-                              <span className="ml-1.5 text-[13px] font-semibold px-1.5 py-0.5 rounded border border-[var(--state-overdue)] bg-[var(--state-overdue)] text-[var(--state-overdue-text)]">do not use</span>
+                              <span className="ml-1.5 text-body font-medium px-1.5 py-0.5 rounded border border-[var(--state-overdue)] bg-[var(--state-overdue)] text-[var(--state-overdue-text)]">do not use</span>
                             )}
                             {s?.best && !awarded && (
-                              <span className="ml-1.5 text-[11px] font-semibold text-[var(--color-text)]" title="Highest weighted value score - not automatically the winner; you decide.">Best value</span>
+                              <span className="ml-1.5 text-caption font-medium text-[var(--color-text)]" title="Highest weighted value score - not automatically the winner; you decide.">Best value</span>
                             )}
-                            {isAwarded && <span className="ml-1.5 inline-flex items-center gap-0.5 text-[11px] font-semibold text-[var(--state-released-text)]"><Trophy className="w-2.5 h-2.5" /> Awarded</span>}
-                            {isDeclined && <span className="ml-1.5 text-[11px] font-bold text-[var(--color-text-faint)]">Not selected</span>}
+                            {isAwarded && <span className="ml-1.5 inline-flex items-center gap-0.5 text-caption font-medium text-[var(--state-released-text)]"><Trophy className="w-2.5 h-2.5" /> Awarded</span>}
+                            {isDeclined && <span className="ml-1.5 text-caption font-medium text-[var(--color-text-faint)]">Not selected</span>}
                             {bidTools(doc)}
                           </td>
-                          <td className="px-3 py-2 text-right font-semibold tabular-nums text-[var(--color-text)]">{fmtMoney(e.total)}</td>
+                          <td className="px-3 py-2 text-right font-medium tabular-nums text-[var(--color-text)]">{fmtMoney(e.total)}</td>
                           <td className="px-3 py-2 text-right tabular-nums">{e.laborHours > 0 ? e.laborHours.toLocaleString() : <span className="text-[var(--color-text-faint)]" title="This bid doesn't state labor hours - undisclosed manpower scores at the field's floor.">not stated</span>}</td>
                           <td className="px-3 py-2 text-right tabular-nums">{e.dollarsPerHour != null ? fmtMoney(e.dollarsPerHour) : "-"}</td>
                           <td className="px-3 py-2 text-right tabular-nums">{e.peakHeadcount ?? "-"}</td>
                           <td className="px-3 py-2 text-right">
                             {s && (
-                              <span className="font-semibold tabular-nums text-[var(--color-text)]" title={`Price ${s.parts.price} · Manpower ${s.parts.manpower} · Coverage ${s.parts.coverage} (each 0–100 vs the field)`}>
+                              <span className="font-medium tabular-nums text-[var(--color-text)]" title={`Price ${s.parts.price} · Manpower ${s.parts.manpower} · Coverage ${s.parts.coverage} (each 0–100 vs the field)`}>
                                 {s.score}
                               </span>
                             )}
@@ -671,17 +671,17 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, parties, companie
                             <td colSpan={canManage && !awarded ? 7 : 6} className="px-3 pb-2 pt-0">
                               <div className="flex flex-wrap gap-1">
                                 {parsed.find((p) => p.doc.id === e.quoteId)?.quote.exclusions.map((x) => (
-                                  <span key={x} className="text-[11px] font-bold px-1.5 py-0.5 rounded border border-[var(--state-held)] bg-[var(--state-held)]/[0.07] text-[var(--state-held-text)]" title="Scope this bid explicitly does NOT include">
+                                  <span key={x} className="text-caption font-medium px-1.5 py-0.5 rounded border border-[var(--state-held)] bg-[var(--state-held)]/[0.07] text-[var(--state-held-text)]" title="Scope this bid explicitly does NOT include">
                                     excludes: {x}
                                   </span>
                                 ))}
                                 {e.missingScope.slice(0, 4).map((x) => (
-                                  <span key={x} className="text-[11px] font-bold px-1.5 py-0.5 rounded border border-[var(--state-overdue)] bg-[var(--state-overdue)]/[0.06] text-[var(--state-overdue-text)]" title="Other bidders priced this - this bid neither priced nor excluded it">
+                                  <span key={x} className="text-caption font-medium px-1.5 py-0.5 rounded border border-[var(--state-overdue)] bg-[var(--state-overdue)]/[0.06] text-[var(--state-overdue-text)]" title="Other bidders priced this - this bid neither priced nor excluded it">
                                     silent gap: {x}
                                   </span>
                                 ))}
                                 {e.missingScope.length > 4 && (
-                                  <span className="text-[11px] font-bold text-[var(--color-text-muted)]">+{e.missingScope.length - 4} more gaps</span>
+                                  <span className="text-caption font-medium text-[var(--color-text-muted)]">+{e.missingScope.length - 4} more gaps</span>
                                 )}
                               </div>
                             </td>
@@ -698,10 +698,10 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, parties, companie
             <ul className="rounded-xl border border-[var(--color-border)] divide-y divide-[var(--color-border)]">
               {manualBids.map((d) => (
                 <li key={d.id} className={`px-3 py-2 flex items-center gap-2 flex-wrap text-xs ${d.status === "declined" && correcting !== d.id ? "opacity-55" : ""}`}>
-                  <span className="font-bold text-[var(--color-text)]">{d.vendorName ?? d.fileName ?? "Bid"}</span>
+                  <span className="font-medium text-[var(--color-text)]">{d.vendorName ?? d.fileName ?? "Bid"}</span>
                   <PreviewButton file={fileOfDoc(d)} />
-                  <span className="font-semibold tabular-nums text-[var(--color-text)]">{fmtMoney(d.totalAmount ?? 0)}</span>
-                  <span className="text-[11px] text-[var(--color-text-muted)]" title="The AI couldn't read line detail from this file. It competes on price only, with no manpower or coverage score.">
+                  <span className="font-medium tabular-nums text-[var(--color-text)]">{fmtMoney(d.totalAmount ?? 0)}</span>
+                  <span className="text-caption text-[var(--color-text-muted)]" title="The AI couldn't read line detail from this file. It competes on price only, with no manpower or coverage score.">
                     typed total, price only
                   </span>
                   <StatusChip status={d.status} />
@@ -721,7 +721,7 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, parties, companie
             </ul>
           )}
           {econ.length > 1 && (
-            <div className="text-[11px] text-[var(--color-text-muted)]">
+            <div className="text-caption text-[var(--color-text-muted)]">
               Value score = {Math.round(DEFAULT_WEIGHTS.price * 100)}% price + {Math.round(DEFAULT_WEIGHTS.manpower * 100)}% manpower-for-the-money + {Math.round(DEFAULT_WEIGHTS.coverage * 100)}% scope coverage, each measured against this field.
               The cheapest bid doesn&apos;t automatically win: exclusions and silent gaps are why. You make the call.
             </div>
@@ -741,7 +741,7 @@ function StatusChip({ status }: { status: CostDocument["status"] }) {
     : status === "declined" || status === "void" ? "border-[var(--color-border)] text-[var(--color-text-faint)]"
     : "border-[var(--state-held)] bg-[var(--state-held)]/[0.07] text-[var(--state-held-text)]";
   return (
-    <span className={`text-[13px] font-semibold px-1.5 py-0.5 rounded border ${tone}`}>
+    <span className={`text-body font-medium px-1.5 py-0.5 rounded border ${tone}`}>
       {COST_DOC_STATUS_LABEL[status]}
     </span>
   );
@@ -750,7 +750,7 @@ function StatusChip({ status }: { status: CostDocument["status"] }) {
 function ReadButton({ busy, onClick }: { busy: boolean; onClick: () => void }) {
   return (
     <button onClick={onClick} disabled={busy}
-      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg border border-[var(--color-border-strong)] text-[var(--color-text)] text-[11px] font-semibold hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors"
+      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg border border-[var(--color-border-strong)] text-[var(--color-text)] text-caption font-medium hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors"
       title="Reads the printed pages into numbers, on your own AI key. You check them before anything posts.">
       {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />} Read
     </button>
@@ -765,21 +765,21 @@ function PostControls({ accounts, busy, onPost, label, suggested }: {
 }) {
   const [accountId, setAccountId] = useState(suggested?.accountId ?? (accounts.length === 1 ? accounts[0].id : ""));
   if (accounts.length === 0) {
-    return <span className="text-[11px] text-[var(--color-text-muted)]" title="Create a budget line first: money always posts somewhere.">needs a budget line</span>;
+    return <span className="text-caption text-[var(--color-text-muted)]" title="Create a budget line first: money always posts somewhere.">needs a budget line</span>;
   }
   return (
     <span className="inline-flex items-center gap-1">
       <select value={accountId} onChange={(e) => setAccountId(e.target.value)}
-        className="h-6 pointer-coarse:h-11 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1 text-[11px] max-w-36">
+        className="h-6 pointer-coarse:h-11 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1 text-caption max-w-36">
         <option value="">Budget line…</option>
         {accounts.map((a) => <option key={a.id} value={a.id}>{a.code ? `${a.code} ` : ""}{a.name}</option>)}
       </select>
       <button onClick={() => accountId && void onPost(accountId)} disabled={busy || !accountId}
-        className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">
+        className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">
         {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckCircle2 className="w-3 h-3" />} {label}
       </button>
       {suggested && accountId === suggested.accountId && (
-        <span className={`text-[11px] font-bold ${suggested.confidence === "high" ? "text-[var(--state-released-text)]" : "text-[var(--color-text-muted)]"}`}
+        <span className={`text-caption font-medium ${suggested.confidence === "high" ? "text-[var(--state-released-text)]" : "text-[var(--color-text-muted)]"}`}
           title={`Suggested: ${suggested.reason}`}>
           <Sparkles className="w-2.5 h-2.5 inline -mt-0.5" /> {suggested.confidence === "high" ? "matched" : "suggested"}
         </span>
@@ -802,7 +802,7 @@ function VoidButton({ doc, actor, busy, setBusy, onChanged, setErr }: {
         if (!res.ok) setErr(res.error ?? "Couldn't void."); else onChanged();
       }}
       disabled={busy}
-      className="ml-auto inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-bold text-[var(--color-text-faint)] hover:text-[var(--state-overdue-text)] hover:bg-[var(--state-overdue)] transition-colors">
+      className="ml-auto inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-caption font-medium text-[var(--color-text-faint)] hover:text-[var(--state-overdue-text)] hover:bg-[var(--state-overdue)] transition-colors">
       <Ban className="w-3 h-3" /> Void
     </button>
   );
@@ -811,7 +811,7 @@ function VoidButton({ doc, actor, busy, setBusy, onChanged, setErr }: {
 function CorrectButton({ onClick }: { onClick: () => void }) {
   return (
     <button onClick={onClick} title="Fix what was read: the total, the vendor, the RFQ group"
-      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
+      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-caption font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
       <Pencil className="w-3 h-3" /> Correct
     </button>
   );
@@ -847,18 +847,18 @@ function CorrectForm({ doc, actor, groups, onDone, onCancel, setErr }: {
   return (
     <div className="mt-1.5 rounded-lg border border-[var(--color-accent-ring)]/50 bg-[var(--color-surface-2)] px-2.5 py-2 flex items-end gap-2 flex-wrap text-xs">
       <label className="block">
-        <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Total</span>
+        <span className="text-body font-medium text-[var(--color-text-muted)]">Total</span>
         <input value={total} onChange={(e) => setTotal(e.target.value)} inputMode="decimal" placeholder="e.g. 182,000"
           className="mt-0.5 block h-8 pointer-coarse:h-11 w-32 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs font-display tabular-nums" />
       </label>
       <label className="block">
-        <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Vendor</span>
+        <span className="text-body font-medium text-[var(--color-text-muted)]">Vendor</span>
         <input value={vendor} onChange={(e) => setVendor(e.target.value)} placeholder="Company name"
           className="mt-0.5 block h-8 pointer-coarse:h-11 w-48 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
       </label>
       {doc.kind === "quote" && (
         <label className="block">
-          <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">RFQ group</span>
+          <span className="text-body font-medium text-[var(--color-text-muted)]">RFQ group</span>
           <input value={group} onChange={(e) => setGroup(e.target.value)} list={listId} placeholder="The scope being bid"
             title="Quotes with the same group name are compared side by side."
             className="mt-0.5 block h-8 pointer-coarse:h-11 w-48 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
@@ -866,10 +866,10 @@ function CorrectForm({ doc, actor, groups, onDone, onCancel, setErr }: {
         </label>
       )}
       <button onClick={() => void save()} disabled={saving}
-        className="h-8 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-semibold hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
+        className="h-8 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-caption font-medium hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
         {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckCircle2 className="w-3 h-3" />} Save
       </button>
-      <button onClick={onCancel} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>
+      <button onClick={onCancel} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>
     </div>
   );
 }
@@ -911,8 +911,8 @@ function UploadRow({ orgId, projectId, actor, kind, existingGroups, onDone, setE
     <div {...drag.bind} className={`px-4 py-2.5 border-b border-[var(--color-border)] bg-[var(--color-surface-2)]/30 flex items-center gap-2 flex-wrap ${drag.ring}`}>
       <label className="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-[var(--color-border-strong)] px-2.5 py-1.5 cursor-pointer hover:border-[var(--color-accent-ring)] text-xs min-w-0">
         {file ? <FileThumb file={file} size={24} /> : <UploadCloud className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />}
-        <span className={`max-w-56 truncate ${drag.over ? "font-bold text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>
-          {drag.over ? drag.say : file ? <><span className="text-[var(--color-text)] font-bold">{file.name}</span> · {fileSize(file.size)}</> : `${kind === "quote" ? "Quote" : "Invoice"} PDF or photo: drop or choose…`}
+        <span className={`max-w-56 truncate ${drag.over ? "font-medium text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>
+          {drag.over ? drag.say : file ? <><span className="text-[var(--color-text)] font-medium">{file.name}</span> · {fileSize(file.size)}</> : `${kind === "quote" ? "Quote" : "Invoice"} PDF or photo: drop or choose…`}
         </span>
         <input type="file" accept={INVOICE_ACCEPT} className="hidden"
           onChange={(e) => { setFile(e.target.files?.[0] ?? null); setFailed(null); e.target.value = ""; }} />
@@ -930,10 +930,10 @@ function UploadRow({ orgId, projectId, actor, kind, existingGroups, onDone, setE
         </>
       )}
       <button onClick={() => void submit()} disabled={saving || !file}
-        className={`h-8 inline-flex items-center gap-1 px-3 rounded-lg text-[11px] font-semibold disabled:opacity-50 transition-colors ${file ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]" : "border border-[var(--color-border-strong)] text-[var(--color-text)]"}`}>
+        className={`h-8 inline-flex items-center gap-1 px-3 rounded-lg text-caption font-medium disabled:opacity-50 transition-colors ${file ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]" : "border border-[var(--color-border-strong)] text-[var(--color-text)]"}`}>
         {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <UploadCloud className="w-3 h-3" />} {failed ? "Try again" : "Upload"}
       </button>
-      {failed && <span role="alert" className="basis-full text-[11px] font-semibold text-[var(--state-overdue-text)]">{file?.name}: {failed}</span>}
+      {failed && <span role="alert" className="basis-full text-caption font-medium text-[var(--state-overdue-text)]">{file?.name}: {failed}</span>}
     </div>
   );
 }
@@ -1035,7 +1035,7 @@ function QuoteLinksSection({ orgId, projectId, actor, existingGroups, setErr }: 
 
   return (
     <div className="px-4 py-3 border-b border-[var(--color-border)] bg-[var(--color-surface-2)] space-y-2">
-      <div className="text-[11px] text-[var(--color-text-muted)]">
+      <div className="text-caption text-[var(--color-text-muted)]">
         A contractor&apos;s own link, no account needed. Their quote lands here and joins the comparison.
       </div>
       <div className="flex items-center gap-2 flex-wrap">
@@ -1047,25 +1047,25 @@ function QuoteLinksSection({ orgId, projectId, actor, existingGroups, setErr }: 
           {existingGroups.map((g) => <option key={g} value={g} />)}
         </datalist>
         <button onClick={() => void create()} disabled={saving}
-          className="h-8 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-semibold hover:bg-[var(--color-accent-hover)] disabled:opacity-50 transition-colors">
+          className="h-8 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-caption font-medium hover:bg-[var(--color-accent-hover)] disabled:opacity-50 transition-colors">
           {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Link2 className="w-3 h-3" />} Create link
         </button>
       </div>
       {(links ?? []).filter((l) => !l.revokedAt).length > 0 && (
         <ul className="space-y-1">
           {(links ?? []).filter((l) => !l.revokedAt).map((l) => (
-            <li key={l.id} className="flex items-center gap-2 text-[11px] rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1.5">
-              <span className="font-bold text-[var(--color-text)]">{l.companyName}</span>
+            <li key={l.id} className="flex items-center gap-2 text-caption rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1.5">
+              <span className="font-medium text-[var(--color-text)]">{l.companyName}</span>
               {l.rfqGroup && <span className="text-[var(--color-text-muted)]">· {l.rfqGroup}</span>}
-              <span className="text-[11px] text-[var(--color-text-faint)]">{l.submissionCount} submission{l.submissionCount === 1 ? "" : "s"}</span>
+              <span className="text-caption text-[var(--color-text-faint)]">{l.submissionCount} submission{l.submissionCount === 1 ? "" : "s"}</span>
               <span className="ml-auto flex items-center gap-1">
                 <button onClick={() => void makeRfq(l)}
                   title="Download a ready-to-send Request For Quote (.docx) built from this project's scope, purpose and turnover requirements, with this company's submission link inside."
-                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-[var(--color-border-strong)] text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
+                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-[var(--color-border-strong)] text-caption font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
                   <FileText className="w-3 h-3" /> RFQ (.docx)
                 </button>
                 <button onClick={() => void copy(l)}
-                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-[var(--color-border-strong)] text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
+                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-[var(--color-border-strong)] text-caption font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
                   <Copy className="w-3 h-3" /> {copied === l.id ? "Copied!" : "Copy link"}
                 </button>
               </span>

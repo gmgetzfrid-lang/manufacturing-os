@@ -74,10 +74,10 @@ export default function StatusChip({ orgId, bump }: { orgId: string; /** Change 
   // Plain words, not a chip: who answers and what this month has cost. A
   // problem says so in its status color, with the way to fix it.
   return (
-    <div title={title} className="min-w-0 flex items-center gap-2 text-[13px] max-sm:hidden">
+    <div title={title} className="min-w-0 flex items-center gap-2 text-body max-sm:hidden">
       {problem || nearCap ? (
         <>
-          <span className={`inline-flex items-center gap-1.5 font-semibold whitespace-nowrap ${snap.failed ? "text-[var(--color-text-muted)]" : nearCap ? "text-[var(--state-overdue)]" : "text-[var(--state-held)]"}`}>
+          <span className={`inline-flex items-center gap-1.5 font-medium whitespace-nowrap ${snap.failed ? "text-[var(--color-text-muted)]" : nearCap ? "text-[var(--state-overdue)]" : "text-[var(--state-held)]"}`}>
             <span aria-hidden className={`w-2 h-2 rounded-full ${snap.failed ? "bg-[var(--color-text-faint)]" : nearCap ? "bg-[var(--state-overdue)]" : "bg-[var(--state-held)]"}`} />
             {snap.failed ? "AI status unknown" : nearCap ? `${money(snap.spentUsd)} of ${cap(snap.capUsd)} used this month` : "No AI key"}
           </span>
@@ -85,7 +85,7 @@ export default function StatusChip({ orgId, bump }: { orgId: string; /** Change 
         </>
       ) : (
         <span className="min-w-0 truncate text-[var(--color-text-muted)]">
-          {!snap.known ? "Checking AI" : <><span className="font-semibold text-[var(--color-text)]">{who}</span>{` ${money(snap.spentUsd)}${snap.capUsd > 0 ? ` of ${cap(snap.capUsd)}` : ""} this month`}</>}
+          {!snap.known ? "Checking AI" : <><span className="font-medium text-[var(--color-text)]">{who}</span>{` ${money(snap.spentUsd)}${snap.capUsd > 0 ? ` of ${cap(snap.capUsd)}` : ""} this month`}</>}
         </span>
       )}
     </div>

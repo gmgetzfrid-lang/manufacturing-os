@@ -28,7 +28,7 @@ export default function TrialBanner() {
       : "bg-[var(--color-text-faint)]";
 
   return (
-    <div role="status" className="shrink-0 w-full flex items-center gap-2 min-h-9 px-4 sm:px-6 py-1.5 border-b border-[var(--color-border)] bg-[var(--color-surface)] text-[13px] text-[var(--color-text)]">
+    <div role="status" className="shrink-0 w-full flex items-center gap-2 min-h-9 px-4 sm:px-6 py-1.5 border-b border-[var(--color-border)] bg-[var(--color-surface)] text-body text-[var(--color-text)]">
       <span aria-hidden className={`w-2 h-2 rounded-full shrink-0 ${dot}`} />
       <span>{label}</span>
       <Link href="/admin/billing" className="text-[var(--color-accent-text)] hover:underline underline-offset-2">

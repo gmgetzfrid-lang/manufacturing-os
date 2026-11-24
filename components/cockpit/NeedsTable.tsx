@@ -65,7 +65,7 @@ export default function NeedsTable({
 
   const name = (r: NeedsRow, fresh: boolean, cls = "") => (
     <Link href={r.link} onClick={(e) => { e.stopPropagation(); onOpen?.(r); onTransitionClick(e, () => router.push(r.link)); }}
-      className={`min-w-0 truncate text-[var(--color-text)] hover:text-[var(--color-accent-text)] hover:underline underline-offset-2 ${fresh || r.yourTurn || !r.ref ? "font-semibold" : ""} ${cls}`}>
+      className={`min-w-0 truncate text-[var(--color-text)] hover:text-[var(--color-accent-text)] hover:underline underline-offset-2 ${fresh || r.yourTurn || !r.ref ? "font-medium" : ""} ${cls}`}>
       {r.name}
     </Link>
   );
@@ -78,7 +78,7 @@ export default function NeedsTable({
   return (
     <div className="@container">
       {/* Wide: a ruled table. */}
-      <table className="hidden @[44rem]:table w-full text-[15px]" aria-label={label}>
+      <table className="hidden @[44rem]:table w-full text-body" aria-label={label}>
         <thead className={thead}>
           <tr>
             <th className={th}>Item</th>
@@ -102,7 +102,7 @@ export default function NeedsTable({
                 </td>
                 <td className="px-4 py-3 text-[var(--color-text-muted)] max-w-[24rem]"><div className="truncate">{r.todo}</div></td>
                 <td className="px-4 py-3"><Status r={r} fresh={fresh} /></td>
-                <td className={`px-4 py-3 whitespace-nowrap tabular-nums ${r.overdue ? "text-[var(--state-overdue-text)] font-semibold" : "text-[var(--color-text-muted)]"}`}>{dateWords(r)}</td>
+                <td className={`px-4 py-3 whitespace-nowrap tabular-nums ${r.overdue ? "text-[var(--state-overdue-text)] font-medium" : "text-[var(--color-text-muted)]"}`}>{dateWords(r)}</td>
                 {hasMark && <td className="px-2 py-1.5 text-right">{markBtn(r, iconBtn)}</td>}
               </tr>
             );
@@ -119,13 +119,13 @@ export default function NeedsTable({
               {r.overdue && <LateEdge />}
               <div onClick={() => open(r)} className="min-w-0 flex-1 px-4 py-3 cursor-pointer hover:bg-[var(--color-surface-2)] transition-colors">
                 <div className="flex items-center gap-3 min-w-0">
-                  <span className="min-w-0 flex-1 flex items-baseline gap-2 text-[15px]">
+                  <span className="min-w-0 flex-1 flex items-baseline gap-2 text-reading">
                     {r.ref ? <CopyId value={r.ref} label="number" className="min-w-0" /> : name(r, fresh)}
                   </span>
                   <span className="shrink-0"><Status r={r} fresh={fresh} /></span>
                 </div>
-                {r.ref && <div className="mt-0.5 flex min-w-0 text-[15px]">{name(r, fresh)}</div>}
-                <div className="mt-0.5 flex items-baseline gap-3 min-w-0 text-[13px] text-[var(--color-text-muted)]">
+                {r.ref && <div className="mt-0.5 flex min-w-0 text-reading">{name(r, fresh)}</div>}
+                <div className="mt-0.5 flex items-baseline gap-3 min-w-0 text-body text-[var(--color-text-muted)]">
                   <span className="min-w-0 flex-1 truncate">{r.todo}</span>
                   <span className={`shrink-0 tabular-nums ${r.overdue ? "text-[var(--state-overdue-text)] font-semibold" : ""}`}>{dateWords(r)}</span>
                 </div>

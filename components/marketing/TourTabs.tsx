@@ -89,7 +89,7 @@ export function TourTabs({ header }: { header?: React.ReactNode }) {
             ))}
           </div>
         </div>
-        <p key={active} className="mt-3 text-[15px] text-[var(--color-text-muted)] max-w-2xl"
+        <p key={active} className="mt-3 text-reading text-[var(--color-text-muted)] max-w-2xl"
           style={{ animation: "rise 0.4s var(--ease-fluid) both" }}>
           {CAPTIONS[active]}
         </p>
@@ -131,7 +131,7 @@ function MockupFrame({ url, side, children }: { url: string; side?: number; chil
           <span className="w-2.5 h-2.5 rounded-full bg-[var(--color-border-strong)]" />
           <span className="w-2.5 h-2.5 rounded-full bg-[var(--color-border-strong)]" />
         </div>
-        <div className="flex-1 min-w-0 max-w-md mx-auto h-6 px-3 rounded bg-[var(--color-surface-2)] text-[12px] text-[var(--color-text-muted)] truncate leading-6">
+        <div className="flex-1 min-w-0 max-w-md mx-auto h-6 px-3 rounded bg-[var(--color-surface-2)] text-caption text-[var(--color-text-muted)] truncate leading-6">
           {url}
         </div>
       </div>
@@ -155,14 +155,14 @@ function MiniBand({ kicker, answer, sub, action, children }: {
 }) {
   return (
     <div className="pb-3 border-b border-[var(--color-border-strong)]">
-      <div className="text-[12px] font-medium text-[var(--color-text-muted)] truncate">{kicker}</div>
+      <div className="text-caption font-medium text-[var(--color-text-muted)] truncate">{kicker}</div>
       <div className="mt-1 flex flex-wrap items-end gap-x-4 gap-y-2">
         <div className="min-w-0 flex-1 basis-[220px]">
           <div className="font-display text-[22px] sm:text-[26px] font-semibold leading-[1.08] text-[var(--color-text)]">{answer}</div>
-          {sub && <div className="mt-1 text-[13px] text-[var(--color-text-muted)]">{sub}</div>}
+          {sub && <div className="mt-1 text-body text-[var(--color-text-muted)]">{sub}</div>}
         </div>
         {action && (
-          <span className="shrink-0 inline-flex items-center gap-1.5 h-8 px-3 rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[13px] font-semibold">
+          <span className="shrink-0 inline-flex items-center gap-1.5 h-8 px-3 rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-body font-medium">
             {action}
           </span>
         )}
@@ -179,7 +179,7 @@ function MiniBody({ children }: { children: React.ReactNode }) {
 function MiniCard({ label, children, className = "" }: { label?: string; children: React.ReactNode; className?: string }) {
   return (
     <div className={className}>
-      {label && <div className="mb-1.5 font-display text-[15px] font-semibold text-[var(--color-text)]">{label}</div>}
+      {label && <div className="mb-1.5 font-display text-reading font-semibold text-[var(--color-text)]">{label}</div>}
       <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] p-3 sm:p-4">{children}</div>
     </div>
   );
@@ -198,7 +198,7 @@ function MiniSteps({ steps, now }: { steps: string[]; now: number }) {
                 style={done ? { background: "var(--color-text)" } : { border: `2px solid ${i === now ? "var(--color-text)" : "var(--color-border-strong)"}` }} />
               {!last && <span className="flex-1 h-0.5" style={{ background: i + 1 <= now ? "var(--color-text)" : "var(--color-border-strong)" }} />}
             </div>
-            <div className={`mt-1.5 pr-2 text-[12px] font-semibold truncate ${i <= now ? "text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>{s}</div>
+            <div className={`mt-1.5 pr-2 text-caption font-medium truncate ${i <= now ? "text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>{s}</div>
           </div>
         );
       })}
@@ -208,7 +208,7 @@ function MiniSteps({ steps, now }: { steps: string[]; now: number }) {
 
 function Avatar({ initials }: { initials: string }) {
   return (
-    <span className="w-6 h-6 shrink-0 rounded-full bg-[var(--color-surface-2)] border border-[var(--color-border-strong)] text-[var(--color-text)] text-[11px] font-semibold grid place-items-center">
+    <span className="w-6 h-6 shrink-0 rounded-full bg-[var(--color-surface-2)] border border-[var(--color-border-strong)] text-[var(--color-text)] text-caption font-medium grid place-items-center">
       {initials}
     </span>
   );
@@ -230,12 +230,12 @@ function DocRow({ id, name, rev, status, checkedOut }: {
     <div className="flex items-center gap-3 py-2.5 border-t first:border-t-0 border-[var(--color-border)]">
       <FileText className="w-4 h-4 shrink-0 text-[var(--color-text-muted)]" />
       <div className="min-w-0 flex-1 sm:flex sm:items-center sm:gap-3">
-        <div className="font-display text-[14px] font-semibold tabular-nums text-[var(--color-text)] shrink-0">{id}</div>
-        <div className="text-[13px] text-[var(--color-text-muted)] truncate">{name}</div>
+        <div className="font-display text-body font-semibold tabular-nums text-[var(--color-text)] shrink-0">{id}</div>
+        <div className="text-body text-[var(--color-text-muted)] truncate">{name}</div>
       </div>
-      <span className="hidden sm:block text-[13px] text-[var(--color-text-muted)] shrink-0">{rev}</span>
+      <span className="hidden sm:block text-body text-[var(--color-text-muted)] shrink-0">{rev}</span>
       {checkedOut && (
-        <span className="hidden sm:inline-flex items-center gap-1 text-[12px] font-semibold text-[var(--color-text-muted)] shrink-0">
+        <span className="hidden sm:inline-flex items-center gap-1 text-caption font-medium text-[var(--color-text-muted)] shrink-0">
           <Lock className="w-3 h-3" /> Checked out
         </span>
       )}
@@ -249,7 +249,7 @@ function LibraryMockup() {
     <MockupFrame url="app.manufacturing-os.com/documents/site-mechanical" side={1}>
       <MiniBand kicker="Document control · Site mechanical" answer="47 drawings. 1 checked out."
         sub="38 issued, 7 in revision, 2 drafts." action={<><Upload className="w-3.5 h-3.5" /> Upload</>}>
-        <div className="h-9 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] flex items-center gap-2 text-[13px] text-[var(--color-text-faint)]">
+        <div className="h-10 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] flex items-center gap-2 text-body text-[var(--color-text-faint)]">
           <Search className="w-3.5 h-3.5 shrink-0" /> <span className="truncate">Find by number, title or equipment tag</span>
         </div>
       </MiniBand>
@@ -260,7 +260,7 @@ function LibraryMockup() {
           <DocRow id="200-PRC-001" name="Process drawing, Area 200" rev="Rev 2" status="draft" checkedOut />
           <DocRow id="200-ISO-014" name='Iso 14" line, feed inlet' rev="Rev 1" status="current" />
           <DocRow id="200-ISO-015" name='Iso 8" line, cooling return' rev="Rev 3" status="revision" />
-          <div className="pt-2.5 border-t border-[var(--color-border)] text-[13px] text-[var(--color-accent-text)]">Show 42 more</div>
+          <div className="pt-2.5 border-t border-[var(--color-border)] text-body text-[var(--color-accent-text)]">Show 42 more</div>
         </MiniCard>
       </MiniBody>
     </MockupFrame>
@@ -274,30 +274,30 @@ function AskMockup() {
     <MockupFrame url="app.manufacturing-os.com/assistant" side={3}>
       <MiniBand kicker="Intelligence · Ask" answer="285 psig at 650 °F." sub="Cited to 2 pages in your library.">
         <div className="flex justify-end">
-          <div className="max-w-[85%] rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-[13px] text-[var(--color-text)]">
+          <div className="max-w-[85%] rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-body text-[var(--color-text)]">
             What is the minimum design pressure for the Area 200 feed line?
           </div>
         </div>
       </MiniBand>
       <MiniBody>
         <MiniCard label="Answer">
-          <p className="text-[14px] text-[var(--color-text)] leading-relaxed">
-            The feed line is rated for a minimum design pressure of 285 psig at 650&nbsp;°F<sup className="font-semibold ml-0.5">1</sup>,
-            set by the piping class for that service<sup className="font-semibold ml-0.5">2</sup>.
+          <p className="text-body text-[var(--color-text)] leading-relaxed">
+            The feed line is rated for a minimum design pressure of 285 psig at 650&nbsp;°F<sup className="font-medium ml-0.5">1</sup>,
+            set by the piping class for that service<sup className="font-medium ml-0.5">2</sup>.
           </p>
-          <div className="mt-3 space-y-1.5 text-[12px] text-[var(--color-text-muted)]">
+          <div className="mt-3 space-y-1.5 text-caption text-[var(--color-text-muted)]">
             <div className="flex items-start gap-2"><CheckCircle2 className="w-3.5 h-3.5 mt-0.5 shrink-0 text-[var(--color-text)]" /> Basis: the piping class table and the line list entry for the 14&quot; feed line.</div>
             <div className="flex items-start gap-2"><CheckCircle2 className="w-3.5 h-3.5 mt-0.5 shrink-0 text-[var(--color-text)]" /> It can only cite documents in your library. Nothing is invented.</div>
           </div>
           <div className="mt-3 pt-3 border-t border-[var(--color-border)] flex flex-wrap gap-2">
-            <span className="inline-flex items-center gap-1.5 h-7 px-2.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text)]">
+            <span className="inline-flex items-center gap-1.5 h-8 px-2.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)] text-body text-[var(--color-text)]">
               <BookOpen className="w-3.5 h-3.5" /> 1. Piping class spec <span className="text-[var(--color-text-muted)]">p. 143</span>
             </span>
-            <span className="inline-flex items-center gap-1.5 h-7 px-2.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text)]">
+            <span className="inline-flex items-center gap-1.5 h-8 px-2.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)] text-body text-[var(--color-text)]">
               <FileText className="w-3.5 h-3.5" /> 2. Line list, Area 200 <span className="text-[var(--color-text-muted)]">p. 12</span>
             </span>
           </div>
-          <p className="mt-3 text-[12px] text-[var(--color-text-muted)]">
+          <p className="mt-3 text-caption text-[var(--color-text-muted)]">
             Runs on your own AI key (Claude or OpenAI) with per-user spend caps. Your documents never train anyone&apos;s model.
           </p>
         </MiniCard>
@@ -311,12 +311,12 @@ function AskMockup() {
 function Person({ label, name, note, warn }: { label: string; name: string; note: string; warn?: boolean }) {
   return (
     <div className="min-w-0">
-      <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-1">{label}</div>
+      <div className="text-body font-medium text-[var(--color-text-muted)] mb-1">{label}</div>
       <div className="flex items-center gap-2 min-w-0">
         <Avatar initials={name.split(" ").map((w) => w[0]).join("")} />
         <div className="min-w-0">
-          <div className="text-[13px] font-semibold text-[var(--color-text)] truncate">{name}</div>
-          <div className={`text-[12px] truncate ${warn ? "font-semibold text-[var(--state-held)]" : "text-[var(--color-text-muted)]"}`}>{note}</div>
+          <div className="text-body font-medium text-[var(--color-text)] truncate">{name}</div>
+          <div className={`text-caption truncate ${warn ? "font-medium text-[var(--state-held)]" : "text-[var(--color-text-muted)]"}`}>{note}</div>
         </div>
       </div>
     </div>
@@ -337,17 +337,17 @@ function TicketMockup() {
             <Person label="Engineer" name="Sarah Mitchell" note="Awaiting sign-off" warn />
             <Person label="Drafter" name="Tom Reyes" note="Drafter" />
             <div>
-              <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-1">Target</div>
-              <div className="font-display text-[15px] font-semibold text-[var(--color-text)]">Jun 10</div>
-              <div className="text-[12px] font-semibold text-[var(--state-held)]">Due soon</div>
+              <div className="text-body font-medium text-[var(--color-text-muted)] mb-1">Target</div>
+              <div className="font-display text-reading font-semibold text-[var(--color-text)]">Jun 10</div>
+              <div className="text-caption font-medium text-[var(--state-held)]">Due soon</div>
             </div>
           </div>
           <div className="mt-4 pt-3 border-t border-[var(--color-border)]">
-            <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-2">Latest comment</div>
+            <div className="text-body font-medium text-[var(--color-text-muted)] mb-2">Latest comment</div>
             <div className="flex items-start gap-2.5">
               <Avatar initials="JD" />
-              <p className="text-[13px] text-[var(--color-text)] leading-relaxed">
-                <span className="font-semibold">John Doe</span> <span className="text-[12px] text-[var(--color-text-muted)]">2 hours ago</span><br />
+              <p className="text-body text-[var(--color-text)] leading-relaxed">
+                <span className="font-medium">John Doe</span> <span className="text-caption text-[var(--color-text-muted)]">2 hours ago</span><br />
                 <span className="text-[var(--color-accent-text)]">@Sarah Mitchell</span>{" "}
                 please confirm the sizing on FE-201 is right for the new flow. The scope is attached.
               </p>
@@ -417,7 +417,7 @@ function GraphMockup() {
               ))}
             </svg>
           </div>
-          <div className="mt-3 lg:mt-0 pt-3 lg:pt-0 border-t lg:border-t-0 lg:border-l border-[var(--color-border)] lg:pl-6 lg:w-56 flex flex-wrap lg:flex-col gap-x-4 gap-y-2 text-[12px] font-semibold text-[var(--color-text)]">
+          <div className="mt-3 lg:mt-0 pt-3 lg:pt-0 border-t lg:border-t-0 lg:border-l border-[var(--color-border)] lg:pl-6 lg:w-56 flex flex-wrap lg:flex-col gap-x-4 gap-y-2 text-caption font-medium text-[var(--color-text)]">
             <span className="inline-flex items-center gap-2"><span className="w-3 h-3 rounded-full bg-[var(--color-text)]" /> Operating area</span>
             <span className="inline-flex items-center gap-2"><span className="w-3 h-3 rounded-sm bg-[var(--color-text-muted)]" /> Equipment</span>
             <span className="inline-flex items-center gap-2"><span className="w-3 h-3 rounded-full border-2 border-[var(--color-text)]" /> Document</span>
@@ -452,13 +452,13 @@ function EquipmentMockup() {
                     {a.photos > 0 ? <Camera className="w-5 h-5 text-[var(--color-text-faint)]" /> : <FileText className="w-5 h-5 text-[var(--color-text-faint)]" />}
                   </div>
                   <div className="flex items-center justify-between gap-1">
-                    <span className="font-display text-[14px] font-semibold text-[var(--color-text)]">{a.tag}</span>
-                    <span className="text-[11px] font-semibold text-[var(--color-text-muted)] truncate">{a.type}</span>
+                    <span className="font-display text-body font-semibold text-[var(--color-text)]">{a.tag}</span>
+                    <span className="text-caption font-medium text-[var(--color-text-muted)] truncate">{a.type}</span>
                   </div>
                   {a.photos > 0 ? (
-                    <div className="text-[12px] text-[var(--color-text-muted)]">{a.photos} photos</div>
+                    <div className="text-caption text-[var(--color-text-muted)]">{a.photos} photos</div>
                   ) : (
-                    <div className="text-[12px] font-semibold text-[var(--state-held)] inline-flex items-center gap-1"><AlertTriangle className="w-3 h-3" /> No photos</div>
+                    <div className="text-caption font-medium text-[var(--state-held)] inline-flex items-center gap-1"><AlertTriangle className="w-3 h-3" /> No photos</div>
                   )}
                 </div>
               ))}
@@ -468,15 +468,15 @@ function EquipmentMockup() {
           <div className="lg:col-span-5 rounded-md bg-[var(--color-ink)] text-white overflow-hidden flex flex-col min-h-[220px]">
             <div className="px-3 py-2.5 border-b border-white/10 flex items-center gap-2 min-w-0">
               <Tag className="w-3.5 h-3.5 shrink-0" />
-              <span className="font-display text-[14px] font-semibold">FE-201</span>
-              <span className="text-[11px] text-white/70">Instrument</span>
-              <span className="ml-auto text-[11px] tabular-nums text-white/70">2 of 4</span>
+              <span className="font-display text-body font-semibold">FE-201</span>
+              <span className="text-caption text-white/70">Instrument</span>
+              <span className="ml-auto text-caption tabular-nums text-white/70">2 of 4</span>
             </div>
             <div className="flex-1 relative grid place-items-center bg-white/5">
               <Camera className="w-8 h-8 text-white/30" />
               <span className="absolute left-2 top-1/2 -translate-y-1/2 w-7 h-7 rounded-full bg-white/15 grid place-items-center"><ChevronLeft className="w-4 h-4" /></span>
               <span className="absolute right-2 top-1/2 -translate-y-1/2 w-7 h-7 rounded-full bg-white/15 grid place-items-center"><ChevronRight className="w-4 h-4" /></span>
-              <span className="absolute bottom-2 right-2 px-2 py-1 rounded-md bg-black/50 text-[11px] font-semibold">Aug 15, 2025 · 12 months ago</span>
+              <span className="absolute bottom-2 right-2 px-2 py-1 rounded-md bg-black/50 text-caption font-medium">Aug 15, 2025 · 12 months ago</span>
             </div>
             <div className="px-3 py-2 border-t border-white/10 flex gap-1.5">
               {[1, 2, 3, 4].map((i) => (
@@ -486,8 +486,8 @@ function EquipmentMockup() {
           </div>
         </div>
         <MiniCard>
-          <p className="text-[12px] text-[var(--color-text-muted)] leading-relaxed">
-            <span className="inline-flex items-center gap-1 px-1.5 mr-1 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] text-[12px] font-semibold text-[var(--color-text)]"><Tag className="w-3 h-3" /> FE-201, 4 photos</span>
+          <p className="text-caption text-[var(--color-text-muted)] leading-relaxed">
+            <span className="inline-flex items-center gap-1 px-1.5 mr-1 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] text-caption font-medium text-[var(--color-text)]"><Tag className="w-3 h-3" /> FE-201, 4 photos</span>
             The same tag works everywhere FE-201 appears: document rows, viewers, requests, the graph. One tap, every photo.
           </p>
         </MiniCard>
@@ -502,10 +502,10 @@ function ActivityRow({ who, children, when }: { who: string; children: React.Rea
   return (
     <div className="flex items-start gap-2.5 py-2 border-t first:border-t-0 border-[var(--color-border)]">
       <Avatar initials={who} />
-      <div className="flex-1 min-w-0 text-[13px] text-[var(--color-text-muted)] leading-snug">
-        <span className="font-semibold text-[var(--color-text)]">{who}</span> {children}
+      <div className="flex-1 min-w-0 text-body text-[var(--color-text-muted)] leading-snug">
+        <span className="font-medium text-[var(--color-text)]">{who}</span> {children}
       </div>
-      <span className="text-[12px] text-[var(--color-text-muted)] shrink-0">{when}</span>
+      <span className="text-caption text-[var(--color-text-muted)] shrink-0">{when}</span>
     </div>
   );
 }
@@ -523,7 +523,7 @@ function ProjectMockup() {
           <ActivityRow who="TR" when="1d">issued the final package for <span className="font-display font-semibold text-[var(--color-text)]">200-ISO-014</span></ActivityRow>
           <div className="pt-2.5 border-t border-[var(--color-border)] flex items-center gap-1">
             <Avatar initials="JD" /><Avatar initials="SM" /><Avatar initials="TR" />
-            <span className="ml-1.5 text-[12px] text-[var(--color-text-muted)]">4 members. The contractor sees this project only.</span>
+            <span className="ml-1.5 text-caption text-[var(--color-text-muted)]">4 members. The contractor sees this project only.</span>
           </div>
         </MiniCard>
       </MiniBody>
@@ -542,12 +542,12 @@ function CheckoutMockup() {
             <FileText className="w-8 h-8 text-[var(--color-text-faint)]" />
           </div>
           <div className="mt-3 flex gap-2">
-            <span className="flex-1 h-9 rounded-md border border-[var(--color-border)] text-[13px] font-semibold text-[var(--color-text-faint)] grid place-items-center">
+            <span className="flex-1 h-9 rounded-md border border-[var(--color-border)] text-body font-medium text-[var(--color-text-faint)] grid place-items-center">
               <span className="inline-flex items-center gap-1.5"><Lock className="w-3.5 h-3.5" /> Edit (locked)</span>
             </span>
-            <span className="flex-1 h-9 rounded-md border border-[var(--color-border-strong)] text-[13px] font-semibold text-[var(--color-text)] grid place-items-center">View history</span>
+            <span className="flex-1 h-9 rounded-md border border-[var(--color-border-strong)] text-body font-medium text-[var(--color-text)] grid place-items-center">View history</span>
           </div>
-          <p className="mt-3 text-[12px] text-[var(--color-text-muted)] leading-relaxed">
+          <p className="mt-3 text-caption text-[var(--color-text-muted)] leading-relaxed">
             One editor at a time, so two drafters can never save over each other. A quick hold releases itself after 24 hours.
           </p>
         </MiniCard>

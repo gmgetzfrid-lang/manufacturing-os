@@ -33,7 +33,7 @@ export default function BackupIndicator() {
         ) : (
           <HardDriveDownload className="w-4 h-4 text-emerald-600 shrink-0" />
         )}
-        <span className="text-xs font-black text-[var(--color-text)] flex-1">
+        <span className="text-xs font-semibold text-[var(--color-text)] flex-1">
           {p.phase === "envelope" && "Backup - reading every table…"}
           {p.phase === "files" && `Backup - file ${p.filesDone + 1} of ${p.filesTotal}`}
           {p.phase === "finalizing" && `Backup - packing part ${p.part}…`}
@@ -55,26 +55,26 @@ export default function BackupIndicator() {
           <div className="h-1.5 rounded-full bg-[var(--color-surface-2)] overflow-hidden mb-1.5">
             <div className="h-full bg-emerald-600 transition-all duration-300" style={{ width: `${pct}%` }} />
           </div>
-          <div className="text-[11px] text-[var(--color-text-muted)] truncate" title={p.currentPath}>
+          <div className="text-caption text-[var(--color-text-muted)] truncate" title={p.currentPath}>
             {p.currentPath
               ? `Fetching ${p.currentPath.split("/").pop()}`
               : p.phase === "envelope" ? "Tables, records, and file links" : "…"}
           </div>
-          <div className="mt-1.5 flex items-center justify-between text-[11px] text-[var(--color-text-muted)]">
+          <div className="mt-1.5 flex items-center justify-between text-caption text-[var(--color-text-muted)]">
             <span>{mb(p.bytesDone)}{p.bytesTotal > 0 ? ` of ~${mb(p.bytesTotal)}` : ""} · part {p.part}</span>
-            <button onClick={cancelBackup} className="font-black text-rose-600 hover:underline">Cancel</button>
+            <button onClick={cancelBackup} className="font-semibold text-rose-600 hover:underline">Cancel</button>
           </div>
-          <div className="mt-1.5 text-[11px] text-[var(--color-text-faint)]">
+          <div className="mt-1.5 text-caption text-[var(--color-text-faint)]">
             Keep this tab open - you can use the app freely while it runs.
           </div>
         </>
       )}
 
       {p.phase === "failed" && p.fatalError && (
-        <div className="text-[11px] text-rose-600">{p.fatalError}</div>
+        <div className="text-caption text-rose-600">{p.fatalError}</div>
       )}
       {finished && p.phase !== "failed" && (
-        <div className="text-[11px] text-[var(--color-text-muted)]">
+        <div className="text-caption text-[var(--color-text-muted)]">
           {p.errors.length > 0
             ? `${p.errors.length} file(s) missed - see backup-report.json in the last part.`
             : "Every file SHA-256 verified - manifest in the last part."}

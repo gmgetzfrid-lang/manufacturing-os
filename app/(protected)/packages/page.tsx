@@ -269,25 +269,25 @@ export default function PackagesPage() {
       ) : packages.length === 0 ? (
         loadErr ? null : (
         <Card>
-          <p className="text-[15px] text-[var(--color-text)]">
+          <p className="text-reading text-[var(--color-text)]">
             No packages yet. A package pins a job&apos;s drawings at their revisions and tells you when one moves on.
           </p>
         </Card>
         )
       ) : (
         <section>
-          <h2 className="flex items-baseline gap-2 font-display text-[20px] leading-tight font-semibold text-[var(--color-heading)] mb-3">
-            Open packages <span className="font-sans text-[14px] font-normal tabular-nums text-[var(--color-text-muted)]">{packages.length}</span>
+          <h2 className="flex items-baseline gap-2 font-display text-section leading-tight font-semibold text-[var(--color-heading)] mb-3">
+            Open packages <span className="font-sans text-body font-normal tabular-nums text-[var(--color-text-muted)]">{packages.length}</span>
           </h2>
           <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
-            <table className="w-full text-[14px]">
-              <thead className="text-[13px] text-[var(--color-text-muted)] text-left max-md:hidden border-b border-[var(--color-border)]">
+            <table className="w-full text-body">
+              <thead className="text-body text-[var(--color-text-muted)] text-left max-md:hidden border-b border-[var(--color-border)]">
                 <tr>
-                  <th className="font-semibold px-4 h-10">Package</th>
-                  <th className="font-semibold px-4 hidden lg:table-cell">Owner</th>
-                  <th className="font-semibold px-4 w-28">Made</th>
-                  <th className="font-semibold px-4 text-right w-28">Drawings</th>
-                  <th className="font-semibold px-4 w-40">State</th>
+                  <th className="font-medium px-4 h-10">Package</th>
+                  <th className="font-medium px-4 hidden lg:table-cell">Owner</th>
+                  <th className="font-medium px-4 w-28">Made</th>
+                  <th className="font-medium px-4 text-right w-28">Drawings</th>
+                  <th className="font-medium px-4 w-40">State</th>
                   <th className="w-48"><span className="sr-only">Actions</span></th>
                 </tr>
               </thead>
@@ -298,27 +298,27 @@ export default function PackagesPage() {
               if (open) { setOpenIds((s) => { const n = new Set(s); n.delete(pkg.id); return n; }); setClosedIds((s) => new Set(s).add(pkg.id)); }
               else { setOpenIds((s) => new Set(s).add(pkg.id)); setClosedIds((s) => { const n = new Set(s); n.delete(pkg.id); return n; }); }
             };
-            const small = "inline-flex items-center gap-1.5 h-8 pointer-coarse:h-10 px-2.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors";
+            const small = "inline-flex items-center gap-1.5 h-8 pointer-coarse:h-10 px-2.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors";
             return (
               <tbody key={pkg.id} data-package-id={pkg.id} className={`border-t border-[var(--color-border)] first-of-type:border-t-0 scroll-mt-24 ${highlightId === pkg.id ? "bg-[var(--color-accent-soft)]" : ""}`}>
                 <tr className="hover:bg-[var(--color-surface-2)] max-md:block max-md:relative">
                   <td className="px-4 pt-3 md:py-3 relative max-md:block max-md:pr-12">
                     {(stale || highlightId === pkg.id) && <span aria-hidden className={`absolute left-0 inset-y-0 w-[3px] ${stale ? "bg-[var(--state-held)]" : "bg-[var(--color-main)]"}`} />}
                     <button type="button" onClick={toggle} aria-expanded={open}
-                      className="inline-flex items-center gap-1.5 text-left text-[15px] font-semibold text-[var(--color-text)] hover:text-[var(--color-accent-text)]">
+                      className="inline-flex items-center gap-1.5 text-left text-reading font-medium text-[var(--color-text)] hover:text-[var(--color-accent-text)]">
                       <ChevronRight aria-hidden className={`ui-chevron w-4 h-4 shrink-0 text-[var(--color-text-muted)] ${open ? "rotate-90" : ""}`} />
                       {pkg.name}
                     </button>
-                    {pkg.description && <div className="pl-[22px] text-[13px] text-[var(--color-text-muted)] truncate max-w-[60ch]">{pkg.description}</div>}
+                    {pkg.description && <div className="pl-[22px] text-body text-[var(--color-text-muted)] truncate max-w-[60ch]">{pkg.description}</div>}
                     {/* Phone: the facts under the name. */}
-                    <div className="md:hidden pl-[22px] mt-0.5 flex flex-wrap gap-x-3 text-[13px] text-[var(--color-text-muted)]">
+                    <div className="md:hidden pl-[22px] mt-0.5 flex flex-wrap gap-x-3 text-body text-[var(--color-text-muted)]">
                       <span className="tabular-nums">{pkg.docs.length} drawing{pkg.docs.length === 1 ? "" : "s"}</span>
                       <span>{humanDate(pkg.createdAt)}</span>
                       <StatusTag tone={stale ? "warn" : "good"}>{stale ? `${pkg.staleCount} moved on` : "Current"}</StatusTag>
                     </div>
                   </td>
-                  <td className="px-4 py-3 text-[14px] hidden lg:table-cell">{pkg.ownerName || "-"}</td>
-                  <td className="px-4 py-3 text-[14px] whitespace-nowrap max-md:hidden">{humanDate(pkg.createdAt)}</td>
+                  <td className="px-4 py-3 text-body hidden lg:table-cell">{pkg.ownerName || "-"}</td>
+                  <td className="px-4 py-3 text-body whitespace-nowrap max-md:hidden">{humanDate(pkg.createdAt)}</td>
                   <td className="px-4 py-3 text-right max-md:hidden tabular-nums text-[var(--color-text)]">{pkg.docs.length}</td>
                   <td className="px-4 py-3 max-md:hidden">
                     <StatusTag tone={stale ? "warn" : "good"}>{stale ? `${pkg.staleCount} moved on` : "Current"}</StatusTag>
@@ -370,7 +370,7 @@ export default function PackagesPage() {
                         href={d.libraryId ? `/documents/${d.libraryId}?doc=${d.documentId}` : "#"}
                         className="flex items-center gap-3 group"
                       >
-                        <span className="ui-id text-[15px] group-hover:underline underline-offset-2 truncate min-w-0">{d.docLabel}</span>
+                        <span className="ui-id text-reading group-hover:underline underline-offset-2 truncate min-w-0">{d.docLabel}</span>
                         {d.drifted ? (
                           <span className="ui-pill is-warn shrink-0">
                             Pinned rev {d.pinnedRevLabel ?? "?"}, now rev {d.currentRev ?? "?"}
@@ -397,8 +397,8 @@ export default function PackagesPage() {
           <div className="ui-float ui-float-in w-full max-w-lg bg-[var(--color-surface)] rounded-xl overflow-hidden">
             <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center gap-3">
               <div className="flex-1">
-                <h2 className="font-display text-[20px] font-semibold text-[var(--color-heading)]">New work package</h2>
-                <div className="text-[14px] text-[var(--color-text-muted)]">Revisions are pinned as of right now.</div>
+                <h2 className="font-display text-section font-semibold text-[var(--color-heading)]">New work package</h2>
+                <div className="text-body text-[var(--color-text-muted)]">Revisions are pinned as of right now.</div>
               </div>
               <button aria-label="Close" onClick={() => setShowCreate(false)} className="w-10 h-10 grid place-items-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><X className="w-5 h-5" /></button>
             </div>
@@ -443,11 +443,11 @@ export default function PackagesPage() {
                       <button
                         key={r.id}
                         onClick={() => { setPicked((prev) => [...prev, r]); setQuery(""); }}
-                        className="w-full flex items-center gap-2 px-3 min-h-11 text-left hover:bg-[var(--color-surface-2)] text-[13px]"
+                        className="w-full flex items-center gap-2 px-3 min-h-11 text-left hover:bg-[var(--color-surface-2)] text-body"
                       >
                         <Plus className="w-4 h-4 text-[var(--color-text-faint)]" />
-                        <span className="ui-id text-[15px]">{r.label}</span>
-                        <span className="ml-auto text-[13px] text-[var(--color-text-muted)]">Rev <span className="ui-id text-[var(--color-text)]">{r.rev ?? "-"}</span></span>
+                        <span className="ui-id text-reading">{r.label}</span>
+                        <span className="ml-auto text-body text-[var(--color-text-muted)]">Rev <span className="ui-id text-[var(--color-text)]">{r.rev ?? "-"}</span></span>
                       </button>
                     ))}
                   </div>
@@ -455,9 +455,9 @@ export default function PackagesPage() {
                 {picked.length > 0 && (
                   <div className="mt-2 space-y-1">
                     {picked.map((p) => (
-                      <div key={p.id} className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-[var(--color-border)] text-[13px]">
-                        <span className="ui-id text-[15px] flex-1 truncate">{p.label}</span>
-                        <span className="text-[13px] text-[var(--color-text-muted)]">Pins rev <span className="ui-id text-[var(--color-text)]">{p.rev ?? "-"}</span></span>
+                      <div key={p.id} className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-[var(--color-border)] text-body">
+                        <span className="ui-id text-reading flex-1 truncate">{p.label}</span>
+                        <span className="text-body text-[var(--color-text-muted)]">Pins rev <span className="ui-id text-[var(--color-text)]">{p.rev ?? "-"}</span></span>
                         <button aria-label={`Remove ${p.label}`} onClick={() => setPicked((prev) => prev.filter((x) => x.id !== p.id))} className="w-8 h-8 pointer-coarse:w-10 pointer-coarse:h-10 grid place-items-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--state-overdue-text)] hover:bg-[var(--color-surface-2)]">
                           <X className="w-4 h-4" />
                         </button>
@@ -471,7 +471,7 @@ export default function PackagesPage() {
             <div className="px-5 py-3 border-t border-[var(--color-border)] flex flex-wrap items-center justify-end gap-x-3 gap-y-2">
               {/* Why the main button waits, said where it waits. */}
               {(!name.trim() || picked.length === 0) && (
-                <span className="mr-auto text-[13px] text-[var(--color-text-muted)]">
+                <span className="mr-auto text-body text-[var(--color-text-muted)]">
                   {!name.trim() ? "Name the job" : "Add at least one drawing"} to make the package.
                 </span>
               )}

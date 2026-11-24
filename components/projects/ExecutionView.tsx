@@ -138,7 +138,7 @@ interface Props {
 }
 
 // A quiet button on a white card.
-const QUIET = "inline-flex items-center justify-center gap-1.5 h-9 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors";
+const QUIET = "inline-flex items-center justify-center gap-1.5 h-10 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors";
 
 // Day-width bounds (px). Auto-fit fills the available width; we never
 // shrink a day below MIN_PX_PER_DAY (so labels stay legible — scroll
@@ -1307,7 +1307,7 @@ export default function ExecutionView({
     return (
       <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm p-12 text-center">
         <CalendarDays className="w-10 h-10 text-slate-300 mx-auto mb-3" />
-        <div className="text-sm font-semibold text-[var(--color-text)]">No dated tasks yet</div>
+        <div className="text-sm font-medium text-[var(--color-text)]">No dated tasks yet</div>
         <div className="text-xs text-[var(--color-text-muted)] mt-1">Import a schedule, or add a task with a date, on the Plan tab.</div>
       </div>
     );
@@ -1342,7 +1342,7 @@ export default function ExecutionView({
             onClick={() => setShowCritical((v) => !v)}
             aria-pressed={showCritical}
             title="Show the critical path, and mark tasks on or off it"
-            className={`inline-flex items-center gap-1.5 h-9 pointer-coarse:h-11 px-3 rounded-lg border text-[14px] font-semibold text-[var(--color-text)] transition-colors ${showCritical ? "border-[var(--color-current)] bg-[var(--color-surface)]" : "border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)]"}`}
+            className={`inline-flex items-center gap-1.5 h-10 pointer-coarse:h-11 px-3 rounded-lg border text-body font-medium text-[var(--color-text)] transition-colors ${showCritical ? "border-[var(--color-current)] bg-[var(--color-surface)]" : "border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)]"}`}
           >
             {showCritical ? <Check className="w-4 h-4 text-[var(--color-current)]" /> : <Zap className="w-4 h-4 text-[var(--color-text-muted)]" />} Critical path <span className="tabular-nums font-normal text-[var(--color-text-muted)]">{critical.ids.size}</span>
           </button>
@@ -1360,12 +1360,12 @@ export default function ExecutionView({
       </div>
 
       {layout === "timeline" && showCritical && (
-        <div className="px-3 sm:px-4 pb-2.5 inline-flex flex-wrap items-center gap-2 text-[12px] text-[var(--color-text-muted)]">
+        <div className="px-3 sm:px-4 pb-2.5 inline-flex flex-wrap items-center gap-2 text-caption text-[var(--color-text-muted)]">
           <label className="inline-flex items-center gap-1.5">
             From
             <select value={critical.mode} disabled={!canEdit} onChange={(e) => void setCriticalSource(e.target.value as CriticalMode)}
               title={CRITICAL_MODES.find((x) => x.value === critical.mode)?.hint}
-              className="h-8 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-control)] bg-[var(--color-surface)] px-2 text-[13px] max-sm:text-[16px] text-[var(--color-text)]">
+              className="h-8 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-control)] bg-[var(--color-surface)] px-2 text-body max-sm:text-reading text-[var(--color-text)]">
               {CRITICAL_MODES.map((x) => <option key={x.value} value={x.value}>{x.label}</option>)}
             </select>
           </label>
@@ -1385,7 +1385,7 @@ export default function ExecutionView({
             signal state), but edits are disabled — say why so it doesn't feel
             broken. */}
         {!canEdit && (
-          <div className="flex items-center gap-2 py-2.5 text-[13px] text-[var(--color-text)]">
+          <div className="flex items-center gap-2 py-2.5 text-body text-[var(--color-text)]">
             <Eye className="w-4 h-4 shrink-0 text-[var(--color-text-muted)]" />
             <span>
               <b>View only.</b> You&apos;re a viewer on this project, or not on it. To update the work, ask its owner or a co-owner to make you an editor (Members).
@@ -1401,7 +1401,7 @@ export default function ExecutionView({
             <ScheduleProgress bare milestones={items} metrics={metrics} projectId={projectId}
               onShowOverdue={() => { setLayout("timeline"); setFilter((f) => ({ ...EMPTY_FILTER, overdueOnly: true, query: f.query })); }}
               onShowBlocked={() => { setLayout("timeline"); setFilter((f) => ({ ...EMPTY_FILTER, blockedOnly: true, query: f.query })); }} />
-            <button onClick={() => setShowCards(false)} className="mt-2 text-[14px] font-semibold text-[var(--color-accent-text)] hover:underline underline-offset-2">Fold the summary</button>
+            <button onClick={() => setShowCards(false)} className="mt-2 text-body font-medium text-[var(--color-accent-text)] hover:underline underline-offset-2">Fold the summary</button>
           </div>
         )}
         {notice}
@@ -1424,8 +1424,8 @@ export default function ExecutionView({
               (which, under a single overarching project, are its first-level
               phases) so the key shows even for a one-root schedule. */}
           {colors.groups.length > 1 && (
-            <div className="mt-2.5 flex items-center gap-x-3 gap-y-1 flex-wrap text-[12px]">
-              <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Phases</span>
+            <div className="mt-2.5 flex items-center gap-x-3 gap-y-1 flex-wrap text-caption">
+              <span className="text-body font-medium text-[var(--color-text-muted)]">Phases</span>
               {colors.groups.map((g) => {
                 const c = colors.colorOf(g);
                 return (
@@ -1522,7 +1522,7 @@ export default function ExecutionView({
                   onDoubleClick={() => { setUserLeftW(LEFT_W); try { localStorage.removeItem("timeline:leftW"); } catch { /* private mode */ } }}
                   className="absolute top-0 -right-1 z-30 h-full w-2 cursor-col-resize hover:bg-[var(--color-main)]/30 active:bg-[var(--color-main)]/50" />
               )}
-              <div className={`sticky top-0 z-10 bg-[var(--color-surface)]/95 backdrop-blur border-b border-[var(--color-border)] flex items-center text-[13px] font-semibold text-[var(--color-text-muted)] ${compact && namesFolded ? "justify-center px-1" : "px-3"}`} style={{ height: AXIS_H }}>
+              <div className={`sticky top-0 z-10 bg-[var(--color-surface)]/95 backdrop-blur border-b border-[var(--color-border)] flex items-center text-body font-medium text-[var(--color-text-muted)] ${compact && namesFolded ? "justify-center px-1" : "px-3"}`} style={{ height: AXIS_H }}>
                 {!(compact && namesFolded) && <><ListTree className="w-3.5 h-3.5 mr-1.5 text-[var(--color-text-muted)]" /> <span className="flex-1 truncate">Work breakdown</span></>}
                 {compact && (
                   <button type="button" onClick={() => setNamesFolded((v) => !v)} aria-pressed={!namesFolded}
@@ -1620,7 +1620,7 @@ export default function ExecutionView({
           meetingFixed="turnover" onOpenReport={onMode ? openReport : undefined} tools={tools} notice={notice} quietMain={quietMain} />
         {/* Non-member feedback, under the report. */}
         {!canEdit && (
-          <div className="flex items-center gap-2 px-1 text-[13px] text-[var(--color-text-muted)]">
+          <div className="flex items-center gap-2 px-1 text-body text-[var(--color-text-muted)]">
             <Eye className="w-4 h-4 shrink-0" />
             <span>
               <b className="text-[var(--color-text)]">View only.</b> You&apos;re a viewer on this project, or not on it. To update the work, ask its owner or a co-owner to make you an editor (Members).
@@ -1762,25 +1762,25 @@ function CompactSummary({ items, now, shiftTimes, projectId, onOpen }: { items: 
   const finLate = fin ? lateWords(fin.lateHours) : null;
   return (
     // A row on the board's card: where the job stands, problems in their colour.
-    <button onClick={onOpen} aria-label="Show the summary" className="group w-full flex items-center gap-x-3 gap-y-1 flex-wrap py-2.5 text-[13px] text-left">
+    <button onClick={onOpen} aria-label="Show the summary" className="group w-full flex items-center gap-x-3 gap-y-1 flex-wrap py-2.5 text-body text-left">
       {byPhase ? byPhase.map((s) => (
-        <span key={s.id} className={s.state === "finished" && (s.lateHours ?? 0) >= 0.5 || s.standing === "behind" ? "font-bold text-[var(--state-overdue-text)]" : "font-bold text-[var(--color-text)]"}>{standingShort(s)}</span>
+        <span key={s.id} className={s.state === "finished" && (s.lateHours ?? 0) >= 0.5 || s.standing === "behind" ? "font-medium text-[var(--state-overdue-text)]" : "font-medium text-[var(--color-text)]"}>{standingShort(s)}</span>
       )) : fin ? (
         <>
           <b className="text-[var(--color-text)]">Finished</b>
-          {finLate && <span className={(fin.lateHours ?? 0) >= 0.5 ? "font-bold text-[var(--state-overdue-text)]" : "text-[var(--color-text-muted)]"}>{finLate}</span>}
+          {finLate && <span className={(fin.lateHours ?? 0) >= 0.5 ? "font-medium text-[var(--state-overdue-text)]" : "text-[var(--color-text-muted)]"}>{finLate}</span>}
         </>
       ) : (
         <>
       <b className="text-[var(--color-text)]">{r.pctComplete}%</b>
-      <span className={standing === "behind" ? "font-bold text-[var(--state-overdue-text)]" : standing === "ahead" ? "font-bold text-[var(--state-released-text)]" : "text-[var(--color-text-muted)]"}>
+      <span className={standing === "behind" ? "font-medium text-[var(--state-overdue-text)]" : standing === "ahead" ? "font-medium text-[var(--state-released-text)]" : "text-[var(--color-text-muted)]"}>
         {standing === "on track" ? "on track" : standing} · plan {r.expectedPct}%
       </span>
         </>
       )}
-      {r.overdue > 0 && <span className="font-bold text-[var(--state-overdue-text)]">{r.overdue} overdue</span>}
-      {r.blocked + r.onHold > 0 && <span className="font-bold text-[var(--state-held-text)]">{r.blocked + r.onHold} stuck</span>}
-      <span className="ml-auto inline-flex items-center gap-0.5 text-[12px] font-semibold text-[var(--color-text-muted)] group-hover:text-[var(--color-text)]">Summary <ChevronRightIcon className="w-3.5 h-3.5" /></span>
+      {r.overdue > 0 && <span className="font-medium text-[var(--state-overdue-text)]">{r.overdue} overdue</span>}
+      {r.blocked + r.onHold > 0 && <span className="font-medium text-[var(--state-held-text)]">{r.blocked + r.onHold} stuck</span>}
+      <span className="ml-auto inline-flex items-center gap-0.5 text-caption font-medium text-[var(--color-text-muted)] group-hover:text-[var(--color-text)]">Summary <ChevronRightIcon className="w-3.5 h-3.5" /></span>
     </button>
   );
 }
@@ -1805,14 +1805,14 @@ function Toolbar({
     <div className="px-3 sm:px-4 py-2 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap bg-[var(--color-surface)]">
       {selectedCount > 0 ? (
         <div className="flex items-center gap-2 flex-1 flex-wrap">
-          <span className="text-xs font-bold text-[var(--color-text)]">{selectedCount} selected</span>
+          <span className="text-xs font-medium text-[var(--color-text)]">{selectedCount} selected</span>
           {canEdit && (
             <>
               {/* Bulk status */}
               <div className="inline-flex items-center gap-1">
-                <span className="text-[12px] font-semibold text-[var(--color-text-faint)]">Mark</span>
+                <span className="text-caption font-medium text-[var(--color-text-faint)]">Mark</span>
                 {([["completed", "Done", "bg-[var(--state-released)]"], ["in_progress", "Doing", "bg-slate-500"], ["on_hold", "Hold", "bg-[var(--state-held)]"], ["blocked", "Block", "bg-[var(--state-overdue)]"]] as const).map(([s, label, dot]) => (
-                  <button key={s} onClick={() => onBulkStatus(s)} className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] text-[11px] font-bold hover:bg-[var(--color-surface-2)]">
+                  <button key={s} onClick={() => onBulkStatus(s)} className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] text-caption font-medium hover:bg-[var(--color-surface-2)]">
                     <span aria-hidden className={`w-2 h-2 rounded-full ${dot}`} />{label}
                   </button>
                 ))}
@@ -1820,9 +1820,9 @@ function Toolbar({
               <span className="w-px h-4 bg-[var(--color-border)]" />
               {/* Bulk move */}
               <div className="inline-flex items-center gap-1">
-                <span className="text-[12px] font-semibold text-[var(--color-text-faint)]">Move</span>
-                <button onClick={() => onBulkMove(-1)} className="px-1.5 py-1 rounded-md border border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] text-[11px] font-bold">−1d</button>
-                <button onClick={() => onBulkMove(1)} className="px-1.5 py-1 rounded-md border border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] text-[11px] font-bold">+1d</button>
+                <span className="text-caption font-medium text-[var(--color-text-faint)]">Move</span>
+                <button onClick={() => onBulkMove(-1)} className="px-1.5 py-1 rounded-md border border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] text-caption font-medium">−1d</button>
+                <button onClick={() => onBulkMove(1)} className="px-1.5 py-1 rounded-md border border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] text-caption font-medium">+1d</button>
               </div>
               {/* The rest, folded: set a field, group, delete. */}
               <MoreMenu iconOnly label="More for the selected tasks"
@@ -1834,18 +1834,18 @@ function Toolbar({
                 ]} />
             </>
           )}
-          <button onClick={onClearSelection} className="inline-flex items-center gap-1 px-2 py-1 rounded-md hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)] text-[11px] font-bold ml-auto">
+          <button onClick={onClearSelection} className="inline-flex items-center gap-1 px-2 py-1 rounded-md hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)] text-caption font-medium ml-auto">
             <XIcon className="w-3 h-3" /> Clear
           </button>
         </div>
       ) : (
         <>
-          <button onClick={onToday} className="inline-flex items-center gap-1.5 h-8 px-2.5 rounded-md text-[13px] font-semibold text-[var(--color-text)] border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)]">
+          <button onClick={onToday} className="inline-flex items-center gap-1.5 h-8 px-2.5 rounded-md text-body font-medium text-[var(--color-text)] border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)]">
             <Crosshair className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> Today
           </button>
           <div className="w-px h-5 bg-[var(--color-border)]" />
-          <button onClick={onExpandAll} className="h-8 pointer-coarse:h-11 px-2 rounded-lg text-[13px] font-semibold text-[var(--color-accent-text)] hover:bg-[var(--color-surface-2)]">Expand all</button>
-          <button onClick={onCollapseAll} className="h-8 pointer-coarse:h-11 px-2 rounded-lg text-[13px] font-semibold text-[var(--color-accent-text)] hover:bg-[var(--color-surface-2)]">Collapse all</button>
+          <button onClick={onExpandAll} className="h-8 pointer-coarse:h-11 px-2 rounded-lg text-body font-medium text-[var(--color-accent-text)] hover:bg-[var(--color-surface-2)]">Expand all</button>
+          <button onClick={onCollapseAll} className="h-8 pointer-coarse:h-11 px-2 rounded-lg text-body font-medium text-[var(--color-accent-text)] hover:bg-[var(--color-surface-2)]">Collapse all</button>
           <div className="ml-auto inline-flex items-center gap-1">
             <button
               onClick={onZoomOut}
@@ -1858,7 +1858,7 @@ function Toolbar({
             <button
               onClick={onFit}
               aria-pressed={isAutoFit}
-              className={`h-8 text-[13px] font-semibold px-2.5 rounded-md border transition-colors ${isAutoFit ? "border-[var(--color-current)] bg-[var(--color-surface)] text-[var(--color-text)]" : "border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"}`}
+              className={`h-8 text-body font-medium px-2.5 rounded-md border transition-colors ${isAutoFit ? "border-[var(--color-current)] bg-[var(--color-surface)] text-[var(--color-text)]" : "border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"}`}
               title="Fit the whole schedule to the screen width"
             >
               Fit
@@ -1934,9 +1934,9 @@ function OutlineRow({
         {status}
         {lean === "list" && (
           <button onClick={onOpenDetail} className="flex-1 min-w-0 text-left" title={`${ms.name} - open details`}>
-            <div className={`truncate text-[14px] leading-tight text-[var(--color-text)] ${ms.isSummary || hasChildren ? "font-semibold" : ""} ${checked && !hasChildren ? "text-[var(--color-text-muted)]" : ""}`}>{ms.name}</div>
-            <div className="flex items-center gap-1.5 text-[12px] leading-tight text-[var(--color-text-muted)] min-w-0">
-              {problem && <span className={`shrink-0 font-semibold ${problem === "On hold" ? "text-[var(--state-held)]" : "text-[var(--state-overdue)]"}`}>{problem}</span>}
+            <div className={`truncate text-body leading-tight text-[var(--color-text)] ${ms.isSummary || hasChildren ? "font-medium" : ""} ${checked && !hasChildren ? "text-[var(--color-text-muted)]" : ""}`}>{ms.name}</div>
+            <div className="flex items-center gap-1.5 text-caption leading-tight text-[var(--color-text-muted)] min-w-0">
+              {problem && <span className={`shrink-0 font-medium ${problem === "On hold" ? "text-[var(--state-held)]" : "text-[var(--state-overdue)]"}`}>{problem}</span>}
               <span className="truncate font-display tabular-nums">{spanLabel(span.start, span.finish, tz)}</span>
               <span className="ml-auto shrink-0 font-display tabular-nums font-semibold text-[var(--color-text)]">{pct}%</span>
             </div>
@@ -1994,13 +1994,13 @@ function OutlineRow({
         className="flex-1 min-w-0 text-left"
         title={`${ms.name} - open details`}
       >
-        <div className={`truncate text-[13px] leading-tight ${checked ? "line-through text-[var(--color-text-faint)]" : ms.isSummary ? "font-bold text-[var(--color-text)]" : "font-medium text-[var(--color-text)]"}`}>
+        <div className={`truncate text-body leading-tight ${checked ? "line-through text-[var(--color-text-faint)]" : ms.isSummary ? "font-medium text-[var(--color-text)]" : "font-medium text-[var(--color-text)]"}`}>
           {ms.name}
         </div>
-        <div className="flex items-center gap-1.5 text-[11px] text-[var(--color-text-faint)] font-display tabular-nums leading-tight min-w-0">
+        <div className="flex items-center gap-1.5 text-caption text-[var(--color-text-faint)] font-display tabular-nums leading-tight min-w-0">
           {/* A problem sits on its own row: held, blocked, missed or late. */}
           {!hasChildren && (ms.status === "blocked" || ms.status === "missed" || ms.status === "on_hold" || late) && (
-            <span className={`shrink-0 font-sans font-bold ${ms.status === "on_hold" ? "text-[var(--state-held-text)]" : "text-[var(--state-overdue-text)]"}`}>
+            <span className={`shrink-0 font-sans font-medium ${ms.status === "on_hold" ? "text-[var(--state-held-text)]" : "text-[var(--state-overdue-text)]"}`}>
               {ms.status === "blocked" ? "Blocked" : ms.status === "missed" ? "Missed" : ms.status === "on_hold" ? "On hold" : "Late"}
             </span>
           )}
@@ -2009,11 +2009,11 @@ function OutlineRow({
           {ms.wbs && <span className="text-[var(--color-text-faint)] shrink-0">{ms.wbs}</span>}
           <span className="truncate" title={spanLabel(span.start, span.finish, tz)}>{spanLabel(span.start, span.finish, tz)}</span>
           {(ms.dependsOn?.length ?? 0) > 0 && (
-            <span className="inline-flex items-center gap-0.5 text-[var(--color-text)] font-bold shrink-0" title={`Depends on ${ms.dependsOn!.length} task${ms.dependsOn!.length === 1 ? "" : "s"} - can't start until they finish`}>
+            <span className="inline-flex items-center gap-0.5 text-[var(--color-text)] font-medium shrink-0" title={`Depends on ${ms.dependsOn!.length} task${ms.dependsOn!.length === 1 ? "" : "s"} - can't start until they finish`}>
               <Link2 className="w-2.5 h-2.5" />{ms.dependsOn!.length}
             </span>
           )}
-          {hasChildren && <span className="text-[var(--color-text-muted)] font-bold shrink-0">{done}/{total}</span>}
+          {hasChildren && <span className="text-[var(--color-text-muted)] font-medium shrink-0">{done}/{total}</span>}
         </div>
       </button>
 
@@ -2023,7 +2023,7 @@ function OutlineRow({
           <div className="w-9 h-1.5 rounded-full bg-[var(--color-accent-soft)] overflow-hidden">
             <div className="h-full bg-[var(--color-main)]" style={{ width: `${pct}%` }} />
           </div>
-          <span className="text-[11px] font-bold tabular-nums text-[var(--color-text-faint)] w-7 text-right">{pct}%</span>
+          <span className="text-caption font-medium tabular-nums text-[var(--color-text-faint)] w-7 text-right">{pct}%</span>
         </div>
       ) : (
         // Leaf: editable % complete.
@@ -2150,7 +2150,7 @@ function Bar({
           </>
         )}
         {resize && (
-          <span className="absolute -top-5 left-1/2 -translate-x-1/2 text-[11px] font-bold bg-slate-900 text-white px-1.5 py-0.5 rounded whitespace-nowrap shadow">
+          <span className="absolute -top-5 left-1/2 -translate-x-1/2 text-caption font-medium bg-slate-900 text-white px-1.5 py-0.5 rounded whitespace-nowrap shadow">
             {resize.days > 0 ? "+" : ""}{resize.days}d
           </span>
         )}
@@ -2165,7 +2165,7 @@ function Bar({
         <button onClick={onOpenDetail} className="relative shrink-0" aria-label={`Milestone ${ms.name}`}>
           <span className={`block w-3 h-3 rotate-45 border-2 border-white shadow ${ms.status === "completed" ? "bg-[var(--state-released)]" : onPath ? "bg-[var(--state-overdue)]" : "bg-slate-700"}`} />
         </button>
-        <span className="whitespace-nowrap text-[11px] font-bold text-[var(--color-text)] max-w-[200px] truncate bg-[var(--color-surface)]/80 rounded px-1">{ms.name}</span>
+        <span className="whitespace-nowrap text-caption font-medium text-[var(--color-text)] max-w-[200px] truncate bg-[var(--color-surface)]/80 rounded px-1">{ms.name}</span>
       </div>
     );
   }
@@ -2191,7 +2191,7 @@ function Bar({
         <div className="absolute inset-y-0 left-0 bg-white/35" style={{ width: `${pct}%` }} />
         <div className="relative h-full flex items-center pl-2.5 pr-1.5 gap-1">
           {ms.status === "completed" && <CircleCheck className="w-3 h-3 text-white shrink-0" />}
-          {labelFits && <span className="truncate text-[11px] font-semibold text-white drop-shadow-sm">{ms.name}{resize ? ` (${spanDays + previewSpanShift}d)` : ""}</span>}
+          {labelFits && <span className="truncate text-caption font-medium text-white drop-shadow-sm">{ms.name}{resize ? ` (${spanDays + previewSpanShift}d)` : ""}</span>}
         </div>
         {/* Edge resize handles — only on leaves the user can edit. */}
         {draggable && (
@@ -2214,7 +2214,7 @@ function Bar({
           visually merge with neighbouring rows' labels. */}
       {!labelFits && (
         <span
-          className="absolute left-full ml-1.5 whitespace-nowrap text-[11px] font-semibold text-[var(--color-text)] pointer-events-none max-w-[220px] truncate bg-[var(--color-surface)]/80 rounded px-1 shadow-sm"
+          className="absolute left-full ml-1.5 whitespace-nowrap text-caption font-medium text-[var(--color-text)] pointer-events-none max-w-[220px] truncate bg-[var(--color-surface)]/80 rounded px-1 shadow-sm"
           style={{ top: "50%", transform: "translateY(-50%)" }}
         >
           {ms.name}
@@ -2287,7 +2287,7 @@ function Axis({ domain, pxPerDay, shiftTimes }: { domain: { start: Date; totalDa
         {ticks.map((t) => (
           <div key={t.d} className="absolute top-0 bottom-0 flex items-center" style={{ left: t.x, width: step === 1 ? pxPerDay : undefined }}>
             <div className="absolute top-0 bottom-0 left-0 w-px bg-slate-300 dark:bg-slate-600" />
-            <span className={`pl-1.5 text-[11px] whitespace-nowrap ${t.anchor || step === 1 ? "font-bold text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>{t.label}</span>
+            <span className={`pl-1.5 text-caption whitespace-nowrap ${t.anchor || step === 1 ? "font-medium text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>{t.label}</span>
           </div>
         ))}
       </div>
@@ -2298,13 +2298,13 @@ function Axis({ domain, pxPerDay, shiftTimes }: { domain: { start: Date; totalDa
             <div key={i} className={`absolute top-0 flex items-center gap-1 overflow-hidden border-b border-slate-200 dark:border-slate-700 ${b.night ? "bg-[var(--color-surface-2)] text-[var(--color-text)]" : "bg-[var(--color-surface)] text-[var(--color-text-muted)]"}`}
               style={{ left: b.x, width: b.w, height: SHIFT_ROW }} title={`${b.night ? "Night" : "Day"} shift from ${clock12(b.label)}`}>
               <div className="absolute top-0 bottom-0 left-0 w-px bg-slate-300 dark:bg-slate-600" />
-              <span className="pl-1 text-[11px] font-semibold whitespace-nowrap">{b.night ? "☾" : "☀"}{pxPerDay >= 110 ? ` ${b.night ? "Night" : "Day"} ${clock12(b.label)}` : ""}</span>
+              <span className="pl-1 text-caption font-medium whitespace-nowrap">{b.night ? "☾" : "☀"}{pxPerDay >= 110 ? ` ${b.night ? "Night" : "Day"} ${clock12(b.label)}` : ""}</span>
             </div>
           ))}
           {hours.map((h, i) => (
             <div key={`h${i}`} className="absolute bottom-0" style={{ left: h.x }}>
               <div className="absolute bottom-0 w-px h-1.5 bg-slate-400 dark:bg-slate-500" />
-              <span className="absolute bottom-1.5 -translate-x-1/2 text-[11px] leading-none tabular-nums text-slate-600 dark:text-slate-300 whitespace-nowrap">{h.label}</span>
+              <span className="absolute bottom-1.5 -translate-x-1/2 text-caption leading-none tabular-nums text-slate-600 dark:text-slate-300 whitespace-nowrap">{h.label}</span>
             </div>
           ))}
         </div>
@@ -2440,33 +2440,33 @@ function Legend() {
     <div className="px-3 sm:px-4 py-2.5 border-t border-[var(--color-border)] bg-[var(--color-surface)] space-y-1.5">
       {/* Status colours */}
       <div className="flex items-center gap-3 flex-wrap">
-        <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Status</span>
+        <span className="text-body font-medium text-[var(--color-text-muted)]">Status</span>
         {entries.map(([s, label]) => (
-          <span key={s} className="inline-flex items-center gap-1.5 text-[11px] text-[var(--color-text-muted)]">
+          <span key={s} className="inline-flex items-center gap-1.5 text-caption text-[var(--color-text-muted)]">
             <span className={`w-2.5 h-2.5 rounded-sm ${statusTone(s).bar}`} /> {label}
           </span>
         ))}
       </div>
       {/* Symbol key — what the shapes mean (MS-Project-style vocabulary). */}
       <div className="flex items-center gap-3.5 flex-wrap">
-        <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Symbols</span>
-        <span className="inline-flex items-center gap-1.5 text-[11px] text-[var(--color-text-muted)]" title="A task; the lighter fill shows % complete">
+        <span className="text-body font-medium text-[var(--color-text-muted)]">Symbols</span>
+        <span className="inline-flex items-center gap-1.5 text-caption text-[var(--color-text-muted)]" title="A task; the lighter fill shows % complete">
           <span className="relative w-7 h-2.5 rounded bg-[var(--color-text-muted)] overflow-hidden"><span className="absolute inset-y-0 left-0 bg-white/40" style={{ width: "55%" }} /></span> Task (fill = % done)
         </span>
-        <span className="inline-flex items-center gap-1.5 text-[11px] text-[var(--color-text-muted)]" title="A summary / phase that rolls up its children">
+        <span className="inline-flex items-center gap-1.5 text-caption text-[var(--color-text-muted)]" title="A summary / phase that rolls up its children">
           <span className="relative w-7 flex items-center"><span className="h-1 w-full rounded-full bg-slate-400" /><span className="absolute -left-px w-[3px] h-3 rounded-sm bg-slate-400" /><span className="absolute -right-px w-[3px] h-3 rounded-sm bg-slate-400" /></span> Phase / summary
         </span>
-        <span className="inline-flex items-center gap-1.5 text-[11px] text-[var(--color-text-muted)]" title="A milestone: a zero-duration marker">
+        <span className="inline-flex items-center gap-1.5 text-caption text-[var(--color-text-muted)]" title="A milestone: a zero-duration marker">
           <span className="w-2.5 h-2.5 rotate-45 bg-slate-700 border border-white" /> Milestone
         </span>
-        <span className="inline-flex items-center gap-1.5 text-[11px] text-[var(--color-text-muted)]" title="On the critical path: drives the finish date">
+        <span className="inline-flex items-center gap-1.5 text-caption text-[var(--color-text-muted)]" title="On the critical path: drives the finish date">
           <span className="w-3 h-2.5 rounded-sm bg-slate-300 ring-2 ring-[var(--state-overdue)] ring-offset-1" /> Critical path
         </span>
-        <span className="inline-flex items-center gap-1.5 text-[11px] text-[var(--color-text-muted)]" title="Finish-to-start dependency between linked tasks">
+        <span className="inline-flex items-center gap-1.5 text-caption text-[var(--color-text-muted)]" title="Finish-to-start dependency between linked tasks">
           <svg width="22" height="10" className="overflow-visible"><path d="M1 2 L11 2 L11 8 L20 8" fill="none" stroke="#6366f1" strokeWidth="1.5" /><path d="M16 5 L20 8 L16 11" fill="none" stroke="#6366f1" strokeWidth="1.5" /></svg> Dependency
         </span>
       </div>
-      <div className="flex items-center gap-1.5 text-[11px] text-[var(--color-text-faint)]">
+      <div className="flex items-center gap-1.5 text-caption text-[var(--color-text-faint)]">
         <Info className="w-3 h-3" /> Drag a bar or ◀ ▶ to reschedule · click the dot for status ·
         <kbd className="px-1 rounded bg-[var(--color-surface)] border border-[var(--color-border-strong)] font-display tabular-nums">↑↓</kbd> navigate
         <kbd className="px-1 rounded bg-[var(--color-surface)] border border-[var(--color-border-strong)] font-display tabular-nums">←→</kbd> move
@@ -2525,15 +2525,15 @@ function GroupTasksModal({
         <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center gap-3">
           <div className="w-9 h-9 rounded-xl bg-[var(--color-surface-2)] text-[var(--color-text)] flex items-center justify-center"><FolderPlus className="w-4 h-4" /></div>
           <div className="flex-1 min-w-0">
-            <h2 className="text-[15px] font-bold text-[var(--color-text)]">Group under a parent</h2>
-            <div className="text-[11px] text-[var(--color-text-muted)]">{childIds.length} task{childIds.length === 1 ? "" : "s"} selected</div>
+            <h2 className="text-reading font-medium text-[var(--color-text)]">Group under a parent</h2>
+            <div className="text-caption text-[var(--color-text-muted)]">{childIds.length} task{childIds.length === 1 ? "" : "s"} selected</div>
           </div>
           <button onClick={onClose} aria-label="Close" className="p-1.5 rounded hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"><XIcon className="w-4 h-4" /></button>
         </div>
         <div className="p-5 space-y-4">
           <div className="inline-flex items-center bg-[var(--color-surface-2)] rounded-md p-0.5 gap-0.5">
             {(["new", "existing"] as const).map((m) => (
-              <button key={m} onClick={() => setMode(m)} className={`px-3 py-1 rounded text-[11px] font-semibold transition-colors ${mode === m ? "bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
+              <button key={m} onClick={() => setMode(m)} className={`px-3 py-1 rounded text-caption font-medium transition-colors ${mode === m ? "bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
                 {m === "new" ? "Create new" : "Use existing"}
               </button>
             ))}
@@ -2550,15 +2550,15 @@ function GroupTasksModal({
           )}
           <div className="rounded-md border border-[var(--color-border)] bg-slate-50/60 dark:bg-[var(--color-surface-2)] p-2.5 max-h-32 overflow-y-auto">
             <ul className="space-y-0.5">
-              {childNames.slice(0, 12).map((n, i) => <li key={i} className="text-[11px] text-[var(--color-text)] truncate">{n}</li>)}
-              {childNames.length > 12 && <li className="text-[11px] text-[var(--color-text-muted)] italic">+{childNames.length - 12} more</li>}
+              {childNames.slice(0, 12).map((n, i) => <li key={i} className="text-caption text-[var(--color-text)] truncate">{n}</li>)}
+              {childNames.length > 12 && <li className="text-caption text-[var(--color-text-muted)] italic">+{childNames.length - 12} more</li>}
             </ul>
           </div>
           {error && <div role="alert" className="text-xs text-[var(--state-overdue-text)]">{error}</div>}
         </div>
         <div className="px-5 py-3 border-t border-[var(--color-border)] flex items-center justify-end gap-2">
           <button onClick={onClose} disabled={busy} className="text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5 transition-colors">Cancel</button>
-          <button onClick={submit} disabled={!canSubmit || busy} className="inline-flex items-center gap-1.5 text-sm font-semibold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] px-4 py-2 rounded-md disabled:opacity-40 transition-colors">
+          <button onClick={submit} disabled={!canSubmit || busy} className="inline-flex items-center gap-1.5 text-sm font-medium text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] px-4 py-2 rounded-md disabled:opacity-40 transition-colors">
             {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <FolderPlus className="w-4 h-4" />} Group
           </button>
         </div>
@@ -2605,15 +2605,15 @@ function SetDurationModal({ task, actorUserId, onClose, onDone }: { task: Milest
         <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center gap-3">
           <div className="w-9 h-9 rounded-xl bg-[var(--color-surface-2)] text-[var(--color-text)] flex items-center justify-center"><CalendarRange className="w-4 h-4" /></div>
           <div className="flex-1 min-w-0">
-            <h2 className="text-[15px] font-bold text-[var(--color-text)] truncate">Set duration</h2>
-            <div className="text-[11px] text-[var(--color-text-muted)] truncate">{task.name}</div>
+            <h2 className="text-reading font-medium text-[var(--color-text)] truncate">Set duration</h2>
+            <div className="text-caption text-[var(--color-text-muted)] truncate">{task.name}</div>
           </div>
           <button onClick={onClose} aria-label="Close" className="p-1.5 rounded hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"><XIcon className="w-4 h-4" /></button>
         </div>
         <div className="p-5 space-y-3">
           <div className="flex items-center justify-between">
-            <label className="text-[12px] font-semibold text-[var(--color-text-muted)]">How long it runs</label>
-            <div className="inline-flex rounded-md bg-[var(--color-surface-2)] p-0.5 text-[11px] font-bold">
+            <label className="text-caption font-medium text-[var(--color-text-muted)]">How long it runs</label>
+            <div className="inline-flex rounded-md bg-[var(--color-surface-2)] p-0.5 text-caption font-medium">
               {(["hours", "days"] as const).map((u) => (
                 <button key={u} onClick={() => { setUnit(u); setValue(u === "hours" ? Math.max(0.25, Math.round(((finishAt - startAt) / 3_600_000) * 4) / 4) : Math.max(1, dayDiff(new Date(startAt), finish, tz) + 1)); }}
                   className={`px-2 py-0.5 rounded ${unit === u ? "bg-[var(--color-surface)] shadow-sm text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>{u}</button>
@@ -2623,7 +2623,7 @@ function SetDurationModal({ task, actorUserId, onClose, onDone }: { task: Milest
           <input type="number" min={unit === "hours" ? 0.25 : 1} max={unit === "hours" ? 2000 : 365} step={unit === "hours" ? 0.25 : 1} value={value}
             onChange={(e) => { const v = Number(e.target.value); setValue(Number.isFinite(v) && v > 0 ? v : unit === "hours" ? 0.25 : 1); }}
             className="w-full px-3 py-2 text-sm border border-[var(--color-border-strong)] rounded-md" />
-          <div className="text-[11px] text-[var(--color-text-muted)]">
+          <div className="text-caption text-[var(--color-text-muted)]">
             Keeps its finish, <b>{fmtInTz(finishAt, tz, { weekday: "short", month: "short", day: "numeric", ...(timed ? { hour: "numeric", minute: "2-digit", hour12: true } : {}) })}</b>;
             {unit === "hours" ? ` starts ${value} h before it.` : days > 1 ? ` starts ${Math.round(days) - 1} day${Math.round(days) - 1 === 1 ? "" : "s"} earlier.` : " a single-day task."}
           </div>
@@ -2631,7 +2631,7 @@ function SetDurationModal({ task, actorUserId, onClose, onDone }: { task: Milest
         </div>
         <div className="px-5 py-3 border-t border-[var(--color-border)] flex items-center justify-end gap-2">
           <button onClick={onClose} disabled={busy} className="text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5 transition-colors">Cancel</button>
-          <button onClick={submit} disabled={busy} className="inline-flex items-center gap-1.5 text-sm font-semibold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] px-4 py-2 rounded-md disabled:opacity-40 transition-colors">
+          <button onClick={submit} disabled={busy} className="inline-flex items-center gap-1.5 text-sm font-medium text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] px-4 py-2 rounded-md disabled:opacity-40 transition-colors">
             {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <CalendarRange className="w-4 h-4" />} Apply
           </button>
         </div>

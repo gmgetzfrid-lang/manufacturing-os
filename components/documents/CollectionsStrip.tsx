@@ -102,16 +102,16 @@ export default function CollectionsStrip({
   return (
     <div className="border-b border-[var(--color-border)] last:border-b-0">
       <div className="flex items-center gap-3 px-4 sm:px-5 min-h-11 py-1">
-        <span className="shrink-0 inline-flex items-center gap-2 text-[14px] font-semibold text-[var(--color-heading)]"
+        <span className="shrink-0 inline-flex items-center gap-2 text-body font-medium text-[var(--color-heading)]"
           title={folderId && folderName ? `Books in ${folderName}` : "Books at the library root"}>
           <span className="ui-icon-tile is-sm" aria-hidden><FolderKanban className="w-4 h-4" /></span>
           Collections
           {collections.length > 0 && <span className="ui-count">{collections.length}</span>}
-          <span className="font-normal text-[13px] text-[var(--color-text-muted)] max-sm:hidden truncate max-w-[160px]">in {folderId && folderName ? folderName : "the library root"}</span>
+          <span className="font-normal text-body text-[var(--color-text-muted)] max-sm:hidden truncate max-w-[160px]">in {folderId && folderName ? folderName : "the library root"}</span>
         </span>
         <div className="flex-1 min-w-0 flex items-center gap-1.5 overflow-x-auto [scrollbar-width:none]">
           {collections.length === 0 ? (
-            <span className="text-[13px] text-[var(--color-text-muted)]">No books here yet.</span>
+            <span className="text-body text-[var(--color-text-muted)]">No books here yet.</span>
           ) : collections.map((c) => (
             <CollectionCard
               key={c.id}
@@ -124,11 +124,11 @@ export default function CollectionsStrip({
           ))}
         </div>
         <button type="button" onClick={() => setCreating(true)}
-          className="shrink-0 inline-flex items-center gap-1.5 h-8 px-2.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[13px] font-semibold text-[var(--color-text)] transition-colors">
+          className="shrink-0 inline-flex items-center gap-1.5 h-8 px-2.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-body font-medium text-[var(--color-text)] transition-colors">
           <Plus className="w-3.5 h-3.5" /><span className="max-sm:sr-only">New collection</span>
         </button>
       </div>
-      {error && <p role="alert" className="px-4 sm:px-5 pb-2 text-[13px] text-[var(--state-overdue)]">{error}</p>}
+      {error && <p role="alert" className="px-4 sm:px-5 pb-2 text-body text-[var(--state-overdue)]">{error}</p>}
 
       {(openCollectionId || creating) && (
         <CollectionModal
@@ -166,13 +166,13 @@ function CollectionCard({
           to open the book. */}
       <button type="button" onClick={onOpen}
         title={count > 0 ? `Open ${collection.name} as a book (${count} sheet${count === 1 ? "" : "s"}${isOrg ? "" : ", personal"})` : "Add documents to this book"}
-        className="ui-tag !h-8 !pl-1.5 !font-sans !text-[14px]">
+        className="ui-tag !h-8 !pl-1.5 !font-sans !text-body">
         {/* A small book cover in the book's own color. */}
         <span aria-hidden className="relative w-[14px] h-[18px] rounded-[2px] shrink-0 ring-1 ring-black/10" style={{ background: bookCover(collection.color) }}>
           <span className="absolute left-0 inset-y-0 w-[3px] bg-black/25" />
         </span>
         <span className="truncate max-w-[16rem]">{collection.name}</span>
-        <span className="font-display text-[13px] font-bold tabular-nums opacity-75">{count}</span>
+        <span className="font-display text-body font-bold tabular-nums opacity-75">{count}</span>
         {!isOrg && <UserIcon className="w-3.5 h-3.5 opacity-70" aria-label="Personal" />}
       </button>
       {canManage && (

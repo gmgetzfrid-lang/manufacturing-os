@@ -174,8 +174,8 @@ export default function AssetCsvImportModal({
         <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center gap-3">
           <div className="p-2 rounded-lg bg-[var(--color-surface-2)] text-[var(--color-text)]"><KeyRound className="w-5 h-5" /></div>
           <div className="flex-1 min-w-0">
-            <div className="text-sm font-semibold text-[var(--color-text)]">Import assets from CSV</div>
-            <div className="text-[13px] text-[var(--color-text-muted)]">Add many tags at once, with type, description and location.</div>
+            <div className="text-sm font-medium text-[var(--color-text)]">Import assets from CSV</div>
+            <div className="text-body text-[var(--color-text-muted)]">Add many tags at once, with type, description and location.</div>
           </div>
           <button onClick={onClose} disabled={busy} aria-label="Close" className="p-2 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-faint)] hover:text-[var(--color-text)]">
             <X className="w-4 h-4" />
@@ -185,20 +185,20 @@ export default function AssetCsvImportModal({
         <div className="px-5 py-4 space-y-4 max-h-[70vh] overflow-y-auto">
           <StepPath steps={STEPS} current={STEP_INDEX[step]} onPick={busy || step === "done" ? undefined : (i) => setStep(i === 0 ? "paste" : i === 1 ? "map" : "preview")} />
           {error && (
-            <p role="alert" className="border-l-2 border-[var(--state-overdue)] pl-3 text-[13px] text-[var(--state-overdue)] flex items-start gap-2">
+            <p role="alert" className="border-l-2 border-[var(--state-overdue)] pl-3 text-body text-[var(--state-overdue)] flex items-start gap-2">
               <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> {error}
             </p>
           )}
           {typesFailed && step !== "done" && (
-            <p className="border-l-2 border-[var(--state-held)] pl-3 text-[13px] text-[var(--state-held)]">
+            <p className="border-l-2 border-[var(--state-held)] pl-3 text-body text-[var(--state-held)]">
               Couldn&apos;t load the equipment types, so the type column will be left blank.
             </p>
           )}
 
           {step === "paste" && (
             <div className="space-y-2">
-              <label className="text-[13px] font-semibold text-[var(--color-text)] ">Paste CSV</label>
-              {draft.restored && raw.trim() && <p className="text-[13px] text-[var(--color-text-muted)]">Brought back what you pasted last time.</p>}
+              <label className="text-body font-medium text-[var(--color-text)] ">Paste CSV</label>
+              {draft.restored && raw.trim() && <p className="text-body text-[var(--color-text-muted)]">Brought back what you pasted last time.</p>}
               <textarea
                 value={raw}
                 onChange={(e) => setRaw(e.target.value)}
@@ -206,22 +206,22 @@ export default function AssetCsvImportModal({
                 rows={10}
                 className="w-full px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] text-xs font-mono"
               />
-              <div className="text-[13px] text-[var(--color-text-muted)]">First row = headers. The <code>type</code> column matches an existing asset-type by name (case-insensitive); unmatched types are left blank.</div>
+              <div className="text-body text-[var(--color-text-muted)]">First row = headers. The <code>type</code> column matches an existing asset-type by name (case-insensitive); unmatched types are left blank.</div>
             </div>
           )}
 
           {step === "map" && (
             <div className="space-y-3">
-              <div className="text-[13px] font-semibold text-[var(--color-text)] ">Map columns</div>
-              <div className="text-[13px] text-[var(--color-text-muted)]">Detected {rows.length} data row{rows.length === 1 ? "" : "s"} · {headers.length} columns.</div>
+              <div className="text-body font-medium text-[var(--color-text)] ">Map columns</div>
+              <div className="text-body text-[var(--color-text-muted)]">Detected {rows.length} data row{rows.length === 1 ? "" : "s"} · {headers.length} columns.</div>
               <div className="space-y-2">
                 {CANONICAL_FIELDS.map((f) => (
                   <div key={f.key} className="flex items-center gap-2">
-                    <div className="w-44 text-[13px] font-bold text-[var(--color-text)]">{f.label}</div>
+                    <div className="w-44 text-body font-medium text-[var(--color-text)]">{f.label}</div>
                     <select
                       value={mapping[f.key] ?? ""}
                       onChange={(e) => setMapping({ ...mapping, [f.key]: e.target.value })}
-                      className="flex-1 px-2 py-1.5 rounded border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] text-[13px]"
+                      className="flex-1 px-2 py-1.5 rounded border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] text-body"
                     >
                       <option value="">Skip</option>
                       {headers.map((h, i) => <option key={i} value={h}>{h}</option>)}
@@ -234,13 +234,13 @@ export default function AssetCsvImportModal({
 
           {step === "preview" && (
             <div>
-              <div className="text-[13px] font-semibold text-[var(--color-text)] mb-2">Preview (first 10)</div>
+              <div className="text-body font-medium text-[var(--color-text)] mb-2">Preview (first 10)</div>
               <div className="rounded-lg border border-[var(--color-border)] overflow-auto">
-                <table className="w-full text-[13px]">
+                <table className="w-full text-body">
                   <thead className="bg-[var(--color-surface-2)] border-b border-[var(--color-border)]">
                     <tr>
                       {CANONICAL_FIELDS.filter((f) => mapping[f.key]).map((f) => (
-                        <th key={f.key} className="text-left px-2 py-1.5 font-semibold text-[var(--color-text)] text-[13px]">
+                        <th key={f.key} className="text-left px-2 py-1.5 font-medium text-[var(--color-text)] text-body">
                           {f.label.replace(/\*/g, "").trim()}
                         </th>
                       ))}
@@ -258,7 +258,7 @@ export default function AssetCsvImportModal({
                   </tbody>
                 </table>
               </div>
-              {rows.length > 10 && <div className="text-[13px] text-[var(--color-text-muted)] mt-1">+ {rows.length - 10} more row{rows.length - 10 === 1 ? "" : "s"} will be imported.</div>}
+              {rows.length > 10 && <div className="text-body text-[var(--color-text-muted)] mt-1">+ {rows.length - 10} more row{rows.length - 10 === 1 ? "" : "s"} will be imported.</div>}
             </div>
           )}
 
@@ -269,8 +269,8 @@ export default function AssetCsvImportModal({
                 <span>Added <b>{result.ok}</b> piece{result.ok === 1 ? "" : "s"} of equipment.</span>
               </p>
               {result.failed.length > 0 && (
-                <div className="border-l-2 border-[var(--state-overdue)] pl-3 text-[13px] text-[var(--state-overdue)]">
-                  <div className="font-bold flex items-center gap-1.5 mb-1"><AlertTriangle className="w-4 h-4" /> {result.failed.length} not added. Fix these rows and paste them again.</div>
+                <div className="border-l-2 border-[var(--state-overdue)] pl-3 text-body text-[var(--state-overdue)]">
+                  <div className="font-medium flex items-center gap-1.5 mb-1"><AlertTriangle className="w-4 h-4" /> {result.failed.length} not added. Fix these rows and paste them again.</div>
                   <ul className="ml-5 list-disc space-y-0.5">
                     {result.failed.slice(0, 8).map((f, i) => (
                       <li key={i}>Row {f.row}: {f.reason}</li>
@@ -285,26 +285,26 @@ export default function AssetCsvImportModal({
 
         <div className="px-5 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-between gap-2">
           {step !== "paste" && step !== "done" && (
-            <button onClick={() => setStep(step === "preview" ? "map" : "paste")} disabled={busy} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-[13px] font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]">
+            <button onClick={() => setStep(step === "preview" ? "map" : "paste")} disabled={busy} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-body font-medium text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]">
               <ArrowLeft className="w-3.5 h-3.5" /> Back
             </button>
           )}
           <div className="ml-auto flex items-center gap-2">
-            <button onClick={onClose} disabled={busy} className="px-3 py-2 rounded-lg text-[13px] font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">
+            <button onClick={onClose} disabled={busy} className="px-3 py-2 rounded-lg text-body font-medium text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">
               {step === "done" ? "Close" : "Cancel"}
             </button>
             {step === "paste" && (
-              <button onClick={parseCsv} disabled={!raw.trim()} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-[13px] font-bold disabled:opacity-50">
+              <button onClick={parseCsv} disabled={!raw.trim()} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-body font-medium disabled:opacity-50">
                 Continue <ChevronRight className="w-3.5 h-3.5" />
               </button>
             )}
             {step === "map" && (
-              <button onClick={goPreview} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-[13px] font-bold">
+              <button onClick={goPreview} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-body font-medium">
                 Preview <ChevronRight className="w-3.5 h-3.5" />
               </button>
             )}
             {step === "preview" && (
-              <button onClick={commit} disabled={busy} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-[13px] font-bold disabled:opacity-50">
+              <button onClick={commit} disabled={busy} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-body font-medium disabled:opacity-50">
                 {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
                 {busy ? `Adding ${progress} of ${rows.length}…` : `Add ${rows.length} item${rows.length === 1 ? "" : "s"}`}
               </button>

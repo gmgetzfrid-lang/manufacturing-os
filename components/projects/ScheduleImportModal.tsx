@@ -348,24 +348,24 @@ export default function ScheduleImportModal({
               <Upload className="w-5 h-5 text-[var(--color-text-muted)]" />
             </div>
             <div className="min-w-0">
-              <h2 className="text-[15px] font-bold text-[var(--color-text)]">Import schedule</h2>
-              <div className="text-[11px] text-[var(--color-text-muted)] inline-flex items-center gap-1.5">
+              <h2 className="text-reading font-medium text-[var(--color-text)]">Import schedule</h2>
+              <div className="text-caption text-[var(--color-text-muted)] inline-flex items-center gap-1.5">
                 <span>Importing into</span>
-                <span className="font-bold text-[var(--color-text)] truncate max-w-[200px]">{projectName ?? `Project ${projectId.slice(0,8)}`}</span>
+                <span className="font-medium text-[var(--color-text)] truncate max-w-[200px]">{projectName ?? `Project ${projectId.slice(0,8)}`}</span>
                 {projectStatus && projectStatus !== "active" && (
-                  <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[13px] font-semibold bg-transparent text-[var(--state-overdue-text)] border border-[var(--color-border)]">
+                  <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-body font-medium bg-transparent text-[var(--state-overdue-text)] border border-[var(--color-border)]">
                     <AlertTriangle className="w-2.5 h-2.5" /> {projectStatus}
                   </span>
                 )}
               </div>
               {phases.length > 0 && (
-                <label className="mt-1 flex items-center gap-1.5 text-[12px] text-[var(--color-text)]">
-                  <span className="font-bold">Phase</span>
+                <label className="mt-1 flex items-center gap-1.5 text-caption text-[var(--color-text)]">
+                  <span className="font-medium">Phase</span>
                   <select value={target ?? ""} onChange={(e) => setTarget(e.target.value)} disabled={importing || !!importResult} aria-label="Phase to import into"
-                    className="h-7 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1.5 text-[12px] font-bold">
+                    className="h-7 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1.5 text-caption font-medium">
                     {phases.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
                   </select>
-                  <span className="text-[11px] text-[var(--color-text-muted)]">{existingCount ? `${existingCount} task${existingCount === 1 ? "" : "s"} there now: the file is merged into them` : "no schedule yet"}; other phases aren&apos;t touched.</span>
+                  <span className="text-caption text-[var(--color-text-muted)]">{existingCount ? `${existingCount} task${existingCount === 1 ? "" : "s"} there now: the file is merged into them` : "no schedule yet"}; other phases aren&apos;t touched.</span>
                 </label>
               )}
             </div>
@@ -395,25 +395,25 @@ export default function ScheduleImportModal({
                 onChange={(e) => { const f = e.target.files?.[0]; if (f) void handleFile(f); }}
               />
               {drag.over ? (
-                <div className="text-[14px] font-bold text-[var(--color-text)] py-6">{drag.say}</div>
+                <div className="text-body font-medium text-[var(--color-text)] py-6">{drag.say}</div>
               ) : parsing ? (
                 <div className="flex flex-col items-center gap-2">
                   <Spinner size="lg" />
-                  <div className="text-sm font-bold text-[var(--color-text)]">Reading {filename}…</div>
+                  <div className="text-sm font-medium text-[var(--color-text)]">Reading {filename}…</div>
                 </div>
               ) : (
                 <>
                   <div className="w-16 h-16 mx-auto rounded-2xl bg-[var(--color-surface-2)] flex items-center justify-center mb-3 border border-[var(--color-border)]">
                     <FileUp className="w-8 h-8 text-[var(--color-text-muted)]" />
                   </div>
-                  <div className="text-[14px] font-bold text-[var(--color-text)]">Drop your schedule here</div>
+                  <div className="text-body font-medium text-[var(--color-text)]">Drop your schedule here</div>
                   <div className="text-sm text-[var(--color-text-muted)] mt-1">or tap to pick a file</div>
                   <div className="mt-4 flex items-center justify-center gap-2 flex-wrap">
                     <FormatBadge label=".xml" hint="MS Project / P6 XML" />
                     <FormatBadge label=".xer" hint="Primavera P6 native" />
                     <FormatBadge label=".csv" hint="Direct export or generic" />
                   </div>
-                  <div className="mt-2 text-[11px] text-[var(--color-text-muted)]">
+                  <div className="mt-2 text-caption text-[var(--color-text-muted)]">
                     Have a .mpp or .mpx? Export XML first. In MS Project: File → Save As → XML Format.
                   </div>
                 </>
@@ -429,12 +429,12 @@ export default function ScheduleImportModal({
                   </div>
                 )}
                 <div className="flex-1 min-w-0">
-                  <div className="text-sm font-bold text-[var(--color-text)] truncate">{filename}</div>
-                  <div className="text-[11px] text-[var(--color-text-muted)]">{file ? `${sizeOf(file.size)} · ` : ""}{FORMAT_LABEL[parseResult.format]} · read {parseResult.rows.length} task{parseResult.rows.length === 1 ? "" : "s"}</div>
+                  <div className="text-sm font-medium text-[var(--color-text)] truncate">{filename}</div>
+                  <div className="text-caption text-[var(--color-text-muted)]">{file ? `${sizeOf(file.size)} · ` : ""}{FORMAT_LABEL[parseResult.format]} · read {parseResult.rows.length} task{parseResult.rows.length === 1 ? "" : "s"}</div>
                 </div>
                 <button
                   onClick={() => { setParseResult(null); setFile(null); setFilename(null); setImportResult(null); }}
-                  className="text-[11px] font-bold text-[var(--color-text)] border border-[var(--color-border)] px-2 py-1 rounded hover:bg-[var(--color-surface)] transition-colors"
+                  className="text-caption font-medium text-[var(--color-text)] border border-[var(--color-border)] px-2 py-1 rounded hover:bg-[var(--color-surface)] transition-colors"
                   disabled={importing}
                 >
                   Choose another
@@ -451,7 +451,7 @@ export default function ScheduleImportModal({
                   which the guide above covers. */}
               {parseResult.format !== "msproject-mpp" && parseResult.format !== "msproject-mpx" && parseResult.warnings.length > 0 && (
                 <div className="border-l-2 border-[var(--state-held)] pl-3 text-xs text-[var(--state-held-text)]">
-                  <div className="font-bold mb-1">
+                  <div className="font-medium mb-1">
                     {parseResult.warnings.length} note{parseResult.warnings.length === 1 ? "" : "s"} from reading the file
                   </div>
                   <ul className="ml-4 list-disc space-y-0.5 text-[var(--color-text)]">
@@ -475,16 +475,16 @@ export default function ScheduleImportModal({
                 <div className="rounded-xl border border-[var(--color-border)] p-3">
                   <div className="flex items-center gap-1.5 mb-1">
                     <Columns3 className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
-                    <span className="text-xs font-semibold text-[var(--color-text)]">{detectedColumns.length} extra column{detectedColumns.length === 1 ? "" : "s"} detected</span>
+                    <span className="text-xs font-medium text-[var(--color-text)]">{detectedColumns.length} extra column{detectedColumns.length === 1 ? "" : "s"} detected</span>
                   </div>
-                  <p className="text-[11px] text-[var(--color-text-muted)] mb-2.5">Rename, drop, or map any of these to a built-in field before importing. Everything else is kept on each task as a custom field.</p>
+                  <p className="text-caption text-[var(--color-text-muted)] mb-2.5">Rename, drop, or map any of these to a built-in field before importing. Everything else is kept on each task as a custom field.</p>
                   <div className="space-y-1.5 max-h-52 overflow-y-auto pr-1">
                     {detectedColumns.map((k) => {
                       const cfg = colConfig[k] ?? { include: true, rename: k, mapTo: "" };
                       return (
                         <div key={k} className={`flex items-center gap-2 ${cfg.include ? "" : "opacity-50"}`}>
                           <input type="checkbox" checked={cfg.include} onChange={(e) => setColConfig((p) => ({ ...p, [k]: { ...cfg, include: e.target.checked } }))} className="w-3.5 h-3.5 accent-[var(--color-text)] shrink-0" title="Include this column" />
-                          <span className="font-display tabular-nums text-[11px] text-[var(--color-text-muted)] w-28 truncate shrink-0" title={k}>{k}</span>
+                          <span className="font-display tabular-nums text-caption text-[var(--color-text-muted)] w-28 truncate shrink-0" title={k}>{k}</span>
                           <ArrowRight className="w-3 h-3 text-slate-300 shrink-0" />
                           <input
                             value={cfg.rename}
@@ -515,12 +515,12 @@ export default function ScheduleImportModal({
               {/* Preview table */}
               {parseResult.rows.length > 0 && (
                 <div className="rounded-xl border border-[var(--color-border)] overflow-hidden">
-                  <div className="px-3 py-2 bg-[var(--color-surface-2)] border-b border-[var(--color-border)] text-[12px] font-semibold text-[var(--color-text-muted)]">
+                  <div className="px-3 py-2 bg-[var(--color-surface-2)] border-b border-[var(--color-border)] text-caption font-medium text-[var(--color-text-muted)]">
                     Preview · first {previewRows.length} {moreCount > 0 ? `of ${parseResult.rows.length}` : "row" + (previewRows.length === 1 ? "" : "s")}
                   </div>
                   <div className="overflow-x-auto">
                   <table className="w-full min-w-[560px] text-xs">
-                    <thead className="bg-[var(--color-surface)] border-b border-[var(--color-border)] text-[12px] font-semibold text-[var(--color-text-muted)]">
+                    <thead className="bg-[var(--color-surface)] border-b border-[var(--color-border)] text-caption font-medium text-[var(--color-text-muted)]">
                       <tr>
                         <th className="text-left px-3 py-1.5">Task</th>
                         <th className="text-left px-3 py-1.5 w-32">Due</th>
@@ -533,25 +533,25 @@ export default function ScheduleImportModal({
                       {previewRows.map((r, i) => (
                         <tr key={i}>
                           <td className="px-3 py-1.5">
-                            <div className="font-bold text-[var(--color-text)] truncate flex items-center gap-1">
-                              {r.isSummary && <span className="text-[11px] font-semibold bg-[var(--color-surface-2)] text-[var(--color-text)] px-1 rounded shrink-0">SUM</span>}
+                            <div className="font-medium text-[var(--color-text)] truncate flex items-center gap-1">
+                              {r.isSummary && <span className="text-caption font-medium bg-[var(--color-surface-2)] text-[var(--color-text)] px-1 rounded shrink-0">SUM</span>}
                               <span className="truncate">{r.name}</span>
                               {(r.dependsOnExternalRefs?.length ?? 0) > 0 && (
                                 <span
-                                  className="inline-flex items-center gap-0.5 text-[11px] font-semibold bg-[var(--color-surface-2)] text-[var(--color-text)] px-1 rounded shrink-0"
+                                  className="inline-flex items-center gap-0.5 text-caption font-medium bg-[var(--color-surface-2)] text-[var(--color-text)] px-1 rounded shrink-0"
                                   title={`${r.dependsOnExternalRefs!.length} predecessor link${r.dependsOnExternalRefs!.length === 1 ? "" : "s"} from the source schedule`}
                                 >
                                   <Link2 className="w-2.5 h-2.5" />{r.dependsOnExternalRefs!.length}
                                 </span>
                               )}
                             </div>
-                            {r.externalRef && <div className="text-[11px] font-display tabular-nums text-[var(--color-text-faint)] truncate">{r.externalRef}</div>}
+                            {r.externalRef && <div className="text-caption font-display tabular-nums text-[var(--color-text-faint)] truncate">{r.externalRef}</div>}
                           </td>
                           <td className="px-3 py-1.5 text-[var(--color-text)]">
                             <CalIcon className="inline w-3 h-3 mr-1 text-[var(--color-text-faint)]" />
                             {humanDate(r.plannedAt, tz)}
                           </td>
-                          <td className="px-3 py-1.5 text-[11px] font-display tabular-nums text-[var(--color-text-muted)] truncate">
+                          <td className="px-3 py-1.5 text-caption font-display tabular-nums text-[var(--color-text-muted)] truncate">
                             {r.parentExternalRef ? r.parentExternalRef.split(":")[1] : <span className="text-slate-300">-</span>}
                           </td>
                           <td className="px-3 py-1.5 text-[var(--color-text)] font-display tabular-nums">{r.outlineLevel ?? <span className="text-slate-300">-</span>}</td>
@@ -559,7 +559,7 @@ export default function ScheduleImportModal({
                         </tr>
                       ))}
                       {moreCount > 0 && (
-                        <tr><td colSpan={5} className="px-3 py-1.5 text-[11px] text-[var(--color-text-muted)] italic">+{moreCount} more row{moreCount === 1 ? "" : "s"} will be imported.</td></tr>
+                        <tr><td colSpan={5} className="px-3 py-1.5 text-caption text-[var(--color-text-muted)] italic">+{moreCount} more row{moreCount === 1 ? "" : "s"} will be imported.</td></tr>
                       )}
                     </tbody>
                   </table>
@@ -570,7 +570,7 @@ export default function ScheduleImportModal({
               {/* Import result */}
               {importResult && (
                 <div className={`pl-3 py-1 border-l-2 ${importResult.errors.length > 0 ? "border-[var(--state-overdue)]" : "border-[var(--state-released)]"}`}>
-                  <div className="flex items-center gap-2 font-bold text-sm">
+                  <div className="flex items-center gap-2 font-medium text-sm">
                     {importResult.errors.length > 0
                       ? <><AlertTriangle className="w-4 h-4 text-[var(--state-overdue-text)]" /> Imported with errors</>
                       : <><CheckCircle2 className="w-4 h-4 text-[var(--state-released-text)]" /> Imported successfully</>
@@ -589,10 +589,10 @@ export default function ScheduleImportModal({
                     {snapshot && (
                       <div className="pt-1.5 flex items-center gap-2 flex-wrap">
                         {undoing === "done" ? (
-                          <span className="font-bold text-[var(--state-released-text)]">Import undone. The schedule is back as it was.</span>
+                          <span className="font-medium text-[var(--state-released-text)]">Import undone. The schedule is back as it was.</span>
                         ) : (
                           <button onClick={() => void undo()} disabled={undoing === "busy"}
-                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md border border-[var(--color-border-strong)] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">
+                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md border border-[var(--color-border-strong)] font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">
                             {undoing === "busy" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null} Undo this import
                           </button>
                         )}
@@ -606,14 +606,14 @@ export default function ScheduleImportModal({
           )}
 
           {mergePlan && !replaceExisting && !importResult && (
-            <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-2 text-[11px] text-[var(--color-text)]">
+            <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-2 text-caption text-[var(--color-text)]">
               <b>If you merge:</b> {mergePlan.updated} task{mergePlan.updated === 1 ? "" : "s"} updated, {mergePlan.added} new
               {mergePlan.kept > 0 ? <>, {mergePlan.kept} already here and not in the file (kept, not deleted)</> : null}.
               <span className="text-[var(--color-text-muted)]"> Updated tasks take the file&apos;s names, dates, hours and outline. Progress, comments, hold reasons and the crew setting stay as recorded here; contractor, location and work order are filled from the file only where they&apos;re blank.</span>
             </div>
           )}
           {!phased && (existingCount ?? 0) > 0 && parseResult && parseResult.rows.length > 0 && !importResult && (
-            <label className="flex items-start gap-2 border-l-2 border-[var(--state-overdue)] pl-3 py-1 text-[12px] text-[var(--color-text)]">
+            <label className="flex items-start gap-2 border-l-2 border-[var(--state-overdue)] pl-3 py-1 text-caption text-[var(--color-text)]">
               <input type="checkbox" checked={replaceExisting} onChange={(e) => setReplaceExisting(e.target.checked)} className="mt-0.5" />
               <span>
                 <b className="text-[var(--state-overdue-text)]">Replace the current schedule:</b> delete the {existingCount} task{existingCount === 1 ? "" : "s"} already on this project first, then import the file from scratch. Cancelled jobs stay cancelled, with their notes.
@@ -625,13 +625,13 @@ export default function ScheduleImportModal({
           )}
 
           {/* Tip strip — always visible. */}
-          <div className="text-[11px] text-[var(--color-text-muted)] italic">
+          <div className="text-caption text-[var(--color-text-muted)] italic">
             Nothing is written back to your scheduling tool. Importing the same file again updates the tasks it made.
           </div>
         </div>
 
         {failed && (
-          <div role="alert" className="px-5 py-3 border-t border-[var(--color-border)] text-[13px] text-[var(--color-text)]">
+          <div role="alert" className="px-5 py-3 border-t border-[var(--color-border)] text-body text-[var(--color-text)]">
             <b className="text-[var(--state-overdue-text)]">The import stopped:</b> {failed.message}{" "}
             {failed.back === true ? "The schedule is back the way it was before you pressed Import. Your file is still here: press Try again."
               : failed.back === false ? <>Putting the schedule back also failed ({failed.backError}). The copy from before is kept in this window: keep it open and press <button type="button" onClick={() => void failed.retry?.()} className="underline cursor-pointer">Put the schedule back</button>.</>
@@ -645,7 +645,7 @@ export default function ScheduleImportModal({
             <button
               onClick={submit}
               disabled={!canSubmit}
-              className="inline-flex items-center gap-1.5 text-sm font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] px-4 py-2 rounded-lg shadow-sm disabled:opacity-40 transition-colors"
+              className="inline-flex items-center gap-1.5 text-sm font-medium text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] px-4 py-2 rounded-lg shadow-sm disabled:opacity-40 transition-colors"
             >
               {importing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
               {failed && failed.back !== false ? "Try again" : `Import ${parseResult.rows.length} task${parseResult.rows.length === 1 ? "" : "s"}`}
@@ -660,8 +660,8 @@ export default function ScheduleImportModal({
 function FormatBadge({ label, hint }: { label: string; hint: string }) {
   return (
     <div className="inline-flex flex-col items-center gap-0.5 px-2.5 py-1 rounded-md bg-[var(--color-surface)] border border-[var(--color-border)]">
-      <span className="text-[11px] font-display tabular-nums font-semibold text-[var(--color-text)]">{label}</span>
-      <span className="text-[11px] text-[var(--color-text-muted)]">{hint}</span>
+      <span className="text-caption font-display tabular-nums font-semibold text-[var(--color-text)]">{label}</span>
+      <span className="text-caption text-[var(--color-text-muted)]">{hint}</span>
     </div>
   );
 }
@@ -690,8 +690,8 @@ function XmlExportGuide({ filename, format }: { filename: string; format: "mspro
           <FileText className="w-4 h-4 text-[var(--color-text-muted)]" />
         </div>
         <div className="flex-1 min-w-0">
-          <div className="text-sm font-semibold text-[var(--color-text)]">This file needs to be exported as XML first</div>
-          <div className="text-[11px] text-[var(--color-text-muted)]">
+          <div className="text-sm font-medium text-[var(--color-text)]">This file needs to be exported as XML first</div>
+          <div className="text-caption text-[var(--color-text-muted)]">
             <code className="font-mono">{ext}</code> files are not accepted: only MS Project&apos;s XML export is an
             exact copy of your schedule.
           </div>
@@ -701,13 +701,13 @@ function XmlExportGuide({ filename, format }: { filename: string; format: "mspro
         <div>
           <ol className="space-y-1.5 text-xs text-[var(--color-text)]">
             <Step n={1}>
-              Open <code className="font-mono bg-[var(--color-surface)] px-1.5 py-0.5 rounded border border-[var(--color-border)] text-[11px]">{filename || "your schedule"}</code> in Microsoft Project.
+              Open <code className="font-mono bg-[var(--color-surface)] px-1.5 py-0.5 rounded border border-[var(--color-border)] text-caption">{filename || "your schedule"}</code> in Microsoft Project.
             </Step>
             <Step n={2}>
               <b>File → Save As</b> (or <kbd className="font-display tabular-nums bg-[var(--color-surface)] px-1.5 py-0.5 rounded border border-[var(--color-border)]">F12</kbd>) → choose <b>XML Format (*.xml)</b> and save.
             </Step>
             <Step n={3}>
-              Drag that new <code className="font-mono bg-[var(--color-surface)] px-1.5 py-0.5 rounded border border-[var(--color-border)] text-[11px]">.xml</code> file right here. It imports with all dependencies, resources, and exact dates.
+              Drag that new <code className="font-mono bg-[var(--color-surface)] px-1.5 py-0.5 rounded border border-[var(--color-border)] text-caption">.xml</code> file right here. It imports with all dependencies, resources, and exact dates.
             </Step>
           </ol>
         </div>
@@ -719,7 +719,7 @@ function XmlExportGuide({ filename, format }: { filename: string; format: "mspro
 function Step({ n, children }: { n: number; children: React.ReactNode }) {
   return (
     <li className="flex items-start gap-2.5">
-      <span className="shrink-0 w-5 h-5 rounded-full bg-[var(--color-text)] text-[var(--color-surface)] text-[11px] font-semibold flex items-center justify-center mt-0.5">{n}</span>
+      <span className="shrink-0 w-5 h-5 rounded-full bg-[var(--color-text)] text-[var(--color-surface)] text-caption font-medium flex items-center justify-center mt-0.5">{n}</span>
       <span className="flex-1">{children}</span>
     </li>
   );
@@ -748,21 +748,21 @@ function ParseQualityStats({ result }: { result: ParseResult }) {
           ? <AlertTriangle className="w-4 h-4 text-[var(--state-overdue-text)] shrink-0" />
           : <CheckCircle2 className="w-4 h-4 text-[var(--state-released-text)] shrink-0" />
         }
-        <div className={`text-sm font-bold ${noHierarchy ? "text-[var(--state-overdue-text)]" : "text-[var(--color-text)]"}`}>
+        <div className={`text-sm font-medium ${noHierarchy ? "text-[var(--state-overdue-text)]" : "text-[var(--color-text)]"}`}>
           {noHierarchy
             ? "No phases or sub-tasks found in the file"
             : `Found ${summaries} phase or group row${summaries === 1 ? "" : "s"} and ${withParent} sub-task${withParent === 1 ? "" : "s"}`}
         </div>
       </div>
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px]">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-caption">
         <StatCell label="Total tasks"      value={`${total}`}            tone={total > 0 ? "ok" : "warn"} />
         <StatCell label="With parent"      value={`${withParent} / ${total}`} tone={withParent  > 0 ? "ok" : "warn"} />
         <StatCell label="With start date"  value={`${withStart} / ${total}`}  tone={withStart   > 0 ? "ok" : "warn"} />
         <StatCell label="WBS codes"        value={`${withWbs} / ${total}`}    tone={withWbs     > 0 ? "ok" : "muted"} />
       </div>
       {noHierarchy && (
-        <div className="text-[12px] text-[var(--color-text)] mt-1 space-y-1">
-          <div className="font-bold">Without parent/child structure, sub-tasks won&apos;t render as accordions and tasks won&apos;t group under phases.</div>
+        <div className="text-caption text-[var(--color-text)] mt-1 space-y-1">
+          <div className="font-medium">Without parent/child structure, sub-tasks won&apos;t render as accordions and tasks won&apos;t group under phases.</div>
           <div>Most common causes:</div>
           <ol className="ml-4 list-decimal space-y-0.5">
             <li>The source file is genuinely flat (an exported punch list with no outline). Check in your scheduling tool. In MS Project: <i>View → Outline → Show Outline</i>. If there&apos;s nothing to expand, the file itself has no structure.</li>
@@ -771,7 +771,7 @@ function ParseQualityStats({ result }: { result: ParseResult }) {
         </div>
       )}
       {!noHierarchy && noDurations && (
-        <div className="text-[12px] text-[var(--state-held-text)] mt-1">
+        <div className="text-caption text-[var(--state-held-text)] mt-1">
           Most rows have only a finish date, no start. Tasks will render as single-day on their finish date. Use the per-task <b>Set duration</b> action on the Work tab to expand the ones that take multiple days.
         </div>
       )}
@@ -786,8 +786,8 @@ function StatCell({ label, value, tone }: { label: string; value: string; tone: 
                        "bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text)]";
   return (
     <div className={`rounded-md border px-2 py-1 ${cls}`}>
-      <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">{label}</div>
-      <div className="font-display tabular-nums font-bold text-[12px]">{value}</div>
+      <div className="text-body font-medium text-[var(--color-text-muted)]">{label}</div>
+      <div className="font-display tabular-nums font-bold text-caption">{value}</div>
     </div>
   );
 }

@@ -41,8 +41,8 @@ export default function PhaseLines({ rows, print }: { rows: PhaseStanding[]; pri
   return (
     <div data-phase-lines>
       <div className={`flex items-baseline justify-between gap-2 ${print ? "mb-2" : "mb-1"}`}>
-        <div className={print ? "text-[12px] font-semibold text-[var(--color-text-muted)]" : "text-[13px] font-semibold text-[var(--color-text-muted)]"}>By phase</div>
-        <div className={`${print ? "text-[11px]" : "text-[12px]"} text-[var(--color-text-muted)]`}>Each phase against its own plan</div>
+        <div className={print ? "text-caption font-medium text-[var(--color-text-muted)]" : "text-body font-medium text-[var(--color-text-muted)]"}>By phase</div>
+        <div className={`${print ? "text-caption" : "text-caption"} text-[var(--color-text-muted)]`}>Each phase against its own plan</div>
       </div>
       {/* On screen the phases are rows on the card, split by hairlines; on paper, a framed list. */}
       <ul className={`divide-y divide-[var(--color-border)] ${print ? "rounded-xl border border-[var(--color-border)]" : "-mx-2"}`}>
@@ -53,9 +53,9 @@ export default function PhaseLines({ rows, print }: { rows: PhaseStanding[]; pri
           const body = (
             <>
               <span className="flex items-baseline gap-2 flex-wrap">
-                <b className={`${print ? "text-[14px]" : "text-[14px]"} text-[var(--color-text)]`}>{s.name}</b>
-                {p && <span className={`${print ? "text-[12px]" : "text-[12px]"} text-[var(--color-text-muted)]`}>{phaseDates(p)}</span>}
-                {s.steps > 0 && <span className={`${print ? "text-[12px]" : "text-[12px]"} text-[var(--color-text-muted)]`}>{s.done} of {s.steps} steps</span>}
+                <b className={`${print ? "text-body" : "text-body"} text-[var(--color-text)]`}>{s.name}</b>
+                {p && <span className={`${print ? "text-caption" : "text-caption"} text-[var(--color-text-muted)]`}>{phaseDates(p)}</span>}
+                {s.steps > 0 && <span className={`${print ? "text-caption" : "text-caption"} text-[var(--color-text-muted)]`}>{s.done} of {s.steps} steps</span>}
               </span>
               {s.steps > 0 && (
                 <span className="relative mt-1.5 block h-1.5 rounded-full bg-[var(--color-accent-soft)]">
@@ -64,8 +64,8 @@ export default function PhaseLines({ rows, print }: { rows: PhaseStanding[]; pri
                   {s.state === "running" && <span className="absolute -top-[3px] h-3 w-0.5 bg-[var(--color-text-muted)]" style={{ left: `calc(${Math.min(100, s.planPct)}% - 1px)` }} title={`Plan by now ${s.planPct}%`} />}
                 </span>
               )}
-              <span className={`mt-1.5 block text-[13px] font-bold ${TONE[w.tone]}`}>{w.head}</span>
-              {w.lines.map((l) => <span key={l} className="block text-[12px] text-[var(--color-text-muted)]">{l}</span>)}
+              <span className={`mt-1.5 block text-body font-medium ${TONE[w.tone]}`}>{w.head}</span>
+              {w.lines.map((l) => <span key={l} className="block text-caption text-[var(--color-text-muted)]">{l}</span>)}
             </>
           );
           return (

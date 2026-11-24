@@ -24,7 +24,7 @@ export default function PdfDrop({ onFile, file, children, className = "" }: {
       className={`flex-1 block border-2 border-dashed border-[var(--color-border-strong)] rounded p-2 cursor-pointer hover:bg-[var(--color-surface-2)] ${file ? "" : "text-center"} ${drag.ring} ${className}`}
     >
       <input type="file" accept="application/pdf" className="hidden" onChange={(e) => onFile(e.target.files?.[0] ?? null)} />
-      {drag.over ? <span className="text-[13px] font-bold text-[var(--color-text)]">{drag.say}</span> : children}
+      {drag.over ? <span className="text-body font-medium text-[var(--color-text)]">{drag.say}</span> : children}
     </label>
   );
 }

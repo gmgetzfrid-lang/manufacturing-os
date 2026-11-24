@@ -115,12 +115,12 @@ export function RoleDayTabs() {
           </button>
         ))}
       </div>
-      <p key={`intro-${role.key}`} className="mt-4 mb-2.5 font-display text-[19px] font-semibold text-[var(--color-text)]"
+      <p key={`intro-${role.key}`} className="mt-4 mb-2.5 font-display text-section font-semibold text-[var(--color-text)]"
         style={{ animation: "rise 0.35s var(--ease-fluid) both" }}>
         {role.intro}
       </p>
       <div role="tabpanel" aria-live="polite" className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
-        <div className="max-md:hidden grid grid-cols-2 bg-[var(--color-surface-2)] text-[13px] font-semibold text-[var(--color-text-muted)]">
+        <div className="max-md:hidden grid grid-cols-2 bg-[var(--color-surface-2)] text-body font-medium text-[var(--color-text-muted)]">
           <div className="px-4 sm:px-5 h-10 flex items-center">Before</div>
           <div className="px-4 sm:px-5 h-10 flex items-center border-l border-[var(--color-border)]">With Manufacturing OS</div>
         </div>
@@ -128,12 +128,12 @@ export function RoleDayTabs() {
           {role.moments.map((m, i) => (
             <li key={`${role.key}-${i}`} className="grid grid-cols-1 md:grid-cols-2"
               style={{ animation: `rise 0.4s var(--ease-fluid) ${i * 60}ms both` }}>
-              <div className="px-4 sm:px-5 py-3.5 text-[15px] leading-snug text-[var(--color-text-muted)]">
-                <span className="md:hidden block text-[13px] font-semibold mb-0.5">Before</span>
+              <div className="px-4 sm:px-5 py-3.5 text-reading leading-snug text-[var(--color-text-muted)]">
+                <span className="md:hidden block text-body font-medium mb-0.5">Before</span>
                 {m.before}
               </div>
-              <div className="px-4 sm:px-5 py-3.5 max-md:pt-0 md:border-l border-[var(--color-border)] text-[15px] leading-snug text-[var(--color-text)]">
-                <span className="md:hidden block text-[13px] font-semibold text-[var(--color-text-muted)] mb-0.5">With Manufacturing OS</span>
+              <div className="px-4 sm:px-5 py-3.5 max-md:pt-0 md:border-l border-[var(--color-border)] text-reading leading-snug text-[var(--color-text)]">
+                <span className="md:hidden block text-body font-medium text-[var(--color-text-muted)] mb-0.5">With Manufacturing OS</span>
                 {m.after}
               </div>
             </li>

@@ -45,7 +45,7 @@ export default function LibraryAiSwitch({ orgId, libraryId, libraryName, exclude
           onClick={() => void flip()}
           disabled={!canChange || busy}
           title={canChange ? (on ? "Turn off: never send this library to AI" : "Turn on: allow AI to read this library") : "Only Admin and Doc Control can change this"}
-          className="group inline-flex items-center gap-2 rounded-md text-[14px] text-[var(--color-text)] disabled:cursor-not-allowed"
+          className="group inline-flex items-center gap-2 rounded-md text-body text-[var(--color-text)] disabled:cursor-not-allowed"
         >
           <span className={`relative inline-flex shrink-0 w-9 h-5 rounded-full transition-colors group-disabled:opacity-50 ${on ? "bg-[var(--color-main)]" : "bg-[var(--color-border-strong)]"}`}>
             <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-[var(--color-surface)] shadow grid place-items-center transition-transform ${on ? "translate-x-4" : ""}`}>
@@ -56,7 +56,7 @@ export default function LibraryAiSwitch({ orgId, libraryId, libraryName, exclude
         </button>
         <StatusTag tone={on ? "good" : "none"}>{on ? "Allowed" : "Never sent"}</StatusTag>
       </span>
-      {note && <span role={note.bad ? "alert" : undefined} className={`text-[13px] ${note.bad ? "text-[var(--state-overdue)]" : "text-[var(--color-text-muted)]"}`}>{note.text}</span>}
+      {note && <span role={note.bad ? "alert" : undefined} className={`text-body ${note.bad ? "text-[var(--state-overdue)]" : "text-[var(--color-text-muted)]"}`}>{note.text}</span>}
     </span>
   );
 }

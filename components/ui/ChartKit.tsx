@@ -116,7 +116,7 @@ export function SCurveChart({ points, fmt, todayIso, className = "" }: {
         <text x={VB_W - PAD_R} y={VB_H - 8} fontSize="10" textAnchor="end" fill="var(--color-text-faint)">{fmtDate(last.date)}</text>
       </svg>
       {hasPlanned && (
-        <p className="mt-1 text-[12px] text-[var(--color-text-muted)] inline-flex items-center gap-1.5">
+        <p className="mt-1 text-caption text-[var(--color-text-muted)] inline-flex items-center gap-1.5">
           <span aria-hidden className="w-4 border-t border-dashed border-[var(--color-text-faint)]" />
           Dashed: the planned pace
         </p>
@@ -147,12 +147,12 @@ export function BarList({ items, fmt, className = "" }: {
     <div className={`space-y-2 ${className}`}>
       {items.map((it, i) => (
         <div key={`${it.label}-${i}`} title={`${it.label} · ${fmt(it.value)}`}>
-          <div className="flex items-baseline justify-between gap-2 text-[12px]">
-            <span className={`truncate font-bold ${it.highlight ? "text-[var(--color-accent-text)]" : "text-[var(--color-text)]"}`}>
+          <div className="flex items-baseline justify-between gap-2 text-caption">
+            <span className={`truncate font-medium ${it.highlight ? "text-[var(--color-accent-text)]" : "text-[var(--color-text)]"}`}>
               {it.label}
-              {it.flag && <span className="ml-1.5 font-semibold text-[12px] text-[var(--state-overdue-text)]">{it.flag}</span>}
+              {it.flag && <span className="ml-1.5 font-medium text-caption text-[var(--state-overdue-text)]">{it.flag}</span>}
             </span>
-            <span className="tabular-nums font-semibold text-[var(--color-text)] shrink-0">{fmt(it.value)}</span>
+            <span className="tabular-nums font-medium text-[var(--color-text)] shrink-0">{fmt(it.value)}</span>
           </div>
           <div className="mt-0.5 h-2 rounded-full bg-[var(--viz-track)] overflow-hidden">
             <div className="h-full rounded-full transition-[width] duration-500"
@@ -162,7 +162,7 @@ export function BarList({ items, fmt, className = "" }: {
                 background: it.highlight ? "var(--color-main)" : it.slot != null ? vizCat(it.slot) : "var(--viz-neutral)",
               }} />
           </div>
-          {it.sublabel && <div className="mt-0.5 text-[12px] text-[var(--color-text-muted)]">{it.sublabel}</div>}
+          {it.sublabel && <div className="mt-0.5 text-caption text-[var(--color-text-muted)]">{it.sublabel}</div>}
         </div>
       ))}
     </div>
@@ -205,10 +205,10 @@ export function ScoreDial({ score, size = 64, label, className = "" }: {
         )}
       </svg>
       <div className="relative text-center leading-none">
-        <div className="font-semibold tabular-nums text-[var(--color-text)]" style={{ fontSize: size / 3.4 }}>
+        <div className="font-medium tabular-nums text-[var(--color-text)]" style={{ fontSize: size / 3.4 }}>
           {score == null ? "-" : Math.round(score)}
         </div>
-        {label && <div className="mt-0.5 text-[13px] font-semibold " style={{ color }}>{label}</div>}
+        {label && <div className="mt-0.5 text-body font-medium " style={{ color }}>{label}</div>}
       </div>
     </div>
   );
@@ -253,7 +253,7 @@ export function Donut({ segments, size = 96, fmt, centerLabel, className = "" }:
           })}
         </svg>
         {centerLabel && (
-          <div className="absolute inset-0 flex items-center justify-center text-[12px] font-semibold text-[var(--color-text-muted)] text-center leading-tight">
+          <div className="absolute inset-0 flex items-center justify-center text-caption font-medium text-[var(--color-text-muted)] text-center leading-tight">
             {centerLabel}
           </div>
         )}
@@ -262,7 +262,7 @@ export function Donut({ segments, size = 96, fmt, centerLabel, className = "" }:
         {shown.map((s) => {
           const slot = segments.indexOf(s);
           return (
-            <div key={s.label} className="flex items-center gap-1.5 text-[12px] text-[var(--color-text-muted)]">
+            <div key={s.label} className="flex items-center gap-1.5 text-caption text-[var(--color-text-muted)]">
               <span aria-hidden className="w-2 h-2 rounded-full shrink-0" style={{ background: vizCat(slot) }} />
               <span className="truncate">{s.label}</span>
               <b className="text-[var(--color-text)] tabular-nums shrink-0">{f(s.value)}</b>
@@ -286,15 +286,15 @@ export function ExampleFrame({ children, note, className = "" }: {
   return (
     <div className={`relative rounded-2xl border-2 border-dashed border-[var(--color-border-strong)] overflow-hidden ${className}`}>
       <div aria-hidden className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
-        <span className="rotate-[-18deg] text-4xl font-semibold text-[var(--color-text)] opacity-[0.07] select-none">
+        <span className="rotate-[-18deg] text-4xl font-medium text-[var(--color-text)] opacity-[0.07] select-none">
           Example
         </span>
       </div>
       <div className="px-3 pt-2.5 pb-1 flex items-center gap-2">
-        <span className="text-[13px] font-semibold px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/40">
+        <span className="text-body font-medium px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/40">
           Example data
         </span>
-        <span className="text-[12px] text-[var(--color-text-muted)]">
+        <span className="text-caption text-[var(--color-text-muted)]">
           {note ?? "This is what the view looks like with a job in flight - it turns real as your numbers land."}
         </span>
       </div>

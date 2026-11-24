@@ -33,7 +33,7 @@ export default function TimeZoneSelect({ value, onChange, className, disabled }:
         {zones.map((z) => <option key={z} value={z}>{z.replace(/_/g, " ")}</option>)}
       </select>
       {abbr && abbr !== value && (
-        <span className="shrink-0 text-[11px] font-display tabular-nums font-bold px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text-muted)]" title="Current short name for this zone">{abbr}</span>
+        <span className="shrink-0 text-caption font-display tabular-nums font-bold px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text-muted)]" title="Current short name for this zone">{abbr}</span>
       )}
       {device !== value && (
         <button
@@ -41,7 +41,7 @@ export default function TimeZoneSelect({ value, onChange, className, disabled }:
           disabled={disabled}
           onClick={() => onChange(device)}
           title={`Use this device's zone: ${device}`}
-          className="shrink-0 inline-flex items-center gap-1 h-8 px-2.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[12px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
+          className="shrink-0 inline-flex items-center gap-1 h-8 px-2.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-caption font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
         >
           <MapPin className="w-3 h-3" /> Use mine
         </button>

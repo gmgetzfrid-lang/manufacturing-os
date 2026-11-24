@@ -10,7 +10,7 @@ export default function OfflinePage() {
     <div className="min-h-dvh bg-[var(--color-canvas)] px-4 pt-10 pb-12">
       <div className="mx-auto w-full max-w-[560px]">
         <header className="page-head">
-          <div className="text-[14px] text-[var(--color-text-muted)]">No connection</div>
+          <div className="text-body text-[var(--color-text-muted)]">No connection</div>
           <h1 className="mt-2 font-display text-title font-semibold text-[var(--color-text)]">You&apos;re offline.</h1>
           <p className="mt-1.5 text-reading text-[var(--color-text-muted)]">
             This page wasn&apos;t saved on this device. Pages you opened recently still work. Try again when the connection is back.

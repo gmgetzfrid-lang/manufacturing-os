@@ -93,8 +93,8 @@ export default function ProtectionRecord({ orgId }: { orgId: string }) {
   ) => (
     <div className={`flex items-center gap-2 px-3 py-2 rounded-xl border ${tone}`}>
       {icon}
-      <span className="text-[15px] font-semibold tabular-nums">{value}</span>
-      <span className="text-[13px] font-bold leading-tight opacity-80">{label}</span>
+      <span className="text-reading font-medium tabular-nums">{value}</span>
+      <span className="text-body font-medium leading-tight opacity-80">{label}</span>
     </div>
   );
 
@@ -102,7 +102,7 @@ export default function ProtectionRecord({ orgId }: { orgId: string }) {
     <div className="mb-4">
       <div className="flex items-center gap-1.5 mb-1.5">
         <ShieldCheck className="w-3.5 h-3.5 text-[var(--state-released)]" />
-        <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">
+        <span className="text-body font-medium text-[var(--color-text-muted)]">
           Protection record - last {WINDOW_DAYS} days
         </span>
       </div>

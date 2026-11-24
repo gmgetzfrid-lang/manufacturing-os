@@ -166,7 +166,7 @@ export default function AsBuiltScheduleView(p: Props) {
 
   if (err) return <ErrorNote title="Couldn't read the job." next={err} />;
   if (!data || !work || !plan || !check) return <SkeletonRows rows={8} cols={3} what="the job, shift by shift" sheet={false} />;
-  if (!built.orders.length) return <p className="py-6 text-[15px] text-[var(--color-text-muted)]">No schedule here yet. Import it on Plan.</p>;
+  if (!built.orders.length) return <p className="py-6 text-reading text-[var(--color-text-muted)]">No schedule here yet. Import it on Plan.</p>;
 
   return (
     <PxCtx.Provider value={px}>
@@ -190,15 +190,15 @@ export default function AsBuiltScheduleView(p: Props) {
   );
 }
 
-const btnQuiet = "inline-flex items-center gap-1.5 h-9 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] cursor-pointer disabled:opacity-50 whitespace-nowrap";
-const btnPri = "inline-flex items-center gap-1.5 h-9 pointer-coarse:h-11 rounded-lg bg-[var(--color-accent)] px-3 text-[14px] font-semibold text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)] cursor-pointer disabled:opacity-50 whitespace-nowrap";
+const btnQuiet = "inline-flex items-center gap-1.5 h-10 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] cursor-pointer disabled:opacity-50 whitespace-nowrap";
+const btnPri = "inline-flex items-center gap-1.5 h-10 pointer-coarse:h-11 rounded-lg bg-[var(--color-accent)] px-3 text-body font-medium text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)] cursor-pointer disabled:opacity-50 whitespace-nowrap";
 /** Two choices, as plain radio buttons (not a filled toggle). */
 function Choice<T extends string>({ value, onChange, options, label }: { value: T; onChange: (v: T) => void; options: ReadonlyArray<readonly [T, string]>; label: string }) {
   const name = React.useId();
   return (
     <div role="radiogroup" aria-label={label} className="flex flex-wrap gap-x-4 gap-y-1">
       {options.map(([k, l]) => (
-        <label key={k} className={`inline-flex items-center gap-1.5 min-h-8 pointer-coarse:min-h-11 text-[13px] cursor-pointer ${value === k ? "font-semibold text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>
+        <label key={k} className={`inline-flex items-center gap-1.5 min-h-8 pointer-coarse:min-h-11 text-body cursor-pointer ${value === k ? "font-medium text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>
           <input type="radio" name={name} checked={value === k} onChange={() => onChange(k)} className="w-4 h-4 accent-[var(--color-current)]" />{l}
         </label>
       ))}
@@ -231,7 +231,7 @@ function Header({ shifts, tz, dayLabel }: { shifts: Array<{ start: number; kind:
     if (s.kind !== "day" && i !== 0) continue;
     const span = s.kind === "day" ? 2 : 1;
     out.push(
-      <div key={i} className="absolute top-0 border-l border-[var(--color-border)] pl-1 text-[11px] text-[var(--color-text-muted)] leading-tight whitespace-nowrap overflow-hidden" style={{ left: i * PX, width: span * PX }}>
+      <div key={i} className="absolute top-0 border-l border-[var(--color-border)] pl-1 text-caption text-[var(--color-text-muted)] leading-tight whitespace-nowrap overflow-hidden" style={{ left: i * PX, width: span * PX }}>
         <b className="text-[var(--color-text)]">{dayLabel ? dayLabel(s.start) : PX < 20 ? fmtInTz(s.start, tz, { day: "numeric" }) : PX < 26 ? fmtInTz(s.start, tz, { month: "numeric", day: "numeric" }) : fmtInTz(s.start, tz, { weekday: "short" })}</b> {PX < 26 ? "" : dayLabel ? fmtInTz(s.start, tz, { weekday: "short" }) : fmtInTz(s.start, tz, { month: "short", day: "numeric" })}
         <div className="flex mt-0.5">{span === 2 ? <><span className="flex-1 text-center">D</span><span className="flex-1 text-center">N</span></> : <span className="flex-1 text-center">{s.kind === "night" ? "N" : "D"}</span>}</div>
       </div>,
@@ -255,7 +255,7 @@ const ORDER_WAIT = hatch("var(--viz-neutral)", "var(--color-surface-2)");
 
 function Legend({ items }: { items: Array<[React.CSSProperties, string]> }) {
   return (
-    <div className="flex flex-wrap gap-x-3 gap-y-1 text-[12px] text-[var(--color-text-muted)]">
+    <div className="flex flex-wrap gap-x-3 gap-y-1 text-caption text-[var(--color-text-muted)]">
       {items.map(([st, label]) => <span key={label} className="inline-flex items-center gap-1"><span className="inline-block w-4 h-2.5 rounded-sm" style={st} />{label}</span>)}
     </div>
   );
@@ -269,7 +269,7 @@ function pieces(items: Piece[], x: (t: number) => number, top: number): { h: num
   const nodes = at.map((q) => {
     const l = x(q.from), w = Math.max(3, x(q.to) - l);
     return (
-      <i key={q.key} title={q.title} className="absolute rounded-[3px] overflow-hidden whitespace-nowrap not-italic text-white text-[11px] font-bold leading-[10px] px-[3px]"
+      <i key={q.key} title={q.title} className="absolute rounded-md overflow-hidden whitespace-nowrap not-italic text-white text-caption font-medium leading-[10px] px-[3px]"
         style={{ left: l + 0.75, width: Math.max(2, w - 1.5), top: top + q.lane * 13, height: 10, background: q.color, boxShadow: q.ring }}>
         {q.label && w >= 34 ? q.label : null}
       </i>
@@ -282,7 +282,7 @@ function pieces(items: Piece[], x: (t: number) => number, top: number): { h: num
 function FoldAll({ open, total, onAll }: { open: number; total: number; onAll: (open: boolean) => void }) {
   const all = open >= total;
   return (
-    <div className="flex flex-wrap items-center gap-2 text-[12px] text-[var(--color-text-muted)]">
+    <div className="flex flex-wrap items-center gap-2 text-caption text-[var(--color-text-muted)]">
       <button type="button" onClick={() => onAll(!all)} className={btnQuiet}>{all ? <ChevronsDownUp className="w-4 h-4" /> : <ChevronsUpDown className="w-4 h-4" />} {all ? "Fold the steps away" : "Show every step"}</button>
       <span>Each work order&apos;s bar is its steps, one piece each. Tap a work order to see its steps.</span>
     </div>
@@ -299,8 +299,8 @@ function OrderName({ open, onToggle, children }: { open: boolean; onToggle: () =
 }
 
 const cellAct = "sticky left-0 z-[2] bg-[var(--color-surface)] border-r border-[var(--color-border)] align-top px-2 py-1.5 w-[170px] min-w-[170px] max-w-[170px] sm:w-[290px] sm:min-w-[290px] sm:max-w-[290px]";
-const cellDt = "col-x align-top px-2 py-1.5 text-[11px] whitespace-nowrap text-[var(--color-text)]";
-const cellN = "col-x align-top px-1.5 py-1.5 text-center font-bold text-[12px] min-w-[44px]";
+const cellDt = "col-x align-top px-2 py-1.5 text-caption whitespace-nowrap text-[var(--color-text)]";
+const cellN = "col-x align-top px-1.5 py-1.5 text-center font-medium text-caption min-w-[44px]";
 
 // ── As-built ─────────────────────────────────────────────────────────────
 
@@ -331,7 +331,7 @@ function BuiltView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: As
 
   return (
     <div className="space-y-2">
-      <div className="flex flex-wrap gap-2 text-[12px]">
+      <div className="flex flex-wrap gap-2 text-caption">
         <Chip>Planned finish <b>{when(built.planFinish, tz)}</b></Chip>
         <Chip>Actual finish <b className={late != null && late > 0.5 ? "text-[var(--state-overdue-text)]" : ""}>{built.finish != null ? when(built.finish, tz) : "not done yet"}</b>{late != null && Math.abs(late) >= 0.5 ? <span className="text-[var(--color-text-muted)]"> {Math.abs(late)} h {late > 0 ? "late" : "early"}</span> : null}</Chip>
         <Chip><b>{built.steps}</b> activities · <b>{built.added}</b> added during the job</Chip>
@@ -339,15 +339,15 @@ function BuiltView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: As
         <Chip>Ready but not started: <b>{t.readySteps}</b> activities, <b>{t.readyShifts}</b> shifts</Chip>
       </div>
       <Legend items={[[{ background: "var(--color-main)" }, "A step, start to finish (on a step's own line: each shift it was worked)"], [ORDER_WAIT, "Work order open, nothing logged that shift"], [WAIT, "Activity in progress, nothing logged"], [READY, "Ready, not started"], [{ background: "var(--viz-neutral)", height: 4 }, "Plan"], [{ borderLeft: "2px solid var(--state-overdue)", width: 2 }, "Planned finish"]]} />
-      <div className="text-[12px] text-[var(--color-text-muted)]">Night shifts count as waiting only for work that ran on nights (its crew worked that work order on two or more nights). Day work sitting overnight is not waiting.</div>
+      <div className="text-caption text-[var(--color-text-muted)]">Night shifts count as waiting only for work that ran on nights (its crew worked that work order on two or more nights). Day work sitting overnight is not waiting.</div>
       <FoldAll open={open.size} total={orders.length} onAll={(all) => setOpen(all ? new Set(orders.map((o) => o.key)) : new Set())} />
       <div className="overflow-auto max-h-[75vh] rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
-        <table className={`border-separate border-spacing-0 w-max text-[12px] ${p.cols ? "" : "[&_.col-x]:hidden"}`}>
+        <table className={`border-separate border-spacing-0 w-max text-caption ${p.cols ? "" : "[&_.col-x]:hidden"}`}>
           <thead className="sticky top-0 z-[4] bg-[var(--color-surface-2)]">
-            <tr className="text-[11px] text-[var(--color-text-muted)] text-left">
+            <tr className="text-caption text-[var(--color-text-muted)] text-left">
               <th className={`${cellAct} !bg-[var(--color-surface-2)] z-[5]`}>Activity</th>
-              <th className="col-x px-2 font-semibold">Planned</th><th className="col-x px-2 font-semibold">Actual</th>
-              <th className="col-x px-1 font-semibold text-center">Shifts<br />worked</th><th className="col-x px-1 font-semibold text-center">Shifts<br />waited</th>
+              <th className="col-x px-2 font-medium">Planned</th><th className="col-x px-2 font-medium">Actual</th>
+              <th className="col-x px-1 font-medium text-center">Shifts<br />worked</th><th className="col-x px-1 font-medium text-center">Shifts<br />waited</th>
               <th className="p-0"><Header shifts={work.shifts} tz={tz} /></th>
             </tr>
           </thead>
@@ -365,9 +365,9 @@ function BuiltView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: As
                   <tr className="bg-[var(--color-surface-2)]" data-order={o.key}>
                     <td className={`${cellAct} !bg-[var(--color-surface-2)]`}>
                       <OrderName open={isOpen} onToggle={() => flip(o.key)}>
-                        <div className="font-semibold text-[12px] text-[var(--color-text)]">{o.name}</div>
-                        {o.foundOn && <div className="text-[11px] font-semibold text-[var(--color-text-muted)]">Found on {o.foundOn}</div>}
-                        <div className="text-[11px] text-[var(--color-text-muted)]">{o.wo ? `${o.wo} · ` : ""}{o.steps.length} step{o.steps.length === 1 ? "" : "s"}{o.steps.some((s) => !s.inPlan) ? ` · ${o.steps.filter((s) => !s.inPlan).length} added` : ""}{!p.cols && ow ? <> · {ow.worked} shift{ow.worked === 1 ? "" : "s"} worked{ow.waited ? <> · <b className="whitespace-nowrap font-semibold text-[var(--state-held-text)]">{ow.waited} waited</b></> : null}</> : null}</div>
+                        <div className="font-medium text-caption text-[var(--color-text)]">{o.name}</div>
+                        {o.foundOn && <div className="text-caption font-medium text-[var(--color-text-muted)]">Found on {o.foundOn}</div>}
+                        <div className="text-caption text-[var(--color-text-muted)]">{o.wo ? `${o.wo} · ` : ""}{o.steps.length} step{o.steps.length === 1 ? "" : "s"}{o.steps.some((s) => !s.inPlan) ? ` · ${o.steps.filter((s) => !s.inPlan).length} added` : ""}{!p.cols && ow ? <> · {ow.worked} shift{ow.worked === 1 ? "" : "s"} worked{ow.waited ? <> · <b className="whitespace-nowrap font-medium text-[var(--state-held-text)]">{ow.waited} waited</b></> : null}</> : null}</div>
                       </OrderName>
                     </td>
                     <td className={cellDt}>{when(o.planStart, tz)}<br />{when(o.planFinish, tz)}</td>
@@ -389,11 +389,11 @@ function BuiltView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: As
                     return (
                       <tr key={s.id}>
                         <td className={cellAct}>
-                          <div className="font-bold text-[var(--color-text)]">{s.name}{!s.inPlan && <span className="ml-1 rounded border border-[var(--color-border-strong)] px-1 text-[11px] font-semibold text-[var(--color-text)]">Added</span>}</div>
-                          <div className="text-[11px] text-[var(--color-text-muted)]"><b className="inline-block w-2 h-2 rounded-full mr-1 align-middle" style={{ background: p.colorOf(w.crew) }} />{w.crew} · plan {r1(s.plannedH)} h{!p.cols ? ` · ${s.elapsedH != null ? `took ${s.elapsedH} h` : s.status === "done" ? "start not recorded" : s.status === "not_started" ? "not started" : "still going"}` : ""}</div>
-                          {w.ready && <div className="text-[11px] text-[var(--color-text-muted)]">Ready {when(w.ready.at, tz)}, waited {w.ready.shifts.length} shift{w.ready.shifts.length === 1 ? "" : "s"} to start: {w.ready.busyOn.length ? `${w.crew} was on ${[...new Set(w.ready.busyOn.map((b) => b.split(" - ")[0]))].join(", ")}` : `${w.crew} logged nothing those shifts`}</div>}
+                          <div className="font-medium text-[var(--color-text)]">{s.name}{!s.inPlan && <span className="ml-1 rounded border border-[var(--color-border-strong)] px-1 text-caption font-medium text-[var(--color-text)]">Added</span>}</div>
+                          <div className="text-caption text-[var(--color-text-muted)]"><b className="inline-block w-2 h-2 rounded-full mr-1 align-middle" style={{ background: p.colorOf(w.crew) }} />{w.crew} · plan {r1(s.plannedH)} h{!p.cols ? ` · ${s.elapsedH != null ? `took ${s.elapsedH} h` : s.status === "done" ? "start not recorded" : s.status === "not_started" ? "not started" : "still going"}` : ""}</div>
+                          {w.ready && <div className="text-caption text-[var(--color-text-muted)]">Ready {when(w.ready.at, tz)}, waited {w.ready.shifts.length} shift{w.ready.shifts.length === 1 ? "" : "s"} to start: {w.ready.busyOn.length ? `${w.crew} was on ${[...new Set(w.ready.busyOn.map((b) => b.split(" - ")[0]))].join(", ")}` : `${w.crew} logged nothing those shifts`}</div>}
                           {w.waits.map((r, i) => (
-                            <div key={i} className="text-[11px] text-[var(--state-held-text)]">
+                            <div key={i} className="text-caption text-[var(--state-held-text)]">
                               Waited {r.shifts} shift{r.shifts === 1 ? "" : "s"}: {r.why.length ? r.why.map((x) => `"${x}"`).join(" · ") : "no reason recorded"}
                               {p.canEdit && r.why.length > 0 && <button type="button" onClick={() => setPlanning({ step: s.id, run: i })} className="ml-1 underline cursor-pointer text-[var(--color-accent-text)]">Plan for it next time</button>}
                               {planning?.step === s.id && planning.run === i && <PlanFor run={r} stepName={s.name} crews={work.crews.map((c) => c.crew)} doneBefore={progressBefore(w.moved, r, idx)} onCancel={() => setPlanning(null)} onSave={(c) => { p.onAdd({ ...c, ...(c.kind === "split" ? { actId: s.id } : {}) } as PlanChange); setPlanning(null); }} />}
@@ -421,12 +421,12 @@ function BuiltView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: As
             <SectionRow title="Crews" sub="activities moved each shift; hands where counted at the meeting" width={width} shifts={work.shifts} />
             {work.crews.map((c) => (
               <tr key={c.crew}>
-                <td className={cellAct}><div className="font-bold"><b className="inline-block w-2 h-2 rounded-full mr-1 align-middle" style={{ background: p.colorOf(c.crew) }} />{c.crew}</div><div className="text-[11px] text-[var(--color-text-muted)]">most moved in a shift: {c.mostMoved}</div></td>
+                <td className={cellAct}><div className="font-medium"><b className="inline-block w-2 h-2 rounded-full mr-1 align-middle" style={{ background: p.colorOf(c.crew) }} />{c.crew}</div><div className="text-caption text-[var(--color-text-muted)]">most moved in a shift: {c.mostMoved}</div></td>
                 <td className="col-x" /><td className="col-x" /><td className={cellN}>{Object.values(c.byShift).filter((x) => x.moved).length}</td><td className="col-x" />
                 <td className="p-0 relative"><div className="relative h-11" style={{ width }}>
                   <Grid shifts={work.shifts} />
                   {keys.map((k, i) => { const b = c.byShift[k]; const hands = b?.counted?.direct ?? b?.counted?.total; return b && (b.moved || hands) ? (
-                    <span key={k} className="absolute top-1.5 h-8 rounded text-white text-center font-semibold text-[11px] leading-[13px] pt-0.5" style={{ left: i * PX + 2, width: PX - 4, background: p.colorOf(c.crew) }}>{b.moved}{hands ? <small className="block text-[11px] leading-none font-bold">{hands} hands</small> : null}</span>
+                    <span key={k} className="absolute top-1.5 h-8 rounded text-white text-center font-medium text-caption leading-[13px] pt-0.5" style={{ left: i * PX + 2, width: PX - 4, background: p.colorOf(c.crew) }}>{b.moved}{hands ? <small className="block text-caption leading-none font-medium">{hands} hands</small> : null}</span>
                   ) : null; })}
                 </div></td>
               </tr>
@@ -438,16 +438,16 @@ function BuiltView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: As
               return (
                 <tr key={`h${c.crew}`}>
                   <td className={cellAct}>
-                    <div className="font-bold"><b className="inline-block w-2 h-2 rounded-full mr-1 align-middle" style={{ background: p.colorOf(c.crew) }} />{c.crew}</div>
-                    <div className="text-[11px] text-[var(--color-text-muted)]">{c.perHand != null ? `${r1(c.perHand)} plan h of work per hand a shift on average` : "too few hands entered to judge"}{c.pace ? ` · ${c.pace.mhPerPlanH} man-hours per plan hour (${c.pace.from === "plan" ? "staffing plan" : c.pace.from === "counted" ? "counts" : "hands per job"})` : ""}</div>
-                    {say("low") && <div className="text-[11px] text-[var(--state-held-text)]">More hands than work logged: {say("low")}</div>}
-                    {say("high") && <div className="text-[11px] text-[var(--color-text-muted)]">Stretched: {say("high")}</div>}
+                    <div className="font-medium"><b className="inline-block w-2 h-2 rounded-full mr-1 align-middle" style={{ background: p.colorOf(c.crew) }} />{c.crew}</div>
+                    <div className="text-caption text-[var(--color-text-muted)]">{c.perHand != null ? `${r1(c.perHand)} plan h of work per hand a shift on average` : "too few hands entered to judge"}{c.pace ? ` · ${c.pace.mhPerPlanH} man-hours per plan hour (${c.pace.from === "plan" ? "staffing plan" : c.pace.from === "counted" ? "counts" : "hands per job"})` : ""}</div>
+                    {say("low") && <div className="text-caption text-[var(--state-held-text)]">More hands than work logged: {say("low")}</div>}
+                    {say("high") && <div className="text-caption text-[var(--color-text-muted)]">Stretched: {say("high")}</div>}
                   </td>
                   <td className="col-x" /><td className="col-x" /><td className="col-x" /><td className="col-x" />
                   <td className="p-0 relative"><div className="relative h-11" style={{ width }}>
                     <Grid shifts={work.shifts} />
                     {keys.map((k, i) => { const b = c.byShift[k]; if (!b || !(b.counted || b.planned)) return null; const hands = b.planned?.direct ?? b.counted?.direct ?? b.counted?.total; const tone = b.verdict === "low" ? "bg-transparent border-[var(--state-held)] text-[var(--state-held-text)]" : b.verdict === "high" ? "bg-blue-100 border-blue-300 text-blue-900" : "bg-transparent border-[var(--color-border)] text-[var(--state-released-text)]";
-                      return <span key={k} title={`${b.planned ? `Planned ${b.planned.direct} on the tools + ${b.planned.indirect}` : ""}${b.counted ? `${b.planned ? "; " : ""}counted ${b.counted.total ?? b.counted.direct}` : ""}; ${b.earned} plan h of work moved`} className={`absolute top-1.5 h-8 rounded border text-center font-semibold text-[11px] leading-[13px] pt-0.5 ${tone}`} style={{ left: i * PX + 2, width: PX - 4 }}>{hands}<small className="block text-[11px] leading-none font-bold">{b.counted && b.planned ? `had ${b.counted.total ?? b.counted.direct}` : `${Math.round(b.earned)} h`}</small></span>; })}
+                      return <span key={k} title={`${b.planned ? `Planned ${b.planned.direct} on the tools + ${b.planned.indirect}` : ""}${b.counted ? `${b.planned ? "; " : ""}counted ${b.counted.total ?? b.counted.direct}` : ""}; ${b.earned} plan h of work moved`} className={`absolute top-1.5 h-8 rounded border text-center font-medium text-caption leading-[13px] pt-0.5 ${tone}`} style={{ left: i * PX + 2, width: PX - 4 }}>{hands}<small className="block text-caption leading-none font-medium">{b.counted && b.planned ? `had ${b.counted.total ?? b.counted.direct}` : `${Math.round(b.earned)} h`}</small></span>; })}
                   </div></td>
                 </tr>
               );
@@ -455,7 +455,7 @@ function BuiltView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: As
           </tbody>
         </table>
       </div>
-      <p className="text-[12px] text-[var(--color-text-muted)]">A solid block is a shift where that crew logged progress (at the time you set, not when you typed it). Yellow: it sat in progress with nothing logged; the reason is the crew&apos;s own comments. Blue: everything before it was done, but its crew was elsewhere. Calendar time between start and finish is never counted as work.</p>
+      <p className="text-caption text-[var(--color-text-muted)]">A solid block is a shift where that crew logged progress (at the time you set, not when you typed it). Yellow: it sat in progress with nothing logged; the reason is the crew&apos;s own comments. Blue: everything before it was done, but its crew was elsewhere. Calendar time between start and finish is never counted as work.</p>
     </div>
   );
 }
@@ -477,7 +477,7 @@ function Chip({ children }: { children: React.ReactNode }) {
 function SectionRow({ title, sub, width, shifts }: { title: string; sub: string; width: number; shifts: Array<{ kind: string }> }) {
   return (
     <tr className="bg-[var(--color-surface-2)]">
-      <td className={`${cellAct} !bg-[var(--color-surface-2)]`}><div className="font-semibold">{title}</div><div className="text-[11px] text-[var(--color-text-muted)]">{sub}</div></td>
+      <td className={`${cellAct} !bg-[var(--color-surface-2)]`}><div className="font-medium">{title}</div><div className="text-caption text-[var(--color-text-muted)]">{sub}</div></td>
       <td className="col-x" /><td className="col-x" /><td className="col-x" /><td className="col-x" />
       <td className="p-0"><div className="relative h-full min-h-[40px]" style={{ width }}><Grid shifts={shifts} /></div></td>
     </tr>
@@ -493,7 +493,7 @@ function PlanFor({ run, stepName, crews, doneBefore, onSave, onCancel }: { run: 
   const [name, setName] = useState(reason.slice(0, 120));
   const [crew, setCrew] = useState(guess);
   const [hours, setHours] = useState(String(run.shifts * 12));
-  const field = "rounded border border-slate-400 bg-[var(--color-surface)] px-1.5 py-1 text-[12px] text-[var(--color-text)]";
+  const field = "rounded border border-slate-400 bg-[var(--color-surface)] px-1.5 py-1 text-caption text-[var(--color-text)]";
   const save = () => {
     const base = { id: `p${Date.now().toString(36)}`, said: `${stepName}: ${reason}`, at: Date.now() };
     if (where === "pre") onSave({ ...base, kind: "add", name: name.trim() || reason, crew, hours: 0, pre: true });
@@ -504,7 +504,7 @@ function PlanFor({ run, stepName, crews, doneBefore, onSave, onCancel }: { run: 
       <Choice label="Where it goes" value={where} onChange={setWhere} options={[["pre", "Before the shutdown"], ["split", "As a step in the job"]] as const} />
       <input value={name} onChange={(e) => setName(e.target.value)} aria-label="What it is" className={`${field} w-full`} />
       {where === "split" && (
-        <div className="flex flex-wrap gap-1.5 items-center text-[12px]">
+        <div className="flex flex-wrap gap-1.5 items-center text-caption">
           <select value={crew} onChange={(e) => setCrew(e.target.value)} aria-label="Crew" className={field}><option value="">Crew?</option>{crews.map((c) => <option key={c}>{c}</option>)}</select>
           <input value={hours} onChange={(e) => setHours(e.target.value.replace(/[^0-9.]/g, ""))} inputMode="decimal" aria-label="Hours" className={`${field} w-16`} /> h (it waited {run.shifts * 12} h this year)
         </div>
@@ -584,14 +584,14 @@ function NextView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsB
       <Taught {...p} at={at} orderName={(k) => orderName.get(k) ?? k} />
       {p.canEdit && (
         <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3 space-y-2">
-          <div className="font-semibold text-[13px]">Tell the schedule</div>
+          <div className="font-medium text-body">Tell the schedule</div>
           <div className="flex gap-2">
             <input value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void send(); }} placeholder='"V-7 is critical path, start it as soon as possible", "Ancon has 2 crews on nights", "PSV-021 needs 6 hours"'
-              aria-label="Tell the schedule" className="flex-1 min-w-0 rounded-lg border border-slate-400 bg-[var(--color-surface)] px-3 py-2 text-[13px] text-[var(--color-text)]" />
+              aria-label="Tell the schedule" className="flex-1 min-w-0 rounded-lg border border-slate-400 bg-[var(--color-surface)] px-3 py-2 text-body text-[var(--color-text)]" />
             <button type="button" onClick={() => void send()} disabled={busy || !text.trim() || !p.orgId} className={btnQuiet}>{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />} Send</button>
           </div>
           {answer && (
-            <div className="rounded-lg bg-[var(--color-surface-2)] px-3 py-2 text-[12px] space-y-1.5">
+            <div className="rounded-lg bg-[var(--color-surface-2)] px-3 py-2 text-caption space-y-1.5">
               {answer.err && <p className="text-[var(--state-overdue-text)]">{answer.err}</p>}
               {answer.question && <p><b>{answer.question}</b></p>}
               {answer.understood && <p>{answer.understood}</p>}
@@ -608,26 +608,26 @@ function NextView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsB
               </div>
             </div>
           )}
-          {!p.orgId && <p className="text-[12px] text-[var(--color-text-muted)]">Needs the project&apos;s workspace to talk to the schedule.</p>}
+          {!p.orgId && <p className="text-caption text-[var(--color-text-muted)]">Needs the project&apos;s workspace to talk to the schedule.</p>}
         </div>
       )}
 
       {mine.length > 0 && (
         <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3">
-          <div className="font-bold text-[12px] mb-1">Your changes ({mine.length})</div>
-          <ul className="space-y-1 text-[12px]">
+          <div className="font-medium text-caption mb-1">Your changes ({mine.length})</div>
+          <ul className="space-y-1 text-caption">
             {mine.map((c) => (
               <li key={c.id} className="flex items-start gap-2">
                 <span className="flex-1">{describe(c, orderName, actName, dayOf)}{c.said ? <span className="text-[var(--color-text-muted)]"> · from &quot;{c.said.slice(0, 120)}&quot;</span> : null}</span>
-                {p.canEdit && <button type="button" onClick={() => p.onChanges(changes.filter((x) => x.id !== c.id))} className="cursor-pointer inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--state-overdue)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors"><Undo2 className="w-3.5 h-3.5" /> Undo</button>}
+                {p.canEdit && <button type="button" onClick={() => p.onChanges(changes.filter((x) => x.id !== c.id))} className="cursor-pointer inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--state-overdue)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors"><Undo2 className="w-3.5 h-3.5" /> Undo</button>}
               </li>
             ))}
           </ul>
         </div>
       )}
 
-      <div className="flex flex-wrap gap-2 text-[12px]">
-        <Chip>Suggested finish <b>{at(plan.finish)}</b>{!trusted && <span className="font-bold text-[var(--state-held-text)]"> {p.check.can ? "not reliable yet" : "not checked yet"}</span>}</Chip>
+      <div className="flex flex-wrap gap-2 text-caption">
+        <Chip>Suggested finish <b>{at(plan.finish)}</b>{!trusted && <span className="font-medium text-[var(--state-held-text)]"> {p.check.can ? "not reliable yet" : "not checked yet"}</span>}</Chip>
         {built.planFinish != null && <Chip>This year: planned <b>{at(built.planFinish)}</b>{built.finish != null && <>, actual <b>{at(built.finish)}</b></>}</Chip>}
         <Chip><b>{plan.acts.length + plan.pre.length}</b> activities{Object.entries(kinds).filter(([k]) => k !== "same").map(([k, n]) => ` · ${n} ${(KIND[k]?.[0] ?? k).toLowerCase()}`).join("")}{plan.pre.length ? ` · ${plan.pre.length} before the shutdown` : ""}</Chip>
         <Chip><CalendarClock className="w-3.5 h-3.5 inline mr-1" />Sets the finish: {drivingOrders.slice(0, 3).join(", ")}</Chip>
@@ -636,18 +636,18 @@ function NextView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsB
 
       <FoldAll open={open.size} total={orders.length} onAll={(all) => setOpen(all ? new Set(orders.map(([k]) => k)) : new Set())} />
       <div className="overflow-auto max-h-[75vh] rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
-        <table className={`border-separate border-spacing-0 w-max text-[12px] ${p.cols ? "" : "[&_.col-x]:hidden"}`}>
+        <table className={`border-separate border-spacing-0 w-max text-caption ${p.cols ? "" : "[&_.col-x]:hidden"}`}>
           <thead className="sticky top-0 z-[4] bg-[var(--color-surface-2)]">
-            <tr className="text-[11px] text-[var(--color-text-muted)] text-left">
+            <tr className="text-caption text-[var(--color-text-muted)] text-left">
               <th className={`${cellAct} !bg-[var(--color-surface-2)] z-[5]`}>Activity</th>
-              <th className="col-x px-1 font-semibold text-center">Hours</th><th className="col-x px-2 font-semibold">Start</th><th className="col-x px-2 font-semibold">Finish</th>
+              <th className="col-x px-1 font-medium text-center">Hours</th><th className="col-x px-2 font-medium">Start</th><th className="col-x px-2 font-medium">Finish</th>
               <th className="p-0"><Header shifts={plan.shifts} tz={tz} dayLabel={dayLabel} /></th>
             </tr>
           </thead>
           <tbody>
             {plan.pre.length > 0 && <SectionRow4 title="Before the shutdown" sub="bookings and materials" width={width} shifts={plan.shifts} />}
             {plan.pre.map((a) => (
-              <tr key={a.id}><td className={cellAct}><div className="font-bold">{a.name} <span className="rounded bg-transparent px-1 text-[11px] font-semibold text-[var(--state-released-text)]">New</span></div>{a.basis && <div className="text-[11px] text-[var(--color-text-muted)]">{a.basis}</div>}</td><td className={cellN}>-</td><td className={cellDt}>Before Day 1</td><td className={cellDt} /><td className="p-0"><div className="relative h-10" style={{ width }}><Grid shifts={plan.shifts} /><span className="absolute left-1.5 top-2.5 rounded bg-transparent px-1.5 text-[11px] font-bold text-[var(--state-released-text)]">before the shutdown</span></div></td></tr>
+              <tr key={a.id}><td className={cellAct}><div className="font-medium">{a.name} <span className="rounded bg-transparent px-1 text-caption font-medium text-[var(--state-released-text)]">New</span></div>{a.basis && <div className="text-caption text-[var(--color-text-muted)]">{a.basis}</div>}</td><td className={cellN}>-</td><td className={cellDt}>Before Day 1</td><td className={cellDt} /><td className="p-0"><div className="relative h-10" style={{ width }}><Grid shifts={plan.shifts} /><span className="absolute left-1.5 top-2.5 rounded bg-transparent px-1.5 text-caption font-medium text-[var(--state-released-text)]">before the shutdown</span></div></td></tr>
             ))}
             {orders.map(([key, acts]) => {
               const s0 = Math.min(...acts.map((a) => a.start)), s1 = Math.max(...acts.map((a) => a.finish));
@@ -665,9 +665,9 @@ function NextView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsB
                   <tr className="bg-[var(--color-surface-2)]" data-order={key}>
                     <td className={`${cellAct} !bg-[var(--color-surface-2)]`}>
                       <OrderName open={isOpen} onToggle={() => flip(key)}>
-                        <div className="font-semibold text-[12px]">{orderName.get(key) ?? key}{crit && <span className="ml-1 rounded bg-transparent px-1 text-[11px] font-semibold text-[var(--state-overdue-text)]">Sets the finish</span>}</div>
-                        {bo?.foundOn && <div className="text-[11px] font-semibold text-[var(--color-text-muted)]">Found on {bo.foundOn}</div>}
-                        <div className="text-[11px] text-[var(--color-text-muted)]">{acts.length} activit{acts.length === 1 ? "y" : "ies"} · {r1(acts.reduce((n, a) => n + a.hours, 0))} h{changed ? ` · ${changed} changed` : ""}</div>
+                        <div className="font-medium text-caption">{orderName.get(key) ?? key}{crit && <span className="ml-1 rounded bg-transparent px-1 text-caption font-medium text-[var(--state-overdue-text)]">Sets the finish</span>}</div>
+                        {bo?.foundOn && <div className="text-caption font-medium text-[var(--color-text-muted)]">Found on {bo.foundOn}</div>}
+                        <div className="text-caption text-[var(--color-text-muted)]">{acts.length} activit{acts.length === 1 ? "y" : "ies"} · {r1(acts.reduce((n, a) => n + a.hours, 0))} h{changed ? ` · ${changed} changed` : ""}</div>
                       </OrderName>
                     </td>
                     <td className={cellN}>{r1(acts.reduce((n, a) => n + a.hours, 0))}</td><td className={cellDt}>{at(s0)}</td><td className={cellDt}>{at(s1)}</td>
@@ -679,10 +679,10 @@ function NextView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsB
                     return (
                       <tr key={a.id} className={isCrit ? "[&>td:first-child]:shadow-[inset_3px_0_0_var(--state-overdue)]" : ""}>
                         <td className={`${cellAct} ${isCrit ? "!bg-transparent dark:!bg-[var(--state-overdue)]" : ""}`}>
-                          <div className="font-bold">{a.name}{k && <span className={`ml-1 rounded px-1 text-[11px] font-semibold ${k[1]}`}>{k[0]}</span>}{a.heldForCrew && <span className="ml-1 rounded bg-transparent px-1 text-[11px] font-semibold text-[var(--state-held-text)]">Waits for its crew</span>}</div>
-                          <div className="text-[11px] text-[var(--color-text-muted)]"><b className="inline-block w-2 h-2 rounded-full mr-1 align-middle" style={{ background: p.colorOf(a.crew) }} />{a.crew} · {r1(a.hours)} h · {a.cal === "both" ? "days and nights" : a.cal === "night" ? "nights" : "days"}</div>
-                          {a.basis && a.kind !== "found" && <div className="text-[11px] text-[var(--color-text-muted)]">{a.basis}</div>}
-                          {a.waitedForCrew && <div className="text-[11px] text-[var(--color-text-muted)]">This year it waited {a.waitedForCrew.shifts} shift{a.waitedForCrew.shifts === 1 ? "" : "s"} for {a.waitedForCrew.crew}{a.waitedForCrew.busyOn.length ? ` (on ${[...new Set(a.waitedForCrew.busyOn.map((b) => b.split(" - ")[0]))].join(", ")})` : ""}. See {a.waitedForCrew.crew} under Crews below.</div>}
+                          <div className="font-medium">{a.name}{k && <span className={`ml-1 rounded px-1 text-caption font-medium ${k[1]}`}>{k[0]}</span>}{a.heldForCrew && <span className="ml-1 rounded bg-transparent px-1 text-caption font-medium text-[var(--state-held-text)]">Waits for its crew</span>}</div>
+                          <div className="text-caption text-[var(--color-text-muted)]"><b className="inline-block w-2 h-2 rounded-full mr-1 align-middle" style={{ background: p.colorOf(a.crew) }} />{a.crew} · {r1(a.hours)} h · {a.cal === "both" ? "days and nights" : a.cal === "night" ? "nights" : "days"}</div>
+                          {a.basis && a.kind !== "found" && <div className="text-caption text-[var(--color-text-muted)]">{a.basis}</div>}
+                          {a.waitedForCrew && <div className="text-caption text-[var(--color-text-muted)]">This year it waited {a.waitedForCrew.shifts} shift{a.waitedForCrew.shifts === 1 ? "" : "s"} for {a.waitedForCrew.crew}{a.waitedForCrew.busyOn.length ? ` (on ${[...new Set(a.waitedForCrew.busyOn.map((b) => b.split(" - ")[0]))].join(", ")})` : ""}. See {a.waitedForCrew.crew} under Crews below.</div>}
                         </td>
                         <td className={cellN}>{r1(a.hours)}</td><td className={cellDt}>{at(a.start)}</td><td className={cellDt}>{at(a.finish)}</td>
                         <td className="p-0"><div className="relative h-11" style={{ width }}><Grid shifts={plan.shifts} />
@@ -715,22 +715,22 @@ function NextView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsB
               return (
                 <tr key={`cr${crew}`} data-crew={crew}>
                   <td className={cellAct}>
-                    <div className="font-bold"><b className="inline-block w-2 h-2 rounded-full mr-1 align-middle" style={{ background: p.colorOf(crew) }} />{crew}</div>
-                    {size && <div className="text-[11px] font-semibold text-[var(--color-text)]" data-crew-size>{sizeWords(size)}{size.hands ? "" : works.night ? (works.day ? ", days and nights" : ", nights") : ", days"}{days ? `, ${days}` : ""}</div>}
-                    {size && <div className="text-[11px] text-[var(--color-text-muted)]">{sourceWords(size, sp.co, dayLabel)}</div>}
-                    {warn && <div role="note" className="mt-0.5 border-l-2 border-[var(--state-held)] pl-1.5 text-[11px] text-[var(--state-held-text)]" data-ramp>{warn}</div>}
-                    {idle > 0 && <div className="text-[11px] font-bold text-[var(--state-held-text)]">{idle} shift{idle === 1 ? "" : "s"} on site with nothing to do</div>}
-                    {sp.plant ? <div className="text-[11px] text-[var(--color-text-muted)]">Kern Energy crew: no contractor staffing plan.</div>
-                      : sum ? <div className="text-[11px] text-[var(--color-text-muted)]">Staffing plan ({sp.plan!.file || "typed in"}). <button type="button" onClick={() => openContractor(sp.co)} className="text-[var(--color-accent-text)] hover:underline cursor-pointer">Open it</button></div>
-                      : <div className="text-[11px] text-[var(--color-text-muted)]">No staffing plan yet. <button type="button" onClick={() => openContractor(sp.co)} className="text-[var(--color-accent-text)] hover:underline cursor-pointer">Put in {sp.co}&apos;s</button></div>}
+                    <div className="font-medium"><b className="inline-block w-2 h-2 rounded-full mr-1 align-middle" style={{ background: p.colorOf(crew) }} />{crew}</div>
+                    {size && <div className="text-caption font-medium text-[var(--color-text)]" data-crew-size>{sizeWords(size)}{size.hands ? "" : works.night ? (works.day ? ", days and nights" : ", nights") : ", days"}{days ? `, ${days}` : ""}</div>}
+                    {size && <div className="text-caption text-[var(--color-text-muted)]">{sourceWords(size, sp.co, dayLabel)}</div>}
+                    {warn && <div role="note" className="mt-0.5 border-l-2 border-[var(--state-held)] pl-1.5 text-caption text-[var(--state-held-text)]" data-ramp>{warn}</div>}
+                    {idle > 0 && <div className="text-caption font-medium text-[var(--state-held-text)]">{idle} shift{idle === 1 ? "" : "s"} on site with nothing to do</div>}
+                    {sp.plant ? <div className="text-caption text-[var(--color-text-muted)]">Kern Energy crew: no contractor staffing plan.</div>
+                      : sum ? <div className="text-caption text-[var(--color-text-muted)]">Staffing plan ({sp.plan!.file || "typed in"}). <button type="button" onClick={() => openContractor(sp.co)} className="text-[var(--color-accent-text)] hover:underline cursor-pointer">Open it</button></div>
+                      : <div className="text-caption text-[var(--color-text-muted)]">No staffing plan yet. <button type="button" onClick={() => openContractor(sp.co)} className="text-[var(--color-accent-text)] hover:underline cursor-pointer">Put in {sp.co}&apos;s</button></div>}
                     {p.canEdit && size && <CrewSizeEdit crew={crew} size={size} pace={plan.pace[crew]?.mh ?? null} mine={mineSet.length > 0}
                       onSave={(c) => p.onChanges([...changes.filter((x) => !mineSet.includes(x)), c])} onClear={() => p.onChanges(changes.filter((x) => !mineSet.includes(x)))} />}
                   </td>
-                  <td className={cellN}>{size ? (byHands ? [size.hands!.day, size.hands!.night].filter((n) => n != null).join(" / ") : size.jobs) : "-"}<div className="text-[11px] font-normal text-[var(--color-text-muted)]">{byHands ? "hands held" : "jobs at a time"}</div></td><td className="col-x" /><td className="col-x" />
+                  <td className={cellN}>{size ? (byHands ? [size.hands!.day, size.hands!.night].filter((n) => n != null).join(" / ") : size.jobs) : "-"}<div className="text-caption font-normal text-[var(--color-text-muted)]">{byHands ? "hands held" : "jobs at a time"}</div></td><td className="col-x" /><td className="col-x" />
                   <td className="p-0"><div className="relative h-[52px]" style={{ width }}><Grid shifts={plan.shifts} />
                     {size && first >= 0 && (
                       // The size, flat from its first shift to its last.
-                      <span aria-hidden className="absolute top-1 h-[16px] rounded-sm border-t-2 text-[11px] font-semibold leading-[13px] pl-1 whitespace-nowrap overflow-hidden text-[var(--color-text)] bg-[var(--color-surface-2)]"
+                      <span aria-hidden className="absolute top-1 h-[16px] rounded-sm border-t-2 text-caption font-medium leading-[13px] pl-1 whitespace-nowrap overflow-hidden text-[var(--color-text)] bg-[var(--color-surface-2)]"
                         style={{ left: first * PX + 1, width: Math.max(PX - 2, (last - first + 1) * PX - 2), borderColor: p.colorOf(crew) }} title={`${crew}: ${sizeWords(size)}, ${days}`}>{sizeWords(size)}</span>
                     )}
                     {plan.shifts.map((w, i) => {
@@ -740,7 +740,7 @@ function NextView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsB
                       const plannedHands = sp.plan?.shifts[shiftKey(w)]?.direct;
                       return (
                         <span key={i} title={`${dayLabel(w.start)} ${w.kind}: ${n ? `${n} job${n === 1 ? "" : "s"} going at once, ${Math.round(plan.load[crew]?.[i] ?? 0)} h of work${byHands ? `, about ${v} of the ${cap} on the tools` : cap != null ? ` (held at ${cap} at a time)` : ""}` : "on site, nothing to do"}${plannedHands != null ? `; staffing plan ${plannedHands} on the tools` : ""}`}
-                          className={`absolute top-[22px] h-6 rounded border text-center text-[11px] font-semibold leading-[22px] ${!n ? "bg-transparent border-[var(--color-border)] text-[var(--state-held-text)]" : "text-white border-transparent"}`}
+                          className={`absolute top-[22px] h-6 rounded border text-center text-caption font-medium leading-[22px] ${!n ? "bg-transparent border-[var(--color-border)] text-[var(--state-held-text)]" : "text-white border-transparent"}`}
                           style={{ left: i * PX + 2, width: PX - 4, background: n ? p.colorOf(crew) : undefined }}>{n ? v : 0}</span>
                       );
                     })}
@@ -751,7 +751,7 @@ function NextView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsB
           </tbody>
         </table>
       </div>
-      <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3 text-[12px] text-[var(--color-text)]">
+      <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3 text-caption text-[var(--color-text)]">
         <b>How it&apos;s built.</b> This year&apos;s activities and crews, in the order they were really done: a link the crews didn&apos;t wait on gives way to what that work waited on, and a work order&apos;s steps done before a step started come first. Nights as this year really ran: a crew that worked a work order on two or more nights works it days and nights, otherwise days, 12-hour shifts; the shutdown and start-up run around the clock. Planned start dates are the earliest each can start, or when it really started if sooner. Missed scope added this year is in; work found by inspection is not planned, it shows as a risk above with what it would do to the finish. An activity done inside fewer shifts than its plan gets that length; nothing is made longer from a guess. Start-up begins once every work order is done. {CREW_RULE} What this job taught (the box at the top) goes in: time off site at the clock time it really took, with what gets it out moved to first thing. The check at the top runs this year back through these same rules with each step at the length it really took; the schedule is trusted only when that lands within {CHECK_H} hours of the real finish.
       </div>
     </div>
@@ -784,7 +784,7 @@ function Taught(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsBui
   return (
     <section className="rounded-xl border-2 border-[var(--color-text)] bg-[var(--color-surface)] p-3 sm:p-4 space-y-3" data-taught>
       <div>
-        <div className={`border-l-2 pl-3 py-1 text-[12px] text-[var(--color-text)] ${trusted ? "border-[var(--state-released)]" : "border-[var(--state-held)]"}`} data-check={trusted ? "ok" : check.can ? "off" : "none"}>
+        <div className={`border-l-2 pl-3 py-1 text-caption text-[var(--color-text)] ${trusted ? "border-[var(--state-released)]" : "border-[var(--state-held)]"}`} data-check={trusted ? "ok" : check.can ? "off" : "none"}>
           {check.can ? (
             <><b>{trusted ? "Checked against this year." : "Not reliable yet."}</b> This year run back through these rules, each step at the length it really took and the found work in, lands {p.at(check.replay!)}; it really finished {p.at(check.actual!)} ({offWord(check.offH!)}). {trusted ? `Within ${CHECK_H} h, so the rules hold for this job.` : `More than ${CHECK_H} h apart, so the finish below is not a promise.`}
               {!trusted && check.gap && <span className="block mt-1">Where they part: <b>{check.gap.name}</b> ({check.gap.order}) started {p.at(check.gap.start)}, {r1(Math.abs(check.gap.hours))} h {check.gap.hours >= 0 ? "after" : "before"} {check.gap.after} finished; the rules start it right away. If work went on in between, add it to {check.gap.order} with its times and this check runs again with it. If it only waited, that wait is something the schedule can&apos;t see coming.</span>}</>
@@ -792,21 +792,21 @@ function Taught(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsBui
             <><b>Not checked yet.</b> The check runs this year back through these rules once every step is done, and holds it against the real finish. Until then the finish below is not a promise.</>
           )}
         </div>
-        <div className="mt-3 text-[13px] font-semibold text-[var(--color-text-muted)]">What this job taught, put in</div>
+        <div className="mt-3 text-body font-medium text-[var(--color-text-muted)]">What this job taught, put in</div>
         {trusted && target != null && lateH != null && (
           lateH <= 0.5 ? (
-            <p className="mt-1 text-[15px] font-bold leading-snug text-[var(--color-text)]">{lateH < -0.5 ? `Makes this year's target: finishes ${p.at(plan.finish)}, ${r1(-lateH)} h before the plan's ${p.at(target)}.` : `Makes this year's target: ${p.at(target)}.`} <span className="font-semibold text-[var(--color-text-muted)]">This year it {built.finish != null ? `finished ${p.at(built.finish)}` : "is not finished"}.</span></p>
+            <p className="mt-1 text-reading font-medium leading-snug text-[var(--color-text)]">{lateH < -0.5 ? `Makes this year's target: finishes ${p.at(plan.finish)}, ${r1(-lateH)} h before the plan's ${p.at(target)}.` : `Makes this year's target: ${p.at(target)}.`} <span className="font-medium text-[var(--color-text-muted)]">This year it {built.finish != null ? `finished ${p.at(built.finish)}` : "is not finished"}.</span></p>
           ) : reach && reach.shortH <= 0.5 && reach.levers.length ? (
             <div className="mt-1 space-y-1.5">
-              <p className="text-[15px] font-bold leading-snug text-[var(--color-text)]">Misses this year&apos;s target ({p.at(target)}) by {lateH} h. {reach.levers.length === 1 ? "This makes it" : `These ${reach.levers.length} make it`}:</p>
-              <ol className="list-decimal pl-5 text-[13px] space-y-0.5">{reach.levers.map((l) => <li key={l.change.id}>{l.words}: <b>{r1(l.savedH)} h sooner</b></li>)}</ol>
+              <p className="text-reading font-medium leading-snug text-[var(--color-text)]">Misses this year&apos;s target ({p.at(target)}) by {lateH} h. {reach.levers.length === 1 ? "This makes it" : `These ${reach.levers.length} make it`}:</p>
+              <ol className="list-decimal pl-5 text-body space-y-0.5">{reach.levers.map((l) => <li key={l.change.id}>{l.words}: <b>{r1(l.savedH)} h sooner</b></li>)}</ol>
               {p.canEdit && <button type="button" onClick={() => p.onChanges([...p.changes, ...reach.levers.map((l, i) => ({ ...l.change, id: `t${Date.now().toString(36)}${i}`, said: "to make the target", at: Date.now() }))])} className={btnPri}><Check className="w-4 h-4" /> Put {reach.levers.length === 1 ? "it" : "them"} in</button>}
             </div>
           ) : (
             <div className="mt-1 space-y-1.5">
-              <p className="text-[15px] font-bold leading-snug text-[var(--color-text)]">Misses this year&apos;s target ({p.at(target)}) by {reach ? reach.shortH : lateH} h{reach?.levers.length ? " even with the changes below" : ""}. What sets the finish: {pathOrders.slice(0, 3).join(", ")}.</p>
-              {reach?.levers.length ? <ol className="list-decimal pl-5 text-[13px] space-y-0.5">{reach.levers.map((l) => <li key={l.change.id}>{l.words}: <b>{r1(l.savedH)} h sooner</b></li>)}</ol> : null}
-              <p className="text-[13px] text-[var(--color-text)]">Only that much more time is needed{offPath ? `, or ${offPath.name.replace(/\s*\(\d of 2\)$/, "")} back sooner than ${offPath.hours >= 36 ? `${r1(offPath.hours / 24)} days` : `${Math.round(offPath.hours)} h`}` : ""}.</p>
+              <p className="text-reading font-medium leading-snug text-[var(--color-text)]">Misses this year&apos;s target ({p.at(target)}) by {reach ? reach.shortH : lateH} h{reach?.levers.length ? " even with the changes below" : ""}. What sets the finish: {pathOrders.slice(0, 3).join(", ")}.</p>
+              {reach?.levers.length ? <ol className="list-decimal pl-5 text-body space-y-0.5">{reach.levers.map((l) => <li key={l.change.id}>{l.words}: <b>{r1(l.savedH)} h sooner</b></li>)}</ol> : null}
+              <p className="text-body text-[var(--color-text)]">Only that much more time is needed{offPath ? `, or ${offPath.name.replace(/\s*\(\d of 2\)$/, "")} back sooner than ${offPath.hours >= 36 ? `${r1(offPath.hours / 24)} days` : `${Math.round(offPath.hours)} h`}` : ""}.</p>
               {p.canEdit && reach?.levers.length ? <button type="button" onClick={() => p.onChanges([...p.changes, ...reach.levers.map((l, i) => ({ ...l.change, id: `t${Date.now().toString(36)}${i}`, said: "to close on the target", at: Date.now() }))])} className={btnQuiet}><Check className="w-4 h-4" /> Put {reach.levers.length === 1 ? "it" : "them"} in</button> : null}
             </div>
           )
@@ -820,13 +820,13 @@ function Taught(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsBui
             return (
               <li key={l.id} className={`py-2.5 ${out ? "opacity-60" : ""}`} data-lesson={l.id}>
                 <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-                  <span className="rounded bg-[var(--color-surface-2)] px-1.5 text-[11px] font-semibold text-[var(--color-text-muted)]">{AREA_WORD[l.area]}</span>
-                  <b className="order-last basis-full sm:order-none sm:basis-0 sm:flex-1 min-w-0 text-[14px] text-[var(--color-text)]">{l.title}</b>
-                  {!out && !l.rule && <span className={`text-[12px] font-bold ${(effects[l.id] ?? 0) >= 0.5 ? "text-[var(--state-released-text)]" : (effects[l.id] ?? 0) <= -0.5 ? "text-[var(--state-held-text)]" : "text-[var(--color-text-muted)]"}`}>{effectWord(effects[l.id])}</span>}
-                  {p.canEdit && !l.rule && <button type="button" onClick={() => skip(l.id, !out)} className="text-[13px] text-[var(--color-accent-text)] hover:underline cursor-pointer">{out ? "Put back" : "Leave out"}</button>}
+                  <span className="rounded bg-[var(--color-surface-2)] px-1.5 text-caption font-medium text-[var(--color-text-muted)]">{AREA_WORD[l.area]}</span>
+                  <b className="order-last basis-full sm:order-none sm:basis-0 sm:flex-1 min-w-0 text-body text-[var(--color-text)]">{l.title}</b>
+                  {!out && !l.rule && <span className={`text-caption font-medium ${(effects[l.id] ?? 0) >= 0.5 ? "text-[var(--state-released-text)]" : (effects[l.id] ?? 0) <= -0.5 ? "text-[var(--state-held-text)]" : "text-[var(--color-text-muted)]"}`}>{effectWord(effects[l.id])}</span>}
+                  {p.canEdit && !l.rule && <button type="button" onClick={() => skip(l.id, !out)} className="text-body text-[var(--color-accent-text)] hover:underline cursor-pointer">{out ? "Put back" : "Leave out"}</button>}
                 </div>
-                <p className="mt-0.5 text-[12px] text-[var(--color-text-muted)]">{l.saw}</p>
-                <p className="mt-0.5 text-[12px] text-[var(--color-text)]">{out ? "Left out of the suggested schedule." : l.does}</p>
+                <p className="mt-0.5 text-caption text-[var(--color-text-muted)]">{l.saw}</p>
+                <p className="mt-0.5 text-caption text-[var(--color-text)]">{out ? "Left out of the suggested schedule." : l.does}</p>
               </li>
             );
           })}
@@ -834,23 +834,23 @@ function Taught(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsBui
       )}
       {risks.length > 0 && (
         <div data-risks>
-          <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">Risks: not planned, what each does if it happens again</div>
+          <div className="text-body font-medium text-[var(--color-text-muted)]">Risks: not planned, what each does if it happens again</div>
           <ul className="mt-1 divide-y divide-[var(--color-border)] border-y border-[var(--color-border)]">
             {[...moving, ...(allRisks ? still : [])].map((r) => (
               <li key={r.id} className="py-2" data-risk={r.id}>
                 <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-                  <span className="rounded bg-[var(--color-surface-2)] px-1.5 text-[11px] font-semibold text-[var(--color-text-muted)]">{r.kind === "found" ? "Found" : "Ran long"}</span>
-                  <b className="order-last basis-full sm:order-none sm:basis-0 sm:flex-1 min-w-0 text-[13px] text-[var(--color-text)]">{r.where}</b>
-                  <span className={`text-[12px] font-bold ${r.finishH >= 0.5 ? "text-[var(--state-overdue-text)]" : "text-[var(--color-text-muted)]"}`}>{r.finishH >= 0.5 ? `finish ${r1(r.finishH)} h later` : "no change to the finish"}</span>
+                  <span className="rounded bg-[var(--color-surface-2)] px-1.5 text-caption font-medium text-[var(--color-text-muted)]">{r.kind === "found" ? "Found" : "Ran long"}</span>
+                  <b className="order-last basis-full sm:order-none sm:basis-0 sm:flex-1 min-w-0 text-body text-[var(--color-text)]">{r.where}</b>
+                  <span className={`text-caption font-medium ${r.finishH >= 0.5 ? "text-[var(--state-overdue-text)]" : "text-[var(--color-text-muted)]"}`}>{r.finishH >= 0.5 ? `finish ${r1(r.finishH)} h later` : "no change to the finish"}</span>
                 </div>
-                <p className="mt-0.5 text-[12px] text-[var(--color-text-muted)]">{r.kind === "found" ? `Found this year: ${r.title} (${r.crew}, ${r1(r.hours)} h of work).` : `This year: ${r.title}. ${r1(r.hours)} h past plan in all (${r.crew}).`}</p>
+                <p className="mt-0.5 text-caption text-[var(--color-text-muted)]">{r.kind === "found" ? `Found this year: ${r.title} (${r.crew}, ${r1(r.hours)} h of work).` : `This year: ${r.title}. ${r1(r.hours)} h past plan in all (${r.crew}).`}</p>
               </li>
             ))}
           </ul>
-          {still.length > 0 && <button type="button" onClick={() => setAllRisks(!allRisks)} className="mt-1 text-[13px] text-[var(--color-accent-text)] hover:underline cursor-pointer">{allRisks ? "Hide the ones that don't move the finish" : `${still.length} more that don't move the finish`}</button>}
+          {still.length > 0 && <button type="button" onClick={() => setAllRisks(!allRisks)} className="mt-1 text-body text-[var(--color-accent-text)] hover:underline cursor-pointer">{allRisks ? "Hide the ones that don't move the finish" : `${still.length} more that don't move the finish`}</button>}
         </div>
       )}
-      <p className="text-[12px] text-[var(--color-text-muted)]">From this job&apos;s record, the same facts the post-event review reads. Each one&apos;s effect is against leaving it out{lessons.some((l) => l.honest) ? "; for time off site, against the real time away on this year's dates" : ""}.</p>
+      <p className="text-caption text-[var(--color-text-muted)]">From this job&apos;s record, the same facts the post-event review reads. Each one&apos;s effect is against leaving it out{lessons.some((l) => l.honest) ? "; for time off site, against the real time away on this year's dates" : ""}.</p>
     </section>
   );
 }
@@ -858,7 +858,7 @@ function Taught(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsBui
 function SectionRow4({ title, sub, width, shifts }: { title: string; sub: string; width: number; shifts: Array<{ kind: string }> }) {
   return (
     <tr className="bg-[var(--color-surface-2)]">
-      <td className={`${cellAct} !bg-[var(--color-surface-2)]`}><div className="font-semibold">{title}</div><div className="text-[11px] text-[var(--color-text-muted)]">{sub}</div></td>
+      <td className={`${cellAct} !bg-[var(--color-surface-2)]`}><div className="font-medium">{title}</div><div className="text-caption text-[var(--color-text-muted)]">{sub}</div></td>
       <td className="col-x" /><td className="col-x" /><td className="col-x" />
       <td className="p-0"><div className="relative h-full min-h-[40px]" style={{ width }}><Grid shifts={shifts} /></div></td>
     </tr>
@@ -924,7 +924,7 @@ function CrewSizeEdit({ crew, size, pace, mine, onSave, onClear }: { crew: strin
   const [day, setDay] = useState(String(size.hands?.day ?? ""));
   const [night, setNight] = useState(String(size.hands?.night ?? ""));
   const [jobs, setJobs] = useState(String(size.jobs ?? Math.max(1, size.worked)));
-  const field = "w-14 rounded border border-slate-400 bg-[var(--color-surface)] px-1.5 py-0.5 text-[12px] text-[var(--color-text)]";
+  const field = "w-14 rounded border border-slate-400 bg-[var(--color-surface)] px-1.5 py-0.5 text-caption text-[var(--color-text)]";
   const num = (v: string) => { const n = Math.round(Number(v)); return Number.isFinite(n) && n >= 1 ? n : null; };
   const ok = mode === "jobs" ? num(jobs) != null : (!size.works.day || num(day) != null) && (!size.works.night || num(night) != null);
   const save = () => {
@@ -932,7 +932,7 @@ function CrewSizeEdit({ crew, size, pace, mine, onSave, onClear }: { crew: strin
     onSave(mode === "jobs" ? { ...base, kind: "jobs", crew, n: num(jobs)! } : { ...base, kind: "crew", crew, day: size.works.day ? num(day) : null, night: size.works.night ? num(night) : null });
     setOpen(false);
   };
-  const link = "text-[11px] text-[var(--color-accent-text)] hover:underline cursor-pointer";
+  const link = "text-caption text-[var(--color-accent-text)] hover:underline cursor-pointer";
   if (!open) return (
     <div className="flex gap-2 mt-0.5">
       <button type="button" onClick={() => setOpen(true)} className={link}>Change the size</button>
@@ -940,7 +940,7 @@ function CrewSizeEdit({ crew, size, pace, mine, onSave, onClear }: { crew: strin
     </div>
   );
   return (
-    <div className="mt-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] p-2 space-y-1.5 whitespace-normal text-[12px] text-[var(--color-text)]">
+    <div className="mt-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] p-2 space-y-1.5 whitespace-normal text-caption text-[var(--color-text)]">
       {pace != null && (
         <Choice label="Set it by" value={mode} onChange={setMode} options={[["hands", "Hands on the tools"], ["jobs", "Jobs at a time"]] as const} />
       )}
@@ -950,7 +950,7 @@ function CrewSizeEdit({ crew, size, pace, mine, onSave, onClear }: { crew: strin
             {size.works.day && <label className="flex items-center gap-1"><input value={day} onChange={(e) => setDay(e.target.value.replace(/[^0-9]/g, ""))} inputMode="numeric" aria-label={`${crew}: hands on days`} className={field} /> on days</label>}
             {size.works.night && <label className="flex items-center gap-1"><input value={night} onChange={(e) => setNight(e.target.value.replace(/[^0-9]/g, ""))} inputMode="numeric" aria-label={`${crew}: hands on nights`} className={field} /> on nights</label>}
           </div>}
-      <div className="text-[11px] text-[var(--color-text-muted)]">Held every shift of the job, from its first shift to its last.</div>
+      <div className="text-caption text-[var(--color-text-muted)]">Held every shift of the job, from its first shift to its last.</div>
       <div className="flex gap-1.5"><button type="button" disabled={!ok} onClick={save} className={btnQuiet}><Check className="w-3.5 h-3.5" /> Hold it</button><button type="button" onClick={() => setOpen(false)} className={btnQuiet}>Cancel</button></div>
     </div>
   );

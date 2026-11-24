@@ -552,8 +552,8 @@ export default function NewTicketPage() {
             <div className="flex items-center gap-3 min-w-0">
               <FileThumb file={file} />
               <div className="min-w-0">
-                <p className="text-[15px] font-semibold text-[var(--color-text)] truncate">{file.name}</p>
-                <p className="text-[13px] text-[var(--color-text-muted)]" aria-live="polite">
+                <p className="text-reading font-medium text-[var(--color-text)] truncate">{file.name}</p>
+                <p className="text-body text-[var(--color-text-muted)]" aria-live="polite">
                   {(file.name.split('.').pop() || 'file').toUpperCase()}, {(file.size / 1024 / 1024).toFixed(2)} MB
                   {st?.state === 'up' && <>, uploading</>}
                   {st?.state === 'done' && <>, uploaded</>}
@@ -581,10 +581,10 @@ export default function NewTicketPage() {
   // One answer on the review step, with a way back to its step.
   const reviewRow = (label: string, value: React.ReactNode, at: (typeof steps)[number]['key'], key: string = label) => (
     <div key={key} className="grid grid-cols-[minmax(0,1fr)_auto] sm:grid-cols-[180px_minmax(0,1fr)_auto] gap-x-4 gap-y-0.5 px-4 sm:px-5 py-3">
-      <dt className="text-[13px] sm:text-[14px] text-[var(--color-text-muted)] sm:pt-px">{label}</dt>
-      <dd className="col-start-1 sm:col-start-2 text-[15px] text-[var(--color-text)] min-w-0 whitespace-pre-wrap break-words">{value}</dd>
+      <dt className="text-body text-[var(--color-text-muted)] sm:pt-px">{label}</dt>
+      <dd className="col-start-1 sm:col-start-2 text-reading text-[var(--color-text)] min-w-0 whitespace-pre-wrap break-words">{value}</dd>
       <button type="button" onClick={() => goStep(steps.findIndex((s) => s.key === at))} aria-label={`Change ${label.toLowerCase()}`}
-        className="row-start-1 col-start-2 sm:col-start-3 self-start inline-flex items-center gap-1 min-h-8 pointer-coarse:min-h-11 -my-1.5 px-1 rounded-lg text-[14px] text-[var(--color-text-muted)] hover:text-[var(--color-accent-text)] hover:underline underline-offset-2">
+        className="row-start-1 col-start-2 sm:col-start-3 self-start inline-flex items-center gap-1 min-h-8 pointer-coarse:min-h-11 -my-1.5 px-1 rounded-lg text-body text-[var(--color-text-muted)] hover:text-[var(--color-accent-text)] hover:underline underline-offset-2">
         <Pencil aria-hidden className="w-3.5 h-3.5" /> Change
       </button>
     </div>
@@ -619,7 +619,7 @@ export default function NewTicketPage() {
           {sourceFileUrl && (
             <div className="flex items-center gap-3 px-5 sm:px-6 py-3 border-b border-[var(--color-border)] bg-[var(--color-surface-2)] rounded-t-xl">
               <FileText aria-hidden className="w-4 h-4 shrink-0 text-[var(--color-text-faint)]" />
-              <div className="min-w-0 text-[15px] text-[var(--color-text)]">
+              <div className="min-w-0 text-reading text-[var(--color-text)]">
                 <span className="text-[var(--color-text-muted)]">Source document </span>
                 <span className="ui-id">{sourceDocNum || sourceDocTitle || sourceFileName || 'Document'}</span>
                 {sourceDocRev ? <span className="text-[var(--color-text-muted)]">, Rev {sourceDocRev}</span> : null}
@@ -629,7 +629,7 @@ export default function NewTicketPage() {
           )}
 
           <div className="px-5 sm:px-6 pt-5 pb-6">
-            <h2 id="req-step-title" className="font-display text-[20px] leading-tight font-semibold text-[var(--color-text)]">
+            <h2 id="req-step-title" className="font-display text-section leading-tight font-semibold text-[var(--color-text)]">
               {cur.label}<span className="sr-only">, step {step + 1} of {steps.length}</span>
             </h2>
 
@@ -694,7 +694,7 @@ export default function NewTicketPage() {
                   <div>
                     <label htmlFor="req-due" className={kitLabel}>Target completion <span className="font-normal text-[var(--color-text-muted)]">(optional)</span></label>
                     <input id="req-due" type="date" className={kitField} value={targetDate} onChange={(e) => setTargetDate(e.target.value)} aria-describedby="req-due-hint" />
-                    <p id="req-due-hint" className="text-[13px] text-[var(--color-text-muted)] mt-1.5">Blank uses the usual time for this type{usualDue ? `: ${fmtDay(usualDue)}` : ''}.</p>
+                    <p id="req-due-hint" className="text-body text-[var(--color-text-muted)] mt-1.5">Blank uses the usual time for this type{usualDue ? `: ${fmtDay(usualDue)}` : ''}.</p>
                   </div>
                 </div>
 
@@ -732,7 +732,7 @@ export default function NewTicketPage() {
 
             {cur.key === 'files' && (
               <div className="mt-5 space-y-3">
-                <p className="text-[15px] text-[var(--color-text-muted)]">Markups, photos, the drawings to change. Optional: you can add files to the request later too.</p>
+                <p className="text-reading text-[var(--color-text-muted)]">Markups, photos, the drawings to change. Optional: you can add files to the request later too.</p>
                 <div
                   role="button"
                   tabIndex={0}
@@ -745,8 +745,8 @@ export default function NewTicketPage() {
                   <input ref={fileInputRef} type="file" multiple className="hidden" onChange={handleFileSelect} />
                   <UploadCloud aria-hidden className="w-6 h-6 shrink-0 text-[var(--color-text-faint)]" />
                   <div className="min-w-0 pointer-events-none">
-                    <p className="text-[15px] text-[var(--color-text)]">{drag.over ? drag.say : <>Drop files here, or <span className="text-[var(--color-accent-text)]">pick them</span></>}</p>
-                    <p className="text-[13px] text-[var(--color-text-muted)]">PDF, JPG, PNG or DWG. Several at once is fine.</p>
+                    <p className="text-reading text-[var(--color-text)]">{drag.over ? drag.say : <>Drop files here, or <span className="text-[var(--color-accent-text)]">pick them</span></>}</p>
+                    <p className="text-body text-[var(--color-text-muted)]">PDF, JPG, PNG or DWG. Several at once is fine.</p>
                   </div>
                 </div>
                 {fileList}
@@ -755,7 +755,7 @@ export default function NewTicketPage() {
 
             {cur.key === 'review' && (
               <div className="mt-4 space-y-4">
-                <p className="text-[15px] text-[var(--color-text-muted)]">Check it over. Send request puts it in the queue for a drafter.</p>
+                <p className="text-reading text-[var(--color-text-muted)]">Check it over. Send request puts it in the queue for a drafter.</p>
                 <dl className="rounded-xl border border-[var(--color-border)] divide-y divide-[var(--color-border)]">
                   {reviewRow("Type", typeLabel, "what")}
                   {reviewRow("Title", title, "what")}
@@ -784,7 +784,7 @@ export default function NewTicketPage() {
             {step > 0
               ? <button type="button" onClick={stepBack} disabled={isSubmitting} className={heroQuiet}>Back</button>
               : <button type="button" onClick={() => router.back()} disabled={isSubmitting} className={heroQuiet}>Cancel</button>}
-            <p id="req-next-why" aria-live="polite" className="min-w-0 flex-1 text-[13px] text-[var(--color-text-muted)] max-sm:order-first max-sm:basis-full">
+            <p id="req-next-why" aria-live="polite" className="min-w-0 flex-1 text-body text-[var(--color-text-muted)] max-sm:order-first max-sm:basis-full">
               {!stepOk ? missing.map(([, m]) => m).join(' ') : isLast ? '' : `Step ${step + 1} of ${steps.length}`}
             </p>
             {isLast ? (
@@ -820,7 +820,7 @@ function QuickPick({ label, value, options, onPick }: {
           const on = o.value === value;
           return (
             <button key={o.value} type="button" role="radio" aria-checked={on} onClick={() => onPick(o.value)}
-              className={`inline-flex items-center gap-2 h-10 pointer-coarse:h-11 pl-3 pr-3.5 rounded-lg border text-[14px] transition-colors ${on ? 'border-[var(--color-text)] shadow-[inset_0_0_0_1px_var(--color-text)] font-semibold text-[var(--color-text)]' : 'border-[var(--color-border-control)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]'}`}>
+              className={`inline-flex items-center gap-2 h-10 pointer-coarse:h-11 pl-3 pr-3.5 rounded-lg border text-body transition-colors ${on ? 'border-[var(--color-text)] shadow-[inset_0_0_0_1px_var(--color-text)] font-medium text-[var(--color-text)]' : 'border-[var(--color-border-control)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]'}`}>
               <span aria-hidden className={`w-4 h-4 rounded-full border-2 grid place-items-center shrink-0 ${on ? 'border-[var(--color-text)]' : 'border-[var(--color-border-control)]'}`}>
                 {on && <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-text)]" />}
               </span>
@@ -854,8 +854,8 @@ function CustomCategorySection({
   const setField = (key: string, value: unknown) => onChange({ ...values, [key]: value });
   return (
     <div className="mt-5 pt-5 border-t border-[var(--color-border)] first-of-type:border-t-0 first-of-type:pt-0">
-      <h3 className="text-[16px] font-semibold text-[var(--color-text)]">{category.label}</h3>
-      {category.description && <p className="text-[14px] text-[var(--color-text-muted)] mt-0.5">{category.description}</p>}
+      <h3 className="text-reading font-medium text-[var(--color-text)]">{category.label}</h3>
+      {category.description && <p className="text-body text-[var(--color-text-muted)] mt-0.5">{category.description}</p>}
       <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-x-5 gap-y-4">
         {category.fields.map((f) => (
           <div key={f.key} className={f.type === 'textarea' || f.type === 'multiselect' ? 'sm:col-span-2' : ''} onBlur={() => onLeave(f.key)}>
@@ -881,7 +881,7 @@ function CustomFieldRenderer({
       {field.label}{!field.required && <span className="font-normal text-[var(--color-text-muted)]"> (optional)</span>}
     </label>
   );
-  const helpText = field.description && <div className="text-[13px] text-[var(--color-text-muted)] mt-1.5">{field.description}</div>;
+  const helpText = field.description && <div className="text-body text-[var(--color-text-muted)] mt-1.5">{field.description}</div>;
 
   switch (field.type) {
     case "text":
@@ -919,7 +919,7 @@ function CustomFieldRenderer({
     case "boolean":
       return (
         <>
-          <label className="inline-flex items-center gap-2 min-h-10 text-[15px] text-[var(--color-text)] cursor-pointer">
+          <label className="inline-flex items-center gap-2 min-h-10 text-reading text-[var(--color-text)] cursor-pointer">
             <input type="checkbox" checked={!!value} onChange={(e) => onChange(e.target.checked)} className="w-4 h-4 rounded border-[var(--color-border-strong)]" />
             {field.label}{!field.required && <span className="text-[var(--color-text-muted)]"> (optional)</span>}
           </label>
@@ -951,9 +951,9 @@ function CustomFieldRenderer({
               return (
                 <button type="button" key={i} role="checkbox" aria-checked={on}
                   onClick={() => onChange(on ? selected.filter((x) => x !== v) : [...selected, v])}
-                  className={`inline-flex items-center gap-2 h-10 pointer-coarse:h-11 pl-2.5 pr-3 rounded-lg border text-[14px] text-[var(--color-text)] ${on ? "border-[var(--color-text)] shadow-[inset_0_0_0_1px_var(--color-text)] font-semibold" : "border-[var(--color-border-control)] hover:bg-[var(--color-surface-2)]"}`}
+                  className={`inline-flex items-center gap-2 h-10 pointer-coarse:h-11 pl-2.5 pr-3 rounded-lg border text-body text-[var(--color-text)] ${on ? "border-[var(--color-text)] shadow-[inset_0_0_0_1px_var(--color-text)] font-medium" : "border-[var(--color-border-control)] hover:bg-[var(--color-surface-2)]"}`}
                 >
-                  <span aria-hidden className={`w-4 h-4 rounded-[4px] border-2 grid place-items-center ${on ? "border-[var(--color-text)] bg-[var(--color-text)] text-[var(--color-surface)]" : "border-[var(--color-border-strong)]"}`}>
+                  <span aria-hidden className={`w-4 h-4 rounded-md border-2 grid place-items-center ${on ? "border-[var(--color-text)] bg-[var(--color-text)] text-[var(--color-surface)]" : "border-[var(--color-border-strong)]"}`}>
                     {on && <Check className="w-3 h-3" strokeWidth={3} />}
                   </span>
                   {o.label}

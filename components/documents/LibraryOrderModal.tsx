@@ -161,8 +161,8 @@ export default function LibraryOrderModal({
           <div className="flex items-center gap-2.5">
             <div className="p-1.5 bg-[var(--color-surface-2)] rounded-lg"><GripVertical className="w-4 h-4 text-[var(--color-text-muted)]" /></div>
             <div>
-              <div className="text-sm font-semibold text-[var(--color-text)]">Library Display Order</div>
-              <div className="text-[13px] text-[var(--color-text-muted)]">Drag rows to set the order documents appear in this library.</div>
+              <div className="text-sm font-medium text-[var(--color-text)]">Library Display Order</div>
+              <div className="text-body text-[var(--color-text-muted)]">Drag rows to set the order documents appear in this library.</div>
             </div>
           </div>
           <button aria-label="Close" onClick={onClose} disabled={busy} className="p-1.5 rounded text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
@@ -170,12 +170,12 @@ export default function LibraryOrderModal({
           </button>
         </div>
 
-        <div className="px-5 py-2 bg-[var(--color-surface-2)] border-b border-[var(--color-border)] flex items-center justify-between text-[13px] shrink-0">
+        <div className="px-5 py-2 bg-[var(--color-surface-2)] border-b border-[var(--color-border)] flex items-center justify-between text-body shrink-0">
           <div className="text-[var(--color-text-muted)]">
             {docs.length} document{docs.length === 1 ? "" : "s"} ·
-            {dirty ? <span className="text-[var(--color-text)] font-bold"> unsaved changes</span> : <span> position saved</span>}
+            {dirty ? <span className="text-[var(--color-text)] font-medium"> unsaved changes</span> : <span> position saved</span>}
           </div>
-          <button onClick={alphabetize} className="inline-flex items-center gap-1 text-[var(--color-text)] hover:text-[var(--color-text)] font-bold">
+          <button onClick={alphabetize} className="inline-flex items-center gap-1 text-[var(--color-text)] hover:text-[var(--color-text)] font-medium">
             <ArrowDownAZ className="w-3 h-3" /> Alphabetize
           </button>
         </div>
@@ -201,13 +201,13 @@ export default function LibraryOrderModal({
                   }`}
                 >
                   <GripVertical className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" />
-                  <span className="text-[13px] font-display tabular-nums text-[var(--color-text-faint)] w-7 text-right shrink-0">{idx + 1}.</span>
+                  <span className="text-body font-display tabular-nums text-[var(--color-text-faint)] w-7 text-right shrink-0">{idx + 1}.</span>
                   <FileText className="w-3.5 h-3.5 text-[var(--color-text-muted)] shrink-0" />
                   <div className="flex-1 min-w-0">
-                    <div className="text-[13px] font-bold text-[var(--color-text)] truncate">{d.documentNumber}</div>
-                    <div className="text-[13px] text-[var(--color-text-muted)] truncate">{d.title}</div>
+                    <div className="text-body font-medium text-[var(--color-text)] truncate">{d.documentNumber}</div>
+                    <div className="text-body text-[var(--color-text-muted)] truncate">{d.title}</div>
                   </div>
-                  {d.rev && <span className="text-[13px] font-bold text-[var(--color-text-muted)] shrink-0">Rev {d.rev}</span>}
+                  {d.rev && <span className="text-body font-medium text-[var(--color-text-muted)] shrink-0">Rev {d.rev}</span>}
                   <div className="flex flex-col shrink-0 -my-1">
                     <button onClick={() => move(d.id, -1)} disabled={idx === 0} title="Move up"
                       className="p-0.5 text-[var(--color-text-faint)] hover:text-[var(--color-text)] disabled:opacity-25">
@@ -225,18 +225,18 @@ export default function LibraryOrderModal({
         </div>
 
         {error && (
-          <div className="mx-5 my-2 text-[13px] flex items-start gap-2 shrink-0 border-l-2 border-[var(--state-overdue)] pl-3 text-[var(--state-overdue)]">
+          <div className="mx-5 my-2 text-body flex items-start gap-2 shrink-0 border-l-2 border-[var(--state-overdue)] pl-3 text-[var(--state-overdue)]">
             <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" /> {error}
           </div>
         )}
 
         <div className="px-5 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-between shrink-0">
-          <button onClick={reset} disabled={busy} className="text-[13px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] inline-flex items-center gap-1">
+          <button onClick={reset} disabled={busy} className="text-body font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] inline-flex items-center gap-1">
             <RotateCcw className="w-3 h-3" /> Clear custom order
           </button>
           <div className="flex items-center gap-2">
-            <button onClick={onClose} disabled={busy} className="px-3 py-2 rounded-lg text-[13px] font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)]">Cancel</button>
-            <button onClick={save} disabled={busy || !dirty} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-[13px] font-semibold bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] disabled:opacity-50 shadow">
+            <button onClick={onClose} disabled={busy} className="px-3 py-2 rounded-lg text-body font-medium text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)]">Cancel</button>
+            <button onClick={save} disabled={busy || !dirty} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-body font-medium bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] disabled:opacity-50 shadow">
               {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
               Save order
             </button>

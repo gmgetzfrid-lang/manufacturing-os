@@ -154,7 +154,7 @@ export default function LifecycleBoard() {
   return (
     <div>
       <div className="flex items-center gap-2 mb-3 flex-wrap">
-        <p className="text-[13px] text-[var(--color-text-muted)] flex-1 min-w-[200px]">
+        <p className="text-body text-[var(--color-text-muted)] flex-1 min-w-[200px]">
           Every controlled document by lifecycle state. Hotter age chips = sitting longer - that&apos;s your bottleneck.
         </p>
         <div className="relative w-56 max-w-[60vw]">
@@ -172,7 +172,7 @@ export default function LifecycleBoard() {
       </div>
 
       {error && (
-        <div className="mb-3 text-[13px] flex items-center gap-2 border-l-2 border-[var(--state-overdue)] pl-3 text-[var(--state-overdue)]">
+        <div className="mb-3 text-body flex items-center gap-2 border-l-2 border-[var(--state-overdue)] pl-3 text-[var(--state-overdue)]">
           <AlertTriangle className="w-4 h-4 shrink-0" /> {error}
         </div>
       )}
@@ -200,9 +200,9 @@ export default function LifecycleBoard() {
                 <div className="px-3 py-2.5 border-b border-black/5">
                   <div className="flex items-center gap-2">
                     <span className={`w-2.5 h-2.5 rounded-full ${COLUMN_DOT[col]}`} />
-                    <span className="text-sm font-semibold text-[var(--color-text)]">{col}</span>
-                    <span className="text-[13px] font-bold text-[var(--color-text-muted)] bg-[var(--color-surface)]/70 rounded-full px-1.5">{badgeText(items.length)}</span>
-                    {bottleneck && <span className="ml-auto inline-flex items-center gap-1 text-[13px] font-bold text-[var(--state-overdue)]"><AlertTriangle className="w-3 h-3" /> bottleneck</span>}
+                    <span className="text-sm font-medium text-[var(--color-text)]">{col}</span>
+                    <span className="text-body font-medium text-[var(--color-text-muted)] bg-[var(--color-surface)]/70 rounded-full px-1.5">{badgeText(items.length)}</span>
+                    {bottleneck && <span className="ml-auto inline-flex items-center gap-1 text-body font-medium text-[var(--state-overdue)]"><AlertTriangle className="w-3 h-3" /> bottleneck</span>}
                   </div>
                   {items.length > 0 && (
                     <div className="mt-2" title="Aging mix: green=fresh, red=90d+">
@@ -219,7 +219,7 @@ export default function LifecycleBoard() {
                 </div>
                 <div className="flex-1 overflow-y-auto p-2 space-y-2">
                   {items.length === 0 ? (
-                    <div className="text-center text-[13px] text-[var(--color-text-faint)] italic py-6">Empty</div>
+                    <div className="text-center text-body text-[var(--color-text-faint)] italic py-6">Empty</div>
                   ) : items.map((d) => {
                     const days = ageDays(d.updatedAt);
                     const chip = ageChip(days);
@@ -230,13 +230,13 @@ export default function LifecycleBoard() {
                         className="block bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl p-2.5 shadow-sm hover:shadow-md hover:border-[var(--color-border-strong)] transition-all"
                       >
                         <div className="flex items-center gap-1.5">
-                          <span className="font-display tabular-nums text-[13px] font-bold text-[var(--color-text)] truncate flex-1">{d.number}</span>
-                          {d.rev && <span className="text-[13px] font-bold bg-[var(--color-surface-2)] text-[var(--color-text-muted)] px-1 py-0.5 rounded shrink-0">R{d.rev}</span>}
+                          <span className="font-display tabular-nums text-body font-bold text-[var(--color-text)] truncate flex-1">{d.number}</span>
+                          {d.rev && <span className="text-body font-medium bg-[var(--color-surface-2)] text-[var(--color-text-muted)] px-1 py-0.5 rounded shrink-0">R{d.rev}</span>}
                         </div>
-                        {d.title && d.number !== d.title && <div className="text-[13px] text-[var(--color-text-muted)] truncate mt-0.5">{d.title}</div>}
+                        {d.title && d.number !== d.title && <div className="text-body text-[var(--color-text-muted)] truncate mt-0.5">{d.title}</div>}
                         <div className="flex items-center gap-1.5 mt-1.5">
-                          <span className={`text-[13px] font-bold px-1.5 py-0.5 rounded ${chip.cls}`} title={`${days} days in this state`}>{chip.label}</span>
-                          {d.checkedOutByName && <span className="text-[13px] font-bold text-[var(--color-text)] inline-flex items-center gap-0.5"><Lock className="w-2.5 h-2.5" />{d.checkedOutByName}</span>}
+                          <span className={`text-body font-medium px-1.5 py-0.5 rounded ${chip.cls}`} title={`${days} days in this state`}>{chip.label}</span>
+                          {d.checkedOutByName && <span className="text-body font-medium text-[var(--color-text)] inline-flex items-center gap-0.5"><Lock className="w-2.5 h-2.5" />{d.checkedOutByName}</span>}
                         </div>
                       </Link>
                     );

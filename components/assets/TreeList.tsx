@@ -107,7 +107,7 @@ export default function TreeList({
   return (
     <div className={`rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden ${className}`}>
       {head && (
-        <div aria-hidden className={`grid ${grid} items-center gap-x-4 h-10 pr-4 bg-[var(--color-surface-2)] text-[13px] font-semibold text-[var(--color-text-muted)] max-sm:hidden`}
+        <div aria-hidden className={`grid ${grid} items-center gap-x-4 h-10 pr-4 bg-[var(--color-surface-2)] text-body font-medium text-[var(--color-text-muted)] max-sm:hidden`}
           style={{ paddingLeft: PAD + STEP + 8 }}>
           {head}
         </div>

@@ -34,7 +34,7 @@ export default function FavoritesStrip({
   // can open, with its star to take it off.
   return (
     <div className="flex items-center gap-3 px-4 sm:px-5 min-h-11 py-1 border-b border-[var(--color-border)] last:border-b-0">
-      <span className="shrink-0 inline-flex items-center gap-2 text-[14px] font-semibold text-[var(--color-heading)]">
+      <span className="shrink-0 inline-flex items-center gap-2 text-body font-medium text-[var(--color-heading)]">
         <span className="ui-icon-tile is-sm" aria-hidden><Star className="w-4 h-4" /></span>
         Favorites <span className="ui-count">{favs.length}</span>
       </span>
@@ -44,9 +44,9 @@ export default function FavoritesStrip({
           // the pill takes it off.
           <span key={d.id} className="ui-tag shrink-0 !h-8 !pr-0.5 !gap-1">
             <button type="button" onClick={() => onOpenDoc?.(d.id)} title={d.title ? `Open ${d.documentNumber}: ${d.title}` : `Open ${d.documentNumber}`}
-              className="inline-flex items-center gap-1.5 text-[15px] tabular-nums hover:underline underline-offset-2">
+              className="inline-flex items-center gap-1.5 text-reading tabular-nums hover:underline underline-offset-2">
               {d.documentNumber}
-              {d.rev && <span className="font-sans text-[13px] font-normal opacity-80">rev {d.rev}</span>}
+              {d.rev && <span className="font-sans text-body font-normal opacity-80">rev {d.rev}</span>}
             </button>
             <button type="button" onClick={() => void toggle(d.id)} aria-label={`Remove ${d.documentNumber} from favorites`} title="Remove from favorites"
               className="w-7 h-7 grid place-items-center rounded text-[var(--state-held)] hover:bg-[var(--color-surface)]">

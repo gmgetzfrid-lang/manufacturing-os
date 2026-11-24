@@ -110,10 +110,10 @@ export default function StaleCheckoutBanner({ userId }: StaleCheckoutBannerProps
     <section aria-label="Checkouts held too long" className="relative rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
       <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] bg-[var(--state-held)]" />
       <div className="flex items-center gap-3 pl-4 sm:pl-5 pr-2 py-2.5">
-        <span className="shrink-0 inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[13px] font-semibold bg-[color-mix(in_srgb,var(--state-held)_14%,transparent)] text-[var(--state-held)]">
+        <span className="shrink-0 inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-body font-medium bg-[color-mix(in_srgb,var(--state-held)_14%,transparent)] text-[var(--state-held)]">
           Held too long
         </span>
-        <p className="min-w-0 flex-1 text-[15px] text-[var(--color-text)]">
+        <p className="min-w-0 flex-1 text-reading text-[var(--color-text)]">
           {n === 1 ? "1 of your checkouts is" : `${n} of your checkouts are`} past the release date
         </p>
         <button onClick={dismissForToday} aria-label="Hide for today" title="Hide for today"
@@ -122,33 +122,33 @@ export default function StaleCheckoutBanner({ userId }: StaleCheckoutBannerProps
         </button>
       </div>
       {releaseError && (
-        <p role="alert" className="pl-4 sm:pl-5 pr-4 pb-2 text-[13px] font-semibold text-[var(--state-overdue)]">{releaseError}</p>
+        <p role="alert" className="pl-4 sm:pl-5 pr-4 pb-2 text-body font-medium text-[var(--state-overdue)]">{releaseError}</p>
       )}
       <ul className="divide-y divide-[var(--color-border)] border-t border-[var(--color-border)]">
         {rows.map((r) => (
           <li key={r.id} className="pl-4 sm:pl-5 pr-3 py-2.5 flex flex-wrap sm:flex-nowrap items-center gap-x-4 gap-y-1.5">
             <div className="min-w-0 flex-1 basis-full sm:basis-auto">
-              <div className="text-[15px] text-[var(--color-text)] truncate">
+              <div className="text-reading text-[var(--color-text)] truncate">
                 <span className="font-display font-semibold tabular-nums">{r.docNumber || "-"}</span>
                 {r.docTitle && r.docTitle !== r.docNumber && <span className="ml-2 text-[var(--color-text-muted)]">{r.docTitle}</span>}
               </div>
             </div>
-            <div className="shrink-0 text-[13px] text-[var(--color-text-muted)] whitespace-nowrap">
+            <div className="shrink-0 text-body text-[var(--color-text-muted)] whitespace-nowrap">
               Checked out {formatRelative(r.startedAt)}
             </div>
-            <div className="shrink-0 text-[13px] font-semibold text-[var(--state-held)] whitespace-nowrap">
+            <div className="shrink-0 text-body font-medium text-[var(--state-held)] whitespace-nowrap">
               Was due {formatRelative(dueOf(r))}
             </div>
             <div className="ml-auto shrink-0 flex items-center gap-2">
               {r.libraryId && (
-                <Link href={`/documents/${r.libraryId}?doc=${r.documentId}`} className="text-[14px] text-[var(--color-accent-text)] hover:underline">
+                <Link href={`/documents/${r.libraryId}?doc=${r.documentId}`} className="text-body text-[var(--color-accent-text)] hover:underline">
                   Open
                 </Link>
               )}
               <button
                 onClick={() => void release(r)}
                 disabled={releasingId === r.id}
-                className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-[13px] font-semibold hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors"
+                className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-body font-medium hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors"
               >
                 {releasingId === r.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
                 Release

@@ -47,16 +47,16 @@ function DocLine({ d, folderName }: { d: DocRow; folderName?: string | null }) {
     <Link href={href} className="flex items-center gap-3 px-4 py-2.5 hover:bg-[var(--color-surface-2)] transition-colors">
       <span className="min-w-0 flex-1">
         <span className="flex items-baseline gap-2 min-w-0">
-          <span className="ui-id text-[15px] truncate">{d.document_number || d.name || "Document"}</span>
-          {d.rev && <span className="shrink-0 inline-flex items-center gap-1 text-[13px] text-[var(--color-text-muted)]">Rev <span className="ui-count is-solid">{d.rev}</span></span>}
+          <span className="ui-id text-reading truncate">{d.document_number || d.name || "Document"}</span>
+          {d.rev && <span className="shrink-0 inline-flex items-center gap-1 text-body text-[var(--color-text-muted)]">Rev <span className="ui-count is-solid">{d.rev}</span></span>}
         </span>
-        <span className="block text-[13px] text-[var(--color-text-muted)] truncate">
+        <span className="block text-body text-[var(--color-text-muted)] truncate">
           {d.title && d.title !== d.document_number ? d.title : (d.name ?? "")}
           {folderName ? `, in ${folderName}` : null}
         </span>
       </span>
       {d.status && <StatusTag tone={STATUS_TONE[d.status] ?? "neutral"}>{d.status}</StatusTag>}
-      <span className="shrink-0 w-20 text-right text-[13px] text-[var(--color-text-muted)] tabular-nums">{d.updated_at ? humanDate(d.updated_at) : ""}</span>
+      <span className="shrink-0 w-20 text-right text-body text-[var(--color-text-muted)] tabular-nums">{d.updated_at ? humanDate(d.updated_at) : ""}</span>
     </Link>
   );
 }
@@ -203,7 +203,7 @@ export default function DocBrowserBody() {
       // On a phone the week's line goes under the count instead of off the
       // edge.
       <div className="mb-3 flex flex-wrap items-end justify-between gap-x-4 gap-y-1 shrink-0">
-        <span className="whitespace-nowrap text-[14px] text-[var(--color-text-muted)]">
+        <span className="whitespace-nowrap text-body text-[var(--color-text-muted)]">
           {/* Small: the page has its one large number already. */}
           <span className={`font-display text-section font-semibold tabular-nums ${(top?.totalDocs ?? 0) === 0 ? "text-[var(--color-text-faint)]" : "text-[var(--color-heading)]"}`}>{(top?.totalDocs ?? 0).toLocaleString()}</span> controlled documents
         </span>
@@ -223,8 +223,8 @@ export default function DocBrowserBody() {
                 ? <NodeCover appearance={{ color: l.color, icon: l.icon, coverImageUrl: l.cover_image_url, coverTint: l.cover_tint }}
                     className="w-9 h-9 shrink-0" rounded="rounded-lg" iconSize="w-4 h-4" />
                 : <span className="ui-icon-tile is-solid"><Library className="w-[18px] h-[18px]" /></span>}
-              <span className="min-w-0 flex-1 text-[15px] font-semibold text-[var(--color-text)] truncate">{l.name}</span>
-              {l.count != null && <span className="shrink-0 inline-flex items-center gap-1.5 text-[13px] text-[var(--color-text-muted)]"><span className="ui-count">{l.count.toLocaleString()}</span> doc{l.count === 1 ? "" : "s"}</span>}
+              <span className="min-w-0 flex-1 text-reading font-medium text-[var(--color-text)] truncate">{l.name}</span>
+              {l.count != null && <span className="shrink-0 inline-flex items-center gap-1.5 text-body text-[var(--color-text-muted)]"><span className="ui-count">{l.count.toLocaleString()}</span> doc{l.count === 1 ? "" : "s"}</span>}
               <ChevronRight className="w-4 h-4 shrink-0 text-[var(--color-text-faint)]" />
             </button>
           </li>
@@ -239,23 +239,23 @@ export default function DocBrowserBody() {
       <button type="button" onClick={up} title={path.length ? "Up one folder" : "Back to all libraries"} className={rowBtn}>
         <ArrowUp className="w-3.5 h-3.5" /> Up
       </button>
-      <nav aria-label="Where you are" className="min-w-0 flex-1 flex items-center gap-1 overflow-x-auto no-scrollbar text-[14px]">
+      <nav aria-label="Where you are" className="min-w-0 flex-1 flex items-center gap-1 overflow-x-auto no-scrollbar text-body">
         <button type="button" onClick={() => go(null)} className={`shrink-0 ${link}`}>All libraries</button>
         <ChevronRight className="w-3.5 h-3.5 shrink-0 text-[var(--color-text-faint)]" />
         {path.length ? (
           <button type="button" onClick={() => { setPath([]); setQ(""); }} className={`shrink-0 truncate max-w-[10rem] ${link}`}>{lib?.name ?? "Library"}</button>
-        ) : <span className="shrink-0 truncate max-w-[12rem] font-semibold text-[var(--color-text)]" aria-current="location">{lib?.name ?? "Library"}</span>}
+        ) : <span className="shrink-0 truncate max-w-[12rem] font-medium text-[var(--color-text)]" aria-current="location">{lib?.name ?? "Library"}</span>}
         {path.map((f, i) => (
           <React.Fragment key={f.id}>
             <ChevronRight className="w-3.5 h-3.5 shrink-0 text-[var(--color-text-faint)]" />
             {i === path.length - 1
-              ? <span className="shrink-0 truncate max-w-[12rem] font-semibold text-[var(--color-text)]" aria-current="location">{f.name}</span>
+              ? <span className="shrink-0 truncate max-w-[12rem] font-medium text-[var(--color-text)]" aria-current="location">{f.name}</span>
               : <button type="button" onClick={() => { setPath((p) => p.slice(0, i + 1)); setQ(""); }} className={`shrink-0 truncate max-w-[10rem] ${link}`}>{f.name}</button>}
           </React.Fragment>
         ))}
         {refreshing && <Loader2 className="w-3.5 h-3.5 ml-1 shrink-0 animate-spin text-[var(--color-text-faint)]" />}
       </nav>
-      <Link href={openHere} title="Open this folder in Documents" className={`shrink-0 text-[14px] ${link}`}>Open in Documents</Link>
+      <Link href={openHere} title="Open this folder in Documents" className={`shrink-0 text-body ${link}`}>Open in Documents</Link>
     </div>
   );
 
@@ -263,7 +263,7 @@ export default function DocBrowserBody() {
     // Never show the previous folder's contents under the new crumb.
     !here || here.at !== `${libId}|${folderId ?? ""}` ? <Skeleton /> : (
       here.folders.length === 0 && here.docs.length === 0 ? (
-        <p className="px-4 py-3 text-[15px] text-[var(--color-text-muted)]">This folder is empty.</p>
+        <p className="px-4 py-3 text-reading text-[var(--color-text-muted)]">This folder is empty.</p>
       ) : (
         <div className="divide-y divide-[var(--color-border)]">
           {here.folders.length > 0 && (
@@ -273,7 +273,7 @@ export default function DocBrowserBody() {
                   <button type="button" onClick={() => { setPath((p) => [...p, f]); setQ(""); }} data-widget-folder={f.id}
                     className="w-full flex items-center gap-3 px-4 py-2.5 text-left hover:bg-[var(--color-surface-2)] transition-colors">
                     <span className="ui-icon-tile is-sm"><Folder className="w-4 h-4" fill="currentColor" fillOpacity={0.2} /></span>
-                    <span className="min-w-0 flex-1 truncate text-[15px] font-semibold text-[var(--color-text)]">{f.name}</span>
+                    <span className="min-w-0 flex-1 truncate text-reading font-medium text-[var(--color-text)]">{f.name}</span>
                     <ChevronRight className="w-4 h-4 shrink-0 text-[var(--color-text-faint)]" />
                   </button>
                 </li>
@@ -282,7 +282,7 @@ export default function DocBrowserBody() {
           )}
           {here.docs.length > 0 && (
             <div>
-              <div className="px-4 py-2 bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text-muted)]">
+              <div className="px-4 py-2 bg-[var(--color-surface-2)] text-body text-[var(--color-text-muted)]">
                 {here.docCount.toLocaleString()} document{here.docCount === 1 ? "" : "s"} here{here.docCount > here.docs.length ? `, newest ${here.docs.length} shown` : ""}
               </div>
               <div className="divide-y divide-[var(--color-border)]">
@@ -290,7 +290,7 @@ export default function DocBrowserBody() {
               </div>
               {here.docCount > here.docs.length && (
                 <div className="px-4 py-2.5 border-t border-[var(--color-border)]">
-                  <Link href={openHere} className={`text-[14px] ${link}`}>See all {here.docCount.toLocaleString()} in Documents</Link>
+                  <Link href={openHere} className={`text-body ${link}`}>See all {here.docCount.toLocaleString()} in Documents</Link>
                 </div>
               )}
             </div>

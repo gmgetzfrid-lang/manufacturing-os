@@ -147,7 +147,7 @@ export default function PillCell({
     return (
       <div className={`relative flex items-center min-w-0 ${saving ? "opacity-60" : ""}`}>
         {pills.length === 0 ? (
-          <span className="text-[14px] text-[var(--color-text-faint)] select-none leading-6">-</span>
+          <span className="text-body text-[var(--color-text-faint)] select-none leading-6">-</span>
         ) : (
           // Every tag, wrapped, in a box two rows tall that scrolls down
           // (wheel, trackpad, touch) with a thin bar that shows there's
@@ -238,7 +238,7 @@ export default function PillCell({
             if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); handleSave(); }
           }}
           placeholder={`Add ${label}…`}
-          className="flex-1 min-w-0 h-8 text-[14px] px-2 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)]"
+          className="flex-1 min-w-0 h-8 text-body px-2 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)]"
         />
         {input.trim() && (
           <button
@@ -253,12 +253,12 @@ export default function PillCell({
         <button
           type="button"
           onClick={(e) => { e.stopPropagation(); handleSave(); }}
-          className="shrink-0 h-8 px-2.5 inline-flex items-center gap-1 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[13px] font-semibold text-[var(--color-text)] transition-colors"
+          className="shrink-0 h-8 px-2.5 inline-flex items-center gap-1 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-body font-medium text-[var(--color-text)] transition-colors"
         >
           <Check className="w-3.5 h-3.5" /> Done
         </button>
       </div>
-      <p className="text-[13px] text-[var(--color-text-muted)]">Enter adds a tag, Esc saves. Commas stay in the tag.</p>
+      <p className="text-body text-[var(--color-text-muted)]">Enter adds a tag, Esc saves. Commas stay in the tag.</p>
     </div>
   );
 }

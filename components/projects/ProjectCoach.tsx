@@ -56,10 +56,10 @@ export default function ProjectCoach({ orgId, projectId, refreshKey }: {
   }, [health]);
 
   if (!health) return (
-    <div role="status" className="rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] px-4 sm:px-5 py-3 flex items-center gap-2 text-[14px]">
+    <div role="status" className="rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] px-4 sm:px-5 py-3 flex items-center gap-2 text-body">
       <Sparkles className="w-4 h-4 text-[var(--color-text-muted)]" />
-      <span className="font-bold text-[var(--color-text)]">Health</span>
-      <span className="text-[13px] text-[var(--color-text-muted)]">{failed ? "Couldn't be checked right now." : "Checking…"}</span>
+      <span className="font-medium text-[var(--color-text)]">Health</span>
+      <span className="text-body text-[var(--color-text-muted)]">{failed ? "Couldn't be checked right now." : "Checking…"}</span>
     </div>
   );
   const shown = showAll ? items : items.slice(0, 4);
@@ -69,14 +69,14 @@ export default function ProjectCoach({ orgId, projectId, refreshKey }: {
       <button onClick={() => setOpen((v) => !v)} aria-expanded={open} className="w-full px-4 sm:px-5 py-3 flex items-center gap-2 text-left hover:bg-[var(--color-surface-2)]/40 transition-colors">
         <ChevronRight className={`w-4 h-4 text-[var(--color-text-faint)] ui-chevron${(open) ? " rotate-90" : ""}`} />
         <Sparkles className="w-4 h-4 text-[var(--color-text-muted)]" />
-        <span className="text-[14px] font-bold text-[var(--color-text)]">Health</span>
+        <span className="text-body font-medium text-[var(--color-text)]">Health</span>
         {health.score != null && (
-          <span className="text-[12px] font-semibold tabular-nums whitespace-nowrap" style={{ color: scoreBandColor(health.score) }}>
+          <span className="text-caption font-medium tabular-nums whitespace-nowrap" style={{ color: scoreBandColor(health.score) }}>
             {health.score} · {band}
           </span>
         )}
         {items.length > 0 && (
-          <span className="ml-auto text-[13px] font-semibold text-[var(--color-text-muted)] whitespace-nowrap">
+          <span className="ml-auto text-body font-medium text-[var(--color-text-muted)] whitespace-nowrap">
             {items.length} <span className="max-sm:hidden">thing{items.length === 1 ? "" : "s"} not set up yet</span><span className="sm:hidden">to set up</span>
           </span>
         )}
@@ -89,8 +89,8 @@ export default function ProjectCoach({ orgId, projectId, refreshKey }: {
             <ScoreDial score={health.score} size={72} label={band} />
             <div className="space-y-1 min-w-0 flex-1">
               {health.parts.map((p) => (
-                <div key={p.label} className="flex items-center gap-2 text-[11px]">
-                  <span className="w-24 max-sm:w-20 shrink-0 font-bold text-[var(--color-text-muted)]">{p.label}</span>
+                <div key={p.label} className="flex items-center gap-2 text-caption">
+                  <span className="w-24 max-sm:w-20 shrink-0 font-medium text-[var(--color-text-muted)]">{p.label}</span>
                   {p.score != null ? (
                     <>
                       <span className="h-1.5 w-20 max-sm:w-12 rounded-full bg-[var(--viz-track)] overflow-hidden shrink-0">
@@ -120,8 +120,8 @@ export default function ProjectCoach({ orgId, projectId, refreshKey }: {
                       className="group flex items-start gap-2 rounded-lg px-2.5 py-2 hover:bg-[var(--color-surface-2)] transition-colors">
                       <ArrowRight className="w-3.5 h-3.5 mt-0.5 text-[var(--color-text-muted)] shrink-0 group-hover:translate-x-0.5 transition-transform" />
                       <span className="min-w-0">
-                        <span className="block text-[13px] font-bold text-[var(--color-text)]">{it.title}</span>
-                        <span className="block text-[12px] text-[var(--color-text-muted)]">{it.payoff}</span>
+                        <span className="block text-body font-medium text-[var(--color-text)]">{it.title}</span>
+                        <span className="block text-caption text-[var(--color-text-muted)]">{it.payoff}</span>
                       </span>
                     </Link>
                   </li>
@@ -129,7 +129,7 @@ export default function ProjectCoach({ orgId, projectId, refreshKey }: {
               </ul>
             )}
             {items.length > 4 && (
-              <button onClick={() => setShowAll((v) => !v)} className="mt-1.5 px-2.5 text-[13px] hover:underline text-[var(--color-accent-text)]">
+              <button onClick={() => setShowAll((v) => !v)} className="mt-1.5 px-2.5 text-body hover:underline text-[var(--color-accent-text)]">
                 {showAll ? "Show fewer" : `Show ${items.length - 4} more`}
               </button>
             )}

@@ -32,12 +32,12 @@ export function TempPasswordNotice({ email, password, expiresAt, onClose }: {
               {copied ? <><Check className="w-4 h-4" /> Copied</> : <><Copy className="w-4 h-4" /> Copy</>}
             </Button>
           </div>
-          <ol className="space-y-1.5 text-[14px] text-[var(--color-text)] list-decimal ml-5">
+          <ol className="space-y-1.5 text-body text-[var(--color-text)] list-decimal ml-5">
             <li>Give it to them in person or by phone, not in the same email as their address.</li>
             <li>They sign in with it and must set their own password right away.</li>
           </ol>
-          <p className="text-[14px] text-[var(--state-held-text)] font-semibold">If they don&apos;t by {until}, the account is suspended until you reset it.</p>
-          <p className="text-[13px] text-[var(--color-text-muted)]">This is the only time it&apos;s shown.</p>
+          <p className="text-body text-[var(--state-held-text)] font-medium">If they don&apos;t by {until}, the account is suspended until you reset it.</p>
+          <p className="text-body text-[var(--color-text-muted)]">This is the only time it&apos;s shown.</p>
           <Button className="w-full" onClick={onClose}>Done</Button>
         </div>
       </ModalBody>

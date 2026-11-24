@@ -137,19 +137,19 @@ export default function AssetPhotoCarousel({
           </div>
           <div className="min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-[15px] font-semibold text-white truncate">{equipmentLabel({ tag: asset.tag, code: asset.code })}</span>
+              <span className="text-reading font-medium text-white truncate">{equipmentLabel({ tag: asset.tag, code: asset.code })}</span>
               {assetType && (
-                <span className="text-[13px] font-semibold bg-white/15 text-white/90 px-1.5 py-0.5 rounded">
+                <span className="text-body font-medium bg-white/15 text-white/90 px-1.5 py-0.5 rounded">
                   {assetType.name}
                 </span>
               )}
               {photos.length > 0 && (
-                <span className="text-[13px] font-display tabular-nums text-white/60">
+                <span className="text-body font-display tabular-nums text-white/60">
                   {activeIdx + 1} / {photos.length}
                 </span>
               )}
             </div>
-            <div className="text-[13px] text-[var(--color-text-faint)] truncate flex items-center gap-3">
+            <div className="text-body text-[var(--color-text-faint)] truncate flex items-center gap-3">
               {asset.description && <span className="truncate max-w-md">{asset.description}</span>}
               {asset.location && (
                 <span className="inline-flex items-center gap-1 shrink-0">
@@ -161,12 +161,12 @@ export default function AssetPhotoCarousel({
         </div>
         <div className="flex items-center gap-2 shrink-0">
           {canManage && onEditAsset && (
-            <button onClick={onEditAsset} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 text-white text-[13px] font-bold backdrop-blur transition-colors">
+            <button onClick={onEditAsset} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 text-white text-body font-medium backdrop-blur transition-colors">
               <Edit3 className="w-3.5 h-3.5" /> Edit asset
             </button>
           )}
           {canManage && onUploadClick && photos.length > 0 && (
-            <button onClick={onUploadClick} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-[13px] font-bold transition-colors">
+            <button onClick={onUploadClick} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-body font-medium transition-colors">
               <Upload className="w-3.5 h-3.5" /> Add photos
             </button>
           )}
@@ -181,7 +181,7 @@ export default function AssetPhotoCarousel({
         {loading && (
           <div className="text-white/60 flex flex-col items-center gap-3">
             <Loader2 className="w-8 h-8 animate-spin" />
-            <span className="text-[13px]">Loading photos…</span>
+            <span className="text-body">Loading photos…</span>
           </div>
         )}
         {error && (
@@ -249,14 +249,14 @@ export default function AssetPhotoCarousel({
 
       {/* Date, age and status, then the caption: plain lines under the photo. */}
       {active && !loading && (
-        <div className="shrink-0 px-6 pt-3 flex items-center justify-center gap-2 flex-wrap text-[13px] text-white/70" onClick={(e) => e.stopPropagation()}>
+        <div className="shrink-0 px-6 pt-3 flex items-center justify-center gap-2 flex-wrap text-body text-white/70" onClick={(e) => e.stopPropagation()}>
           <Calendar className="w-3 h-3" />
           <span className="tabular-nums">{active.captured_at ? new Date(active.captured_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "Date unknown"}</span>
           {age && age.category !== "unknown" && (
-            <span className={age.category === "stale" ? "text-red-300 font-bold" : age.category === "aging" ? "text-amber-300 font-bold" : ""}>· {age.label}</span>
+            <span className={age.category === "stale" ? "text-red-300 font-medium" : age.category === "aging" ? "text-amber-300 font-medium" : ""}>· {age.label}</span>
           )}
           {active.status !== "current" && (
-            <span className={`inline-flex items-center gap-1 font-bold ${active.status === "needs_verification" ? "text-amber-300" : "text-red-300"}`}>
+            <span className={`inline-flex items-center gap-1 font-medium ${active.status === "needs_verification" ? "text-amber-300" : "text-red-300"}`}>
               · {active.status === "needs_verification" ? <AlertTriangle className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
               {active.status === "needs_verification" ? "Needs checking" : "Superseded"}
             </span>
@@ -285,7 +285,7 @@ export default function AssetPhotoCarousel({
               >
                 <SignedImg path={p.file_url} alt="" className="w-full h-full object-cover" />
                 {p.status !== "current" && (
-                  <span className={`absolute bottom-0 inset-x-0 px-1 py-0.5 bg-black/70 text-[13px] font-bold text-center ${p.status === "needs_verification" ? "text-amber-300" : "text-red-300"}`}>
+                  <span className={`absolute bottom-0 inset-x-0 px-1 py-0.5 bg-black/70 text-body font-medium text-center ${p.status === "needs_verification" ? "text-amber-300" : "text-red-300"}`}>
                     {p.status === "needs_verification" ? "Check" : "Old"}
                   </span>
                 )}
@@ -305,14 +305,14 @@ function EmptyState({ canUpload, onUpload }: { canUpload: boolean; onUpload?: ()
       <div className="p-6 rounded-3xl bg-white/5 backdrop-blur mb-4">
         <ImageIcon className="w-16 h-16 text-white/40" />
       </div>
-      <h3 className="text-[15px] font-bold text-white mb-1">No photos yet</h3>
-      <p className="text-[13px] text-white/60 leading-relaxed mb-4">
+      <h3 className="text-reading font-medium text-white mb-1">No photos yet</h3>
+      <p className="text-body text-white/60 leading-relaxed mb-4">
         Photos added here show wherever this tag appears.
       </p>
       {canUpload && onUpload && (
         <button
           onClick={onUpload}
-          className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-sm font-semibold"
+          className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-sm font-medium"
         >
           <Upload className="w-4 h-4" /> Upload first photo
         </button>

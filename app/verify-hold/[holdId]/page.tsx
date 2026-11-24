@@ -59,17 +59,17 @@ export default function VerifyHoldPage() {
         {loading ? (
           <div className="text-white/90">
             <Loader2 className="w-14 h-14 mx-auto animate-spin mb-4" />
-            <div className="text-[13px] font-semibold ">Checking hold…</div>
+            <div className="text-body font-medium ">Checking hold…</div>
           </div>
         ) : error ? (
           <div className="text-white/90">
             <ShieldQuestion className="w-16 h-16 mx-auto mb-4 opacity-80" />
             <h1 className="text-[34px] leading-[1.05] tracking-[-0.02em] font-bold mb-3">Can&apos;t verify this tag</h1>
-            <p className="text-[15px] opacity-90">{error}</p>
-            <p className="text-[13px] opacity-70 mt-4">
+            <p className="text-reading opacity-90">{error}</p>
+            <p className="text-body opacity-70 mt-4">
               Treat the hold as active until Document Control confirms otherwise.
             </p>
-            <button onClick={() => void check()} className="mt-6 inline-flex items-center gap-2 h-11 px-4 rounded-lg bg-white/15 hover:bg-white/25 text-[15px] font-semibold">
+            <button onClick={() => void check()} className="mt-6 inline-flex items-center gap-2 h-11 px-4 rounded-lg bg-white/15 hover:bg-white/25 text-reading font-medium">
               <RefreshCw className="w-4 h-4" /> Try again
             </button>
           </div>
@@ -83,7 +83,7 @@ export default function VerifyHoldPage() {
             <h1 className="text-[40px] font-bold text-white leading-[1.03] tracking-[-0.03em] mb-3">
               {result.active ? "Hold active" : "Released"}
             </h1>
-            <p className="text-white/90 text-[15px] font-semibold mb-6">
+            <p className="text-white/90 text-reading font-medium mb-6">
               {result.active
                 ? "Do not advance this document or the work it covers."
                 : "This hold was released. The tag can come down."}
@@ -92,34 +92,34 @@ export default function VerifyHoldPage() {
             <div className="bg-[var(--color-surface)] rounded-xl ui-float p-5 text-left space-y-3">
               {result.docLabel && (
                 <div>
-                  <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">Document</div>
-                  <div className="text-[15px] font-semibold text-[var(--color-text)]">
+                  <div className="text-body font-medium text-[var(--color-text-muted)]">Document</div>
+                  <div className="text-reading font-medium text-[var(--color-text)]">
                     {result.docLabel}{result.docRev ? ` · Rev ${result.docRev}` : ""}
                   </div>
                 </div>
               )}
               <div className="pt-2 border-t border-[var(--color-border)]">
-                <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">Reason</div>
-                <div className={`text-[14px] font-semibold ${result.active ? "text-[var(--state-overdue-text)]" : "text-[var(--color-text)]"}`}>{result.reason ?? "-"}</div>
+                <div className="text-body font-medium text-[var(--color-text-muted)]">Reason</div>
+                <div className={`text-body font-medium ${result.active ? "text-[var(--state-overdue-text)]" : "text-[var(--color-text)]"}`}>{result.reason ?? "-"}</div>
               </div>
               <div className="grid grid-cols-2 gap-3 pt-2 border-t border-[var(--color-border)] text-xs">
                 <div>
-                  <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">Placed</div>
+                  <div className="text-body font-medium text-[var(--color-text-muted)]">Placed</div>
                   <div className="text-[var(--color-text)]">{fmt(result.openedAt)}</div>
                 </div>
                 {!result.active && (
                   <div>
-                    <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">Released</div>
-                    <div className="text-[var(--state-released-text)] font-semibold">{fmt(result.releasedAt)}</div>
+                    <div className="text-body font-medium text-[var(--color-text-muted)]">Released</div>
+                    <div className="text-[var(--state-released-text)] font-medium">{fmt(result.releasedAt)}</div>
                   </div>
                 )}
               </div>
             </div>
 
-            <div className="mt-5 text-[12px] text-white/70">
+            <div className="mt-5 text-caption text-white/70">
               Checked {new Date(result.checkedAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })} by document control.
             </div>
-            <button onClick={() => void check()} className="mt-3 inline-flex items-center gap-1.5 h-11 px-4 rounded-lg bg-white/15 hover:bg-white/25 text-white text-[15px] font-semibold">
+            <button onClick={() => void check()} className="mt-3 inline-flex items-center gap-1.5 h-11 px-4 rounded-lg bg-white/15 hover:bg-white/25 text-white text-reading font-medium">
               <RefreshCw className="w-4 h-4" /> Check again
             </button>
           </>

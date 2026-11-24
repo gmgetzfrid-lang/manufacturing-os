@@ -175,7 +175,7 @@ export default function SemanticIndexPanel({ orgId, libraryId, isController }: {
   // exports indexes to almost nothing until image reading is on). Say the
   // state out loud instead, and name the fix.
   const help = (
-    <span className="font-sans font-normal text-[14px] leading-snug"><HelpTooltip>
+    <span className="font-sans font-normal text-body leading-snug"><HelpTooltip>
       Finds &ldquo;pipe supports&rdquo; in a standard that says &ldquo;hanger and support details&rdquo;. Keyword search still handles exact tags. Building it uses your embeddings key, which is separate from your chat key (AI settings).
     </HelpTooltip></span>
   );
@@ -209,7 +209,7 @@ export default function SemanticIndexPanel({ orgId, libraryId, isController }: {
 
   const action = isController ? (
     building ? (
-      <Button size="sm" variant="secondary" className="!h-9 !text-[14px]" onClick={() => { stopRef.current = true; }}>
+      <Button size="sm" variant="secondary" className="!h-9 !text-body" onClick={() => { stopRef.current = true; }}>
         <Square className="w-3.5 h-3.5" /> Stop
       </Button>
     ) : complete ? (
@@ -218,11 +218,11 @@ export default function SemanticIndexPanel({ orgId, libraryId, isController }: {
       // upgrade would reach only documents added afterwards and the
       // library would sit half-indexed under two regimes with nothing
       // on screen saying so.
-      <Button size="sm" variant="secondary" className="!h-9 !text-[14px]" onClick={() => void rebuild()}>
+      <Button size="sm" variant="secondary" className="!h-9 !text-body" onClick={() => void rebuild()}>
         <RefreshCw className="w-4 h-4" /> Rebuild index
       </Button>
     ) : (
-      <Button size="sm" variant="secondary" className="!h-9 !text-[14px]" onClick={() => void build()}>
+      <Button size="sm" variant="secondary" className="!h-9 !text-body" onClick={() => void build()}>
         <Brain className="w-4 h-4" /> Build index
       </Button>
     )
@@ -237,7 +237,7 @@ export default function SemanticIndexPanel({ orgId, libraryId, isController }: {
     <Section label={<span className="inline-flex items-center gap-2.5">Meaning-based search {tag}{help}</span>} action={action}>
       <div className={`${sheet} overflow-hidden`}>
         <Cells cells={[
-          { label: "Passages with meaning", value: <>{status.estimated ? "≈ " : ""}{covered.toLocaleString()}<span className="text-[var(--color-text-muted)] font-medium text-[18px]"> of {status.total.toLocaleString()}</span></> },
+          { label: "Passages with meaning", value: <>{status.estimated ? "≈ " : ""}{covered.toLocaleString()}<span className="text-[var(--color-text-muted)] font-medium text-section"> of {status.total.toLocaleString()}</span></> },
           { label: "Built", value: `${pct}%`, tone: complete ? "good" : undefined },
           { label: "Left to build", value: status.remaining.toLocaleString() },
           complete
@@ -246,7 +246,7 @@ export default function SemanticIndexPanel({ orgId, libraryId, isController }: {
         ]} />
         <div className="px-4 sm:px-5 pb-4">
           <Bar segments={[{ key: "built", value: covered, color: "var(--color-main)" }]} total={status.total} label={`${pct}% built`} />
-          <p className="mt-1.5 flex items-center gap-1.5 text-[13px] text-[var(--color-text-muted)]">
+          <p className="mt-1.5 flex items-center gap-1.5 text-body text-[var(--color-text-muted)]">
             {building && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
             {building && status.busy ? "Database busy: pausing a moment, nothing lost."
               : complete ? "Every passage carries a vector."

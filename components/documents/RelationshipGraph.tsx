@@ -94,12 +94,12 @@ export default function RelationshipGraph({
         <div className="flex items-center gap-2 px-5 py-3 border-b border-[var(--color-border)]">
           <Network className="w-4 h-4 text-[var(--color-text-muted)]" />
           <div className="flex-1 min-w-0">
-            <h2 className="text-sm font-semibold text-[var(--color-text)]">Relationship map</h2>
-            <p className="text-[13px] text-[var(--color-text-muted)]">Supersession lineage and same-scope documents. Click any node to open it.</p>
+            <h2 className="text-sm font-medium text-[var(--color-text)]">Relationship map</h2>
+            <p className="text-body text-[var(--color-text-muted)]">Supersession lineage and same-scope documents. Click any node to open it.</p>
           </div>
           <button
             onClick={() => go(`/graph?focus=${encodeURIComponent(documentId)}`)}
-            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] dark:hover:bg-[var(--color-surface-2)] border border-[var(--color-border)] dark:border-[var(--color-border)]"
+            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] dark:hover:bg-[var(--color-surface-2)] border border-[var(--color-border)] dark:border-[var(--color-border)]"
             title="See this document inside the full org graph"
           >
             <Waypoints className="w-3.5 h-3.5" /> Full org graph
@@ -127,12 +127,12 @@ export default function RelationshipGraph({
                 {nodes.map((n) => (
                   <g key={n.id} className="cursor-pointer" onClick={() => go(n.href)}>
                     <circle cx={n.x} cy={n.y} r={7} fill={REASON_META[n.reason as RelatedReason].hex} stroke="#fff" strokeWidth={2} />
-                    <text x={n.x} y={n.y - 12} textAnchor="middle" className="fill-[var(--color-text)] text-[13px] font-bold" style={{ fontFamily: "monospace" }}>{n.label.slice(0, 18)}</text>
+                    <text x={n.x} y={n.y - 12} textAnchor="middle" className="fill-[var(--color-text)] text-body font-medium" style={{ fontFamily: "monospace" }}>{n.label.slice(0, 18)}</text>
                   </g>
                 ))}
                 {/* center node */}
                 <circle cx={CX} cy={CY} r={13} fill="var(--color-main)" stroke="#fff" strokeWidth={3} />
-                <text x={CX} y={CY + 30} textAnchor="middle" className="fill-[var(--color-text)] text-[13px] font-semibold" style={{ fontFamily: "monospace" }}>
+                <text x={CX} y={CY + 30} textAnchor="middle" className="fill-[var(--color-text)] text-body font-medium" style={{ fontFamily: "monospace" }}>
                   {center?.document_number || center?.title || "This document"}
                 </text>
               </svg>
@@ -140,7 +140,7 @@ export default function RelationshipGraph({
               {/* legend */}
               <div className="flex flex-wrap items-center justify-center gap-4 mt-2">
                 {(Object.keys(REASON_META) as RelatedReason[]).map((r) => (
-                  <span key={r} className="inline-flex items-center gap-1.5 text-[13px] font-bold text-[var(--color-text-muted)]">
+                  <span key={r} className="inline-flex items-center gap-1.5 text-body font-medium text-[var(--color-text-muted)]">
                     <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: REASON_META[r].hex }} /> {REASON_META[r].label}
                   </span>
                 ))}
@@ -151,8 +151,8 @@ export default function RelationshipGraph({
                 {nodes.map((n) => (
                   <button key={`row-${n.id}`} onClick={() => go(n.href)} className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-[var(--color-surface-2)] text-left">
                     <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: REASON_META[n.reason as RelatedReason].hex }} />
-                    <span className="font-display tabular-nums text-[13px] font-bold text-[var(--color-text)] truncate">{n.label}</span>
-                    <span className="text-[13px] text-[var(--color-text-muted)] truncate flex-1">{n.sub}</span>
+                    <span className="font-display tabular-nums text-body font-bold text-[var(--color-text)] truncate">{n.label}</span>
+                    <span className="text-body text-[var(--color-text-muted)] truncate flex-1">{n.sub}</span>
                     <ArrowRight className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" />
                   </button>
                 ))}

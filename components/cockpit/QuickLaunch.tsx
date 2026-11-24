@@ -27,8 +27,8 @@ export function QuickLaunch() {
             {/* A plain muted icon, no tile: the words say what it is. */}
             <a.icon aria-hidden className="w-[18px] h-[18px] shrink-0 text-[var(--color-text-muted)]" />
             <span className="min-w-0 flex-1">
-              <span className="block text-[15px] font-semibold text-[var(--color-text)] truncate">{a.label}</span>
-              <span className="block text-[13px] text-[var(--color-text-muted)] truncate">{a.sub}</span>
+              <span className="block text-reading font-medium text-[var(--color-text)] truncate">{a.label}</span>
+              <span className="block text-body text-[var(--color-text-muted)] truncate">{a.sub}</span>
             </span>
             <ChevronRight className="w-4 h-4 text-[var(--color-text-faint)] shrink-0" />
           </span>

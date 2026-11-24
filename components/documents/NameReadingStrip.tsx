@@ -43,7 +43,7 @@ export default function NameReadingStrip({ readings, onChange }: {
   const shown = unsure > 0 || open ? groups.filter((g) => open || g.unsure > 0).slice(0, 6) : groups.slice(0, 1);
 
   return (
-    <div className={`mb-3 rounded-xl border px-3 py-2 text-[13px] ${unsure ? "border-[color-mix(in_srgb,var(--state-held)_40%,transparent)] bg-[color-mix(in_srgb,var(--state-held)_12%,transparent)]" : "border-[var(--color-border)] bg-[var(--color-surface-2)]/40"}`}>
+    <div className={`mb-3 rounded-xl border px-3 py-2 text-body ${unsure ? "border-[color-mix(in_srgb,var(--state-held)_40%,transparent)] bg-[color-mix(in_srgb,var(--state-held)_12%,transparent)]" : "border-[var(--color-border)] bg-[var(--color-surface-2)]/40"}`}>
       <div className="flex items-center gap-1.5 text-[var(--color-text-muted)]">
         {unsure ? <AlertTriangle className="w-3.5 h-3.5 text-[var(--state-held)] shrink-0" /> : <Wand2 className="w-3.5 h-3.5 shrink-0" />}
         <span className="flex-1">
@@ -52,7 +52,7 @@ export default function NameReadingStrip({ readings, onChange }: {
             : <>File names read as{groups.length > 1 ? ` (${groups.length} naming patterns)` : ""} - click a piece to change what it is.</>}
         </span>
         {groups.length > 1 && (
-          <button onClick={() => setOpen((v) => !v)} className="inline-flex items-center gap-0.5 font-bold hover:text-[var(--color-text)]">
+          <button onClick={() => setOpen((v) => !v)} className="inline-flex items-center gap-0.5 font-medium hover:text-[var(--color-text)]">
             <ChevronRight className={`w-3 h-3 ui-chevron${(open) ? " rotate-90" : ""}`} /> {open ? "Fewer" : "All patterns"}
           </button>
         )}
@@ -63,7 +63,7 @@ export default function NameReadingStrip({ readings, onChange }: {
             {g.example.parts.map((p, i) => (
               <label key={i} className={`relative inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 ${TONE[p.role]} ${p.sure ? "" : "ring-2 ring-[var(--state-held)]"}`} title={`“${p.text}” is read as ${ROLE_LABEL[p.role]}`}>
                 <span className="font-display tabular-nums">{p.text}</span>
-                <span className="text-[13px] font-semibold opacity-70">{ROLE_LABEL[p.role]}</span>
+                <span className="text-body font-medium opacity-70">{ROLE_LABEL[p.role]}</span>
                 <select
                   aria-label={`What “${p.text}” is`}
                   value={p.role}
@@ -74,7 +74,7 @@ export default function NameReadingStrip({ readings, onChange }: {
                 </select>
               </label>
             ))}
-            <span className="text-[13px] text-[var(--color-text-faint)] ml-1">{g.count} file{g.count === 1 ? "" : "s"}{g.unsure ? ` · ${g.unsure} unsure` : ""}</span>
+            <span className="text-body text-[var(--color-text-faint)] ml-1">{g.count} file{g.count === 1 ? "" : "s"}{g.unsure ? ` · ${g.unsure} unsure` : ""}</span>
           </div>
         ))}
       </div>

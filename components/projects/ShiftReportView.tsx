@@ -169,13 +169,13 @@ interface Props {
 }
 
 // A quiet button on the white card; the one accent one is Email / Print.
-const QUIET = "inline-flex items-center justify-center gap-1.5 h-9 pointer-coarse:h-11 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors";
+const QUIET = "inline-flex items-center justify-center gap-1.5 h-10 pointer-coarse:h-11 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors";
 // The toolbar's shift picker: a field (16 px on a phone, 44 px to touch).
-const PICK = "h-9 pointer-coarse:h-11 min-w-0 rounded-lg border border-[var(--color-border-control)] bg-[var(--color-surface)] px-2.5 text-[14px] max-sm:text-[16px] text-[var(--color-text)] tabular-nums";
+const PICK = "h-9 pointer-coarse:h-11 min-w-0 rounded-lg border border-[var(--color-border-control)] bg-[var(--color-surface)] px-2.5 text-body max-sm:text-reading text-[var(--color-text)] tabular-nums";
 // Back / forward a shift: an icon button.
 const ARROW = "w-9 h-9 pointer-coarse:w-11 pointer-coarse:h-11 shrink-0 inline-flex items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]";
 // A quiet text action in the toolbar.
-const LINK = "inline-flex items-center gap-1.5 min-h-9 pointer-coarse:min-h-11 px-1 text-[14px] font-semibold text-[var(--color-accent-text)] hover:underline underline-offset-2 whitespace-nowrap";
+const LINK = "inline-flex items-center gap-1.5 min-h-9 pointer-coarse:min-h-11 px-1 text-body font-medium text-[var(--color-accent-text)] hover:underline underline-offset-2 whitespace-nowrap";
 
 
 const NONE_CANCELLED: CancelledJob[] = [];
@@ -1081,9 +1081,9 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
             )}
             {showTimes && <div className="fixed inset-0 z-20" onClick={() => setShowTimes(false)} aria-hidden />}
             {showTimes && (
-              <div className="ui-float ui-float-in absolute right-0 top-full mt-1 z-30 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 space-y-2 text-[14px] w-[24rem] max-w-[calc(100vw-1.5rem)]">
+              <div className="ui-float ui-float-in absolute right-0 top-full mt-1 z-30 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 space-y-2 text-body w-[24rem] max-w-[calc(100vw-1.5rem)]">
                 <div className="flex items-center gap-2">
-                  <h3 className="flex-1 text-[15px] font-semibold text-[var(--color-text)]">Shift change times <span className="font-normal text-[var(--color-text-muted)]">(plant time)</span></h3>
+                  <h3 className="flex-1 text-reading font-medium text-[var(--color-text)]">Shift change times <span className="font-normal text-[var(--color-text-muted)]">(plant time)</span></h3>
                   <button type="button" onClick={() => setShowTimes(false)} aria-label="Close" className="w-8 h-8 pointer-coarse:w-11 pointer-coarse:h-11 -mr-1 inline-flex items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
                 </div>
                 <label className="flex items-center justify-between gap-3 text-[var(--color-text)]"><span className="inline-flex items-center gap-1.5"><Sun className="w-4 h-4 text-[var(--color-text-muted)]" /> Day starts</span>
@@ -1109,7 +1109,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
                   </div>
                 )}
                 {timesMsg && (/^Saved for everyone/.test(timesMsg)
-                  ? <p role="status" className="leading-snug text-[13px] text-[var(--color-text)] inline-flex items-center gap-1.5"><span aria-hidden className="w-[7px] h-[7px] rounded-full bg-[var(--state-released)]" />{timesMsg}</p>
+                  ? <p role="status" className="leading-snug text-body text-[var(--color-text)] inline-flex items-center gap-1.5"><span aria-hidden className="w-[7px] h-[7px] rounded-full bg-[var(--state-released)]" />{timesMsg}</p>
                   : <ErrorNote compact title={timesMsg} next="" />)}
               </div>
             )}
@@ -1126,8 +1126,8 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
             {showSecs && (
               <>
                 <div className="fixed inset-0 z-20" onClick={() => setShowSecs(false)} aria-hidden />
-                <div className="ui-float ui-float-in absolute right-0 top-full mt-1 z-30 w-72 max-w-[calc(100vw-1.5rem)] rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-[14px]">
-                  <h3 className="text-[15px] font-semibold text-[var(--color-text)]">Show on the report</h3>
+                <div className="ui-float ui-float-in absolute right-0 top-full mt-1 z-30 w-72 max-w-[calc(100vw-1.5rem)] rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-body">
+                  <h3 className="text-reading font-medium text-[var(--color-text)]">Show on the report</h3>
                   <div className="mt-2 space-y-0.5">
                     {reportAll.map((x) => (
                       <label key={x.id} className="flex items-center gap-2.5 cursor-pointer select-none min-h-9 pointer-coarse:min-h-11">
@@ -1137,7 +1137,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
                     ))}
                   </div>
                   <div className="mt-3 flex items-center justify-between gap-2 border-t border-[var(--color-border)] pt-3">
-                    <span className="text-[13px] text-[var(--color-text-muted)] leading-snug">On screen and in print. The email has its own list.</span>
+                    <span className="text-body text-[var(--color-text-muted)] leading-snug">On screen and in print. The email has its own list.</span>
                     {hiddenSecs.length > 0 && <button type="button" onClick={() => setHidden(null, false)} className={`${LINK} shrink-0`}>Show all</button>}
                   </div>
                 </div>
@@ -1224,8 +1224,8 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
           const flag = s.flag === "rose" ? "var(--state-overdue)" : s.flag === "amber" ? "var(--state-held)" : null;
           return (
             <button key={s.id} type="button" onClick={() => goTo(s.id)} aria-current={active ? "step" : undefined}
-              className={`shrink-0 inline-flex items-center gap-1.5 h-8 px-2.5 rounded-md text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] ${active ? "bg-[var(--color-accent-soft)] ring-1 ring-[var(--color-main)]" : ""}`}>
-              <span className={`font-display tabular-nums text-[13px] font-medium ${active ? "text-[var(--color-main)]" : "text-[var(--color-text-muted)]"}`}>{i + 1}</span>
+              className={`shrink-0 inline-flex items-center gap-1.5 h-8 px-2.5 rounded-md text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] ${active ? "bg-[var(--color-accent-soft)] ring-1 ring-[var(--color-main)]" : ""}`}>
+              <span className={`font-display tabular-nums text-body font-medium ${active ? "text-[var(--color-main)]" : "text-[var(--color-text-muted)]"}`}>{i + 1}</span>
               {s.short}
               {s.count != null && <span className={`ui-count ${s.flag === "rose" && s.count > 0 ? "is-bad" : s.flag === "amber" && s.count > 0 ? "is-warn" : active ? "is-solid" : ""}`}>{badgeText(s.count)}</span>}
               {flag && <span aria-label={s.flag === "rose" ? "needs attention" : "waiting"} className="w-2 h-2 rounded-full" style={{ background: flag }} />}
@@ -1238,20 +1238,20 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
         <div className="px-3 sm:px-4 pb-2 flex flex-wrap sm:flex-nowrap items-center gap-x-2 gap-y-1.5">
           {crews.length > 1 && (
             <label className="min-w-0 max-sm:w-full flex items-center gap-2">
-              <span className="shrink-0 text-[13px] text-[var(--color-text-muted)]">Crew</span>
+              <span className="shrink-0 text-body text-[var(--color-text-muted)]">Crew</span>
               <select value={crew ?? ""} onChange={(e) => setCrewPick(e.target.value || null)} aria-label="Show one crew"
-                className={`${PICK} pr-7 max-sm:flex-1 ${crew ? "font-semibold" : ""}`}>
+                className={`${PICK} pr-7 max-sm:flex-1 ${crew ? "font-medium" : ""}`}>
                 <option value="">All crews</option>
                 {crews.map((x) => <option key={x.who} value={x.who}>{x.who} ({x.steps})</option>)}
               </select>
             </label>
           )}
           <div className="shrink-0 flex items-center gap-4" role="group" aria-label="Show only">
-            <label className="inline-flex items-center gap-2 min-h-9 pointer-coarse:min-h-11 text-[14px] text-[var(--color-text)] cursor-pointer select-none">
+            <label className="inline-flex items-center gap-2 min-h-9 pointer-coarse:min-h-11 text-body text-[var(--color-text)] cursor-pointer select-none">
               <input type="checkbox" checked={criticalOnly} onChange={() => setOnlyPick((v) => ({ ...v, critical: !v.critical }))} className="w-4 h-4 accent-[var(--color-current)]" />
               Critical path only
             </label>
-            <label className="inline-flex items-center gap-2 min-h-9 pointer-coarse:min-h-11 text-[14px] text-[var(--color-text)] cursor-pointer select-none">
+            <label className="inline-flex items-center gap-2 min-h-9 pointer-coarse:min-h-11 text-body text-[var(--color-text)] cursor-pointer select-none">
               <input type="checkbox" checked={addedOnly} onChange={() => setOnlyPick((v) => ({ ...v, added: !v.added }))} className="w-4 h-4 accent-[var(--color-current)]" />
               Discovery &amp; added only
             </label>
@@ -1273,21 +1273,21 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
       )}
       <QuickLookOpen.Provider value={openLook}>
       {presenting != null && sections[presenting] ? (
-        <div className="px-6 py-5 min-h-[420px] text-[14px]">
+        <div className="px-6 py-5 min-h-[420px] text-body">
           <SectionHead n={presenting + 1} s={sections[presenting]} big />
           <div className="mt-3">{sections[presenting].body(false)}</div>
           <div className="mt-6 flex items-center justify-between no-print">
             <button disabled={presenting === 0} onClick={() => setPresenting(presenting - 1)} className={`${QUIET} disabled:opacity-30`}>
               <ChevronLeft className="w-4 h-4" /> {presenting > 0 ? sections[presenting - 1].short : "Back"}
             </button>
-            <span className="text-[12px] text-[var(--color-text-muted)] tabular-nums">{presenting + 1} of {sections.length} · ← → to move · Esc to leave</span>
+            <span className="text-caption text-[var(--color-text-muted)] tabular-nums">{presenting + 1} of {sections.length} · ← → to move · Esc to leave</span>
             <button disabled={presenting === sections.length - 1} onClick={() => setPresenting(presenting + 1)} className={`${QUIET} disabled:opacity-30`}>
               {presenting < sections.length - 1 ? sections[presenting + 1].short : "Done"} <ChevronRight className="w-4 h-4" />
             </button>
           </div>
         </div>
       ) : (
-        <div className="px-3 sm:px-5 pt-4 pb-4 text-[13px] text-[var(--color-text)]">
+        <div className="px-3 sm:px-5 pt-4 pb-4 text-body text-[var(--color-text)]">
           {/* The report's sections in order, joined by one line down the
               left: a sequence reads as one path. A flagged one's number is
               in its colour. */}
@@ -1300,7 +1300,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
             return (
               <li key={s.id} className="flex gap-2.5 sm:gap-4">
                 <div aria-hidden className="flex flex-col items-center shrink-0 w-6">
-                  <span className={`w-6 h-6 rounded-full font-display tabular-nums text-[13px] font-semibold flex items-center justify-center ${dot}`}>{i + 1}</span>
+                  <span className={`w-6 h-6 rounded-full font-display tabular-nums text-body font-semibold flex items-center justify-center ${dot}`}>{i + 1}</span>
                   {!last && <span className="flex-1 w-0.5 mt-1 bg-[var(--color-border-strong)]" />}
                 </div>
                 <section ref={(el) => { if (el) refs.current.set(s.id, el); else refs.current.delete(s.id); }} className={`min-w-0 flex-1 scroll-mt-28 ${last ? "" : "pb-6"}`}>
@@ -1314,15 +1314,15 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
           })}
           </ol>
           {hiddenSecs.length > 0 && (
-            <div className="mt-4 flex flex-wrap items-center gap-x-2 gap-y-1 border-t border-[var(--color-border)] pt-3 text-[12px] text-[var(--color-text-muted)] print:hidden">
+            <div className="mt-4 flex flex-wrap items-center gap-x-2 gap-y-1 border-t border-[var(--color-border)] pt-3 text-caption text-[var(--color-text-muted)] print:hidden">
               <EyeOff className="w-3.5 h-3.5" /> Hidden:
               {hiddenSecs.map((x) => (
                 <button key={x.id} type="button" onClick={() => setHidden(x.id, false)} title="Show it again"
-                  className="inline-flex items-center gap-1 h-7 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+                  className="inline-flex items-center gap-1 h-8 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
                   {x.title.split(" - ")[0]} <Eye className="inline w-3 h-3 -mt-px" />
                 </button>
               ))}
-              <button type="button" onClick={() => setHidden(null, false)} className="ml-auto text-[13px] text-[var(--color-accent-text)] hover:underline">Show all</button>
+              <button type="button" onClick={() => setHidden(null, false)} className="ml-auto text-body text-[var(--color-accent-text)] hover:underline">Show all</button>
             </div>
           )}
           <Footnote meeting={meeting} ctx={ctx} asOf={asOf} now={now} projectName={projectName} />
@@ -1443,7 +1443,7 @@ async function copyText(text: string): Promise<boolean> {
 function OpenReportButton({ label, onClick, title }: { label: string; onClick: () => void; title?: string }) {
   return (
     <button type="button" onClick={onClick} title={title ?? `Open the ${label.toLowerCase()} in Reports, set to this shift`}
-      className="inline-flex items-center gap-1.5 text-[11px] font-bold px-3 py-1.5 rounded-lg border border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+      className="inline-flex items-center gap-1.5 text-caption font-medium px-3 py-1.5 rounded-lg border border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
       <FileText className="w-3.5 h-3.5" /> {label}
     </button>
   );
@@ -1522,7 +1522,7 @@ function CopyUpdate({ doc, meeting, lh, stamps, primary }: { primary?: boolean; 
 
   return (
     <>
-      <Button size="sm" variant={primary ? "primary" : "secondary"} onClick={open} className={primary ? "!h-9 pointer-coarse:!h-11 !text-[14px]" : "!h-9 pointer-coarse:!h-11 !text-[14px]"}
+      <Button size="sm" variant={primary ? "primary" : "secondary"} onClick={open} className={primary ? "!h-9 pointer-coarse:!h-11 !text-body" : "!h-9 pointer-coarse:!h-11 !text-body"}
         title="The short update: copy it into an email, or print it. You see it first.">
         <Mail className="w-4 h-4" /> Email / Print
       </Button>
@@ -1531,10 +1531,10 @@ function CopyUpdate({ doc, meeting, lh, stamps, primary }: { primary?: boolean; 
           <ModalHeader icon={Mail} title="Email or print the update" subtitle="What you'll send or print - leave out any section for today." onClose={() => setIsOpen(false)} />
           <ModalBody className="space-y-3">
             {d.form && (
-              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[14px]" role="radiogroup" aria-label="Format">
-                <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">Format</span>
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-body" role="radiogroup" aria-label="Format">
+                <span className="text-body font-medium text-[var(--color-text-muted)]">Format</span>
                 {([["form", "Required (shift table)"], ["detail", "Detailed"]] as const).map(([k, l]) => (
-                  <label key={k} className={`inline-flex items-center gap-2 min-h-9 pointer-coarse:min-h-11 cursor-pointer select-none ${format === k ? "font-semibold text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>
+                  <label key={k} className={`inline-flex items-center gap-2 min-h-9 pointer-coarse:min-h-11 cursor-pointer select-none ${format === k ? "font-medium text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>
                     <input type="radio" name="update-format" checked={format === k} onChange={() => setFormat(k)} className="w-4 h-4 accent-[var(--color-current)]" />{l}
                   </label>
                 ))}
@@ -1542,43 +1542,43 @@ function CopyUpdate({ doc, meeting, lh, stamps, primary }: { primary?: boolean; 
             )}
             {useForm && (
               <>
-                <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[12px]">
-                  <span className="text-[12px] font-semibold text-[var(--color-text-muted)]">Header</span>
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-caption">
+                  <span className="text-caption font-medium text-[var(--color-text-muted)]">Header</span>
                   {parts.map((p) => (
                     <label key={p.id} className="inline-flex items-center gap-1.5 cursor-pointer select-none">
                       <input type="checkbox" className="accent-[var(--color-main)]" checked={!headerOff.has(p.id)} onChange={() => flip(setHeaderOff, HEADER_OFF_KEY, p.id)} />
-                      <span className="font-semibold text-[var(--color-text)]">{p.word}</span>
+                      <span className="font-medium text-[var(--color-text)]">{p.word}</span>
                     </label>
                   ))}
                 </div>
-                <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[12px]">
-                  <span className="text-[12px] font-semibold text-[var(--color-text-muted)]">Table</span>
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-caption">
+                  <span className="text-caption font-medium text-[var(--color-text-muted)]">Table</span>
                   {FORM_ROWS.map((r) => (
                     <label key={r.id} className="inline-flex items-center gap-1.5 cursor-pointer select-none">
                       <input type="checkbox" className="accent-[var(--color-main)]" checked={!formOff.has(r.id)} onChange={() => flip(setFormOff, FORM_OFF_KEY, r.id)} />
-                      <span className="font-semibold text-[var(--color-text)]">{r.word}</span>
+                      <span className="font-medium text-[var(--color-text)]">{r.word}</span>
                     </label>
                   ))}
                 </div>
                 {(d.formCheck?.length ?? 0) > 0 && (
-                  <ul className="border-l-2 border-[var(--state-held)] py-0.5 text-[12px] font-semibold text-[var(--state-held-text)] list-disc pl-7">
+                  <ul className="border-l-2 border-[var(--state-held)] py-0.5 text-caption font-medium text-[var(--state-held-text)] list-disc pl-7">
                     {d.formCheck!.map((c) => <li key={c}>{c}</li>)}
                   </ul>
                 )}
               </>
             )}
-            {!useForm && <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[12px]">
-              <span className="text-[12px] font-semibold text-[var(--color-text-muted)]">Include</span>
+            {!useForm && <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-caption">
+              <span className="text-caption font-medium text-[var(--color-text-muted)]">Include</span>
               {d.sections.map((s) => (
                 <label key={idOf(s)} className="inline-flex items-center gap-1.5 cursor-pointer select-none">
                   <input type="checkbox" className="accent-[var(--color-main)]" checked={!off.has(idOf(s))} onChange={() => toggle(idOf(s))} />
-                  <span className="font-semibold text-[var(--color-text)]">{s.title.split(" - ")[0]}</span>
+                  <span className="font-medium text-[var(--color-text)]">{s.title.split(" - ")[0]}</span>
                 </label>
               ))}
               {stamps && (
                 <label className="inline-flex items-center gap-1.5 cursor-pointer select-none border-l border-[var(--color-border)] pl-3" title="The time each step was done, in Done - the time log has them all">
                   <input type="checkbox" className="accent-[var(--color-main)]" checked={stamps.on} onChange={() => stamps.set(!stamps.on)} />
-                  <span className="font-semibold text-[var(--color-text)]">Times in Done</span>
+                  <span className="font-medium text-[var(--color-text)]">Times in Done</span>
                 </label>
               )}
             </div>}
@@ -1589,10 +1589,10 @@ function CopyUpdate({ doc, meeting, lh, stamps, primary }: { primary?: boolean; 
           </ModalBody>
           <ModalFooter className="flex-wrap">
             {done && (
-              <span role="status" className="w-full sm:w-auto mr-auto text-[13px] text-[var(--color-text)]">
+              <span role="status" className="w-full sm:w-auto mr-auto text-body text-[var(--color-text)]">
                 {!done.ok ? <ErrorNote compact title={done.what === "word" ? "Couldn't make the Word file." : "Your browser blocked the copy."} next="Try again." />
                   : done.what === "word" ? "Word file saved." : done.what === "email"
-                  ? <>Paste it into your email (Ctrl+V). <a className="font-semibold text-[var(--color-accent-text)] hover:underline underline-offset-2" href={`mailto:?subject=${encodeURIComponent(subject)}`}>New email with the subject</a></>
+                  ? <>Paste it into your email (Ctrl+V). <a className="font-medium text-[var(--color-accent-text)] hover:underline underline-offset-2" href={`mailto:?subject=${encodeURIComponent(subject)}`}>New email with the subject</a></>
                   : "Paste it anywhere (Ctrl+V)."}
               </span>
             )}
@@ -1686,7 +1686,7 @@ function makeCtx(tz: string, byId: Map<string, Milestone>, progress?: Map<string
 /** Breaks and lunch for each shift: blocked off in the notes by the hour.
  *  Picked, not typed: the shift, the time, how long, and what it is. */
 function BreaksEditor({ breaks, onChange, times }: { breaks: ShiftBreak[]; onChange: (b: ShiftBreak[]) => void; times: ShiftTimes }) {
-  const sel = "h-7 rounded border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1 text-[11px]";
+  const sel = "h-7 rounded border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1 text-caption";
   const set = (i: number, v: Partial<ShiftBreak>) => onChange(breaks.map((b, j) => (j === i ? { ...b, ...v } : b)));
   // A break outside its shift never shows: said, with the shift's hours.
   const min = (hm: string) => Number(hm.slice(0, 2)) * 60 + Number(hm.slice(3, 5));
@@ -1696,7 +1696,7 @@ function BreaksEditor({ breaks, onChange, times }: { breaks: ShiftBreak[]; onCha
   const outside = (b: ShiftBreak) => /^\d{2}:\d{2}/.test(b.start) && (b.shift === "day" ? !inDay(b.start) : inDay(b.start));
   return (
     <div className="border-t border-[var(--color-border)] pt-1.5 space-y-1">
-      <div className="font-bold text-[var(--color-text)]">Breaks and lunch</div>
+      <div className="font-medium text-[var(--color-text)]">Breaks and lunch</div>
       {breaks.length === 0 && <div className="text-[var(--color-text-muted)]">None set.</div>}
       {breaks.map((b, i) => (
         <div key={i} className="flex flex-wrap items-center gap-1">
@@ -1711,7 +1711,7 @@ function BreaksEditor({ breaks, onChange, times }: { breaks: ShiftBreak[]; onCha
             {[10, 15, 20, 30, 45, 60].map((m) => <option key={m} value={m}>{m} min</option>)}
           </select>
           <button type="button" onClick={() => onChange(breaks.filter((_, j) => j !== i))} aria-label="Remove this break" className="p-1 text-[var(--color-text-muted)] hover:text-[var(--state-overdue-text)]"><X className="w-3.5 h-3.5" /></button>
-          {outside(b) && <span className="basis-full text-[11px] font-semibold text-[var(--state-held-text)]">{c12(b.start)} isn&apos;t on the {b.shift} shift ({c12(b.shift === "day" ? ds : ns)} to {c12(b.shift === "day" ? ns : ds)}): it won&apos;t show. AM or PM, or the other shift?</span>}
+          {outside(b) && <span className="basis-full text-caption font-medium text-[var(--state-held-text)]">{c12(b.start)} isn&apos;t on the {b.shift} shift ({c12(b.shift === "day" ? ds : ns)} to {c12(b.shift === "day" ? ns : ds)}): it won&apos;t show. AM or PM, or the other shift?</span>}
         </div>
       ))}
       <button type="button" onClick={() => onChange([...breaks, { shift: "day", start: breaks.length ? "12:00" : "09:00", minutes: breaks.length ? 30 : 15, label: breaks.length ? "Lunch" : "Break" }])}
@@ -1858,19 +1858,19 @@ function waitingSection(w: WaitingReady, shift: ShiftWindow, c: Ctx): Sec {
   const n = w.waiting.length + w.ready.length;
   const row = (key: string, lead: string, text: string, aside: string, note?: string | null) => (
     <li key={key} className="py-1.5 border-b last:border-b-0 border-[var(--color-border)]">
-      <div className="flex items-baseline gap-x-2 flex-wrap"><b className="text-[var(--color-text)]">{lead}</b><span className="text-[var(--color-text)]">{text}</span><span className="ml-auto text-[12px] text-[var(--color-text-muted)] whitespace-nowrap">{aside}</span></div>
-      {note && <div className="text-[12px] text-[var(--color-text-muted)]">{note}</div>}
+      <div className="flex items-baseline gap-x-2 flex-wrap"><b className="text-[var(--color-text)]">{lead}</b><span className="text-[var(--color-text)]">{text}</span><span className="ml-auto text-caption text-[var(--color-text-muted)] whitespace-nowrap">{aside}</span></div>
+      {note && <div className="text-caption text-[var(--color-text-muted)]">{note}</div>}
     </li>
   );
   return {
     id: "waiting", title: waitingTitle(shift, c), short: "Waiting", sub: WAIT_SUB, count: n || undefined, flag: w.waiting.length ? "amber" : null,
-    body: () => (!n && !w.service.length ? <div className="text-[13px] text-[var(--color-text-muted)]">{WAIT_NONE}</div> : (
-      <div className="space-y-3 text-[13px]" data-waiting-ready>
+    body: () => (!n && !w.service.length ? <div className="text-body text-[var(--color-text-muted)]">{WAIT_NONE}</div> : (
+      <div className="space-y-3 text-body" data-waiting-ready>
         {!n && <div className="text-[var(--color-text-muted)]">{WAIT_NONE}</div>}
-        {w.waiting.length > 0 && <div><div className="text-[12px] font-semibold text-[var(--state-held-text)]">Started, nothing logged this shift ({w.waiting.length})</div><ul>{w.waiting.map((j) => row(j.id, jobWord(j), waitWhy(j), `${j.crew} · ${shiftsWord(j.shifts)}`, j.said ? `"${j.said}"` : null))}</ul></div>}
-        {w.ready.length > 0 && <div><div className="text-[12px] font-semibold text-[var(--color-text-muted)]">Ready, not started ({w.ready.length})</div><ul>{w.ready.map((j) => row(j.id, jobWord(j), `Ready since ${c.DT(j.readyAt)}`, `${j.crew} · ${shiftsWord(j.shifts)}`, readyWhy(j)))}</ul></div>}
-        {w.service.length > 0 && <div><div className="text-[12px] font-semibold text-[var(--color-text-muted)]">{SERVICE_TITLE} ({w.service.length})</div><ul>{w.service.map((j) => row(j.id, jobWord(j), "", j.crew, j.said ? `"${j.said}"` : null))}</ul></div>}
-        <div className="text-[12px] text-[var(--color-text-muted)]">A night shift counts only for work that ran on nights. The post-event review counts these the same way.</div>
+        {w.waiting.length > 0 && <div><div className="text-caption font-medium text-[var(--state-held-text)]">Started, nothing logged this shift ({w.waiting.length})</div><ul>{w.waiting.map((j) => row(j.id, jobWord(j), waitWhy(j), `${j.crew} · ${shiftsWord(j.shifts)}`, j.said ? `"${j.said}"` : null))}</ul></div>}
+        {w.ready.length > 0 && <div><div className="text-caption font-medium text-[var(--color-text-muted)]">Ready, not started ({w.ready.length})</div><ul>{w.ready.map((j) => row(j.id, jobWord(j), `Ready since ${c.DT(j.readyAt)}`, `${j.crew} · ${shiftsWord(j.shifts)}`, readyWhy(j)))}</ul></div>}
+        {w.service.length > 0 && <div><div className="text-caption font-medium text-[var(--color-text-muted)]">{SERVICE_TITLE} ({w.service.length})</div><ul>{w.service.map((j) => row(j.id, jobWord(j), "", j.crew, j.said ? `"${j.said}"` : null))}</ul></div>}
+        <div className="text-caption text-[var(--color-text-muted)]">A night shift counts only for work that ran on nights. The post-event review counts these the same way.</div>
       </div>
     )),
     data: () => waitingBlocks(w, c),
@@ -2021,7 +2021,7 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
       // it? One small button on the line; once marked, its crew and note.
       inline: !print && ho && r.leaf.id && kind === "carry" && !goals.byPlan ? (
         <button type="button" disabled={ho.locked} onClick={() => ho.set(r.leaf.id!, { ...ho.decisions[r.leaf.id!], tryIt: true, crew: ho.suggest(r)[0]?.crew ?? null })}
-          className="whitespace-nowrap rounded-full border border-[var(--color-border-strong)] px-1.5 py-px text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-60 print:hidden">
+          className="whitespace-nowrap rounded-full border border-[var(--color-border-strong)] px-1.5 py-px text-caption font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-60 print:hidden">
           + {next.kind} could try
         </button>
       ) : undefined,
@@ -2045,13 +2045,13 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
   // Without a plan, steps can still be pulled forward one by one.
   const addButton = ho?.openPicker && !goals.byPlan ? (
     <button type="button" onClick={ho.openPicker}
-      className="inline-flex items-center gap-1.5 h-9 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] print:hidden">
+      className="inline-flex items-center gap-1.5 h-10 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] print:hidden">
       <Zap className="w-3.5 h-3.5" /> Add work for the {next.kind} shift
     </button>
   ) : null;
   const planButton = np?.open ? (
     <button type="button" onClick={np.open}
-      className="inline-flex items-center gap-1.5 h-9 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] print:hidden">
+      className="inline-flex items-center gap-1.5 h-10 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] print:hidden">
       <ListChecks className="w-3.5 h-3.5" /> {goals.byPlan ? `Change the ${next.kind} plan` : `Plan the ${next.kind} shift`}
     </button>
   ) : null;
@@ -2082,7 +2082,7 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
   });
   const afterButton = after?.open && afterNext ? (
     <button type="button" onClick={after.open}
-      className="inline-flex items-center gap-1.5 h-9 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] print:hidden">
+      className="inline-flex items-center gap-1.5 h-10 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] print:hidden">
       <ListChecks className="w-3.5 h-3.5" /> {after.report.goals.byPlan ? `Change the ${afterNext.kind} plan` : `Plan the ${afterNext.kind} shift`}
     </button>
   ) : null;
@@ -2128,7 +2128,7 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
   const sortOf = (print: boolean, table: keyof TableOrder) => ({ onReorder: !print && sh?.edit ? (ids: string[]) => sh.setOrder(table, ids) : undefined, runs: !!sh?.order?.[table]?.length });
   const putBack = (print: boolean, table: keyof TableOrder) => (!print && sh?.edit && sh.order?.[table]?.length ? (
     <div className="flex justify-end -mb-1 print:hidden">
-      <button type="button" onClick={() => sh.setOrder(table, null)} className="text-[13px] hover:underline text-[var(--color-accent-text)]">Put back in the usual order</button>
+      <button type="button" onClick={() => sh.setOrder(table, null)} className="text-body hover:underline text-[var(--color-accent-text)]">Put back in the usual order</button>
     </div>
   ) : null);
   const editRow = o.onEdit;
@@ -2169,10 +2169,10 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
           {/* Only when the job is behind: on track or ahead, the order the work was done in is not reported. */}
           {o.why && o.why.total >= 0.5 && overall.standing === "behind" && <WhyBehind why={o.why} c={c} print={print} />}
           {!print && o.pathSource && (
-            <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px] text-[var(--color-text-muted)] print:hidden">
+            <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-caption text-[var(--color-text-muted)] print:hidden">
               <span>Critical path: <b className="text-[var(--color-text)]">{o.pathSource.label}</b> ({o.pathSource.theirs} step{o.pathSource.theirs === 1 ? "" : "s"}). From the schedule&apos;s links it&apos;s {o.pathSource.calculated}, recalculated as work moves - near-critical and float come with it.</span>
               {o.pathSource.onUse && <button type="button" onClick={o.pathSource.onUse} className="text-[var(--color-accent-text)] hover:underline">Use the calculated path</button>}
-              {o.pathSource.msg && <span className="font-semibold text-[var(--state-held-text)]">{o.pathSource.msg}</span>}
+              {o.pathSource.msg && <span className="font-medium text-[var(--state-held-text)]">{o.pathSource.msg}</span>}
             </div>
           )}
         </>
@@ -2220,14 +2220,14 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
           {!print && o.thisPlan?.open && (
             <div className="flex flex-wrap items-center gap-2">
               <button type="button" onClick={o.thisPlan.open}
-                className="inline-flex items-center gap-1.5 h-9 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] print:hidden">
+                className="inline-flex items-center gap-1.5 h-10 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] print:hidden">
                 <ListChecks className="w-3.5 h-3.5" /> {o.thisPlan.plan ? "Change this shift's plan" : "Plan this shift"}
               </button>
-              <span className="text-[12px] text-[var(--color-text-muted)]">{o.thisPlan.plan ? `${planSetText(o.thisPlan.plan, c) ?? "Planned."} The update's "Work to be completed" is this plan.` : "The work after the meeting. Not set: the update lists the schedule's work for the shift."}</span>
+              <span className="text-caption text-[var(--color-text-muted)]">{o.thisPlan.plan ? `${planSetText(o.thisPlan.plan, c) ?? "Planned."} The update's "Work to be completed" is this plan.` : "The work after the meeting. Not set: the update lists the schedule's work for the shift."}</span>
             </div>
           )}
-          {checkText && <div className="text-[12px] font-semibold text-[var(--color-text)]">{checkText}</div>}
-          {askedText && <div className="text-[12px] font-semibold text-slate-700 dark:text-slate-200">{askedText}</div>}
+          {checkText && <div className="text-caption font-medium text-[var(--color-text)]">{checkText}</div>}
+          {askedText && <div className="text-caption font-medium text-slate-700 dark:text-slate-200">{askedText}</div>}
           {doneRows.length > 0 && putBack(print, "done")}
           {doneRows.length > 0 ? (
             <DoneTasks rows={doneTasks} print={print} stamps={!!sh?.stamps} T={c.T} sort={sortOf(print, "done")} onEdit={print ? undefined : editRow} />
@@ -2253,11 +2253,11 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
       flag: null,
       body: (print) => (
         <div className="space-y-2">
-          {!print && planButton && <div className="flex flex-wrap items-center gap-2">{planButton}{!goals.byPlan && <span className="text-[12px] text-[var(--color-text-muted)]">No plan set: this list is the schedule&apos;s. Tick the work you&apos;re giving the {next.kind} shift.</span>}</div>}
-          {planSet && <div className="text-[12px] font-semibold text-[var(--color-text)]">{planSet} This list is the plan; nothing else is handed to the {next.kind} shift.</div>}
+          {!print && planButton && <div className="flex flex-wrap items-center gap-2">{planButton}{!goals.byPlan && <span className="text-caption text-[var(--color-text-muted)]">No plan set: this list is the schedule&apos;s. Tick the work you&apos;re giving the {next.kind} shift.</span>}</div>}
+          {planSet && <div className="text-caption font-medium text-[var(--color-text)]">{planSet} This list is the plan; nothing else is handed to the {next.kind} shift.</div>}
           {next.kind === "night" && o.times.nightJobs === undefined && !goals.byPlan && (
             // Not decided: the list follows the schedule file's hours.
-            <div role="alert" className="border-l-2 border-[var(--state-overdue)] pl-3 py-1 text-[12px] text-[var(--color-text)]">
+            <div role="alert" className="border-l-2 border-[var(--state-overdue)] pl-3 py-1 text-caption text-[var(--color-text)]">
               <b className="text-[var(--state-overdue-text)]">Night shifts aren&apos;t set:</b> this list follows the schedule file&apos;s hours, which can hand day work to nights. Set them once in <b>Schedule setup → Night shifts</b>: which jobs run days and nights.
             </div>
           )}
@@ -2265,9 +2265,9 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
           {planList.length + tryList.length === 0 ? <Empty>{goals.byPlan ? "Nothing left open on the plan." : "Nothing is scheduled for the next shift."}</Empty> : (
             <StepTable print={print} box whenHead="When" rightHead="Done → goal" rows={nextRows(print, true)} sort={sortOf(print, "next")} onEdit={print ? undefined : editRow} />
           )}
-          {tryLine && <div className="text-[12px] font-semibold text-[var(--state-held-text)]">{tryLine}</div>}
+          {tryLine && <div className="text-caption font-medium text-[var(--state-held-text)]">{tryLine}</div>}
           {goals.pulledHeld.length > 0 && (
-            <div className="text-[12px] font-semibold text-[var(--state-overdue-text)]">
+            <div className="text-caption font-medium text-[var(--state-overdue-text)]">
               Blocked since it was added, not on the list: {goals.pulledHeld.map((r) => `${r.leaf.name}${r.reason ? ` (${r.reason})` : ""}`).join("; ")}.
             </div>
           )}
@@ -2275,7 +2275,7 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
           {!print && addButton}
           {!print && o.onPlanNext && (
             <button type="button" onClick={o.onPlanNext}
-              className={`${addButton ? "ml-2 " : ""}inline-flex items-center gap-1.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 py-1.5 text-[12px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] print:hidden`}>
+              className={`${addButton ? "ml-2 " : ""}inline-flex items-center gap-1.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 py-1.5 text-caption font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] print:hidden`}>
               <CalendarClock className="w-3.5 h-3.5" /> Move schedule dates: swap, pull in, push out
             </button>
           )}
@@ -2299,13 +2299,13 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
       flag: plan.held.some((r) => r.status === "blocked") ? "rose" : null,
       body: (print: boolean) => (
         <div className="space-y-2">
-          {!print && afterButton && <div className="flex flex-wrap items-center gap-2">{afterButton}{!after.report.goals.byPlan && <span className="text-[12px] text-[var(--color-text-muted)]">No plan set: this list is the schedule&apos;s, with what the {next.kind === "day" ? "night" : "day"} crew leaves open. Tick the work you&apos;re giving the {afterNext.kind} shift.</span>}</div>}
-          {afterSet && <div className="text-[12px] font-semibold text-[var(--color-text)]">{afterSet} This list is the plan; nothing else is handed to the {afterNext.kind} shift.</div>}
+          {!print && afterButton && <div className="flex flex-wrap items-center gap-2">{afterButton}{!after.report.goals.byPlan && <span className="text-caption text-[var(--color-text-muted)]">No plan set: this list is the schedule&apos;s, with what the {next.kind === "day" ? "night" : "day"} crew leaves open. Tick the work you&apos;re giving the {afterNext.kind} shift.</span>}</div>}
+          {afterSet && <div className="text-caption font-medium text-[var(--color-text)]">{afterSet} This list is the plan; nothing else is handed to the {afterNext.kind} shift.</div>}
           {afterList.length === 0 ? <Empty>{after.report.goals.byPlan ? "Nothing left open on the plan." : `Nothing is scheduled for the ${afterNext.kind} shift.`}</Empty> : (
             <StepTable print={print} box whenHead="When" rightHead="Done → goal" rows={afterRows()} onEdit={print ? undefined : editRow} />
           )}
           {plan.held.length > 0 && (
-            <div className="text-[12px] font-semibold text-[var(--state-overdue-text)]">
+            <div className="text-caption font-medium text-[var(--state-overdue-text)]">
               Blocked or on hold, on no shift&apos;s list: {plan.held.map((r) => `${r.leaf.name}${r.reason ? ` (${r.reason})` : ""}`).join("; ")}.
             </div>
           )}
@@ -2350,10 +2350,10 @@ function FollowUpsBox({ open, edit, T, onAdd, onDone }: {
       {open.length === 0 ? <Empty>No follow-up items open.</Empty> : (
         <ul className="space-y-1">
           {open.map((n) => (
-            <li key={n.id} className="flex items-start gap-2 text-[12px] text-[var(--color-text)]">
+            <li key={n.id} className="flex items-start gap-2 text-caption text-[var(--color-text)]">
               <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-[var(--state-held)] shrink-0" aria-hidden />
-              <span className="flex-1 min-w-0 break-words">{n.text}<span className="ml-1.5 text-[11px] text-[var(--color-text-muted)]">{n.from ? `from ${n.from}` : `added ${T(n.at)}`}</span></span>
-              {edit && <button type="button" onClick={() => onDone(n)} className="shrink-0 text-[13px] hover:underline text-[var(--color-accent-text)]">Done</button>}
+              <span className="flex-1 min-w-0 break-words">{n.text}<span className="ml-1.5 text-caption text-[var(--color-text-muted)]">{n.from ? `from ${n.from}` : `added ${T(n.at)}`}</span></span>
+              {edit && <button type="button" onClick={() => onDone(n)} className="shrink-0 text-body hover:underline text-[var(--color-accent-text)]">Done</button>}
             </li>
           ))}
         </ul>
@@ -2361,8 +2361,8 @@ function FollowUpsBox({ open, edit, T, onAdd, onDone }: {
       {edit && (
         <div className="flex gap-2">
           <input value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") add(); }} placeholder="Add a follow-up item"
-            aria-label="Add a follow-up item" className="flex-1 min-w-0 h-9 pointer-coarse:h-11 px-2.5 rounded-[10px] border border-transparent bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text)] focus:bg-[var(--color-surface)]" />
-          <button type="button" onClick={add} disabled={!text.trim()} className="h-9 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] text-[13px] font-semibold disabled:opacity-50">Add</button>
+            aria-label="Add a follow-up item" className="flex-1 min-w-0 h-9 pointer-coarse:h-11 px-2.5 rounded-lg border border-transparent bg-[var(--color-surface-2)] text-body text-[var(--color-text)] focus:bg-[var(--color-surface)]" />
+          <button type="button" onClick={add} disabled={!text.trim()} className="h-9 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] text-body font-medium disabled:opacity-50">Add</button>
         </div>
       )}
     </div>
@@ -2415,13 +2415,13 @@ function discoverySection(shift: ShiftWindow, c: Ctx, list: Discovery[], onAdd?:
       <div className="space-y-2">
         {ds.inShift.length === 0 ? <Empty>Nothing added this shift.</Empty> : <DiscoveryList list={ds.inShift} c={c} print={print} />}
         {ds.open.length > 0 && (
-          <div className="text-[12px] font-semibold text-[var(--state-held-text)]">
+          <div className="text-caption font-medium text-[var(--state-held-text)]">
             Still open from earlier: {ds.open.map((d) => `${d.task?.name ?? ""}: ${d.record.what} (${d.steps.filter((x) => x.status !== "completed").length} of ${d.steps.length} steps open)`).join("; ")}.
           </div>
         )}
         {!print && onAdd && (
           <button type="button" onClick={onAdd}
-            className="inline-flex items-center gap-1.5 h-9 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] print:hidden">
+            className="inline-flex items-center gap-1.5 h-10 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] print:hidden">
             <Plus className="w-3.5 h-3.5" /> Add discovery or added scope
           </button>
         )}
@@ -2439,37 +2439,37 @@ function DiscoveryList({ list, c, print, now = false }: { list: Discovery[]; c: 
   now?: boolean }) {
   const impactOf = (d: Discovery) => (now ? impactNowLine(d, c.hrs, c.word, c.tz) : impactLine(d.record.impact, c.hrs, c.word));
   const cell = print ? "px-1 py-[1px]" : "px-2 py-1.5";
-  const impactCls = (d: Discovery) => (d.record.impact.critical ? "text-[var(--state-overdue-text)] font-bold" : "text-[var(--color-text)]");
+  const impactCls = (d: Discovery) => (d.record.impact.critical ? "text-[var(--state-overdue-text)] font-medium" : "text-[var(--color-text)]");
   return (
     <>
       {!print && (
         <div className="sm:hidden rounded-md border border-slate-300 dark:border-slate-700 divide-y divide-slate-200 dark:divide-slate-700/60">
           {list.map((d) => (
-            <div key={d.record.id} className="px-3 py-2 text-[12px] space-y-0.5">
+            <div key={d.record.id} className="px-3 py-2 text-caption space-y-0.5">
               <div className="flex items-start justify-between gap-2">
-                <b className="break-words">{d.task?.name}{d.task?.workOrderRef && <span className="ml-1.5 ui-id text-[12px]">WO {d.task.workOrderRef}</span>}</b>
-                <span className="shrink-0 font-display tabular-nums text-[11px] text-[var(--color-text-muted)]">{c.DTs(d.record.foundAt)}</span>
+                <b className="break-words">{d.task?.name}{d.task?.workOrderRef && <span className="ml-1.5 ui-id text-caption">WO {d.task.workOrderRef}</span>}</b>
+                <span className="shrink-0 font-display tabular-nums text-caption text-[var(--color-text-muted)]">{c.DTs(d.record.foundAt)}</span>
               </div>
-              <div className="break-words"><b className="text-[11px] text-[var(--color-text-muted)] mr-1">{ADDED[kindOf(d.record)].word}</b>{d.record.what}</div>
-              {d.steps.map((m) => <div key={m.id} className="text-[12px] text-[var(--color-text-muted)] break-words">{discoveryStepLine(m, c.hrs)}</div>)}
-              <div className={`text-[12px] ${impactCls(d)}`}>{impactOf(d)}</div>
+              <div className="break-words"><b className="text-caption text-[var(--color-text-muted)] mr-1">{ADDED[kindOf(d.record)].word}</b>{d.record.what}</div>
+              {d.steps.map((m) => <div key={m.id} className="text-caption text-[var(--color-text-muted)] break-words">{discoveryStepLine(m, c.hrs)}</div>)}
+              <div className={`text-caption ${impactCls(d)}`}>{impactOf(d)}</div>
             </div>
           ))}
         </div>
       )}
       <div className={print ? "" : "hidden sm:block"}>
-        <table className={`w-full border-collapse ${print ? "text-[8pt]" : "text-[12px]"}`}>
+        <table className={`w-full border-collapse ${print ? "text-[8pt]" : "text-caption"}`}>
           <thead>
-            <tr className="border-b border-slate-300 dark:border-slate-600 text-[11px] font-medium text-slate-500 dark:text-slate-400 text-left">
+            <tr className="border-b border-slate-300 dark:border-slate-600 text-caption font-medium text-slate-500 dark:text-slate-400 text-left">
               <th className={`${cell} w-[92px]`}>When</th><th className={`${cell} w-[18%]`}>Task</th><th className={cell}>What</th><th className={`${cell} w-[30%]`}>Work it added</th><th className={`${cell} w-[22%]`}>What it did</th>
             </tr>
           </thead>
           <tbody>
             {list.map((d) => (
               <tr key={d.record.id} className="border-b border-slate-100 dark:border-slate-800 align-top">
-                <td className={`${cell} font-display tabular-nums text-[11px] whitespace-nowrap`}>{c.DTs(d.record.foundAt)}</td>
-                <td className={`${cell} font-semibold break-words`}>{d.task?.name}{d.task?.workOrderRef && <div className="ui-id text-[12px]">WO {d.task.workOrderRef}</div>}</td>
-                <td className={`${cell} break-words`}><div className="text-[12px] font-semibold text-[var(--color-text-muted)]">{ADDED[kindOf(d.record)].word}</div>{d.record.what}{d.record.approvedBy && <div className="text-[11px] text-[var(--color-text-muted)]">Approved by {d.record.approvedBy}</div>}</td>
+                <td className={`${cell} font-display tabular-nums text-caption whitespace-nowrap`}>{c.DTs(d.record.foundAt)}</td>
+                <td className={`${cell} font-medium break-words`}>{d.task?.name}{d.task?.workOrderRef && <div className="ui-id text-caption">WO {d.task.workOrderRef}</div>}</td>
+                <td className={`${cell} break-words`}><div className="text-caption font-medium text-[var(--color-text-muted)]">{ADDED[kindOf(d.record)].word}</div>{d.record.what}{d.record.approvedBy && <div className="text-caption text-[var(--color-text-muted)]">Approved by {d.record.approvedBy}</div>}</td>
                 <td className={`${cell} break-words`}>{d.steps.map((m) => <div key={m.id}>{discoveryStepLine(m, c.hrs)}</div>)}</td>
                 <td className={`${cell} break-words ${impactCls(d)}`}>{impactOf(d)}</td>
               </tr>
@@ -2510,7 +2510,7 @@ function kickoffSections(k: ReturnType<typeof buildKickoff>, c: Ctx, f?: Finding
           <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5 keep">
             {jobStats.map((x) => <Stat key={x.label} label={x.label} value={x.value} tone={x.tone} />)}
           </div>
-          {unscheduledMsg && <div className="text-[12px] font-semibold text-[var(--state-held-text)]">{unscheduledMsg}</div>}
+          {unscheduledMsg && <div className="text-caption font-medium text-[var(--state-held-text)]">{unscheduledMsg}</div>}
         </div>
       ),
       data: () => [{ k: "stats", items: jobStats }, ...(unscheduledMsg ? [{ k: "note", text: unscheduledMsg, tone: "amber" } as ExportBlock] : [])],
@@ -2644,7 +2644,7 @@ function findingsSection(f: FindingsCtx, c: Ctx): Sec {
       )}
       {f.team.length > 0 && (
         <div className="keep text-[8.5pt]">
-          <div className="text-[12px] font-semibold text-[var(--color-text-muted)]">From the team - not reviewed yet</div>
+          <div className="text-caption font-medium text-[var(--color-text-muted)]">From the team - not reviewed yet</div>
           <ul className="list-disc pl-4">{f.team.map((l, i) => <li key={i}>{l.text}{l.by ? <span className="text-[var(--color-text-muted)]"> - {l.by}</span> : null}</li>)}</ul>
         </div>
       )}
@@ -2767,7 +2767,7 @@ function lookBackSections(lb: LookBack, report: ShiftReport, c: Ctx): Sec[] {
   });
   const first = lb.chain.find((l) => l.addedH >= 1);
   const name = (s: StepLook) => `${s.task ? `${s.task} › ` : ""}${s.name}`;
-  const txt = (print: boolean) => (print ? "text-[8.5pt]" : "text-[12px]");
+  const txt = (print: boolean) => (print ? "text-[8.5pt]" : "text-caption");
   const bullets = (items: string[], tone: "emerald" | "amber", print: boolean) => (
     <ul className={`space-y-1 ${txt(print)}`}>
       {items.map((x) => <li key={x} className="flex gap-2"><span className={`mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full ${tone === "emerald" ? "bg-[var(--state-released)]" : "bg-[var(--state-held)]"}`} /><span className="text-[var(--color-text)]">{x}</span></li>)}
@@ -2785,7 +2785,7 @@ function lookBackSections(lb: LookBack, report: ShiftReport, c: Ctx): Sec[] {
           </div>
           {lb.byCause.length > 0 && (
             <div className={`keep rounded-md border border-[var(--color-border)] px-2.5 py-2 space-y-1 ${txt(print)}`}>
-              <div className="text-[12px] font-semibold text-[var(--color-text-muted)]">Hours lost, by cause</div>
+              <div className="text-caption font-medium text-[var(--color-text-muted)]">Hours lost, by cause</div>
               {lb.byCause.map((x) => (
                 <div key={x.cause} className="grid grid-cols-[minmax(0,15rem)_1fr_auto] items-center gap-2 max-sm:grid-cols-[1fr_auto]">
                   <span className="text-[var(--color-text)] break-words max-sm:col-span-2">{CAUSE_LABEL[x.cause]}</span>
@@ -2793,7 +2793,7 @@ function lookBackSections(lb: LookBack, report: ShiftReport, c: Ctx): Sec[] {
                   <span className="tabular-nums text-[var(--color-text-muted)]"><b className="text-[var(--color-text)]">{c.hrs(x.hours)}</b> · {x.steps} step{x.steps === 1 ? "" : "s"}</span>
                 </div>
               ))}
-              <div className="text-[11px] text-[var(--color-text-faint)]">Hours each step lost on its own, added up - work runs side by side, so this is more than the finish moved. What moved the finish is under The chain of events.</div>
+              <div className="text-caption text-[var(--color-text-faint)]">Hours each step lost on its own, added up - work runs side by side, so this is more than the finish moved. What moved the finish is under The chain of events.</div>
             </div>
           )}
         </div>
@@ -2812,7 +2812,7 @@ function lookBackSections(lb: LookBack, report: ShiftReport, c: Ctx): Sec[] {
                 <span className="text-[var(--color-text-muted)]"> · {[s.task, s.wo ? `WO ${s.wo}` : null, s.crew].filter(Boolean).join(" · ")}{s.done ? "" : " · forecast"}</span>
                 <div className="text-[var(--color-text-muted)] break-words">{whyLost(s, c).join(" · ")}</div>
               </div>
-              <div className="text-right tabular-nums font-bold text-[var(--state-overdue-text)] whitespace-nowrap">{signed(s.lostH)}</div>
+              <div className="text-right tabular-nums font-medium text-[var(--state-overdue-text)] whitespace-nowrap">{signed(s.lostH)}</div>
             </div>
           ))}
           {lb.setbacks.length > setbacks.length && <div className="px-2.5 py-1 text-[var(--color-text-muted)]">+ {lb.setbacks.length - setbacks.length} more, each losing less</div>}
@@ -2840,7 +2840,7 @@ function lookBackSections(lb: LookBack, report: ShiftReport, c: Ctx): Sec[] {
                 <span className={`absolute -left-[5px] top-[9px] h-2 w-2 rounded-full ${l.addedH >= 1 ? "bg-[var(--state-overdue)]" : l.addedH <= -1 ? "bg-[var(--state-released)]" : "bg-slate-400"}`} />
                 <div className="flex flex-wrap items-baseline gap-x-2">
                   <b className="text-[var(--color-text)] break-words">{name(s)}</b>
-                  <span className={`font-bold tabular-nums ${tone}`}>{l.addedH >= 1 ? `added ${signed(l.addedH)}` : l.addedH <= -1 ? `made up ${c.hrs(-l.addedH)}` : "passed it on"}</span>
+                  <span className={`font-medium tabular-nums ${tone}`}>{l.addedH >= 1 ? `added ${signed(l.addedH)}` : l.addedH <= -1 ? `made up ${c.hrs(-l.addedH)}` : "passed it on"}</span>
                   <span className="text-[var(--color-text-muted)] tabular-nums">· finish {signed(l.slipH)} after it</span>
                 </div>
                 <div className="text-[var(--color-text-muted)]">
@@ -2865,11 +2865,11 @@ function lookBackSections(lb: LookBack, report: ShiftReport, c: Ctx): Sec[] {
           {lb.keep.length > 0 && bullets(lb.keep, "emerald", print)}
           {lb.ahead.length > 0 && (
             <div className={`keep rounded-md border border-[var(--color-border)] divide-y divide-[var(--color-border)] ${txt(print)}`}>
-              <div className="px-2.5 py-1 text-[12px] font-semibold text-[var(--color-text-muted)]">Finished ahead of plan</div>
+              <div className="px-2.5 py-1 text-caption font-medium text-[var(--color-text-muted)]">Finished ahead of plan</div>
               {lb.ahead.slice(0, 8).map((s) => (
                 <div key={s.id} className="px-2.5 py-1 grid grid-cols-[1fr_auto] gap-x-3">
                   <span className="min-w-0 break-words"><b className="text-[var(--color-text)]">{s.name}</b><span className="text-[var(--color-text-muted)]"> · {[s.task, s.crew].filter(Boolean).join(" · ")}</span></span>
-                  <span className="tabular-nums font-bold text-[var(--state-released-text)] whitespace-nowrap">{c.hrs(-s.finishH)} early</span>
+                  <span className="tabular-nums font-medium text-[var(--state-released-text)] whitespace-nowrap">{c.hrs(-s.finishH)} early</span>
                 </div>
               ))}
             </div>
@@ -2877,12 +2877,12 @@ function lookBackSections(lb: LookBack, report: ShiftReport, c: Ctx): Sec[] {
           {lb.absorbed.length > 0 && <div className={`text-[var(--color-text)] ${txt(print)}`}>Discovery that fit in the float: {lb.absorbed.map((d) => `“${d.record.what}” (${c.hrs(d.record.impact.hours)})`).join("; ")}.</div>}
           {lb.crews.length > 0 && (
             <div className={`keep rounded-md border border-[var(--color-border)] ${txt(print)}`}>
-              <div className="px-2.5 py-1 text-[12px] font-semibold text-[var(--color-text-muted)]">Crews - steps done on plan</div>
+              <div className="px-2.5 py-1 text-caption font-medium text-[var(--color-text-muted)]">Crews - steps done on plan</div>
               {lb.crews.map((x) => (
                 <div key={x.crew} className="px-2.5 py-0.5 grid grid-cols-[1fr_auto_auto] gap-x-3 tabular-nums">
                   <span className="text-[var(--color-text)] truncate">{x.crew}</span>
                   <span className="text-[var(--color-text-muted)]">{x.onPlan} of {x.done} on plan</span>
-                  <span className={`font-bold ${x.done && x.onPlan === x.done ? "text-[var(--state-released-text)]" : "text-[var(--color-text-muted)]"}`}>{Math.round((x.onPlan / x.done) * 100)}%</span>
+                  <span className={`font-medium ${x.done && x.onPlan === x.done ? "text-[var(--state-released-text)]" : "text-[var(--color-text-muted)]"}`}>{Math.round((x.onPlan / x.done) * 100)}%</span>
                 </div>
               ))}
             </div>
@@ -2917,20 +2917,20 @@ function cancelledSection(jobs: CancelledJob[], c: Ctx): Sec {
     id: "cancelled", title: "Cancelled from this schedule", short: "Cancelled", count: jobs.length, flag: "amber",
     sub: "Still to be done: moved off this schedule",
     body: (print) => (
-      <div className={`rounded-md border border-[var(--color-border)] border-l-2 border-l-amber-500 divide-y divide-[var(--color-border)] ${print ? "text-[8.5pt]" : "text-[12px]"}`}>
+      <div className={`rounded-md border border-[var(--color-border)] border-l-2 border-l-amber-500 divide-y divide-[var(--color-border)] ${print ? "text-[8.5pt]" : "text-caption"}`}>
         {jobs.map((j) => (
           <div key={j.m.id ?? j.m.name} className={`keep ${print ? "px-1.5 py-1" : "px-2.5 py-2"} flex flex-col gap-0.5`}>
             <div className="flex items-baseline gap-x-2 flex-wrap">
               <b className="text-[var(--color-text)]">{title(j)}</b>
-              {j.crumbs.length > 1 && <span className="text-[11px] text-[var(--color-text-faint)]">{j.crumbs.slice(0, -1).join(" › ")}</span>}
-              {j.steps > 1 && <span className="text-[11px] text-[var(--color-text-muted)]">{j.steps} steps</span>}
+              {j.crumbs.length > 1 && <span className="text-caption text-[var(--color-text-faint)]">{j.crumbs.slice(0, -1).join(" › ")}</span>}
+              {j.steps > 1 && <span className="text-caption text-[var(--color-text-muted)]">{j.steps} steps</span>}
             </div>
             <div className="text-[var(--color-text)]">
-              <span className="text-[12px] font-semibold text-[var(--state-held-text)]">Moved to </span>
+              <span className="text-caption font-medium text-[var(--state-held-text)]">Moved to </span>
               {j.m.movedTo ? <b>{j.m.movedTo}</b> : <span className="text-[var(--color-text-faint)]">not said</span>}
             </div>
             {j.m.cancelNote && <div className="text-[var(--color-text-muted)] italic">“{j.m.cancelNote}”</div>}
-            <div className="text-[11px] print:text-[12px] text-[var(--color-text-faint)]">Cancelled {when(j)}</div>
+            <div className="text-caption print:text-caption text-[var(--color-text-faint)]">Cancelled {when(j)}</div>
           </div>
         ))}
       </div>
@@ -2949,16 +2949,16 @@ function closeSection(title: string, signers: string[], sub = "Notes, actions an
       // On paper two framed boxes; on screen two plain columns on the card.
       <div className={`grid grid-cols-1 sm:grid-cols-2 keep ${print ? "gap-2" : "gap-x-6 gap-y-4"}`}>
         <div className={print ? "rounded-md border border-[var(--color-border)] px-2.5 py-1.5" : ""}>
-          <div className={print ? "text-[12px] font-semibold text-slate-600 dark:text-slate-300" : "mb-1 text-[13px] font-semibold text-[var(--color-text-muted)]"}>Notes &amp; actions</div>
+          <div className={print ? "text-caption font-medium text-slate-600 dark:text-slate-300" : "mb-1 text-body font-medium text-[var(--color-text-muted)]"}>Notes &amp; actions</div>
           {notes ? notes(print) : Array.from({ length: print ? 4 : 3 }).map((_, i) => <div key={i} className="h-5 border-b border-dotted border-[var(--color-border-strong)]" />)}
         </div>
         <div className={print ? "rounded-md border border-[var(--color-border)] px-2.5 py-1.5 space-y-2" : "space-y-2"}>
-          <div className={print ? "text-[12px] font-semibold text-slate-600 dark:text-slate-300" : "text-[13px] font-semibold text-[var(--color-text-muted)]"}>Sign-off</div>
+          <div className={print ? "text-caption font-medium text-slate-600 dark:text-slate-300" : "text-body font-medium text-[var(--color-text-muted)]"}>Sign-off</div>
           {signers.map((who) => (
-            <div key={who} className="flex items-end gap-2 text-[11px] text-[var(--color-text-muted)]">
+            <div key={who} className="flex items-end gap-2 text-caption text-[var(--color-text-muted)]">
               <span className="w-40 shrink-0">{who}</span>
               <span className="flex-1 border-b border-[var(--color-border-strong)]" />
-              <span className="w-12 border-b border-[var(--color-border-strong)] text-center text-[11px] print:text-[12px]">time</span>
+              <span className="w-12 border-b border-[var(--color-border-strong)] text-center text-caption print:text-caption">time</span>
             </div>
           ))}
         </div>
@@ -2995,21 +2995,21 @@ function Masthead({ meeting, report, kickoff, closeout, ctx: c, asOf, now, rehea
       <div className="flex items-center gap-3 flex-wrap">
         <div className="min-w-0 flex-1">
           <div className="flex items-baseline gap-2 flex-wrap">
-            <span className={print ? "text-[11px] font-semibold text-slate-500" : "text-[13px] font-semibold text-[var(--color-text-muted)]"}>{title}</span>
-            <h2 className={`${print ? "text-[14pt]" : "basis-full text-[15px] text-[var(--color-text)]"} font-bold tracking-tight leading-tight ${print ? "truncate" : ""}`}>{print ? (projectName ?? "Schedule") : when}</h2>
+            <span className={print ? "text-caption font-medium text-slate-500" : "text-body font-medium text-[var(--color-text-muted)]"}>{title}</span>
+            <h2 className={`${print ? "text-[14pt]" : "basis-full text-reading text-[var(--color-text)]"} font-medium tracking-tight leading-tight ${print ? "truncate" : ""}`}>{print ? (projectName ?? "Schedule") : when}</h2>
           </div>
-          <div className={print ? "text-[11px] text-slate-700" : "mt-0.5 text-[12px] text-[var(--color-text-muted)]"}>
+          <div className={print ? "text-caption text-slate-700" : "mt-0.5 text-caption text-[var(--color-text-muted)]"}>
             {print ? <>{when} · </> : null}as of {c.T(meeting === "turnover" ? asOf : now)} {tzAbbrev(c.tz, now)}
-            {crew && meeting === "turnover" && <span className={`ml-2 whitespace-nowrap px-1.5 py-0.5 rounded text-[11px] print:text-[12px] font-semibold ${print ? "border border-slate-700 text-slate-900" : "border border-[var(--color-border-strong)] text-[var(--color-text)]"}`}>{crew} only</span>}
-            {criticalOnly && meeting === "turnover" && <span className={`ml-2 whitespace-nowrap px-1.5 py-0.5 rounded text-[11px] print:text-[12px] font-semibold ${print ? "border border-[var(--state-overdue)] text-[var(--state-overdue-text)]" : "bg-transparent text-[var(--state-overdue-text)]"}`}>Critical path only</span>}
-            {addedOnly && meeting === "turnover" && <span className={`ml-2 whitespace-nowrap px-1.5 py-0.5 rounded text-[11px] print:text-[12px] font-semibold ${print ? "border border-slate-700 text-slate-900" : "border border-[var(--color-border-strong)] text-[var(--color-text)]"}`}>Discovery &amp; added only</span>}
-            {classOnly && meeting === "turnover" && <span className={`ml-2 whitespace-nowrap px-1.5 py-0.5 rounded text-[11px] print:text-[12px] font-semibold ${print ? "border border-slate-700 text-slate-900" : "border border-[var(--color-border-strong)] text-[var(--color-text)]"}`}>{classOnly} only</span>}
+            {crew && meeting === "turnover" && <span className={`ml-2 whitespace-nowrap px-1.5 py-0.5 rounded text-caption print:text-caption font-medium ${print ? "border border-slate-700 text-slate-900" : "border border-[var(--color-border-strong)] text-[var(--color-text)]"}`}>{crew} only</span>}
+            {criticalOnly && meeting === "turnover" && <span className={`ml-2 whitespace-nowrap px-1.5 py-0.5 rounded text-caption print:text-caption font-medium ${print ? "border border-[var(--state-overdue)] text-[var(--state-overdue-text)]" : "bg-transparent text-[var(--state-overdue-text)]"}`}>Critical path only</span>}
+            {addedOnly && meeting === "turnover" && <span className={`ml-2 whitespace-nowrap px-1.5 py-0.5 rounded text-caption print:text-caption font-medium ${print ? "border border-slate-700 text-slate-900" : "border border-[var(--color-border-strong)] text-[var(--color-text)]"}`}>Discovery &amp; added only</span>}
+            {classOnly && meeting === "turnover" && <span className={`ml-2 whitespace-nowrap px-1.5 py-0.5 rounded text-caption print:text-caption font-medium ${print ? "border border-slate-700 text-slate-900" : "border border-[var(--color-border-strong)] text-[var(--color-text)]"}`}>{classOnly} only</span>}
             {rehearsal && meeting === "turnover" && (print
-              ? <span className="ml-2 px-1.5 py-0.5 rounded text-[11px] print:text-[12px] font-semibold border border-[var(--state-held)] text-[var(--state-held-text)]">Rehearsal: shift not started</span>
-              : <span className="ml-2 inline-flex items-center gap-1.5 whitespace-nowrap font-semibold text-[var(--state-held-text)]"><span aria-hidden className="w-[7px] h-[7px] rounded-full bg-[var(--state-held)]" />Rehearsal: shift not started</span>)}
+              ? <span className="ml-2 px-1.5 py-0.5 rounded text-caption print:text-caption font-medium border border-[var(--state-held)] text-[var(--state-held-text)]">Rehearsal: shift not started</span>
+              : <span className="ml-2 inline-flex items-center gap-1.5 whitespace-nowrap font-medium text-[var(--state-held-text)]"><span aria-hidden className="w-[7px] h-[7px] rounded-full bg-[var(--state-held)]" />Rehearsal: shift not started</span>)}
             {historyNote && meeting === "turnover" && (print
-              ? <span className="ml-2 px-1.5 py-0.5 rounded text-[11px] print:text-[12px] font-bold border border-slate-500 text-slate-700">Earlier shift: {historyNote}</span>
-              : <span className="ml-2 text-[var(--color-text)]"><span className="font-semibold">Earlier shift:</span> {historyNote}</span>)}
+              ? <span className="ml-2 px-1.5 py-0.5 rounded text-caption print:text-caption font-medium border border-slate-500 text-slate-700">Earlier shift: {historyNote}</span>
+              : <span className="ml-2 text-[var(--color-text)]"><span className="font-medium">Earlier shift:</span> {historyNote}</span>)}
           </div>
         </div>
       </div>
@@ -3019,7 +3019,7 @@ function Masthead({ meeting, report, kickoff, closeout, ctx: c, asOf, now, rehea
 
 function Footnote({ meeting, ctx: c, asOf, now, projectName }: { meeting: MeetingKind; ctx: Ctx; asOf: number; now: number; projectName?: string }) {
   return (
-    <footer className="pt-2 mt-2 border-t border-[var(--color-border)] text-[11px] print:text-[12px] text-[var(--color-text-faint)] flex justify-between gap-3 flex-wrap">
+    <footer className="pt-2 mt-2 border-t border-[var(--color-border)] text-caption print:text-caption text-[var(--color-text-faint)] flex justify-between gap-3 flex-wrap">
       <span>
         {meeting === "turnover" ? `Plan % = work the schedule expected done by ${c.DT(asOf)}, hour-weighted; actual % = progress entered. Gap = the difference in planned work-hours. ` : ""}
         Critical = on the chain that drives the finish date. Hours are planned work-hours. Behind {SEVERE_BEHIND_H} h or more shows red; less, amber.
@@ -3037,16 +3037,16 @@ function SectionHead({ n, s, collapsed, big, print, onPath }: { n: number; s: Se
   onPath?: boolean }) {
   if (onPath && !print && !big) return (
     <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-0.5 min-h-6">
-      <span className="min-w-0 font-display text-[17px] font-semibold text-[var(--color-text)] leading-6">{s.title}</span>
-      {s.sub && <span className="min-w-0 text-[13px] text-[var(--color-text-muted)]">{s.sub}</span>}
+      <span className="min-w-0 font-display text-section font-semibold text-[var(--color-text)] leading-6">{s.title}</span>
+      {s.sub && <span className="min-w-0 text-body text-[var(--color-text-muted)]">{s.sub}</span>}
       <ChevronDown className={`ml-auto self-center w-4 h-4 shrink-0 text-[var(--color-text-muted)] transition-transform ${collapsed ? "-rotate-90" : ""}`} />
     </div>
   );
   return (
     <div className={`flex flex-wrap items-baseline gap-x-2.5 gap-y-0.5 ${print ? "pb-[2px] border-b-[1.5px] border-slate-900" : "pb-1.5 border-b-2 border-slate-900 dark:border-slate-500"}`}>
-      <span className={`${big ? "w-7 h-7 text-[13px]" : print ? "w-4 h-4 text-[7.5pt]" : "w-5 h-5 text-[11px]"} self-center rounded-full bg-slate-900 text-white dark:bg-slate-200 dark:text-slate-900 font-bold flex items-center justify-center shrink-0`}>{n}</span>
-      <span className={`${big ? "text-[20px]" : print ? "text-[11pt]" : "text-[14px]"} min-w-0 font-bold tracking-tight`}>{s.title}</span>
-      {s.sub && <span className={`min-w-0 ${big ? "text-[13px]" : print ? "text-[8pt]" : "text-[12px]"} text-[var(--color-text-muted)]`}>{s.sub}</span>}
+      <span className={`${big ? "w-7 h-7 text-body" : print ? "w-4 h-4 text-[7.5pt]" : "w-5 h-5 text-caption"} self-center rounded-full bg-slate-900 text-white dark:bg-slate-200 dark:text-slate-900 font-medium flex items-center justify-center shrink-0`}>{n}</span>
+      <span className={`${big ? "text-section" : print ? "text-[11pt]" : "text-body"} min-w-0 font-bold tracking-tight`}>{s.title}</span>
+      {s.sub && <span className={`min-w-0 ${big ? "text-body" : print ? "text-[8pt]" : "text-caption"} text-[var(--color-text-muted)]`}>{s.sub}</span>}
       {!print && !big && <ChevronDown className={`ml-auto self-center w-4 h-4 shrink-0 text-[var(--color-text-muted)] transition-transform ${collapsed ? "-rotate-90" : ""}`} />}
     </div>
   );
@@ -3060,36 +3060,36 @@ function StandTiles({ actual, planned, standing, gap, done, total, pastDue, past
   done: number; total: number; pastDue: number; pastDueHeld?: number; pastDueLabel: string; print: boolean;
 }) {
   const tile = `rounded-lg border border-slate-200 dark:border-slate-700 ${print ? "px-2 py-1" : "px-3 py-2"}`;
-  const label = `font-medium text-slate-500 dark:text-slate-400 ${print ? "text-[7.5pt]" : "text-[11px]"}`;
+  const label = `font-medium text-slate-500 dark:text-slate-400 ${print ? "text-[7.5pt]" : "text-caption"}`;
   const value = `font-bold tracking-tight tabular-nums leading-tight ${print ? "text-[14pt]" : "text-[22px]"}`;
-  const small = `font-medium text-slate-600 dark:text-slate-300 ${print ? "text-[8pt]" : "text-[13px]"}`;
-  const sub = `text-slate-500 dark:text-slate-400 ${print ? "text-[7pt]" : "text-[11px]"}`;
+  const small = `font-medium text-slate-600 dark:text-slate-300 ${print ? "text-[8pt]" : "text-body"}`;
+  const sub = `text-slate-500 dark:text-slate-400 ${print ? "text-[7pt]" : "text-caption"}`;
   const gapTone = standing === "behind" ? "text-[var(--state-overdue-text)]" : standing === "ahead" ? "text-[var(--state-released-text)]" : "";
   // On screen: one compact row, no tiles (no big numbers in the content).
   if (!print) return (
     <dl className="grid grid-cols-2 sm:grid-cols-4 gap-x-6 gap-y-3 keep">
       <div className="min-w-0">
-        <dt className="text-[13px] font-semibold text-[var(--color-text-muted)]">Progress</dt>
-        <dd className="mt-0.5 text-[14px] font-bold tabular-nums">{actual}% <span className="text-[12px] font-medium text-[var(--color-text-muted)]">of {planned}% planned</span></dd>
+        <dt className="text-body font-medium text-[var(--color-text-muted)]">Progress</dt>
+        <dd className="mt-0.5 text-body font-medium tabular-nums">{actual}% <span className="text-caption font-medium text-[var(--color-text-muted)]">of {planned}% planned</span></dd>
         <div className="relative mt-1.5 h-1.5 rounded-full bg-[var(--color-surface-2)]" aria-hidden>
           <div className="absolute inset-y-0 left-0 rounded-full bg-[var(--color-main)]" style={{ width: `${Math.min(100, actual)}%` }} />
           <div className={`absolute -top-[3px] w-0.5 h-3 ${standing === "behind" ? "bg-[var(--state-overdue)]" : "bg-[var(--color-text-muted)]"}`} style={{ left: `calc(${Math.min(100, planned)}% - 1px)` }} />
         </div>
       </div>
       <div className="min-w-0">
-        <dt className="text-[13px] font-semibold text-[var(--color-text-muted)]">{gap.label}</dt>
-        <dd className={`mt-0.5 text-[14px] font-bold tabular-nums ${gapTone}`}>{gap.value}</dd>
-        <dd className="text-[12px] text-[var(--color-text-muted)]">{standing === "behind" ? "planned work-hours not done" : standing === "ahead" ? "work-hours done early" : "planned work-hours, either way"}</dd>
+        <dt className="text-body font-medium text-[var(--color-text-muted)]">{gap.label}</dt>
+        <dd className={`mt-0.5 text-body font-medium tabular-nums ${gapTone}`}>{gap.value}</dd>
+        <dd className="text-caption text-[var(--color-text-muted)]">{standing === "behind" ? "planned work-hours not done" : standing === "ahead" ? "work-hours done early" : "planned work-hours, either way"}</dd>
       </div>
       <div className="min-w-0">
-        <dt className="text-[13px] font-semibold text-[var(--color-text-muted)]">Steps done</dt>
-        <dd className="mt-0.5 text-[14px] font-bold tabular-nums">{done} <span className="text-[12px] font-medium text-[var(--color-text-muted)]">of {total}</span></dd>
-        <dd className="text-[12px] text-[var(--color-text-muted)]">all crews, whole job</dd>
+        <dt className="text-body font-medium text-[var(--color-text-muted)]">Steps done</dt>
+        <dd className="mt-0.5 text-body font-medium tabular-nums">{done} <span className="text-caption font-medium text-[var(--color-text-muted)]">of {total}</span></dd>
+        <dd className="text-caption text-[var(--color-text-muted)]">all crews, whole job</dd>
       </div>
       <div className="min-w-0">
-        <dt className="text-[13px] font-semibold text-[var(--color-text-muted)]">{pastDueLabel}</dt>
-        <dd className={`mt-0.5 text-[14px] font-bold tabular-nums ${pastDue ? "text-[var(--state-held-text)]" : ""}`}>{pastDue}</dd>
-        <dd className="text-[12px] text-[var(--color-text-muted)]">steps past their finish{pastDueHeld ? `, ${pastDueHeld} on hold or blocked` : ""}</dd>
+        <dt className="text-body font-medium text-[var(--color-text-muted)]">{pastDueLabel}</dt>
+        <dd className={`mt-0.5 text-body font-medium tabular-nums ${pastDue ? "text-[var(--state-held-text)]" : ""}`}>{pastDue}</dd>
+        <dd className="text-caption text-[var(--color-text-muted)]">steps past their finish{pastDueHeld ? `, ${pastDueHeld} on hold or blocked` : ""}</dd>
       </div>
     </dl>
   );
@@ -3133,20 +3133,20 @@ function WhyBehind({ why, c, print }: { why: BehindWhy; c: Ctx; print: boolean }
   const list = why.chains;
   const shown = !print && !all ? list.slice(0, 6) : list;
   const more = why.chains.length - shown.length;
-  const text = print ? "text-[8pt]" : "text-[12px]";
-  const small = print ? "text-[7.5pt]" : "text-[11px]";
+  const text = print ? "text-[8pt]" : "text-caption";
+  const small = print ? "text-[7.5pt]" : "text-caption";
   // A cause: a dot and its word; red only for the one that needs someone.
   const tag = (flag: boolean) => (flag ? "text-[var(--state-overdue-text)]" : "text-[var(--color-text-muted)]");
   const dot = (flag: boolean) => <span aria-hidden className="w-1.5 h-1.5 rounded-full shrink-0 print:hidden" style={{ background: flag ? "var(--state-overdue)" : "var(--color-text-faint)" }} />;
   return (
     <div className={print ? "mt-2 rounded-lg border border-slate-200 dark:border-slate-700 px-2 py-1.5 keep" : "mt-4 pt-3 border-t border-[var(--color-border)] keep"}>
-      <div className={`font-bold ${print ? "text-[9pt]" : "text-[14px]"}`}>{whyTitle(why, c.hrs)}</div>
+      <div className={`font-medium ${print ? "text-[9pt]" : "text-body"}`}>{whyTitle(why, c.hrs)}</div>
       {/* Hours behind by cause, as labelled figures. */}
-      <dl className={`mt-1.5 flex flex-wrap gap-x-6 gap-y-1 ${print ? small : "text-[13px]"}`}>
+      <dl className={`mt-1.5 flex flex-wrap gap-x-6 gap-y-1 ${print ? small : "text-body"}`}>
         {labelHours(why).map((x) => (
           <div key={x.short} className="inline-flex items-baseline gap-1.5">
             <dt className={`inline-flex items-center gap-1.5 self-center ${tag(x.flag)}`}>{dot(x.flag)}{x.short[0].toUpperCase() + x.short.slice(1)}</dt>
-            <dd className={`font-display font-semibold tabular-nums ${x.flag ? "text-[var(--state-overdue-text)]" : "text-[var(--color-text)]"} ${print ? "" : "text-[15px]"}`}>{h(x.hours)}</dd>
+            <dd className={`font-display font-semibold tabular-nums ${x.flag ? "text-[var(--state-overdue-text)]" : "text-[var(--color-text)]"} ${print ? "" : "text-reading"}`}>{h(x.hours)}</dd>
           </div>
         ))}
       </dl>
@@ -3157,9 +3157,9 @@ function WhyBehind({ why, c, print }: { why: BehindWhy; c: Ctx; print: boolean }
             const l = chainLabel(ch);
             return (
               <li key={ch.head.id} className="py-1.5 flex items-start gap-2">
-                <span className={`shrink-0 w-24 mt-px inline-flex items-center gap-1.5 font-semibold ${small} ${tag(l.flag)}`}>{dot(l.flag)}{l.short[0].toUpperCase() + l.short.slice(1)}</span>
+                <span className={`shrink-0 w-24 mt-px inline-flex items-center gap-1.5 font-medium ${small} ${tag(l.flag)}`}>{dot(l.flag)}{l.short[0].toUpperCase() + l.short.slice(1)}</span>
                 <div className="min-w-0 flex-1">
-                  <div className="font-semibold text-[var(--color-text)] break-words">{t.title} <span className="font-normal text-[var(--color-text-muted)]">- {t.state}</span></div>
+                  <div className="font-medium text-[var(--color-text)] break-words">{t.title} <span className="font-normal text-[var(--color-text-muted)]">- {t.state}</span></div>
                   {t.facts && <div className="text-[var(--color-text-muted)] break-words">{t.facts}</div>}
                   {t.waiting && <div className="text-[var(--color-text-muted)] break-words">{t.waiting}</div>}
                   {t.split && <div className={`${small} text-[var(--color-text-faint)]`}>{t.split}</div>}
@@ -3171,12 +3171,12 @@ function WhyBehind({ why, c, print }: { why: BehindWhy; c: Ctx; print: boolean }
         </ul>
       )}
       {!print && more > 0 && !all && (
-        <button type="button" onClick={() => setAll(true)} className="mt-1 h-8 px-2.5 -ml-2.5 rounded-lg text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] print:hidden">
+        <button type="button" onClick={() => setAll(true)} className="mt-1 h-8 px-2.5 -ml-2.5 rounded-lg text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] print:hidden">
           Show {more} more
         </button>
       )}
       {all && (
-        <button type="button" onClick={() => setAll(false)} className="mt-1 text-[13px] hover:underline print:hidden text-[var(--color-accent-text)]">Show fewer</button>
+        <button type="button" onClick={() => setAll(false)} className="mt-1 text-body hover:underline print:hidden text-[var(--color-accent-text)]">Show fewer</button>
       )}
     </div>
   );
@@ -3188,8 +3188,8 @@ function Stat({ label, value, tone }: { label: string; value: string; tone: "eme
     // On screen a compact label and value (no big numbers); on paper the
     // framed tile it always was (print: classes).
     <div className="min-w-0 print:rounded-lg print:border print:border-slate-200 print:px-3 print:py-1.5">
-      <div className="text-[13px] font-semibold text-[var(--color-text-muted)] print:normal-case print:tracking-normal print:font-medium print:text-slate-500">{label}</div>
-      <div className={`mt-0.5 print:mt-0 text-[14px] print:text-[20px] font-bold leading-tight tabular-nums ${t}`}>{value}</div>
+      <div className="text-body font-medium text-[var(--color-text-muted)] print:normal-case print:tracking-normal print:font-medium print:text-slate-500">{label}</div>
+      <div className={`mt-0.5 print:mt-0 text-body print:text-section font-bold leading-tight tabular-nums ${t}`}>{value}</div>
     </div>
   );
 }
@@ -3198,9 +3198,9 @@ function Stat({ label, value, tone }: { label: string; value: string; tone: "eme
  *  line, the steps a tap away (in print, the line only). */
 function OffPlan({ text, rows, print, c }: { text: string; rows: ShiftRow[]; print: boolean; c: Ctx }) {
   const [open, setOpen] = useState(false);
-  if (print) return <div className="text-[12px] text-[var(--color-text-muted)]">{text}</div>;
+  if (print) return <div className="text-caption text-[var(--color-text-muted)]">{text}</div>;
   return (
-    <div className="text-[12px] text-[var(--color-text-muted)]">
+    <div className="text-caption text-[var(--color-text-muted)]">
       <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open} className="inline-flex items-start gap-1 text-left hover:text-[var(--color-text)]">
         <ChevronDown className={`w-3.5 h-3.5 mt-px shrink-0 transition-transform ${open ? "" : "-rotate-90"}`} /> <span>{text}</span>
       </button>
@@ -3220,7 +3220,7 @@ function OffPlan({ text, rows, print, c }: { text: string; rows: ShiftRow[]; pri
 }
 
 function Empty({ children }: { children: React.ReactNode }) {
-  return <div className="py-1 text-[12px] text-[var(--color-text-muted)] italic">{children}</div>;
+  return <div className="py-1 text-caption text-[var(--color-text-muted)] italic">{children}</div>;
 }
 
 function Blank({ print }: { print: boolean }) {
@@ -3232,7 +3232,7 @@ function Prompts({ items, print, lines = 0, cols = 2 }: { items: string[]; print
   return (
     <ul className={`grid ${lines ? "grid-cols-1" : cols === 3 ? "grid-cols-1 sm:grid-cols-3 print:grid-cols-3" : "grid-cols-1 sm:grid-cols-2"} gap-x-4 gap-y-1 keep`}>
       {items.map((t) => (
-        <li key={t} className="text-[12px]">
+        <li key={t} className="text-caption">
           <label className="flex items-start gap-1.5">
             {print ? <Box /> : <input type="checkbox" className="mt-0.5 shrink-0" />}
             <span>{t}</span>
@@ -3252,9 +3252,9 @@ interface TagT { t: string; tone: TagTone }
  *  someone. */
 function TagChip({ t, tone }: TagT) {
   const dot = tone === "rose" ? "var(--state-overdue)" : tone === "amber" ? "var(--state-held)" : tone === "emerald" ? "var(--state-released)" : tone === "violet" ? "var(--color-current)" : "var(--color-text-faint)";
-  const text = tone === "rose" ? "text-[var(--state-overdue-text)] font-semibold" : tone === "amber" ? "text-[var(--state-held-text)] font-semibold" : "text-[var(--color-text-muted)]";
+  const text = tone === "rose" ? "text-[var(--state-overdue-text)] font-medium" : tone === "amber" ? "text-[var(--state-held-text)] font-medium" : "text-[var(--color-text-muted)]";
   return (
-    <span className={`inline-flex items-center gap-1 max-w-full whitespace-nowrap text-[12px] print:text-[12px] align-middle ${text}`}>
+    <span className={`inline-flex items-center gap-1 max-w-full whitespace-nowrap text-caption print:text-caption align-middle ${text}`}>
       <span aria-hidden className="w-1.5 h-1.5 rounded-full shrink-0 print:hidden" style={{ background: dot }} />{t.charAt(0).toUpperCase() + t.slice(1)}
     </span>
   );
@@ -3262,23 +3262,23 @@ function TagChip({ t, tone }: TagT) {
 
 /** Work on the chain that drives the finish: a red dot and the word. */
 function CriticalTag({ print }: { print?: boolean }) {
-  return <span className={`ml-2 inline-flex items-center gap-1 font-semibold leading-snug text-[var(--state-overdue-text)] align-[1px] ${print ? "text-[7pt]" : "text-[12px]"}`}><span aria-hidden className="w-1.5 h-1.5 rounded-full bg-[var(--state-overdue)] print:hidden" />Critical</span>;
+  return <span className={`ml-2 inline-flex items-center gap-1 font-medium leading-snug text-[var(--state-overdue-text)] align-[1px] ${print ? "text-[7pt]" : "text-caption"}`}><span aria-hidden className="w-1.5 h-1.5 rounded-full bg-[var(--state-overdue)] print:hidden" />Critical</span>;
 }
 
 /** What's going on with a step, as one quiet line: how far behind (red only
  *  past most of a shift), late, what it waits on — the first word capitalised. */
 const TONE_TEXT: Record<TagTone, string> = {
-  rose: "text-[var(--state-overdue-text)] font-semibold",
+  rose: "text-[var(--state-overdue-text)] font-medium",
   amber: "text-[var(--state-held-text)] font-medium",
   emerald: "text-[var(--state-released-text)] font-medium",
   muted: "text-[var(--color-text-muted)]",
   wait: "text-[var(--color-text-muted)]",
-  violet: "text-[var(--color-text)] font-semibold",
+  violet: "text-[var(--color-text)] font-medium",
 };
 function StatusLine({ tags, print }: { tags: TagT[]; print?: boolean }) {
   if (!tags.length) return null;
   return (
-    <div className={`mt-0.5 leading-snug ${print ? "text-[7.5pt]" : "text-[12px]"}`}>
+    <div className={`mt-0.5 leading-snug ${print ? "text-[7.5pt]" : "text-caption"}`}>
       {tags.map((t, i) => (
         <span key={`${t.t}${i}`} className={TONE_TEXT[t.tone]}>
           {i > 0 && <span className="mx-1.5 font-normal text-slate-400" aria-hidden>·</span>}
@@ -3293,7 +3293,7 @@ function StatusLine({ tags, print }: { tags: TagT[]; print?: boolean }) {
 type NumTone = "rose" | "amber" | "slate";
 /** The order on the list: a plain number — colour is for problems. */
 function Num({ n }: { n: number; tone?: NumTone }) {
-  return <span className="inline-block min-w-[14px] text-right font-display text-[12px] text-[var(--color-text-muted)] tabular-nums">{n}</span>;
+  return <span className="inline-block min-w-[14px] text-right font-display text-caption text-[var(--color-text-muted)] tabular-nums">{n}</span>;
 }
 
 function Box() {
@@ -3327,18 +3327,18 @@ interface TRow {
 function GroupTitle({ title }: { title: string }) {
   const m = /^([A-Z0-9][A-Z0-9./-]{0,14})\s+[-–—]\s+(.+)$/i.exec(title.trim());
   return m && /\d/.test(m[1])
-    ? <><b className="font-bold text-slate-900 dark:text-slate-100">{m[1]}</b> · {m[2]}</>
-    : <b className="font-bold text-slate-900 dark:text-slate-100">{title}</b>;
+    ? <><b className="font-medium text-slate-900 dark:text-slate-100">{m[1]}</b> · {m[2]}</>
+    : <b className="font-medium text-slate-900 dark:text-slate-100">{title}</b>;
 }
 
 /** "25% · goal 100%": where it is, a thin bar, and the shift's goal marked. */
 function Progress({ right, print }: { right: string; print?: boolean }) {
   const m = /^(\d+)%(?: · goal (\d+)%)?$/.exec(right.trim());
-  if (!m) return <span className={`font-display tabular-nums font-semibold text-slate-700 dark:text-slate-200 ${print ? "text-[8pt]" : "text-[12px]"}`}>{right}</span>;
+  if (!m) return <span className={`font-display tabular-nums font-semibold text-slate-700 dark:text-slate-200 ${print ? "text-[8pt]" : "text-caption"}`}>{right}</span>;
   const pct = Math.min(100, +m[1]), goal = m[2] != null ? Math.min(100, +m[2]) : null;
   return (
     <span className="inline-flex flex-col items-end gap-1">
-      <span className={`font-display tabular-nums font-semibold text-slate-900 dark:text-slate-100 whitespace-nowrap ${print ? "text-[8pt]" : "text-[12px]"}`}>
+      <span className={`font-display tabular-nums font-semibold text-slate-900 dark:text-slate-100 whitespace-nowrap ${print ? "text-[8pt]" : "text-caption"}`}>
         {pct}%{goal != null && <span className="font-normal text-slate-500 dark:text-slate-400"> → {goal}%</span>}
       </span>
       <span className={`relative block h-1 rounded-full bg-slate-200 dark:bg-slate-700 ${print ? "w-16" : "w-20"}`} aria-hidden>
@@ -3394,7 +3394,7 @@ function StepTable({ rows, print, box, rightHead = "", whenHead = "When", ownerL
       className={`text-left hover:underline decoration-dotted underline-offset-2 ${r.done ? "line-through text-slate-400" : cls}`}>{r.name}</button>
   ) : <span className={r.done ? "line-through text-slate-400" : cls}>{r.name}</span>;
   const cell = print ? "px-1 py-[3px]" : "px-2 py-2";
-  const taskCls = `font-semibold text-slate-900 dark:text-slate-50 ${print ? "text-[9pt]" : "text-[14px]"}`;
+  const taskCls = `font-medium text-slate-900 dark:text-slate-50 ${print ? "text-[9pt]" : "text-body"}`;
   return (
     <div ref={sortBox} className="relative">
     {sortLine}
@@ -3405,10 +3405,10 @@ function StepTable({ rows, print, box, rightHead = "", whenHead = "When", ownerL
         {groups.map(({ g, rows: list, key }) => (
           <div key={key} className="mt-3 first:mt-0">
             {g.title && (
-              <div className="group/sort pb-1 border-b border-slate-300 dark:border-slate-600 text-[12px] font-semibold text-slate-700 dark:text-slate-300">
+              <div className="group/sort pb-1 border-b border-slate-300 dark:border-slate-600 text-caption font-medium text-slate-700 dark:text-slate-300">
                 <Grip props={grip(list.map((x) => x.id), g.title)} />
                 <GroupTitle title={g.title} />
-                {g.meta && <div className="text-[11px] font-normal text-slate-500 dark:text-slate-400">{g.meta}</div>}
+                {g.meta && <div className="text-caption font-normal text-slate-500 dark:text-slate-400">{g.meta}</div>}
               </div>
             )}
             {list.map((r) => (
@@ -3418,16 +3418,16 @@ function StepTable({ rows, print, box, rightHead = "", whenHead = "When", ownerL
                   {box && <span className="pt-1"><Box /></span>}
                   {r.n && <span className="pt-0.5"><Num n={r.n.num} /></span>}
                   <div className="flex-1 min-w-0">
-                    <div className="text-[14px] leading-snug">
+                    <div className="text-body leading-snug">
                       {flat && r.group.title && <span className="text-slate-500 dark:text-slate-400">{r.group.title} › </span>}
-                      {nameOf(r, "font-semibold text-slate-900 dark:text-slate-50")}{critical(r) && <CriticalTag />}{edit(r)}
+                      {nameOf(r, "font-medium text-slate-900 dark:text-slate-50")}{critical(r) && <CriticalTag />}{edit(r)}
                     </div>
                     <StatusLine tags={statusOf(r)} />
-                    <div className="mt-1 text-[12px] text-slate-600 dark:text-slate-300">
+                    <div className="mt-1 text-caption text-slate-600 dark:text-slate-300">
                       {[!crew && r.who ? r.who : null, r.when, r.wo ? `WO ${r.wo}` : null].filter(Boolean).join(" · ")}
                     </div>
-                    {r.note && <div className="text-[12px] italic text-slate-600 dark:text-slate-300 mt-0.5">{r.note}</div>}
-                    {r.why && <div className="text-[12px] italic font-medium text-[var(--state-held-text)] mt-0.5">Why behind: {r.why}</div>}
+                    {r.note && <div className="text-caption italic text-slate-600 dark:text-slate-300 mt-0.5">{r.note}</div>}
+                    {r.why && <div className="text-caption italic font-medium text-[var(--state-held-text)] mt-0.5">Why behind: {r.why}</div>}
                     {r.inline && <div className="mt-1.5">{r.inline}</div>}
                   </div>
                   <div className="shrink-0 pt-0.5"><Progress right={r.right} /></div>
@@ -3440,9 +3440,9 @@ function StepTable({ rows, print, box, rightHead = "", whenHead = "When", ownerL
       </div>
     )}
     <div className={print ? "" : "hidden sm:block overflow-x-auto"}>
-      <table className={`w-full border-collapse table-fixed ${print ? "text-[8pt]" : "text-[12px]"}`}>
+      <table className={`w-full border-collapse table-fixed ${print ? "text-[8pt]" : "text-caption"}`}>
         <thead>
-          <tr className={`text-left font-medium text-slate-500 dark:text-slate-400 border-b border-slate-300 dark:border-slate-600 ${print ? "text-[7.5pt]" : "text-[11px]"}`}>
+          <tr className={`text-left font-medium text-slate-500 dark:text-slate-400 border-b border-slate-300 dark:border-slate-600 ${print ? "text-[7.5pt]" : "text-caption"}`}>
             {box && <th className={`${cell} w-6 font-medium`} />}
             {hasN && <th className={`${cell} w-7 font-medium text-right`}>#</th>}
             <th className={`${cell} font-medium`}>Task</th>
@@ -3457,10 +3457,10 @@ function StepTable({ rows, print, box, rightHead = "", whenHead = "When", ownerL
             <React.Fragment key={key}>
               {g.title && (
                 <tr className="group/sort border-b border-slate-300 dark:border-slate-600">
-                  <td colSpan={cols} className={`${print ? "px-1 pt-[7px] pb-[2px] text-[8pt]" : "px-2 pt-3.5 pb-1 text-[12px]"} font-semibold text-slate-700 dark:text-slate-300`}>
+                  <td colSpan={cols} className={`${print ? "px-1 pt-[7px] pb-[2px] text-[8pt]" : "px-2 pt-3.5 pb-1 text-caption"} font-medium text-slate-700 dark:text-slate-300`}>
                     <Grip props={grip(list.map((x) => x.id), g.title)} />
                     <GroupTitle title={g.title} />
-                    {g.meta && <span className={`float-right font-normal text-slate-500 dark:text-slate-400 ${print ? "text-[7.5pt]" : "text-[11px]"}`}>{g.meta}</span>}
+                    {g.meta && <span className={`float-right font-normal text-slate-500 dark:text-slate-400 ${print ? "text-[7.5pt]" : "text-caption"}`}>{g.meta}</span>}
                   </td>
                 </tr>
               )}
@@ -3477,13 +3477,13 @@ function StepTable({ rows, print, box, rightHead = "", whenHead = "When", ownerL
                         {!print && r.inline && <span className="ml-2 align-middle">{r.inline}</span>}
                       </div>
                       <StatusLine tags={statusOf(r)} print={print} />
-                      {r.note && <div className={`italic text-slate-600 dark:text-slate-300 mt-0.5 ${print ? "text-[7.5pt]" : "text-[12px]"}`}>{r.note}</div>}
-                      {r.why && <div className={`italic font-medium text-[var(--state-held-text)] mt-0.5 ${print ? "text-[7.5pt]" : "text-[12px]"}`}>Why behind: {r.why}</div>}
-                      {ownerLine && <div className="text-[11px] print:text-[12px] text-slate-500 mt-0.5">Owner / decision: <span className="inline-block w-44 border-b border-dotted border-slate-400 align-baseline">&nbsp;</span></div>}
+                      {r.note && <div className={`italic text-slate-600 dark:text-slate-300 mt-0.5 ${print ? "text-[7.5pt]" : "text-caption"}`}>{r.note}</div>}
+                      {r.why && <div className={`italic font-medium text-[var(--state-held-text)] mt-0.5 ${print ? "text-[7.5pt]" : "text-caption"}`}>Why behind: {r.why}</div>}
+                      {ownerLine && <div className="text-caption print:text-caption text-slate-500 mt-0.5">Owner / decision: <span className="inline-block w-44 border-b border-dotted border-slate-400 align-baseline">&nbsp;</span></div>}
                     </td>
                     {hasWhen && <td className={`${cell} text-slate-700 dark:text-slate-300 break-words`}>{r.when}</td>}
                     {hasWho && <td className={`${cell} font-medium text-slate-900 dark:text-slate-100 truncate`} title={r.who}>{r.who}</td>}
-                    {hasWo && <td className={`${cell} font-display tabular-nums text-slate-500 dark:text-slate-400 truncate ${print ? "text-[7.5pt]" : "text-[12px]"}`}>{r.wo}</td>}
+                    {hasWo && <td className={`${cell} font-display tabular-nums text-slate-500 dark:text-slate-400 truncate ${print ? "text-[7.5pt]" : "text-caption"}`}>{r.wo}</td>}
                     <td className={`${cell} text-right`}><Progress right={r.right} print={print} /></td>
                   </tr>
                   {/* The meeting's decision on this step — its own full-width line. */}
@@ -3519,19 +3519,19 @@ type DoneTask = ReturnType<typeof doneByTask>[number];
  *  the one still going (each with its time when times are on, its WO when
  *  the task has several, and the comment typed with it). Phone and desktop alike. */
 function DoneLines({ x, stamps, T, print, onEdit }: { x: DoneTask; stamps: boolean; T: (ms: number) => string; print: boolean; onEdit?: (id: string) => void }) {
-  const small = print ? "text-[7pt]" : "text-[11px]";
+  const small = print ? "text-[7pt]" : "text-caption";
   const line = (label: string, l: DoneLine, more: number, moreWord: string) => {
     const lead = [l.wo ? `WO ${l.wo}` : "", stamps && l.time != null ? T(l.time) : ""].filter(Boolean).join(" ");
     return (
       <div className="mt-0.5 first:mt-0">
-        <span className={`mr-1.5 font-semibold text-slate-500 dark:text-slate-400 ${small}`}>{label}</span>
-        {lead && <span className={`font-display tabular-nums text-slate-600 dark:text-slate-300 mr-1.5 ${print ? "text-[7.5pt]" : "text-[12px]"}`}>{lead}</span>}
+        <span className={`mr-1.5 font-medium text-slate-500 dark:text-slate-400 ${small}`}>{label}</span>
+        {lead && <span className={`font-display tabular-nums text-slate-600 dark:text-slate-300 mr-1.5 ${print ? "text-[7.5pt]" : "text-caption"}`}>{lead}</span>}
         <span>{l.name}</span>
-        {l.critical && <span className={`ml-1.5 font-bold text-[var(--state-overdue-text)] ${small}`}>critical path</span>}
-        {l.discovery && <span className={`ml-1.5 font-bold text-[var(--color-text)] ${small}`}>{l.discovery}</span>}
+        {l.critical && <span className={`ml-1.5 font-medium text-[var(--state-overdue-text)] ${small}`}>critical path</span>}
+        {l.discovery && <span className={`ml-1.5 font-medium text-[var(--color-text)] ${small}`}>{l.discovery}</span>}
         {more > 0 && <span className={`ml-1.5 text-slate-500 dark:text-slate-400 ${small}`}>+{more} more {moreWord}</span>}
         {!print && onEdit && <EditBtn label={l.name} onClick={() => onEdit(l.id)} />}
-        {l.note && <div className={`italic text-slate-500 dark:text-slate-400 ml-3 ${print ? "text-[7.5pt]" : "text-[11px]"}`}>“{l.note}”</div>}
+        {l.note && <div className={`italic text-slate-500 dark:text-slate-400 ml-3 ${print ? "text-[7.5pt]" : "text-caption"}`}>“{l.note}”</div>}
       </div>
     );
   };
@@ -3554,31 +3554,31 @@ function DoneTasks({ rows, print, stamps = false, T, sort, onEdit }: { rows: Don
   const vsCls = (t?: string) => (t === "rose" ? "text-[var(--state-overdue-text)]" : "text-[var(--state-released-text)]");
   const cell = print ? "px-1 py-[1px]" : "px-2 py-1.5";
   const pctLine = (x: DoneTask) => [x.taskPct ? `${x.own ? "" : "task "}${x.taskPct.pct}% done${x.taskPct.plan != null ? ` · plan ${x.taskPct.plan}%` : ""}` : null, x.count ?? null].filter(Boolean).join(" · ") || null;
-  const whyLine = (x: DoneTask) => x.why && <div className={`mt-0.5 italic font-medium text-[var(--state-held-text)] ${print ? "text-[7.5pt]" : "text-[12px]"}`}>Why behind: {x.why}</div>;
+  const whyLine = (x: DoneTask) => x.why && <div className={`mt-0.5 italic font-medium text-[var(--state-held-text)] ${print ? "text-[7.5pt]" : "text-caption"}`}>Why behind: {x.why}</div>;
   return (
     <div ref={sortBox} className="relative">
       {sortLine}
       {!print && (
         <div className="sm:hidden rounded-md border border-slate-300 dark:border-slate-700 divide-y divide-slate-200 dark:divide-slate-700/60">
           {rows.map((x) => (
-            <div key={x.ids.join(",")} data-sort-id={x.key} className={`group/sort px-3 py-2 text-[12px] space-y-0.5 ${moving(x.key) ? "opacity-40" : ""}`}>
+            <div key={x.ids.join(",")} data-sort-id={x.key} className={`group/sort px-3 py-2 text-caption space-y-0.5 ${moving(x.key) ? "opacity-40" : ""}`}>
               <div className="flex items-start justify-between gap-2">
-                <b className="text-[var(--color-text)] break-words"><Grip props={grip([x.key], x.task)} />{x.task}{x.critical && <CriticalTag />}{x.woShown && <span className="ml-1.5 font-display tabular-nums font-semibold text-[11px] text-[var(--color-text-muted)]">{/^\d+ WOs$/.test(x.woShown) ? x.woShown : `WO ${x.woShown}`}</span>}</b>
-                {x.vs.text && <b className={`shrink-0 font-display tabular-nums text-[12px] ${vsCls(x.vs.tone)}`}>{x.vs.text}</b>}
+                <b className="text-[var(--color-text)] break-words"><Grip props={grip([x.key], x.task)} />{x.task}{x.critical && <CriticalTag />}{x.woShown && <span className="ml-1.5 font-display tabular-nums font-semibold text-caption text-[var(--color-text-muted)]">{/^\d+ WOs$/.test(x.woShown) ? x.woShown : `WO ${x.woShown}`}</span>}</b>
+                {x.vs.text && <b className={`shrink-0 font-display tabular-nums text-caption ${vsCls(x.vs.tone)}`}>{x.vs.text}</b>}
               </div>
-              {pctLine(x) && <div className="text-[11px] text-[var(--color-text-muted)]">{pctLine(x)}</div>}
+              {pctLine(x) && <div className="text-caption text-[var(--color-text-muted)]">{pctLine(x)}</div>}
               <div className="text-[var(--color-text)] break-words"><DoneLines x={x} stamps={stamps} T={T} print={false} onEdit={onEdit} /></div>
-              <div className={`font-bold break-words ${resultCls(x.result.tone)}`}>{x.result.text}</div>
+              <div className={`font-medium break-words ${resultCls(x.result.tone)}`}>{x.result.text}</div>
               {whyLine(x)}
-              {x.who && <div className="text-[12px] text-[var(--color-text-muted)] break-words">{x.who}</div>}
+              {x.who && <div className="text-caption text-[var(--color-text-muted)] break-words">{x.who}</div>}
             </div>
           ))}
         </div>
       )}
       <div className={print ? "" : "hidden sm:block"}>
-        <table className={`w-full border-collapse ${print ? "text-[8pt]" : "text-[12px]"}`}>
+        <table className={`w-full border-collapse ${print ? "text-[8pt]" : "text-caption"}`}>
           <thead>
-            <tr className="border-b border-slate-300 dark:border-slate-600 text-[11px] font-medium text-slate-500 dark:text-slate-400 text-left">
+            <tr className="border-b border-slate-300 dark:border-slate-600 text-caption font-medium text-slate-500 dark:text-slate-400 text-left">
               <th className={`${cell} w-[18%]`}>Task</th>{hasWo && <th className={`${cell} w-[62px]`}>WO</th>}<th className={cell}>Last done · In progress</th><th className={`${cell} w-[13%]`}>Who</th>
               <th className={`${cell} w-[20%]`}>What it means</th><th className={`${cell} w-[64px] text-right`}>vs plan</th>
             </tr>
@@ -3586,11 +3586,11 @@ function DoneTasks({ rows, print, stamps = false, T, sort, onEdit }: { rows: Don
           <tbody>
             {rows.map((x) => (
               <tr key={x.ids.join(",")} data-sort-id={x.key} className={`group/sort border-b border-slate-100 dark:border-slate-800 align-top ${moving(x.key) ? "opacity-40" : ""}`}>
-                <td className={`${cell} font-semibold break-words`}><Grip props={grip([x.key], x.task)} />{x.task}{x.critical && <CriticalTag print={print} />}{pctLine(x) && <div className={`font-normal text-slate-500 dark:text-slate-400 ${print ? "text-[7.5pt]" : "text-[11px]"}`}>{pctLine(x)}</div>}</td>
-                {hasWo && <td className={`${cell} font-display tabular-nums text-[11px] break-words`}>{x.woShown.split(/,\s*/).map((w, i) => <span key={i} className="block">{w}</span>)}</td>}
+                <td className={`${cell} font-medium break-words`}><Grip props={grip([x.key], x.task)} />{x.task}{x.critical && <CriticalTag print={print} />}{pctLine(x) && <div className={`font-normal text-slate-500 dark:text-slate-400 ${print ? "text-[7.5pt]" : "text-caption"}`}>{pctLine(x)}</div>}</td>
+                {hasWo && <td className={`${cell} font-display tabular-nums text-caption break-words`}>{x.woShown.split(/,\s*/).map((w, i) => <span key={i} className="block">{w}</span>)}</td>}
                 <td className={`${cell} break-words`}><DoneLines x={x} stamps={stamps} T={T} print={print} onEdit={onEdit} /></td>
-                <td className={`${cell} text-[12px] text-[var(--color-text-muted)] break-words`}>{x.who}</td>
-                <td className={`${cell} font-bold break-words ${resultCls(x.result.tone)}`}>{x.result.text}{whyLine(x)}</td>
+                <td className={`${cell} text-caption text-[var(--color-text-muted)] break-words`}>{x.who}</td>
+                <td className={`${cell} font-medium break-words ${resultCls(x.result.tone)}`}>{x.result.text}{whyLine(x)}</td>
                 <td className={`${cell} text-right font-display tabular-nums font-bold whitespace-nowrap ${vsCls(x.vs.tone)}`}>{x.vs.text}</td>
               </tr>
             ))}
@@ -3606,16 +3606,16 @@ function SimpleTable({ head, rows, print }: { head: string[]; rows: Array<{ id: 
   const cell = print ? "px-1 py-[1px]" : "px-1.5 py-[3px]";
   return (
     <div className={`rounded-md border border-slate-300 dark:border-slate-700 ${print ? "" : "overflow-x-auto"}`}>
-      <table className={`w-full border-collapse ${print ? "text-[8.5pt]" : "text-[12px]"}`}>
+      <table className={`w-full border-collapse ${print ? "text-[8.5pt]" : "text-caption"}`}>
         <thead>
-          <tr className="border-b border-slate-300 dark:border-slate-600 text-[11px] font-medium text-slate-500 dark:text-slate-400 text-left">
+          <tr className="border-b border-slate-300 dark:border-slate-600 text-caption font-medium text-slate-500 dark:text-slate-400 text-left">
             {head.map((h) => <th key={h} className={cell}>{h}</th>)}
           </tr>
         </thead>
         <tbody>
           {rows.map((r) => (
             <tr key={r.id} className="border-t border-slate-200 dark:border-slate-700/60 align-top">
-              {r.cells.map((c, i) => <td key={i} className={`${cell} ${i === 0 ? "" : "whitespace-nowrap font-display tabular-nums text-[11px] print:text-[12px]"}`}>{c}</td>)}
+              {r.cells.map((c, i) => <td key={i} className={`${cell} ${i === 0 ? "" : "whitespace-nowrap font-display tabular-nums text-caption print:text-caption"}`}>{c}</td>)}
             </tr>
           ))}
         </tbody>

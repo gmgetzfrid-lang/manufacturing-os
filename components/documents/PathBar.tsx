@@ -109,10 +109,10 @@ export default function PathBar({ library, segments, onNavigate, onDropItems, on
     dropOn !== key ? ""
     : onDark ? " px-1.5 bg-[var(--color-surface)] ring-2 ring-[var(--color-border-strong)] text-[var(--color-text)]"
     : " bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] ring-2 ring-[var(--color-border-strong)] text-[var(--color-text)]";
-  const here = onDark ? "text-[var(--color-text)]" : "text-[var(--color-text)] font-bold";
+  const here = onDark ? "text-[var(--color-text)]" : "text-[var(--color-text)] font-medium";
 
   return (
-    <nav className={`flex items-center min-w-0 overflow-hidden ${onDark ? "text-[14px] font-medium text-[var(--color-text-muted)]" : "text-[13px] font-medium text-[var(--color-text-muted)]"}`} aria-label="Folder path">
+    <nav className={`flex items-center min-w-0 overflow-hidden ${onDark ? "text-body font-medium text-[var(--color-text-muted)]" : "text-body font-medium text-[var(--color-text-muted)]"}`} aria-label="Folder path">
       {home && (
         <>
           <Link href={home.href} className={`${chip} max-sm:hidden`}>{home.label}</Link>
@@ -160,7 +160,7 @@ export default function PathBar({ library, segments, onNavigate, onDropItems, on
                     key={seg.id}
                     role="menuitem"
                     onClick={() => { setMenuOpen(false); onNavigate(seg.id); }}
-                    className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-[13px] font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
+                    className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
                     style={{ paddingLeft: `${12 + i * 10}px` }}
                   >
                     <Tile icon={seg.icon} color={seg.color} />
@@ -189,7 +189,7 @@ export default function PathBar({ library, segments, onNavigate, onDropItems, on
       {current && (
         <>
           {sep}
-          <span aria-current="page" className={`flex items-center gap-1.5 py-1 min-w-0 ${onDark ? "text-white" : "px-1.5 font-bold text-[var(--color-text)]"}`} title={current.name}>
+          <span aria-current="page" className={`flex items-center gap-1.5 py-1 min-w-0 ${onDark ? "text-white" : "px-1.5 font-medium text-[var(--color-text)]"}`} title={current.name}>
             {!onDark && <Tile icon={current.icon} color={current.color} />}
             <span className="truncate">{current.name}</span>
           </span>

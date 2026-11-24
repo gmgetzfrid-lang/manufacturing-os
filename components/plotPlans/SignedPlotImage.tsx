@@ -27,10 +27,10 @@ export function SignedPlotImage({
   }, [path]);
 
   if (failed) {
-    return <div className={`flex flex-col items-center justify-center gap-1 bg-[var(--color-surface-2)] text-[var(--color-text-faint)] ${className ?? ""}`}><ImageIcon className="w-8 h-8" />{path && <span className="text-[13px]">Couldn&apos;t load the drawing</span>}</div>;
+    return <div className={`flex flex-col items-center justify-center gap-1 bg-[var(--color-surface-2)] text-[var(--color-text-faint)] ${className ?? ""}`}><ImageIcon className="w-8 h-8" />{path && <span className="text-body">Couldn&apos;t load the drawing</span>}</div>;
   }
   if (!url) {
-    return <div className={`flex items-center justify-center gap-2 bg-[var(--color-surface-2)] text-[11px] text-[var(--color-text-muted)] ${className ?? ""}`}><Loader2 className="w-5 h-5 animate-spin" /> Loading the drawing…</div>;
+    return <div className={`flex items-center justify-center gap-2 bg-[var(--color-surface-2)] text-caption text-[var(--color-text-muted)] ${className ?? ""}`}><Loader2 className="w-5 h-5 animate-spin" /> Loading the drawing…</div>;
   }
   // eslint-disable-next-line @next/next/no-img-element -- signed R2 URL
   return <img src={url} alt={alt} className={className} draggable={false} onLoad={(e) => onLoadDims?.(e.currentTarget.naturalWidth, e.currentTarget.naturalHeight)} />;

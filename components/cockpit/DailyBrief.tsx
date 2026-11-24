@@ -101,7 +101,7 @@ export function DailyBrief({ data }: { data: InboxSnapshot }) {
   return (
     <div className="min-w-0">
       <div className="flex items-baseline gap-3 flex-wrap">
-        <p className="min-w-0 flex-1 text-[15px] text-[var(--color-text)] leading-relaxed">{narrative}</p>
+        <p className="min-w-0 flex-1 text-reading text-[var(--color-text)] leading-relaxed">{narrative}</p>
         {urgent > 0 && <StatusTag tone="overdue">{urgent} urgent</StatusTag>}
       </div>
       {next && (
@@ -113,7 +113,7 @@ export function DailyBrief({ data }: { data: InboxSnapshot }) {
       {sentences.length > 0 && (
         <ul className="mt-3 divide-y divide-[var(--color-border)] border-t border-[var(--color-border)]">
           {sentences.map((line, i) => (
-            <li key={i} className="py-2 text-[14px] text-[var(--color-text)]">{line.charAt(0).toUpperCase() + line.slice(1)}</li>
+            <li key={i} className="py-2 text-body text-[var(--color-text)]">{line.charAt(0).toUpperCase() + line.slice(1)}</li>
           ))}
         </ul>
       )}

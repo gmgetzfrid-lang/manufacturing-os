@@ -78,14 +78,14 @@ export default function DateTimePicker({ label, value, onChange, tz, times, plan
   const iso = time ? fromDateTimeInput(value, tz) : null;
   const t = iso ? Date.parse(iso) : NaN;
   const sh = Number.isFinite(t) ? shiftAt(t, tz, times) : null;
-  const chip = (on: boolean, empty: boolean) => `inline-flex items-center gap-1.5 h-9 px-3 rounded-lg border text-[13px] font-semibold disabled:opacity-50 ${on ? "border-[var(--color-text)] ring-1 ring-[var(--color-text)] bg-[var(--color-surface)]" : empty ? "border-dashed border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text-muted)]" : "border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)]"}`;
+  const chip = (on: boolean, empty: boolean) => `inline-flex items-center gap-1.5 h-10 px-3 rounded-lg border text-body font-medium disabled:opacity-50 ${on ? "border-[var(--color-text)] ring-1 ring-[var(--color-text)] bg-[var(--color-surface)]" : empty ? "border-dashed border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text-muted)]" : "border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)]"}`;
   // Quick picks: a quiet fill, not another box.
-  const small = "h-7 px-2.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[12px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50";
+  const small = "h-7 px-2.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-caption font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50";
 
   return (
     <div className="space-y-1.5">
       <div className="flex items-center justify-between gap-2">
-        <span><span className="text-[13px] font-semibold text-[var(--color-text-muted)]">{label}</span>{hint && <span className="ml-1 text-[12px] text-[var(--color-text-muted)]">{hint}</span>}</span>
+        <span><span className="text-body font-medium text-[var(--color-text-muted)]">{label}</span>{hint && <span className="ml-1 text-caption text-[var(--color-text-muted)]">{hint}</span>}</span>
         <span className="flex gap-1">
           {shortcuts.filter((x) => Number.isFinite(x.at)).map((x) => <button key={x.label} type="button" disabled={disabled} onClick={() => take(x.at)} className={small}>{x.label}</button>)}
           {showNow && <button type="button" disabled={disabled} onClick={now} className={small}>Now</button>}
@@ -99,13 +99,13 @@ export default function DateTimePicker({ label, value, onChange, tz, times, plan
           <Clock className="w-4 h-4 opacity-70" />{time ? time12(time) : "Pick time"}
         </button>
         {sh && (!future && t > nowMs + 60_000
-          ? <span className="text-[12px] font-semibold text-[var(--state-held-text)]">{aheadWords(t - nowMs)} from now</span>
-          : <span className="text-[12px] text-[var(--color-text-muted)]" title="The shift this time counts for, not the date">{fmtInTz(sh.start, tz, { weekday: "short" })} {sh.kind} shift, {fmtInTz(sh.start, tz, { hour: "numeric", minute: "2-digit", hour12: true })} to {fmtInTz(sh.end, tz, { hour: "numeric", minute: "2-digit", hour12: true })}</span>)}
+          ? <span className="text-caption font-medium text-[var(--state-held-text)]">{aheadWords(t - nowMs)} from now</span>
+          : <span className="text-caption text-[var(--color-text-muted)]" title="The shift this time counts for, not the date">{fmtInTz(sh.start, tz, { weekday: "short" })} {sh.kind} shift, {fmtInTz(sh.start, tz, { hour: "numeric", minute: "2-digit", hour12: true })} to {fmtInTz(sh.end, tz, { hour: "numeric", minute: "2-digit", hour12: true })}</span>)}
       </div>
       {date && firstDay && date < firstDay ? (
-        <div className="text-[12px] font-semibold text-[var(--state-overdue-text)]">Before the job started ({dayWords(firstDay)}). Pick the right day.</div>
+        <div className="text-caption font-medium text-[var(--state-overdue-text)]">Before the job started ({dayWords(firstDay)}). Pick the right day.</div>
       ) : early >= 2 && (
-        <div className="text-[12px] font-semibold text-[var(--state-held-text)]">{early} days before its planned day ({dayWords(plannedDay!)}). Check the day.</div>
+        <div className="text-caption font-medium text-[var(--state-held-text)]">{early} days before its planned day ({dayWords(plannedDay!)}). Check the day.</div>
       )}
       {panel === "date" && <Month value={date} today={today} planned={plannedDay} onPick={pickDay} future={future} earliest={firstDay} />}
       {wheels && <TimeSheet title={label} hm={time} start={startHm} onSet={(h, m) => { setTime(h, m); setWheels(false); }} onClose={() => setWheels(false)} />}
@@ -121,7 +121,7 @@ export function TimeChip({ value, onChange, tz, label = "Time" }: { value: strin
   return (
     <>
       <button type="button" aria-haspopup="dialog" aria-label={label} onClick={show}
-        className={`inline-flex items-center gap-1 h-7 px-2 rounded-md border text-[12px] font-semibold bg-[var(--color-surface)] ${value ? "border-[var(--color-border-strong)]" : "border-dashed border-[var(--color-border-strong)] text-[var(--color-text-muted)]"}`}>
+        className={`inline-flex items-center gap-1 h-8 px-2 rounded-md border text-caption font-medium bg-[var(--color-surface)] ${value ? "border-[var(--color-border-strong)]" : "border-dashed border-[var(--color-border-strong)] text-[var(--color-text-muted)]"}`}>
         <Clock className="w-3.5 h-3.5 opacity-70" />{value ? time12(value) : "Time"}
       </button>
       {open && <TimeSheet title={label} hm={value} start={startHm} onSet={(h, m) => { onChange(`${p2(h)}:${p2(m)}`); setOpen(false); }} onClose={() => setOpen(false)} />}
@@ -166,11 +166,11 @@ function TimeSheet({ title, hm, start, onSet, onClose }: { title: string; hm: st
       <div role="dialog" aria-modal="true" aria-label={title} onClick={(e) => e.stopPropagation()}
         className="w-full sm:w-[340px] rounded-t-2xl sm:rounded-2xl bg-[var(--color-surface)] text-[var(--color-text)] shadow-2xl px-4 pt-3 pb-[max(1rem,env(safe-area-inset-bottom))] space-y-2.5">
         <div className="flex items-center justify-between gap-2">
-          <span className="text-[15px] font-bold flex-1 min-w-0 truncate">{title}</span>
+          <span className="text-reading font-medium flex-1 min-w-0 truncate">{title}</span>
           <input value={typed ?? shown} onChange={(e) => type(e.target.value)} onFocus={(e) => e.currentTarget.select()} autoFocus={fine}
             onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); set(); } }}
             aria-label="Type the time" inputMode="text" autoComplete="off" spellCheck={false} enterKeyHint="done"
-            className={`w-[118px] h-9 pointer-coarse:h-11 rounded-lg border px-2 text-right text-[15px] font-bold tabular-nums bg-[var(--color-surface-2)]  ${bad ? "border-[var(--state-overdue)]" : "border-transparent "}`} />
+            className={`w-[118px] h-9 pointer-coarse:h-11 rounded-lg border px-2 text-right text-reading font-medium tabular-nums bg-[var(--color-surface-2)]  ${bad ? "border-[var(--state-overdue)]" : "border-transparent "}`} />
           <button type="button" onClick={onClose} aria-label="Close" className="shrink-0 -mr-1.5 w-8 h-8 inline-flex items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
         </div>
         <div className="relative flex justify-center gap-2">
@@ -179,12 +179,12 @@ function TimeSheet({ title, hm, start, onSet, onClose }: { title: string; hm: st
           <Wheel label="Minute" items={MINS} index={d.m} onPick={(i) => spun({ m: i })} />
           <Wheel label="AM or PM" items={AMPM} index={d.pm ? 1 : 0} onPick={(i) => spun({ pm: i === 1 })} />
         </div>
-        <div className={`text-[12px] text-center ${bad ? "font-semibold text-[var(--state-overdue-text)]" : "text-[var(--color-text-muted)]"}`}>
+        <div className={`text-caption text-center ${bad ? "font-medium text-[var(--state-overdue-text)]" : "text-[var(--color-text-muted)]"}`}>
           {bad ? "Type it with its a or p: 1130p" : "Spin to the time, then Set. Or type it: 1130p"}
         </div>
         <div className="flex gap-2">
-          <button type="button" onClick={onClose} className="flex-1 h-11 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-semibold hover:bg-[var(--color-surface-2)]">Cancel</button>
-          <button type="button" onClick={set} disabled={bad} className="flex-[2] h-11 rounded-xl bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[14px] font-semibold hover:bg-[var(--color-accent-hover)] disabled:opacity-50">Set {shown}</button>
+          <button type="button" onClick={onClose} className="flex-1 h-11 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium hover:bg-[var(--color-surface-2)]">Cancel</button>
+          <button type="button" onClick={set} disabled={bad} className="flex-[2] h-11 rounded-xl bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-body font-medium hover:bg-[var(--color-accent-hover)] disabled:opacity-50">Set {shown}</button>
         </div>
       </div>
     </div>,
@@ -270,7 +270,7 @@ function Wheel({ label, items, index, onPick }: { label: string; items: string[]
         style={{ paddingBlock: ROW * 2, maskImage: fade, WebkitMaskImage: fade }}>
         {items.map((x, i) => (
           <div key={x} role="option" aria-selected={i === index} aria-label={`${label} ${x}`} onClick={() => { if (!dragged.current) onPick(i); dragged.current = false; }}
-            className={`h-10 snap-center flex items-center justify-center text-[20px] tabular-nums select-none ${i === index ? "font-bold text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>{x}</div>
+            className={`h-10 snap-center flex items-center justify-center text-section tabular-nums select-none ${i === index ? "font-bold text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>{x}</div>
         ))}
       </div>
     </div>
@@ -293,10 +293,10 @@ function Month({ value, today, planned, onPick, future, earliest }: { value: str
     <div className="pt-0.5 w-[280px] max-w-full">
       <div className="flex items-center justify-between mb-1">
         <button type="button" aria-label="Previous month" disabled={first} onClick={() => setYm(ym - 1)} className={nav}><ChevronLeft className="w-4 h-4" /></button>
-        <span className="text-[14px] font-bold">{new Date(Date.UTC(y, mo, 1)).toLocaleDateString("en-US", { month: "long", year: "numeric", timeZone: "UTC" })}</span>
+        <span className="text-body font-medium">{new Date(Date.UTC(y, mo, 1)).toLocaleDateString("en-US", { month: "long", year: "numeric", timeZone: "UTC" })}</span>
         <button type="button" aria-label="Next month" disabled={latest} onClick={() => setYm(ym + 1)} className={nav}><ChevronRight className="w-4 h-4" /></button>
       </div>
-      <div className="grid grid-cols-7 text-center text-[11px] font-semibold text-[var(--color-text-muted)]">
+      <div className="grid grid-cols-7 text-center text-caption font-medium text-[var(--color-text-muted)]">
         {["S", "M", "T", "W", "T", "F", "S"].map((d, i) => <span key={i} className="py-1">{d}</span>)}
       </div>
       <div className="grid grid-cols-7 gap-y-0.5">
@@ -305,14 +305,14 @@ function Month({ value, today, planned, onPick, future, earliest }: { value: str
           const k = key(i + 1), on = k === value, later = (!future && k > today) || (!!earliest && k < earliest);
           return (
             <button key={k} type="button" disabled={later} aria-pressed={on} aria-label={dayWords(k)} onClick={() => onPick(k)}
-              className={`relative mx-auto w-9 h-9 rounded-full text-[13px] tabular-nums ${on ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30 font-bold" : later ? "text-[var(--color-text-faint)] opacity-40" : `hover:bg-[var(--color-surface-2)] ${k === today ? "font-bold text-[var(--color-text)] ring-1 ring-inset ring-[var(--color-border-strong)]" : ""}`}`}>
+              className={`relative mx-auto w-9 h-9 rounded-full text-body tabular-nums ${on ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30 font-medium" : later ? "text-[var(--color-text-faint)] opacity-40" : `hover:bg-[var(--color-surface-2)] ${k === today ? "font-medium text-[var(--color-text)] ring-1 ring-inset ring-[var(--color-border-strong)]" : ""}`}`}>
               {i + 1}
               {k === planned && <span title="Planned" className={`absolute bottom-1 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full ${on ? "bg-[var(--color-surface)]" : "bg-[var(--color-text-muted)]"}`} />}
             </button>
           );
         })}
       </div>
-      {planned && <div className="mt-1 text-[11px] text-[var(--color-text-muted)]"><span className="inline-block w-1 h-1 rounded-full bg-[var(--color-text-muted)] align-middle mr-1" />planned day</div>}
+      {planned && <div className="mt-1 text-caption text-[var(--color-text-muted)]"><span className="inline-block w-1 h-1 rounded-full bg-[var(--color-text-muted)] align-middle mr-1" />planned day</div>}
     </div>
   );
 }

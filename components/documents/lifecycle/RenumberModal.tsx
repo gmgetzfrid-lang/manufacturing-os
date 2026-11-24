@@ -62,8 +62,8 @@ export default function RenumberModal(props: RenumberModalProps) {
           <div className="flex items-center gap-2">
             <Hash className="w-5 h-5 text-[var(--color-text-muted)]" />
             <div>
-              <h2 className="font-semibold text-[var(--color-text)]">Renumber Document</h2>
-              <div className="text-[13px] text-[var(--color-text-muted)] mt-0.5">Existing revisions and history are preserved.</div>
+              <h2 className="font-medium text-[var(--color-text)]">Renumber Document</h2>
+              <div className="text-body text-[var(--color-text-muted)] mt-0.5">Existing revisions and history are preserved.</div>
             </div>
           </div>
           <button aria-label="Close" type="button" onClick={onCancel} className="p-1.5 rounded hover:bg-slate-200 text-[var(--color-text-muted)]">
@@ -72,20 +72,20 @@ export default function RenumberModal(props: RenumberModalProps) {
         </div>
 
         <div className="p-5 space-y-3">
-          <div className="text-[13px] text-[var(--color-text-muted)]">
+          <div className="text-body text-[var(--color-text-muted)]">
             Cross-references inside other drawings (callouts like &ldquo;see Sheet 3&rdquo;) won&apos;t auto-update.
             Those live in the PDF content.
           </div>
 
           <label className="block">
-            <span className="text-[13px] font-semibold text-[var(--color-text)] ">Current number</span>
+            <span className="text-body font-medium text-[var(--color-text)] ">Current number</span>
             <div className="mt-1 px-2.5 py-1.5 text-sm font-display tabular-nums bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded text-[var(--color-text)]">
               {doc.documentNumber || "(none)"}
             </div>
           </label>
 
           <label className="block">
-            <span className="text-[13px] font-semibold text-[var(--color-text)] ">New number *</span>
+            <span className="text-body font-medium text-[var(--color-text)] ">New number *</span>
             <input
               value={newNumber}
               onChange={(e) => setNewNumber(e.target.value)}
@@ -95,7 +95,7 @@ export default function RenumberModal(props: RenumberModalProps) {
           </label>
 
           <label className="block">
-            <span className="text-[13px] font-semibold text-[var(--color-text)] ">Reason *</span>
+            <span className="text-body font-medium text-[var(--color-text)] ">Reason *</span>
             <textarea
               value={reason}
               onChange={(e) => setReason(e.target.value)}
@@ -106,7 +106,7 @@ export default function RenumberModal(props: RenumberModalProps) {
           </label>
 
           {error && (
-            <div className="flex items-start gap-2 text-[13px] border-l-2 border-[var(--state-overdue)] pl-3 text-[var(--state-overdue)]">
+            <div className="flex items-start gap-2 text-body border-l-2 border-[var(--state-overdue)] pl-3 text-[var(--state-overdue)]">
               <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" /> {error}
             </div>
           )}
@@ -114,7 +114,7 @@ export default function RenumberModal(props: RenumberModalProps) {
 
         <div className="px-5 py-3 border-t border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center justify-end gap-2">
           <button type="button" onClick={onCancel} disabled={busy} className="text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5">Cancel</button>
-          <button type="submit" disabled={!valid || busy} className="inline-flex items-center gap-1.5 text-sm font-bold bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] px-3 py-1.5 rounded disabled:opacity-40">
+          <button type="submit" disabled={!valid || busy} className="inline-flex items-center gap-1.5 text-sm font-medium bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] px-3 py-1.5 rounded disabled:opacity-40">
             {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
             Renumber
           </button>

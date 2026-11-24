@@ -69,7 +69,7 @@ export default function WidgetSettingsModal({ widget, onClose, onSave }: Props) 
         );
       case "toggle":
         return (
-          <label className="inline-flex items-center gap-2 text-[15px] text-[var(--color-text)] cursor-pointer">
+          <label className="inline-flex items-center gap-2 text-reading text-[var(--color-text)] cursor-pointer">
             <input type="checkbox" checked={(v as boolean) ?? f.default} onChange={(e) => set(f.key, e.target.checked)} className="w-4 h-4 accent-[var(--color-text)]" />
             {(v as boolean) ?? f.default ? "On" : "Off"}
           </label>
@@ -81,7 +81,7 @@ export default function WidgetSettingsModal({ widget, onClose, onSave }: Props) 
         );
       case "knowledgeLibrary":
         return kLibs === null ? <Skeleton className="h-10 w-full rounded-lg" /> : kLibs.length === 0 ? (
-          <p className="text-[14px] text-[var(--color-text-muted)]">No knowledge libraries yet.</p>
+          <p className="text-body text-[var(--color-text-muted)]">No knowledge libraries yet.</p>
         ) : (
           <Select value={(v as string) ?? ""} onChange={(e) => set(f.key, e.target.value)} aria-label={f.label}>
             <option value="">First library (default)</option>
@@ -91,14 +91,14 @@ export default function WidgetSettingsModal({ widget, onClose, onSave }: Props) 
       case "docLibraries": {
         const sel = new Set(Array.isArray(v) ? (v as string[]) : []);
         return docLibs === null ? <Skeleton className="h-24 w-full rounded-lg" /> : docLibs.length === 0 ? (
-          <p className="text-[14px] text-[var(--color-text-muted)]">No libraries yet.</p>
+          <p className="text-body text-[var(--color-text-muted)]">No libraries yet.</p>
         ) : (
           <div className="max-h-52 overflow-y-auto rounded-lg border border-[var(--color-border)] divide-y divide-[var(--color-border)]">
             {docLibs.map((l) => (
               <label key={l.id} className="flex items-center gap-2.5 px-3 py-2 hover:bg-[var(--color-surface-2)] cursor-pointer">
                 <input type="checkbox" checked={sel.has(l.id)} className="w-4 h-4 accent-[var(--color-text)]"
                   onChange={() => { const n = new Set(sel); if (n.has(l.id)) n.delete(l.id); else n.add(l.id); set(f.key, [...n]); }} />
-                <span className="text-[15px] text-[var(--color-text)]">{l.name}</span>
+                <span className="text-reading text-[var(--color-text)]">{l.name}</span>
               </label>
             ))}
           </div>
@@ -114,7 +114,7 @@ export default function WidgetSettingsModal({ widget, onClose, onSave }: Props) 
         <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--color-border)]">
           <div className="min-w-0">
             <h2 className="font-display text-section font-semibold text-[var(--color-text)] truncate">{meta.title} settings</h2>
-            <p className="mt-0.5 text-[14px] text-[var(--color-text-muted)]">Only this widget changes.</p>
+            <p className="mt-0.5 text-body text-[var(--color-text-muted)]">Only this widget changes.</p>
           </div>
           <button type="button" onClick={onClose} aria-label="Close" className="w-9 h-9 pointer-coarse:w-11 pointer-coarse:h-11 grid place-items-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><X className="w-5 h-5" /></button>
         </div>
@@ -123,13 +123,13 @@ export default function WidgetSettingsModal({ widget, onClose, onSave }: Props) 
             <label htmlFor={`ws-title-${widget.id}`} className={label}>Title</label>
             <input id={`ws-title-${widget.id}`} value={(draft.title as string) ?? ""} onChange={(e) => set("title", e.target.value.slice(0, 60))}
               placeholder={meta.title} className={input} />
-            <p className="text-[13px] text-[var(--color-text-muted)] mt-1.5">Handy when you have two, like &ldquo;Ask: Piping&rdquo;.</p>
+            <p className="text-body text-[var(--color-text-muted)] mt-1.5">Handy when you have two, like &ldquo;Ask: Piping&rdquo;.</p>
           </div>
           {fields.map((f) => (
             <div key={f.key}>
               <div className={label}>{f.label}</div>
               {renderField(f)}
-              {f.help && <p className="text-[13px] text-[var(--color-text-muted)] mt-1.5">{f.help}</p>}
+              {f.help && <p className="text-body text-[var(--color-text-muted)] mt-1.5">{f.help}</p>}
             </div>
           ))}
         </div>

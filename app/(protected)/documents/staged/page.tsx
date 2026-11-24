@@ -59,7 +59,7 @@ function Opening({ text = "Opening the staged documents…" }: { text?: string }
     <div className="surface-charcoal h-full grid place-items-center">
       <div className="flex flex-col items-center gap-3 text-[var(--color-text-muted)]">
         <Loader2 className="w-8 h-8 animate-spin" />
-        <span className="text-[14px]">{text}</span>
+        <span className="text-body">{text}</span>
       </div>
     </div>
   );
@@ -236,7 +236,7 @@ export default function StagedPage() {
   const ready = records.length > 0;
   const actions = (
     <>
-      <button type="button" onClick={() => void sendToDrafting()} disabled={drafting || !ready} className={`${vQuiet} !h-10 max-sm:!h-11 !text-[14px]`}
+      <button type="button" onClick={() => void sendToDrafting()} disabled={drafting || !ready} className={`${vQuiet} !h-10 max-sm:!h-11 !text-body`}
         title="Start one new drafting request with every staged sheet attached: marked-up sheets with your markups drawn in, the rest as issued">
         {drafting ? <Loader2 className="w-4 h-4 animate-spin" /> : <PenTool className="w-4 h-4" />}
         <span className="truncate">{drafting ? `Preparing ${plural(records.length, "sheet")}…` : "Send to drafting"}</span>
@@ -291,7 +291,7 @@ export default function StagedPage() {
       {messages.length > 0 && (
         <div className="mb-3 space-y-1.5">
           {messages.map((m) => (
-            <div key={m.text} role="alert" className="flex items-start gap-2 text-[14px] text-[var(--color-text)]">
+            <div key={m.text} role="alert" className="flex items-start gap-2 text-body text-[var(--color-text)]">
               <CircleAlert aria-hidden className="w-4 h-4 mt-0.5 shrink-0 text-[var(--state-overdue)]" />
               <span className="flex-1 min-w-0">{plainError(m.text)}</span>
               {m.retry
@@ -319,12 +319,12 @@ export default function StagedPage() {
                   <button type="button" onClick={() => show(r)} aria-current={on ? "true" : undefined}
                     title={r.rec === null ? "Not found. It may have been deleted, or you may no longer have access." : `Show ${nameOf(r)}`}
                     className="min-w-0 flex-1 flex items-start gap-2.5 text-left pl-3 pr-1 py-2.5 rounded-md">
-                    <span className={`mt-px w-5 shrink-0 text-right text-[13px] tabular-nums ${on ? "font-semibold text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>{i + 1}</span>
+                    <span className={`mt-px w-5 shrink-0 text-right text-body tabular-nums ${on ? "font-medium text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>{i + 1}</span>
                     <span className="min-w-0 flex-1">
-                      <span className={`block font-display text-[16px] leading-tight font-semibold tabular-nums truncate ${r.rec === null ? "text-[var(--color-text-muted)]" : "text-[var(--color-text)]"}`}>{r.number || "No number"}</span>
-                      {r.title && r.title !== r.number && <span className="block text-[13px] leading-snug text-[var(--color-text)] truncate">{r.title}</span>}
+                      <span className={`block font-display text-reading leading-tight font-semibold tabular-nums truncate ${r.rec === null ? "text-[var(--color-text-muted)]" : "text-[var(--color-text)]"}`}>{r.number || "No number"}</span>
+                      {r.title && r.title !== r.number && <span className="block text-body leading-snug text-[var(--color-text)] truncate">{r.title}</span>}
                       {(r.sheet || r.rev) && (
-                        <span className="mt-0.5 flex gap-x-3 text-[13px] leading-snug text-[var(--color-text-muted)] tabular-nums truncate">
+                        <span className="mt-0.5 flex gap-x-3 text-body leading-snug text-[var(--color-text-muted)] tabular-nums truncate">
                           {r.sheet && <span>Sheet {r.sheet}</span>}
                           {r.rev && <span>Rev {r.rev}</span>}
                         </span>
@@ -333,10 +333,10 @@ export default function StagedPage() {
                         {r.rec === null
                           ? <span className="ui-pill is-bad">Not found</span>
                           : r.status ? <StatusTag status={r.status} /> : null}
-                        {r.library && <span className="min-w-0 truncate text-[13px] text-[var(--color-text-muted)]">{r.library}</span>}
+                        {r.library && <span className="min-w-0 truncate text-body text-[var(--color-text-muted)]">{r.library}</span>}
                       </span>
-                      {r.rec === null && <span className="mt-1 block text-[13px] leading-snug text-[var(--color-text-muted)]">It may have been deleted, or you may no longer have access.</span>}
-                      {r.marked && <span className="mt-1.5 flex items-center gap-1 text-[13px] font-semibold text-[var(--color-text)]"><PenLine className="w-3.5 h-3.5" /> Marked up</span>}
+                      {r.rec === null && <span className="mt-1 block text-body leading-snug text-[var(--color-text-muted)]">It may have been deleted, or you may no longer have access.</span>}
+                      {r.marked && <span className="mt-1.5 flex items-center gap-1 text-body font-medium text-[var(--color-text)]"><PenLine className="w-3.5 h-3.5" /> Marked up</span>}
                     </span>
                   </button>
                   <div className="shrink-0 pt-1.5 pr-1">
@@ -347,7 +347,7 @@ export default function StagedPage() {
               );
             })}
           </ol>
-          <p className="shrink-0 px-3 py-2.5 border-t border-[var(--color-border)] text-[13px] text-[var(--color-text-muted)]">{kept}</p>
+          <p className="shrink-0 px-3 py-2.5 border-t border-[var(--color-border)] text-body text-[var(--color-text-muted)]">{kept}</p>
         </aside>
 
         {/* Phone and narrow screens: a row of chips over the sheets. */}
@@ -359,11 +359,11 @@ export default function StagedPage() {
                 <li key={r.staged.id} data-staged-chip data-on={on ? "" : undefined}
                   className={`shrink-0 flex items-center h-11 rounded-lg border transition-colors ${on ? "bg-[var(--color-surface-2)] border-[var(--color-text-muted)] text-[var(--color-text)]" : "bg-[var(--color-surface)] border-[var(--color-border-strong)] text-[var(--color-text)]"}`}>
                   <button type="button" onClick={() => show(r)} aria-current={on ? "true" : undefined}
-                    className={`h-full flex items-center gap-2 pl-3.5 ${on ? "pr-1" : "pr-3.5"} rounded-lg text-[14px] whitespace-nowrap`}>
-                    <span className="tabular-nums text-[13px] text-[var(--color-text-muted)]">{i + 1}</span>
-                    <span className="font-semibold tabular-nums">{r.number || "No number"}</span>
-                    {r.sheet && <span className="text-[13px] text-[var(--color-text-muted)]">Sheet {r.sheet}</span>}
-                    {r.rec === null && <span className="text-[13px] font-semibold text-[var(--state-overdue-text)]">Not found</span>}
+                    className={`h-full flex items-center gap-2 pl-3.5 ${on ? "pr-1" : "pr-3.5"} rounded-lg text-body whitespace-nowrap`}>
+                    <span className="tabular-nums text-body text-[var(--color-text-muted)]">{i + 1}</span>
+                    <span className="font-medium tabular-nums">{r.number || "No number"}</span>
+                    {r.sheet && <span className="text-body text-[var(--color-text-muted)]">Sheet {r.sheet}</span>}
+                    {r.rec === null && <span className="text-body font-medium text-[var(--state-overdue-text)]">Not found</span>}
                     {r.marked && <PenLine className="w-3.5 h-3.5" aria-label="Marked up" />}
                   </button>
                   {on && (
@@ -374,7 +374,7 @@ export default function StagedPage() {
               );
             })}
           </ol>
-          <p className="px-4 pb-2 -mt-0.5 text-[13px] text-[var(--color-text-muted)]">{kept}</p>
+          <p className="px-4 pb-2 -mt-0.5 text-body text-[var(--color-text-muted)]">{kept}</p>
         </div>
 
         {/* The sheets, large, with the tools and the actions over them. */}
@@ -398,7 +398,7 @@ export default function StagedPage() {
             />
           ) : allMissing ? (
             <div className="surface-charcoal h-full grid place-items-center p-6">
-              <p className="max-w-md text-center text-[15px] text-[var(--color-text)]">
+              <p className="max-w-md text-center text-reading text-[var(--color-text)]">
                 {n === 1 ? "The staged document could not be found." : "None of the staged documents could be found."} {n === 1 ? "It may have been deleted, or you may no longer have access. Remove it from the list." : "They may have been deleted, or you may no longer have access. Remove them from the list."}
               </p>
             </div>

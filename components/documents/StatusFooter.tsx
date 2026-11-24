@@ -29,7 +29,7 @@ export default function StatusFooter({
 }: StatusFooterProps) {
   return (
     <div
-      className="h-9 shrink-0 border-t border-[var(--color-border)] bg-[var(--color-surface)] flex items-center gap-4 px-4 text-[13px] tabular-nums text-[var(--color-text-muted)] z-20 max-sm:hidden"
+      className="h-9 shrink-0 border-t border-[var(--color-border)] bg-[var(--color-surface)] flex items-center gap-4 px-4 text-body tabular-nums text-[var(--color-text-muted)] z-20 max-sm:hidden"
     >
       {/* Words only while something is loading; no "live" light. */}
       {loading && (
@@ -50,13 +50,13 @@ export default function StatusFooter({
       </div>
 
       {selectedCount > 0 && (
-        <div className="flex items-center gap-1 text-[var(--color-text)] font-semibold">
+        <div className="flex items-center gap-1 text-[var(--color-text)] font-medium">
           <span>{selectedCount} selected</span>
         </div>
       )}
 
       {stagedCount > 0 && (
-        <div className="flex items-center gap-1 text-[var(--color-text)] font-semibold">
+        <div className="flex items-center gap-1 text-[var(--color-text)] font-medium">
           <Layers className="w-3 h-3" />
           <span>{stagedCount} staged</span>
         </div>
@@ -70,7 +70,7 @@ export default function StatusFooter({
           type="button"
           onClick={() => onDensityChange("compact")}
           aria-pressed={density === "compact"}
-          className={`${bandSegItem(density === "compact")} !h-6 !px-2 !text-[13px]`}
+          className={`${bandSegItem(density === "compact")} !h-6 !px-2 !text-body`}
         >
           Compact
         </button>
@@ -78,7 +78,7 @@ export default function StatusFooter({
           type="button"
           onClick={() => onDensityChange("comfy")}
           aria-pressed={density === "comfy"}
-          className={`${bandSegItem(density === "comfy")} !h-6 !px-2 !text-[13px]`}
+          className={`${bandSegItem(density === "comfy")} !h-6 !px-2 !text-body`}
         >
           Roomy
         </button>

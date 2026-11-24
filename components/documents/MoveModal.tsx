@@ -32,8 +32,8 @@ export default function MoveModal(props: {
       <div className="w-full max-w-3xl rounded-lg bg-[var(--color-surface)] shadow-2xl border border-[var(--color-border)] overflow-hidden animate-in fade-in zoom-in-95">
         <div className="px-6 py-4 border-b border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center justify-between">
           <div>
-            <div className="text-sm font-bold text-[var(--color-text)]">{title || "Move"}</div>
-            <div className="text-[13px] text-[var(--color-text-muted)]">Select a destination folder.</div>
+            <div className="text-sm font-medium text-[var(--color-text)]">{title || "Move"}</div>
+            <div className="text-body text-[var(--color-text-muted)]">Select a destination folder.</div>
           </div>
           <button aria-label="Close"
             onClick={onClose}
@@ -56,13 +56,13 @@ export default function MoveModal(props: {
         <div className="px-6 py-4 border-t border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center justify-end gap-2">
           <button
             onClick={onClose}
-            className="px-4 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-sm font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
+            className="px-4 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-sm font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
           >
             Cancel
           </button>
           <button
             onClick={() => onConfirm(selected ?? null)}
-            className="px-4 py-2 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-sm font-bold inline-flex items-center gap-2"
+            className="px-4 py-2 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-sm font-medium inline-flex items-center gap-2"
           >
             <CheckCircle2 className="h-4 w-4" />
             Move here

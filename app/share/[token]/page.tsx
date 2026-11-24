@@ -230,14 +230,14 @@ export default function SharePage() {
                 <FileText className="w-5 h-5 shrink-0 text-[var(--color-text-muted)] max-sm:hidden" />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-[16px]">
-                      {it.documentNumber ? <CopyId value={it.documentNumber} label="document number" /> : <span className="font-semibold text-[var(--color-text)]">{itemName(it)}</span>}
+                    <span className="text-reading">
+                      {it.documentNumber ? <CopyId value={it.documentNumber} label="document number" /> : <span className="font-medium text-[var(--color-text)]">{itemName(it)}</span>}
                     </span>
-                    {it.rev && <span className="text-[14px] text-[var(--color-text-muted)]">Rev <span className="ui-id text-[var(--color-text)]">{it.rev}</span></span>}
+                    {it.rev && <span className="text-body text-[var(--color-text-muted)]">Rev <span className="ui-id text-[var(--color-text)]">{it.rev}</span></span>}
                     {it.markedUp && <span className="ui-pill is-muted">Marked up</span>}
                   </div>
-                  {it.documentNumber && it.title && <div className="text-[14px] text-[var(--color-text-muted)] mt-0.5 truncate">{it.title}</div>}
-                  {!it.viewable && <div className="text-[13px] text-[var(--color-text-muted)] mt-0.5">There&apos;s no file to show for this one. Ask the person who sent it.</div>}
+                  {it.documentNumber && it.title && <div className="text-body text-[var(--color-text-muted)] mt-0.5 truncate">{it.title}</div>}
+                  {!it.viewable && <div className="text-body text-[var(--color-text-muted)] mt-0.5">There&apos;s no file to show for this one. Ask the person who sent it.</div>}
                 </div>
                 {it.viewable && (
                   <div className="flex items-center gap-2 shrink-0 max-sm:w-full">
@@ -256,7 +256,7 @@ export default function SharePage() {
           </ul>
           {downloadError && <div className="px-4 sm:px-5 pb-3"><Problem>{downloadError}</Problem></div>}
         </Card>
-        <div className="space-y-1.5 text-[14px] text-[var(--color-text-muted)] px-1 -mt-4">
+        <div className="space-y-1.5 text-body text-[var(--color-text-muted)] px-1 -mt-4">
           <p className="flex items-start gap-2"><ShieldCheck className="w-4 h-4 mt-0.5 shrink-0" />
             <span>These are uncontrolled copies. Every page is stamped with the revision and a QR code to check whether it is still current.</span></p>
           {!d.allowDownload && <p className="pl-6">View only: the person who sent this didn&apos;t allow downloading.</p>}
@@ -278,10 +278,10 @@ export default function SharePage() {
         <div className="fixed inset-0 z-50 flex flex-col items-center justify-center gap-4 px-6 bg-[var(--color-canvas)] text-center" role="dialog" aria-modal="true">
           {viewing.error
             ? <>
-                <p className="text-[16px] text-[var(--color-text)] max-w-md">{viewing.error}</p>
+                <p className="text-reading text-[var(--color-text)] max-w-md">{viewing.error}</p>
                 <Button variant="secondary" onClick={closeViewer}>Back to the list</Button>
               </>
-            : <p className="text-[15px] text-[var(--color-text-muted)] inline-flex items-center gap-2"><Loader2 className="w-5 h-5 animate-spin" /> Opening {itemName(viewing.item)}…</p>}
+            : <p className="text-reading text-[var(--color-text-muted)] inline-flex items-center gap-2"><Loader2 className="w-5 h-5 animate-spin" /> Opening {itemName(viewing.item)}…</p>}
         </div>
       ))}
     </>
@@ -332,7 +332,7 @@ function CodeBoxes({ onDone, busy, error, onTyping }: { onDone: (code: string) =
   const code = digits.join("");
   return (
     <form onSubmit={(e) => { e.preventDefault(); onDone(code); }}>
-      <div className="text-[14px] font-semibold text-[var(--color-text)]">Code</div>
+      <div className="text-body font-medium text-[var(--color-text)]">Code</div>
       <div className="mt-3 flex items-center gap-2 sm:gap-3" role="group" aria-label="6-digit code">
         {digits.map((v, i) => (
           <React.Fragment key={i}>
@@ -359,7 +359,7 @@ function CodeBoxes({ onDone, busy, error, onTyping }: { onDone: (code: string) =
       <Button type="submit" disabled={!/^\d{6}$/.test(code)} loading={busy} className="mt-4 w-full sm:w-auto sm:min-w-[160px]">
         Open
       </Button>
-      {!/^\d{6}$/.test(code) && !busy && <p className="mt-2 text-[13px] text-[var(--color-text-muted)]">Type all six digits to open it.</p>}
+      {!/^\d{6}$/.test(code) && !busy && <p className="mt-2 text-body text-[var(--color-text-muted)]">Type all six digits to open it.</p>}
     </form>
   );
 }

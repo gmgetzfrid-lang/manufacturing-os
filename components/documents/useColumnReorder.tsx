@@ -275,7 +275,7 @@ export function useColumnReorder(opts: {
       {/* The header, lifted, following the pointer. */}
       <div
         aria-hidden
-        className="pointer-events-none fixed z-[96] flex items-center gap-1.5 pl-1.5 pr-3 rounded-md border border-[var(--color-main)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] shadow-xl select-none"
+        className="pointer-events-none fixed z-[96] flex items-center gap-1.5 pl-1.5 pr-3 rounded-md border border-[var(--color-main)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] shadow-xl select-none"
         style={{
           left: view.x - Math.min(view.grabX, Math.min(view.width, 260) - 12),
           top: view.y - view.grabY,

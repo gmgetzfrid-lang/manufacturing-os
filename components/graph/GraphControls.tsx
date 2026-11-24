@@ -38,7 +38,7 @@ function Section({ icon: Icon, title, children, defaultOpen = false }: {
       <button onClick={() => setOpen((v) => !v)}
         className="w-full flex items-center gap-2 px-3 py-2 hover:bg-[var(--color-surface-2)]">
         <Icon className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
-        <span className="flex-1 text-left text-[13px] font-semibold text-[var(--color-text)]">{title}</span>
+        <span className="flex-1 text-left text-body font-medium text-[var(--color-text)]">{title}</span>
         <ChevronDown className={`w-3.5 h-3.5 text-[var(--color-text-faint)] transition-transform ${open ? "rotate-180" : ""}`} />
       </button>
       {open && <div className="px-3 pb-3 space-y-2.5">{children}</div>}
@@ -52,7 +52,7 @@ function Slider({ label, value, min, max, step, onChange, hint }: {
 }) {
   return (
     <label className="block">
-      <span className="flex items-center justify-between text-[13px] font-bold text-[var(--color-text-muted)]">
+      <span className="flex items-center justify-between text-body font-medium text-[var(--color-text-muted)]">
         {label}
         <span className="font-display tabular-nums text-[var(--color-text-faint)]">{value.toFixed(step < 1 ? 2 : 0)}</span>
       </span>
@@ -61,7 +61,7 @@ function Slider({ label, value, min, max, step, onChange, hint }: {
         onChange={(e) => onChange(Number(e.target.value))}
         className="w-full accent-[var(--color-text)] h-1.5"
       />
-      {hint && <span className="block text-[13px] text-[var(--color-text-faint)] -mt-0.5">{hint}</span>}
+      {hint && <span className="block text-body text-[var(--color-text-faint)] -mt-0.5">{hint}</span>}
     </label>
   );
 }
@@ -74,8 +74,8 @@ function Toggle({ label, checked, onChange, hint }: {
       <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)}
         className="mt-0.5 accent-[var(--color-text)]" />
       <span className="min-w-0">
-        <span className="block text-[13px] font-bold text-[var(--color-text)]">{label}</span>
-        {hint && <span className="block text-[13px] text-[var(--color-text-faint)]">{hint}</span>}
+        <span className="block text-body font-medium text-[var(--color-text)]">{label}</span>
+        {hint && <span className="block text-body text-[var(--color-text-faint)]">{hint}</span>}
       </span>
     </label>
   );
@@ -122,19 +122,19 @@ export default function GraphControls({
         {/* 2D / 3D — the switch people will reach for first. */}
         <div className="inline-flex rounded-full border border-[var(--color-border-strong)] bg-[var(--color-surface)]/90 backdrop-blur p-0.5 shadow-sm">
           <button onClick={() => onChange({ mode: "map" })} title="The estate as a tree: units, equipment, documents. Same map as Documents › Graph"
-            className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-[13px] font-semibold transition-colors ${
+            className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-body font-semibold transition-colors ${
               settings.mode === "map" ? "bg-[var(--color-surface)] text-[var(--color-text)] ring-1 ring-[var(--color-text-muted)] shadow-sm" : "text-[var(--color-text-muted)]"
             }`}>
             <MapIcon className="w-3 h-3" /> Map
           </button>
           <button onClick={() => onChange({ mode: "2d" })}
-            className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-[13px] font-semibold transition-colors ${
+            className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-body font-semibold transition-colors ${
               settings.mode === "2d" ? "bg-[var(--color-surface)] text-[var(--color-text)] ring-1 ring-[var(--color-text-muted)] shadow-sm" : "text-[var(--color-text-muted)]"
             }`}>
             <Square className="w-3 h-3" /> 2D
           </button>
           <button onClick={() => onChange({ mode: "3d" })}
-            className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-[13px] font-semibold transition-colors ${
+            className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-body font-semibold transition-colors ${
               settings.mode === "3d" ? "bg-[var(--color-surface)] text-[var(--color-text)] ring-1 ring-[var(--color-text-muted)] shadow-sm" : "text-[var(--color-text-muted)]"
             }`}>
             <Boxes className="w-3 h-3" /> 3D
@@ -144,14 +144,14 @@ export default function GraphControls({
           <div className="inline-flex rounded-full border border-[var(--color-border-strong)] bg-[var(--color-surface)]/90 backdrop-blur p-0.5 shadow-sm" title="Estate: the Map's tree as a globe, each operating area its own cluster, nothing moves. Web: every link pulling freely.">
             {(["estate", "web"] as const).map((k) => (
               <button key={k} onClick={() => onChange({ layout3d: k })}
-                className={`px-2 py-1 rounded-full text-[13px] font-semibold ${settings.layout3d === k ? "bg-[var(--color-surface)] text-[var(--color-text)] ring-1 ring-[var(--color-text-muted)] shadow-sm" : "text-[var(--color-text-muted)]"}`}>
+                className={`px-2 py-1 rounded-full text-body font-medium ${settings.layout3d === k ? "bg-[var(--color-surface)] text-[var(--color-text)] ring-1 ring-[var(--color-text-muted)] shadow-sm" : "text-[var(--color-text-muted)]"}`}>
                 {k === "estate" ? "Estate" : "Web"}
               </button>
             ))}
           </div>
         )}
         <button onClick={() => setOpen((v) => !v)}
-          className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-full border text-[13px] font-semibold shadow-sm ${
+          className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-full border text-body font-semibold shadow-sm ${
             open ? "border-[var(--color-text)] text-[var(--color-text)] bg-[var(--color-surface)]"
                  : "border-[var(--color-border-strong)] text-[var(--color-text)] bg-[var(--color-surface)]/90 backdrop-blur"
           }`}>
@@ -169,8 +169,8 @@ export default function GraphControls({
                     <input type="checkbox" checked={!settings.hiddenTypes.includes(t)}
                       onChange={() => toggleType(t)} className="accent-[var(--color-text)]" />
                     <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: NODE_COLORS[t] }} />
-                    <span className="flex-1 text-[13px] font-bold text-[var(--color-text)]">{TYPE_LABELS[t]}</span>
-                    <span className="text-[13px] font-display tabular-nums text-[var(--color-text-faint)]">{counts[t]}</span>
+                    <span className="flex-1 text-body font-medium text-[var(--color-text)]">{TYPE_LABELS[t]}</span>
+                    <span className="text-body font-display tabular-nums text-[var(--color-text-faint)]">{counts[t]}</span>
                   </label>
                 )
               ))}
@@ -192,7 +192,7 @@ export default function GraphControls({
           </Section>
 
           <Section icon={Palette} title="Groups">
-            <p className="text-[13px] text-[var(--color-text-faint)]">
+            <p className="text-body text-[var(--color-text-faint)]">
               Paint your own meaning onto the map. Matches a node&apos;s name, or use
               <code className="mx-1 px-1 rounded bg-[var(--color-surface-2)]">type:asset</code>
               to colour a whole kind. First match wins.
@@ -204,7 +204,7 @@ export default function GraphControls({
                   className="accent-[var(--color-text)]" />
                 <input value={g.query} onChange={(e) => patchGroup(g.id, { query: e.target.value })}
                   placeholder="e.g. 44-  ·  crude  ·  type:unit"
-                  className="flex-1 min-w-0 px-2 py-1 border border-[var(--color-border-strong)] rounded-lg text-[13px] bg-[var(--color-surface)]" />
+                  className="flex-1 min-w-0 px-2 py-1 border border-[var(--color-border-strong)] rounded-lg text-body bg-[var(--color-surface)]" />
                 <input type="color" value={g.color}
                   onChange={(e) => patchGroup(g.id, { color: e.target.value })}
                   aria-label="Group colour"
@@ -216,7 +216,7 @@ export default function GraphControls({
               </div>
             ))}
             <button onClick={addGroup}
-              className="inline-flex items-center gap-1 text-[13px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] border border-dashed border-[var(--color-border-strong)] rounded-lg px-2 py-1">
+              className="inline-flex items-center gap-1 text-body font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] border border-dashed border-[var(--color-border-strong)] rounded-lg px-2 py-1">
               <Plus className="w-3 h-3" /> Add colour group
             </button>
           </Section>
@@ -261,11 +261,11 @@ export default function GraphControls({
 
           <div className="p-2">
             <button onClick={onReset}
-              className="w-full inline-flex items-center justify-center gap-1.5 text-[13px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] border border-[var(--color-border-strong)] rounded-lg py-1.5">
+              className="w-full inline-flex items-center justify-center gap-1.5 text-body font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] border border-[var(--color-border-strong)] rounded-lg py-1.5">
               <RotateCcw className="w-3 h-3" /> Reset to defaults
             </button>
             {JSON.stringify(settings) === JSON.stringify(DEFAULT_GRAPH_SETTINGS) && (
-              <div className="text-[13px] text-center text-[var(--color-text-faint)] pt-1">Settings are saved per workspace.</div>
+              <div className="text-body text-center text-[var(--color-text-faint)] pt-1">Settings are saved per workspace.</div>
             )}
           </div>
         </div>

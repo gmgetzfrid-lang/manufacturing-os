@@ -58,7 +58,7 @@ interface Props {
   bare?: boolean;
 }
 
-const LABEL = "text-[13px] font-semibold text-[var(--color-text-muted)] mb-2";
+const LABEL = "text-body font-medium text-[var(--color-text-muted)] mb-2";
 
 const STATUS_META: Record<MilestoneStatus, { label: string; tone: string; bar: string; Icon: React.ComponentType<{ className?: string }> }> = {
   // The same colours as the timeline and calendar dots.
@@ -131,14 +131,14 @@ export default function ScheduleProgress({ milestones, metrics, projectId, onSho
         {byPhase ? <div className="mb-3"><PhaseLines rows={byPhase} /></div> : (
           <div className="mb-3">
             {head && <div className={LABEL}>Progress</div>}
-            <p className="text-[15px] font-bold text-[var(--color-text)] tabular-nums">
+            <p className="text-reading font-medium text-[var(--color-text)] tabular-nums">
               {earnedPct}% done
-              <span className="font-semibold text-[var(--color-text-muted)]">{finished ? ` · ${r.done} of ${r.totalLeaves} steps` : ` · plan by now ${planPct}%`}</span>
+              <span className="font-medium text-[var(--color-text-muted)]">{finished ? ` · ${r.done} of ${r.totalLeaves} steps` : ` · plan by now ${planPct}%`}</span>
             </p>
             {/* Finished: when and how late is on the card beside this, once. */}
             {!finished && (
-              <p className="mt-0.5 text-[13px] text-[var(--color-text-muted)] inline-flex flex-wrap items-center gap-x-1.5">
-                <span className={`inline-flex items-center gap-1 font-semibold ${verdictTone}`}>
+              <p className="mt-0.5 text-body text-[var(--color-text-muted)] inline-flex flex-wrap items-center gap-x-1.5">
+                <span className={`inline-flex items-center gap-1 font-medium ${verdictTone}`}>
                   {verdict === "behind" ? <TrendingDown className="w-3.5 h-3.5" /> : <TrendingUp className="w-3.5 h-3.5" />}
                   {verdict === "behind" ? `${fmtH(gapH)} behind plan` : verdict === "ahead" ? `${fmtH(gapH)} ahead of plan` : "On plan"}
                 </span>
@@ -153,7 +153,7 @@ export default function ScheduleProgress({ milestones, metrics, projectId, onSho
         <StackedBar counts={metrics.byStatus} />
 
         {/* The counts in one row: zero is faint, colour only where it's off. */}
-        <ul className="mt-2.5 flex flex-wrap gap-x-4 gap-y-1 text-[12px]" aria-label="Steps by status">
+        <ul className="mt-2.5 flex flex-wrap gap-x-4 gap-y-1 text-caption" aria-label="Steps by status">
           {(Object.keys(STATUS_META) as MilestoneStatus[]).map((s) => {
             const meta = STATUS_META[s];
             const n = metrics.byStatus[s] ?? 0;
@@ -171,21 +171,21 @@ export default function ScheduleProgress({ milestones, metrics, projectId, onSho
       {/* What needs you, when it ends, and what's coming: one card. */}
       <Box bare={bare} label={byPhase ? "Needs you" : finished ? "Finished" : "Forecast end"}>
           {byPhase ? (
-            overdue.length === 0 && held === 0 ? <div className="text-[14px] font-bold text-[var(--color-text)]">Nothing overdue or held</div> : null
+            overdue.length === 0 && held === 0 ? <div className="text-body font-medium text-[var(--color-text)]">Nothing overdue or held</div> : null
           ) : finished ? (
             <>
-              <div className="text-[14px] font-bold text-[var(--color-text)]">{r.finishedAt ? humanDateTime(r.finishedAt, tz) : "-"}</div>
-              <div className={`text-[12px] mt-0.5 inline-flex items-center gap-1 ${finIsLate ? "text-[var(--state-overdue-text)] font-semibold" : "text-[var(--state-released-text)]"}`}>
+              <div className="text-body font-medium text-[var(--color-text)]">{r.finishedAt ? humanDateTime(r.finishedAt, tz) : "-"}</div>
+              <div className={`text-caption mt-0.5 inline-flex items-center gap-1 ${finIsLate ? "text-[var(--state-overdue-text)] font-medium" : "text-[var(--state-released-text)]"}`}>
                 {finIsLate ? <AlertTriangle className="w-3.5 h-3.5" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
                 {[finWords, plannedEndAt ? `planned ${humanDateTime(plannedEndAt, tz)}` : null].filter(Boolean).join(" · ")}
               </div>
             </>
           ) : (
             <>
-          <div className="text-[14px] font-bold text-[var(--color-text)]">
+          <div className="text-body font-medium text-[var(--color-text)]">
             {forecastEndAt ? (linked ? humanDateTime(forecastEndAt, tz) : humanDate(forecastEndAt, tz)) : plannedEndAt ? humanDate(plannedEndAt, tz) : "-"}
           </div>
-          <div className={`text-[12px] mt-0.5 inline-flex items-center gap-1 ${late ? "text-[var(--state-overdue-text)] font-semibold" : "text-[var(--state-released-text)]"}`}>
+          <div className={`text-caption mt-0.5 inline-flex items-center gap-1 ${late ? "text-[var(--state-overdue-text)] font-medium" : "text-[var(--state-released-text)]"}`}>
             {linked
               ? (slipH >= 0.5 ? <><AlertTriangle className="w-3.5 h-3.5" /> {fmtH(slipH)} late</> : slipH <= -0.5 ? <><CheckCircle2 className="w-3.5 h-3.5" /> {fmtH(-slipH)} early</> : <><CheckCircle2 className="w-3.5 h-3.5" /> On plan</>)
               : late
@@ -196,7 +196,7 @@ export default function ScheduleProgress({ milestones, metrics, projectId, onSho
             </>
           )}
           {(overdue.length > 0 || held > 0) && (
-            <div className="mt-1.5 flex flex-wrap items-center gap-x-1 text-[13px] font-bold">
+            <div className="mt-1.5 flex flex-wrap items-center gap-x-1 text-body font-medium">
               <AlertTriangle className="w-3.5 h-3.5 text-[var(--state-overdue-text)]" />
               {overdue.length > 0 && (onShowOverdue
                 ? <button type="button" onClick={onShowOverdue} className="text-[var(--state-overdue-text)] underline decoration-dotted underline-offset-2 hover:decoration-solid" title="Show the overdue work">{overdue.length} overdue</button>
@@ -212,18 +212,18 @@ export default function ScheduleProgress({ milestones, metrics, projectId, onSho
         <div className="mt-4 pt-3 border-t border-[var(--color-border)]">
           <div className="flex items-baseline justify-between mb-1.5">
             <div className={LABEL.replace(" mb-2", "")}>Next 14 days</div>
-            {upcoming.length > 0 && <div className="text-[12px] text-[var(--color-text-muted)] tabular-nums">{upcoming.length}</div>}
+            {upcoming.length > 0 && <div className="text-caption text-[var(--color-text-muted)] tabular-nums">{upcoming.length}</div>}
           </div>
           {upcoming.length === 0 ? (
-            <div className="text-[13px] text-[var(--color-text-muted)]">Nothing scheduled.</div>
+            <div className="text-body text-[var(--color-text-muted)]">Nothing scheduled.</div>
           ) : (
             <ul className="space-y-1.5">
               {upcoming.map(({ m, due }) => (
-                <li key={m.id} className="flex items-start gap-2 text-[13px]">
+                <li key={m.id} className="flex items-start gap-2 text-body">
                   <Flag className={`w-3.5 h-3.5 mt-0.5 shrink-0 ${STATUS_META[m.status].tone}`} />
                   <div className="min-w-0 flex-1">
-                    <div className="font-semibold text-[var(--color-text)] truncate">{m.name}</div>
-                    <div className="text-[12px] text-[var(--color-text-muted)] inline-flex items-center gap-1">
+                    <div className="font-medium text-[var(--color-text)] truncate">{m.name}</div>
+                    <div className="text-caption text-[var(--color-text-muted)] inline-flex items-center gap-1">
                       <CalendarClock className="w-3 h-3" /> {humanRelative(due, tz)}
                     </div>
                   </div>
@@ -231,7 +231,7 @@ export default function ScheduleProgress({ milestones, metrics, projectId, onSho
               ))}
             </ul>
           )}
-          {!head && <div className="mt-2 text-[12px] text-[var(--color-text-muted)]">{total} task{total === 1 ? "" : "s"} on the schedule</div>}
+          {!head && <div className="mt-2 text-caption text-[var(--color-text-muted)]">{total} task{total === 1 ? "" : "s"} on the schedule</div>}
         </div>
       </Box>
     </div>

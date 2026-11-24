@@ -152,7 +152,7 @@ function CenterPanel({
       >
         <div className="px-5 pt-4 pb-4 shrink-0 border-b border-[var(--color-border)]">
           <div className="flex items-center gap-2 min-h-9">
-            <div className="text-[14px] text-[var(--color-text-muted)]">Notifications</div>
+            <div className="text-body text-[var(--color-text-muted)]">Notifications</div>
             <div className="flex-1" />
             <button
               type="button"
@@ -166,7 +166,7 @@ function CenterPanel({
           </div>
           <h2 className="font-display text-title font-semibold text-[var(--color-text)]">{answer}</h2>
           {counts.all > 0 && (
-            <dl className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-[14px]">
+            <dl className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-body">
               {[
                 { label: "Overdue", value: nf.overdue, bad: true },
                 { label: "Waiting on you", value: nf.yourTurn, bad: false },

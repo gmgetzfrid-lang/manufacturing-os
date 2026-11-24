@@ -212,7 +212,7 @@ export default function SetupPage() {
       >
         {facts !== null && (
           <>
-            <p className="sm:hidden mb-2.5 text-[14px] font-semibold text-[var(--color-text)]">{next ? `Stage ${firstIncomplete + 1} of ${stages.length}: ${next.title}` : `All ${stages.length} stages done`}</p>
+            <p className="sm:hidden mb-2.5 text-body font-medium text-[var(--color-text)]">{next ? `Stage ${firstIncomplete + 1} of ${stages.length}: ${next.title}` : `All ${stages.length} stages done`}</p>
             <div className="max-sm:hidden">
               <StepLine steps={stages.map((st, i) => ({ label: st.title, state: st.checks.every((c) => c.ok) ? "done" : i === firstIncomplete ? "now" : "next" }))} />
             </div>
@@ -225,14 +225,14 @@ export default function SetupPage() {
         <SkeletonRows rows={7} cols={2} what="where your workspace is" />
       ) : (
         <Card label="Stages" pad={false} className="overflow-hidden">
-          <table className="w-full text-[15px]">
-            <thead className="bg-[var(--color-surface-2)] text-[13px] text-[var(--color-text-muted)] text-left max-md:hidden">
+          <table className="w-full text-body">
+            <thead className="bg-[var(--color-surface-2)] text-body text-[var(--color-text-muted)] text-left max-md:hidden">
               <tr>
-                <th className="font-semibold pl-4 pr-2 h-10 w-10">#</th>
-                <th className="font-semibold px-4 h-10">Stage</th>
-                <th className="font-semibold px-4 h-10">Status</th>
-                <th className="font-semibold px-4 h-10">What&apos;s there now</th>
-                <th className="font-semibold px-4 h-10 text-right">Go to</th>
+                <th className="font-medium pl-4 pr-2 h-10 w-10">#</th>
+                <th className="font-medium px-4 h-10">Stage</th>
+                <th className="font-medium px-4 h-10">Status</th>
+                <th className="font-medium px-4 h-10">What&apos;s there now</th>
+                <th className="font-medium px-4 h-10 text-right">Go to</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[var(--color-border)]">
@@ -250,7 +250,7 @@ export default function SetupPage() {
                       {active && <span aria-hidden className="md:hidden absolute -left-4 inset-y-[-12px] w-[3px] bg-[var(--color-current)]" />}
                       <div className="flex items-center gap-2.5">
                         <span className="md:hidden font-display tabular-nums text-[var(--color-text-muted)]">{i + 1}.</span>
-                        <span className="font-semibold text-[var(--color-text)]">{s.title}</span>
+                        <span className="font-medium text-[var(--color-text)]">{s.title}</span>
                         <HelpTooltip>{s.blurb}</HelpTooltip>
                       </div>
                     </td>
@@ -260,7 +260,7 @@ export default function SetupPage() {
                     <td className="md:px-4 md:py-3 align-top">
                       <ul className="space-y-0.5">
                         {s.checks.map((c) => (
-                          <li key={c.label} className={`flex items-start gap-2 text-[14px] ${c.ok ? "text-[var(--color-text-muted)]" : "text-[var(--color-text)]"}`}>
+                          <li key={c.label} className={`flex items-start gap-2 text-body ${c.ok ? "text-[var(--color-text-muted)]" : "text-[var(--color-text)]"}`}>
                             {c.ok
                               ? <Check aria-label="Done" className="w-4 h-4 mt-0.5 shrink-0 text-[var(--state-released)]" />
                               : <span aria-label="Not yet" className="w-4 h-4 mt-0.5 shrink-0 grid place-items-center"><span className="w-2 h-2 rounded-full border-2 border-[var(--color-text-faint)]" /></span>}
@@ -270,7 +270,7 @@ export default function SetupPage() {
                       </ul>
                     </td>
                     <td className="md:px-4 md:py-3 align-top md:text-right">
-                      <div className="flex flex-wrap md:flex-col md:items-end gap-x-4 gap-y-0.5 text-[14px]">
+                      <div className="flex flex-wrap md:flex-col md:items-end gap-x-4 gap-y-0.5 text-body">
                         <Link href={s.href} className="inline-flex items-center gap-1 text-[var(--color-accent-text)] hover:underline underline-offset-2 whitespace-nowrap">{s.cta} <ArrowRight className="w-3.5 h-3.5" /></Link>
                         {s.extraHref && <Link href={s.extraHref} className="text-[var(--color-accent-text)] hover:underline underline-offset-2 whitespace-nowrap">{s.extraCta}</Link>}
                       </div>

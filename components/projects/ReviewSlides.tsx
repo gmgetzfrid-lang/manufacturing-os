@@ -127,16 +127,16 @@ export default function ReviewSlides({ slides, name, onClose, onDownload, downlo
   const wide = !!box && box.w >= 820;
   const pad = full ? 0 : 16;
   const scale = box ? Math.min((box.w - pad * 2) / W, (box.h - pad * 2) / H) : 1;
-  const bar = "inline-flex items-center gap-1.5 h-9 px-3 rounded-lg text-[13px] font-bold hover:bg-white/10 disabled:opacity-30 whitespace-nowrap";
+  const bar = "inline-flex items-center gap-1.5 h-10 px-3 rounded-lg text-body font-medium hover:bg-white/10 disabled:opacity-30 whitespace-nowrap";
 
   // On the page's own body, so nothing the review sits in can crop it.
   return createPortal(
     <div ref={shell} style={deckVars(look)} className="fixed inset-0 z-[400] bg-slate-950 text-white flex flex-col" role="dialog" aria-modal="true" aria-label={`${name}: slide ${at + 1} of ${count}`} data-review-slides>
       {!full && (
         <div className="flex items-center gap-2 px-3 sm:px-5 py-2 border-b border-white/10">
-          <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-white/70">{name}</span>
+          <span className="min-w-0 flex-1 truncate text-body font-medium text-white/70">{name}</span>
           {choice && template && (
-            <div role="radiogroup" aria-label="Slide look" className="inline-flex rounded-lg bg-white/10 p-0.5 text-[13px] font-bold" data-slide-choice>
+            <div role="radiogroup" aria-label="Slide look" className="inline-flex rounded-lg bg-white/10 p-0.5 text-body font-medium" data-slide-choice>
               {([[true, "Company template"], [false, "Plain"]] as const).map(([v, t]) => (
                 <button key={t} type="button" role="radio" aria-checked={choice.on === v} onClick={() => { setMore(null); setAt(0); choice.set(v); }}
                   className={`h-8 px-2.5 sm:px-3 rounded-md whitespace-nowrap ${choice.on === v ? "bg-white text-slate-900" : "text-white/80 hover:bg-white/10"}`}>
@@ -145,7 +145,7 @@ export default function ReviewSlides({ slides, name, onClose, onDownload, downlo
               ))}
             </div>
           )}
-          <span className="text-[13px] font-bold text-white/60 tabular-nums whitespace-nowrap" data-slide-count>{at + 1} / {count}</span>
+          <span className="text-body font-medium text-white/60 tabular-nums whitespace-nowrap" data-slide-count>{at + 1} / {count}</span>
           {edit && !editing && <button type="button" onClick={() => { setEditing(true); setMore(null); }} className={bar} data-slide-edit-open><Pencil className="w-4 h-4" /> Edit</button>}
           <button type="button" onClick={onDownload} disabled={downloading} className={bar}>{downloading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}<span className="hidden sm:inline">Download </span>PowerPoint</button>
           {canFull && wide && <button type="button" onClick={toggleFull} className={bar}><Maximize2 className="w-4 h-4" /> Full screen</button>}
@@ -153,9 +153,9 @@ export default function ReviewSlides({ slides, name, onClose, onDownload, downlo
         </div>
       )}
       {ready && !full && (
-        <div role="status" className="flex items-center gap-2 flex-wrap px-3 sm:px-5 py-2 border-b border-white/10 text-[13px] font-bold text-white">
+        <div role="status" className="flex items-center gap-2 flex-wrap px-3 sm:px-5 py-2 border-b border-white/10 text-body font-medium text-white">
           <span className="min-w-0 flex-1">The file is ready.</span>
-          <button type="button" onClick={ready.onSave} className="h-9 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] font-semibold hover:bg-[var(--color-accent-hover)]">Save file</button>
+          <button type="button" onClick={ready.onSave} className="h-9 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] font-medium hover:bg-[var(--color-accent-hover)]">Save file</button>
         </div>
       )}
       <PickCtx.Provider value={pickCtx}>
@@ -167,10 +167,10 @@ export default function ReviewSlides({ slides, name, onClose, onDownload, downlo
           <div className="absolute inset-0 grid place-items-center px-6 text-center" data-slide-wait>
             {deckState && typeof deckState === "object" ? (
               <div className="max-w-md space-y-3">
-                <p className="text-[15px] font-semibold">The slides couldn&apos;t be laid on {template}: {deckState.error}</p>
-                <button type="button" onClick={() => choice?.set(false)} className="h-10 px-4 rounded-lg bg-white text-slate-900 font-bold">Show plain slides</button>
+                <p className="text-reading font-medium">The slides couldn&apos;t be laid on {template}: {deckState.error}</p>
+                <button type="button" onClick={() => choice?.set(false)} className="h-10 px-4 rounded-lg bg-white text-slate-900 font-medium">Show plain slides</button>
               </div>
-            ) : <span className="inline-flex items-center gap-2 text-[15px] text-white/80"><Loader2 className="w-5 h-5 animate-spin" /> Laying the slides on {template}…</span>}
+            ) : <span className="inline-flex items-center gap-2 text-reading text-white/80"><Loader2 className="w-5 h-5 animate-spin" /> Laying the slides on {template}…</span>}
           </div>
         ) : box && onTpl && deck ? (wide ? (
           <div className="absolute" style={{ inset: pad }} data-slide={at} data-slide-template onClick={full ? (e) => { if (!(e.target as HTMLElement).closest("tr[data-row]")) go(e.clientX > box.w / 2 ? 1 : -1); } : undefined}>
@@ -209,16 +209,16 @@ export default function ReviewSlides({ slides, name, onClose, onDownload, downlo
         <div className="absolute inset-0 z-10 flex items-end sm:items-center justify-center bg-slate-950/70" onClick={(e) => { if (e.target === e.currentTarget) setMore(null); }} data-slide-more>
           <div className="w-full sm:max-w-2xl max-h-[86%] overflow-y-auto rounded-t-2xl sm:rounded-2xl px-5 py-5" style={{ background: C.bg, color: C.ink }}>
             <div className="flex items-start gap-3">
-              <h3 className="min-w-0 flex-1 text-[18px] font-semibold leading-tight">{T(more.title)}</h3>
+              <h3 className="min-w-0 flex-1 text-section font-semibold leading-tight">{T(more.title)}</h3>
               <button type="button" onClick={() => setMore(null)} aria-label="Close" className="shrink-0 w-9 h-9 rounded-lg inline-flex items-center justify-center" style={{ background: C.band }}><X className="w-5 h-5" /></button>
             </div>
             {more.sections.map((sec, i) => (
               <div key={i} className="mt-4">
-                <div className="text-[13px] font-semibold" style={{ color: C.acc }}>{T(sec.title)}</div>
+                <div className="text-body font-medium" style={{ color: C.acc }}>{T(sec.title)}</div>
                 {sec.numbered
-                  ? <ol className="mt-1.5 list-decimal pl-5 space-y-1.5 text-[14px] leading-snug">{sec.lines.map((l, n) => <li key={n}>{T(l)}</li>)}</ol>
-                  : sec.lines.length === 1 ? <p className="mt-1.5 text-[14px] leading-snug">{T(sec.lines[0])}</p>
-                    : <ul className="mt-1.5 list-disc pl-5 space-y-1.5 text-[14px] leading-snug">{sec.lines.map((l, n) => <li key={n}>{T(l)}</li>)}</ul>}
+                  ? <ol className="mt-1.5 list-decimal pl-5 space-y-1.5 text-body leading-snug">{sec.lines.map((l, n) => <li key={n}>{T(l)}</li>)}</ol>
+                  : sec.lines.length === 1 ? <p className="mt-1.5 text-body leading-snug">{T(sec.lines[0])}</p>
+                    : <ul className="mt-1.5 list-disc pl-5 space-y-1.5 text-body leading-snug">{sec.lines.map((l, n) => <li key={n}>{T(l)}</li>)}</ul>}
               </div>
             ))}
           </div>
@@ -425,55 +425,55 @@ function Page({ spec, open }: { spec: SlideSpec; open?: Open }) {
   const b = spec.body;
   return (
     <div className="px-4 py-5">
-      <div className="text-[13px] font-semibold" style={{ color: C.acc }}>{T(spec.kicker)}</div>
-      <h2 className="mt-1 text-[21px] font-semibold leading-tight" style={{ color: C.heading }}>{T(spec.title)}</h2>
+      <div className="text-body font-medium" style={{ color: C.acc }}>{T(spec.kicker)}</div>
+      <h2 className="mt-1 text-[21px] font-medium leading-tight" style={{ color: C.heading }}>{T(spec.title)}</h2>
       {spec.pics && spec.pics.length > 0 && (
         <div className={`mt-3 grid gap-2 ${spec.pics.length > 1 ? "grid-cols-2" : "grid-cols-1"}`} data-slide-pics>
           {spec.pics.slice(0, 2).map((p, i) => (
             <figure key={i} className="m-0">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src={p.url} alt={p.caption} className="w-full aspect-[4/3] object-cover rounded-lg" />
-              {p.caption && <figcaption className="mt-1 text-[12px] truncate" style={{ color: C.soft }}>{T(p.caption)}</figcaption>}
+              {p.caption && <figcaption className="mt-1 text-caption truncate" style={{ color: C.soft }}>{T(p.caption)}</figcaption>}
             </figure>
           ))}
         </div>
       )}
       {b.k === "cover" && <>
-        {b.sub && <p className="mt-2 text-[14px]" style={{ color: C.soft }}>{T(b.sub)}</p>}
-        {b.table && <><div className="mt-5 text-[13px] font-semibold" style={{ color: C.acc }}>{T(b.tableTitle ?? "What this review measures")}</div><div className="mt-2"><Rows head={b.table.head} rows={b.table.rows} /></div></>}
-        {!b.table && <ol className="mt-5 space-y-1.5 text-[15px]">{b.agenda.map((t, i) => <li key={i}>{i + 1}. {T(t)}</li>)}</ol>}
-        <p className="mt-6 text-[13px]" style={{ color: C.soft }}>{T(b.meta)}</p>
+        {b.sub && <p className="mt-2 text-body" style={{ color: C.soft }}>{T(b.sub)}</p>}
+        {b.table && <><div className="mt-5 text-body font-medium" style={{ color: C.acc }}>{T(b.tableTitle ?? "What this review measures")}</div><div className="mt-2"><Rows head={b.table.head} rows={b.table.rows} /></div></>}
+        {!b.table && <ol className="mt-5 space-y-1.5 text-reading">{b.agenda.map((t, i) => <li key={i}>{i + 1}. {T(t)}</li>)}</ol>}
+        <p className="mt-6 text-body" style={{ color: C.soft }}>{T(b.meta)}</p>
       </>}
       {b.k === "asks" && (
         <ol className="mt-4 space-y-4">
-          {!b.items.length && <li className="text-[15px]">{T(spec.notes)}</li>}
+          {!b.items.length && <li className="text-reading">{T(spec.notes)}</li>}
           {b.items.map((it) => (
             <li key={it.n} className="flex gap-3">
               <span className="text-[22px] font-semibold leading-none" style={{ color: C.acc }}>{it.n}</span>
-              <span className="min-w-0"><b className="block text-[17px] leading-snug">{T(it.ask)}</b><span className="block mt-0.5 text-[14px] leading-snug" style={{ color: C.soft }}>{T(it.because)}</span></span>
+              <span className="min-w-0"><b className="block text-section leading-snug">{T(it.ask)}</b><span className="block mt-0.5 text-body leading-snug" style={{ color: C.soft }}>{T(it.because)}</span></span>
             </li>
           ))}
         </ol>
       )}
-      {b.k === "table" && b.lead && <p className="mt-3 text-[15px] font-semibold leading-snug" style={{ color: C.acc }} data-slide-lead>{T(b.lead)}</p>}
+      {b.k === "table" && b.lead && <p className="mt-3 text-reading font-medium leading-snug" style={{ color: C.acc }} data-slide-lead>{T(b.lead)}</p>}
       {b.k === "table" && b.tally && b.tally.length > 0 && (
-        <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1" data-slide-tally>{b.tally.map((t) => <span key={t.label} className="whitespace-nowrap"><b className="text-[20px]" style={{ color: `#${TONE_HEX[t.tone].fg}` }}>{t.n}</b> <span className="text-[13px]" style={{ color: C.soft }}>{T(t.label)}</span></span>)}</div>
+        <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1" data-slide-tally>{b.tally.map((t) => <span key={t.label} className="whitespace-nowrap"><b className="text-section" style={{ color: `#${TONE_HEX[t.tone].fg}` }}>{t.n}</b> <span className="text-body" style={{ color: C.soft }}>{T(t.label)}</span></span>)}</div>
       )}
       {b.k === "table" && <div className="mt-3"><Rows head={b.head} rows={b.rows} tags={b.tags} more={b.more} open={open} span={b.span} source={b.source} /></div>}
       {b.k === "split" && <div className="mt-3 space-y-5"><PanePage pane={b.left} /><PanePage pane={b.right} /></div>}
-      {b.k !== "cover" && b.foot && <p className="mt-4 text-[12px]" style={{ color: C.foot }}>{T(b.foot)}</p>}
+      {b.k !== "cover" && b.foot && <p className="mt-4 text-caption" style={{ color: C.foot }}>{T(b.foot)}</p>}
     </div>
   );
 }
 function PanePage({ pane }: { pane: SlidePane }) {
   const items = (pane.items ?? []).map(itemOf);
-  const label = "text-[13px] font-semibold ";
+  const label = "text-body font-medium ";
   return (
     <div>
       {pane.title && <div className={label} style={{ color: C.acc }}>{T(pane.title)}</div>}
       {items.length > 0 && (
-        <div className="mt-1.5 text-[14px] leading-snug">
-          {items.map((it, i) => <div key={i} className={`flex gap-2 mb-1.5 ${it.bold ? "font-semibold mt-3" : ""} ${it.sub ? "pl-4" : ""}`}>{!it.bold && <span aria-hidden>•</span>}<span>{T(it.text)}</span></div>)}
+        <div className="mt-1.5 text-body leading-snug">
+          {items.map((it, i) => <div key={i} className={`flex gap-2 mb-1.5 ${it.bold ? "font-medium mt-3" : ""} ${it.sub ? "pl-4" : ""}`}>{!it.bold && <span aria-hidden>•</span>}<span>{T(it.text)}</span></div>)}
         </div>
       )}
       {pane.table && <div className="mt-3">{pane.table.title && <div className={`${label} mb-1.5`} style={{ color: C.acc }}>{T(pane.table.title)}</div>}<Rows head={pane.table.head} rows={pane.table.rows} /></div>}
@@ -489,10 +489,10 @@ function Rows({ head, rows, tags, more, open, span, source }: { head: string[]; 
   const starts = groupsOf(rows.length, span).map((g, i) => (g.start === i ? i : -1)).filter((i) => i >= 0);
   // A short answer ("Not set", "No. 4") sits on its heading's line; a longer one goes under it.
   const field = (c: string, n: number, k: string) => !c ? null : !c.includes("\n") && c.length <= 28 ? (
-    <div key={k} className="mt-1.5"><span className="text-[12px] font-bold" style={{ color: C.foot }}>{T(head[n])}</span> <span>{T(c)}</span></div>
+    <div key={k} className="mt-1.5"><span className="text-caption font-medium" style={{ color: C.foot }}>{T(head[n])}</span> <span>{T(c)}</span></div>
   ) : (
     <div key={k} className="mt-1.5">
-      <div className="text-[12px] font-bold" style={{ color: C.foot }}>{T(head[n])}</div>
+      <div className="text-caption font-medium" style={{ color: C.foot }}>{T(head[n])}</div>
       <div>{lines(c, n === source)}</div>
     </div>
   );
@@ -502,15 +502,15 @@ function Rows({ head, rows, tags, more, open, span, source }: { head: string[]; 
         const m = open ? more?.[i] ?? null : null;
         const r = rows[i], own = span ? rows.slice(i, i + Math.max(1, span.rows[i] ?? 1)) : [r];
         return (
-          <li key={i} className="rounded-xl px-3 py-2.5 text-[14px] leading-snug" style={{ background: gi % 2 ? C.band : C.bg, border: pickCtx.picked === i ? "3px solid #f5b301" : `1px solid ${C.line}`, cursor: m || pickCtx.pick ? "pointer" : undefined }} onClick={pickCtx.pick ? () => pickCtx.pick!(i) : m ? () => open!(m) : undefined} data-row-more={m ? "" : undefined} data-row-group={gi}>
-            <div className="flex items-baseline gap-2 flex-wrap font-bold text-[15px]"><span className="min-w-0">{cell(r[0] ?? "", true)}</span>{tags?.[i] && <Tag tag={tags[i]!} size="11.5px" />}</div>
+          <li key={i} className="rounded-xl px-3 py-2.5 text-body leading-snug" style={{ background: gi % 2 ? C.band : C.bg, border: pickCtx.picked === i ? "3px solid #f5b301" : `1px solid ${C.line}`, cursor: m || pickCtx.pick ? "pointer" : undefined }} onClick={pickCtx.pick ? () => pickCtx.pick!(i) : m ? () => open!(m) : undefined} data-row-more={m ? "" : undefined} data-row-group={gi}>
+            <div className="flex items-baseline gap-2 flex-wrap font-medium text-reading"><span className="min-w-0">{cell(r[0] ?? "", true)}</span>{tags?.[i] && <Tag tag={tags[i]!} size="11.5px" />}</div>
             {r.slice(1, shared).map((c, n) => field(c, n + 1, `s${n}`))}
             {own.map((row, k) => row.slice(shared).some(Boolean) && (
               <div key={k} className={k || shared > 1 ? "mt-2 pt-1 border-t" : ""} style={{ borderColor: C.line }} data-row-item>
                 {row.slice(shared).map((c, n) => field(c, n + shared, `o${n}`))}
               </div>
             ))}
-            {m && <div className="mt-2 text-[12px] font-bold" style={{ color: C.acc }}>Tap for more</div>}
+            {m && <div className="mt-2 text-caption font-medium" style={{ color: C.acc }}>Tap for more</div>}
           </li>
         );
       })}

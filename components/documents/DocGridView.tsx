@@ -89,15 +89,15 @@ export default function DocGridView({
               className={`${itemShell(doc, selected, focused)} rounded-lg px-2 py-1 flex items-center gap-2.5 ${dimmedIds?.has(doc.id!) ? "opacity-50" : ""}`}
             >
               <DocThumb documentId={doc.id} width={thumbWidth} rounded="rounded" />
-              <span className="font-display text-[15px] font-semibold tabular-nums text-[var(--color-text)] truncate max-w-[16ch] shrink-0">
+              <span className="font-display text-reading font-semibold tabular-nums text-[var(--color-text)] truncate max-w-[16ch] shrink-0">
                 {doc.documentNumber || "-"}
               </span>
-              <span className="text-[14px] text-[var(--color-text)] truncate flex-1">
+              <span className="text-body text-[var(--color-text)] truncate flex-1">
                 {doc.title || doc.name || "Untitled"}
               </span>
               {doc.rev && (
-                <span className="text-[13px] text-[var(--color-text-muted)] shrink-0">
-                  Rev <span className="font-display text-[14px] font-semibold tabular-nums text-[var(--color-text)]">{doc.rev}</span>
+                <span className="text-body text-[var(--color-text-muted)] shrink-0">
+                  Rev <span className="font-display text-body font-semibold tabular-nums text-[var(--color-text)]">{doc.rev}</span>
                 </span>
               )}
               <StatusPill status={doc.status} />
@@ -136,18 +136,18 @@ export default function DocGridView({
             )}
             <DocThumb documentId={doc.id} width={thumbWidth} className="pointer-events-none" />
             <div className="w-full text-center min-w-0">
-              <div className="font-display text-[15px] font-semibold tabular-nums text-[var(--color-text)] truncate">
+              <div className="font-display text-reading font-semibold tabular-nums text-[var(--color-text)] truncate">
                 {doc.documentNumber || doc.title || doc.name || "-"}
               </div>
               {doc.documentNumber && (doc.title || doc.name) && (
-                <div className="text-[13px] text-[var(--color-text-muted)] truncate mt-0.5">
+                <div className="text-body text-[var(--color-text-muted)] truncate mt-0.5">
                   {doc.title || doc.name}
                 </div>
               )}
               <div className="flex items-center justify-center gap-1.5 mt-1.5">
                 {doc.rev && (
-                  <span className="text-[13px] text-[var(--color-text-muted)]">
-                    Rev <span className="font-display text-[14px] font-semibold tabular-nums text-[var(--color-text)]">{doc.rev}</span>
+                  <span className="text-body text-[var(--color-text-muted)]">
+                    Rev <span className="font-display text-body font-semibold tabular-nums text-[var(--color-text)]">{doc.rev}</span>
                   </span>
                 )}
                 <StatusPill status={doc.status} />

@@ -205,14 +205,14 @@ export default function DraftingConfigPage() {
                 <input 
                   value={opt.label}
                   onChange={(e) => updateOption('requestTypes', i, 'label', e.target.value)}
-                  className={`${fieldBox} h-10 pointer-coarse:h-11 text-[15px] max-sm:text-[16px] flex-1 min-w-0`}
+                  className={`${fieldBox} h-10 pointer-coarse:h-11 text-reading flex-1 min-w-0`}
                   placeholder="Display label"
                   aria-label="Display label"
                 />
                 <input 
                   value={opt.value}
                   onChange={(e) => updateOption('requestTypes', i, 'value', e.target.value)}
-                  className={`${fieldBox} h-10 pointer-coarse:h-11 text-[15px] max-sm:text-[16px] w-24 sm:w-36 shrink-0 tabular-nums`}
+                  className={`${fieldBox} h-10 pointer-coarse:h-11 text-reading w-24 sm:w-36 shrink-0 tabular-nums`}
                   placeholder="Value (ID)"
                   aria-label="Value (ID)"
                 />
@@ -233,14 +233,14 @@ export default function DraftingConfigPage() {
                 <input 
                   value={opt.label}
                   onChange={(e) => updateOption('units', i, 'label', e.target.value)}
-                  className={`${fieldBox} h-10 pointer-coarse:h-11 text-[15px] max-sm:text-[16px] flex-1 min-w-0`}
+                  className={`${fieldBox} h-10 pointer-coarse:h-11 text-reading flex-1 min-w-0`}
                   placeholder="Unit name"
                   aria-label="Unit name"
                 />
                 <input 
                   value={opt.value}
                   onChange={(e) => updateOption('units', i, 'value', e.target.value)}
-                  className={`${fieldBox} h-10 pointer-coarse:h-11 text-[15px] max-sm:text-[16px] w-24 sm:w-36 shrink-0 tabular-nums`}
+                  className={`${fieldBox} h-10 pointer-coarse:h-11 text-reading w-24 sm:w-36 shrink-0 tabular-nums`}
                   placeholder="Code"
                   aria-label="Code"
                 />
@@ -262,7 +262,7 @@ export default function DraftingConfigPage() {
                 <input 
                   value={opt.label}
                   onChange={(e) => updateOption('priorities', i, 'label', e.target.value)}
-                  className={`${fieldBox} h-10 pointer-coarse:h-11 text-[15px] max-sm:text-[16px] flex-1 min-w-0`}
+                  className={`${fieldBox} h-10 pointer-coarse:h-11 text-reading flex-1 min-w-0`}
                   placeholder="Level description"
                   aria-label="Level description"
                 />
@@ -270,7 +270,7 @@ export default function DraftingConfigPage() {
                   type="number"
                   value={opt.value}
                   onChange={(e) => updateOption('priorities', i, 'value', Number(e.target.value))}
-                  className={`${fieldBox} h-10 pointer-coarse:h-11 text-[15px] max-sm:text-[16px] w-24 shrink-0 tabular-nums`}
+                  className={`${fieldBox} h-10 pointer-coarse:h-11 text-reading w-24 shrink-0 tabular-nums`}
                   placeholder="Level number"
                   aria-label="Level number"
                 />
@@ -294,8 +294,8 @@ export default function DraftingConfigPage() {
                   className="mt-1 w-4 h-4"
                 />
                 <span>
-                  <span className="block text-[15px] font-semibold text-[var(--color-text)]">Keep admins notified when there is a drafting supervisor</span>
-                  <span className="block text-[14px] text-[var(--color-text-muted)] mt-0.5">Otherwise new-request notices go only to the drafting supervisor. With no supervisor, admins always get them.</span>
+                  <span className="block text-reading font-medium text-[var(--color-text)]">Keep admins notified when there is a drafting supervisor</span>
+                  <span className="block text-body text-[var(--color-text-muted)] mt-0.5">Otherwise new-request notices go only to the drafting supervisor. With no supervisor, admins always get them.</span>
                 </span>
               </label>
             </div>
@@ -334,10 +334,10 @@ function ConfigSection({
     <Section label={<>{title} <HelpTooltip>{desc}</HelpTooltip></>} count={config.options.length}>
       <div className={sheet}>
         <FormRow label="Form label" htmlFor={`label-${title}`}>
-          <input id={`label-${title}`} value={config.label} onChange={(e) => onLabelChange(e.target.value)} className={`${field} font-semibold`} />
+          <input id={`label-${title}`} value={config.label} onChange={(e) => onLabelChange(e.target.value)} className={`${field} font-medium`} />
         </FormRow>
         <div className="border-t border-[var(--color-border)] px-4 sm:px-5 pt-3 pb-4">
-          <div className="flex items-center gap-2 pb-1.5 text-[13px] font-semibold text-[var(--color-text-muted)]">
+          <div className="flex items-center gap-2 pb-1.5 text-body font-medium text-[var(--color-text-muted)]">
             <span className="flex-1">Shown as</span>
             <span className="w-24 sm:w-36 shrink-0">Stored as</span>
             <span className="w-8 shrink-0" />
@@ -397,7 +397,7 @@ function CustomCategoriesSection({
       action={<button type="button" onClick={addCategory} className={btnQuiet}><Plus className="w-3.5 h-3.5" /> Add section</button>}>
       <div className="space-y-4">
         {categories.length === 0 && (
-          <div className={`${sheet} px-4 py-6 text-center text-[15px] text-[var(--color-text-muted)]`}>The form has only the standard sections.</div>
+          <div className={`${sheet} px-4 py-6 text-center text-reading text-[var(--color-text-muted)]`}>The form has only the standard sections.</div>
         )}
         {categories.map((cat, idx) => (
           <CategoryCard
@@ -445,10 +445,10 @@ function CategoryCard({
           value={cat.label}
           onChange={(e) => onChange({ label: e.target.value })}
           aria-label="Section name"
-          className={`${fieldBox} h-10 pointer-coarse:h-11 text-[15px] max-sm:text-[16px] flex-1 min-w-[160px] font-semibold`}
+          className={`${fieldBox} h-10 pointer-coarse:h-11 text-reading flex-1 min-w-[160px] font-medium`}
           placeholder="Section name"
         />
-        <label className="inline-flex items-center gap-1.5 text-[14px] text-[var(--color-text)] px-1">
+        <label className="inline-flex items-center gap-1.5 text-body text-[var(--color-text)] px-1">
           <input type="checkbox" checked={cat.enabled} onChange={(e) => onChange({ enabled: e.target.checked })} className="w-4 h-4" />
           Shown on the form
         </label>
@@ -467,7 +467,7 @@ function CategoryCard({
           className={field}
         />
         <div className="space-y-2 mt-2">
-          {cat.fields.length === 0 && <div className="text-[14px] text-[var(--color-text-muted)]">No fields yet.</div>}
+          {cat.fields.length === 0 && <div className="text-body text-[var(--color-text-muted)]">No fields yet.</div>}
           {cat.fields.map((f, i) => (
             <FieldEditor key={f.key} field={f} onChange={(patch) => updateField(i, patch)} onRemove={() => removeField(i)} />
           ))}
@@ -506,17 +506,17 @@ function FieldEditor({
           onChange={(e) => onChange({ label: e.target.value })}
           placeholder="Field label"
           aria-label="Field label"
-          className={`${fieldBox} h-10 pointer-coarse:h-11 text-[15px] max-sm:text-[16px] flex-1 min-w-[140px] font-semibold`}
+          className={`${fieldBox} h-10 pointer-coarse:h-11 text-reading flex-1 min-w-[140px] font-medium`}
         />
         <select
           aria-label="Field type"
           value={field.type}
           onChange={(e) => onChange({ type: e.target.value as CustomFieldType, options: e.target.value === "select" || e.target.value === "multiselect" ? (field.options || []) : undefined })}
-          className={`${fieldBox} h-10 pointer-coarse:h-11 text-[15px] max-sm:text-[16px]`}
+          className={`${fieldBox} h-10 pointer-coarse:h-11 text-reading`}
         >
           {FIELD_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
         </select>
-        <label className="inline-flex items-center gap-1.5 text-[14px] text-[var(--color-text)] px-1">
+        <label className="inline-flex items-center gap-1.5 text-body text-[var(--color-text)] px-1">
           <input type="checkbox" checked={!!field.required} onChange={(e) => onChange({ required: e.target.checked })} className="w-4 h-4" />
           Required
         </label>
@@ -530,7 +530,7 @@ function FieldEditor({
           onChange={(e) => onChange({ placeholder: e.target.value })}
           placeholder="Placeholder (optional)"
           aria-label="Placeholder"
-          className={`${fieldBox} w-full mt-2 h-10 pointer-coarse:h-11 text-[15px] max-sm:text-[16px]`}
+          className={`${fieldBox} w-full mt-2 h-10 pointer-coarse:h-11 text-reading`}
         />
       )}
       <input
@@ -538,11 +538,11 @@ function FieldEditor({
         onChange={(e) => onChange({ description: e.target.value })}
         placeholder="Help text (optional)"
         aria-label="Help text"
-        className={`${fieldBox} w-full mt-2 h-10 pointer-coarse:h-11 text-[15px] max-sm:text-[16px]`}
+        className={`${fieldBox} w-full mt-2 h-10 pointer-coarse:h-11 text-reading`}
       />
       {isChoice && (
         <div className="mt-2 space-y-1">
-          <div className="text-[13px] font-semibold text-[var(--color-text-muted)]">Choices</div>
+          <div className="text-body font-medium text-[var(--color-text-muted)]">Choices</div>
           {(field.options ?? []).map((opt, oi) => (
             <div key={oi} className="flex gap-1 items-center">
               <input
@@ -554,7 +554,7 @@ function FieldEditor({
                 }}
                 placeholder="Shown as"
                 aria-label="Shown as"
-                className={`${fieldBox} flex-1 h-10 pointer-coarse:h-11 text-[15px] max-sm:text-[16px]`}
+                className={`${fieldBox} flex-1 h-10 pointer-coarse:h-11 text-reading`}
               />
               <input
                 value={String(opt.value)}
@@ -565,7 +565,7 @@ function FieldEditor({
                 }}
                 placeholder="Stored as"
                 aria-label="Stored as"
-                className={`${fieldBox} w-24 sm:w-36 h-10 pointer-coarse:h-11 text-[15px] max-sm:text-[16px]`}
+                className={`${fieldBox} w-24 sm:w-36 h-10 pointer-coarse:h-11 text-reading`}
               />
               <button
                 type="button"

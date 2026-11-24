@@ -30,7 +30,7 @@ export default function RetentionPill({ retentionUntil, dispositionState, legalH
   return (
     <span
       title={legalHold ? "Under legal hold: can't be deleted or disposed" : retentionUntil ? `Retention until ${retentionUntil.slice(0, 10)}` : undefined}
-      className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[13px] font-semibold whitespace-nowrap ${cfg.cls} ${className}`}
+      className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-body font-medium whitespace-nowrap ${cfg.cls} ${className}`}
     >
       <Icon className="w-3 h-3 shrink-0" /> {compact ? cfg.short : cfg.full}
     </span>

@@ -385,8 +385,8 @@ export default function RestorePage() {
         <div className={`${sheet} p-4 flex items-center gap-3`} {...drag.bind}>
           <FileThumb file={picked} />
           <div className="min-w-0 flex-1">
-            <div className="text-[15px] font-semibold text-[var(--color-text)] truncate">{picked.name}</div>
-            <div className="text-[13px] text-[var(--color-text-muted)]">
+            <div className="text-reading font-medium text-[var(--color-text)] truncate">{picked.name}</div>
+            <div className="text-body text-[var(--color-text-muted)]">
               {formatBytes(picked.size)}
               {busy && <span className="inline-flex items-center gap-1 ml-2"><Loader2 aria-hidden className="w-3 h-3 animate-spin" /> Reading the backup and making the plan</span>}
               {plan && !busy && <>, {plural(plan.counts.tables.filter((t) => t.rows > 0).length, "table")}</>}
@@ -406,12 +406,12 @@ export default function RestorePage() {
           className={`w-full rounded-xl border-2 border-dashed border-[var(--color-border-strong)] bg-[var(--color-surface)] px-6 py-10 text-center transition-colors hover:bg-[var(--color-surface-2)] ${drag.ring}`}
         >
           {drag.over ? (
-            <span className="block text-[15px] font-semibold text-[var(--color-text)]">{drag.say}</span>
+            <span className="block text-reading font-medium text-[var(--color-text)]">{drag.say}</span>
           ) : (
             <>
               <UploadCloud aria-hidden className="w-6 h-6 mx-auto mb-2.5 text-[var(--color-text-faint)]" />
-              <span className="block text-[15px] font-semibold text-[var(--color-text)]">Drop a backup .zip or .json here, or choose one</span>
-              <span className="block text-[13px] text-[var(--color-text-muted)] mt-1">Read in your browser. The full backup ZIP can also put the files back.</span>
+              <span className="block text-reading font-medium text-[var(--color-text)]">Drop a backup .zip or .json here, or choose one</span>
+              <span className="block text-body text-[var(--color-text-muted)] mt-1">Read in your browser. The full backup ZIP can also put the files back.</span>
             </>
           )}
         </button>
@@ -427,7 +427,7 @@ export default function RestorePage() {
               <StatusTag tone="warn">Check before restoring</StatusTag>
               <ul className="mt-2 space-y-1 list-disc ml-5">
                 {plan.warnings.map((w, i) => (
-                  <li key={i} className="text-[14px] text-[var(--color-text)]">{w}</li>
+                  <li key={i} className="text-body text-[var(--color-text)]">{w}</li>
                 ))}
               </ul>
             </div>
@@ -443,9 +443,9 @@ export default function RestorePage() {
                       <span aria-hidden className={`w-4 h-4 rounded-full border-2 grid place-items-center shrink-0 ${keepName === val ? "border-[var(--color-text)]" : "border-[var(--color-border-control)]"}`}>
                         {keepName === val && <span className="w-2 h-2 rounded-full bg-[var(--color-text)]" />}
                       </span>
-                      <span className="text-[15px] font-semibold text-[var(--color-text)] truncate">{name}</span>
+                      <span className="text-reading font-medium text-[var(--color-text)] truncate">{name}</span>
                     </span>
-                    <span className="block text-[13px] text-[var(--color-text-muted)] mt-0.5 pl-[26px]">{hint}</span>
+                    <span className="block text-body text-[var(--color-text-muted)] mt-0.5 pl-[26px]">{hint}</span>
                   </button>
                 ))}
               </div>
@@ -455,15 +455,15 @@ export default function RestorePage() {
           <div className={`grid grid-cols-1 gap-x-6 gap-y-8 items-start ${plan.users.length > 0 ? "lg:grid-cols-[minmax(0,62fr)_minmax(0,38fr)]" : ""}`}>
             {plan.users.length > 0 && (
               <Section label={<>People <HelpTooltip>Matched by email. Someone already in this workspace is re-linked to their records. Anyone else comes back as an inactive placeholder with no seat; re-invite them in Users to give access.</HelpTooltip></>}
-                action={<span className="text-[13px] text-[var(--color-text-muted)] tabular-nums">{fmtNum(plan.counts.matchedUsers)} re-linked, {fmtNum(plan.counts.newUsers)} placeholders</span>}>
+                action={<span className="text-body text-[var(--color-text-muted)] tabular-nums">{fmtNum(plan.counts.matchedUsers)} re-linked, {fmtNum(plan.counts.newUsers)} placeholders</span>}>
                 <ul className={`${sheet} divide-y divide-[var(--color-border)] max-h-80 overflow-y-auto`}>
                   {plan.users.map((u) => (
                     <li key={u.email} className="px-4 py-2.5 flex items-center gap-3">
                       <div className="flex-1 min-w-0">
-                        <div className="text-[14px] font-semibold text-[var(--color-text)] truncate">{u.displayName || u.email}</div>
-                        <div className="text-[13px] text-[var(--color-text-muted)] truncate">{u.email}{u.role ? `, ${u.role}` : ""}</div>
+                        <div className="text-body font-medium text-[var(--color-text)] truncate">{u.displayName || u.email}</div>
+                        <div className="text-body text-[var(--color-text-muted)] truncate">{u.email}{u.role ? `, ${u.role}` : ""}</div>
                       </div>
-                      <span className="text-[13px] text-[var(--color-text-muted)] shrink-0">{u.disposition === "linked" ? "Re-linked" : "Placeholder"}</span>
+                      <span className="text-body text-[var(--color-text-muted)] shrink-0">{u.disposition === "linked" ? "Re-linked" : "Placeholder"}</span>
                     </li>
                   ))}
                 </ul>
@@ -472,14 +472,14 @@ export default function RestorePage() {
 
             <Section label="What would import">
               <div className={`${sheet} max-h-80 overflow-y-auto`}>
-                <table className="w-full text-[14px] tabular-nums">
+                <table className="w-full text-body tabular-nums">
                   <thead className="sr-only"><tr><th>Table</th><th>Rows</th><th>Imports</th></tr></thead>
                   <tbody className="divide-y divide-[var(--color-border)]">
                     {plan.counts.tables.filter((t) => t.rows > 0).map((t) => (
                       <tr key={t.name} title={t.reason}>
-                        <td className="px-4 py-2 font-mono text-[13px] text-[var(--color-text)] max-w-0 w-full truncate">{t.name}</td>
+                        <td className="px-4 py-2 font-mono text-body text-[var(--color-text)] max-w-0 w-full truncate">{t.name}</td>
                         <td className="px-2 py-2 text-right text-[var(--color-text-muted)] whitespace-nowrap">{fmtNum(t.rows)}</td>
-                        <td className="px-4 py-2 text-right whitespace-nowrap text-[13px]">{t.willImport ? <span className="text-[var(--color-text)]">Imports</span> : <span className="text-[var(--color-text-faint)]">Skipped</span>}</td>
+                        <td className="px-4 py-2 text-right whitespace-nowrap text-body">{t.willImport ? <span className="text-[var(--color-text)]">Imports</span> : <span className="text-[var(--color-text-faint)]">Skipped</span>}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -491,40 +491,40 @@ export default function RestorePage() {
           {/* Step 3: write the records, with honest progress. */}
           {applying && (
             <div className={`${sheet} p-4 sm:p-5`} aria-live="polite">
-              <div className="flex items-center gap-2 text-[15px] font-semibold text-[var(--color-text)] mb-2">
+              <div className="flex items-center gap-2 text-reading font-medium text-[var(--color-text)] mb-2">
                 <Loader2 aria-hidden className="w-4 h-4 animate-spin text-[var(--color-text-muted)]" />
-                {applyProgress.phase === "begin" ? "Matching people" : <>Restoring <span className="font-mono text-[14px]">{applyProgress.currentTable}</span>, table {Math.min(applyProgress.tablesDone + 1, applyProgress.tablesTotal)} of {applyProgress.tablesTotal}</>}
+                {applyProgress.phase === "begin" ? "Matching people" : <>Restoring <span className="font-mono text-body">{applyProgress.currentTable}</span>, table {Math.min(applyProgress.tablesDone + 1, applyProgress.tablesTotal)} of {applyProgress.tablesTotal}</>}
               </div>
               <div className="h-2 rounded-full bg-[var(--color-surface-2)] overflow-hidden" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct} aria-label="Records restored">
                 <div className="h-full rounded-full bg-[var(--color-text)] transition-[width] motion-reduce:transition-none" style={{ width: `${pct}%` }} />
               </div>
-              <div className="text-[13px] text-[var(--color-text-muted)] mt-1 tabular-nums">{fmtNum(applyProgress.rowsDone)} of {fmtNum(applyProgress.rowsTotal)} records ({pct}%)</div>
+              <div className="text-body text-[var(--color-text-muted)] mt-1 tabular-nums">{fmtNum(applyProgress.rowsDone)} of {fmtNum(applyProgress.rowsTotal)} records ({pct}%)</div>
             </div>
           )}
 
           {applyResult ? (
             <div className={`${sheet} p-4 sm:p-5`}>
-              <p className="flex items-center gap-2 text-[16px] font-semibold text-[var(--color-text)]"><Check aria-hidden className="w-4 h-4 text-[var(--state-released)]" /> Records restored</p>
-              <p className="mt-1 text-[14px] text-[var(--color-text)]">
+              <p className="flex items-center gap-2 text-reading font-medium text-[var(--color-text)]"><Check aria-hidden className="w-4 h-4 text-[var(--state-released)]" /> Records restored</p>
+              <p className="mt-1 text-body text-[var(--color-text)]">
                 Imported {plural(applyResult.totalInserted, "record")}, re-linked {plural(applyResult.linkedUsers, "person", "people")}, and made {plural(applyResult.createdUsers, "placeholder")}.
                 {" "}Placeholders are inactive. <Link href="/admin/users" className={link}>Re-invite them in Users</Link> to give access.
               </p>
               {applyResult.failedTables.length > 0 && (
-                <p role="alert" className="mt-2 text-[14px] text-[var(--state-overdue-text)]">
+                <p role="alert" className="mt-2 text-body text-[var(--state-overdue-text)]">
                   These tables didn&apos;t fully import: <span className="font-mono">{applyResult.failedTables.join(", ")}</span>. Run the restore again (it only adds, so it&apos;s safe) or check the audit log.
                 </p>
               )}
             </div>
           ) : !applying && (
             <div className={`${sheet} p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center gap-4`}>
-              <p className="flex-1 text-[14px] text-[var(--color-text-muted)]">
-                <b className="font-semibold text-[var(--color-text)]">This writes to the live workspace.</b> It only adds (existing data is kept), can be run again, and does exactly the plan above.{zipRef.current ? " After the records, the next step puts the ZIP's files back." : " A JSON backup has no files; use the full backup ZIP to restore files too."}
+              <p className="flex-1 text-body text-[var(--color-text-muted)]">
+                <b className="font-medium text-[var(--color-text)]">This writes to the live workspace.</b> It only adds (existing data is kept), can be run again, and does exactly the plan above.{zipRef.current ? " After the records, the next step puts the ZIP's files back." : " A JSON backup has no files; use the full backup ZIP to restore files too."}
               </p>
               <div className="shrink-0 flex flex-col items-start sm:items-end gap-1">
                 <Button onClick={() => void applyRestore()} disabled={plan.counts.totalRows === 0}>
                   Restore {plural(plan.counts.totalRows, "record")}
                 </Button>
-                {plan.counts.totalRows === 0 && <span className="text-[13px] text-[var(--color-text-muted)]">This backup has no records to add.</span>}
+                {plan.counts.totalRows === 0 && <span className="text-body text-[var(--color-text-muted)]">This backup has no records to add.</span>}
               </div>
             </div>
           )}
@@ -538,31 +538,31 @@ export default function RestorePage() {
                     <div className="h-2 rounded-full bg-[var(--color-surface-2)] overflow-hidden" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={filePct} aria-label="Files put back">
                       <div className="h-full rounded-full bg-[var(--color-text-muted)] transition-[width] motion-reduce:transition-none" style={{ width: `${filePct}%` }} />
                     </div>
-                    <div className="text-[13px] text-[var(--color-text-muted)] mt-1 tabular-nums">
+                    <div className="text-body text-[var(--color-text-muted)] mt-1 tabular-nums">
                       {fmtNum(filesProgress.done)} of {fmtNum(filesProgress.total)}: {fmtNum(filesProgress.uploaded)} uploaded, {fmtNum(filesProgress.skipped)} already there
                       {filesProgress.offline > 0 && <>, {fmtNum(filesProgress.offline)} left in space archives</>}
-                      {filesProgress.failed > 0 && <span className="text-[var(--state-overdue-text)] font-semibold">, {fmtNum(filesProgress.failed)} didn&apos;t upload</span>}
+                      {filesProgress.failed > 0 && <span className="text-[var(--state-overdue-text)] font-medium">, {fmtNum(filesProgress.failed)} didn&apos;t upload</span>}
                     </div>
                   </div>
                 ) : (
-                  <p className="mb-3 text-[14px] text-[var(--color-text-muted)]">{plural(fileEntryCount, "file")} in this ZIP.</p>
+                  <p className="mb-3 text-body text-[var(--color-text-muted)]">{plural(fileEntryCount, "file")} in this ZIP.</p>
                 )}
                 {failedFiles.length > 0 && !filesProgress.running && (
                   <ul className="mb-3 rounded-lg border border-[var(--color-border)] divide-y divide-[var(--color-border)] max-h-64 overflow-y-auto">
                     {failedFiles.slice(0, 50).map((f) => (
                       <li key={f.entry} className="px-3 py-2 flex items-center gap-2">
                         <span className="min-w-0 flex-1">
-                          <span className="block text-[13px] font-mono font-semibold text-[var(--color-text)] truncate" title={f.key}>{f.key.split("/").pop()}</span>
-                          <span className="block text-[13px] text-[var(--state-overdue-text)] truncate">{said(f.error)}</span>
+                          <span className="block text-body font-mono font-medium text-[var(--color-text)] truncate" title={f.key}>{f.key.split("/").pop()}</span>
+                          <span className="block text-body text-[var(--state-overdue-text)] truncate">{said(f.error)}</span>
                         </span>
                         <Button size="sm" variant="secondary" loading={!!f.retrying} onClick={() => void retryFile(f.entry, f.key)}>Try again</Button>
                       </li>
                     ))}
-                    {failedFiles.length > 50 && <li className="px-3 py-2 text-[13px] text-[var(--color-text-muted)]">And {fmtNum(failedFiles.length - 50)} more</li>}
+                    {failedFiles.length > 50 && <li className="px-3 py-2 text-body text-[var(--color-text-muted)]">And {fmtNum(failedFiles.length - 50)} more</li>}
                   </ul>
                 )}
                 <div className="flex items-center justify-end gap-4 flex-wrap">
-                  {filesDone && <Link href="/documents" className={`text-[15px] ${link}`}>Open Documents</Link>}
+                  {filesDone && <Link href="/documents" className={`text-reading ${link}`}>Open Documents</Link>}
                   {failedFiles.length > 0 && !filesProgress.running ? (
                     <Button onClick={() => void putFilesBack(failedFiles.map((f) => f.entry))}>
                       Try again for {plural(failedFiles.length, "file")}

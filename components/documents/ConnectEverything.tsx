@@ -179,7 +179,7 @@ export function useConnectEverything(orgId: string | null, onDone?: () => void) 
 export function ConnectButton({ running, onClick, disabled, className = "" }: { running: boolean; onClick: () => void; disabled?: boolean; className?: string }) {
   return (
     <button onClick={onClick} disabled={running || disabled} title="Units, drawings read, equipment registry and links: all of it, with sensible defaults. Safe to press again."
-      className={`rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] px-2.5 py-1 inline-flex items-center gap-1 font-semibold disabled:opacity-60 ${className}`}>
+      className={`rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] px-2.5 py-1 inline-flex items-center gap-1 font-medium disabled:opacity-60 ${className}`}>
       {running ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />} {running ? "Connecting…" : "Connect everything"}
     </button>
   );
@@ -198,10 +198,10 @@ export function ConnectProgress({ status, running, error, reading, onCancel, onC
 }) {
   if (!status && !running && !error && !bulk) return null;
   return (
-    <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)]/95 px-3 py-2 text-[13px] shadow-md space-y-1.5 max-w-md">
+    <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)]/95 px-3 py-2 text-body shadow-md space-y-1.5 max-w-md">
       <div className="flex items-center justify-between gap-2">
-        <div className="font-semibold inline-flex items-center gap-1.5"><Sparkles className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> {running ? "Connecting the estate" : error ? "Stopped" : status?.more ? "Paused - press again to continue" : "Connected"}</div>
-        {running ? <button onClick={onCancel} className="text-[13px] opacity-70 hover:opacity-100">stop</button> : <button onClick={onClose} className="opacity-60 hover:opacity-100"><X className="w-3.5 h-3.5" /></button>}
+        <div className="font-medium inline-flex items-center gap-1.5"><Sparkles className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> {running ? "Connecting the estate" : error ? "Stopped" : status?.more ? "Paused - press again to continue" : "Connected"}</div>
+        {running ? <button onClick={onCancel} className="text-body opacity-70 hover:opacity-100">stop</button> : <button onClick={onClose} className="opacity-60 hover:opacity-100"><X className="w-3.5 h-3.5" /></button>}
       </div>
       {error && <div className="text-[var(--state-overdue)]">{error}</div>}
       {!status && running && <div className="text-[var(--color-text-muted)] inline-flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" /> Looking at units, libraries and drawings…</div>}
@@ -214,16 +214,16 @@ export function ConnectProgress({ status, running, error, reading, onCancel, onC
             return (
               <li key={s.key} className="flex items-start gap-1.5">
                 <I className={`w-3.5 h-3.5 mt-0.5 shrink-0 ${tone}`} />
-                <div className="min-w-0"><span className="font-bold">{s.title}</span> <span className="text-[var(--color-text-muted)]">· {detail}</span></div>
+                <div className="min-w-0"><span className="font-medium">{s.title}</span> <span className="text-[var(--color-text-muted)]">· {detail}</span></div>
               </li>
             );
           })}
         </ol>
       )}
-      {reading?.visionSkip && running && <div className="text-[13px] text-[var(--state-held)]">{reading.visionSkip}</div>}
+      {reading?.visionSkip && running && <div className="text-body text-[var(--state-held)]">{reading.visionSkip}</div>}
       {bulk && (
-        <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] px-2 py-1.5 text-[13px] space-y-0.5">
-          <div className="font-bold inline-flex items-center gap-1">{!bulk.finished ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckCircle2 className="w-3 h-3 text-[var(--state-released)]" />} Drawings read with your AI model: {bulk.done} of {bulk.total}</div>
+        <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] px-2 py-1.5 text-body space-y-0.5">
+          <div className="font-medium inline-flex items-center gap-1">{!bulk.finished ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckCircle2 className="w-3 h-3 text-[var(--state-released)]" />} Drawings read with your AI model: {bulk.done} of {bulk.total}</div>
           {bulk.current && <div className="text-[var(--color-text-muted)] truncate">Now: {bulk.current}</div>}
           <div className="text-[var(--color-text-muted)]">{bulk.equipment} equipment callouts found · {bulk.added} tags put on drawings · {bulk.removed} wrong tags taken off · {bulk.created} new in the registry{bulk.failed ? ` · ${bulk.failed} failed` : ""}</div>
           {bulk.lastError && <div className="text-[var(--state-overdue)]">{bulk.lastError}</div>}
@@ -232,7 +232,7 @@ export function ConnectProgress({ status, running, error, reading, onCancel, onC
       )}
       {!running && undoBox}
       {status && (
-        <div className="text-[13px] text-[var(--color-text-muted)] border-t border-[var(--color-border)] pt-1.5 space-y-1">
+        <div className="text-body text-[var(--color-text-muted)] border-t border-[var(--color-border)] pt-1.5 space-y-1">
           <div>
             {status.ai.hasKey
               ? <>AI vision is on your key ({status.ai.provider}{status.ai.model ? ` · ${status.ai.model}` : ""}): pages with no usable text layer are read by vision as they come up.</>
@@ -244,7 +244,7 @@ export function ConnectProgress({ status, running, error, reading, onCancel, onC
                 <input type="checkbox" checked={status.ai.visionAllPages} disabled={!status.ai.hasKey} onChange={(e) => onRun({ visionAllPages: e.target.checked })} className="w-3.5 h-3.5 accent-[var(--color-text)]" />
                 Read every page with AI vision
               </label>
-              {onReadAll && <button onClick={onReadAll} disabled={!status.ai.hasKey} className="rounded-full border border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)] px-2 py-0.5 font-semibold hover:bg-[var(--color-surface-2)] disabled:opacity-50">Read all drawings with AI</button>}
+              {onReadAll && <button onClick={onReadAll} disabled={!status.ai.hasKey} className="rounded-full border border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)] px-2 py-0.5 font-medium hover:bg-[var(--color-surface-2)] disabled:opacity-50">Read all drawings with AI</button>}
             </div>
           )}
           {!running && onAutoRead && <AutoReadSwitch auto={status.ai.autoRead} hasKey={status.ai.hasKey} onChange={onAutoRead} />}
@@ -262,11 +262,11 @@ export function UndoRunBox({ runId, journaled, undo, onUndo }: {
   onUndo: () => void;
 }) {
   if (!runId) return null;
-  if (!journaled) return <div className="text-[13px] text-[var(--state-held)]">Undo is not available for this run: apply migration 20261021_ai_boundary_runs.sql to record runs.</div>;
+  if (!journaled) return <div className="text-body text-[var(--state-held)]">Undo is not available for this run: apply migration 20261021_ai_boundary_runs.sql to record runs.</div>;
   const r = undo?.result;
   return (
-    <div className="text-[13px] space-y-0.5">
-      {!r && <button onClick={onUndo} disabled={undo?.busy} className="rounded-full border border-[color-mix(in_srgb,var(--state-overdue)_35%,transparent)] bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] text-[var(--state-overdue)] px-2 py-0.5 font-semibold hover:bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] disabled:opacity-50 inline-flex items-center gap-1">{undo?.busy ? <Loader2 className="w-3 h-3 animate-spin" /> : null} Undo this run</button>}
+    <div className="text-body space-y-0.5">
+      {!r && <button onClick={onUndo} disabled={undo?.busy} className="rounded-full border border-[color-mix(in_srgb,var(--state-overdue)_35%,transparent)] bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] text-[var(--state-overdue)] px-2 py-0.5 font-medium hover:bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] disabled:opacity-50 inline-flex items-center gap-1">{undo?.busy ? <Loader2 className="w-3 h-3 animate-spin" /> : null} Undo this run</button>}
       {undo?.error && <div className="text-[var(--state-overdue)]">{undo.error}</div>}
       {r && <div className="text-[var(--state-released)]">Undone: {r.drawings} drawing{r.drawings === 1 ? "" : "s"} put back · {r.columnsRestored} equipment columns · {r.edgesRestored + r.edgesRemoved} links · {r.readingsRestored} readings · {r.assetsRemoved} registry items removed{r.assetsKept.length ? ` · kept ${r.assetsKept.join(", ")} (someone added to them)` : ""}{r.skipped.length ? ` · ${r.skipped.length} left as a person changed them since` : ""}.</div>}
     </div>
@@ -280,13 +280,13 @@ function AutoReadSwitch({ auto, hasKey, onChange }: { auto: ConnectStatus["ai"][
   const capNum = Math.max(1, Math.min(100_000, Number(cap) || auto.monthlyPages));
   return (
     <div className="rounded-md border border-[var(--color-border)] px-2 py-1.5 space-y-1">
-      <label className="flex items-center gap-1.5 cursor-pointer font-semibold text-[var(--color-text)]" title="Every page of a new drawing is read by the drawing reader (the same one as Read with AI) and its equipment tagged. Every automatic change can be undone from Undo a run.">
+      <label className="flex items-center gap-1.5 cursor-pointer font-medium text-[var(--color-text)]" title="Every page of a new drawing is read by the drawing reader (the same one as Read with AI) and its equipment tagged. Every automatic change can be undone from Undo a run.">
         <input type="checkbox" checked={auto.on} disabled={!hasKey && !auto.on} onChange={(e) => onChange(e.target.checked, capNum)} className="w-3.5 h-3.5 accent-[var(--color-text)]" />
         Read new drawings automatically
       </label>
       <div className="flex flex-wrap items-center gap-1">
         up to
-        <input value={cap} onChange={(e) => setCap(e.target.value.replace(/[^0-9]/g, ""))} onBlur={() => { if (auto.on && capNum !== auto.monthlyPages) onChange(true, capNum); }} inputMode="numeric" className="w-14 rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-1 py-0.5 text-[13px]" />
+        <input value={cap} onChange={(e) => setCap(e.target.value.replace(/[^0-9]/g, ""))} onBlur={() => { if (auto.on && capNum !== auto.monthlyPages) onChange(true, capNum); }} inputMode="numeric" className="w-14 rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-1 py-0.5 text-body" />
         pages a month · {auto.used} used this month
       </div>
       <div>

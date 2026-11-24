@@ -54,7 +54,7 @@ export default function ExecutionReportView({ milestones, shiftTimes, critical: 
     return (
       <div className="bg-[var(--color-surface)] rounded-lg border border-[var(--color-border)] p-12 text-center">
         <CalendarDays className="w-10 h-10 text-[var(--color-text-faint)] mx-auto mb-3" />
-        <div className="text-[14px] font-bold text-[var(--color-text)]">Nothing to report yet.</div>
+        <div className="text-body font-medium text-[var(--color-text)]">Nothing to report yet.</div>
         <div className="text-xs text-[var(--color-text-muted)] mt-1">Import or add tasks to see progress, pace, and diagnostics.</div>
       </div>
     );
@@ -76,7 +76,7 @@ export default function ExecutionReportView({ milestones, shiftTimes, critical: 
     <div className="space-y-3">
       {print && (
         <div className="pb-1 mb-1 border-b-2 border-slate-900 flex items-baseline justify-between gap-3">
-          <span className="text-[13pt] font-semibold">Schedule report</span>
+          <span className="text-[13pt] font-medium">Schedule report</span>
           <span className="text-[9pt] text-slate-600">Printed {fmtInTz(new Date().toISOString(), tz, { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" })}</span>
         </div>
       )}
@@ -86,52 +86,52 @@ export default function ExecutionReportView({ milestones, shiftTimes, critical: 
         {!byPhase && <Card print={print}>
           <Label>Complete</Label>
           <div className="flex items-baseline gap-1">
-            <span className={`${print ? "text-3xl font-semibold tracking-tighter" : "text-[15px] font-bold"} ${r.pctComplete === 100 ? "text-[var(--state-released-text)]" : "text-[var(--color-text)]"}`}>{r.pctComplete}</span>
-            <span className={`${print ? "text-base" : "text-[13px]"} text-[var(--color-text-faint)] font-bold`}>%</span>
+            <span className={`${print ? "text-3xl font-medium tracking-tighter" : "text-reading font-medium"} ${r.pctComplete === 100 ? "text-[var(--state-released-text)]" : "text-[var(--color-text)]"}`}>{r.pctComplete}</span>
+            <span className={`${print ? "text-base" : "text-body"} text-[var(--color-text-faint)] font-medium`}>%</span>
           </div>
           <Bar pct={r.pctComplete} done={r.pctComplete === 100} />
-          <div className="text-[11px] text-[var(--color-text-muted)] font-display tabular-nums mt-1">{r.done} / {r.totalLeaves} tasks</div>
+          <div className="text-caption text-[var(--color-text-muted)] font-display tabular-nums mt-1">{r.done} / {r.totalLeaves} tasks</div>
         </Card>}
 
         {byPhase ? null : st.state === "finished" ? (
         <Card print={print}>
           <Label>Finished</Label>
-          <div className={`${print ? "text-2xl font-semibold tracking-tight" : "text-[15px] font-bold"} ${(st.lateHours ?? 0) >= 0.5 ? "text-[var(--state-overdue-text)]" : "text-[var(--color-text)]"}`}>{finLate ?? "done"}</div>
-          <div className="text-[11px] text-[var(--color-text-muted)] mt-1">{st.finishedAt ? `last step done ${fmtDateTime(st.finishedAt, tz)}` : "every step done"}</div>
+          <div className={`${print ? "text-2xl font-medium tracking-tight" : "text-reading font-medium"} ${(st.lateHours ?? 0) >= 0.5 ? "text-[var(--state-overdue-text)]" : "text-[var(--color-text)]"}`}>{finLate ?? "done"}</div>
+          <div className="text-caption text-[var(--color-text-muted)] mt-1">{st.finishedAt ? `last step done ${fmtDateTime(st.finishedAt, tz)}` : "every step done"}</div>
         </Card>
         ) : (
         <Card print={print}>
           <Label>Pace</Label>
-          <div className={`flex items-center gap-1.5 ${print ? "text-2xl font-semibold tracking-tight" : "text-[15px] font-bold"} ${standing === "behind" ? "text-[var(--state-overdue-text)]" : standing === "ahead" ? "text-[var(--state-released-text)]" : "text-[var(--color-text)]"}`}>
+          <div className={`flex items-center gap-1.5 ${print ? "text-2xl font-medium tracking-tight" : "text-reading font-medium"} ${standing === "behind" ? "text-[var(--state-overdue-text)]" : standing === "ahead" ? "text-[var(--state-released-text)]" : "text-[var(--color-text)]"}`}>
             {ahead ? <TrendingUp className="w-5 h-5" /> : <TrendingDown className="w-5 h-5" />}
-            {ahead ? "+" : ""}{r.paceDelta}<span className={`${print ? "text-base" : "text-[13px]"} text-[var(--color-text-faint)] font-bold`}>pts</span>
+            {ahead ? "+" : ""}{r.paceDelta}<span className={`${print ? "text-base" : "text-body"} text-[var(--color-text-faint)] font-medium`}>pts</span>
           </div>
-          <div className="text-[11px] text-[var(--color-text-muted)] mt-1">{standing === "on track" ? "on track" : standing === "ahead" ? "ahead of schedule" : "behind schedule"} · expected {r.expectedPct}% by now</div>
-          {parts && <div className="text-[11px] text-[var(--color-text-muted)]">{parts}</div>}
+          <div className="text-caption text-[var(--color-text-muted)] mt-1">{standing === "on track" ? "on track" : standing === "ahead" ? "ahead of schedule" : "behind schedule"} · expected {r.expectedPct}% by now</div>
+          {parts && <div className="text-caption text-[var(--color-text-muted)]">{parts}</div>}
         </Card>
         )}
 
         <Card print={print}>
           <Label>Work hours</Label>
           <div className="flex items-baseline gap-1">
-            <span className={`${print ? "text-2xl font-semibold tracking-tight" : "text-[15px] font-bold"} text-[var(--color-text)]`}>{r.pctHours}</span>
-            <span className={`${print ? "text-base" : "text-[13px]"} text-[var(--color-text-faint)] font-bold`}>%</span>
+            <span className={`${print ? "text-2xl font-medium tracking-tight" : "text-reading font-medium"} text-[var(--color-text)]`}>{r.pctHours}</span>
+            <span className={`${print ? "text-base" : "text-body"} text-[var(--color-text-faint)] font-medium`}>%</span>
           </div>
           <Bar pct={r.pctHours} />
-          <div className="text-[11px] text-[var(--color-text-muted)] font-display tabular-nums mt-1">{Math.round(r.earnedHours)} / {Math.round(r.plannedHours)} h</div>
+          <div className="text-caption text-[var(--color-text-muted)] font-display tabular-nums mt-1">{Math.round(r.earnedHours)} / {Math.round(r.plannedHours)} h</div>
         </Card>
 
         {!byPhase && st.state !== "finished" && <Card print={print}>
           <Label>Forecast finish</Label>
-          <div className={`${print ? "text-lg font-semibold tracking-tight" : "text-[15px] font-bold"} ${r.forecastFinish && r.finish && Date.parse(r.forecastFinish) > Date.parse(r.finish) + 30 * 60_000 ? "text-[var(--state-overdue-text)]" : "text-[var(--color-text)]"}`}>{r.forecastFinish ? fmtDate(r.forecastFinish, tz) : "No work yet to forecast from"}</div>
-          <div className="text-[11px] text-[var(--color-text-muted)] mt-1">
+          <div className={`${print ? "text-lg font-medium tracking-tight" : "text-reading font-medium"} ${r.forecastFinish && r.finish && Date.parse(r.forecastFinish) > Date.parse(r.finish) + 30 * 60_000 ? "text-[var(--state-overdue-text)]" : "text-[var(--color-text)]"}`}>{r.forecastFinish ? fmtDate(r.forecastFinish, tz) : "No work yet to forecast from"}</div>
+          <div className="text-caption text-[var(--color-text-muted)] mt-1">
             planned {fmtDate(r.finish, tz)} · day {r.elapsedDays} of {r.totalDays}
           </div>
         </Card>}
         {!byPhase && st.state === "finished" && <Card print={print}>
           <Label>Planned finish</Label>
-          <div className={`${print ? "text-lg font-semibold tracking-tight" : "text-[15px] font-bold"} text-[var(--color-text)]`}>{fmtDateTime(st.plannedFinish, tz)}</div>
-          <div className="text-[11px] text-[var(--color-text-muted)] mt-1">{st.done} of {st.steps} steps done</div>
+          <div className={`${print ? "text-lg font-medium tracking-tight" : "text-reading font-medium"} text-[var(--color-text)]`}>{fmtDateTime(st.plannedFinish, tz)}</div>
+          <div className="text-caption text-[var(--color-text-muted)] mt-1">{st.done} of {st.steps} steps done</div>
         </Card>}
       </div>
 
@@ -140,16 +140,16 @@ export default function ExecutionReportView({ milestones, shiftTimes, critical: 
         <div className={`rounded-2xl bg-[var(--color-surface)] px-4 py-3 ${print ? "border border-[var(--color-border)] border-l-2 border-l-rose-500 shadow-sm" : "shadow-[var(--shadow-card)]"}`}>
           <div className="flex items-center gap-2 flex-wrap">
             <Zap className="w-4 h-4 text-[var(--state-overdue-text)]" />
-            <span className={print ? "text-[12px] font-semibold text-[var(--color-text-faint)]" : "text-[13px] font-semibold text-[var(--color-text-muted)]"}>Driving the finish</span>
-            <span className="text-sm font-bold text-[var(--color-text)]">{critical.ids.size} task{critical.ids.size === 1 ? "" : "s"} on the critical path</span>
-            {critical.remainingHours > 0 && <span className="text-[11px] text-[var(--color-text-muted)]">· {Math.round(critical.remainingHours)}h remaining on the chain</span>}
-            <span className="ml-auto text-[11px] print:text-[12px] text-[var(--color-text-faint)]">{criticalSource ? `${criticalSource} · change it on the Timeline` : "estimate, based on schedule shape, not dependency links"}</span>
+            <span className={print ? "text-caption font-medium text-[var(--color-text-faint)]" : "text-body font-medium text-[var(--color-text-muted)]"}>Driving the finish</span>
+            <span className="text-sm font-medium text-[var(--color-text)]">{critical.ids.size} task{critical.ids.size === 1 ? "" : "s"} on the critical path</span>
+            {critical.remainingHours > 0 && <span className="text-caption text-[var(--color-text-muted)]">· {Math.round(critical.remainingHours)}h remaining on the chain</span>}
+            <span className="ml-auto text-caption print:text-caption text-[var(--color-text-faint)]">{criticalSource ? `${criticalSource} · change it on the Timeline` : "estimate, based on schedule shape, not dependency links"}</span>
           </div>
           <div className="mt-2 flex flex-wrap gap-1.5">
             {criticalNames.slice(0, 10).map((n, i) => (
-              <span key={i} className="inline-flex items-center text-[11px] bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--state-overdue-text)] rounded-full px-2 py-0.5">{n}</span>
+              <span key={i} className="inline-flex items-center text-caption bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--state-overdue-text)] rounded-full px-2 py-0.5">{n}</span>
             ))}
-            {criticalNames.length > 10 && <span className="text-[11px] text-[var(--color-text-faint)] italic">+{criticalNames.length - 10} more</span>}
+            {criticalNames.length > 10 && <span className="text-caption text-[var(--color-text-faint)] italic">+{criticalNames.length - 10} more</span>}
           </div>
         </div>
       )}
@@ -158,19 +158,19 @@ export default function ExecutionReportView({ milestones, shiftTimes, critical: 
       {r.baseline && (
         <div className={`rounded-2xl bg-[var(--color-surface)] px-4 py-3 ${print ? `border border-[var(--color-border)] shadow-sm ${r.baseline.finishDriftDays > 0 ? "border-l-2 border-l-rose-500" : r.baseline.finishDriftDays < 0 ? "border-l-2 border-l-emerald-500" : ""}` : "shadow-[var(--shadow-card)]"}`}>
           <div className="flex items-center gap-3 flex-wrap">
-            <span className={print ? "text-[12px] font-semibold text-[var(--color-text-faint)]" : "text-[13px] font-semibold text-[var(--color-text-muted)]"}>Vs. approved plan</span>
-            <span className={`${print ? "text-lg font-semibold" : "text-[14px] font-bold"} ${r.baseline.finishDriftDays > 0 ? "text-[var(--state-overdue-text)]" : r.baseline.finishDriftDays < 0 ? "text-[var(--state-released-text)]" : "text-[var(--color-text)]"}`}>
+            <span className={print ? "text-caption font-medium text-[var(--color-text-faint)]" : "text-body font-medium text-[var(--color-text-muted)]"}>Vs. approved plan</span>
+            <span className={`${print ? "text-lg font-semibold" : "text-body font-bold"} ${r.baseline.finishDriftDays > 0 ? "text-[var(--state-overdue-text)]" : r.baseline.finishDriftDays < 0 ? "text-[var(--state-released-text)]" : "text-[var(--color-text)]"}`}>
               {r.baseline.finishDriftDays === 0 ? "On plan" : r.baseline.finishDriftDays > 0 ? `${r.baseline.finishDriftDays}d behind plan` : `${Math.abs(r.baseline.finishDriftDays)}d ahead of plan`}
             </span>
-            <span className="text-[11px] text-[var(--color-text-muted)]">planned finish {fmtDate(r.baseline.baselineFinish, tz)} → now {fmtDate(r.baseline.currentFinish, tz)}</span>
-            <span className="ml-auto text-[11px] text-[var(--color-text-muted)]">
+            <span className="text-caption text-[var(--color-text-muted)]">planned finish {fmtDate(r.baseline.baselineFinish, tz)} → now {fmtDate(r.baseline.currentFinish, tz)}</span>
+            <span className="ml-auto text-caption text-[var(--color-text-muted)]">
               <b className="text-[var(--state-overdue-text)]">{r.baseline.slipped}</b> slipped · <b className="text-[var(--state-released-text)]">{r.baseline.pulledIn}</b> pulled in
             </span>
           </div>
           {r.baseline.worstSlips.length > 0 && (
             <div className="mt-2 flex flex-wrap gap-1.5">
               {r.baseline.worstSlips.map((s) => (
-                <span key={s.id} className="inline-flex items-center gap-1 text-[11px] bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--state-overdue-text)] rounded-full px-2 py-0.5">
+                <span key={s.id} className="inline-flex items-center gap-1 text-caption bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--state-overdue-text)] rounded-full px-2 py-0.5">
                   {s.name} <b>+{s.days}d</b>
                 </span>
               ))}
@@ -187,7 +187,7 @@ export default function ExecutionReportView({ milestones, shiftTimes, critical: 
         <Health print={print} icon={<AlertTriangle className="w-4 h-4" />} tone="rose" label="Blocked" value={r.blocked} />
         <Health print={print} icon={<AlertTriangle className="w-4 h-4" />} tone="rose" label="Overdue" value={r.overdue} />
         <span className="ml-auto inline-flex items-center gap-2 print:hidden">
-          <button onClick={() => window.print()} className="inline-flex items-center gap-1.5 h-9 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+          <button onClick={() => window.print()} className="inline-flex items-center gap-1.5 h-10 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
             <Printer className="w-3.5 h-3.5" /> Print / export
           </button>
         </span>
@@ -198,20 +198,20 @@ export default function ExecutionReportView({ milestones, shiftTimes, critical: 
         <div className={`bg-[var(--color-surface)] rounded-2xl overflow-hidden ${print ? "border border-[var(--color-border)] border-l-2 border-l-rose-500 shadow-sm" : "shadow-[var(--shadow-card)]"}`}>
           <div className={`px-4 py-2.5 border-b border-[var(--color-border)] flex items-center gap-2 ${print ? "bg-[var(--color-surface-2)]" : ""}`}>
             <AlertTriangle className="w-4 h-4 text-[var(--state-overdue-text)]" />
-            <span className={print ? "font-bold text-[var(--color-text)] text-sm" : "text-[13px] font-semibold text-[var(--color-text-muted)]"}>Needs attention</span>
-            <span className="text-[11px] text-[var(--color-text-muted)]">{r.blockers.length} on-hold / blocked</span>
+            <span className={print ? "font-medium text-[var(--color-text)] text-sm" : "text-body font-medium text-[var(--color-text-muted)]"}>Needs attention</span>
+            <span className="text-caption text-[var(--color-text-muted)]">{r.blockers.length} on-hold / blocked</span>
           </div>
           <ul className="divide-y divide-[var(--color-border)]">
             {r.blockers.map((b) => (
               <li key={b.id} className="px-4 py-2.5 flex items-start gap-3">
-                <span className={`mt-0.5 shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[11px] print:text-[12px] font-semibold border ${b.status === "blocked" ? "bg-transparent text-[var(--state-overdue-text)] border-[var(--color-border)]" : "bg-transparent text-[var(--state-held-text)] border-[var(--color-border)]"}`}>
+                <span className={`mt-0.5 shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-caption print:text-caption font-medium border ${b.status === "blocked" ? "bg-transparent text-[var(--state-overdue-text)] border-[var(--color-border)]" : "bg-transparent text-[var(--state-held-text)] border-[var(--color-border)]"}`}>
                   {b.status === "blocked" ? "Blocked" : "On hold"}
                 </span>
                 <div className="flex-1 min-w-0">
-                  <div className="text-[13px] font-semibold text-[var(--color-text)]">{b.name}{b.group && <span className="text-[var(--color-text-faint)] font-normal"> · {b.group}</span>}</div>
-                  <div className="text-[12px] text-[var(--color-text-muted)]">{b.reason ? b.reason : <span className="italic text-[var(--color-text-faint)]">no reason given</span>}</div>
+                  <div className="text-body font-medium text-[var(--color-text)]">{b.name}{b.group && <span className="text-[var(--color-text-faint)] font-normal"> · {b.group}</span>}</div>
+                  <div className="text-caption text-[var(--color-text-muted)]">{b.reason ? b.reason : <span className="italic text-[var(--color-text-faint)]">no reason given</span>}</div>
                 </div>
-                <div className="text-[11px] text-[var(--color-text-faint)] font-display tabular-nums shrink-0">{fmtDate(b.plannedAt, tz)}</div>
+                <div className="text-caption text-[var(--color-text-faint)] font-display tabular-nums shrink-0">{fmtDate(b.plannedAt, tz)}</div>
               </li>
             ))}
           </ul>
@@ -221,22 +221,22 @@ export default function ExecutionReportView({ milestones, shiftTimes, critical: 
       {/* Per-group rollups */}
       {r.groups.length > 1 && (
         <div className={`bg-[var(--color-surface)] rounded-2xl overflow-hidden ${print ? "border border-[var(--color-border)] shadow-sm" : "shadow-[var(--shadow-card)]"}`}>
-          <div className={`px-4 py-2.5 border-b border-[var(--color-border)] ${print ? "bg-slate-50/60 dark:bg-[var(--color-surface-2)] font-bold text-[var(--color-text)] text-sm" : "text-[13px] font-semibold text-[var(--color-text-muted)]"}`}>By group</div>
+          <div className={`px-4 py-2.5 border-b border-[var(--color-border)] ${print ? "bg-slate-50/60 dark:bg-[var(--color-surface-2)] font-medium text-[var(--color-text)] text-sm" : "text-body font-medium text-[var(--color-text-muted)]"}`}>By group</div>
           <div className="divide-y divide-[var(--color-border)]">
             {r.groups.map((g) => (
               <div key={g.id} className="px-4 py-2.5 flex items-center gap-3">
                 <div className="w-40 shrink-0 min-w-0">
-                  <div className="text-[13px] font-bold text-[var(--color-text)] truncate">{g.name}</div>
-                  <div className="text-[11px] print:text-[12px] text-[var(--color-text-faint)] font-display tabular-nums">{fmtDate(g.start, tz)} – {fmtDate(g.finish, tz)}</div>
+                  <div className="text-body font-medium text-[var(--color-text)] truncate">{g.name}</div>
+                  <div className="text-caption print:text-caption text-[var(--color-text-faint)] font-display tabular-nums">{fmtDate(g.start, tz)} – {fmtDate(g.finish, tz)}</div>
                 </div>
                 <div className="flex-1">
                   <Bar pct={g.pctComplete} done={g.pctComplete === 100} />
                 </div>
-                <div className="w-12 text-right text-[13px] font-semibold tabular-nums text-[var(--color-text)]">{g.pctComplete}%</div>
-                <div className="w-28 shrink-0 flex items-center justify-end gap-2 text-[11px]">
-                  {g.blocked > 0 && <span className="text-[var(--state-overdue-text)] font-bold">{g.blocked} blkd</span>}
-                  {g.onHold > 0 && <span className="text-[var(--state-held-text)] font-bold">{g.onHold} hold</span>}
-                  {g.overdue > 0 && <span className="text-[var(--state-overdue-text)] font-bold">{g.overdue} late</span>}
+                <div className="w-12 text-right text-body font-medium tabular-nums text-[var(--color-text)]">{g.pctComplete}%</div>
+                <div className="w-28 shrink-0 flex items-center justify-end gap-2 text-caption">
+                  {g.blocked > 0 && <span className="text-[var(--state-overdue-text)] font-medium">{g.blocked} blkd</span>}
+                  {g.onHold > 0 && <span className="text-[var(--state-held-text)] font-medium">{g.onHold} hold</span>}
+                  {g.overdue > 0 && <span className="text-[var(--state-overdue-text)] font-medium">{g.overdue} late</span>}
                 </div>
               </div>
             ))}
@@ -248,7 +248,7 @@ export default function ExecutionReportView({ milestones, shiftTimes, critical: 
       <div className={`bg-[var(--color-surface)] rounded-2xl overflow-hidden ${print ? "border border-[var(--color-border)] shadow-sm" : "shadow-[var(--shadow-card)]"}`}>
         <div className={`px-4 py-2.5 border-b border-[var(--color-border)] flex items-center gap-2 ${print ? "bg-slate-50/60 dark:bg-[var(--color-surface-2)]" : ""}`}>
           <Users className="w-4 h-4 text-[var(--color-text-muted)]" />
-          <span className={print ? "font-bold text-[var(--color-text)] text-sm" : "text-[13px] font-semibold text-[var(--color-text-muted)]"}>Who did the work</span>
+          <span className={print ? "font-medium text-[var(--color-text)] text-sm" : "text-body font-medium text-[var(--color-text-muted)]"}>Who did the work</span>
         </div>
         <div className="px-4 py-3">
           {Object.keys(r.performers.byActualKind).length === 0 ? (
@@ -257,7 +257,7 @@ export default function ExecutionReportView({ milestones, shiftTimes, critical: 
             <div className="flex items-center gap-4 flex-wrap text-sm">
               {Object.entries(r.performers.byActualKind).map(([kind, n]) => (
                 <span key={kind} className="inline-flex items-center gap-1.5">
-                  <span className="font-semibold text-[var(--color-text)] tabular-nums">{n}</span>
+                  <span className="font-medium text-[var(--color-text)] tabular-nums">{n}</span>
                   <span className="text-[var(--color-text-muted)] capitalize">{kind === "unspecified" ? "unspecified" : kind} completed</span>
                 </span>
               ))}
@@ -265,14 +265,14 @@ export default function ExecutionReportView({ milestones, shiftTimes, critical: 
           )}
           {r.performers.deviations.length > 0 && (
             <div className="mt-3 border-l-2 border-[var(--state-held)] pl-3 py-0.5">
-              <div className="text-[11px] font-bold text-[var(--state-held-text)] mb-1">{r.performers.deviations.length} task{r.performers.deviations.length === 1 ? "" : "s"} done by someone other than planned</div>
+              <div className="text-caption font-medium text-[var(--state-held-text)] mb-1">{r.performers.deviations.length} task{r.performers.deviations.length === 1 ? "" : "s"} done by someone other than planned</div>
               <ul className="space-y-0.5">
                 {r.performers.deviations.slice(0, 8).map((d) => (
-                  <li key={d.id} className="text-[12px] text-[var(--color-text)]">
+                  <li key={d.id} className="text-caption text-[var(--color-text)]">
                     <b>{d.name}</b>: planned <i>{d.planned}</i> → actually <i>{d.actual}</i>
                   </li>
                 ))}
-                {r.performers.deviations.length > 8 && <li className="text-[11px] text-[var(--color-text-muted)] italic">+{r.performers.deviations.length - 8} more</li>}
+                {r.performers.deviations.length > 8 && <li className="text-caption text-[var(--color-text-muted)] italic">+{r.performers.deviations.length - 8} more</li>}
               </ul>
             </div>
           )}
@@ -316,7 +316,7 @@ function Card({ children, print, className = "" }: { children: React.ReactNode; 
   return <div className={`bg-[var(--color-surface)] rounded-2xl px-4 py-3 ${print ? "border border-[var(--color-border)] shadow-sm ring-1 ring-slate-900/[0.03]" : "shadow-[var(--shadow-card)]"} ${className}`}>{children}</div>;
 }
 function Label({ children }: { children: React.ReactNode }) {
-  return <div className="text-[13px] print:text-[12px] font-semibold print:font-semibold text-[var(--color-text-muted)] print:text-[var(--color-text-faint)] mb-1">{children}</div>;
+  return <div className="text-body print:text-caption font-medium print:font-medium text-[var(--color-text-muted)] print:text-[var(--color-text-faint)] mb-1">{children}</div>;
 }
 function Bar({ pct, done }: { pct: number; done?: boolean }) {
   return (
@@ -330,8 +330,8 @@ function Health({ icon, tone, label, value, print }: { icon: React.ReactNode; to
   return (
     <span className="inline-flex items-center gap-1.5">
       <span className={c}>{icon}</span>
-      <span className={`${print ? "text-lg font-semibold" : "text-[14px] font-bold"} tabular-nums text-[var(--color-text)]`}>{value}</span>
-      <span className="text-[11px] text-[var(--color-text-muted)]">{label}</span>
+      <span className={`${print ? "text-lg font-semibold" : "text-body font-bold"} tabular-nums text-[var(--color-text)]`}>{value}</span>
+      <span className="text-caption text-[var(--color-text-muted)]">{label}</span>
     </span>
   );
 }

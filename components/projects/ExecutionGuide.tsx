@@ -35,7 +35,7 @@ export default function ExecutionGuide({ open: openProp, onOpenChange, buttonCla
       {/* Toolbar trigger. */}
       <button
         onClick={() => setOpen(true)}
-        className={`inline-flex items-center justify-center w-9 h-9 rounded-[10px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors ${buttonClass}`}
+        className={`inline-flex items-center justify-center w-9 h-9 rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors ${buttonClass}`}
         title="How this view works" aria-label="How this view works"
       >
         <HelpCircle className="w-4 h-4" />
@@ -48,11 +48,11 @@ export default function ExecutionGuide({ open: openProp, onOpenChange, buttonCla
           <div className="relative w-full max-w-lg bg-[var(--color-surface)] rounded-lg border border-[var(--color-border)] overflow-hidden max-h-[85vh] flex flex-col animate-in fade-in zoom-in-95" onClick={(e) => e.stopPropagation()}>
             <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center gap-2">
               <HelpCircle className="w-5 h-5 text-[var(--color-text-muted)]" />
-              <h2 className="text-[15px] font-bold text-[var(--color-text)]">How this view works</h2>
+              <h2 className="text-reading font-medium text-[var(--color-text)]">How this view works</h2>
               <button onClick={() => setOpen(false)} aria-label="Close" className="ml-auto p-1.5 rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] transition-colors"><XIcon className="w-4 h-4" /></button>
             </div>
 
-            <div className="overflow-y-auto p-5 space-y-5 text-[14px] text-[var(--color-text)]">
+            <div className="overflow-y-auto p-5 space-y-5 text-body text-[var(--color-text)]">
               <Section title="Two ways to look at the schedule">
                 <Row icon={<ListTree className="w-4 h-4 text-[var(--color-text-muted)]" />} label="Timeline">
                   The work breakdown on the left, bars on a time axis on the right. Best for seeing sequence and overlap.
@@ -84,7 +84,7 @@ export default function ExecutionGuide({ open: openProp, onOpenChange, buttonCla
                 <Row icon={<GripVertical className="w-4 h-4 text-[var(--color-text-muted)]" />} label="Then move the one step">
                   Drag that step&apos;s grip handle to another day, or open the task and use the <ChevronLeft className="inline w-3 h-3" /> <ChevronRight className="inline w-3 h-3" /> buttons on each sub-step row.
                 </Row>
-                <p className="text-[12px] text-[var(--color-text-muted)]">
+                <p className="text-caption text-[var(--color-text-muted)]">
                   Moving one step leaves the others where they were and stretches the task to cover both. Did 3 of 10 steps early? Only those 3 move; the rest stay on plan.
                 </p>
               </Section>
@@ -97,7 +97,7 @@ export default function ExecutionGuide({ open: openProp, onOpenChange, buttonCla
             </div>
 
             <div className="px-5 py-3 border-t border-[var(--color-border)] flex justify-end">
-              <button onClick={() => setOpen(false)} className="h-10 text-[14px] font-semibold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] px-5 rounded-xl transition-colors">Got it</button>
+              <button onClick={() => setOpen(false)} className="h-10 text-body font-medium text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] px-5 rounded-xl transition-colors">Got it</button>
             </div>
           </div>
         </div>
@@ -109,7 +109,7 @@ export default function ExecutionGuide({ open: openProp, onOpenChange, buttonCla
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div>
-      <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-2">{title}</div>
+      <div className="text-body font-medium text-[var(--color-text-muted)] mb-2">{title}</div>
       <div className="space-y-2">{children}</div>
     </div>
   );
@@ -120,7 +120,7 @@ function Row({ icon, label, children }: { icon: React.ReactNode; label: string; 
     <div className="flex items-start gap-2.5">
       <span className="mt-0.5 shrink-0 w-5 flex justify-center">{icon}</span>
       <div className="min-w-0">
-        <span className="font-bold text-[var(--color-text)]">{label}.</span>{" "}
+        <span className="font-medium text-[var(--color-text)]">{label}.</span>{" "}
         <span className="text-[var(--color-text-muted)]">{children}</span>
       </div>
     </div>

@@ -56,7 +56,7 @@ const agoWords = (iso: string | null | undefined) => {
 const agoLower = (iso: string | null | undefined) => { const a = agoWords(iso); return a === "Just now" ? "just now" : a; };
 
 /** A widget's table: ruled rows, edge to edge in the sheet. */
-const wTable = "w-full text-[14px]";
+const wTable = "w-full text-body";
 const wRow = "hover:bg-[var(--color-surface-2)] cursor-pointer transition-colors";
 const td = "px-4 py-2.5";
 
@@ -213,12 +213,12 @@ export function DraftingRequestsBody() {
                   {t.priority === 1 && <LateEdge />}
                   <Link href={`/requests/${t.id}`} className="block px-4 py-2.5 hover:bg-[var(--color-surface-2)]">
                     <span className="flex items-baseline gap-3">
-                      <span className="min-w-0 flex-1 truncate text-[15px]">
+                      <span className="min-w-0 flex-1 truncate text-reading">
                         <span className="ui-id mr-2">{t.ticket_id ?? "–"}</span>{t.title ?? "Untitled request"}
                       </span>
                       <StatusTag tone={t.priority === 1 ? "overdue" : st.tone}>{st.label}</StatusTag>
                     </span>
-                    <span className="mt-0.5 block text-[13px] text-[var(--color-text-muted)] truncate">
+                    <span className="mt-0.5 block text-body text-[var(--color-text-muted)] truncate">
                       {t.requester_id === uid ? "You" : t.requester_name || "Unknown"} to {t.assigned_drafter_id === uid ? "you" : t.assigned_drafter_name || "nobody yet"}, opened {agoLower(t.created_at)}
                     </span>
                   </Link>
@@ -311,7 +311,7 @@ function ProjectsTable({ data, loading, scope, setScope, q, setQ, dq, uid }: {
   const workCell = (p: (typeof rows)[number]) => {
     const pr = progress.get(p.id);
     if (pr) return <WorkBar pct={pr.pct} late={p.due?.kind === "past target" && pr.pct < 100} width="w-20" title={`${pr.done} of ${pr.steps} steps done`} />;
-    if (pr === null) return <span className="text-[13px] text-[var(--color-text-muted)]">No schedule</span>;
+    if (pr === null) return <span className="text-body text-[var(--color-text-muted)]">No schedule</span>;
     return <span className="text-[var(--color-text-faint)]">–</span>;
   };
   return (
@@ -351,7 +351,7 @@ function ProjectsTable({ data, loading, scope, setScope, q, setQ, dq, uid }: {
                 <tr key={p.id} className={wRow} onClick={() => router.push(`/projects/${p.id}`)}>
                   <td className={`${td} relative max-w-0 w-full`}>
                     {p.due?.kind === "past target" && <LateEdge />}
-                    <Link href={`/projects/${p.id}`} onClick={(e) => e.stopPropagation()} className="block truncate font-semibold text-[var(--color-text)] hover:text-[var(--color-accent-text)]">{p.name ?? "Untitled project"}</Link>
+                    <Link href={`/projects/${p.id}`} onClick={(e) => e.stopPropagation()} className="block truncate font-medium text-[var(--color-text)] hover:text-[var(--color-accent-text)]">{p.name ?? "Untitled project"}</Link>
                   </td>
                   <td className={`${td} whitespace-nowrap`}>{projState(p)}</td>
                   <td className={`${td} whitespace-nowrap`}>{workCell(p)}</td>
@@ -373,14 +373,14 @@ function ProjectsTable({ data, loading, scope, setScope, q, setQ, dq, uid }: {
                 {p.due?.kind === "past target" && <LateEdge />}
                 <Link href={`/projects/${p.id}`} className="block px-4 py-2.5 hover:bg-[var(--color-surface-2)]">
                   <span className="flex items-center gap-3">
-                    <span className="min-w-0 flex-1 truncate font-semibold text-[15px] text-[var(--color-text)]">{p.name ?? "Untitled project"}</span>
+                    <span className="min-w-0 flex-1 truncate font-medium text-reading text-[var(--color-text)]">{p.name ?? "Untitled project"}</span>
                     {projState(p)}
                   </span>
-                  <span className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-[13px]">
+                  <span className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-body">
                     {progress.get(p.id) && workCell(p)}
                     <span data-project-due>{dueTag(p)}</span>
                   </span>
-                  <span className="mt-0.5 block text-[13px] text-[var(--color-text-muted)] truncate">
+                  <span className="mt-0.5 block text-body text-[var(--color-text-muted)] truncate">
                     {[p.owner_user_id === uid ? "You" : p.owner_user_name, p.moc_reference ? `MOC ${p.moc_reference}` : null, p.last_activity_at ? `last activity ${agoLower(p.last_activity_at)}` : null].filter(Boolean).join(", ")}
                   </span>
                 </Link>
@@ -480,16 +480,16 @@ function ActivityFeed({ adminView }: { adminView: boolean }) {
           { value: "knowledge", label: "Knowledge", count: count("knowledge") },
           { value: "admin", label: "Admin", count: count("admin") },
         ]} />
-        <label className="ml-auto pb-2 shrink-0 inline-flex items-center gap-2 text-[14px] text-[var(--color-text)] cursor-pointer select-none">
+        <label className="ml-auto pb-2 shrink-0 inline-flex items-center gap-2 text-body text-[var(--color-text)] cursor-pointer select-none">
           <input type="checkbox" checked={onlyMine} onChange={(e) => setOnlyMine(e.target.checked)} className="w-4 h-4 accent-[var(--color-main)]" />
           Only mine
         </label>
       </div>
       {sum(buckets.counts) > 0 && (
         <div className="shrink-0 mt-3 flex items-center gap-3">
-          <span className="shrink-0 text-[13px] text-[var(--color-text-muted)]">Last 14 days</span>
+          <span className="shrink-0 text-body text-[var(--color-text-muted)]">Last 14 days</span>
           <div className="flex-1"><Sparkline values={buckets.counts} labels={buckets.labels} height={28} /></div>
-          {adminView && <span className="shrink-0 text-[13px] text-[var(--color-text-muted)]"><span className="font-display font-semibold text-[var(--color-text)] tabular-nums">{(data?.total ?? 0).toLocaleString()}</span> events on record</span>}
+          {adminView && <span className="shrink-0 text-body text-[var(--color-text-muted)]"><span className="font-display font-semibold text-[var(--color-text)] tabular-nums">{(data?.total ?? 0).toLocaleString()}</span> events on record</span>}
         </div>
       )}
       {shown.length === 0 ? (
@@ -533,12 +533,12 @@ function ActivityFeed({ adminView }: { adminView: boolean }) {
               const inner = (
                 <>
                   <span className="flex items-baseline gap-3">
-                    <span className="min-w-0 flex-1 truncate text-[15px] text-[var(--color-text)]">
+                    <span className="min-w-0 flex-1 truncate text-reading text-[var(--color-text)]">
                       {humanize(r.action)}{label ? <span className="ui-id"> {label}</span> : null}
                     </span>
-                    <span className="shrink-0 text-[13px] text-[var(--color-text-muted)] tabular-nums">{when(r.timestamp)}</span>
+                    <span className="shrink-0 text-body text-[var(--color-text-muted)] tabular-nums">{when(r.timestamp)}</span>
                   </span>
-                  <span className="mt-0.5 block text-[13px] text-[var(--color-text-muted)]">{who}</span>
+                  <span className="mt-0.5 block text-body text-[var(--color-text-muted)]">{who}</span>
                 </>
               );
               return (
@@ -590,7 +590,7 @@ export function EquipmentBody() {
   return (
     <div className={FILL}>
       <div className="flex items-center gap-3 shrink-0">
-        <span className="shrink-0 text-[14px] text-[var(--color-text-muted)]">
+        <span className="shrink-0 text-body text-[var(--color-text-muted)]">
           <span className="ui-count is-solid">{(data?.count ?? 0).toLocaleString()}</span> in the registry
         </span>
         <div className="flex-1 min-w-0">
@@ -651,11 +651,11 @@ export function RecentDocsBody() {
               <DocThumb documentId={r.documentId} width={28} />
             </DocHoverPreview>
             <span className="min-w-0 flex-1">
-              <span className="ui-id block text-[15px] truncate">{r.documentNumber || r.title || "Document"}</span>
-              {r.title && r.title !== r.documentNumber && <span className="block text-[13px] text-[var(--color-text-muted)] truncate">{r.title}</span>}
+              <span className="ui-id block text-reading truncate">{r.documentNumber || r.title || "Document"}</span>
+              {r.title && r.title !== r.documentNumber && <span className="block text-body text-[var(--color-text-muted)] truncate">{r.title}</span>}
             </span>
             {r.rev && <span className="shrink-0 ui-tag">Rev {r.rev}</span>}
-            <span className="shrink-0 w-24 text-right text-[13px] text-[var(--color-text-muted)] tabular-nums">{agoWords(r.viewedAt)}</span>
+            <span className="shrink-0 w-24 text-right text-body text-[var(--color-text-muted)] tabular-nums">{agoWords(r.viewedAt)}</span>
           </Link>
         </li>
       ))}
@@ -692,17 +692,17 @@ export function AdminUsersBody() {
   return (
     <div className={FILL}>
       <div className="flex items-baseline justify-between gap-3 shrink-0">
-        <span className="text-[14px] text-[var(--color-text-muted)]">
+        <span className="text-body text-[var(--color-text-muted)]">
           <span className="ui-count is-solid">{active.length}</span> active members
         </span>
         {pending.length > 0 && (
-          <Link href="/admin/users" className={`text-[14px] ${link}`}><span className="ui-count is-warn">{pending.length}</span> invite{pending.length === 1 ? "" : "s"} pending</Link>
+          <Link href="/admin/users" className={`text-body ${link}`}><span className="ui-count is-warn">{pending.length}</span> invite{pending.length === 1 ? "" : "s"} pending</Link>
         )}
       </div>
       {segments.length > 0 && <SegmentBar segments={segments} className="mt-2 shrink-0" />}
       <div className="mt-3 shrink-0 flex items-center gap-2">
         <select value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)} aria-label="Role"
-          className="shrink-0 h-9 px-2.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] text-[var(--color-text)]">
+          className="shrink-0 h-9 px-2.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body text-[var(--color-text)]">
           <option value="all">All roles</option>
           {entries.map(([r]) => <option key={r} value={r}>{r}</option>)}
         </select>
@@ -712,7 +712,7 @@ export function AdminUsersBody() {
         <ul className="-mx-4 -mb-4 mt-3 flex-1 min-h-0 overflow-y-auto border-t border-[var(--color-border)] divide-y divide-[var(--color-border)]">
           {shown.map((m) => (
             <li key={m.uid} className="flex items-center gap-3 pr-4 hover:bg-[var(--color-surface-2)]">
-              <Link href="/admin/users" className="min-w-0 flex-1 truncate px-4 py-2.5 text-[15px] text-[var(--color-text)]">{m.display_name || m.email || m.uid.slice(0, 8)}</Link>
+              <Link href="/admin/users" className="min-w-0 flex-1 truncate px-4 py-2.5 text-reading text-[var(--color-text)]">{m.display_name || m.email || m.uid.slice(0, 8)}</Link>
               <span className="shrink-0 flex items-center gap-1.5">
                 <button type="button" onClick={() => setRoleFilter(m.role || "Member")} aria-pressed={roleFilter === (m.role || "Member")} title={`Show only ${m.role || "Member"}`} className="ui-tag">{m.role || "Member"}</button>
                 {(m.roles ?? []).filter((r) => r !== m.role).slice(0, 2).map((r) => (

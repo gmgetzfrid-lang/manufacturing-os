@@ -161,11 +161,11 @@ export default function RegisterPage() {
         {kpis && (
           <div className={`${bandSeg} mt-4`} role="group" aria-label="Show">
             <button type="button" onClick={() => setFilter("all")} aria-pressed={filter === "all"} className={bandSegItem(filter === "all")}>
-              All <span className={`ui-count !h-5 !px-1.5 !text-[12px] ${filter === "all" ? "is-solid" : ""}`}>{kpis.totalControlled.toLocaleString()}</span>
+              All <span className={`ui-count !h-5 !px-1.5 !text-caption ${filter === "all" ? "is-solid" : ""}`}>{kpis.totalControlled.toLocaleString()}</span>
             </button>
             {shownChips.map((c) => (
               <button key={c.key} type="button" onClick={() => setFilter(c.key)} aria-pressed={filter === c.key} className={bandSegItem(filter === c.key)}>
-                {c.label} <span className={`ui-count !h-5 !px-1.5 !text-[12px] ${c.tone && c.n > 0 ? (c.tone === "bad" ? "is-bad" : "is-warn") : filter === c.key ? "is-solid" : ""}`}>{c.n.toLocaleString()}</span>
+                {c.label} <span className={`ui-count !h-5 !px-1.5 !text-caption ${c.tone && c.n > 0 ? (c.tone === "bad" ? "is-bad" : "is-warn") : filter === c.key ? "is-solid" : ""}`}>{c.n.toLocaleString()}</span>
               </button>
             ))}
           </div>
@@ -179,7 +179,7 @@ export default function RegisterPage() {
             <Search className={bandInputIcon} />
             <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search number, title, owner" aria-label="Search the register" className={`${bandInput} max-sm:text-base`} />
           </div>
-          <span className="text-[14px] text-[var(--color-text-muted)] ml-auto tabular-nums">{filtered.length.toLocaleString()} of {rows.length.toLocaleString()}{capped ? " (first rows only)" : ""}</span>
+          <span className="text-body text-[var(--color-text-muted)] ml-auto tabular-nums">{filtered.length.toLocaleString()} of {rows.length.toLocaleString()}{capped ? " (first rows only)" : ""}</span>
         </div>
       </PageHero>
 
@@ -193,7 +193,7 @@ export default function RegisterPage() {
       ) : error ? null : filtered.length === 0 ? (
         <Card>
           <div className="flex flex-wrap items-center gap-x-4 gap-y-3">
-            <p className="flex-1 min-w-[14rem] text-[15px] text-[var(--color-text)]">No documents match.</p>
+            <p className="flex-1 min-w-[14rem] text-reading text-[var(--color-text)]">No documents match.</p>
             {(filter !== "all" || libraryId || search) && (
               <Button variant="secondary" onClick={() => { setFilter("all"); setLibraryId(null); setSearch(""); }}>Show every document</Button>
             )}
@@ -202,19 +202,19 @@ export default function RegisterPage() {
       ) : (
         <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full text-[14px]">
+          <table className="w-full text-body">
             <thead className="max-sm:hidden border-b border-[var(--color-border)]">
-              <tr className="text-[13px] text-[var(--color-text-muted)] h-10">
-                <th className="text-left font-semibold px-3 max-sm:hidden">Document</th>
-                <th className="text-left font-semibold px-3 hidden md:table-cell">Library</th>
-                <th className="text-left font-semibold px-3 max-sm:hidden">Owner</th>
-                <th className="text-left font-semibold px-3 max-sm:hidden">Rev</th>
-                <th className="text-left font-semibold px-3 max-sm:hidden">Effective</th>
-                <th className="text-left font-semibold px-3 max-sm:hidden">Review</th>
-                <th className="text-left font-semibold px-3 max-sm:hidden">Ack</th>
-                <th className="text-left font-semibold px-3 hidden lg:table-cell" title="Distribution confirmations outstanding">Dist.</th>
-                <th className="text-left font-semibold px-3 max-sm:hidden">Gate</th>
-                <th className="text-left font-semibold px-3 max-sm:hidden">Records</th>
+              <tr className="text-body text-[var(--color-text-muted)] h-10">
+                <th className="text-left font-medium px-3 max-sm:hidden">Document</th>
+                <th className="text-left font-medium px-3 hidden md:table-cell">Library</th>
+                <th className="text-left font-medium px-3 max-sm:hidden">Owner</th>
+                <th className="text-left font-medium px-3 max-sm:hidden">Rev</th>
+                <th className="text-left font-medium px-3 max-sm:hidden">Effective</th>
+                <th className="text-left font-medium px-3 max-sm:hidden">Review</th>
+                <th className="text-left font-medium px-3 max-sm:hidden">Ack</th>
+                <th className="text-left font-medium px-3 hidden lg:table-cell" title="Distribution confirmations outstanding">Dist.</th>
+                <th className="text-left font-medium px-3 max-sm:hidden">Gate</th>
+                <th className="text-left font-medium px-3 max-sm:hidden">Records</th>
               </tr>
             </thead>
             <tbody>
@@ -225,12 +225,12 @@ export default function RegisterPage() {
                   className="cursor-pointer border-t border-[var(--color-border)] first:border-t-0 hover:bg-[var(--color-surface-2)]">
                   <td className="px-3 py-2.5">
                     <div className="flex items-center gap-1.5">
-                      <Link href={rowHref(r)} className="ui-id text-[15px]">{r.number}</Link>
+                      <Link href={rowHref(r)} className="ui-id text-reading">{r.number}</Link>
                       {r.external && <OriginBadge origin="external" source={null} reference={null} />}
                     </div>
-                    {r.title && r.title !== r.number && <div className="text-[13px] text-[var(--color-text-muted)] truncate max-w-[280px]">{r.title}</div>}
+                    {r.title && r.title !== r.number && <div className="text-body text-[var(--color-text-muted)] truncate max-w-[280px]">{r.title}</div>}
                     {/* Phone: the facts under the number. */}
-                    <div className="sm:hidden mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px] text-[var(--color-text-muted)]">
+                    <div className="sm:hidden mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-body text-[var(--color-text-muted)]">
                       <span>Rev <span className="ui-id">{r.rev || "-"}</span></span>
                       <span className={r.owned ? "text-[var(--color-text)]" : ""}>{r.ownerName || "Doc Control"}</span>
                       {r.reviewStatus !== "none" && <ReviewPill nextReviewDate={r.nextReviewDate} compact />}
@@ -241,18 +241,18 @@ export default function RegisterPage() {
                   <td className="px-3 py-2 hidden md:table-cell">
                     {r.libraryName
                       ? <button type="button" onClick={() => setLibraryId(libraryId === r.libraryId ? null : r.libraryId)}
-                          className={`ui-tag !font-sans ${libraryId === r.libraryId ? "!bg-[var(--color-surface)] !border-[var(--color-text-muted)]" : ""}`} aria-pressed={libraryId === r.libraryId}
+                          className="ui-chip" aria-pressed={libraryId === r.libraryId}
                           title={libraryId === r.libraryId ? "Show every library" : `Show only ${r.libraryName}`}>
                           {r.libraryName}
                         </button>
                       : <span className="text-[var(--color-text-faint)]">-</span>}
                   </td>
                   <td className="px-3 py-2 max-sm:hidden">
-                    <span className={`text-[13px] whitespace-nowrap ${r.owned ? "text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>
+                    <span className={`text-body whitespace-nowrap ${r.owned ? "text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>
                       {r.ownerName || "Doc Control"}
                     </span>
                   </td>
-                  <td className="px-3 py-2 max-sm:hidden font-display text-[15px] font-semibold tabular-nums">{r.rev || "-"}</td>
+                  <td className="px-3 py-2 max-sm:hidden font-display text-reading font-semibold tabular-nums">{r.rev || "-"}</td>
                   <td className="px-3 py-2 max-sm:hidden">{r.effectivePending ? <EffectivePill effectiveDate={r.effectiveDate} compact /> : <span className="text-[var(--color-text-faint)]">-</span>}</td>
                   <td className="px-3 py-2 max-sm:hidden">{r.reviewStatus === "none" ? <span className="text-[var(--color-text-faint)]">-</span> : <ReviewPill nextReviewDate={r.nextReviewDate} compact />}</td>
                   <td className="px-3 py-2 max-sm:hidden">{r.ack ? <AckPill summary={r.ack} compact /> : <span className="text-[var(--color-text-faint)]">-</span>}</td>
@@ -263,7 +263,7 @@ export default function RegisterPage() {
                   </td>
                   <td className="px-3 py-2 max-sm:hidden">
                     {r.review?.inReview
-                      ? <span className="inline-flex items-center gap-2 whitespace-nowrap text-[13px]"><StatusTag tone={r.review.ready ? "good" : "warn"}>{r.review.revisionLabel || "In review"}</StatusTag><span className="tabular-nums text-[var(--color-text-muted)]">{r.review.signed} of {r.review.requiredPrimaries} signed</span></span>
+                      ? <span className="inline-flex items-center gap-2 whitespace-nowrap text-body"><StatusTag tone={r.review.ready ? "good" : "warn"}>{r.review.revisionLabel || "In review"}</StatusTag><span className="tabular-nums text-[var(--color-text-muted)]">{r.review.signed} of {r.review.requiredPrimaries} signed</span></span>
                       : <span className="text-[var(--color-text-faint)]">-</span>}
                   </td>
                   <td className="px-3 py-2 max-sm:hidden">{(r.legalHold || r.dispositionEligible) ? <RetentionPill retentionUntil={r.retentionUntil} dispositionState={r.dispositionEligible ? "eligible" : null} legalHold={r.legalHold} compact /> : <span className="text-[var(--color-text-faint)]">-</span>}</td>

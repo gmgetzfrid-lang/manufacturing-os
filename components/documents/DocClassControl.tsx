@@ -76,7 +76,7 @@ export default function DocClassControl({ documentId, collectionId, libraryId, f
 
   return (
     <div>
-      <div className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-1 flex items-center gap-1.5">
+      <div className="text-body font-medium text-[var(--color-text-muted)] mb-1 flex items-center gap-1.5">
         Document class
         {(loading || busy) && <Loader2 className="w-3 h-3 animate-spin" />}
       </div>
@@ -91,13 +91,13 @@ export default function DocClassControl({ documentId, collectionId, libraryId, f
             type="button"
             disabled={loading || busy}
             onClick={() => void apply(o.v)}
-            className={`flex-1 py-1.5 text-[13px] font-bold rounded-md transition-all disabled:opacity-60 ${declared === o.v ? "bg-[var(--color-surface)] shadow text-[var(--color-text)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}
+            className={`flex-1 py-1.5 text-body font-medium rounded-md transition-all disabled:opacity-60 ${declared === o.v ? "bg-[var(--color-surface)] shadow text-[var(--color-text)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}
           >
             {o.label}
           </button>
         ))}
       </div>
-      <div className="text-[13px] text-[var(--color-text-muted)] mt-1">
+      <div className="text-body text-[var(--color-text-muted)] mt-1">
         {effective === "drawing"
           ? "Effective: Drawing. Non-minor publishes require an MOC; check-in routes redlines to drafting."
           : effective === "procedure"

@@ -1160,7 +1160,7 @@ export default function FullScreenViewer({
       <Icon className="w-5 h-5" />
     </button>
   );
-  const railBtn = "w-9 h-9 sm:w-10 sm:h-10 shrink-0 rounded-[10px] grid place-items-center text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-ink-2)] transition-colors";
+  const railBtn = "w-9 h-9 sm:w-10 sm:h-10 shrink-0 rounded-lg grid place-items-center text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-ink-2)] transition-colors";
   const railLine = <div className="w-7 h-px shrink-0 bg-[var(--color-border)] my-1" aria-hidden="true" />;
 
   // Detect whether the doc has any equipment tags worth showing — if
@@ -1209,7 +1209,7 @@ export default function FullScreenViewer({
         {committing && (
           <div className="absolute inset-0 z-[200] bg-[color-mix(in_srgb,var(--color-ink)_85%,transparent)] backdrop-blur-sm flex flex-col items-center justify-center gap-3">
             <Loader2 className="w-9 h-9 animate-spin text-[var(--color-text-muted)]" />
-            <span className="text-[14px] font-bold text-[var(--color-text)]">Applying your markups…</span>
+            <span className="text-body font-medium text-[var(--color-text)]">Applying your markups…</span>
           </div>
         )}
 
@@ -1318,7 +1318,7 @@ export default function FullScreenViewer({
             </span>
             {onCheckout && (
               <button type="button" onClick={() => onCheckout(docRecord)}
-                className="ml-auto shrink-0 h-7 px-2.5 rounded-lg bg-[var(--color-ink-2)] text-[var(--color-text)] hover:bg-[var(--color-ink-line)] text-[13px] font-bold">
+                className="ml-auto shrink-0 h-7 px-2.5 rounded-lg bg-[var(--color-ink-2)] text-[var(--color-text)] hover:bg-[var(--color-ink-line)] text-body font-medium">
                 Open checkout thread
               </button>
             )}
@@ -1353,22 +1353,22 @@ export default function FullScreenViewer({
               <button type="button" onClick={() => setStampMenuOpen((v) => !v)} aria-expanded={stampMenuOpen} aria-label="Stamp" title="Stamp" className={vTool(stampMenuOpen)}><StampIcon className="w-5 h-5" /></button>
               {stampMenuOpen && (
                 <div className="absolute left-12 bottom-0 w-64 rounded-xl bg-[var(--color-surface)] border border-[var(--color-border)] shadow-2xl p-2 z-50 max-h-[min(52vh,30rem)] overflow-y-auto">
-                  <div className="text-[13px] font-semibold text-[var(--color-text-muted)] px-2 pb-2">Standard</div>
+                  <div className="text-body font-medium text-[var(--color-text-muted)] px-2 pb-2">Standard</div>
                   {/* Each stamp shown as it lands on the sheet: its color on paper. */}
                   <div className="grid grid-cols-1 gap-1">
                     {STAMPS.map((s) => (
                       <button type="button" key={s.label} onClick={() => addStamp(s.label, s.tone)} className="text-left px-1.5 py-1 rounded-md hover:bg-[var(--color-ink-2)]">
-                        <span className="inline-block px-2 py-0.5 rounded border-2 bg-[var(--color-ink-fg)] text-[13px] font-semibold tracking-wide" style={{ color: COLOR_HEX[s.tone], borderColor: COLOR_HEX[s.tone] }}>{s.label}</span>
+                        <span className="inline-block px-2 py-0.5 rounded border-2 bg-[var(--color-ink-fg)] text-body font-medium tracking-wide" style={{ color: COLOR_HEX[s.tone], borderColor: COLOR_HEX[s.tone] }}>{s.label}</span>
                       </button>
                     ))}
                   </div>
 
                   <div className="mt-3 pt-2 border-t border-[var(--color-border)] flex items-center justify-between px-2 pb-2">
-                    <span className="text-[13px] font-semibold text-[var(--color-text-muted)] ">Custom</span>
+                    <span className="text-body font-medium text-[var(--color-text-muted)] ">Custom</span>
                     <button
                       type="button"
                       onClick={() => stampFileInputRef.current?.click()}
-                      className="text-[13px] font-bold h-7 px-2.5 rounded-lg bg-[var(--color-ink-2)] hover:bg-[var(--color-ink-line)] text-[var(--color-text)]"
+                      className="text-body font-medium h-7 px-2.5 rounded-lg bg-[var(--color-ink-2)] hover:bg-[var(--color-ink-line)] text-[var(--color-text)]"
                     >+ Upload</button>
                     <input
                       ref={stampFileInputRef}
@@ -1383,7 +1383,7 @@ export default function FullScreenViewer({
                     />
                   </div>
                   {customStamps.length === 0 ? (
-                    <div className="text-[12px] text-[var(--color-text-muted)] px-2 pb-2">Upload PNG, JPG or SVG stamps. They&apos;re kept on this device.</div>
+                    <div className="text-caption text-[var(--color-text-muted)] px-2 pb-2">Upload PNG, JPG or SVG stamps. They&apos;re kept on this device.</div>
                   ) : (
                     <div className="grid grid-cols-3 gap-1 px-1 pb-1">
                       {customStamps.map((s) => (
@@ -1400,7 +1400,7 @@ export default function FullScreenViewer({
                           <button
                             type="button"
                             onClick={() => removeCustomStamp(s.id)}
-                            className="absolute -top-1 -right-1 w-4 h-4 bg-red-600 text-white rounded-full text-[11px] font-bold opacity-60 sm:opacity-0 group-hover:opacity-100 transition-opacity"
+                            className="absolute -top-1 -right-1 w-4 h-4 bg-red-600 text-white rounded-full text-caption font-medium opacity-60 sm:opacity-0 group-hover:opacity-100 transition-opacity"
                             title="Remove" aria-label={`Remove ${s.name}`}
                           >×</button>
                         </div>
@@ -1431,10 +1431,10 @@ export default function FullScreenViewer({
               </div>
               <div className="w-px h-5 shrink-0 bg-[var(--color-border)]" />
               <label className="flex items-center gap-2 shrink-0">
-                <span className="text-[13px] font-semibold text-[var(--color-text-muted)] ">Width</span>
+                <span className="text-body font-medium text-[var(--color-text-muted)] ">Width</span>
                 <input type="range" min={1} max={12} value={strokeWidth} onChange={(e) => setStrokeWidth(Number(e.target.value))}
                   className="w-24 h-1 rounded-lg accent-[var(--color-ink-fg)] cursor-pointer" />
-                <span className="text-[13px] tabular-nums text-[var(--color-text)] w-5 text-right">{strokeWidth}</span>
+                <span className="text-body tabular-nums text-[var(--color-text)] w-5 text-right">{strokeWidth}</span>
               </label>
             </div>
 
@@ -1466,7 +1466,7 @@ export default function FullScreenViewer({
               <button
                 type="button"
                 onClick={(e) => { e.stopPropagation(); setTagsBarOpen(true); }}
-                className="absolute top-12 right-3 z-40 inline-flex items-center gap-1.5 h-8 px-3 rounded-lg bg-[color-mix(in_srgb,var(--color-ink)_88%,transparent)] backdrop-blur border border-[var(--color-border)] text-[var(--color-text)] text-[12px] font-bold shadow-lg"
+                className="absolute top-12 right-3 z-40 inline-flex items-center gap-1.5 h-8 px-3 rounded-lg bg-[color-mix(in_srgb,var(--color-ink)_88%,transparent)] backdrop-blur border border-[var(--color-border)] text-[var(--color-text)] text-caption font-medium shadow-lg"
                 title="Show the equipment tags"
               >
                 <Camera className="w-3.5 h-3.5" /> Equipment tags
@@ -1513,14 +1513,14 @@ export default function FullScreenViewer({
               {!archivedInfo && fetchError && (
                 <div role="alert" className="absolute inset-0 flex flex-col items-center justify-center p-8 text-center">
                   <ShieldAlert className="w-10 h-10 text-rose-400 mb-3" />
-                  <div className="text-[15px] font-bold text-[var(--color-text)] mb-1">{notViewable ? `${fileTypeName({ fileName: shownFileName, path: url })} can't be shown here` : "Couldn't open this drawing"}</div>
-                  <div className="text-[13px] text-[var(--color-text-muted)] max-w-md">{notViewable ? "Close this and use Download in the document's panel to open it in its own program." : fetchError}</div>
+                  <div className="text-reading font-medium text-[var(--color-text)] mb-1">{notViewable ? `${fileTypeName({ fileName: shownFileName, path: url })} can't be shown here` : "Couldn't open this drawing"}</div>
+                  <div className="text-body text-[var(--color-text-muted)] max-w-md">{notViewable ? "Close this and use Download in the document's panel to open it in its own program." : fetchError}</div>
                 </div>
               )}
               {!archivedInfo && !fetchError && !resolvedUrl && (
                 <div className="absolute inset-0 flex flex-col items-center justify-center text-[var(--color-text-muted)]">
                   <Loader2 className="w-9 h-9 animate-spin mb-3" />
-                  <div className="text-[13px] font-semibold">Opening the drawing…</div>
+                  <div className="text-body font-medium">Opening the drawing…</div>
                 </div>
               )}
 
@@ -1585,9 +1585,9 @@ export default function FullScreenViewer({
             onClose={pendingBusy ? undefined : closePending}
           />
           <ModalBody className="space-y-3">
-            <p className="text-[14px] text-[var(--color-text-muted)]">Each page gets an &quot;UNCONTROLLED - FOR REVIEW ONLY&quot; mark and a footer with your email and the time. It&apos;s logged.</p>
+            <p className="text-body text-[var(--color-text-muted)]">Each page gets an &quot;UNCONTROLLED - FOR REVIEW ONLY&quot; mark and a footer with your email and the time. It&apos;s logged.</p>
             {(pending.type === "markup" ? markupError : actionError) && (
-              <p role="alert" className="text-[13px] font-semibold text-rose-700 dark:text-rose-300">{pending.type === "markup" ? markupError : actionError}</p>
+              <p role="alert" className="text-body font-medium text-rose-700 dark:text-rose-300">{pending.type === "markup" ? markupError : actionError}</p>
             )}
           </ModalBody>
           <ModalFooter>

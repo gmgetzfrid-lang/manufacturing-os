@@ -96,10 +96,10 @@ export default function SignatureCeremony({
   // One choice out of a few: a segmented control, the picked one ruled
   // in graphite.
   const seg = (on: boolean) =>
-    `inline-flex items-center gap-1.5 h-9 px-3 rounded-md border text-[14px] font-semibold transition-colors ${on
+    `inline-flex items-center gap-1.5 h-9 px-3 rounded-md border text-body font-semibold transition-colors ${on
       ? "border-[var(--color-text)] bg-[var(--color-surface)] text-[var(--color-text)] shadow-[inset_0_0_0_1px_var(--color-text)]"
       : "border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`;
-  const label = "block text-[13px] font-semibold text-[var(--color-text-muted)] mb-1.5";
+  const label = "block text-body font-medium text-[var(--color-text-muted)] mb-1.5";
   const input = "w-full h-11 px-3 rounded-md border bg-[var(--color-surface)] text-[var(--color-text)] outline-none focus:ring-2";
 
   return (
@@ -107,7 +107,7 @@ export default function SignatureCeremony({
       <div className="w-full max-w-md bg-[var(--color-surface)] rounded-lg shadow-2xl my-4" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-2 px-5 h-14 border-b border-[var(--color-border)]">
           <ShieldCheck className="w-4 h-4 text-[var(--color-text-muted)]" />
-          <h2 id="sig-ceremony-title" className="font-display text-[19px] font-semibold text-[var(--color-text)] flex-1">Sign {resourceLabel ?? "this document"}</h2>
+          <h2 id="sig-ceremony-title" className="font-display text-section font-semibold text-[var(--color-text)] flex-1">Sign {resourceLabel ?? "this document"}</h2>
           <button type="button" onClick={() => !busy && onCancel()} aria-label="Close" className="w-8 h-8 grid place-items-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
         </div>
 
@@ -126,8 +126,8 @@ export default function SignatureCeremony({
           )}
 
           <div className="border-l-[3px] border-[var(--color-border-strong)] pl-3">
-            <div className="text-[13px] text-[var(--color-text-muted)]">You are affirming</div>
-            <p className="text-[15px] text-[var(--color-text)] leading-snug">{statement}</p>
+            <div className="text-body text-[var(--color-text-muted)]">You are affirming</div>
+            <p className="text-reading text-[var(--color-text)] leading-snug">{statement}</p>
           </div>
 
           {allowDrawn && (
@@ -154,12 +154,12 @@ export default function SignatureCeremony({
                 style={{ fontFamily: "cursive", fontSize: "1.15rem" }}
                 autoFocus
               />
-              {typed.length > 0 && !nameMatches && <p className="text-[13px] text-[var(--state-overdue)] mt-1">Must match your account name: {signerName}</p>}
+              {typed.length > 0 && !nameMatches && <p className="text-body text-[var(--state-overdue)] mt-1">Must match your account name: {signerName}</p>}
             </div>
           )}
 
           {reauth === "loading" && (
-            <p className="inline-flex items-center gap-1.5 text-[13px] text-[var(--color-text-muted)]"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Checking your sign-in…</p>
+            <p className="inline-flex items-center gap-1.5 text-body text-[var(--color-text-muted)]"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Checking your sign-in…</p>
           )}
           {reauth !== "loading" && reauth?.method === "password" && (
             <div>
@@ -176,13 +176,13 @@ export default function SignatureCeremony({
                 className={`${input} ${reauthError ? "border-[var(--state-overdue)] focus:ring-[var(--state-overdue)]/30" : "border-[var(--color-border-strong)] focus:ring-[var(--color-accent-ring)]"}`}
               />
               {reauthError
-                ? <p className="text-[13px] text-[var(--state-overdue)] mt-1">{reauthError}</p>
-                : <p className="text-[13px] text-[var(--color-text-muted)] mt-1">Asked each time, so nobody can sign from your unlocked screen.</p>}
+                ? <p className="text-body text-[var(--state-overdue)] mt-1">{reauthError}</p>
+                : <p className="text-body text-[var(--color-text-muted)] mt-1">Asked each time, so nobody can sign from your unlocked screen.</p>}
             </div>
           )}
           {reauth !== "loading" && reauth?.method === "sso" && !reauth.fresh && (
             <div className="border-l-[3px] border-[var(--state-held)] pl-3">
-              <p className="text-[14px] text-[var(--color-text)]">
+              <p className="text-body text-[var(--color-text)]">
                 Signing needs a recent sign-in. Sign in with Microsoft again; you&apos;ll come straight back here.
               </p>
               <button type="button" onClick={() => void reauthWithProvider()} className={`mt-2 ${secondaryBtn}`}>
@@ -193,7 +193,7 @@ export default function SignatureCeremony({
 
           <label className="flex items-start gap-2.5 cursor-pointer">
             <input type="checkbox" checked={agreed} onChange={(e) => setAgreed(e.target.checked)} className="mt-0.5 w-4 h-4 shrink-0 accent-[var(--color-text)]" />
-            <span className="text-[14px] leading-snug text-[var(--color-text)]">I understand this signature is binding and is recorded with my name, role and the time.</span>
+            <span className="text-body leading-snug text-[var(--color-text)]">I understand this signature is binding and is recorded with my name, role and the time.</span>
           </label>
         </div>
 

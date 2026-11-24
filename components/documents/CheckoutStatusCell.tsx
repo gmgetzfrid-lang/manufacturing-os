@@ -246,11 +246,11 @@ const CheckoutInfoPopover = ({
     >
       {/* Header */}
       <div className="px-4 py-3 border-b border-[var(--color-border)] flex justify-between items-center bg-[var(--color-surface-2)]">
-        <h4 className="text-[13px] font-semibold text-[var(--color-text-muted)] flex items-center">
+        <h4 className="text-body font-medium text-[var(--color-text-muted)] flex items-center">
           <Clock className="w-3.5 h-3.5 mr-1.5 text-[var(--color-text-muted)]" /> Who has it
         </h4>
         {loading ? <Loader2 className="w-3 h-3 animate-spin text-[var(--color-text-faint)]" /> : (
-           <span className="text-[13px] font-semibold tabular-nums text-[var(--color-text)]">
+           <span className="text-body font-medium tabular-nums text-[var(--color-text)]">
              {sessions.length} {sessions.length !== 1 ? 'people' : 'person'}
            </span>
         )}
@@ -258,9 +258,9 @@ const CheckoutInfoPopover = ({
 
       <div className="p-4 space-y-4 max-h-[300px] overflow-y-auto custom-scrollbar">
         {loading ? (
-          <div className="text-center py-4 text-[13px] text-[var(--color-text-muted)]">Loading…</div>
+          <div className="text-center py-4 text-body text-[var(--color-text-muted)]">Loading…</div>
         ) : sessions.length === 0 ? (
-          <div className="text-center py-4 text-[13px] text-[var(--color-text-muted)]">No one is working on it now. The lock may be left over.</div>
+          <div className="text-center py-4 text-body text-[var(--color-text-muted)]">No one is working on it now. The lock may be left over.</div>
         ) : (
           <div className="space-y-3">
             {sessions.map(session => (
@@ -269,14 +269,14 @@ const CheckoutInfoPopover = ({
                   <UserAvatar uid={session.userId} name={session.userName} size={24} className="shadow-sm" />
                   <div className="flex-1 min-w-0">
                     <div className="flex justify-between items-center">
-                      <p className="text-[13px] font-bold text-[var(--color-text)] truncate">{session.userName}</p>
+                      <p className="text-body font-medium text-[var(--color-text)] truncate">{session.userName}</p>
                       {session.userId === docRecord.checkedOutBy && (
-                        <span className="flex items-center text-[13px] font-bold text-[var(--color-text)] bg-[var(--color-surface)] px-1.5 py-0.5 rounded-full border border-[var(--color-border)] shadow-sm" title="This person holds the lock, they're the one publishing wins for">
+                        <span className="flex items-center text-body font-medium text-[var(--color-text)] bg-[var(--color-surface)] px-1.5 py-0.5 rounded-full border border-[var(--color-border)] shadow-sm" title="This person holds the lock, they're the one publishing wins for">
                           <Lock className="w-2.5 h-2.5 mr-1" /> Holds the lock
                         </span>
                       )}
                     </div>
-                    <p className="text-[13px] text-[var(--color-text-faint)] flex items-center mt-0.5">
+                    <p className="text-body text-[var(--color-text-faint)] flex items-center mt-0.5">
                        {session.mode} • {session.startedAt ? timeAgo(toSafeDate(session.startedAt)) : ''}
                     </p>
                   </div>
@@ -284,21 +284,21 @@ const CheckoutInfoPopover = ({
                 {/* The document-control "why": purpose category + stated reason. */}
                 <div className="ml-9 space-y-1.5">
                   {session.purpose && (
-                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[13px] font-bold bg-[var(--color-surface-2)] text-[var(--color-text)] border border-[var(--color-border)]">
+                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-body font-medium bg-[var(--color-surface-2)] text-[var(--color-text)] border border-[var(--color-border)]">
                       {session.purpose}
                     </span>
                   )}
                   {session.note ? (
-                    <div className="text-[13px] text-[var(--color-text)] bg-[var(--color-surface-2)] p-2 rounded-lg border border-[var(--color-border)] italic">
+                    <div className="text-body text-[var(--color-text)] bg-[var(--color-surface-2)] p-2 rounded-lg border border-[var(--color-border)] italic">
                       &ldquo;{session.note}&rdquo;
                     </div>
                   ) : !session.purpose ? (
-                    <div className="text-[13px] text-[var(--color-text-faint)] italic">No stated reason (pre-policy checkout)</div>
+                    <div className="text-body text-[var(--color-text-faint)] italic">No stated reason (pre-policy checkout)</div>
                   ) : null}
                   {(() => {
                     const clock = clockLine(session);
                     return clock ? (
-                      <div className={`text-[13px] font-bold ${clock.overdue ? "text-[var(--state-held)]" : "text-[var(--color-text-muted)]"}`}>
+                      <div className={`text-body font-medium ${clock.overdue ? "text-[var(--state-held)]" : "text-[var(--color-text-muted)]"}`}>
                         <Clock className="w-2.5 h-2.5 inline mr-1 -mt-0.5" />{clock.text}
                       </div>
                     ) : null;
@@ -314,7 +314,7 @@ const CheckoutInfoPopover = ({
         {recentPulls.length > 0 && (
           <div className="pt-2 border-t border-dashed border-[var(--color-border)] space-y-0.5">
             {recentPulls.map((p, i) => (
-              <div key={i} className="text-[13px] text-[var(--color-text-faint)]">
+              <div key={i} className="text-body text-[var(--color-text-faint)]">
                 {p.name} {p.kind} · {p.when}
               </div>
             ))}
@@ -326,7 +326,7 @@ const CheckoutInfoPopover = ({
           <button
             onClick={handleReleaseMine}
             disabled={releasing}
-            className="w-full py-2 bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] border border-[var(--color-border)] rounded-lg text-[13px] font-bold flex items-center justify-center transition-colors disabled:opacity-50"
+            className="w-full py-2 bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] border border-[var(--color-border)] rounded-lg text-body font-medium flex items-center justify-center transition-colors disabled:opacity-50"
             title="Ends your session only. If others are still on the checkout, the lock passes to them."
           >
             {releasing ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Check className="w-3.5 h-3.5 mr-1.5" />}
@@ -340,7 +340,7 @@ const CheckoutInfoPopover = ({
              <button
                onClick={handleForceRelease}
                disabled={processing}
-               className="w-full py-2 bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--state-overdue)] border border-[var(--color-border)] rounded-lg text-[13px] font-bold flex items-center justify-center transition-colors disabled:opacity-50"
+               className="w-full py-2 bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--state-overdue)] border border-[var(--color-border)] rounded-lg text-body font-medium flex items-center justify-center transition-colors disabled:opacity-50"
              >
                <Shield className="w-3.5 h-3.5 mr-1.5" />
                {processing ? "Releasing…" : "Force release (admin)"}
@@ -411,11 +411,11 @@ export default function CheckoutStatusCell({
     }
   };
 
-  const small = "inline-flex items-center gap-1 h-8 pointer-coarse:h-10 px-2.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-border-control)] disabled:opacity-50 transition-colors whitespace-nowrap";
+  const small = "inline-flex items-center gap-1 h-8 pointer-coarse:h-10 px-2.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-border-control)] disabled:opacity-50 transition-colors whitespace-nowrap";
   if (!isCheckedOut && quiet) {
     return (
       <div className="relative flex items-center gap-1 min-h-8 group/cell">
-        <span className="text-[13px] text-[var(--color-text-faint)] group-hover:invisible group-focus-within/cell:invisible [@media(hover:none)]:hidden">Available</span>
+        <span className="text-body text-[var(--color-text-faint)] group-hover:invisible group-focus-within/cell:invisible [@media(hover:none)]:hidden">Available</span>
         <div className="absolute inset-y-0 left-0 flex items-center gap-1 invisible group-hover:visible group-focus-within/cell:visible [@media(hover:none)]:visible [@media(hover:none)]:static">
           <button
             type="button"
@@ -482,7 +482,7 @@ export default function CheckoutStatusCell({
         type="button"
         onClick={(e) => { e.stopPropagation(); onCheckout(docRecord); }}
         title={isLockedByMe ? "Checked out by you. Open to check in." : `Checked out by ${holder}`}
-        className="min-w-0 inline-flex items-center gap-1.5 h-7 px-1.5 -ml-1.5 rounded-md hover:bg-[var(--color-surface-2)] text-[13px] font-semibold text-[var(--color-text)]"
+        className="min-w-0 inline-flex items-center gap-1.5 h-8 px-1.5 -ml-1.5 rounded-md hover:bg-[var(--color-surface-2)] text-body font-medium text-[var(--color-text)]"
       >
         <span aria-hidden className="w-2 h-2 rounded-full shrink-0 bg-[var(--state-held)]" />
         <span className="truncate">{holder}{others > 0 ? ` +${others}` : ""}</span>

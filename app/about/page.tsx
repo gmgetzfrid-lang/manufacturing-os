@@ -33,9 +33,9 @@ const sectionGap = "pt-16 sm:pt-24 scroll-mt-16";
 function SectionHead({ kicker, title, line, id }: { kicker: string; title: string; line?: React.ReactNode; id?: string }) {
   return (
     <div className="max-w-3xl">
-      <div className="text-[14px] font-medium text-[var(--color-text-muted)]">{kicker}</div>
+      <div className="text-body font-medium text-[var(--color-text-muted)]">{kicker}</div>
       <h2 id={id} className="mt-1 font-display text-[28px] sm:text-[36px] leading-[1.08] font-semibold tracking-[-0.01em] text-[var(--color-text)]">{title}</h2>
-      {line && <p className="mt-2 text-[15px] sm:text-[16px] leading-snug text-[var(--color-text-muted)]">{line}</p>}
+      {line && <p className="mt-2 text-reading leading-snug text-[var(--color-text-muted)]">{line}</p>}
     </div>
   );
 }
@@ -90,30 +90,30 @@ function Hero() {
           button is where the eye lands. */}
       <div className="page-head bg-[var(--color-band)] [box-shadow:0_0_0_100vmax_var(--color-band)] [clip-path:inset(0_-100vmax)] py-10 sm:py-14 flex flex-wrap items-end gap-x-10 gap-y-6">
         <div className="min-w-0 flex-1 basis-[520px]">
-          <div className="text-[14px] font-medium text-[var(--color-text-muted)]">For refineries and plants that run on drawings</div>
+          <div className="text-body font-medium text-[var(--color-text-muted)]">For refineries and plants that run on drawings</div>
           <h1 className="mt-2 font-display text-[40px] sm:text-[56px] leading-[1.02] font-semibold tracking-[-0.015em] text-[var(--color-text)]">
             Know which revision is current.
           </h1>
-          <p className="mt-3 text-[16px] sm:text-[17px] leading-snug text-[var(--color-text-muted)] max-w-2xl">
+          <p className="mt-3 text-reading sm:text-section leading-snug text-[var(--color-text-muted)] max-w-2xl">
             Drawings, revisions and change requests in one register, with a record of who signed. Designed to support OSHA PSM 1910.119 and ISO 9001 documentation.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
           <Link href="/signup" className={`${btnPrimary} h-11 px-5`}>Start a workspace <ArrowRight className="w-4 h-4" /></Link>
-          <a href="#tour" className={`${btnQuiet} h-11 px-4 text-[15px]`}>See it in action</a>
+          <a href="#tour" className={`${btnQuiet} h-11 px-4 text-reading`}>See it in action</a>
         </div>
       </div>
 
       {/* The one bold element: the register, as the app draws it. */}
       <div className="mt-8" style={{ animation: "rise 0.6s var(--ease-fluid) 120ms both" }}>
         <div className="flex flex-wrap items-end gap-x-4 gap-y-1 mb-2.5">
-          <h2 className="font-display text-[19px] font-semibold text-[var(--color-text)]">Unit 25 diesel hydrotreater, drawing register</h2>
-          <span className="text-[13px] text-[var(--color-text-muted)]">Example</span>
+          <h2 className="font-display text-section font-semibold text-[var(--color-text)]">Unit 25 diesel hydrotreater, drawing register</h2>
+          <span className="text-body text-[var(--color-text-muted)]">Example</span>
           <div className="flex-1" />
-          <dl className="flex gap-5 text-[13px] text-[var(--color-text-muted)]">
-            <div className="flex items-baseline gap-1.5"><dt>Late</dt><dd className="font-display text-[19px] font-semibold tabular-nums text-[var(--state-overdue)]">1</dd></div>
-            <div className="flex items-baseline gap-1.5"><dt>Waiting on sign-off</dt><dd className="font-display text-[19px] font-semibold tabular-nums text-[var(--state-held)]">1</dd></div>
-            <div className="flex items-baseline gap-1.5"><dt>Issued</dt><dd className="font-display text-[19px] font-semibold tabular-nums text-[var(--color-text)]">3</dd></div>
+          <dl className="flex gap-5 text-body text-[var(--color-text-muted)]">
+            <div className="flex items-baseline gap-1.5"><dt>Late</dt><dd className="font-display text-section font-semibold tabular-nums text-[var(--state-overdue)]">1</dd></div>
+            <div className="flex items-baseline gap-1.5"><dt>Waiting on sign-off</dt><dd className="font-display text-section font-semibold tabular-nums text-[var(--state-held)]">1</dd></div>
+            <div className="flex items-baseline gap-1.5"><dt>Issued</dt><dd className="font-display text-section font-semibold tabular-nums text-[var(--color-text)]">3</dd></div>
           </dl>
         </div>
         <div className={tbl.wrap}>
@@ -134,13 +134,13 @@ function Hero() {
                 <tr key={r.no}>
                   <td className={`${tbl.td} relative whitespace-nowrap`}>
                     {r.edge && <RowEdge tone={r.edge} />}
-                    <span className="font-display text-[16px] font-semibold tabular-nums text-[var(--color-text)]">{r.no}</span>
+                    <span className="font-display text-reading font-semibold tabular-nums text-[var(--color-text)]">{r.no}</span>
                   </td>
                   <td className={`${tbl.td} text-[var(--color-text)]`}>{r.title}</td>
-                  <td className={`${tbl.td} text-right font-display text-[16px] font-semibold tabular-nums`}>{r.rev}</td>
+                  <td className={`${tbl.td} text-right font-display text-reading font-semibold tabular-nums`}>{r.rev}</td>
                   <td className={tbl.td}><StatusTag tone={r.tone} colored={r.tone === "bad"}>{r.status}</StatusTag></td>
                   <td className={`${tbl.td} max-lg:hidden whitespace-nowrap text-[var(--color-text-muted)]`}>{r.issued}</td>
-                  <td className={`${tbl.td} max-md:hidden text-[14px] ${r.tone === "bad" ? "font-semibold text-[var(--state-overdue)]" : "text-[var(--color-text-muted)]"}`}>{r.note ?? ""}</td>
+                  <td className={`${tbl.td} max-md:hidden text-body ${r.tone === "bad" ? "font-medium text-[var(--state-overdue)]" : "text-[var(--color-text-muted)]"}`}>{r.note ?? ""}</td>
                 </tr>
               ))}
             </tbody>
@@ -151,11 +151,11 @@ function Hero() {
               <li key={r.no} className="relative px-4 py-3">
                 {r.edge && <RowEdge tone={r.edge} />}
                 <div className="flex items-center gap-3">
-                  <span className="font-display text-[16px] font-semibold tabular-nums">{r.no}</span>
-                  <span className="text-[13px] text-[var(--color-text-muted)]">Rev {r.rev}</span>
+                  <span className="font-display text-reading font-semibold tabular-nums">{r.no}</span>
+                  <span className="text-body text-[var(--color-text-muted)]">Rev {r.rev}</span>
                   <span className="ml-auto"><StatusTag tone={r.tone} colored={r.tone === "bad"}>{r.status}</StatusTag></span>
                 </div>
-                <div className="mt-0.5 text-[14px] text-[var(--color-text-muted)] leading-snug">{r.note ?? r.title}</div>
+                <div className="mt-0.5 text-body text-[var(--color-text-muted)] leading-snug">{r.note ?? r.title}</div>
               </li>
             ))}
           </ul>
@@ -168,8 +168,8 @@ function Hero() {
         {promises.map((p, i) => (
           <li key={p.title} className={`py-4 sm:pr-5 border-b border-[var(--color-border)] lg:border-b-0 ${i > 0 ? "lg:pl-5 lg:border-l lg:border-[var(--color-border-strong)]" : ""} ${i % 2 === 1 ? "sm:pl-5 sm:border-l sm:border-[var(--color-border-strong)]" : ""}`}>
             <a href={p.href} className="group block">
-              <span className="font-display text-[19px] font-semibold text-[var(--color-text)] group-hover:text-[var(--color-accent-text)]">{p.title}</span>
-              <span className="block mt-0.5 text-[14px] leading-snug text-[var(--color-text-muted)]">{p.body}</span>
+              <span className="font-display text-section font-semibold text-[var(--color-text)] group-hover:text-[var(--color-accent-text)]">{p.title}</span>
+              <span className="block mt-0.5 text-body leading-snug text-[var(--color-text-muted)]">{p.body}</span>
             </a>
           </li>
         ))}
@@ -266,10 +266,10 @@ function PillarsSection() {
           {PILLARS.map((p, i) => (
             <li key={p.title} className="grid grid-cols-1 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)] gap-x-8 gap-y-3 px-4 sm:px-5 py-5">
               <div className="flex gap-3 min-w-0">
-                <span className="font-display text-[19px] font-semibold tabular-nums text-[var(--color-text-faint)] w-5 shrink-0">{i + 1}</span>
+                <span className="font-display text-section font-semibold tabular-nums text-[var(--color-text-faint)] w-5 shrink-0">{i + 1}</span>
                 <div className="min-w-0">
-                  <h3 className="font-display text-[19px] leading-tight font-semibold text-[var(--color-text)]">{p.title}</h3>
-                  <p className="mt-1 text-[15px] leading-snug text-[var(--color-text-muted)]">{p.line}</p>
+                  <h3 className="font-display text-section leading-tight font-semibold text-[var(--color-text)]">{p.title}</h3>
+                  <p className="mt-1 text-reading leading-snug text-[var(--color-text-muted)]">{p.line}</p>
                 </div>
               </div>
               <div className="min-w-0 max-lg:pl-8">
@@ -318,19 +318,19 @@ function TrustSection() {
             <tbody className={tbl.tbody}>
               {paths.map((p, i) => (
                 <tr key={p.title} className="max-sm:flex max-sm:flex-col max-sm:py-2">
-                  <td className={`${tbl.td} max-sm:py-1 font-semibold whitespace-nowrap`}><span className="font-display tabular-nums text-[var(--color-text-faint)] mr-2">{i + 1}</span>{p.title}</td>
+                  <td className={`${tbl.td} max-sm:py-1 font-medium whitespace-nowrap`}><span className="font-display tabular-nums text-[var(--color-text-faint)] mr-2">{i + 1}</span>{p.title}</td>
                   <td className={`${tbl.td} max-sm:py-1 text-[var(--color-text-muted)]`}>{p.body}</td>
                 </tr>
               ))}
               <tr className="max-sm:flex max-sm:flex-col max-sm:py-2">
-                <td className={`${tbl.td} max-sm:py-1 font-semibold align-top`}>What&apos;s in the ZIP</td>
+                <td className={`${tbl.td} max-sm:py-1 font-medium align-top`}>What&apos;s in the ZIP</td>
                 <td className={`${tbl.td} max-sm:py-1`}>
                   <div className="flex flex-wrap gap-1.5">
                     {files.map((f) => (
-                      <code key={f} className="inline-flex items-center h-7 px-2 rounded bg-[var(--color-surface-2)] border border-[var(--color-border)] text-[13px] font-mono text-[var(--color-text)]">{f}</code>
+                      <code key={f} className="inline-flex items-center h-8 px-2 rounded bg-[var(--color-surface-2)] border border-[var(--color-border)] text-body font-mono text-[var(--color-text)]">{f}</code>
                     ))}
                   </div>
-                  <p className="mt-2 text-[14px] text-[var(--color-text-muted)]">
+                  <p className="mt-2 text-body text-[var(--color-text-muted)]">
                     Enough to rebuild from scratch on any Postgres.{" "}
                     <Link href="/data-portability" className={link}>Read the full commitment</Link>
                   </p>
@@ -370,8 +370,8 @@ function HonestyList({ heading, tone, rows }: { heading: string; tone: Tone; row
       <ul className="divide-y divide-[var(--color-border)]">
         {rows.map(([t, b]) => (
           <li key={t} className="px-4 sm:px-5 py-3">
-            <div className="text-[15px] font-semibold text-[var(--color-text)]">{t}</div>
-            <div className="mt-0.5 text-[14px] leading-snug text-[var(--color-text-muted)]">{b}</div>
+            <div className="text-reading font-medium text-[var(--color-text)]">{t}</div>
+            <div className="mt-0.5 text-body leading-snug text-[var(--color-text-muted)]">{b}</div>
           </li>
         ))}
       </ul>
@@ -420,7 +420,7 @@ function SecuritySection() {
             <tbody className={tbl.tbody}>
               {items.map(([t, b]) => (
                 <tr key={t} className="max-sm:flex max-sm:flex-col max-sm:py-2">
-                  <td className={`${tbl.td} max-sm:py-0.5 font-semibold`}>{t}</td>
+                  <td className={`${tbl.td} max-sm:py-0.5 font-medium`}>{t}</td>
                   <td className={`${tbl.td} max-sm:py-0.5 text-[var(--color-text-muted)]`}>{b}</td>
                 </tr>
               ))}
@@ -447,8 +447,8 @@ function AudienceSection() {
         <ul className="grid grid-cols-1 md:grid-cols-3 border-t border-[var(--color-border-strong)]">
           {who.map(([t, b], i) => (
             <li key={t} className={`py-4 md:pr-6 max-md:border-b border-[var(--color-border)] ${i > 0 ? "md:pl-6 md:border-l md:border-[var(--color-border-strong)]" : ""}`}>
-              <h3 className="font-display text-[19px] font-semibold text-[var(--color-text)]">{t}</h3>
-              <p className="mt-1 text-[15px] leading-snug text-[var(--color-text-muted)]">{b}</p>
+              <h3 className="font-display text-section font-semibold text-[var(--color-text)]">{t}</h3>
+              <p className="mt-1 text-reading leading-snug text-[var(--color-text-muted)]">{b}</p>
             </li>
           ))}
         </ul>
@@ -465,11 +465,11 @@ function FinalCta() {
       <div className="pt-8 border-t border-[var(--color-border-strong)] flex flex-wrap items-end gap-x-10 gap-y-5">
         <div className="min-w-0 flex-1 basis-[420px]">
           <h2 className="font-display text-[28px] sm:text-[36px] leading-[1.08] font-semibold text-[var(--color-text)]">Stop running your plant off a shared drive.</h2>
-          <p className="mt-2 text-[15px] sm:text-[16px] text-[var(--color-text-muted)]">Set up a workspace and bring in your drawings. The day you leave, you take everything with you.</p>
+          <p className="mt-2 text-reading text-[var(--color-text-muted)]">Set up a workspace and bring in your drawings. The day you leave, you take everything with you.</p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
           <Link href="/signup" className={`${btnPrimary} h-11 px-5`}>Create your workspace <ArrowRight className="w-4 h-4" /></Link>
-          <Link href="/" className={`${btnQuiet} h-11 px-4 text-[15px]`}>Sign in</Link>
+          <Link href="/" className={`${btnQuiet} h-11 px-4 text-reading`}>Sign in</Link>
         </div>
       </div>
     </section>

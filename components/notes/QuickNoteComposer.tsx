@@ -86,24 +86,24 @@ export default function QuickNoteComposer({ orgId, userId, userEmail, userName, 
 
   return (
     <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3">
-      <div className="text-[13px] font-semibold text-[var(--color-text)] flex items-center gap-1 mb-2">
+      <div className="text-body font-medium text-[var(--color-text)] flex items-center gap-1 mb-2">
         <StickyNote className="w-3 h-3 text-[var(--color-text-muted)]" /> Notes
         {notes.length > 0 && <span className="text-[var(--color-text-faint)] tabular-nums">{notes.length}</span>}
       </div>
 
       {loading ? (
-        <div className="py-2 text-[11px] text-[var(--color-text-faint)] inline-flex items-center gap-1.5"><Loader2 className="w-3 h-3 animate-spin" /> Loading…</div>
+        <div className="py-2 text-caption text-[var(--color-text-faint)] inline-flex items-center gap-1.5"><Loader2 className="w-3 h-3 animate-spin" /> Loading…</div>
       ) : loadError ? (
-        <div role="alert" className="py-2 text-[11px] font-semibold text-red-700 dark:text-red-400">Couldn&apos;t load the notes: {loadError}</div>
+        <div role="alert" className="py-2 text-caption font-medium text-red-700 dark:text-red-400">Couldn&apos;t load the notes: {loadError}</div>
       ) : notes.length === 0 ? (
-        <div className="py-2 text-[11px] italic text-[var(--color-text-faint)]">No notes yet.</div>
+        <div className="py-2 text-caption italic text-[var(--color-text-faint)]">No notes yet.</div>
       ) : (
         <ul className="space-y-1.5 mb-2">
           {notes.map((n) => (
             <li key={n.id} className="group flex items-start gap-2 text-xs">
               <div className="flex-1 min-w-0 bg-[var(--color-surface)] rounded-md border border-[var(--color-border)] px-2 py-1.5">
                 <CommentBody text={n.body} currentUserId={userId} className="text-[var(--color-text)] text-xs" />
-                <div className="text-[11px] text-[var(--color-text-faint)] mt-1">{n.createdByName ?? "-"} · {formatAgo(n.createdAt)}</div>
+                <div className="text-caption text-[var(--color-text-faint)] mt-1">{n.createdByName ?? "-"} · {formatAgo(n.createdAt)}</div>
               </div>
               {String(n.createdBy) === String(userId) && (
                 <button

@@ -16,7 +16,7 @@ export const vPanel =
 
 /** Small line over the title: revision, status. */
 export const vKicker =
-  "truncate text-[13px] text-[var(--color-text-muted)]";
+  "truncate text-body text-[var(--color-text-muted)]";
 
 /** The drawing's name: the one big thing in the chrome. */
 export const vTitle =
@@ -36,15 +36,15 @@ export function vTool(on: boolean, size = "w-10 h-10 pointer-coarse:w-11 pointer
 
 /** A quiet text button on the charcoal. */
 export const vQuiet =
-  "inline-flex items-center justify-center gap-1.5 h-10 pointer-coarse:h-11 px-3 shrink-0 rounded-lg bg-[var(--color-ink-2)] text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-ink-line)] disabled:opacity-40 disabled:pointer-events-none transition-colors";
+  "inline-flex items-center justify-center gap-1.5 h-10 pointer-coarse:h-11 px-3 shrink-0 rounded-lg bg-[var(--color-ink-2)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-ink-line)] disabled:opacity-40 disabled:pointer-events-none transition-colors";
 
 /** A pill holding a small set of controls (page arrows, zoom). */
 export const vGroup =
-  "flex items-center h-10 pointer-coarse:h-11 shrink-0 rounded-lg bg-[var(--color-ink-2)] text-[14px] font-semibold tabular-nums text-[var(--color-text)]";
+  "flex items-center h-10 pointer-coarse:h-11 shrink-0 rounded-lg bg-[var(--color-ink-2)] text-body font-medium tabular-nums text-[var(--color-text)]";
 
 /** The one orange action, sized for the chrome. */
 export const vPrimary =
-  "inline-flex items-center justify-center gap-2 h-10 pointer-coarse:h-11 px-4 shrink-0 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[15px] font-semibold hover:bg-[var(--color-accent-hover)] disabled:opacity-50 transition-colors";
+  "inline-flex items-center justify-center gap-2 h-10 pointer-coarse:h-11 px-4 shrink-0 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-reading font-medium hover:bg-[var(--color-accent-hover)] disabled:opacity-50 transition-colors";
 
 /** The way out (X), top right. */
 export const vClose =
@@ -52,4 +52,4 @@ export const vClose =
 
 /** A thin line in the chrome that says something about this drawing. */
 export const vNote =
-  "shrink-0 px-4 sm:px-5 py-1.5 flex items-center gap-2 text-[13px] border-b border-[var(--color-border)]";
+  "shrink-0 px-4 sm:px-5 py-1.5 flex items-center gap-2 text-body border-b border-[var(--color-border)]";

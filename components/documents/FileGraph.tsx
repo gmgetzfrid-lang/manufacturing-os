@@ -693,7 +693,7 @@ const FileGraph = React.forwardRef<FileGraphHandle, Props>(function FileGraph(
             transform: `translate(${hoverAt.x > hoverAt.w - 280 ? "calc(-100% - 32px)" : "0"}, ${hoverAt.y > hoverAt.h - 90 ? "calc(-100% - 32px)" : "0"})`,
           }}
         >
-          <div className="font-bold truncate">{hoverNode.label}</div>
+          <div className="font-medium truncate">{hoverNode.label}</div>
           <div className="text-[var(--color-text-muted)]">
             {hoverId === "__up__" ? "Click to go back up" : hoverSat ? `${hoverSat.sub ?? "Entity"} · ${hoverSat.links.length} linked file${hoverSat.links.length === 1 ? "" : "s"} · click to open` : "hint" in hoverNode && hoverNode.hint ? hoverNode.hint : isContainer(hoverNode.kind) ? `${hoverNode.type.label} · ${hoverNode.childCount} inside · click to explore` : `${hoverNode.type.label} · click for details · double-click to open`}
           </div>

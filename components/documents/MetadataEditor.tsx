@@ -68,7 +68,7 @@ function TagInput({
             )}
           </div>
         ))}
-        {values.length === 0 && disabled && <span className="text-[var(--color-text-faint)] text-[13px]">-</span>}
+        {values.length === 0 && disabled && <span className="text-[var(--color-text-faint)] text-body">-</span>}
       </div>
       {!disabled && (
         <div className="flex items-center gap-1 mt-2">
@@ -83,7 +83,7 @@ function TagInput({
               if (e.key === "Tab" && input.trim()) { e.preventDefault(); addPill(); }
             }}
             placeholder={`Add ${label}…`}
-            className="flex-1 min-w-0 text-[13px] px-2 py-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)]"
+            className="flex-1 min-w-0 text-body px-2 py-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)]"
           />
           {input.trim() && (
             <button
@@ -96,7 +96,7 @@ function TagInput({
           )}
         </div>
       )}
-      {!disabled && <p className="text-[13px] text-[var(--color-text-faint)] mt-1">Enter adds it. Commas stay in the tag.</p>}
+      {!disabled && <p className="text-body text-[var(--color-text-faint)] mt-1">Enter adds it. Commas stay in the tag.</p>}
     </div>
   );
 }
@@ -310,11 +310,11 @@ export default function MetadataEditor(props: {
         <div className="px-6 py-4 border-b border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center justify-between shrink-0">
           <div className="flex items-center gap-4 min-w-0">
             <div className="min-w-0">
-              <div className="text-sm font-bold text-[var(--color-text)] flex items-center gap-2">
+              <div className="text-sm font-medium text-[var(--color-text)] flex items-center gap-2">
                 <FileText className="w-4 h-4 text-[var(--color-text-faint)] shrink-0" />
                 Metadata Editor
               </div>
-              <div className="text-[13px] text-[var(--color-text-muted)] truncate">{document.documentNumber || document.title || "Document"}</div>
+              <div className="text-body text-[var(--color-text-muted)] truncate">{document.documentNumber || document.title || "Document"}</div>
             </div>
             {onCheckout && (
               <div className="pl-4 border-l border-[var(--color-border)] shrink-0">
@@ -328,7 +328,7 @@ export default function MetadataEditor(props: {
               </div>
             )}
             {!canEdit && (
-              <span className="text-[13px] font-bold text-[var(--state-held)] bg-[color-mix(in_srgb,var(--state-held)_12%,transparent)] border border-[color-mix(in_srgb,var(--state-held)_40%,transparent)] px-2 py-0.5 rounded-full shrink-0">
+              <span className="text-body font-medium text-[var(--state-held)] bg-[color-mix(in_srgb,var(--state-held)_12%,transparent)] border border-[color-mix(in_srgb,var(--state-held)_40%,transparent)] px-2 py-0.5 rounded-full shrink-0">
                 View only
               </span>
             )}
@@ -347,7 +347,7 @@ export default function MetadataEditor(props: {
           {canEdit && document.ingestion?.extractedFields && Object.keys(document.ingestion.extractedFields).length > 0 && (
             <button
               onClick={applyIngestion}
-              className="inline-flex items-center gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-2 text-[13px] font-bold text-[var(--color-text)]"
+              className="inline-flex items-center gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-2 text-body font-medium text-[var(--color-text)]"
             >
               <Zap className="h-4 w-4" /> Apply extracted metadata
             </button>
@@ -355,10 +355,10 @@ export default function MetadataEditor(props: {
 
           {/* ── CORE FIELDS ─────────────────────────────────────────────── */}
           <div>
-            <div className="text-[13px] font-semibold text-[var(--color-text-faint)] mb-3">Document</div>
+            <div className="text-body font-medium text-[var(--color-text-faint)] mb-3">Document</div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
-                <label className="text-[13px] font-bold text-[var(--color-text-muted)]">Title</label>
+                <label className="text-body font-medium text-[var(--color-text-muted)]">Title</label>
                 <input
                   value={title}
                   onChange={(e) => canEdit && setTitle(e.target.value)}
@@ -367,7 +367,7 @@ export default function MetadataEditor(props: {
                 />
               </div>
               <div>
-                <label className="text-[13px] font-bold text-[var(--color-text-muted)]">Document Number</label>
+                <label className="text-body font-medium text-[var(--color-text-muted)]">Document Number</label>
                 <input
                   value={documentNumber}
                   onChange={(e) => canEdit && setDocumentNumber(e.target.value)}
@@ -376,7 +376,7 @@ export default function MetadataEditor(props: {
                 />
               </div>
               <div>
-                <label className="text-[13px] font-bold text-[var(--color-text-muted)]">Revision</label>
+                <label className="text-body font-medium text-[var(--color-text-muted)]">Revision</label>
                 <input
                   value={rev}
                   onChange={(e) => canEdit && setRev(e.target.value)}
@@ -386,7 +386,7 @@ export default function MetadataEditor(props: {
                 />
               </div>
               <div>
-                <label className="text-[13px] font-bold text-[var(--color-text-muted)]">Status</label>
+                <label className="text-body font-medium text-[var(--color-text-muted)]">Status</label>
                 <select
                   value={status}
                   onChange={(e) => canEdit && setStatus(e.target.value)}
@@ -405,12 +405,12 @@ export default function MetadataEditor(props: {
           {/* ── CUSTOM COLUMNS ───────────────────────────────────────────── */}
           {columns.length > 0 && (
             <div>
-              <div className="text-[13px] font-semibold text-[var(--color-text-faint)] mb-3">Custom Fields</div>
+              <div className="text-body font-medium text-[var(--color-text-faint)] mb-3">Custom Fields</div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {columns.map((col) => (
                   <div key={col.key} className={col.type === "tags" || col.type === "multi" ? "md:col-span-2" : ""}>
                     {col.type !== "boolean" && (
-                      <label className="text-[13px] font-bold text-[var(--color-text-muted)]">
+                      <label className="text-body font-medium text-[var(--color-text-muted)]">
                         {col.label}{col.required ? " *" : ""}
                       </label>
                     )}
@@ -432,7 +432,7 @@ export default function MetadataEditor(props: {
         <div className="px-6 py-4 border-t border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center justify-end gap-2 shrink-0">
           <button
             onClick={onClose}
-            className="px-4 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-sm font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
+            className="px-4 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-sm font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
           >
             {canEdit ? "Cancel" : "Close"}
           </button>
@@ -440,7 +440,7 @@ export default function MetadataEditor(props: {
             <button
               onClick={save}
               disabled={saving}
-              className="px-4 py-2 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-sm font-bold disabled:opacity-60"
+              className="px-4 py-2 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-sm font-medium disabled:opacity-60"
             >
               {saving ? "Saving…" : "Save"}
             </button>

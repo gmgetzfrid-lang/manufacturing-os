@@ -200,9 +200,9 @@ export default function WorkspaceSettingsPage() {
               </FormRow>
               <FormRow label="Next number looks like" hint="The count restarts each year and never repeats.">
                 <div className="flex flex-wrap items-center gap-x-5 gap-y-3">
-                  <span className="ui-id text-[20px]">{preview}</span>
+                  <span className="ui-id text-section">{preview}</span>
                   <span className="ml-auto inline-flex items-center gap-3">
-                    {numDirty && <span className="text-[13px] text-[var(--color-text-muted)]">Not saved yet</span>}
+                    {numDirty && <span className="text-body text-[var(--color-text-muted)]">Not saved yet</span>}
                     <Button variant="secondary" {...numFx.state} doneLabel="Saved" onClick={() => void saveNumbering()} disabled={!numDirty && !numFx.done}
                       title={!numDirty ? "Nothing changed yet" : undefined}>
                       Save numbering
@@ -217,11 +217,11 @@ export default function WorkspaceSettingsPage() {
           {/* Identity */}
           <Section label="Workspace">
             <div className={`${sheet} divide-y divide-[var(--color-border)]`}>
-              <FormRow label="Name"><div className="@xl:pt-2 text-[15px] text-[var(--color-text)]">{org?.name ?? <span className="text-[var(--color-text-faint)]">Not loaded</span>}</div></FormRow>
-              {org?.subscribed_plan && <FormRow label="Plan"><div className="@xl:pt-2 text-[15px] text-[var(--color-text)] capitalize">{org.subscribed_plan}</div></FormRow>}
-              {org?.subscription_status && <FormRow label="Subscription"><div className="@xl:pt-2 text-[15px] text-[var(--color-text)] capitalize">{org.subscription_status}</div></FormRow>}
+              <FormRow label="Name"><div className="@xl:pt-2 text-reading text-[var(--color-text)]">{org?.name ?? <span className="text-[var(--color-text-faint)]">Not loaded</span>}</div></FormRow>
+              {org?.subscribed_plan && <FormRow label="Plan"><div className="@xl:pt-2 text-reading text-[var(--color-text)] capitalize">{org.subscribed_plan}</div></FormRow>}
+              {org?.subscription_status && <FormRow label="Subscription"><div className="@xl:pt-2 text-reading text-[var(--color-text)] capitalize">{org.subscription_status}</div></FormRow>}
               <FormRow label="AI assistance" hint="Set providers in Knowledge, AI settings.">
-                <p className="@xl:pt-2 text-[15px] text-[var(--color-text)]">Runs only in Knowledge Libraries, on each person&apos;s own key, with a monthly spend limit.</p>
+                <p className="@xl:pt-2 text-reading text-[var(--color-text)]">Runs only in Knowledge Libraries, on each person&apos;s own key, with a monthly spend limit.</p>
               </FormRow>
             </div>
           </Section>
@@ -229,7 +229,7 @@ export default function WorkspaceSettingsPage() {
         </div>
 
         {/* Email delivery */}
-        <Section label="Email" action={<Link href="/settings/notifications" className={`text-[14px] ${link}`}>Your own email settings</Link>}>
+        <Section label="Email" action={<Link href="/settings/notifications" className={`text-body ${link}`}>Your own email settings</Link>}>
           <div className={`${sheet} divide-y divide-[var(--color-border)]`}>
             <FormRow label="Outbound email" hint="Sent through Resend. Each person picks what they get.">
               <div className="@xl:pt-2">
@@ -237,7 +237,7 @@ export default function WorkspaceSettingsPage() {
                 {emailQueueStatus === "no-key" && (
                   <>
                     <StatusTag tone="warn">Not set up yet</StatusTag>
-                    <p className="mt-1 text-[14px] text-[var(--color-text-muted)]">Emails wait as <code className="font-mono text-[13px]">queued</code> until <code className="font-mono text-[13px]">RESEND_API_KEY</code> and <code className="font-mono text-[13px]">RESEND_FROM_EMAIL</code> are set on the server, then all go out.</p>
+                    <p className="mt-1 text-body text-[var(--color-text-muted)]">Emails wait as <code className="font-mono text-body">queued</code> until <code className="font-mono text-body">RESEND_API_KEY</code> and <code className="font-mono text-body">RESEND_FROM_EMAIL</code> are set on the server, then all go out.</p>
                   </>
                 )}
                 {emailQueueStatus === "unknown" && <StatusTag tone="none">Not checked yet</StatusTag>}
@@ -249,10 +249,10 @@ export default function WorkspaceSettingsPage() {
                 <div className="@xl:pt-1 flex flex-wrap items-center gap-4">
                   {failedEmails > 0 ? (
                     <>
-                      <span className="text-[15px] font-semibold text-[var(--state-overdue-text)] tabular-nums">{plural(failedEmails, "email")}</span>
+                      <span className="text-reading font-medium text-[var(--state-overdue-text)] tabular-nums">{plural(failedEmails, "email")}</span>
                       <Button variant="secondary" size="sm" loading={requeuing} onClick={() => void requeueFailed()}>Send again</Button>
                     </>
-                  ) : <span className="text-[15px] text-[var(--color-text-muted)]">Nothing failed to send.</span>}
+                  ) : <span className="text-reading text-[var(--color-text-muted)]">Nothing failed to send.</span>}
                 </div>
               </FormRow>
             )}
@@ -320,18 +320,18 @@ function SchemaHealthCard({ orgId }: { orgId: string | null }) {
         <div className={`${tbl.wrap} !overflow-x-auto`}>
           <div className="px-4 py-3 border-b border-[var(--color-border)]">
             <StatusTag tone="warn">{plural(missing, "missing piece")}</StatusTag>
-            <span className="ml-2 text-[14px] text-[var(--color-text-muted)]">Features that use them show nothing until their migration runs.</span>
+            <span className="ml-2 text-body text-[var(--color-text-muted)]">Features that use them show nothing until their migration runs.</span>
           </div>
           <table className={tbl.table}>
             <thead className={tbl.thead}>
               <tr><th className={tbl.th}>Missing</th><th className={`${tbl.th} max-sm:hidden`}>Used by</th><th className={tbl.th}>Run this migration</th></tr>
             </thead>
-            <tbody className={`${tbl.tbody} text-[14px]`}>
+            <tbody className={`${tbl.tbody} text-body`}>
               {state.missingTables.map((t) => (
-                <tr key={t.table}><td className={tbl.td}><code className="font-mono text-[13px]">{t.table}</code></td><td className={`${tbl.td} max-sm:hidden text-[var(--color-text-muted)]`}>Table</td><td className={tbl.td}><code className="font-mono text-[13px]">{t.migration}</code></td></tr>
+                <tr key={t.table}><td className={tbl.td}><code className="font-mono text-body">{t.table}</code></td><td className={`${tbl.td} max-sm:hidden text-[var(--color-text-muted)]`}>Table</td><td className={tbl.td}><code className="font-mono text-body">{t.migration}</code></td></tr>
               ))}
               {state.missingColumns.map((c) => (
-                <tr key={`${c.table}.${c.column}`}><td className={tbl.td}><code className="font-mono text-[13px]">{c.table}.{c.column}</code></td><td className={`${tbl.td} max-sm:hidden text-[var(--color-text-muted)]`}>{c.feature}</td><td className={tbl.td}><code className="font-mono text-[13px]">{c.migration}</code></td></tr>
+                <tr key={`${c.table}.${c.column}`}><td className={tbl.td}><code className="font-mono text-body">{c.table}.{c.column}</code></td><td className={`${tbl.td} max-sm:hidden text-[var(--color-text-muted)]`}>{c.feature}</td><td className={tbl.td}><code className="font-mono text-body">{c.migration}</code></td></tr>
               ))}
             </tbody>
           </table>

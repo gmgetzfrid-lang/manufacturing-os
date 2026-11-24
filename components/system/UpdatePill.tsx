@@ -42,7 +42,7 @@ export default function UpdatePill() {
       <button
         type="button"
         onClick={() => window.location.reload()}
-        className="ui-float inline-flex items-center gap-2 rounded-full bg-[var(--color-ink)] px-4 h-10 pointer-coarse:h-11 text-[13px] font-semibold text-[var(--color-ink-fg)] hover:bg-[var(--color-ink-2)] transition-colors"
+        className="ui-float inline-flex items-center gap-2 rounded-full bg-[var(--color-ink)] px-4 h-10 pointer-coarse:h-11 text-body font-medium text-[var(--color-ink-fg)] hover:bg-[var(--color-ink-2)] transition-colors"
       >
         <RefreshCw className="w-3.5 h-3.5" />
         A new version is ready. Tap to reload.

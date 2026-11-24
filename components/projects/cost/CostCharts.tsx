@@ -105,7 +105,7 @@ export default function CostCharts({ rollup, entries, scheduleStart, scheduleEnd
           <SectionLabel icon={<LineChartIcon className="w-3.5 h-3.5" />} text="Spend curve: planned pace, promised and spent" />
           <SCurveChart points={series} fmt={fmt} todayIso={todayIso} />
           {!scheduleStart && (
-            <div className="mt-1 text-[11px] text-[var(--color-text-muted)]">
+            <div className="mt-1 text-caption text-[var(--color-text-muted)]">
               No schedule dates yet, so there&apos;s no planned-pace line - import or add milestones and it appears.
             </div>
           )}
@@ -125,7 +125,7 @@ export default function CostCharts({ rollup, entries, scheduleStart, scheduleEnd
 
 function SectionLabel({ icon, text }: { icon?: React.ReactNode; text: string }) {
   return (
-    <div className="flex items-center gap-1.5 mb-1.5 text-[13px] font-semibold text-[var(--color-text-muted)]">
+    <div className="flex items-center gap-1.5 mb-1.5 text-body font-medium text-[var(--color-text-muted)]">
       {icon}{text}
     </div>
   );
@@ -155,15 +155,15 @@ export function CostGlossary() {
     <div className="rounded-lg bg-[var(--color-surface)] overflow-hidden border border-[var(--color-border)]">
       <button onClick={() => setOpen((v) => !v)}
         className="w-full px-4 py-2.5 flex items-center gap-2 text-left hover:bg-[var(--color-surface-2)]/40 transition-colors">
-        <span className="text-[13px] font-semibold text-[var(--color-text-muted)]">What do these words mean?</span>
-        <span className="text-[11px] text-[var(--color-text-muted)]">Plain-language guide to every term on this page</span>
-        <span className="ml-auto text-[11px] font-semibold text-[var(--color-accent-text)]">{open ? "Hide" : "Show"}</span>
+        <span className="text-body font-medium text-[var(--color-text-muted)]">What do these words mean?</span>
+        <span className="text-caption text-[var(--color-text-muted)]">Plain-language guide to every term on this page</span>
+        <span className="ml-auto text-caption font-medium text-[var(--color-accent-text)]">{open ? "Hide" : "Show"}</span>
       </button>
       {open && (
         <dl className="px-4 pb-4 pt-1 grid md:grid-cols-2 gap-x-6 gap-y-2 border-t border-[var(--color-border)]">
           {TERMS.map((t) => (
             <div key={t.term} className="text-xs">
-              <dt className="font-semibold text-[var(--color-text)]">{t.term}</dt>
+              <dt className="font-medium text-[var(--color-text)]">{t.term}</dt>
               <dd className="text-[var(--color-text-muted)] mt-0.5">{t.plain}</dd>
             </div>
           ))}

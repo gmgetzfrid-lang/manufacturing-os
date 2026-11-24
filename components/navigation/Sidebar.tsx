@@ -339,7 +339,7 @@ export default function Sidebar({
               // No company logo uploaded yet: the app logo and name.
               <>
                 <AppMark size={32} ring />
-                <div className="flex-1 min-w-0 font-display text-[18px] font-semibold text-[var(--color-text)] leading-none truncate">Manufacturing OS</div>
+                <div className="flex-1 min-w-0 font-display text-section font-semibold text-[var(--color-text)] leading-none truncate">Manufacturing OS</div>
               </>
             )}
             <button
@@ -357,19 +357,19 @@ export default function Sidebar({
       {/* WORKSPACE: switch between workspaces; an admin can set the logo. */}
       {orgOptions.length > 0 && !collapsed && (orgOptions.length > 1 || !logoUrl || canEditBranding) && (
         <div className="px-3 pt-3 shrink-0">
-          <div className="flex items-center gap-2 h-9 px-2.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)]">
+          <div className="flex items-center gap-2 h-10 px-2.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)]">
             {orgOptions.length > 1 ? (
               <select
                 value={activeOrgId ?? ''}
                 onChange={(e) => setActiveOrgId(e.target.value || null)}
                 disabled={orgLoading}
                 aria-label="Workspace"
-                className="flex-1 min-w-0 bg-transparent text-[14px] font-semibold text-[var(--color-text)] outline-none cursor-pointer truncate"
+                className="flex-1 min-w-0 bg-transparent text-body font-medium text-[var(--color-text)] outline-none cursor-pointer truncate"
               >
                 {orgOptions.map((org) => <option key={org.id} value={org.id} className="bg-[var(--color-surface)] text-[var(--color-text)]">{org.name}</option>)}
               </select>
             ) : (
-              <span className="flex-1 min-w-0 text-[14px] font-semibold text-[var(--color-text)] truncate">{orgOptions[0].name}</span>
+              <span className="flex-1 min-w-0 text-body font-medium text-[var(--color-text)] truncate">{orgOptions[0].name}</span>
             )}
             {canEditBranding && (
               <button
@@ -434,8 +434,8 @@ export default function Sidebar({
             <Link href="/profile" className="flex items-center min-w-0 flex-1 group" title="Open profile">
               <UserAvatar uid={uid} email={userEmail} size={36} rounded="lg" />
               <div className="ml-2.5 overflow-hidden">
-                <div className="text-[14px] font-semibold text-[var(--color-text)] truncate">{userEmail?.split('@')[0] ?? '-'}</div>
-                <div className="text-[13px] text-[var(--color-text-muted)] truncate">{activeOrgId ? (activeRole ?? '…') : 'No workspace'}</div>
+                <div className="text-body font-medium text-[var(--color-text)] truncate">{userEmail?.split('@')[0] ?? '-'}</div>
+                <div className="text-body text-[var(--color-text-muted)] truncate">{activeOrgId ? (activeRole ?? '…') : 'No workspace'}</div>
               </div>
             </Link>
             <button
@@ -469,9 +469,9 @@ function SectionHeader({
       onClick={onToggle}
       title={section.hint ?? section.title}
       aria-expanded={open}
-      className="group/sec w-full flex items-center gap-1.5 px-2.5 h-7 rounded-md hover:bg-[var(--color-surface-2)] transition-colors select-none"
+      className="group/sec w-full flex items-center gap-1.5 px-2.5 h-8 rounded-md hover:bg-[var(--color-surface-2)] transition-colors select-none"
     >
-      <span className={`text-[12px] font-semibold truncate ${active ? 'text-[var(--color-text)]' : 'text-[var(--color-text-faint)]'}`}>
+      <span className={`text-caption font-medium truncate ${active ? 'text-[var(--color-text)]' : 'text-[var(--color-text-faint)]'}`}>
         {section.title}
       </span>
       <ChevronDown aria-hidden className={`ui-chevron w-3.5 h-3.5 text-[var(--color-text-faint)] group-hover/sec:text-[var(--color-text-muted)] ${open ? '' : '-rotate-90'}`} />
@@ -517,11 +517,11 @@ function SidebarLeaf({
         collapsed ? 'h-10 justify-center' : 'h-9 px-2.5'
       } ${
         active
-          ? 'nav-joined -mr-2 rounded-l-lg font-semibold'
+          ? 'nav-joined -mr-2 rounded-l-lg font-medium'
           : 'rounded-lg text-[var(--color-text-muted)] hover:bg-[var(--color-surface)] hover:text-[var(--color-text)]'
       }`}
     >
-      {active && <span aria-hidden className="absolute left-1 top-2 bottom-2 w-[3px] rounded-full bg-[var(--color-current)]" />}
+      {active && <span aria-hidden className="side-marker absolute left-1 top-2 bottom-2 w-[3px] rounded-full bg-[var(--color-current)]" />}
       <span className="relative shrink-0 inline-flex">
         <Icon className={`w-[17px] h-[17px] ${active ? '' : TONE_ICON[leaf.tone]}`} />
         {collapsed && hasBadge && (
@@ -529,7 +529,7 @@ function SidebarLeaf({
         )}
       </span>
       {!collapsed && (
-        <span className="text-[15px] truncate flex-1 leading-none">{leaf.label}</span>
+        <span className="text-reading truncate flex-1 leading-none">{leaf.label}</span>
       )}
       {!collapsed && hasBadge && (
         // The count is a doorway, not a scoreboard: clicking it opens the
@@ -538,13 +538,15 @@ function SidebarLeaf({
         // still goes to its tool. Unread news is plain figures, not a
         // badge: only what needs a decision is badged.
         <button
+          // Keyed by the count, so a change pops (globals.css .ui-badge).
+          key={String(leaf.badge)}
           type="button"
           onClick={(e) => { e.preventDefault(); e.stopPropagation(); openCenter(urgent ? 'action' : 'all'); }}
           title={badgeWords}
           aria-label={`${leaf.label}: ${badgeWords}`}
           className={urgent
             ? 'ui-badge cursor-pointer hover:brightness-110'
-            : 'min-w-5 h-5 px-1 rounded text-[12px] tabular-nums text-[var(--color-text-muted)] hover:text-[var(--color-text)] cursor-pointer'}
+            : 'min-w-5 h-5 px-1 rounded text-caption tabular-nums text-[var(--color-text-muted)] hover:text-[var(--color-text)] cursor-pointer'}
         >
           {badgeText(leaf.badge!)}
         </button>

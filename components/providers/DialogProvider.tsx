@@ -123,9 +123,9 @@ export function DialogHost() {
           {/* A plain icon, no tile: red only when the action can't be undone. */}
           <Icon aria-hidden className={`w-5 h-5 mt-0.5 shrink-0 ${danger ? "text-[var(--state-overdue)]" : "text-[var(--color-text-muted)]"}`} />
           <div className="min-w-0 flex-1">
-            {current.title && <h2 className="text-[16px] leading-6 font-semibold text-[var(--color-text)]">{current.title}</h2>}
+            {current.title && <h2 className="text-reading leading-6 font-medium text-[var(--color-text)]">{current.title}</h2>}
             {current.message && (
-              <div className={`text-[14px] leading-5 text-[var(--color-text-muted)] ${current.title ? "mt-1" : ""}`}>
+              <div className={`text-body leading-5 text-[var(--color-text-muted)] ${current.title ? "mt-1" : ""}`}>
                 {current.message}
               </div>
             )}

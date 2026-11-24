@@ -26,8 +26,8 @@ export interface AnswerTestDraft {
   sourceQuestionId?: string | null;
 }
 
-const field = "w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1.5 text-[13px] text-[var(--color-text)] focus:outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]";
-const label = "text-[13px] font-semibold text-[var(--color-text-muted)]";
+const field = "w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1.5 text-body text-[var(--color-text)] focus:outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]";
+const label = "text-body font-medium text-[var(--color-text-muted)]";
 
 /** Strip a document name down to what people call it ("EP 5-2-3"). */
 const shortName = (name: string) => name.replace(/\.pdf$/i, "").split(/\s+[-–—]\s+/)[0].trim();
@@ -101,19 +101,19 @@ export default function AnswerTestEditor({ initial, citations = [], onSave, onCa
   };
 
   return (
-    <div className="space-y-3 text-[13px]">
+    <div className="space-y-3 text-body">
       <div className="flex items-center gap-2 text-[var(--color-text)]">
         <FlaskConical className="w-4 h-4 text-[var(--color-text-muted)]" />
         <b>{initial.id ? "Edit test case" : "Make this a test case"}</b>
       </div>
-      <p className="text-[13px] text-[var(--color-text-muted)]">
+      <p className="text-body text-[var(--color-text-muted)]">
         Every run asks this question again and checks the answer against what you mark here. A change that breaks it shows up before it reaches anyone.
       </p>
 
       <div className="space-y-1">
         <div className={label}>Question</div>
         <textarea value={question} onChange={(e) => setQuestion(e.target.value)} rows={2} className={field} />
-        {rating && <div className="text-[13px] text-[var(--color-text-muted)]">Checked automatically: the answer must stay on <b>Class {rating}</b>.</div>}
+        {rating && <div className="text-body text-[var(--color-text-muted)]">Checked automatically: the answer must stay on <b>Class {rating}</b>.</div>}
       </div>
 
       <div className="space-y-1">
@@ -122,7 +122,7 @@ export default function AnswerTestEditor({ initial, citations = [], onSave, onCa
           <div className="flex flex-wrap gap-1">
             {offered.map((c) => (
               <button key={`${c.documentName}|${c.page}`} type="button" onClick={() => toggle(c)}
-                className={`rounded-md border px-2 py-0.5 text-[13px] ${ticked(c) ? "border-[var(--state-released)] bg-[color-mix(in_srgb,var(--state-released)_10%,transparent)] text-[var(--state-released)]" : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
+                className={`rounded-md border px-2 py-0.5 text-body ${ticked(c) ? "border-[var(--state-released)] bg-[color-mix(in_srgb,var(--state-released)_10%,transparent)] text-[var(--state-released)]" : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
                 {ticked(c) ? "✓ " : ""}{shortName(c.documentName)} p.{c.page}
               </button>
             ))}
@@ -138,7 +138,7 @@ export default function AnswerTestEditor({ initial, citations = [], onSave, onCa
             </div>
           );
         })}
-        <button type="button" onClick={() => setPages((ps) => [...ps, { document: "", page: "" }])} className="inline-flex items-center gap-1 text-[13px] font-bold text-[var(--color-accent-text)] hover:underline">
+        <button type="button" onClick={() => setPages((ps) => [...ps, { document: "", page: "" }])} className="inline-flex items-center gap-1 text-body font-medium text-[var(--color-accent-text)] hover:underline">
           <Plus className="w-3 h-3" /> A page the answer missed
         </button>
       </div>
@@ -148,7 +148,7 @@ export default function AnswerTestEditor({ initial, citations = [], onSave, onCa
           <div className={label}>Facts it must state (one per line)</div>
           <textarea value={contain} onChange={(e) => setContain(e.target.value)} rows={3} className={field}
             placeholder={"the class code a right answer names\nfree water | water present"} />
-          <div className="text-[13px] text-[var(--color-text-faint)]">Use “ | ” for either wording.</div>
+          <div className="text-body text-[var(--color-text-faint)]">Use “ | ” for either wording.</div>
         </div>
         <div className="space-y-1">
           <div className={label}>It must never say (one per line)</div>
@@ -167,10 +167,10 @@ export default function AnswerTestEditor({ initial, citations = [], onSave, onCa
             <button type="button" aria-label="Remove rule" onClick={() => setTerms((ts) => ts.filter((_, j) => j !== i))} className="px-1 text-[var(--color-text-muted)] hover:text-[var(--state-overdue)]"><X className="w-3.5 h-3.5" /></button>
           </div>
         ))}
-        <button type="button" onClick={() => setTerms((ts) => [...ts, { term: "", not: "" }])} className="inline-flex items-center gap-1 text-[13px] font-bold text-[var(--color-accent-text)] hover:underline">
+        <button type="button" onClick={() => setTerms((ts) => [...ts, { term: "", not: "" }])} className="inline-flex items-center gap-1 text-body font-medium text-[var(--color-accent-text)] hover:underline">
           <Plus className="w-3 h-3" /> A term rule
         </button>
-        <div className="text-[13px] text-[var(--color-text-faint)]">Common related terms are checked on every test already; add one when your standards draw a line the system can&apos;t know.</div>
+        <div className="text-body text-[var(--color-text-faint)]">Common related terms are checked on every test already; add one when your standards draw a line the system can&apos;t know.</div>
       </div>
 
       <div className="space-y-1">
@@ -178,16 +178,16 @@ export default function AnswerTestEditor({ initial, citations = [], onSave, onCa
         <input value={notes} onChange={(e) => setNotes(e.target.value)} className={field} placeholder="Why this answer is right, for whoever reads a failure" />
       </div>
 
-      <label className="flex items-center gap-2 text-[13px] text-[var(--color-text)]">
+      <label className="flex items-center gap-2 text-body text-[var(--color-text)]">
         <input type="checkbox" checked={critical} onChange={(e) => setCritical(e.target.checked)} />
         Critical - a version that fails this is flagged as a regression
       </label>
 
-      {error && <div className="text-[13px] font-bold text-[var(--state-overdue)]">{error}</div>}
+      {error && <div className="text-body font-medium text-[var(--state-overdue)]">{error}</div>}
       <div className="flex justify-end gap-2">
-        <button type="button" onClick={onCancel} className="h-9 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3.5 text-[14px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">Cancel</button>
+        <button type="button" onClick={onCancel} className="h-9 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3.5 text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">Cancel</button>
         <button type="button" onClick={() => void save()} disabled={saving}
-          className="inline-flex items-center gap-1.5 h-9 rounded-md bg-[var(--color-accent)] px-4 text-[14px] font-semibold text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)] disabled:opacity-60">
+          className="inline-flex items-center gap-1.5 h-10 rounded-md bg-[var(--color-accent)] px-4 text-body font-medium text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)] disabled:opacity-60">
           {saving && <Loader2 className="w-3.5 h-3.5 animate-spin" />} Save test case
         </button>
       </div>
