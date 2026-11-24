@@ -9,6 +9,8 @@
 // workspace's sign-in rules (lib/signinCheck), unchanged here.
 
 import { AuthCard, authField, authBtn } from "@/components/marketing/AuthCard";
+import { rememberWorkspaceName } from "@/lib/deviceWorkspace";
+import { prefersReducedMotion } from "@/lib/viewTransition";
 import { checkSignin, type SigninVerdict } from "@/lib/signinCheck";
 import { fetchMemberships, pickMembership, SignedOut } from "@/lib/membershipClient";
 import React, { useCallback, useEffect, useRef, useState } from 'react';
@@ -18,7 +20,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { label as fieldLabel, link } from '@/components/admin/kit';
 import { Button } from '@/components/ui/Button';
-import { Loader2, AlertCircle, LogOut } from 'lucide-react';
+import { AlertCircle, LogOut } from 'lucide-react';
 import { SlowNotice, useElapsed, startOver } from '@/components/system/SlowNotice';
 
 /** Microsoft's four-square logo (lucide has no brand marks). */
@@ -68,6 +70,9 @@ export default function LoginPage() {
   const [authedEmail, setAuthedEmail] = useState<string | null>(null);
   // The password button's answer once the workspace opens: a check.
   const [opened, setOpened] = useState(false);
+  // The title block's SIGNED line, then the hand-off into the app.
+  const [signed, setSigned] = useState<{ name: string; at: Date } | null>(null);
+  const [leaving, setLeaving] = useState(false);
   // A password sign-in in progress decides its own next step (handleLogin).
   const loginInFlight = useRef(false);
   const slowSecs = useElapsed(view === "checking" || loading);
@@ -99,16 +104,40 @@ export default function LoginPage() {
       return;
     }
     if (verdict.action === "set_password") { router.replace("/set-password"); return; }
-    await openWorkspace(user.email ?? null);
+    // Already signed in (or back from Microsoft): a short signing, not the
+    // full one a typed sign-in gets.
+    await openWorkspace(user, "quick");
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router]);
 
   /** Into the app when the server says the account is active in a
-   *  workspace; else the paused-access screen. */
-  const openWorkspace = async (userEmail: string | null) => {
+   *  workspace; else the paused-access screen. On the way in, the title
+   *  block is signed with the person's name and the time, then the sheet
+   *  settles away into the app. */
+  const openWorkspace = async (user: User | null, ceremony: "full" | "quick") => {
+    const userEmail = user?.email ?? null;
     try {
+      router.prefetch("/dashboard");
       const answer = await fetchMemberships();
-      if (pickMembership(answer, null)) { setLoading(false); setOpened(true); router.replace("/dashboard"); return; }
+      const pick = pickMembership(answer, null);
+      if (pick) {
+        rememberWorkspaceName(pick.orgName);
+        const meta = (user?.user_metadata ?? {}) as { full_name?: unknown; name?: unknown };
+        const name = typeof meta.full_name === "string" && meta.full_name.trim() ? meta.full_name.trim()
+          : typeof meta.name === "string" && meta.name.trim() ? meta.name.trim()
+          : userEmail ?? "Signed in";
+        setLoading(false); setOpened(true);
+        setSigned({ name, at: new Date() });
+        // A phone has scrolled to the fields: back up to where the title
+        // block shows the signature.
+        try { if (window.matchMedia("(max-width: 767px)").matches) window.scrollTo({ top: 0, behavior: "smooth" }); } catch { /* old browser */ }
+        const calm = prefersReducedMotion();
+        await new Promise((r) => setTimeout(r, calm ? 0 : ceremony === "full" ? 750 : 420));
+        setLeaving(true);
+        await new Promise((r) => setTimeout(r, calm ? 0 : 360));
+        router.replace("/dashboard");
+        return;
+      }
       setAuthedEmail(userEmail);
       setView("no-workspace");
     } catch (e) {
@@ -259,7 +288,7 @@ export default function LoginPage() {
       } else if (verdict.action === "set_password") {
         router.push('/set-password');
       } else {
-        await openWorkspace(signedIn.user?.email ?? email);
+        await openWorkspace(signedIn.user ?? null, "full");
       }
     } finally {
       loginInFlight.current = false;
@@ -291,11 +320,10 @@ export default function LoginPage() {
   // ─── Checking / OAuth redirect in progress ──────────────────────
   if (view === "checking") {
     return (
-      <div className="min-h-dvh bg-[var(--color-canvas)] flex flex-col items-center justify-center p-4">
-        <Loader2 aria-hidden className="w-8 h-8 text-[var(--color-text-muted)] motion-safe:animate-spin mb-4" />
-        <p role="status" className="text-[15px] text-[var(--color-text-muted)]">Signing you in</p>
-        <div className="w-full max-w-sm"><SlowNotice secs={slowSecs} onStartOver={() => startOver()} /></div>
-      </div>
+      <AuthCard title={signed ? "Signed in." : "Signing you in."} signed={signed} leaving={leaving}
+        status={signed ? "Opening your workspace" : "Checking your sign-in"}>
+        <SlowNotice secs={slowSecs} onStartOver={() => startOver()} />
+      </AuthCard>
     );
   }
 
@@ -316,7 +344,14 @@ export default function LoginPage() {
   // ─── Login ──────────────────────────────────────────────────────
   return (
     <AuthCard
-      title="Sign in."
+      title={signed ? "Signed in." : "Sign in."}
+      signed={signed}
+      leaving={leaving}
+      status={signed ? "Opening your workspace"
+        : loading ? "Signing in"
+        : oauthLoading ? "Opening Microsoft"
+        : error ? "Not signed in"
+        : "Ready to sign in"}
       footer={<>
         <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 text-[14px]">
           <p className="text-[var(--color-text-muted)]">
@@ -326,7 +361,7 @@ export default function LoginPage() {
           <Link href="/about" className={link}>About Manufacturing OS</Link>
         </div>
         <p className="text-[13px] text-[var(--color-text-muted)]">Your workspace admin adds your account. Forgot your password? Ask them to reset it. Company accounts reset through Microsoft.</p>
-        <p className="text-[13px] text-[var(--color-text-muted)]">Version 2.1.0. Authorized use only.</p>
+        <p className="text-[13px] text-[var(--color-text-muted)]">Authorized use only.</p>
       </>}
     >
             {/* A problem sits where it happened: right above the doors it's about. */}

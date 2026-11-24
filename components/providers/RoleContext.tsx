@@ -6,6 +6,7 @@ import type { Role } from "@/types/schema";
 import { normalizeRoles, primaryRole } from "@/lib/roleCapabilities";
 import { readMember, writeMember, storedUid, memberToOpen, type CachedMember } from "@/lib/memberCache";
 import { fetchMemberships, pickMembership, SignedOut } from "@/lib/membershipClient";
+import { rememberWorkspaceName } from "@/lib/deviceWorkspace";
 
 type OrgMember = {
   orgId: string;
@@ -162,6 +163,7 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
       const answer = await fetchMemberships();
       const pick = pickMembership(answer, lastOrg);
       if (!pick) return { orgId: null, mem: null };
+      rememberWorkspaceName(pick.orgName);
       return { orgId: pick.orgId, mem: { org_id: pick.orgId, role: pick.role, roles: pick.roles, status: pick.status, email: pick.email } };
     };
 

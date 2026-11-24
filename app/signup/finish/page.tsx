@@ -68,7 +68,7 @@ function Finish() {
 
   if (state.k === "loading") {
     return (
-      <AuthCard title="Setting up your workspace." sub="This takes a few seconds after paying.">
+      <AuthCard sheet="New workspace" title="Setting up your workspace." sub="This takes a few seconds after paying.">
         <p role="status" className="flex items-center gap-2 text-reading text-[var(--color-text-muted)]">
           <Loader2 aria-hidden className="w-5 h-5 motion-safe:animate-spin" /> Making your workspace
         </p>
@@ -77,7 +77,7 @@ function Finish() {
   }
   if (state.k === "error") {
     return (
-      <AuthCard title="This didn't open." footer={<p className="text-[14px]"><Link href="/" className={link}>Go to sign in</Link></p>}>
+      <AuthCard sheet="New workspace" title="This didn't open." footer={<p className="text-[14px]"><Link href="/" className={link}>Go to sign in</Link></p>}>
         <p role="alert" className="flex items-start gap-2 text-reading font-semibold text-[var(--state-overdue-text)]"><AlertCircle aria-hidden className="w-4 h-4 shrink-0 mt-1" /> {state.message}</p>
         <p className="mt-2 text-[14px] text-[var(--color-text-muted)]">Open the link from the payment page again, or sign in if your password is already set.</p>
       </AuthCard>
@@ -85,7 +85,7 @@ function Finish() {
   }
   if (state.k === "done") {
     return (
-      <AuthCard title="Your workspace is ready." sub={state.company}>
+      <AuthCard sheet="New workspace" title="Your workspace is ready." sub={state.company}>
         <p className="text-reading text-[var(--color-text)]">Your password is set. Sign in to start adding your people.</p>
         <Link href="/" className={`${btnPrimary} ${authBtn} mt-6`}>Sign in</Link>
       </AuthCard>
@@ -95,7 +95,7 @@ function Finish() {
   const mismatchNow = left.pw2 && pw2 && pw2 !== pw ? "The two passwords don't match." : null;
   const ready = !!pw && pw === pw2 && !passwordProblem(pw, state.email);
   return (
-    <AuthCard title="Set your password." sub={[state.company, state.email].filter(Boolean).join(", ")}>
+    <AuthCard sheet="New workspace" title="Set your password." sub={[state.company, state.email].filter(Boolean).join(", ")}>
       {error && (
         <div role="alert" className="mb-5 flex items-start gap-2 text-[var(--state-overdue-text)]">
           <AlertCircle aria-hidden className="w-4 h-4 shrink-0 mt-0.5" />

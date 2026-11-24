@@ -79,7 +79,7 @@ export default function SetPasswordPage() {
   };
 
   return (
-    <AuthCard title="Set your password." sub={until ? `Do it now. Your one-time password stops working at ${until}.` : "Do it now, before you go on."}>
+    <AuthCard sheet="Set password" title="Set your password." sub={until ? `Do it now. Your one-time password stops working at ${until}.` : "Do it now, before you go on."}>
       {!email ? (
         <SkeletonText lines={4} />
       ) : (

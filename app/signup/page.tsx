@@ -49,7 +49,7 @@ function SignupForm() {
   const ready = !!company.trim() && !!name.trim() && /\S+@\S+\.\S+/.test(email);
 
   return (
-    <AuthCard
+    <AuthCard sheet="New workspace"
       wide
       title="Start a workspace."
       sub="For a company new here. Pay first, then add your people."

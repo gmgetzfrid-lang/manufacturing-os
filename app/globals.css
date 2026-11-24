@@ -854,3 +854,58 @@ html.vt-on .vt-top { view-transition-name: top-bar; }
 .scroll-quiet:hover::-webkit-scrollbar { width: 4px; }
 .scroll-quiet:hover::-webkit-scrollbar-thumb { background: rgb(148 163 184 / 0.55); border-radius: 999px; }
 .scroll-quiet:hover::-webkit-scrollbar-track { background: transparent; }
+
+/* ── The front door: a drawing sheet you sign in on (components/auth) ──
+   The P&ID draws itself (bp-draw: each stroke's own length, 0 → full),
+   then product flows through the lines and the column's level breathes.
+   The title block (the sign-in card) rises in at once, so typing never
+   waits for the drawing. .bp-quick: already played this session, appear
+   drawn. Reduced motion: the finished drawing, nothing moving. */
+.bp-stage { transition: opacity .45s ease; }
+.bp-svg { width: 100%; height: 100%; display: block; color: var(--color-text); }
+.bp-camera { width: 100%; height: 100%; transform-origin: 72% 70%; animation: bp-camera 1.9s cubic-bezier(.2,.7,.2,1) both; }
+.bp-lines { opacity: .5; }
+.bp-draw { stroke-dasharray: 1; stroke-dashoffset: 0; animation: bp-draw .75s cubic-bezier(.4,0,.2,1) var(--d, 0s) both; }
+.bp-fade { animation: bp-fade .5s ease var(--d, 0s) both; }
+.bp-fill { fill: currentColor; stroke: none; }
+.bp-grid { animation: bp-fade .6s ease both; }
+.bp-t { font: 600 10px var(--font-display), "Barlow Semi Condensed", sans-serif; fill: currentColor; stroke: none; text-anchor: middle; }
+.bp-level { fill: currentColor; opacity: .08; animation: bp-level 6s ease-in-out 1.6s infinite alternate; transform-box: fill-box; }
+.bp-flow path { stroke: var(--color-accent-text); stroke-width: 2; stroke-dasharray: 3 13; opacity: 0; animation: bp-flow-in .8s ease 1.5s forwards, bp-flow 1.4s linear 1.5s infinite; }
+.bp-tag { cursor: default; }
+.bp-tag .bp-hit { fill: transparent; stroke: none; pointer-events: all; }
+.bp-tag .bp-ring { transition: stroke-width .15s ease, opacity .15s ease; opacity: .55; }
+.bp-tag:hover .bp-ring, .bp-tag:active .bp-ring { stroke-width: 2.6; opacity: 1; }
+.bp-means { font: 600 13px var(--font-sans), "Barlow", sans-serif; fill: var(--color-text); stroke: var(--side-bg, #081d48); stroke-width: 6px; paint-order: stroke; stroke-linejoin: round; opacity: 0; transition: opacity .15s ease; pointer-events: none; }
+.bp-means.is-left { text-anchor: end; }
+.bp-tag:hover .bp-means, .bp-tag:active .bp-means { opacity: 1; }
+.bp-border { position: absolute; border: 1px solid color-mix(in srgb, var(--color-text) 28%, transparent); pointer-events: none; animation: bp-border 1.1s cubic-bezier(.4,0,.2,1) both; }
+.bp-zones { position: absolute; display: flex; justify-content: space-around; font: 600 12px var(--font-display), sans-serif; color: color-mix(in srgb, var(--color-text) 45%, transparent); pointer-events: none; animation: bp-fade .6s ease .9s both; }
+.bp-rise { animation: bp-rise .55s cubic-bezier(.2,.7,.2,1) .12s both; }
+.bp-intro { animation: bp-fade .7s ease .35s both; }
+.tb-rule { transform-origin: left center; animation: bp-rule .6s cubic-bezier(.4,0,.2,1) .45s both; }
+.tb-ink { animation: bp-ink .7s cubic-bezier(.4,0,.2,1) both; }
+.bp-leaving .bp-stage { opacity: 0; }
+/* A phone sees the middle of the drawing, closer. */
+@media (max-width: 767px) { .bp-svg { transform: scale(1.55) translateY(7%); transform-origin: 50% 50%; } }
+.bp-leaving .bp-rise { transition: transform .4s ease, opacity .35s ease; transform: translateY(18px); opacity: 0; }
+
+.bp-quick .bp-camera, .bp-quick .bp-draw, .bp-quick .bp-fade, .bp-quick .bp-grid, .bp-quick .bp-border,
+.bp-quick .bp-zones, .bp-quick .bp-intro, .bp-quick .tb-rule { animation-duration: .25s; animation-delay: 0s; }
+.bp-quick .bp-flow path { animation-delay: .2s, .2s; }
+
+@keyframes bp-draw { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
+@keyframes bp-fade { from { opacity: 0; } }
+@keyframes bp-camera { from { transform: scale(1.07); } to { transform: scale(1); } }
+@keyframes bp-level { from { transform: translateY(-6px); } to { transform: translateY(8px); } }
+@keyframes bp-flow { from { stroke-dashoffset: 16; } to { stroke-dashoffset: 0; } }
+@keyframes bp-flow-in { to { opacity: .85; } }
+@keyframes bp-border { from { clip-path: inset(0 100% 100% 0); } to { clip-path: inset(0 0 0 0); } }
+@keyframes bp-rise { from { opacity: 0; transform: translateY(16px); } }
+@keyframes bp-rule { from { transform: scaleX(0); } }
+@keyframes bp-ink { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0 0 0 0); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .bp-camera, .bp-draw, .bp-fade, .bp-grid, .bp-level, .bp-border, .bp-zones, .bp-rise, .bp-intro, .tb-rule, .tb-ink { animation: none !important; }
+  .bp-flow path { animation: none !important; opacity: .6; }
+}
