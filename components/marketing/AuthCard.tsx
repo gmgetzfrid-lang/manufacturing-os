@@ -23,9 +23,9 @@ const INSIDE = [
   "Answers from your own library, cited to the page.",
 ];
 
-/** A small, true-to-life piece of the app: Home's answer and the one
- *  thing waiting, as the app draws them (decoration, hidden from screen
- *  readers). */
+/** A small piece of the app's look: Home's answer and one waiting item,
+ *  drawn as placeholder lines (no made-up record numbers or names; this
+ *  is decoration, hidden from screen readers). */
 function Glimpse() {
   return (
     <div aria-hidden className="on-sheet w-[316px] rounded-panel bg-[var(--color-surface)] border border-[var(--color-border)] shadow-[var(--shadow-float)] p-4 select-none">
@@ -34,11 +34,11 @@ function Glimpse() {
       <div className="mt-3 pt-3 border-t border-[var(--color-border)] flex items-start gap-2.5">
         <span className="mt-[7px] w-[7px] h-[7px] shrink-0 rounded-full bg-[var(--state-held)]" />
         <div className="min-w-0">
-          <div className="text-[14px] text-[var(--color-text)] truncate"><span className="ui-id">KE-DDRT-26-0042</span> Issue the IFC package</div>
+          <div className="flex items-center gap-2 h-5"><span className="h-2.5 w-[86px] rounded-full bg-[var(--color-text)] opacity-80" /><span className="h-2.5 w-[120px] rounded-full bg-[var(--color-border-strong)]" /></div>
           <div className="mt-0.5 text-[12px] font-semibold text-[var(--state-held-text)]">Waiting on you</div>
         </div>
       </div>
-      <div className="mt-2.5 text-[12px] text-[var(--color-text-muted)]">Rev C of 100-PID-042 issued by J. Ortiz, 2 h ago</div>
+      <div className="mt-3 h-2 w-[210px] rounded-full bg-[var(--color-border)]" />
     </div>
   );
 }
