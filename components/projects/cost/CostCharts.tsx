@@ -11,8 +11,8 @@
 
 import React, { useMemo } from "react";
 import { LineChart as LineChartIcon, Users } from "lucide-react";
-import { SCurveChart, ExampleFrame, BarList } from "@/components/ui/ChartKit";
-import { MiniBars } from "@/components/dashboard/viz";
+import { SCurveChart, ExampleFrame } from "@/components/ui/ChartKit";
+import { LinesChart } from "@/components/projects/cost/BudgetTable";
 import { buildCostSeries, plannedManpowerSeries, type DatedAmount } from "@/lib/costSeries";
 import { buildExampleCostData } from "@/lib/exampleProject";
 import { computeBidEconomics } from "@/lib/bidTab";
@@ -76,20 +76,14 @@ export default function CostCharts({ rollup, entries, scheduleStart, scheduleEnd
             <SCurveChart points={exSeries} fmt={(n) => fmtMoney(n, "USD")} todayIso={ex.today} />
           </div>
 
-          <div className="grid md:grid-cols-2 gap-4">
-            <div>
-              <SectionLabel icon={<Users className="w-3.5 h-3.5" />} text="Planned crew size by week (from the awarded bid's hours)" />
-              <MiniBars values={exManpower.map((w) => w.headcount)}
-                labels={exManpower.map((w) => `${w.weekOf} · ${w.headcount} people`)} height={44} />
-            </div>
-            <div>
-              <SectionLabel text="Burn by budget line" />
-              <BarList fmt={(n) => fmtMoney(n, "USD")} items={ex.accounts.map((a) => ({
-                label: `${a.code} ${a.name}`, value: a.spent,
-                sublabel: `of ${fmtMoney(a.budget, "USD")} budget`,
-                flag: a.spent > a.budget ? "over budget" : undefined,
-              }))} />
-            </div>
+          {/* Each line against its own budget, as the Overview draws it on
+              a running job: the track is the line's budget, committed gray
+              and spent solid inside it, the words on the row. */}
+          <LinesChart bare cur="USD" rows={ex.accounts.map((a) => ({ name: `${a.code} ${a.name}`, budget: a.budget, committed: a.committed, spent: a.spent }))} />
+
+          <div>
+            <SectionLabel icon={<Users className="w-3.5 h-3.5" />} text="Planned crew size by week (from the awarded bid's hours)" />
+            <CrewWeeks weeks={exManpower} />
           </div>
         </div>
       </ExampleFrame>
@@ -115,11 +109,57 @@ export default function CostCharts({ rollup, entries, scheduleStart, scheduleEnd
       {manpower.length > 0 && (
         <div>
           <SectionLabel icon={<Users className="w-3.5 h-3.5" />} text="Planned crew size by week (from the awarded bid's hours)" />
-          <MiniBars values={manpower.map((w) => w.headcount)}
-            labels={manpower.map((w) => `${w.weekOf} · ${w.headcount} people`)} height={44} />
+          <CrewWeeks weeks={manpower} />
         </div>
       )}
     </div>
+  );
+}
+
+/** "Jun 1" from "2026-06-01". */
+const shortDay = (iso: string) => new Date(`${iso.slice(0, 10)}T12:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+const people = (n: number) => `${Math.round(n * 10) / 10} ${n === 1 ? "person" : "people"}`;
+
+/** The planned crew, week by week: the answer in words first. An even
+ *  spread (the bid's hours over the schedule's weeks) is that sentence and
+ *  its weeks, not a slab of equal bars; an uneven one adds a column per
+ *  week from zero, the biggest week labeled, the first and last week named
+ *  under it, each column's week and count on hover. One series, one color. */
+function CrewWeeks({ weeks }: { weeks: Array<{ weekOf: string; headcount: number }> }) {
+  if (!weeks.length) return null;
+  const max = Math.max(...weeks.map((w) => w.headcount));
+  const even = weeks.every((w) => w.headcount === weeks[0].headcount);
+  const peak = weeks.findIndex((w) => w.headcount === max);
+  const H = 56;
+  return (
+    <figure className="min-w-0">
+      <figcaption className="text-body text-[var(--color-text)]">
+        {even
+          ? <>About <b className="font-medium tabular-nums">{people(max)}</b> every week, for {weeks.length} week{weeks.length === 1 ? "" : "s"}.</>
+          : <>Up to <b className="font-medium tabular-nums">{people(max)}</b> a week, over {weeks.length} weeks.</>}
+        <span className="text-[var(--color-text-muted)]"> People on site at 40 h a week{even ? `, week of ${shortDay(weeks[0].weekOf)} to week of ${shortDay(weeks[weeks.length - 1].weekOf)}` : ""}.</span>
+      </figcaption>
+      {!even && (<>
+      <div role="img" aria-label={`Planned crew by week: ${weeks.map((w) => `week of ${shortDay(w.weekOf)}, ${people(w.headcount)}`).join("; ")}.`}
+        className="mt-2 flex items-end gap-[2px] border-b border-[var(--color-border-strong)]" style={{ height: H + 18 }}>
+        {weeks.map((w, i) => (
+          <div key={w.weekOf} title={`Week of ${shortDay(w.weekOf)}: ${people(w.headcount)}`} className="relative flex-1 min-w-0 h-full flex flex-col justify-end">
+            {i === peak && (
+              <span aria-hidden className={`absolute text-caption font-medium tabular-nums text-[var(--color-text)] whitespace-nowrap ${i > weeks.length / 2 ? "right-0" : "left-0"}`}
+                style={{ bottom: Math.max(2, (w.headcount / (max || 1)) * H) + 2 }}>
+                {Math.round(w.headcount * 10) / 10}
+              </span>
+            )}
+            <span aria-hidden className="block w-full rounded-t-[4px] bg-[var(--color-main)]" style={{ height: Math.max(2, (w.headcount / (max || 1)) * H) }} />
+          </div>
+        ))}
+      </div>
+      <div aria-hidden className="mt-1 flex justify-between gap-2 text-caption text-[var(--color-text-muted)] tabular-nums">
+        <span>Week of {shortDay(weeks[0].weekOf)}</span>
+        {weeks.length > 1 && <span>Week of {shortDay(weeks[weeks.length - 1].weekOf)}</span>}
+      </div>
+      </>)}
+    </figure>
   );
 }
 

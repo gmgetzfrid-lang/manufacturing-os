@@ -344,7 +344,8 @@ function InvoicesSection({ orgId, projectId, canManage, actor, accounts, parties
           {/* The one next step in sight (read it, post it, or the line it
               moves to); everything else on the invoice in its ⋯ menu (rule A3). */}
           {canManage && (
-            <span className="ml-auto inline-flex flex-wrap items-center justify-end gap-1.5">
+            <span className="ml-auto inline-flex items-center gap-1.5">
+              <span className="inline-flex flex-wrap items-center justify-end gap-1.5">
               {doc.status === "draft" && <ReadButton busy={busy === doc.id} onClick={() => void readDoc(doc)} />}
               {doc.status === "parsed" && (
                 <PostControls accounts={accounts} busy={busy === doc.id} suggested={suggestion}
@@ -363,6 +364,7 @@ function InvoicesSection({ orgId, projectId, canManage, actor, accounts, parties
                   <button onClick={() => setMoving(null)} className="inline-flex items-center justify-center gap-1.5 h-8 pointer-coarse:h-11 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>
                 </>
               )}
+              </span>
               {(() => {
                 const more: MoreItem[] = doc.status === "draft" ? [
                   { icon: <Pencil className="w-4 h-4" />, label: "Type the total", onClick: () => typeTotal(doc) },
@@ -881,14 +883,14 @@ function PostControls({ accounts, busy, onPost, label, suggested }: {
     return <span className="text-caption text-[var(--color-text-muted)]" title="Create a budget line first: money always posts somewhere.">needs a budget line</span>;
   }
   return (
-    <span className="inline-flex items-center gap-1">
+    <span className="inline-flex flex-wrap items-center justify-end gap-1">
       <select value={accountId} onChange={(e) => setAccountId(e.target.value)} aria-label="Budget line"
         className="h-6 pointer-coarse:h-11 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1 text-caption max-w-36">
         <option value="">Budget line…</option>
         {accounts.map((a) => <option key={a.id} value={a.id}>{a.code ? `${a.code} ` : ""}{a.name}</option>)}
       </select>
       <button onClick={() => accountId && void onPost(accountId)} disabled={busy || !accountId}
-        className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">
+        className="inline-flex items-center gap-1.5 h-8 pointer-coarse:h-11 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] whitespace-nowrap hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">
         {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckCircle2 className="w-3 h-3" />} {label}
       </button>
       {suggested && accountId === suggested.accountId && (

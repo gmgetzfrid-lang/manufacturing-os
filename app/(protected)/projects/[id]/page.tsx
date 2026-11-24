@@ -743,6 +743,13 @@ export default function ProjectDetailPage() {
             <StepLine onDark compact={tab !== "plan"} steps={lineSteps} />
           </div>
         )}
+        {/* Sent here for one step (from the Inbox): what is asked comes
+            first, above the tabs, with its buttons. */}
+        {askStep && project.id && (
+          <div className="mt-4">
+            <ProjectAsk stepId={askStep} projectId={project.id} onWorkTab={tab === "work"} />
+          </div>
+        )}
         {/* TABS: the five for running the job, then the records used every
             week, all in sight (a phone scrolls the strip sideways). The two
             rare ones sit under More, with the one open in sight. Switching
@@ -801,7 +808,6 @@ export default function ProjectDetailPage() {
             ))}
           </div>
         )}
-        {askStep && project.id && <ProjectAsk stepId={askStep} projectId={project.id} onWorkTab={tab === "work"} />}
         {/* The work is done: what's left to close, as one path. */}
         {tab === "plan" && closing && (
           <ClosePath close={close} standings={standings} when={when} />

@@ -268,7 +268,8 @@ function CoRow({ co, canManage, busy, partyName, accountLabel, accounts, decide,
           {co.status === "proposed" ? "Waiting on a decision" : co.status.charAt(0).toUpperCase() + co.status.slice(1)}
         </span>
         {canManage && (isOpen || co.status === "approved") && (
-          <span className="ml-auto inline-flex flex-wrap items-center justify-end gap-1.5">
+          <span className="ml-auto inline-flex items-center gap-1.5">
+            <span className="inline-flex flex-wrap items-center justify-end gap-1.5">
             {isOpen && !co.costAccountId && (
               <select value={accountPick} onChange={(e) => setAccountPick(e.target.value)} aria-label="Budget line it posts to"
                 className="h-8 pointer-coarse:h-11 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1.5 text-body max-w-44"
@@ -283,6 +284,7 @@ function CoRow({ co, canManage, busy, partyName, accountLabel, accounts, decide,
                 {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />} {busy ? "Working" : "Approve"}
               </button>
             )}
+            </span>
             {busy && !isOpen
               ? <Loader2 aria-label="Voiding" className="w-4 h-4 m-2 animate-spin text-[var(--color-text-muted)]" />
               : <MoreMenu iconOnly label={`More for ${co.coNumber}`} items={more} triggerClass="ui-press inline-flex items-center justify-center w-9 h-9 pointer-coarse:w-11 pointer-coarse:h-11 rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]" />}

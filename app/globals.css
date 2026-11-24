@@ -208,6 +208,13 @@
 @keyframes float-in { from { opacity: 0; transform: scale(0.96); } }
 @keyframes skeleton-pulse { 50% { opacity: 0.55; } }
 
+/* The browser's own parts (radios, checkboxes, date pickers, scrollbars)
+   follow the app's light or dark choice, not the computer's. Without this
+   the page's "light dark" meta let a dark Windows draw them dark in the
+   light app: an unticked radio as a solid dark circle, a dark scrollbar. */
+:root { color-scheme: light; }
+:root.dark { color-scheme: dark; }
+
 /* Dark theme: a deep slate page; the same roles. */
 :root {
   /* The app's own third color (beside the navy and the blue), an accent

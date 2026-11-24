@@ -23,8 +23,24 @@ export interface SCurvePoint {
   actual: number;
 }
 
-// Room on the right for the names at the line ends.
-const VB_W = 600, VB_H = 220, PAD_L = 8, PAD_R = 112, PAD_T = 12, PAD_B = 24;
+// Drawn at its measured width, so the words stay 12 px on a phone and a
+// desktop alike (rule TY3); room on the right for the names at the line ends.
+const PAD_L = 8, PAD_R = 136, PAD_T = 12, PAD_B = 26;
+
+/** The width a box has, kept up to date (0 until measured). */
+function useBoxWidth<T extends HTMLElement>(): [React.RefObject<T | null>, number] {
+  const ref = React.useRef<T | null>(null);
+  const [w, setW] = React.useState(0);
+  React.useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const ro = new ResizeObserver((xs) => setW(Math.floor(xs[0].contentRect.width)));
+    ro.observe(el);
+    setW(Math.floor(el.getBoundingClientRect().width));
+    return () => ro.disconnect();
+  }, []);
+  return [ref, w];
+}
 
 /** End labels pushed apart so two lines ending close together stay
  *  readable (at least `gap` apart, inside the plot). */
@@ -44,7 +60,10 @@ export function SCurveChart({ points, fmt, todayIso, className = "" }: {
   todayIso?: string | null;
   className?: string;
 }) {
+  const [box, measured] = useBoxWidth<HTMLDivElement>();
   if (points.length < 2) return null;
+  const VB_W = measured > 0 ? measured : 600;
+  const VB_H = VB_W < 480 ? 200 : 240;
   const max = Math.max(
     1,
     ...points.map((p) => Math.max(p.planned ?? 0, p.committed, p.actual)),
@@ -70,8 +89,8 @@ export function SCurveChart({ points, fmt, todayIso, className = "" }: {
     new Date(d + "T00:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" });
 
   return (
-    <div className={className}>
-      <svg viewBox={`0 0 ${VB_W} ${VB_H}`} className="w-full h-auto" role="img"
+    <div ref={box} className={className}>
+      <svg viewBox={`0 0 ${VB_W} ${VB_H}`} className="block w-full h-auto" role="img"
         aria-label={`Cost curve - actual ${fmt(last.actual)}, committed ${fmt(last.committed)}${last.planned != null ? `, planned ${fmt(last.planned)}` : ""}`}>
         {/* Hairline grid at quarter lines, and the zero line. */}
         {[0, 0.25, 0.5, 0.75, 1].map((f) => (
@@ -97,11 +116,11 @@ export function SCurveChart({ points, fmt, todayIso, className = "" }: {
         <circle cx={px(n - 1)} cy={py(last.actual)} r="3.5" fill="var(--color-main)" />
         <circle cx={px(n - 1)} cy={py(last.committed)} r="3" fill="var(--viz-neutral)" />
         {spreadLabels([
-          { key: "spent", y: py(last.actual), text: `Spent ${fmt(last.actual)}`, color: "var(--color-main)", bold: true },
+          { key: "spent", y: py(last.actual), text: `Spent ${fmt(last.actual)}`, color: "var(--color-text)", bold: true },
           { key: "committed", y: py(last.committed), text: `Committed ${fmt(last.committed)}`, color: "var(--color-text-muted)", bold: false },
           ...(hasPlanned && last.planned != null ? [{ key: "planned", y: py(last.planned), text: `Planned ${fmt(last.planned)}`, color: "var(--color-text-muted)", bold: false }] : []),
-        ], 13, PAD_T + 4, VB_H - PAD_B).map((l) => (
-          <text key={l.key} x={px(n - 1) + 8} y={l.y + 4} fontSize="11" fontWeight={l.bold ? 600 : 400} fill={l.color}
+        ], 16, PAD_T + 4, VB_H - PAD_B).map((l) => (
+          <text key={l.key} x={px(n - 1) + 8} y={l.y + 4} fontSize="12" fontWeight={l.bold ? 600 : 400} fill={l.color}
             style={{ fontVariantNumeric: "tabular-nums" }}>{l.text}</text>
         ))}
         {/* Per-point hover columns. */}
@@ -112,8 +131,8 @@ export function SCurveChart({ points, fmt, todayIso, className = "" }: {
           </rect>
         ))}
         {/* X extremes. */}
-        <text x={PAD_L} y={VB_H - 8} fontSize="10" fill="var(--color-text-faint)">{fmtDate(points[0].date)}</text>
-        <text x={VB_W - PAD_R} y={VB_H - 8} fontSize="10" textAnchor="end" fill="var(--color-text-faint)">{fmtDate(last.date)}</text>
+        <text x={PAD_L} y={VB_H - 8} fontSize="12" fill="var(--color-text-muted)">{fmtDate(points[0].date)}</text>
+        <text x={VB_W - PAD_R} y={VB_H - 8} fontSize="12" textAnchor="end" fill="var(--color-text-muted)">{fmtDate(last.date)}</text>
       </svg>
       {hasPlanned && (
         <p className="mt-1 text-caption text-[var(--color-text-muted)] inline-flex items-center gap-1.5">
