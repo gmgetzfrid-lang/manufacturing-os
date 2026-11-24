@@ -111,11 +111,13 @@ export default function WidgetFrame({ widget, editing, size, onRemove, onOpenSet
   const iconBtn = "w-8 h-8 pointer-coarse:w-11 pointer-coarse:h-11 inline-flex items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors";
 
   // The section's name is a heading on the page, as text (its description
-  // rides along as a tooltip); the tools sit on the right.
+  // rides along as a tooltip); the tools sit on the right. On a phone the
+  // name wraps rather than being cut ("Document ..."), and Expand steps
+  // aside (the widget is already the screen's width; Open is the full page).
   const header = (isExpanded: boolean) => (
     <div className={`flex items-center gap-2 shrink-0 min-h-9 ${isExpanded ? "" : "mb-3"}`}>
       {editing && <GripVertical className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" aria-hidden />}
-      <h2 title={meta.description} className="min-w-0 flex-1 truncate font-display text-section font-semibold text-[var(--color-text)]">{title}</h2>
+      <h2 title={meta.description} className="min-w-0 flex-1 line-clamp-2 [overflow-wrap:anywhere] font-display text-section font-semibold text-[var(--color-text)]">{title}</h2>
       {editing ? (
         <div data-no-drag className="shrink-0 flex items-center gap-1">
           <button type="button" onClick={onOpenSettings} title="Widget settings" aria-label="Widget settings" className={iconBtn}>
@@ -136,7 +138,7 @@ export default function WidgetFrame({ widget, editing, size, onRemove, onOpenSet
             <Settings2 className="w-4 h-4" />
           </button>
           {!isExpanded && (
-            <button type="button" onClick={() => setExpanded(true)} className={iconBtn} aria-label="Expand" title="Work in it full size">
+            <button type="button" onClick={() => setExpanded(true)} className={`${iconBtn} max-sm:hidden`} aria-label="Expand" title="Work in it full size">
               <Maximize2 className="w-4 h-4" />
             </button>
           )}
@@ -170,7 +172,7 @@ export default function WidgetFrame({ widget, editing, size, onRemove, onOpenSet
           editing ? "rounded-panel outline-2 outline-dashed outline-offset-4 outline-[var(--color-border-strong)]" : ""}`}
       >
         {header(false)}
-        <div className="relative flex-1 min-h-0 flex flex-col rounded-panel border border-[var(--color-border)] bg-[var(--color-surface)] p-4 overflow-hidden">
+        <div className="relative flex-1 min-h-0 flex flex-col rounded-panel border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 overflow-hidden">
           {!expanded && errorLine}
           {/* While expanded, the full-size copy is the live one: the tile
               doesn't fetch the same data twice. */}

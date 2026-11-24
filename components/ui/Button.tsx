@@ -3,8 +3,9 @@
 // Button: the one token-driven button. Four kinds, so only one thing on a
 // screen shouts:
 //   primary     filled with the accent: the ONE main action per screen
-//               or dialog
-//   secondary   white with a hairline edge
+//               or dialog; top-lit (a light top edge, a small shadow) so
+//               it reads as pressable
+//   secondary   white with a hairline edge on a faint shadow
 //   tertiary    a link (no box)
 //   danger      red words on a secondary button; always confirm first
 //   ghost       no edge (toolbars, icon rows)
@@ -25,11 +26,11 @@ export type ButtonVariant = "primary" | "secondary" | "tertiary" | "ghost" | "da
 export type ButtonSize = "sm" | "md";
 
 const VARIANTS: Record<ButtonVariant, string> = {
-  primary: "bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] border-transparent",
-  secondary: "bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border-strong)] hover:border-[var(--color-border-control)]",
+  primary: "bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] border-transparent shadow-[var(--shadow-action)] active:shadow-none disabled:shadow-none",
+  secondary: "bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border-strong)] hover:border-[var(--color-border-control)] shadow-[var(--shadow-control)] active:shadow-none disabled:shadow-none",
   tertiary: "bg-transparent border-transparent text-[var(--color-accent-text)] hover:underline underline-offset-2 !px-1",
   ghost: "bg-transparent hover:bg-[var(--color-surface-2)] text-[var(--color-text)] border-transparent",
-  danger: "bg-[var(--color-surface)] text-[var(--state-overdue-text)] border-[var(--color-border-strong)] hover:bg-[color-mix(in_srgb,var(--state-overdue)_6%,var(--color-surface))] hover:border-[color-mix(in_srgb,var(--state-overdue)_45%,var(--color-border-strong))]",
+  danger: "bg-[var(--color-surface)] text-[var(--state-overdue-text)] border-[var(--color-border-strong)] hover:bg-[color-mix(in_srgb,var(--state-overdue)_6%,var(--color-surface))] hover:border-[color-mix(in_srgb,var(--state-overdue)_45%,var(--color-border-strong))] shadow-[var(--shadow-control)] active:shadow-none disabled:shadow-none",
 };
 const SIZES: Record<ButtonSize, string> = {
   sm: "h-8 pointer-coarse:h-10 px-3 text-[13px] gap-1.5",
@@ -73,7 +74,7 @@ export function Button({
       {...rest}
       disabled={disabled || loading}
       aria-busy={loading || undefined}
-      className={`relative inline-flex items-center justify-center whitespace-nowrap font-semibold rounded-lg border transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${loading ? "disabled:opacity-80 cursor-progress" : ""} ${SIZES[size]} ${VARIANTS[variant]} ${className}`}
+      className={`relative inline-flex items-center justify-center whitespace-nowrap font-semibold rounded-lg border transition-[color,background-color,border-color,box-shadow] disabled:opacity-50 disabled:cursor-not-allowed ${loading ? "disabled:opacity-80 cursor-progress" : ""} ${SIZES[size]} ${VARIANTS[variant]} ${className}`}
     >
       {/* Both labels share one cell, so the button keeps its width. */}
       <span className="grid">

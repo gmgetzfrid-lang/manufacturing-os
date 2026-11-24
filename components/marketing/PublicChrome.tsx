@@ -2,19 +2,37 @@
 // product mark, the sections of /about, and the two ways in.
 
 import Link from "next/link";
-import { Layout } from "lucide-react";
 import { btnQuiet } from "@/components/admin/kit";
+import { AppLogo, AppMark } from "@/components/brand/AppMark";
 
 const wrap = "max-w-[1200px] mx-auto px-4 sm:px-6";
 
+/** The product's mark and name (the same mark as the home-screen icon).
+ *  These pages sit on the deep brand shade, so the tile gets its hairline. */
 export function Logo() {
+  return <AppLogo ring />;
+}
+
+/** The slim bar on a page someone opens from outside the company (a
+ *  shared link, a transmittal, an upload link): the product's mark and
+ *  name on the white top bar, the same as inside the app. */
+export function PublicBar() {
   return (
-    <span className="flex items-center gap-2.5">
-      <span className="w-8 h-8 rounded-md grid place-items-center bg-[var(--color-text)] text-[var(--color-canvas)]">
-        <Layout className="w-4 h-4" />
-      </span>
-      <span className="whitespace-nowrap font-display text-[18px] font-semibold text-[var(--color-text)]">Manufacturing OS</span>
-    </span>
+    <header className="sticky top-0 z-30 bg-[var(--color-surface)] border-b border-[var(--color-border)]">
+      <div className="h-14 px-4 sm:px-6 flex items-center">
+        <AppLogo size={28} nameClass="text-[17px]" />
+      </div>
+    </header>
+  );
+}
+
+/** The product's signature under a verdict screen (a printed QR checked
+ *  in the field), white on the verdict's color. */
+export function PublicSignature() {
+  return (
+    <p className="mt-10 inline-flex items-center gap-2 font-display text-[15px] font-semibold text-white">
+      <AppMark size={22} ring /> Manufacturing OS
+    </p>
   );
 }
 

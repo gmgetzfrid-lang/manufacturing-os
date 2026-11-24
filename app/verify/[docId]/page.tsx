@@ -12,6 +12,7 @@ import { friendlyError } from "@/lib/friendlyError";
 import React, { useEffect, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import { CheckCircle2, XCircle, Loader2, ShieldQuestion, RefreshCw } from "lucide-react";
+import { PublicSignature } from "@/components/marketing/PublicChrome";
 
 interface VerifyResult {
   docNumber: string | null;
@@ -150,6 +151,7 @@ export default function VerifyPage() {
           </>
         )}
       </div>
+      <PublicSignature />
     </div>
   );
 }

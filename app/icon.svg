@@ -1,18 +1,2 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-label="Manufacturing OS">
-  <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#f97316"/>
-      <stop offset="1" stop-color="#c2410c"/>
-    </linearGradient>
-  </defs>
-  <!-- Full-bleed background so the icon reads as "maskable": the glyph sits
-       well inside the safe zone (centered, ~60% of the canvas). -->
-  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
-  <!-- Dashboard / control glyph, white, centered with generous padding. -->
-  <g fill="#ffffff">
-    <rect x="146" y="146" width="98" height="98" rx="18"/>
-    <rect x="268" y="146" width="98" height="58" rx="18"/>
-    <rect x="268" y="226" width="98" height="140" rx="18"/>
-    <rect x="146" y="268" width="98" height="98" rx="18"/>
-  </g>
-</svg>
+<!-- Browser tab icon: the app mark drawn on a 16 px grid (bigger valve, no pipe stubs) so it stays crisp at 16 and 32 px. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 16 16" role="img" aria-label="Manufacturing OS"><rect width="16" height="16" rx="3.5" fill="#0b1f4d"/><path d="M2 8L8 11.5L2 15ZM14 8L8 11.5L14 15Z" fill="#ffffff"/><path d="M7 6h2v5.5H7z" fill="#ffffff"/><path d="M3.5 6a4.5 4.5 0 0 1 9 0z" fill="#f5a524"/></svg>

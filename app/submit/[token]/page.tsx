@@ -12,6 +12,7 @@ import {
   UploadCloud, FileText, Loader2, CheckCircle2, X, CircleAlert,
 } from "lucide-react";
 import { PageHero, PageBody, Card, heroQuiet } from "@/components/ui/PageHero";
+import { PublicBar } from "@/components/marketing/PublicChrome";
 import { Button } from "@/components/ui/Button";
 import { SkeletonText } from "@/components/ui/Skeleton";
 import { StatusTag } from "@/components/requests/RequestBits";
@@ -83,7 +84,8 @@ interface Resolved {
 function Shell({ kicker, title, sub, children }: { kicker: React.ReactNode; title: React.ReactNode; sub?: React.ReactNode; children: React.ReactNode }) {
   return (
     <div className="min-h-dvh bg-[var(--color-canvas)]">
-      <div className="mx-auto w-full max-w-3xl px-2 sm:px-6 pt-2 sm:pt-8 pb-16">
+      <PublicBar />
+      <div className="mx-auto w-full max-w-3xl px-2 sm:px-6 pt-6 sm:pt-8 pb-16">
         <PageHero kicker={kicker} title={title} sub={sub} size="md" />
         <PageBody>{children}</PageBody>
       </div>

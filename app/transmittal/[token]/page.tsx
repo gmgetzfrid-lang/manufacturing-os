@@ -10,6 +10,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { FileText, CheckCircle2, Download } from "lucide-react";
 import { PageHero, PageBody, Card } from "@/components/ui/PageHero";
+import { PublicBar } from "@/components/marketing/PublicChrome";
 import { Button } from "@/components/ui/Button";
 import CopyId from "@/components/ui/CopyId";
 import ErrorNote from "@/components/ui/ErrorNote";
@@ -26,17 +27,21 @@ function when(iso: string, time = false): string {
   return time ? `${day}, ${d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}` : day;
 }
 
-// The page frame: paper, a band with the answer, cards over its edge. Kept
+// The page frame: the product's bar, the header with the answer, the cards
+// under it. Kept
 // outside the page component so typing in the receipt form doesn't remount
 // everything (and drop the cursor) on each key.
 function Shell({ kicker, title, sub, children }: { kicker: React.ReactNode; title: React.ReactNode; sub?: React.ReactNode; children: React.ReactNode }) {
   return (
-    <main className="min-h-dvh bg-[var(--color-canvas)] px-3 sm:px-6 py-4 sm:py-8">
-      <div className="mx-auto w-full max-w-3xl">
-        <PageHero kicker={kicker} title={title} sub={sub} size="md" />
-        <PageBody>{children}</PageBody>
-      </div>
-    </main>
+    <div className="min-h-dvh bg-[var(--color-canvas)]">
+      <PublicBar />
+      <main className="px-3 sm:px-6 pt-6 pb-8">
+        <div className="mx-auto w-full max-w-3xl">
+          <PageHero kicker={kicker} title={title} sub={sub} size="md" />
+          <PageBody>{children}</PageBody>
+        </div>
+      </main>
+    </div>
   );
 }
 

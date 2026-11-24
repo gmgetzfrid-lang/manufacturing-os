@@ -308,7 +308,8 @@ export function logoTriplets(colors: string[]): Triplet[] {
 }
 
 /** Greys with a breath of the brand hue (about 4%), so the page feels like
- *  one family without reading as blue (or green, or red). `borderControl`
+ *  one family without reading as blue (or green, or red). The page is a
+ *  step darker than the sheets, so a white sheet reads on it. `borderControl`
  *  is the resting edge of a field: 3:1 against the page and the sheet, so a
  *  field can be found (WCAG 1.4.11). */
 export function tintedNeutrals(hex: string, mode: "light" | "dark") {
@@ -316,12 +317,12 @@ export function tintedNeutrals(hex: string, mode: "light" | "dark") {
   const h = toOklch(sc[600])[2];
   if (mode === "dark") {
     return {
-      canvas: fromOklch(0.2, 0.01, h), surface: fromOklch(0.235, 0.012, h), surface2: fromOklch(0.27, 0.014, h),
+      canvas: fromOklch(0.19, 0.01, h), surface: fromOklch(0.235, 0.012, h), surface2: fromOklch(0.27, 0.014, h),
       border: fromOklch(0.31, 0.014, h), borderStrong: fromOklch(0.38, 0.016, h), borderControl: fromOklch(0.58, 0.018, h),
     };
   }
   return {
-    canvas: fromOklch(0.968, 0.008, h), surface: "#ffffff", surface2: fromOklch(0.975, 0.009, h),
+    canvas: fromOklch(0.955, 0.009, h), surface: "#ffffff", surface2: fromOklch(0.975, 0.009, h),
     border: fromOklch(0.915, 0.009, h), borderStrong: fromOklch(0.86, 0.012, h), borderControl: fromOklch(0.64, 0.016, h),
   };
 }

@@ -51,7 +51,7 @@
      marker and focus use the brand's readable shade. Red / amber / green
      are states only (late, waiting, done). The workspace's colors replace
      these defaults at runtime (ThemeProvider). */
-  --color-canvas: #f1f5fa;        /* the page */
+  --color-canvas: #ecf0f6;        /* the page: a touch darker than the sheets, so white reads */
   --color-surface: #ffffff;       /* sheets: tables, forms, cards */
   --color-surface-2: #f3f7fd;     /* hover, quiet fills inside a sheet */
   --color-text: #1f2733;
@@ -75,15 +75,15 @@
   --color-ink: #1f2733;
   /* Kept for older code: there is no colored header band any more; it is
      the page color. */
-  --color-band: #f1f5fa;
+  --color-band: #ecf0f6;
   /* Controls on graphite (viewers): white at low strength. */
   --color-ink-2: rgb(255 255 255 / 0.1);
   --color-ink-line: rgb(255 255 255 / 0.22);
   --color-ink-fg: #ffffff;
   --color-ink-text: #d5dae2;
   --color-ink-muted: #aeb6c2;
-  /* Sheets sit flat on the page: a hairline, no floating shadow. */
-  --shadow-card: 0 0 0 1px rgb(31 39 51 / 0.02);
+  /* Sheets sit on the page with a hairline and a faint shadow under it. */
+  --shadow-card: 0 1px 2px 0 rgb(15 23 42 / 0.06);
 
   /* The action color: the one filled button per screen (the workspace's
      accent). accent-text is the brand's readable shade for links. */
@@ -162,18 +162,25 @@
   --animate-rise: rise 0.22s var(--ease-fluid) both;
   --animate-shimmer: shimmer 1.8s linear infinite;
 
-  /* ── Depth: two levels ───────────────────────────────────────────
-     Surfaces get a hairline (the small shadow steps are near nothing, so
-     the 400+ `shadow-sm` / `shadow` already in the app go quiet). Things
-     that float above the page (menus, popovers, dialogs, toasts, the
-     phone sheet) get the one soft float shadow: the large steps all map to
-     it. */
+  /* ── Depth: a surface, a lift, a float ───────────────────────────
+     Sheets (cards, tables, forms) get a hairline and a faint shadow under
+     it (xs; the small steps all map to it, so the `shadow-sm` / `shadow`
+     already in the app read the same). A clickable card lifts on hover
+     (md). Things that float above the page (menus, popovers, dialogs,
+     toasts, the phone sheet) get the one soft float shadow: the large
+     steps all map to it. The main button is top-lit (`action`: a light
+     edge on top and a small shadow), a secondary one sits on a faint
+     shadow (`control`); the top bar casts `bar` once the page scrolls
+     under it. */
   --shadow-2xs: 0 0 0 0 transparent;
-  --shadow-xs:  0 1px 0 0 rgb(15 23 42 / 0.03);
-  --shadow-sm:  0 1px 0 0 rgb(15 23 42 / 0.04);
-  --shadow:     0 1px 0 0 rgb(15 23 42 / 0.04);
-  --shadow-md:  0 1px 2px 0 rgb(15 23 42 / 0.05), 0 2px 6px -2px rgb(15 23 42 / 0.06);
+  --shadow-xs:  0 1px 2px 0 rgb(15 23 42 / 0.06);
+  --shadow-sm:  0 1px 2px 0 rgb(15 23 42 / 0.06);
+  --shadow:     0 1px 2px 0 rgb(15 23 42 / 0.06);
+  --shadow-md:  0 6px 16px -6px rgb(15 23 42 / 0.14), 0 2px 4px -2px rgb(15 23 42 / 0.06);
   --shadow-float: 0 16px 44px -12px rgb(15 23 42 / 0.22), 0 2px 8px -2px rgb(15 23 42 / 0.08);
+  --shadow-action: inset 0 1px 0 0 rgb(255 255 255 / 0.3), 0 1px 2px 0 rgb(15 23 42 / 0.16), 0 2px 6px -2px rgb(15 23 42 / 0.12);
+  --shadow-control: 0 1px 2px 0 rgb(15 23 42 / 0.06);
+  --shadow-bar: 0 6px 16px -10px rgb(15 23 42 / 0.22);
   --shadow-lg:  var(--shadow-float);
   --shadow-xl:  var(--shadow-float);
   --shadow-2xl: var(--shadow-float);
@@ -191,12 +198,12 @@
 
 /* Dark theme: a deep slate page; the same roles. */
 .dark {
-  --color-canvas: #14161b;
+  --color-canvas: #111418;
   --color-surface: #1b1e24;
   --color-surface-2: #23272d;
   --color-ink: #0b0e13;
-  --color-band: #14161b;
-  --shadow-card: 0 0 0 1px rgb(0 0 0 / 0.2);
+  --color-band: #111418;
+  --shadow-card: 0 1px 2px 0 rgb(0 0 0 / 0.35);
   --color-border-control: #757b85;
   --color-current: #73a3fd;
   --color-focus: #73a3fd;
@@ -227,11 +234,14 @@
 
   /* On a dark page, ink-tinted shadows vanish: deep black, still one
      hairline level and one float level. */
-  --shadow-xs:  0 1px 0 0 rgb(0 0 0 / 0.25);
-  --shadow-sm:  0 1px 0 0 rgb(0 0 0 / 0.3);
-  --shadow:     0 1px 0 0 rgb(0 0 0 / 0.3);
-  --shadow-md:  0 1px 2px 0 rgb(0 0 0 / 0.35), 0 2px 6px -2px rgb(0 0 0 / 0.4);
+  --shadow-xs:  0 1px 2px 0 rgb(0 0 0 / 0.35);
+  --shadow-sm:  0 1px 2px 0 rgb(0 0 0 / 0.35);
+  --shadow:     0 1px 2px 0 rgb(0 0 0 / 0.35);
+  --shadow-md:  0 6px 16px -6px rgb(0 0 0 / 0.55), 0 2px 4px -2px rgb(0 0 0 / 0.35);
   --shadow-float: 0 16px 44px -12px rgb(0 0 0 / 0.65), 0 2px 8px -2px rgb(0 0 0 / 0.4);
+  --shadow-action: inset 0 1px 0 0 rgb(255 255 255 / 0.28), 0 1px 2px 0 rgb(0 0 0 / 0.5), 0 2px 6px -2px rgb(0 0 0 / 0.4);
+  --shadow-control: inset 0 1px 0 0 rgb(255 255 255 / 0.04), 0 1px 2px 0 rgb(0 0 0 / 0.4);
+  --shadow-bar: 0 6px 16px -10px rgb(0 0 0 / 0.7);
 }
 
 /* The job-named colors point at the older names; a surface that redefines
@@ -351,6 +361,27 @@ body {
 .page-head [class^="bg-white/"], .page-head [class*=" bg-white/"] { background-color: var(--color-surface); }
 .page-head [class*="border-white"] { border-color: var(--color-border-strong); }
 
+/* ── The page header's own surface ────────────────────────────────
+   The header (PageHero: where you are, the answer, its facts, the tabs
+   and filters under it) sits on white, from the top bar down to a
+   hairline under it, full width of the content column; the content below
+   is on the page color, its sheets white again. The white is a shadow
+   spread from an empty layer behind the header (never a box wider than the
+   page, so nothing scrolls sideways), clipped to the column by the
+   column's own edge. When the header ends with a tab row, the hairline is
+   the tab row's own line. */
+.page-top { position: relative; padding-bottom: 20px; }
+.page-top-sheet {
+  position: absolute; left: 0; right: 0; bottom: 0; top: calc(-1 * var(--page-top-bleed, 40px));
+  pointer-events: none;
+  background: var(--color-surface);
+  box-shadow: 0 0 0 100vmax var(--color-surface), 0 1px 0 100vmax var(--color-border);
+  clip-path: inset(0 -100vmax -1px -100vmax);
+}
+.page-top:has(> .page-top-kids > :last-child.border-b, > .page-top-kids > :last-child > :last-child.border-b) { padding-bottom: 0; }
+.page-top:has(> .page-top-kids > :last-child.border-b, > .page-top-kids > :last-child > :last-child.border-b) > .page-top-sheet { bottom: 1px; }
+.page-top-kids > :last-child.border-b, .page-top-kids > :last-child > :last-child.border-b { margin-bottom: 0; }
+
 /* ── Icons, counts, tags, statuses ────────────────────────────────
    Quiet by default, so color keeps its meaning.
    - An icon in front of a heading or a row is a plain muted icon at text
@@ -449,10 +480,16 @@ h2.font-display, h3.font-display { color: var(--color-heading); }
   box-shadow: var(--shadow-card);
 }
 @utility hover-lift {
-  /* A clickable card answers the pointer with its edge, not a float. */
-  transition: border-color 0.15s var(--ease-out-quick), background-color 0.15s var(--ease-out-quick);
+  /* A clickable card answers the pointer: its edge darkens and it rises a
+     pixel on a slightly deeper shadow. */
+  transition: border-color 0.15s var(--ease-out-quick), background-color 0.15s var(--ease-out-quick), box-shadow 0.18s var(--ease-out-quick), transform 0.18s var(--ease-out-quick);
   &:hover {
     border-color: var(--color-border-control);
+    box-shadow: var(--shadow-md);
+    transform: translateY(-1px);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    &:hover { transform: none; }
   }
 }
 /* Faint accent wash for page headers / hero strips — gives flat zones a
@@ -674,6 +711,16 @@ html[data-density="compact"] tbody tr {
   }
 }
 
+/* ── The main button is top-lit ──────────────────────────────────
+   Any button filled with the action color gets the light top edge and the
+   small shadow, so it reads as something to press (the shared recipes set
+   it too; a utility on the element still wins, this is the base layer).
+   Only a fill at rest counts, not one that shows on hover. */
+@layer base {
+  :is(button, a, [role="button"]):is([class^="bg-[var(--color-accent)]"], [class*=" bg-[var(--color-accent)]"]) { box-shadow: var(--shadow-action); }
+  :is(button, a, [role="button"]):is([class^="bg-[var(--color-accent)]"], [class*=" bg-[var(--color-accent)]"]):is(:disabled, [aria-disabled="true"]) { box-shadow: none; }
+}
+
 /* ── Form-control baseline ───────────────────────────────────────
    Native checkboxes, radios and progress bars take the brand. */
 @layer base {
@@ -734,15 +781,15 @@ html[data-density="compact"] tbody tr {
   .ui-chevron { transition: transform 180ms var(--ease-out-quick), rotate 180ms var(--ease-out-quick); }
 
   /* ── The side menu's current item joins the page ───────────────
-     The row takes the page's color and runs into the content edge, with
-     curved inner corners above and below, so the menu points at the
-     page. */
-  .nav-joined { position: relative; background: var(--side-current, var(--color-canvas)); }
+     The row takes the white of the top bar and the page header beside it
+     and runs into the content edge, with curved inner corners above and
+     below, so the menu points at the page. */
+  .nav-joined { position: relative; background: var(--side-current, var(--sheet-surface)); }
   .nav-joined::before, .nav-joined::after {
     content: ""; position: absolute; right: 0; width: 10px; height: 10px; pointer-events: none;
   }
-  .nav-joined::before { top: -10px; background: radial-gradient(circle at 0 0, transparent 9.5px, var(--side-current, var(--color-canvas)) 10px); }
-  .nav-joined::after { bottom: -10px; background: radial-gradient(circle at 0 100%, transparent 9.5px, var(--side-current, var(--color-canvas)) 10px); }
+  .nav-joined::before { top: -10px; background: radial-gradient(circle at 0 0, transparent 9.5px, var(--side-current, var(--sheet-surface)) 10px); }
+  .nav-joined::after { bottom: -10px; background: radial-gradient(circle at 0 100%, transparent 9.5px, var(--side-current, var(--sheet-surface)) 10px); }
 }
 
 /* ── Moving between views (lib/viewTransition.ts) ─────────────────
