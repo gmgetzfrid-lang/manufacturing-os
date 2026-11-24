@@ -714,10 +714,11 @@ html[data-density="compact"] tbody tr {
 /* ── The main button is top-lit ──────────────────────────────────
    Any button filled with the action color gets the light top edge and the
    small shadow, so it reads as something to press (the shared recipes set
-   it too; a utility on the element still wins, this is the base layer). */
+   it too; a utility on the element still wins, this is the base layer).
+   Only a fill at rest counts, not one that shows on hover. */
 @layer base {
-  :is(button, a, [role="button"])[class*="bg-[var(--color-accent)]"] { box-shadow: var(--shadow-action); }
-  :is(button, a, [role="button"])[class*="bg-[var(--color-accent)]"]:is(:disabled, [aria-disabled="true"]) { box-shadow: none; }
+  :is(button, a, [role="button"]):is([class^="bg-[var(--color-accent)]"], [class*=" bg-[var(--color-accent)]"]) { box-shadow: var(--shadow-action); }
+  :is(button, a, [role="button"]):is([class^="bg-[var(--color-accent)]"], [class*=" bg-[var(--color-accent)]"]):is(:disabled, [aria-disabled="true"]) { box-shadow: none; }
 }
 
 /* ── Form-control baseline ───────────────────────────────────────
