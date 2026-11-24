@@ -1,5 +1,6 @@
 "use client";
 
+import { forgetLoads } from "@/lib/warmLoads";
 import React, { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import type { Role } from "@/types/schema";
@@ -293,6 +294,8 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
         setLoading(false);
         openedRef.current = null;
         try { writeMember(window.localStorage, null); } catch { /* private mode */ }
+        // Loads the sign-in page started for this account (lib/warmLoads).
+        forgetLoads();
         // Status snapshots persist in localStorage for instant paints —
         // they must not outlive the account that fetched them.
         try {
