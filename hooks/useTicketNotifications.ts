@@ -1,3 +1,4 @@
+import { sharedLoad } from "@/lib/warmLoads";
 import { useState, useEffect, useMemo, useId } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useRole } from '@/components/providers/RoleContext';
@@ -157,28 +158,39 @@ export function useTicketNotifications() {
       const note = (e: { message?: string } | null | undefined) => { if (e?.message) problems.push(e.message); };
       try {
         // 1) My tickets, scoped by role (same visibility rules as the portal).
-        let list: Ticket[] = [];
-        if (isManagementRole(roles) || isEngineerRole(roles) || roles.includes('DocCtrl')) {
-          const { data, error } = await supabase.from('tickets').select('*').eq('org_id', activeOrgId).neq('status', 'CLOSED').order('last_modified', { ascending: false }).limit(OPEN_TICKET_CAP);
-          note(error);
-          list = (data || []).map((r) => fromDbTicket(r as Record<string, unknown>));
-        } else if (roles.includes('Drafter')) {
-          const [assigned, pool] = await Promise.all([
-            supabase.from('tickets').select('*').eq('org_id', activeOrgId).eq('assigned_drafter_id', uid).order('last_modified', { ascending: false }).limit(OPEN_TICKET_CAP),
-            supabase.from('tickets').select('*').eq('org_id', activeOrgId).eq('status', 'PENDING_ASSIGNMENT').order('last_modified', { ascending: false }).limit(OPEN_TICKET_CAP),
-          ]);
-          note(assigned.error); note(pool.error);
-          const map = new Map<string, Ticket>();
-          for (const row of [...(assigned.data || []), ...(pool.data || [])]) {
-            const t = fromDbTicket(row as Record<string, unknown>);
-            map.set(t.id!, t);
+        //    The side menu, the bell and the dashboard each mount this hook at
+        //    once: one load serves them all (lib/warmLoads, 1.5 s).
+        const loadList = async (): Promise<{ list: Ticket[]; errs: string[] }> => {
+          const errs: string[] = [];
+          const noteL = (e: { message?: string } | null | undefined) => { if (e?.message) errs.push(e.message); };
+          let list: Ticket[] = [];
+          if (isManagementRole(roles) || isEngineerRole(roles) || roles.includes('DocCtrl')) {
+            const { data, error } = await supabase.from('tickets').select('*').eq('org_id', activeOrgId).neq('status', 'CLOSED').order('last_modified', { ascending: false }).limit(OPEN_TICKET_CAP);
+            noteL(error);
+            list = (data || []).map((r) => fromDbTicket(r as Record<string, unknown>));
+          } else if (roles.includes('Drafter')) {
+            const [assigned, pool] = await Promise.all([
+              supabase.from('tickets').select('*').eq('org_id', activeOrgId).eq('assigned_drafter_id', uid).order('last_modified', { ascending: false }).limit(OPEN_TICKET_CAP),
+              supabase.from('tickets').select('*').eq('org_id', activeOrgId).eq('status', 'PENDING_ASSIGNMENT').order('last_modified', { ascending: false }).limit(OPEN_TICKET_CAP),
+            ]);
+            noteL(assigned.error); noteL(pool.error);
+            const map = new Map<string, Ticket>();
+            for (const row of [...(assigned.data || []), ...(pool.data || [])]) {
+              const t = fromDbTicket(row as Record<string, unknown>);
+              map.set(t.id!, t);
+            }
+            list = Array.from(map.values());
+          } else {
+            const { data, error } = await supabase.from('tickets').select('*').eq('org_id', activeOrgId).eq('requester_id', uid).neq('status', 'CLOSED').order('last_modified', { ascending: false }).limit(OPEN_TICKET_CAP);
+            noteL(error);
+            list = (data || []).map((r) => fromDbTicket(r as Record<string, unknown>));
           }
-          list = Array.from(map.values());
-        } else {
-          const { data, error } = await supabase.from('tickets').select('*').eq('org_id', activeOrgId).eq('requester_id', uid).neq('status', 'CLOSED').order('last_modified', { ascending: false }).limit(OPEN_TICKET_CAP);
-          note(error);
-          list = (data || []).map((r) => fromDbTicket(r as Record<string, unknown>));
-        }
+
+          return { list, errs };
+        };
+        const got = await sharedLoad(`tickets:${activeOrgId}|${uid}|${roles.join(",")}`, loadList, { maxAgeMs: 1500 });
+        const list = got.list;
+        got.errs.forEach((m) => note({ message: m }));
 
         // 2) My unread in-app notifications (the bell's events), scoped to the
         //    active workspace.

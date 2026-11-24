@@ -18,6 +18,7 @@
 // older version is shown, and edited, as one column in its own order.
 // On a phone the editor can't drag; it still removes and opens settings.
 
+import { sharedLoad, dashKey } from "@/lib/warmLoads";
 import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import SetupChecklist from "@/components/onboarding/SetupChecklist";
@@ -126,7 +127,8 @@ export default function DashboardGrid() {
   useEffect(() => {
     let alive = true;
     if (!uid) return;
-    loadDashboardConfig(uid).then((cfg) => {
+    // The layout sign-in already asked for, when it did.
+    sharedLoad(dashKey(uid), () => loadDashboardConfig(uid)).then((cfg) => {
       // Shown, and edited, as one full-width column in its own order. The
       // stored layout only changes when the person changes something.
       if (alive) { setConfig({ ...cfg, widgets: asColumn(cfg.widgets) }); setLoaded(true); }

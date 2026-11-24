@@ -13,6 +13,7 @@ import { rememberWorkspaceName } from "@/lib/deviceWorkspace";
 import { checkSignin, type SigninVerdict } from "@/lib/signinCheck";
 import { fetchMemberships, pickMembership, SignedOut, type MembershipAnswer } from "@/lib/membershipClient";
 import { writeMember } from "@/lib/memberCache";
+import { sharedLoad, forgetLoads, dashKey, inboxKey } from "@/lib/warmLoads";
 import { normalizeRoles, primaryRole } from "@/lib/roleCapabilities";
 import type { Role } from "@/types/schema";
 import React, { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
@@ -94,6 +95,21 @@ export default function LoginPage() {
   // server), then the server's answer on its workspaces. No profile is ever
   // made here: accounts and profiles are made only by an admin adding
   // someone, or by a paid new workspace.
+  /** The workspace this device last used, when the account is still in it. */
+  const lastOrg = () => { try { return window.localStorage.getItem("manufacturingos.activeOrgId"); } catch { return null; } };
+  /** Start the dashboard's own loads (its layout, what needs you) as soon as
+   *  the account and workspace are known; the dashboard picks them up
+   *  (lib/warmLoads) instead of starting again. */
+  const warm = (user: User | null, answer: MembershipAnswer | null): Promise<unknown> => {
+    if (!user?.id) return Promise.resolve();
+    const uid = user.id;
+    const pick = answer ? pickMembership(answer, lastOrg()) : null;
+    return Promise.allSettled([
+      import("@/lib/dashboard/config").then((m) => sharedLoad(dashKey(uid), () => m.loadDashboardConfig(uid))),
+      ...(pick ? [import("@/lib/inbox").then((m) => sharedLoad(inboxKey(pick.orgId, uid), () => m.loadInbox(pick.orgId, uid, user.email ?? undefined)))] : []),
+    ]);
+  };
+
   const routeAuthedUser = useCallback(async (user: User) => {
     if (loginInFlight.current) return;
     // If they signed in via Microsoft, remember it on this device so we can try
@@ -108,10 +124,11 @@ export default function LoginPage() {
     const { data: { session } } = await supabase.auth.getSession();
     // The workspace lookup runs alongside the sign-in check, not after it;
     // its answer is used only when the check lets the account in.
-    const workspaces = fetchMemberships().catch((e: unknown) => e);
+    const workspaces = fetchMemberships().then((a) => { void warm(user, a); return a; }).catch((e: unknown) => e);
     const verdict = await checkSignin(session?.access_token ?? null);
     const why = refusal(verdict);
     if (why) {
+      forgetLoads();
       if (verdict.action === NOT_ADDED) setPreferMicrosoft(false);
       await supabase.auth.signOut();
       setError(why);
@@ -135,9 +152,12 @@ export default function LoginPage() {
       router.prefetch("/dashboard");
       if (known instanceof SignedOut) throw known;
       const answer = known && typeof known === "object" && "memberships" in (known as object) ? known as MembershipAnswer : await fetchMemberships();
-      const pick = pickMembership(answer, null);
+      const pick = pickMembership(answer, lastOrg());
       if (pick) {
         rememberWorkspaceName(pick.orgName);
+        // The sign-in rules were just checked here: the app doesn't ask the
+        // server again on the way in (app/(protected)/layout, once per visit).
+        if (user?.id) { try { sessionStorage.setItem(`signin-checked:${user.id}`, "1"); } catch { /* it checks again */ } }
         const meta = (user?.user_metadata ?? {}) as { full_name?: unknown; name?: unknown };
         const name = typeof meta.full_name === "string" && meta.full_name.trim() ? meta.full_name.trim()
           : typeof meta.name === "string" && meta.name.trim() ? meta.name.trim()
@@ -151,6 +171,10 @@ export default function LoginPage() {
         }
         setLoading(false); setOpened(true);
         setSigned({ name, at: new Date() });
+        // "Opening your workspace" has a job: the dashboard's layout and what
+        // needs you load now, so it opens filled in. Never more than 2.5 s:
+        // past that it opens and the rest arrives in place.
+        await Promise.race([warm(user, answer), new Promise((r) => setTimeout(r, 2500))]);
         router.replace("/dashboard");
         return;
       }
@@ -296,10 +320,11 @@ export default function LoginPage() {
       }
       // The workspace's sign-in rules decide what happens next; the
       // workspace lookup runs alongside, used only if they let the account in.
-      const workspaces = fetchMemberships().catch((e: unknown) => e);
+      const workspaces = fetchMemberships().then((a) => { void warm(signedIn.user ?? null, a); return a; }).catch((e: unknown) => e);
       const verdict = await checkSignin(signedIn.session?.access_token ?? null);
       const why = refusal(verdict) ?? (verdict.action === "error" ? "Couldn't finish signing you in. Check your connection and try again." : null);
       if (why) {
+        forgetLoads();
         await supabase.auth.signOut();
         setError(why);
         setLoading(false);

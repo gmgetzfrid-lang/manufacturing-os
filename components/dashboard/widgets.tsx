@@ -33,6 +33,7 @@ import { useRole } from "@/components/providers/RoleContext";
 import DocThumb from "@/components/documents/DocThumb";
 import DocHoverPreview from "@/components/documents/DocHoverPreview";
 import { loadInbox, type InboxSnapshot } from "@/lib/inbox";
+import { sharedLoad, inboxKey } from "@/lib/warmLoads";
 import { computeNudges } from "@/lib/nudges";
 import { resolveMarkupRequest } from "@/lib/markupRequests";
 import { useTicketNotifications } from "@/hooks/useTicketNotifications";
@@ -214,7 +215,8 @@ function useInboxSnapshot(): { snap: InboxSnapshot | null; loading: boolean; ref
   useEffect(() => {
     let alive = true;
     if (!activeOrgId || !uid) return;
-    loadInbox(activeOrgId, uid, userEmail ?? undefined)
+    // The first load is the one sign-in started, when it did; a refresh is new.
+    sharedLoad(inboxKey(activeOrgId, uid), () => loadInbox(activeOrgId, uid, userEmail ?? undefined), { fresh: reloadKey > 0 || refreshKey > 0 })
       .then((s) => { if (alive) { setSnap(s); setLoading(false); reportLoaded(); } })
       .catch(() => { if (alive) { setLoading(false); reportLoaded(); } });
     return () => { alive = false; };
@@ -574,7 +576,8 @@ function CommandDeckBody() {
   useEffect(() => {
     let alive = true;
     if (!uid || !activeOrgId) return;
-    loadInbox(activeOrgId, uid, userEmail ?? undefined)
+    // The first load is the one sign-in started, when it did; a refresh is new.
+    sharedLoad(inboxKey(activeOrgId, uid), () => loadInbox(activeOrgId, uid, userEmail ?? undefined), { fresh: reloadKey > 0 })
       .then((snap) => { if (alive) { setData(snap); setLastLoadedAt(Date.now()); } })
       .catch(() => { /* leave prior data; deck degrades to dashes */ })
       .finally(() => { if (alive) { setLoading(false); setRefreshing(false); } });
