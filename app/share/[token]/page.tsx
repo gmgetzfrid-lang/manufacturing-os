@@ -24,6 +24,7 @@ import { Problem, shortDateTime } from "@/components/admin/kit";
 import { Button } from "@/components/ui/Button";
 import CopyId from "@/components/ui/CopyId";
 import { SkeletonRows } from "@/components/ui/Skeleton";
+import { PublicBar } from "@/components/marketing/PublicChrome";
 import type { ResolvedShare, ResolvedShareItem } from "@/lib/documentShares";
 
 import { friendlyError } from "@/lib/friendlyError";
@@ -287,12 +288,15 @@ export default function SharePage() {
 
 function Shell({ kicker, title, sub, children }: { kicker: React.ReactNode; title: React.ReactNode; sub?: React.ReactNode; children?: React.ReactNode }) {
   return (
-    <main className="min-h-dvh bg-[var(--color-canvas)] px-3 sm:px-6 pt-6 pb-16">
-      <div className="mx-auto w-full max-w-2xl">
-        <PageHero kicker={kicker} title={title} sub={sub} size="md" />
-        {children && <PageBody>{children}</PageBody>}
-      </div>
-    </main>
+    <div className="min-h-dvh bg-[var(--color-canvas)]">
+      <PublicBar />
+      <main className="px-3 sm:px-6 pt-6 pb-16">
+        <div className="mx-auto w-full max-w-2xl">
+          <PageHero kicker={kicker} title={title} sub={sub} size="md" />
+          {children && <PageBody>{children}</PageBody>}
+        </div>
+      </main>
+    </div>
   );
 }
 

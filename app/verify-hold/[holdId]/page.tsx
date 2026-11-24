@@ -10,6 +10,7 @@ import { friendlyError } from "@/lib/friendlyError";
 import React, { useCallback, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { OctagonAlert, CheckCircle2, Loader2, ShieldQuestion, RefreshCw } from "lucide-react";
+import { PublicSignature } from "@/components/marketing/PublicChrome";
 
 interface HoldStatus {
   active: boolean;
@@ -124,6 +125,7 @@ export default function VerifyHoldPage() {
           </>
         )}
       </div>
+      <PublicSignature />
     </div>
   );
 }

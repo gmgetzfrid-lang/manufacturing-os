@@ -1,18 +1,2 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-label="Manufacturing OS">
-  <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#f97316"/>
-      <stop offset="1" stop-color="#c2410c"/>
-    </linearGradient>
-  </defs>
-  <!-- Full-bleed background so the icon reads as "maskable": the glyph sits
-       well inside the safe zone (centered, ~60% of the canvas). -->
-  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
-  <!-- Dashboard / control glyph, white, centered with generous padding. -->
-  <g fill="#ffffff">
-    <rect x="146" y="146" width="98" height="98" rx="18"/>
-    <rect x="268" y="146" width="98" height="58" rx="18"/>
-    <rect x="268" y="226" width="98" height="140" rx="18"/>
-    <rect x="146" y="268" width="98" height="98" rx="18"/>
-  </g>
-</svg>
+<!-- Manufacturing OS: a control valve (bowtie, stem, diaphragm actuator), white on navy, the actuator in the warm accent. Rounded tile for "any" use; the PNGs are the full-bleed maskable cut. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 100 100" role="img" aria-label="Manufacturing OS"><rect width="100" height="100" rx="22" fill="#0b1f4d"/><g transform="translate(8 8) scale(0.84)"><path d="M12 63H27M73 63H88" stroke="#ffffff" stroke-width="8" stroke-linecap="round"/><path d="M27 47L50 63L27 79ZM73 47L50 63L73 79Z" fill="#ffffff" stroke="#ffffff" stroke-width="3" stroke-linejoin="round"/><path d="M46.5 37h7v26h-7z" fill="#ffffff"/><path d="M30 38a20 20 0 0 1 40 0z" fill="#f5a524"/></g></svg>

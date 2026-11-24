@@ -10,6 +10,7 @@ import { friendlyError } from "@/lib/friendlyError";
 import React, { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { CheckCircle2, XCircle, Loader2, ShieldQuestion, RefreshCw } from "lucide-react";
+import { PublicSignature } from "@/components/marketing/PublicChrome";
 
 interface SheetRow {
   label: string;
@@ -140,6 +141,7 @@ export default function VerifyPackagePage() {
           </>
         )}
       </div>
+      <PublicSignature />
     </div>
   );
 }
