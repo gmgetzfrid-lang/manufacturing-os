@@ -54,7 +54,16 @@ What it should do, in this order:
 4. **Only then, the gap to the target**: the smallest added people or time that closes what is left, each with its hours saved and its cost.
 5. Say plainly what the replay cannot know (a wait with no reason logged, a crew move nobody recorded).
 
-## 7. Rules still open (from docs/design-rules.md status)
+## 8. Materials: add a line like a spreadsheet, two owners
+Today "Add an item" is a dialog with 14 fields (item, spec, missing from spec, quantity, work order, owner, supplier, status, need-by, ETA, about the date, question, answer, note, phase). It breaks the rules on short forms and filling in what we know (W1, F12, A6), and it is slower than typing a line in Excel.
+- **Add from the list.** A blank row always waits at the bottom of the register: item, quantity, work order, need-by. Enter saves it and opens the next row. Pasting rows copied from Excel adds them all.
+- **Everything else in the row,** edited in place or in a side panel when the row is opened: spec, supplier, ETA, question, note. Never needed to add a line. The phase comes from the work order.
+- **Two owners, as the owner's turnaround execution and management method says:** the warehouse person (gets it in and checks it) and the turnaround crew person (makes sure it is used on the job). The row is flagged when either is missing.
+- **Close the loop:** the list does not end at "Received, checked". The crew owner marks it used or installed, so "done" means done on the job.
+- Off-site repair stays the same kind of row, with a return date in place of the ETA.
+- Ask the owner for the simplified version of the book, so the steps and words match it exactly.
+
+## 9. Rules still open (from docs/design-rules.md status)
 - 91 tap targets under 44 px on touch, starting with the "All" and "Ask" tabs (under 24 px).
 - Status colors on the dark document viewer; timeline and calendar bar colors need chart tokens.
 - Compact inline add rows with only a screen-reader name.
