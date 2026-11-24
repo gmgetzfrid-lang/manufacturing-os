@@ -514,6 +514,16 @@ export default function DocAsk(p: Props) {
   if (ask === "hold") {
     const h = holds[0];
     if (!h) return nothing(<>The hold on {label} was released. It can be used again.</>);
+    if (h.openedBy === uid) {
+      return (
+        <NeededFromYou
+          what={<>You put {label} on hold ({h.reason}). Release it once that&apos;s cleared, so work can go on.</>}
+          why={<>Nobody should work from it while it&apos;s on hold.{h.notes ? ` Your note: "${h.notes}"` : ""}</>}
+          when={h.expectedReleaseAt ? dueWords(String(h.expectedReleaseAt).slice(0, 10)) : sinceWords(String(h.openedAt ?? ""))}
+          note={<>Release is in the hold box just below.</>}
+        />
+      );
+    }
     return (
       <NeededFromYou
         what={<>Don&apos;t use {label} for work: it&apos;s on hold ({h.reason}).</>}

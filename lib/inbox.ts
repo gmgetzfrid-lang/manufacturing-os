@@ -26,8 +26,9 @@ export interface InboxSnapshot {
   // Checkouts I currently hold
   myCheckouts: CheckoutSession[];
 
-  // Holds I opened that are still open (I'm responsible for clearing them)
-  myOpenHolds: DocumentHold[];
+  // Holds I opened that are still open (I'm responsible for clearing them),
+  // with the document each is on, so the row says which and opens it.
+  myOpenHolds: Array<DocumentHold & { __docLabel?: string | null; __libraryId?: string | null }>;
 
   // Markup requests TO me (someone asked for my markups)
   markupRequestsToMe: Array<{
@@ -213,9 +214,19 @@ export async function loadInbox(orgId: string, userId: string, userEmail?: strin
     return !!s.startedAt && s.startedAt < longHeldBeforeIso;
   });
 
-  const myOpenHolds: DocumentHold[] = holdsRes.status === "fulfilled"
+  const myOpenHolds: Array<DocumentHold & { __docLabel?: string | null; __libraryId?: string | null }> = holdsRes.status === "fulfilled"
     ? ((holdsRes.value.data || []) as Array<Record<string, unknown>>).map(rowToHold)
     : [];
+  if (myOpenHolds.length) {
+    const ids = [...new Set(myOpenHolds.map((h) => h.documentId))];
+    const { data: hd } = await supabase.from("documents").select("id, library_id, document_number, title, name").in("id", ids);
+    const byId = new Map(((hd ?? []) as Array<Record<string, unknown>>).map((d) => [d.id as string, d]));
+    for (const h of myOpenHolds) {
+      const d = byId.get(h.documentId);
+      h.__libraryId = (d?.library_id as string | null) ?? null;
+      h.__docLabel = (d?.document_number as string) || (d?.title as string) || (d?.name as string) || null;
+    }
+  }
 
   const markupRequestsToMe = markupRes.status === "fulfilled"
     ? ((markupRes.value.data || []) as Array<Record<string, unknown>>).map((r) => ({

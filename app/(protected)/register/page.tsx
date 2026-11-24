@@ -38,6 +38,9 @@ const SHORT: Partial<Record<RegisterFilter, string>> = {
   acks_outstanding: "Acks open", effective_pending: "Not in effect", disposition_eligible: "Disposition",
   in_review: "In review", external: "External",
 };
+// A document whose review is due opens with Still current / Needs changes
+// at the top (lib/asks.ts); any other row opens as it always did.
+const rowHref = (r: RegisterRow) => `/documents/${r.libraryId}?doc=${r.id}${r.reviewStatus === "overdue" || r.reviewStatus === "due_soon" ? "&ask=review" : ""}`;
 const asFilter = (v: string | null): RegisterFilter | null => (v && (FILTERS as string[]).includes(v) ? (v as RegisterFilter) : null);
 
 export default function RegisterPage() {
@@ -218,11 +221,11 @@ export default function RegisterPage() {
               {filtered.map((r) => (
                 <tr key={r.id}
                   // The whole row opens the document; the library tag keeps its own click.
-                  onClick={(e) => { if (!(e.target as HTMLElement).closest("a,button")) transitionPush(router, `/documents/${r.libraryId}?doc=${r.id}`); }}
+                  onClick={(e) => { if (!(e.target as HTMLElement).closest("a,button")) transitionPush(router, rowHref(r)); }}
                   className="cursor-pointer border-t border-[var(--color-border)] first:border-t-0 hover:bg-[var(--color-surface-2)]">
                   <td className="px-3 py-2.5">
                     <div className="flex items-center gap-1.5">
-                      <Link href={`/documents/${r.libraryId}?doc=${r.id}`} className="ui-id text-[15px]">{r.number}</Link>
+                      <Link href={rowHref(r)} className="ui-id text-[15px]">{r.number}</Link>
                       {r.external && <OriginBadge origin="external" source={null} reference={null} />}
                     </div>
                     {r.title && r.title !== r.number && <div className="text-[13px] text-[var(--color-text-muted)] truncate max-w-[280px]">{r.title}</div>}

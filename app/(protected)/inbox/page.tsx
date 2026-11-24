@@ -282,8 +282,9 @@ export default function InboxPage() {
       key: "holds", title: "Holds you opened", count: data.myOpenHolds.length,
       rows: data.myOpenHolds.slice(0, 6).map((h, i) => ({
         key: h.id ?? `h-${i}`,
-        item: <StatusTag tone="overdue">{h.reason}</StatusTag>,
-        detail: h.notes ? `“${h.notes}”` : "",
+        // Which document, opening on "release it when it's cleared".
+        item: h.__libraryId ? docLink(`/documents/${h.__libraryId}?doc=${h.documentId}&ask=hold`, h.__docLabel || "Document") : <StatusTag tone="overdue">{h.reason}</StatusTag>,
+        detail: <>{h.__libraryId ? <StatusTag tone="overdue">{h.reason}</StatusTag> : null}{h.notes ? ` “${h.notes}”` : ""}</>,
         when: <>Opened {ago(h.openedAt).toLowerCase()}</>,
       })),
       more: { href: "/admin/holds", label: "Hold queue" },
