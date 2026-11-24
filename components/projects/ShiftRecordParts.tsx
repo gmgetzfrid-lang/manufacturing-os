@@ -14,7 +14,7 @@
 
 import React, { useMemo, useState } from "react";
 import { useParams } from "next/navigation";
-import { FileSpreadsheet, RotateCcw, CircleAlert } from "lucide-react";
+import { FileSpreadsheet, RotateCcw, CircleAlert, Check } from "lucide-react";
 import {
   INCIDENT_KINDS, saveShiftRecord, editIncident, restoreIncident, editNote, restoreNote, unclearNote,
   type Incident, type IncidentKind, type ShiftNote, type ShiftRecord,
@@ -118,8 +118,8 @@ const addBtn = "inline-flex items-center justify-center gap-1 h-8 pointer-coarse
 
 const inputCls = "h-8 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-control)] bg-[var(--color-surface)] px-2.5 text-body text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] ";
 
-/** "Safety incidents this shift: None / Report one" — in place of the old
- *  tick-box, with each one reported listed under it. */
+/** "Incidents not entered" with None / Report one, as one tinted line, the email's callout (in place of the old
+ *  tick-box), each one reported listed under it. */
 export function IncidentsLine({ incidents, edit, print, shift, tz, T, onNone, onAdd, onRemove, onEdit, onRestore }: {
   incidents?: { none?: { at: number; by?: string | null } | null; items?: Incident[] };
   edit: boolean; print: boolean; shift: ShiftWindow; tz: string; T: (ms: number) => string;
@@ -182,13 +182,14 @@ export function IncidentsLine({ incidents, edit, print, shift, tz, T, onNone, on
   const btn = (on: boolean) => `inline-flex items-center gap-1 h-8 pointer-coarse:h-11 px-3 text-body font-medium bg-[var(--color-surface)] ${on ? "text-[var(--color-text)] shadow-[inset_0_-2px_0_var(--color-current)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`;
   return (
     <div className="text-caption min-w-0">
-      <div className="flex flex-wrap items-center gap-1.5">
-        <b className="text-[var(--color-text)]">Safety incidents this shift:</b>
-        {print || !edit ? (
-          <span className={items.length ? "font-medium text-[var(--state-overdue-text)]" : none ? "font-medium text-[var(--state-released-text)]" : "text-[var(--color-text-muted)]"}>
-            {items.length ? `${items.length} reported` : none ? "None" : "not recorded"}
-          </span>
-        ) : (
+      {/* One tinted line with its mark, as the email says it: reported,
+          none, or not entered yet (with the two answers beside it). */}
+      <div className={`inline-flex max-w-full flex-wrap items-center gap-x-3 gap-y-1.5 rounded-md px-3 py-1.5 ${items.length ? "bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)]" : none ? "bg-[color-mix(in_srgb,var(--state-released)_10%,transparent)]" : "bg-[color-mix(in_srgb,var(--state-held)_12%,transparent)]"}`}>
+        <span className={`inline-flex items-center gap-1.5 text-body font-semibold ${items.length ? "text-[var(--state-overdue-text)]" : none ? "text-[var(--state-released-text)]" : "text-[var(--state-held-text)]"}`}>
+          {none ? <Check aria-hidden className="w-4 h-4 shrink-0" /> : <CircleAlert aria-hidden className="w-4 h-4 shrink-0" />}
+          {items.length ? `${items.length} incident${items.length === 1 ? "" : "s"} this shift` : none ? "No incidents this shift" : "Incidents not entered"}
+        </span>
+        {print || !edit ? null : (
           <span className="inline-flex overflow-hidden rounded-md border border-[var(--color-border-strong)] divide-x divide-[var(--color-border-strong)]">
             <button type="button" aria-pressed={none} disabled={items.length > 0} onClick={() => onNone(!none)} className={`${btn(none)} disabled:opacity-50`}>None</button>
             <button type="button" aria-pressed={open && !editingId} onClick={() => { if (editingId) reset(); else setOpen((v) => !v); }} className={btn(false)}>Report one</button>

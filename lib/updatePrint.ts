@@ -120,7 +120,7 @@ export function sendParts(d: ExportDoc, o: { format?: SendFormat; headerOff?: Re
   if (!d.form || format === "detail") return { html: toEmailHtml(d), text: toPlainText(d), form: false };
   const hOff = o.headerOff ?? readHeaderOff(), fOff = o.formOff ?? readFormOff();
   const h = formHead(d), shown = { project: !hOff.has("project"), when: !hOff.has("when") };
-  const head = headerHtml(h, hOff), headT = headerText(h, hOff);
+  const head = headerHtml(h, hOff, { crews: fOff.has("headcount") }), headT = headerText(h, hOff);
   return { html: head + formHtml(d.form, fOff, shown), text: [headT, formText(d.form, fOff, shown)].filter(Boolean).join("\n\n"), form: true };
 }
 
@@ -141,7 +141,9 @@ export function docxHeader(full: ExportDoc, off: ReadonlySet<HeaderPart>): FormD
     ...(off.has("asof") ? {} : { asOf: d.asOf }),
     ...(d.status && !off.has("status") ? { status: d.status } : {}),
     ...(stand && !off.has("standLine") ? { standLine: stand.sub ?? "" } : {}),
-    tiles: (ov?.stats ?? []).filter((x) => { const p = tilePart(x.label); return !p || !off.has(p); }),
+    tiles: [...(ov?.stats ?? []).filter((x) => { const p = tilePart(x.label); return !p || !off.has(p); }),
+      // The head count as one more number ("On site 24").
+      ...(d.headcount && !off.has("headcount") && /^\d+ on site/.test(d.headcount) ? [{ label: "On site", value: d.headcount.match(/^\d+/)![0], tone: "slate" as const }] : [])],
     ...(ov?.bars && !off.has("bars") ? { bars: ov.bars } : {}),
   };
 }

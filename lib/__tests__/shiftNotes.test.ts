@@ -107,8 +107,8 @@ describe("the turnover email: additions in the sections it already has", () => {
     expect(s).not.toMatch(/of \d+ done/);
   });
   it("safety incidents: their own box at the end - none, each one, or not recorded", () => {
-    expect(text()).toMatch(/SAFETY INCIDENTS - DAY SHIFT 10-27\n\s+Not recorded\./);
-    expect(text({ incidents: { none: true, items: [] } })).toMatch(/SAFETY INCIDENTS - DAY SHIFT 10-27\n\s+None\./);
+    expect(text()).toMatch(/SAFETY INCIDENTS - DAY SHIFT 10-27\n\s+Incidents not entered for this shift\./);
+    expect(text({ incidents: { none: true, items: [] } })).toMatch(/SAFETY INCIDENTS - DAY SHIFT 10-27\n\s+No safety incidents\./);
     expect(text({ incidents: { none: false, items: [{ at: t("2026-10-27", "14:10"), kind: "Near miss", text: "Dropped wrench from deck" }] } })).toMatch(/14:10 - Near miss.*Dropped wrench from deck/);
     const ids = turnoverUpdate(report, f, look()).map((x) => x.id);
     expect(ids[ids.length - 1]).toBe("incidents");

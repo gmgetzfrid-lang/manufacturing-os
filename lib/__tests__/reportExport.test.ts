@@ -52,8 +52,12 @@ describe("the turnover as management reads it", () => {
     expect(h).toContain("43.5&nbsp;h");
     expect(h).toContain("Phase 1 finished Sat, Nov 21 1:30 AM, 43.5 h late (1.8 days).");
     expect(h).not.toContain("ON TRACK");
-    // The head count comes before any section.
-    expect(h.indexOf("38 on site: Schultz 12")).toBeLessThan(h.indexOf("Where we stand"));
+    // One card leads: the head count is a number in it ("On site 38"), the
+    // crews under it, before any section.
+    expect(h).toMatch(/>On site<\/div><div[^>]*>38<\/div>/);
+    expect(h.indexOf("On site: Schultz 12, Ancon 20, Brand 6")).toBeGreaterThan(-1);
+    expect(h.indexOf("On site: Schultz 12, Ancon 20, Brand 6")).toBeLessThan(h.indexOf("Where we stand"));
+    expect(h.indexOf("data-hero")).toBeLessThan(h.indexOf("43.5&nbsp;h"));
     const t = text(late);
     expect(t).toContain("Status: FINISHED LATE - Phase 1 finished Sat, Nov 21 1:30 AM, 43.5 h late (1.8 days).");
     expect(t.indexOf("38 on site")).toBeLessThan(t.indexOf("WHERE WE STAND"));
@@ -114,5 +118,36 @@ describe("a table's notes are never squeezed or dropped", () => {
     const t2 = toPlainText(withNotes);
     expect(t2).toContain(`• +26 h - step Pull bundle ("E-12"); Hydroblast (task 40% done) · who Ancon`);
     expect(t2).toContain("\n       Why: on hold 20 h, waiting on material; ran 6 h longer than planned\n");
+  });
+});
+
+describe("the card at the top of the update", () => {
+  const stand = { id: "stand", title: "Where we stand", sub: "Phase 2 only · Day 10 of 10 · planned finish Mon, Nov 16 · forecast finish Tue, Nov 17 8:30 PM - 43.5 h late",
+    blocks: [{ k: "overview" as const, title: "", lines: [], stats: [{ label: "Complete", value: "100%", tone: "slate" as const }, { label: "Steps done", value: "122 / 122", tone: "slate" as const }] }] };
+  const d: ExportDoc = { kind: "Shift turnover", project: "P", when: "w", asOf: "a", status: { label: "FINISHED LATE", tone: "rose", key: "43.5 h", detail: "Phase 2 finished Tue, Nov 17 8:30 PM, 43.5 h late (1.8 days)." },
+    headcount: "24 on site: Schultz 20, Safety (KE) 4", sections: [stand, { id: "done", title: "Done", blocks: [{ k: "note", text: "x" }] }] };
+
+  it("says each fact once: the phase line drops what the verdict already says", async () => {
+    const { toEmailHtml: html } = await import("@/lib/reportExport");
+    const h = html(d);
+    expect(h).toContain("Phase 2 only · Day 10 of 10 · planned finish Mon, Nov 16<");
+    expect(h).not.toContain("forecast finish Tue, Nov 17");
+    // Where we stand's numbers are in the card, not again as a section.
+    expect(h.match(/>Steps done</g)).toHaveLength(1);
+    expect(h).not.toContain(">Where we stand<");
+  });
+
+  it("the shift table's header leaves the crews to the table's head count row", async () => {
+    const { headerHtml } = await import("@/lib/reportExport");
+    expect(headerHtml(d, new Set())).toContain("On site: Schultz 20, Safety (KE) 4");
+    expect(headerHtml(d, new Set(), { crews: false })).not.toContain("Schultz 20");
+    expect(headerHtml(d, new Set(["kind", "project", "when", "asof", "status", "headcount", "standLine", "complete", "plan", "gap", "steps", "bars"]))).toBe("");
+  });
+
+  it("a good or bad line is one tinted line with its mark", async () => {
+    const { toEmailHtml: html } = await import("@/lib/reportExport");
+    const h = html({ ...d, sections: [{ title: "Safety", blocks: [{ k: "note", text: "No safety incidents.", tone: "emerald" }, { k: "note", text: "Incidents not entered for this shift.", tone: "amber" }] }] });
+    expect(h).toMatch(/&#10003;<\/span>&nbsp;&nbsp;No safety incidents\./);
+    expect(h).toMatch(/!<\/span>&nbsp;&nbsp;Incidents not entered for this shift\./);
   });
 });

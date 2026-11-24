@@ -183,6 +183,22 @@ function byTask(rows: ShiftRow[], cells: (r: ShiftRow) => ExportCell[], taskSub?
 }
 const muted = (t: string): ExportCell => ({ t, tone: "muted" });
 
+/** Hours with nothing in them, one after another, are one row ("7:00 to
+ *  8:00", left blank as an empty hour always is): the log reads as what
+ *  happened, and still shows which hours were empty. */
+export function quietHours(rows: ExportCell[][]): ExportCell[][] {
+  const out: ExportCell[][] = [];
+  const text = (c: ExportCell) => (typeof c === "string" ? c : c.t);
+  for (let i = 0; i < rows.length; i++) {
+    if (text(rows[i][1] ?? "") !== "") { out.push(rows[i]); continue; }
+    let j = i;
+    while (j + 1 < rows.length && text(rows[j + 1][1] ?? "") === "") j += 1;
+    out.push([{ t: j > i ? `${text(rows[i][0])} to ${text(rows[j][0])}` : text(rows[i][0]), bold: true }, ""]);
+    i = j;
+  }
+  return out;
+}
+
 export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: UpdateLookups): Array<ExportSection & { id: string }> {
   // Three tables, no more: where we stand (and WHY), what got done (and
   // what it meant), and what's next — every open step once, with what
@@ -419,10 +435,10 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
   const inc = look.incidents;
   out.push({
     id: "incidents", title: `Safety incidents - ${shiftName(shift)} ${f.D(shift.start)}`,
-    blocks: !inc ? [{ k: "note", text: "Not recorded.", tone: "muted" }]
+    blocks: !inc ? [{ k: "note", text: "Incidents not entered for this shift.", tone: "amber" }]
       : inc.items.length ? [{ k: "table", head: ["Time", "Kind", "What happened"], align: ["left", "left", "left"], nowrap: [0],
         rows: [...inc.items].sort((a, b) => a.at - b.at).map((x) => [f.T(x.at), { t: x.kind, bold: true }, x.text] as ExportCell[]) }]
-      : [{ k: "note", text: "None.", tone: "emerald" }],
+      : [{ k: "note", text: "No safety incidents.", tone: "emerald" }],
   });
 
   // ── Shift notes, hour by hour: the meeting (who attended), the first
@@ -453,7 +469,7 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
   if (hl.length) {
     out.push({
       id: "hourly", title: `Shift notes - ${shiftName(shift)} ${f.D(shift.start)}`, sub: "hour by hour",
-      blocks: [{ k: "table", head: ["Time", "What happened"], align: ["left", "left"], textLabels: ["", ""], nowrap: [0], rows: hl.map((x) => {
+      blocks: [{ k: "table", head: ["Time", "What happened"], align: ["left", "left"], textLabels: ["", ""], nowrap: [0], rows: quietHours(hl.map((x) => {
         // Each item on its own line; then what crews kept working on.
         const items = [
           ...(x.kind === "overtime" ? [x.title || "Overtime"]
@@ -468,7 +484,7 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
         const done = new Set(x.closed ?? []);
         return [{ t: x.clock, bold: true }, !first ? ""
           : { t: first, ...(x.kind === "break" ? { tone: "muted" as const } : done.has(first) ? { tone: "emerald" as const } : {}), ...(rest.length ? { lines: rest.map((t) => ({ t, ...(done.has(t) ? { tone: "emerald" as const } : {}) })) } : {}) }] as ExportCell[];
-      }) }],
+      })) }],
     });
   }
 

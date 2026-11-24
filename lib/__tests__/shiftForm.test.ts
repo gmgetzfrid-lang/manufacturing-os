@@ -33,7 +33,7 @@ describe("the shift table in the plant's format", () => {
       ],
       notes: [{ clock: "9:00", text: "Schultz: E-02 done" }, { clock: "9:00", text: "Break, 15 min." }, { clock: "9:30", text: "Ancon: V-1 started." }, { clock: "9:30", text: "Schultz: E-23 done" }] });
     expect(g.rows.find((r) => r.id === "done")!.lines).toEqual([{ k: "group", text: "Schultz" },
-      { k: "item", text: "E-32 – Set Blinds; Verify LOTO, Remove Channel Head, Pull Bundle (0% to 50%)" }, { k: "item", text: "PSV-209 - E-27 Propane Condenser" }]);
+      { k: "item", text: "E-32 – Set Blinds; Verify LOTO, Remove Channel Head, Pull Bundle (0% to 50%)", tag: "E-32", body: "Set Blinds; Verify LOTO, Remove Channel Head, Pull Bundle (0% to 50%)" }, { k: "item", text: "PSV-209 - E-27 Propane Condenser" }]);
     expect(g.rows.find((r) => r.id === "notes")!.lines.map((l) => ("lead" in l ? `${l.lead}${l.text}` : l.text))).toEqual(["9:00 – Schultz: E-02 done, Break, 15 min.", "9:30 – Ancon: V-1 started. Schultz: E-23 done"]);
   });
   it("the date said once: the header's line, no title row repeating it", () => {
@@ -56,8 +56,12 @@ describe("the shift table in the plant's format", () => {
   it("rows left out stay out of the email and the text", () => {
     const html = formHtml(f, ["attend", "headcount"]);
     expect(html).not.toContain("Meeting Attendees");
-    expect(html).toMatch(/<b[^>]*><u>No Safety Incidents<\/u><\/b>/);
-    expect(html).toMatch(/<ol[^>]*><li[^>]*>V-03 – Remove Trays/);
+    // No incidents: one tinted line with a check; items numbered in the
+    // email itself (a list style can be dropped), the equipment set apart.
+    expect(html).toMatch(/&#10003;<\/b>&nbsp;&nbsp;<b>No Safety Incidents<\/b>/);
+    expect(html).toMatch(/>1\.<\/td>/);
+    expect(html).toContain("V-03 – Remove Trays");
+    expect(html).not.toMatch(/<ol|<li/);
     const t = formText(f, ["notes"]);
     expect(t).toContain("  1. V-03 – Remove Trays");
     expect(t).not.toContain("SHIFT NOTES");

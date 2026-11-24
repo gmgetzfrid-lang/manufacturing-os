@@ -351,7 +351,7 @@ const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replac
 
 // The app's type scale (docs/design-rules.md TY2, TY3): 12 caption, 14
 // body, 16 reading, 20 section, 26 key number; nothing smaller, and no
-// tiny capitals (TY8). Panels round at 8 px (SP3).
+// tiny capitals (TY8). Radii by size (SP3): 6 small parts, 12 cards.
 const FONT = "font-family:Arial,Helvetica,sans-serif;";
 const INK = "#0f172a", MUTED = "#64748b", LINE = "#cbd5e1";
 const TONE: Record<Tone, { fg: string; bg: string; bd: string }> = {
@@ -384,7 +384,15 @@ function blockHtml(b: ExportBlock): string {
           `<div style="${FONT}font-size:${b.small ? 14 : 20}px;font-weight:bold;color:${t.fg};white-space:nowrap;">${esc(x.value)}</div>`, `bgcolor="${t.bg}" `);
       }).join("")}</tr></table>`;
     case "note":
-      return `<p style="${FONT}font-size:12px;margin:3px 0;color:${b.tone ? TONE[b.tone].fg : INK};${b.tone ? "font-weight:bold;" : ""}">${esc(b.text)}</p>`;
+      // A line that is good or bad news is one tinted line with its mark
+      // (a single line, never a list: rule S1).
+      if (b.tone && b.tone !== "muted" && b.tone !== "slate") {
+        const t = TONE[b.tone];
+        return `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse:separate;margin:4px 0;"><tr>` +
+          td(`font-size:14px;line-height:1.45;font-weight:bold;color:${t.fg};background-color:${t.bg};border-radius:6px;padding:6px 12px;`,
+            `<span style="color:${SOLID[b.tone]};">${b.tone === "emerald" ? "&#10003;" : "!"}</span>&nbsp;&nbsp;${esc(b.text)}`, `bgcolor="${t.bg}" `) + `</tr></table>`;
+      }
+      return `<p style="${FONT}font-size:14px;line-height:1.45;margin:3px 0;color:${b.tone ? TONE[b.tone].fg : INK};">${esc(b.text)}</p>`;
     case "sub":
       return `<p style="${FONT}font-size:12px;font-weight:600;margin:8px 0 3px;color:${TONE[b.tone].fg};">${esc(b.title)} (${b.count})</p>`;
     case "label":
@@ -419,7 +427,9 @@ function blockHtml(b: ExportBlock): string {
         return n ? `<tr>${td(`font-size:12px;line-height:1.4;color:#475569;padding:0 8px 6px;text-align:left;vertical-align:top;`, esc(n), `colspan="${keep.filter(Boolean).length}" `)}</tr>` : "";
       };
       return `<table cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;border:1px solid ${LINE};">` +
-        `<tr>${b.head.map((h, j) => !keep[j] ? "" : td(`font-size:12px;font-weight:600;color:${MUTED};background-color:#f8fafc;padding:5px 8px;border-bottom:1px solid ${LINE};text-align:${al(j)};white-space:nowrap;`, esc(h), `bgcolor="#f8fafc" `)).join("")}</tr>` +
+        // A column that never wraps (times, WO numbers) takes only the
+        // width it needs; the words get the rest.
+        `<tr>${b.head.map((h, j) => !keep[j] ? "" : td(`font-size:12px;font-weight:600;color:${MUTED};background-color:#f8fafc;padding:5px 8px;border-bottom:1px solid ${LINE};text-align:${al(j)};white-space:nowrap;${b.nowrap?.includes(j) ? "width:1%;" : ""}`, esc(h), `bgcolor="#f8fafc" `)).join("")}</tr>` +
         b.rows.map((r, i) => {
           // A row that continues the task above has no line between them.
           const cont = cellText(r[0] ?? "") === "";
@@ -442,20 +452,7 @@ function blockHtml(b: ExportBlock): string {
     }
     case "overview": {
       // Left: the numbers and the two bars. Right: the bottom line.
-      const bar = (label: string, pct: number, color: string) => {
-        const w = Math.max(0, Math.min(100, Math.round(pct)));
-        return `<tr>${td(`font-size:12px;color:${MUTED};padding:1px 6px 1px 0;white-space:nowrap;width:34px;`, esc(label))}` +
-          td("padding:1px 0;", `<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;"><tr>` +
-            (w > 0 ? td(`background-color:${color};height:8px;font-size:1px;line-height:1px;`, "&nbsp;", `width="${w}%" bgcolor="${color}" `) : "") +
-            (w < 100 ? td("background-color:#e2e8f0;height:8px;font-size:1px;line-height:1px;", "&nbsp;", `bgcolor="#e2e8f0" `) : "") +
-            `</tr></table>`) +
-          td(`font-size:12px;color:${INK};font-weight:bold;padding:1px 0 1px 6px;white-space:nowrap;width:30px;text-align:right;`, `${w}%`) + `</tr>`;
-      };
-      const left = blockHtml({ k: "stats", items: b.stats, small: b.small }) + (b.bars && barsShown(b.bars)
-        ? `<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;margin-top:4px;">` +
-          bar("Done", b.bars.done, "#0f766e") + bar("Plan", b.bars.plan, "#94a3b8") +
-          `<tr>${td("", "")}${td(`font-size:12px;color:${MUTED};padding-top:1px;`, `${esc(b.bars.from)} → ${esc(b.bars.to)} · whole job`)}${td("", "")}</tr></table>`
-        : "");
+      const left = blockHtml({ k: "stats", items: b.stats, small: b.small }) + (b.bars && barsShown(b.bars) ? barsHtml(b.bars) : "");
       // No lines: the numbers and bars take the whole width.
       if (!b.lines.length) return `<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;"><tr>${td("vertical-align:top;padding:0;", left)}</tr></table>`;
       const right = `<div style="${FONT}font-size:12px;font-weight:600;color:#4338ca;margin-bottom:3px;">${esc(b.title)}</div>` +
@@ -535,69 +532,89 @@ export function tilePart(label: string): HeaderPart | null {
   return null;
 }
 
-/** The masthead with the pieces left on: what it is, the project, the
- *  shifts and time, and the verdict box. Empty when every piece is off. */
-function mastheadHtml(d: ExportDoc, off: ReadonlySet<HeaderPart> = new Set()): string {
-  // No dark blocks with light text anywhere: phone mail apps switching
-  // light / dark mode recolor text and backgrounds separately, and white
-  // text on a kept-dark background comes out black on navy. Light panels
-  // with dark text (every color set on the element itself) flip cleanly.
-  // A status with its key number leads the update as a sentence of its own
-  // (leadHtml, under this); without one, the verdict is a small box here.
-  const status = d.status && !d.status.key && !off.has("status")
-    ? td(`padding:6px 10px;background-color:${TONE[d.status.tone].bg};border:1px solid ${TONE[d.status.tone].bd};border-left:4px solid ${SOLID[d.status.tone]};text-align:right;white-space:nowrap;vertical-align:middle;`,
-      `<div style="${FONT}font-size:14px;font-weight:bold;color:${TONE[d.status.tone].fg};"><span style="color:${SOLID[d.status.tone]};">&#9679;</span>&nbsp;${esc(sentence(d.status.label))}</div>` +
-      (d.status.detail ? `<div style="${FONT}font-size:12px;color:${TONE[d.status.tone].fg};">${esc(d.status.detail)}</div>` : ""), `bgcolor="${TONE[d.status.tone].bg}" `)
-    : "";
-  const whenLine = [off.has("when") ? "" : d.when, off.has("asof") ? "" : `as of ${d.asOf}`].filter(Boolean).join(" · ");
-  const left = (off.has("kind") ? "" : `<div style="${FONT}font-size:12px;font-weight:600;color:${MUTED};">${esc(d.kind)}</div>`) +
-    (off.has("project") ? "" : `<div style="${FONT}font-size:20px;font-weight:bold;color:${INK};">${esc(d.project)}</div>`) +
-    (whenLine ? `<div style="${FONT}font-size:12px;color:#334155;">${esc(whenLine)}</div>` : "");
-  const lead = leadHtml(d, off);
-  if (!left && !status) return lead;
-  return `<table cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;max-width:820px;"><tr>` +
-    (left ? td(`padding:10px 14px;background-color:#f8fafc;border:1px solid ${LINE};border-radius:8px;`, left, `bgcolor="#f8fafc" `) : "") +
-    status + `</tr></table>` + lead;
+/** A Where we stand line's pieces the verdict already says ("43.5 h late",
+ *  "forecast finish Tue, Nov 17 8:30 PM" beside "finished Tue, Nov 17
+ *  8:30 PM ...") are left out: each fact once. */
+function notSaid(sub: string, s?: ExportDoc["status"] | null): string {
+  const said = `${s?.key ?? ""} ${s?.detail ?? ""}`;
+  const fresh = (seg: string) => { const core = seg.replace(/^[a-z ]+?(?=[A-Z0-9])/, "").trim(); return !(core && said.includes(core)); };
+  return sub.split(" · ").map((seg) => seg.split(" - ").filter(fresh).join(" - ")).filter(Boolean).join(" · ");
 }
 
-/** The answer first: the status as one sentence with its key number big
- *  beside it (never wrapped), the verdict's word over the sentence; then
- *  the head count in one line. A light panel with dark text, its color set
- *  on the cell itself (mail apps in dark mode recolor safely). */
-function leadHtml(d: ExportDoc, off: ReadonlySet<HeaderPart>): string {
-  const s = d.status && d.status.key && !off.has("status") ? d.status : null;
-  const head = d.headcount && !off.has("headcount") ? d.headcount : "";
-  if (!s && !head) return "";
+const isOverview = (b: ExportBlock): b is Extract<ExportBlock, { k: "overview" }> => b.k === "overview";
+
+/** Done and plan as two thin bars, over the whole job. */
+function barsHtml(b: { done: number; plan: number; from: string; to: string }): string {
+  const bar = (label: string, pct: number, color: string) => {
+    const w = Math.max(0, Math.min(100, Math.round(pct)));
+    return `<tr>${td(`font-size:12px;color:${MUTED};padding:1px 6px 1px 0;white-space:nowrap;width:34px;`, esc(label))}` +
+      td("padding:1px 0;", `<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;"><tr>` +
+        (w > 0 ? td(`background-color:${color};height:8px;font-size:1px;line-height:1px;`, "&nbsp;", `width="${w}%" bgcolor="${color}" `) : "") +
+        (w < 100 ? td("background-color:#e2e8f0;height:8px;font-size:1px;line-height:1px;", "&nbsp;", `bgcolor="#e2e8f0" `) : "") +
+        `</tr></table>`) +
+      td(`font-size:12px;color:${INK};font-weight:bold;padding:1px 0 1px 6px;white-space:nowrap;width:30px;text-align:right;`, `${w}%`) + `</tr>`;
+  };
+  return `<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;margin-top:6px;max-width:420px;">` +
+    bar("Done", b.done, "#0f766e") + bar("Plan", b.plan, "#94a3b8") +
+    `<tr>${td("", "")}${td(`font-size:12px;color:${MUTED};padding-top:1px;`, `${esc(b.from)} → ${esc(b.to)} · whole job`)}${td("", "")}</tr></table>`;
+}
+
+/** The update's card, read in one look (the pattern from the posts the
+ *  owner sent: one card, the key number big, the numbers under it each a
+ *  small label over its value). What and when; the verdict with its key
+ *  number and one sentence; the numbers in one row that wraps on a phone;
+ *  the phase line and the crews on site small at the foot. Every piece can
+ *  be left out. White card, dark text, every color on the element itself
+ *  (phone mail apps in dark mode recolor text and backgrounds separately;
+ *  rule S1: the verdict's color is a rule down the side, never the fill). */
+function heroHtml(d: ExportDoc, off: ReadonlySet<HeaderPart> = new Set(), o: { crews?: boolean } = {}): string {
+  const s = d.status && !off.has("status") ? d.status : null;
   const t = s ? TONE[s.tone] : null;
-  // The verdict on white (rule S1: color never fills the box): a rule in
-  // its color down the left, the key number big, its word with a dot.
-  const row = s && t
-    ? `<tr>${td(`padding:10px 14px;background-color:#ffffff;border:1px solid ${LINE};border-left:4px solid ${SOLID[s.tone]};border-radius:8px 0 0 8px;border-right:0;vertical-align:middle;white-space:nowrap;width:1%;`,
-      `<div style="${FONT}font-size:26px;font-weight:bold;color:${t.fg};white-space:nowrap;">${esc(s.key!).replace(/ /g, "&nbsp;")}</div>`, `bgcolor="#ffffff" `)}` +
-      td(`padding:10px 14px 10px 6px;background-color:#ffffff;border:1px solid ${LINE};border-left:0;border-radius:0 8px 8px 0;vertical-align:middle;`,
-        `<div style="${FONT}font-size:14px;font-weight:bold;color:${t.fg};"><span style="color:${SOLID[s.tone]};">&#9679;</span>&nbsp;${esc(sentence(s.label))}</div>` +
-        (s.detail ? `<div style="${FONT}font-size:14px;line-height:1.45;color:${INK};margin-top:2px;">${esc(s.detail)}</div>` : ""), `bgcolor="#ffffff" `) + `</tr>`
-    : "";
-  const count = head ? `<tr>${td(`padding:${s ? 6 : 0}px 0 0;font-size:12px;color:#334155;`, esc(head), s ? `colspan="2" ` : "")}</tr>` : "";
-  return `<table cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;max-width:820px;margin-top:8px;">${row}${count}</table>`;
+  const whenLine = [off.has("kind") ? "" : d.kind, off.has("when") ? "" : d.when, off.has("asof") ? "" : `as of ${d.asOf}`].filter(Boolean).join(" · ");
+  const project = off.has("project") ? "" : d.project;
+  const stand = d.sections.find((x) => x.id === "stand");
+  const ov = stand?.blocks.find(isOverview);
+  const stats = (ov?.stats ?? []).filter((x) => { const p = tilePart(x.label); return !p || !off.has(p); });
+  const head = d.headcount && !off.has("headcount") ? d.headcount : "";
+  const onSite = head.match(/^(\d+) on site(?::\s*(.+))?$/);
+  const metrics = [...stats.map((x) => ({ label: sentence(x.label), value: x.value, tone: x.tone })),
+    ...(onSite ? [{ label: "On site", value: onSite[1], tone: "slate" as Tone }] : [])];
+  const bars = ov?.bars && barsShown(ov.bars) && !off.has("bars") ? ov.bars : undefined;
+  const standLine = stand?.sub && !off.has("standLine") ? notSaid(stand.sub, s) : "";
+  // The crews' counts, unless the shift table under the card lists them.
+  const crews = o.crews === false ? "" : onSite ? (onSite[2] ? `On site: ${onSite[2]}` : "") : head;
+  const rows: string[] = [];
+  if (whenLine || project) rows.push(td("padding:12px 16px 0;",
+    (whenLine ? `<div style="${FONT}font-size:12px;line-height:1.4;color:${MUTED};">${esc(whenLine)}</div>` : "") +
+    (project ? `<div style="${FONT}font-size:20px;line-height:1.3;font-weight:bold;color:${INK};margin-top:2px;">${esc(project)}</div>` : "")));
+  if (s && t) {
+    const word = `<div style="${FONT}font-size:14px;font-weight:bold;color:${t.fg};"><span style="color:${SOLID[s.tone]};">&#9679;</span>&nbsp;${esc(sentence(s.label))}</div>` +
+      (s.detail ? `<div style="${FONT}font-size:14px;line-height:1.45;color:${INK};margin-top:2px;">${esc(s.detail)}</div>` : "");
+    rows.push(td("padding:10px 16px 12px;", s.key
+      ? `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;"><tr>` +
+        td("padding:0 14px 0 0;vertical-align:middle;white-space:nowrap;", `<div style="${FONT}font-size:26px;line-height:1.1;font-weight:bold;color:${t.fg};white-space:nowrap;">${esc(s.key).replace(/ /g, "&nbsp;")}</div>`) +
+        td("vertical-align:middle;", word) + `</tr></table>`
+      : word));
+  }
+  if (metrics.length || bars || standLine || crews) rows.push(td(`padding:10px 16px 10px;border-top:1px solid #e2e8f0;`,
+    // Inline blocks, not cells: on a phone the numbers wrap to a second
+    // line instead of squeezing (Outlook desktop stacks them, still read).
+    metrics.map((m) => `<div style="display:inline-block;vertical-align:top;margin:0 24px 4px 0;">` +
+      `<div style="${FONT}font-size:12px;color:${MUTED};white-space:nowrap;">${esc(m.label)}</div>` +
+      `<div style="${FONT}font-size:16px;font-weight:bold;color:${m.tone === "rose" || m.tone === "amber" || m.tone === "emerald" ? TONE[m.tone].fg : INK};white-space:nowrap;">${esc(m.value).replace(/ /g, "&nbsp;")}</div></div>`).join("") +
+    (bars ? barsHtml(bars) : "") +
+    (standLine ? `<div style="${FONT}font-size:12px;line-height:1.4;color:${MUTED};margin-top:4px;">${esc(standLine)}</div>` : "") +
+    (crews ? `<div style="${FONT}font-size:12px;line-height:1.4;color:#334155;margin-top:2px;">${esc(crews)}</div>` : "")));
+  if (!rows.length) return "";
+  const edge = s ? SOLID[s.tone] : LINE;
+  return `<table data-hero="1" cellpadding="0" cellspacing="0" border="0" width="100%" bgcolor="#ffffff" style="border-collapse:separate;border-spacing:0;max-width:820px;background-color:#ffffff;border:1px solid ${LINE};border-left:4px solid ${edge};border-radius:12px;">` +
+    rows.map((r) => `<tr>${r}</tr>`).join("") + `</table>`;
 }
 
-/** The header as picked: the masthead, then Where we stand's line,
- *  numbers and bars (only the pieces left on), for the required format. */
-export function headerHtml(d: ExportDoc, off: ReadonlySet<HeaderPart>): string {
-  let html = mastheadHtml(d, off);
-  const stand = d.sections.find((s) => s.id === "stand");
-  const ov = stand?.blocks.find((b): b is Extract<ExportBlock, { k: "overview" }> => b.k === "overview");
-  const stats = (ov?.stats ?? []).filter((x) => { const p = tilePart(x.label); return !p || !off.has(p); });
-  const bars = ov?.bars && barsShown(ov.bars) && !off.has("bars") ? ov.bars : undefined;
-  const line = stand && !off.has("standLine");
-  if (line || stats.length || bars) {
-    html += `<table cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;max-width:820px;margin-top:${html ? 14 : 0}px;">` +
-      (line ? `<tr>${td(`border-bottom:2px solid ${stand!.flag === "rose" ? SOLID.rose : INK};padding:0 0 3px;`,
-        `<span style="${FONT}font-size:16px;font-weight:bold;color:${INK};">${esc(stand!.title)}</span>` + (stand!.sub ? `<span style="${FONT}font-size:12px;color:${MUTED};">&nbsp;&nbsp;${esc(stand!.sub)}</span>` : ""))}</tr>` : "") +
-      (stats.length || bars ? `<tr>${td("padding:6px 0 0;", blockHtml({ k: "overview", stats, bars, title: "", lines: [], small: !!d.status?.key || ov?.small }))}</tr>` : "") +
-      `</table>`;
-  }
+/** The header as picked, for the required format: the card. `crews:
+ *  false` when the table under it has the head count by crew. */
+export function headerHtml(d: ExportDoc, off: ReadonlySet<HeaderPart>, o: { crews?: boolean } = {}): string {
+  const html = heroHtml(d, off, o);
   return html ? `<div style="${FONT}color:${INK};max-width:820px;margin-bottom:14px;">${html}</div>` : "";
 }
 
@@ -621,8 +638,12 @@ export function headerText(d: ExportDoc, off: ReadonlySet<HeaderPart>): string {
 
 function emailHtml(d: ExportDoc): string {
   let html = `<div style="${FONT}color:${INK};">`;
-  html += mastheadHtml(d);
-  for (const s of d.sections) {
+  html += heroHtml(d);
+  for (const sec of d.sections) {
+    // Where we stand's numbers and line are in the card; what's left of it
+    // (why behind) stays as a section, without the line said twice.
+    const s = sec.id === "stand" && sec.blocks.some(isOverview) ? { ...sec, sub: undefined, blocks: sec.blocks.filter((b) => !isOverview(b)) } : sec;
+    if (!s.blocks.length) continue;
     // A section that needs attention gets a colored rule, not a number.
     const rule = s.flag === "rose" ? SOLID.rose : s.flag === "amber" ? SOLID.amber : INK;
     // data-sec: lets a printed copy put a section on its own page (safety).

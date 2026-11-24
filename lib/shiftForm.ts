@@ -25,12 +25,16 @@ export type FormRowId = "attend" | "safety" | "plan" | "done" | "waiting" | "fol
 export type FormLine =
   /** A crew's name over its items ("Schultz"). */
   | { k: "group"; text: string }
-  /** A numbered item; numbering starts again under each group. */
-  | { k: "item"; text: string }
+  /** A numbered item; numbering starts again under each group. `tag`:
+   *  the equipment it's on ("E-32"), and `body` the rest, for the email
+   *  to set the tag apart; `text` has both. */
+  | { k: "item"; text: string; tag?: string; body?: string }
   /** A line; `lead` in bold before it ("Operations" – "Jess Montgomery"),
    *  `strong` the whole line bold and underlined ("No Safety Incidents"),
-   *  `bold` the whole line bold ("Maintenance – 6"). */
-  | { k: "text"; text: string; lead?: string; strong?: boolean; bold?: boolean };
+   *  `bold` the whole line bold ("Maintenance – 6"). For the email: `tone`
+   *  makes it a callout (ok, warn, bad), `at` is a note's time, and
+   *  `name` / `value` a count with its number on the right. */
+  | { k: "text"; text: string; lead?: string; strong?: boolean; bold?: boolean; tone?: "ok" | "warn" | "bad"; at?: string; name?: string; value?: string };
 
 export interface FormRow { id: FormRowId; label: string; lines: FormLine[] }
 export interface ShiftForm {
@@ -105,7 +109,7 @@ function byCrew(list: FormWork[]): FormLine[] {
     crews.set(crew, items);
   }
   return [...crews.entries()].flatMap(([crew, items]) => [{ k: "group" as const, text: crew },
-    ...items.map((i) => ({ k: "item" as const, text: i.group ? `${i.group} – ${i.texts.join(", ")}` : i.texts[0] }))]);
+    ...items.map((i) => (i.group ? { k: "item" as const, text: `${i.group} – ${i.texts.join(", ")}`, tag: i.group, body: i.texts.join(", ") } : { k: "item" as const, text: i.texts[0] }))]);
 }
 
 /** The hours, one paragraph a time: the same time twice is one. */
@@ -131,9 +135,9 @@ export function shiftForm(i: FormInput): ShiftForm {
         ? i.attendees.filter((a) => clean(a.names)).map((a) => ({ k: "text" as const, lead: clean(a.crew), text: ` – ${clean(a.names)}` }))
         : none("No attendance entered") },
     { id: "safety", label: "Safety", lines: [
-      ...(i.incidents?.none && !i.incidents.items.length ? [{ k: "text" as const, text: "No Safety Incidents", strong: true }]
-        : i.incidents?.items.length ? i.incidents.items.map((x) => ({ k: "text" as const, lead: clean(x.kind), text: ` – ${[x.time, clean(x.text)].filter(Boolean).join(" ")}` }))
-          : [{ k: "text" as const, text: "Incidents not entered" }]),
+      ...(i.incidents?.none && !i.incidents.items.length ? [{ k: "text" as const, text: "No Safety Incidents", strong: true, tone: "ok" as const }]
+        : i.incidents?.items.length ? i.incidents.items.map((x) => ({ k: "text" as const, lead: clean(x.kind), text: ` – ${[x.time, clean(x.text)].filter(Boolean).join(" ")}`, tone: "bad" as const }))
+          : [{ k: "text" as const, text: "Incidents not entered", tone: "warn" as const }]),
       ...(clean(i.safetyTopic ?? "") ? [{ k: "text" as const, text: `Safety Topics – ${clean(i.safetyTopic!)}` }] : []),
     ] },
     { id: "plan", label: `Work to be Completed After ${i.meeting} Meeting`, lines: i.planned.length ? byCrew(i.planned) : none("No work planned for the shift") },
@@ -145,9 +149,9 @@ export function shiftForm(i: FormInput): ShiftForm {
     ] : none("Nothing sat this shift") }] : []),
     { id: "followup", label: "Follow-Up Items", lines: i.followUps.map(clean).filter(Boolean).length ? i.followUps.map(clean).filter(Boolean).map((t) => ({ k: "item" as const, text: t })) : none("None") },
     { id: "notes", label: "Shift Notes", lines: oneATime(i.notes).length
-      ? oneATime(i.notes).map((n) => ({ k: "text" as const, lead: `${n.clock} –`, text: ` ${n.text}` }))
+      ? oneATime(i.notes).map((n) => ({ k: "text" as const, lead: `${n.clock} –`, text: ` ${n.text}`, at: n.clock }))
       : none("No notes entered") },
-    { id: "headcount", label: "Personnel Headcount", lines: i.headcount.length ? i.headcount.map((h) => ({ k: "text" as const, text: `${clean(h.crew)} – ${h.n}`, bold: true })) : none("No head count entered") },
+    { id: "headcount", label: "Personnel Headcount", lines: i.headcount.length ? i.headcount.map((h) => ({ k: "text" as const, text: `${clean(h.crew)} – ${h.n}`, bold: true, name: clean(h.crew), value: String(h.n) })) : none("No head count entered") },
   ];
   return { title: clean(i.project), when: `${i.date} ${i.start} – ${i.end}`,
     dateLine: `${i.weekday ? `${i.weekday}, ` : ""}${i.date} · ${i.shift ? `${i.shift} ` : ""}${i.start} – ${i.end}`,
@@ -166,18 +170,67 @@ const FONT = "font-family:Lato,Calibri,Arial,sans-serif;";
 // row names and thin light lines between the rows. No dark bands with
 // light text: phone mail apps in dark mode recolor text and backgrounds
 // separately (lib/reportExport).
-const NAVY = "#000A72", TINT = "#EEF1F8", RULE = "#D5DAE6", OK_GREEN = "#166534";
+const NAVY = "#000A72", TINT = "#EEF1F8", RULE = "#D5DAE6", INK = "#111827", MUTED = "#64748B";
+// The app's type scale (docs/design-rules.md TY2): 12 / 14 / 16 px; radii
+// by size (SP3): 6 small parts, 12 the table's card.
+const CALL = {
+  ok: { fg: "#065F46", bg: "#ECFDF5", dot: "#059669", icon: "&#10003;" },
+  warn: { fg: "#92400E", bg: "#FFFBEB", dot: "#D97706", icon: "!" },
+  bad: { fg: "#9F1239", bg: "#FFF1F2", dot: "#E11D48", icon: "!" },
+} as const;
+const cellOf = (style: string, html: string, attrs = "") => `<td ${attrs}style="${FONT}${style}">${html}</td>`;
+const grid = (rows: string, max = "") => `<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;${max ? `max-width:${max};` : ""}">${rows}</table>`;
+/** The equipment a step is on, set apart so the eye finds it. */
+const chip = (t: string) => `<span style="font-family:Consolas,Menlo,monospace;font-size:12px;font-weight:bold;color:${NAVY};background-color:${TINT};border-radius:6px;padding:1px 6px;white-space:nowrap;">${esc(t)}</span>`;
 
+/** A row's lines as the email shows them (the posts the owner sent: a
+ *  list grouped under a heading with its count, the equipment set apart,
+ *  times in their own column, numbers on the right, a problem as one
+ *  tinted line with its mark). Numbers are written, not left to a list
+ *  style a mail app or the app's own page may drop. */
 function linesHtml(lines: FormLine[]): string {
-  let out = "", list: string[] = [], first = true;
-  const flush = () => { if (list.length) { out += `<ol style="${FONT}font-size:11pt;color:#111827;margin:2px 0 6px 0;padding-left:26px;">${list.map((t) => `<li style="margin:0 0 3px 0;">${esc(t)}</li>`).join("")}</ol>`; list = []; } };
-  for (const l of lines) {
-    if (l.k === "item") { list.push(l.text); continue; }
+  let out = "", rows: string[] = [], n = 0, first = true, total = 0, counts = 0;
+  const flush = () => {
+    if (!rows.length) return;
+    if (counts > 1) rows.push(`<tr>${cellOf(`font-size:14px;font-weight:bold;color:${INK};padding:5px 0 0;`, "Total")}${cellOf(`font-size:14px;font-weight:bold;color:${INK};padding:5px 0 0;text-align:right;`, String(total))}</tr>`);
+    out += grid(rows.join(""), counts ? "320px" : "");
+    rows = []; total = 0; counts = 0;
+  };
+  lines.forEach((l, i) => {
+    if (l.k === "item") {
+      n += 1;
+      rows.push(`<tr>${cellOf(`font-size:14px;line-height:1.45;color:${MUTED};padding:3px 8px 3px 0;vertical-align:top;width:20px;text-align:right;white-space:nowrap;`, `${n}.`)}` +
+        cellOf(`font-size:14px;line-height:1.45;color:${INK};padding:3px 0;vertical-align:top;`, l.tag ? `${chip(l.tag)}&nbsp; ${esc(l.body ?? l.text)}` : esc(l.text)) + `</tr>`);
+      return;
+    }
+    if (l.k === "text" && l.at) {
+      if (counts) flush();
+      rows.push(`<tr>${cellOf(`font-size:14px;line-height:1.45;font-weight:bold;color:${NAVY};padding:3px 12px 3px 0;vertical-align:top;white-space:nowrap;width:1%;`, esc(l.at))}` +
+        cellOf(`font-size:14px;line-height:1.45;color:${INK};padding:3px 0;vertical-align:top;`, esc(l.text.trim())) + `</tr>`);
+      return;
+    }
+    if (l.k === "text" && l.value != null) {
+      counts += 1; total += Number(l.value) || 0;
+      rows.push(`<tr>${cellOf(`font-size:14px;color:${INK};padding:4px 0;border-bottom:1px solid ${TINT};`, esc(l.name ?? l.text))}` +
+        cellOf(`font-size:14px;font-weight:bold;color:${INK};padding:4px 0;border-bottom:1px solid ${TINT};text-align:right;white-space:nowrap;`, esc(l.value)) + `</tr>`);
+      return;
+    }
     flush();
-    if (l.k === "group") out += `<div style="${FONT}font-size:11pt;font-weight:bold;color:${NAVY};margin:${first ? 0 : 8}px 0 0 0;">${esc(l.text)}</div>`;
-    else out += `<div style="${FONT}font-size:11pt;color:#111827;margin:0 0 5px 0;">${l.lead ? `<b style="color:${NAVY};">${esc(l.lead)}</b>` : ""}${l.strong ? `<b style="color:${OK_GREEN};"><u>${esc(l.text)}</u></b>` : l.bold ? `<b>${esc(l.text)}</b>` : esc(l.text)}</div>`;
+    if (l.k === "group") {
+      n = 0;
+      let c = 0;
+      for (let j = i + 1; j < lines.length && lines[j].k !== "group"; j++) if (lines[j].k === "item") c += 1;
+      out += `<div style="${FONT}font-size:14px;font-weight:bold;color:${NAVY};margin:${first ? 0 : 10}px 0 2px;">${esc(l.text)}<span style="font-weight:normal;color:${MUTED};">&nbsp;·&nbsp;${c}</span></div>`;
+    } else if (l.tone) {
+      const c = CALL[l.tone];
+      out += `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse:separate;margin:0 0 6px;"><tr>` +
+        cellOf(`font-size:14px;line-height:1.45;color:${c.fg};background-color:${c.bg};border-radius:6px;padding:6px 12px;`,
+          `<b style="color:${c.dot};">${c.icon}</b>&nbsp;&nbsp;${l.lead ? `<b>${esc(l.lead)}</b>${esc(l.text)}` : `<b>${esc(l.text)}</b>`}`, `bgcolor="${c.bg}" `) + `</tr></table>`;
+    } else {
+      out += `<div style="${FONT}font-size:14px;line-height:1.45;color:${INK};margin:0 0 4px 0;">${l.lead ? `<b style="color:${NAVY};">${esc(l.lead)}</b>` : ""}${l.strong || l.bold ? `<b>${esc(l.text)}</b>` : esc(l.text)}</div>`;
+    }
     first = false;
-  }
+  });
   flush();
   return out;
 }
@@ -188,18 +241,34 @@ function titleOf(f: ShiftForm, shown: FormShown): { left: string; right: string 
   return left || right ? { left, right } : null;
 }
 
+/** How many a row holds, beside its name ("Done · 3"); none for a row
+ *  that says it's empty, or one that isn't a list. */
+function countOf(r: FormRow): string {
+  const items = r.lines.filter((l) => l.k === "item").length;
+  if (items) return String(items);
+  if (r.id === "notes") { const t = r.lines.filter((l) => l.k === "text" && l.at).length; return t ? String(t) : ""; }
+  if (r.id === "headcount") { const t = r.lines.reduce((a, l) => a + (l.k === "text" && l.value != null ? Number(l.value) || 0 : 0), 0); return t ? String(t) : ""; }
+  return "";
+}
+
 /** The table as an email body: inline styles only, so Outlook and Gmail
- *  keep it as it is. */
+ *  keep it as it is. A card (rounded 12, a navy rule on top), each row's
+ *  name and count on a light tint at the left. */
 export function formHtml(f: ShiftForm, off: Iterable<FormRowId> = [], shown: FormShown = {}): string {
   const rows = formRows(f, off);
   const t = titleOf(f, shown);
   const line = (i: number) => (i ? `border-top:1px solid ${RULE};` : "");
-  const title = t ? `<tr><td colspan="2" bgcolor="#F7F8FB" style="${FONT}background-color:#F7F8FB;padding:8px 12px;"><table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;"><tr>` +
-    `<td style="${FONT}font-size:12pt;font-weight:bold;color:${NAVY};">${esc(t.left)}</td><td style="${FONT}font-size:11pt;color:#334155;text-align:right;white-space:nowrap;">${esc(t.right)}</td></tr></table></td></tr>` : "";
-  return `<table data-form="shift" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;max-width:820px;border:1px solid ${RULE};border-top:3px solid ${NAVY};background-color:#FFFFFF;" bgcolor="#FFFFFF">` +
+  const last = rows.length - 1;
+  const title = t ? `<tr><td colspan="2" bgcolor="#F7F8FB" style="${FONT}background-color:#F7F8FB;padding:10px 12px;border-radius:9px 9px 0 0;"><table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;"><tr>` +
+    `<td style="${FONT}font-size:16px;font-weight:bold;color:${NAVY};">${esc(t.left)}</td><td style="${FONT}font-size:14px;color:#334155;text-align:right;white-space:nowrap;">${esc(t.right)}</td></tr></table></td></tr>` : "";
+  return `<table data-form="shift" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:separate;border-spacing:0;max-width:820px;border:1px solid ${RULE};border-top:3px solid ${NAVY};border-radius:12px;background-color:#FFFFFF;" bgcolor="#FFFFFF">` +
     title +
-    rows.map((r, i) => `<tr><td width="19%" bgcolor="${TINT}" style="${FONT}font-size:10.5pt;font-weight:bold;color:${NAVY};background-color:${TINT};vertical-align:top;padding:9px 10px;${line(i || (t ? 1 : 0))}">${esc(r.label)}</td>` +
-      `<td style="${FONT}font-size:11pt;color:#111827;vertical-align:top;padding:9px 12px;${line(i || (t ? 1 : 0))}">${linesHtml(r.lines)}</td></tr>`).join("") +
+    rows.map((r, i) => {
+      const c = countOf(r);
+      const corner = `${i === 0 && !t ? "border-top-left-radius:9px;" : ""}${i === last ? "border-bottom-left-radius:11px;" : ""}`;
+      return `<tr><td width="22%" bgcolor="${TINT}" style="${FONT}font-size:14px;line-height:1.35;font-weight:bold;color:${NAVY};background-color:${TINT};vertical-align:top;padding:10px 12px;${corner}${line(i || (t ? 1 : 0))}">${esc(r.label)}${c ? `<span style="font-weight:normal;color:${MUTED};">&nbsp;·&nbsp;${c}</span>` : ""}</td>` +
+        `<td style="${FONT}font-size:14px;color:${INK};vertical-align:top;padding:10px 14px;${line(i || (t ? 1 : 0))}">${linesHtml(r.lines)}</td></tr>`;
+    }).join("") +
     `</table>`;
 }
 
@@ -226,7 +295,7 @@ export function formText(f: ShiftForm, off: Iterable<FormRowId> = [], shown: For
  *  pieces picked): plain data, drawn here. */
 export interface FormDocxHeader {
   kind?: string; project?: string; when?: string; asOf?: string;
-  status?: { label: string; detail?: string; tone: "rose" | "amber" | "emerald" | "slate" | "muted" };
+  status?: { label: string; detail?: string; key?: string; tone: "rose" | "amber" | "emerald" | "slate" | "muted" };
   standLine?: string;
   tiles?: Array<{ label: string; value: string; tone: "rose" | "amber" | "emerald" | "slate" | "muted" }>;
   bars?: { done: number; plan: number; from: string; to: string };
@@ -266,7 +335,9 @@ function headerXml(h: FormDocxHeader): string {
     const st = h.status ? TONE_FILL[h.status.tone] ?? TONE_FILL.slate : null;
     const statusW = h.status ? 2400 : 0;
     x += table(h.status ? [FULL - statusW, statusW] : [FULL], [`<w:tr>${cell(FULL - statusW, left, { fill: "F8FAFC" })}${h.status ? cell(statusW,
-      para(run(h.status.label, { b: true, sz: 26, color: st!.color }), '<w:jc w:val="right"/><w:spacing w:after="0"/>') + (h.status.detail ? para(run(h.status.detail, { sz: 18, color: st!.color }), '<w:jc w:val="right"/><w:spacing w:after="0"/>') : ""),
+      // The key number big ("43.5 h"), the verdict's word, the sentence.
+      (h.status.key ? para(run(h.status.key, { b: true, sz: 40, color: st!.color }), '<w:jc w:val="right"/><w:spacing w:after="0"/>') : "") +
+      para(run(h.status.key ? h.status.label.charAt(0) + h.status.label.slice(1).toLowerCase() : h.status.label, { b: true, sz: h.status.key ? 22 : 26, color: st!.color }), '<w:jc w:val="right"/><w:spacing w:after="0"/>') + (h.status.detail ? para(run(h.status.detail, { sz: 18, color: st!.color }), '<w:jc w:val="right"/><w:spacing w:after="0"/>') : ""),
       { fill: st!.fill }) : ""}</w:tr>`]);
     x += para("", '<w:spacing w:after="80"/>');
   }

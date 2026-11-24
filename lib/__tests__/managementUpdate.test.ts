@@ -60,6 +60,11 @@ describe("shift notes by the hour", () => {
     expect(notes).not.toMatch(/7:00 - -|Nothing logged/);
     expect(notes).toMatch(/8:00 - Pulling the E-606 bundle\./);
   });
+  it("empty hours one after another are one row", async () => {
+    const { quietHours } = await import("@/lib/managementUpdate");
+    const out = quietHours([[{ t: "6:00", bold: true }, "a"], [{ t: "7:00", bold: true }, ""], [{ t: "8:00", bold: true }, ""], [{ t: "9:00", bold: true }, { t: "b" }], [{ t: "10:00", bold: true }, ""]]);
+    expect(out.map((r) => [typeof r[0] === "string" ? r[0] : r[0].t, typeof r[1] === "string" ? r[1] : r[1].t])).toEqual([["6:00", "a"], ["7:00 to 8:00", ""], ["9:00", "b"], ["10:00", ""]]);
+  });
 });
 
 describe("the shift meetings: their own section", () => {
