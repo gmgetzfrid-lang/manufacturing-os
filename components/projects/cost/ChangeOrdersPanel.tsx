@@ -14,7 +14,7 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  GitPullRequestArrow, Plus, Loader2, Check, X as XIcon, Pencil, Ban, CircleAlert
+  GitPullRequestArrow, Plus, Loader2, Check, X as XIcon, Pencil, Ban, CircleAlert, ChevronRight
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { fmtMoney, type CostAccount, type CostParty, type Actor } from "@/lib/costs";
@@ -28,6 +28,9 @@ import { appConfirm, appPrompt } from "@/components/providers/DialogProvider";
 import { useDraft } from "@/hooks/useDraft";
 import { sayError } from "@/components/projects/sayError";
 import { SkeletonRows } from "@/components/ui/Skeleton";
+import { MoreDetails } from "@/components/ui/MoreDetails";
+import HelpTooltip from "@/components/ui/HelpTooltip";
+import { AnswerLine, money } from "@/components/projects/cost/Answer";
 
 export default function ChangeOrdersPanel({ orgId, projectId, canManage, actor, accounts, parties, onMoneyMoved, setErr }: {
   orgId: string; projectId: string; canManage: boolean; actor: Actor;
@@ -42,6 +45,7 @@ export default function ChangeOrdersPanel({ orgId, projectId, canManage, actor, 
   // The proposed CO being edited in place.
   const [editing, setEditing] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [showDecided, setShowDecided] = useState(false);
   const [readErr, setReadErr] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
@@ -118,28 +122,58 @@ export default function ChangeOrdersPanel({ orgId, projectId, canManage, actor, 
 
   const open = (cos ?? []).filter((c) => c.status === "proposed");
   const decided = (cos ?? []).filter((c) => c.status !== "proposed");
+  const openSum = open.reduce((t, c) => t + c.amount, 0);
+  const empty = cos !== null && !readErr && cos.length === 0;
+  // Decided ones recede, folded with a count, while some wait on a decision.
+  const decidedOpen = showDecided || open.length === 0;
+  const plural = (n: number, one: string) => `${n} ${one}${n === 1 ? "" : "s"}`;
+
+  const proposeButton = canManage ? (
+    <button onClick={() => setShowForm((v) => !v)} aria-expanded={showForm}
+      className={`inline-flex items-center gap-1.5 h-10 pointer-coarse:h-11 px-3.5 rounded-lg text-body font-medium transition-colors ${showForm ? "border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] text-[var(--color-text)]" : "bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]"}`}>
+      <Plus className="w-4 h-4" /> Propose change
+    </button>
+  ) : undefined;
+  const coRow = (co: ChangeOrder) => editing === co.id && co.status === "proposed" ? (
+    <li key={co.id}>
+      <ProposeForm orgId={orgId} projectId={projectId} actor={actor} accounts={accounts} parties={parties} editing={co}
+        onDone={() => { setEditing(null); void refresh(); }} onCancel={() => setEditing(null)} />
+    </li>
+  ) : (
+    <CoRow key={co.id} co={co} canManage={canManage} busy={busy === co.id}
+      partyName={co.partyId ? partyName.get(co.partyId) ?? null : null}
+      accountLabel={co.costAccountId ? accountName.get(co.costAccountId) ?? null : null}
+      accounts={accounts} decide={decide}
+      onEdit={() => setEditing(co.id)} onVoidApproved={() => void voidApproved(co)} />
+  );
 
   return (
-    <div className="bg-[var(--color-surface)] rounded-lg overflow-hidden border border-[var(--color-border)]">
+    <div className="space-y-4">
+      {/* ── The answer: what waits on a decision, or what's been approved ── */}
+      {cos !== null && !readErr && (
+        empty ? (
+          <AnswerLine action={proposeButton}>No change orders. When scope grows or shrinks, propose it here with a reason.</AnswerLine>
+        ) : open.length > 0 ? (
+          <AnswerLine value={open.length} action={proposeButton}
+            sub={summary.approvedCount > 0 ? `${plural(summary.approvedCount, "approved change order")}, ${money(summary.approvedAmount)} total change.` : undefined}>
+            change order{open.length === 1 ? "" : "s"} waiting on a decision, {openSum < 0 ? `a ${money(Math.abs(openSum))} credit` : money(openSum)}.
+          </AnswerLine>
+        ) : summary.approvedCount > 0 ? (
+          <AnswerLine value={money(summary.approvedAmount)} action={proposeButton}>
+            total change in {plural(summary.approvedCount, "approved change order")}. Nothing waiting on a decision.
+          </AnswerLine>
+        ) : (
+          <AnswerLine action={proposeButton}>Nothing waiting on a decision. {plural(decided.length, "change order")} decided, none approved.</AnswerLine>
+        )
+      )}
+
+      {!(empty && !showForm) && (
+    <div className="bg-[var(--color-surface)] rounded-lg border border-[var(--color-border)]">
       <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap">
         <GitPullRequestArrow className="w-4 h-4 text-[var(--color-text-muted)]" />
-        <span className="text-body font-medium text-[var(--color-text-muted)]">Change orders</span>
-        {open.length > 0 && (
-          <span className="text-caption font-medium px-1.5 py-0.5 rounded bg-transparent text-[var(--state-held-text)] border border-[var(--state-held)]">
-            {open.length} awaiting decision
-          </span>
-        )}
-        {summary.approvedCount > 0 && (
-          <span className="text-caption text-[var(--color-text-muted)]">
-            {summary.approvedCount} approved · {fmtMoney(summary.approvedAmount)} total change
-          </span>
-        )}
-        {canManage && (
-          <button onClick={() => setShowForm((v) => !v)} aria-expanded={showForm}
-            className={`ml-auto inline-flex items-center gap-1 h-10 px-3 rounded-lg text-body font-medium transition-colors ${showForm ? "border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] text-[var(--color-text)]" : "bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]"}`}>
-            <Plus className="w-3 h-3" /> Propose change
-          </button>
-        )}
+        <span className="text-body font-medium text-[var(--color-text)]">Change orders</span>
+        {cos && cos.length > 0 && <span className="text-body tabular-nums text-[var(--color-text-muted)]">{cos.length}</span>}
+        <HelpTooltip>Reason codes score both sides: scope gaps land on the contractor&apos;s record, design errors and owner requests on ours. Approving posts the money to its budget line; nothing changes the budget silently.</HelpTooltip>
       </div>
 
       {showForm && canManage && (
@@ -161,14 +195,24 @@ export default function ChangeOrdersPanel({ orgId, projectId, canManage, actor, 
           <span>Couldn&apos;t load change orders: {readErr}</span>
           <button onClick={() => void refresh()} className="text-[var(--color-accent-text)] hover:underline">Try again</button>
         </div>
-      ) : cos.length === 0 ? (
-        <div className="px-4 py-6 text-center text-caption text-[var(--color-text-muted)]">
-          No change orders. When scope grows or shrinks, propose it here with a reason.
-        </div>
-      ) : (
+      ) : cos.length === 0 ? null : (
         <>
+          <ul className="divide-y divide-[var(--color-border)]">
+            {open.map(coRow)}
+            {decided.length > 0 && open.length > 0 && (
+              <li>
+                <button type="button" onClick={() => setShowDecided((v) => !v)} aria-expanded={decidedOpen}
+                  className="w-full px-4 py-2.5 min-h-11 flex items-center gap-2 text-left text-body hover:bg-[var(--color-surface-2)]/40">
+                  <ChevronRight aria-hidden className={`w-4 h-4 text-[var(--color-text-muted)] ui-chevron${decidedOpen ? " rotate-90" : ""}`} />
+                  <span className="font-medium text-[var(--color-text)]">Decided</span>
+                  <span className="tabular-nums text-[var(--color-text-muted)]">{decided.length}</span>
+                </button>
+              </li>
+            )}
+            {decidedOpen && decided.map(coRow)}
+          </ul>
           {summary.byReason.length > 0 && (
-            <div className="px-4 py-3 border-b border-[var(--color-border)]">
+            <div className="px-4 py-3 border-t border-[var(--color-border)]">
               <div className="text-body font-medium text-[var(--color-text-muted)] mb-2">
                 Approved changes by reason: who owns the growth
               </div>
@@ -178,21 +222,9 @@ export default function ChangeOrdersPanel({ orgId, projectId, canManage, actor, 
                 centerLabel={`${summary.approvedCount} CO${summary.approvedCount === 1 ? "" : "s"}`} />
             </div>
           )}
-          <ul className="divide-y divide-[var(--color-border)]">
-            {[...open, ...decided].map((co) => editing === co.id && co.status === "proposed" ? (
-              <li key={co.id}>
-                <ProposeForm orgId={orgId} projectId={projectId} actor={actor} accounts={accounts} parties={parties} editing={co}
-                  onDone={() => { setEditing(null); void refresh(); }} onCancel={() => setEditing(null)} />
-              </li>
-            ) : (
-              <CoRow key={co.id} co={co} canManage={canManage} busy={busy === co.id}
-                partyName={co.partyId ? partyName.get(co.partyId) ?? null : null}
-                accountLabel={co.costAccountId ? accountName.get(co.costAccountId) ?? null : null}
-                accounts={accounts} decide={decide}
-                onEdit={() => setEditing(co.id)} onVoidApproved={() => void voidApproved(co)} />
-            ))}
-          </ul>
         </>
+      )}
+    </div>
       )}
     </div>
   );
@@ -209,7 +241,7 @@ function CoRow({ co, canManage, busy, partyName, accountLabel, accounts, decide,
   const [accountPick, setAccountPick] = useState(co.costAccountId ?? "");
   const isOpen = co.status === "proposed";
   return (
-    <li className={`px-4 py-2.5 text-caption ${!isOpen && co.status !== "approved" ? "opacity-60" : ""}`}>
+    <li className={`px-4 py-2.5 text-body ${!isOpen && co.status !== "approved" ? "opacity-60" : ""}`}>
       <div className="flex items-center gap-2 flex-wrap">
         <span className="font-display tabular-nums text-caption font-semibold text-[var(--color-text-muted)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded">{co.coNumber}</span>
         <span className="font-medium text-[var(--color-text)]">{co.title}</span>
@@ -220,11 +252,9 @@ function CoRow({ co, canManage, busy, partyName, accountLabel, accounts, decide,
           title="Reason codes score both sides: scope gaps land on the contractor's record, design errors and owner requests on ours.">
           {CO_REASON_LABEL[co.reasonCode]}
         </span>
-        <span className={`text-caption font-semibold px-1.5 py-0.5 rounded border ${
-          co.status === "approved" ? "border-[var(--state-released)] bg-[var(--state-released)]/[0.07] text-[var(--state-released-text)]"
-          : co.status === "proposed" ? "border-[var(--state-held)] bg-[var(--state-held)]/[0.07] text-[var(--state-held-text)]"
-          : "border-[var(--color-border)] text-[var(--color-text-faint)]"}`}>
-          {co.status}
+        <span className={`inline-flex items-center gap-1.5 text-body ${co.status === "approved" || co.status === "proposed" ? "text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>
+          <span aria-hidden className="w-[7px] h-[7px] rounded-full shrink-0" style={{ background: co.status === "approved" ? "var(--state-released)" : co.status === "proposed" ? "var(--state-held)" : "var(--color-border-strong)" }} />
+          {co.status === "proposed" ? "Waiting on a decision" : co.status.charAt(0).toUpperCase() + co.status.slice(1)}
         </span>
         {isOpen && canManage && (
           <span className="ml-auto inline-flex items-center gap-1.5">
@@ -329,42 +359,69 @@ function ProposeForm({ orgId, projectId, actor, accounts, parties, onDone, onCan
     } finally { setSaving(false); }
   };
 
+  const unitId = React.useId();
+  const lbl = "block mb-1 text-body font-medium text-[var(--color-text-muted)]";
+  const fld = "h-10 pointer-coarse:h-11 w-full rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-body text-[var(--color-text)]";
+  // Asked for up front: what changed, how much, why. Where it posts, who
+  // it's with and the detail are folded (where it posts is asked again at
+  // approval when it's still blank).
   return (
-    <div className="px-4 py-3 border-b border-[var(--color-border)] bg-[var(--color-surface-2)] space-y-2">
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-        <input value={title} onChange={(e) => setTitle(e.target.value)} aria-label="What changed" placeholder="What changed? (title)" autoFocus
-          className="h-8 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-caption col-span-2" />
-        <input value={amount} onChange={(e) => setAmount(e.target.value)} aria-label="Amount (minus for a credit)" placeholder="Amount (− = credit)" inputMode="decimal"
-          className="h-8 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-caption font-display tabular-nums" />
-        <select value={reason} onChange={(e) => setReason(e.target.value as CoReason)} aria-label="Reason"
-          className="h-8 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-caption">
-          {(Object.keys(CO_REASON_LABEL) as CoReason[]).map((r) => (
-            <option key={r} value={r}>{CO_REASON_LABEL[r]}</option>
-          ))}
-        </select>
-        <select value={accountId} onChange={(e) => setAccountId(e.target.value)} aria-label="Budget line it posts to"
-          className="h-8 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-caption col-span-2">
-          <option value="">Budget line it posts to (required to approve)…</option>
-          {accounts.map((a) => <option key={a.id} value={a.id}>{a.code ? `${a.code} ` : ""}{a.name}</option>)}
-        </select>
-        <select value={partyId} onChange={(e) => setPartyId(e.target.value)} aria-label="Contractor or vendor"
-          className="h-8 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-caption">
-          <option value="">Contractor / vendor…</option>
-          {pickParties.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-        </select>
-        <input value={desc} onChange={(e) => setDesc(e.target.value)} aria-label="Detail" placeholder="Detail (goes on the record)"
-          className="h-8 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-caption" />
+    <form onSubmit={(e) => { e.preventDefault(); void submit(); }} aria-label={editing ? `Change ${editing.coNumber}` : "Propose a change order"}
+      className="px-4 py-3 border-b border-[var(--color-border)] bg-[var(--color-surface-2)] space-y-3">
+      <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1.5fr)] gap-2">
+        <label className="block min-w-0">
+          <span className={lbl}>What changed</span>
+          <input value={title} onChange={(e) => setTitle(e.target.value)} autoFocus enterKeyHint="next" className={fld} />
+        </label>
+        <label className="block min-w-0">
+          <span className={lbl}>Amount</span>
+          <input value={amount} onChange={(e) => setAmount(e.target.value)} inputMode="decimal" enterKeyHint="next" aria-describedby={unitId}
+            className={`${fld} font-display tabular-nums`} />
+          <span id={unitId} className="block mt-0.5 text-caption text-[var(--color-text-muted)]">Minus for a credit back</span>
+        </label>
+        <label className="block min-w-0">
+          <span className={lbl}>Reason</span>
+          <select value={reason} onChange={(e) => setReason(e.target.value as CoReason)} className={fld}>
+            {(Object.keys(CO_REASON_LABEL) as CoReason[]).map((r) => (
+              <option key={r} value={r}>{CO_REASON_LABEL[r]}</option>
+            ))}
+          </select>
+        </label>
       </div>
+      <MoreDetails filled={(accountId ? 1 : 0) + (partyId ? 1 : 0) + (desc.trim() ? 1 : 0)} total={3}>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          <label className="block min-w-0">
+            <span className={lbl}>Budget line it posts to</span>
+            <select value={accountId} onChange={(e) => setAccountId(e.target.value)} className={fld}>
+              <option value="">Not picked (needed to approve)</option>
+              {accounts.map((a) => <option key={a.id} value={a.id}>{a.code ? `${a.code} ` : ""}{a.name}</option>)}
+            </select>
+          </label>
+          <label className="block min-w-0">
+            <span className={lbl}>Contractor or vendor</span>
+            <select value={partyId} onChange={(e) => setPartyId(e.target.value)} className={fld}>
+              <option value="">None</option>
+              {pickParties.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+          </label>
+          <label className="block min-w-0 sm:col-span-2">
+            <span className={lbl}>Detail (goes on the record)</span>
+            <input value={desc} onChange={(e) => setDesc(e.target.value)} className={fld} />
+          </label>
+        </div>
+      </MoreDetails>
       <div className="flex items-center gap-2">
         {error && <span role="alert" className="text-caption font-medium text-[var(--state-overdue-text)] flex items-start gap-1.5"><CircleAlert aria-hidden className="w-3.5 h-3.5 shrink-0 mt-0.5" /><span>{error}</span></span>}
         <span className="ml-auto flex items-center gap-2">
-          <button onClick={onCancel} className="inline-flex items-center justify-center gap-1.5 h-8 pointer-coarse:h-11 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>
-          <button onClick={() => void submit()} disabled={saving}
-            className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-caption font-medium hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
-            {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />} {editing ? `Save ${editing.coNumber}` : "Propose"}
+          <button type="button" onClick={onCancel} className="inline-flex items-center justify-center gap-1.5 h-10 pointer-coarse:h-11 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>
+          <button type="submit" disabled={saving}
+            className={`inline-flex items-center gap-1.5 h-10 pointer-coarse:h-11 px-3.5 rounded-lg text-body font-medium disabled:opacity-50 ${editing
+              ? "border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
+              : "bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]"}`}>
+            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} {saving ? (editing ? "Saving" : "Proposing") : editing ? `Save ${editing.coNumber}` : "Propose"}
           </button>
         </span>
       </div>
-    </div>
+    </form>
   );
 }

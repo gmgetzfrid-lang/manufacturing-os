@@ -55,7 +55,7 @@ export default function ExecutionReportView({ milestones, shiftTimes, critical: 
       <div className="bg-[var(--color-surface)] rounded-lg border border-[var(--color-border)] p-12 text-center">
         <CalendarDays className="w-10 h-10 text-[var(--color-text-faint)] mx-auto mb-3" />
         <div className="text-body font-medium text-[var(--color-text)]">Nothing to report yet.</div>
-        <div className="text-xs text-[var(--color-text-muted)] mt-1">Import or add tasks to see progress, pace, and diagnostics.</div>
+        <div className="text-caption text-[var(--color-text-muted)] mt-1">Import or add tasks to see progress, pace, and diagnostics.</div>
       </div>
     );
   }
@@ -141,7 +141,7 @@ export default function ExecutionReportView({ milestones, shiftTimes, critical: 
           <div className="flex items-center gap-2 flex-wrap">
             <Zap className="w-4 h-4 text-[var(--state-overdue-text)]" />
             <span className={print ? "text-caption font-medium text-[var(--color-text-faint)]" : "text-body font-medium text-[var(--color-text-muted)]"}>Driving the finish</span>
-            <span className="text-sm font-medium text-[var(--color-text)]">{critical.ids.size} task{critical.ids.size === 1 ? "" : "s"} on the critical path</span>
+            <span className="text-body font-medium text-[var(--color-text)]">{critical.ids.size} task{critical.ids.size === 1 ? "" : "s"} on the critical path</span>
             {critical.remainingHours > 0 && <span className="text-caption text-[var(--color-text-muted)]">· {Math.round(critical.remainingHours)}h remaining on the chain</span>}
             <span className="ml-auto text-caption print:text-caption text-[var(--color-text-faint)]">{criticalSource ? `${criticalSource} · change it on the Timeline` : "estimate, based on schedule shape, not dependency links"}</span>
           </div>
@@ -252,9 +252,9 @@ export default function ExecutionReportView({ milestones, shiftTimes, critical: 
         </div>
         <div className="px-4 py-3">
           {Object.keys(r.performers.byActualKind).length === 0 ? (
-            <div className="text-xs text-[var(--color-text-faint)] italic">No completed work yet, or performer not recorded.</div>
+            <div className="text-caption text-[var(--color-text-muted)] italic">No completed work yet, or performer not recorded.</div>
           ) : (
-            <div className="flex items-center gap-4 flex-wrap text-sm">
+            <div className="flex items-center gap-4 flex-wrap text-body">
               {Object.entries(r.performers.byActualKind).map(([kind, n]) => (
                 <span key={kind} className="inline-flex items-center gap-1.5">
                   <span className="font-medium text-[var(--color-text)] tabular-nums">{n}</span>

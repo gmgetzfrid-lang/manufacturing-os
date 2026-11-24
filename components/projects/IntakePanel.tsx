@@ -13,8 +13,12 @@ import { Card } from "@/components/ui/PageHero";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   Link2, Loader2, Check, X, Copy, Ban, ShieldCheck, Clock,
-  FilePlus2, Search, CalendarPlus,
+  FilePlus2, Search, CalendarPlus, ChevronRight,
 } from "lucide-react";
+import HelpTooltip from "@/components/ui/HelpTooltip";
+import MoreMenu from "@/components/ui/MoreMenu";
+import { MoreDetails } from "@/components/ui/MoreDetails";
+import { controlClass } from "@/components/ui/Field";
 import { supabase } from "@/lib/supabase";
 import { dayOfIso, endOfDayIso, extendedExpiry, isExpired } from "@/lib/intakeExpiry";
 import { finalizeReviewedRevision } from "@/lib/reviewControl";
@@ -60,6 +64,8 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
   const [expires, setExpires] = useState("");
   const [trusted, setTrusted] = useState(false);
   const [libPick, setLibPick] = useState("");
+  // Revoked links fold away under the ones in use.
+  const [showRevoked, setShowRevoked] = useState(false);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -285,7 +291,7 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
   };
 
   const reject = async (p: PendingSub) => {
-    if (!(await appConfirm({ title: `Reject ${p.label} Rev ${p.revLabel ?? ""}?`, message: "The company will see it as not accepted.", tone: "danger", confirmLabel: "Reject" }))) return;
+    if (!(await appConfirm({ title: `Reject ${p.label} Rev ${p.revLabel ?? ""}?`, message: "The company will see it as not accepted.", tone: "danger", confirmLabel: "Reject revision" }))) return;
     setBusy(p.docId); setMsg(null);
     try {
       // Mark the version first — if the DB refuses (pre-migration CHECK),
@@ -326,34 +332,151 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
 
   if (loading) return <SkeletonRows rows={5} cols={2} what="intake" />;
 
-  return (
-    <div className="space-y-4">
-      {/* Review queue: the point of the whole system. */}
-      <Card label={<>Submissions awaiting review <span className="ml-1 text-reading font-normal tabular-nums text-[var(--color-text-muted)]">{pending.length}</span></>}>
-        {msg && <div role="status" className="mb-2 text-body font-medium text-[var(--color-text)] flex items-center gap-2"><span className="min-w-0 flex-1">{msg}</span><button onClick={() => setMsg(null)} aria-label="Dismiss" className="ui-hit shrink-0 p-1 text-[var(--color-text-faint)] hover:text-[var(--color-text)]"><X className="w-3.5 h-3.5" /></button></div>}
-        {pending.length === 0 && <div className="text-body text-[var(--color-text-muted)]">Nothing waiting for review.</div>}
-        <ul className="divide-y divide-[var(--color-border)]">
-          {pending.map((p) => (
-            <li key={p.docId} className="py-2.5">
-              <div className="flex items-center gap-2 flex-wrap">
-                <Clock className="w-3.5 h-3.5 text-[var(--state-held-text)] shrink-0" />
-                <span className="text-body font-medium text-[var(--color-text)]">{p.label}</span>
-                <span className="text-body text-[var(--color-text-muted)]">Rev {p.revLabel ?? "-"} · {p.company ?? "external"}{p.submittedAt ? ` · ${new Date(p.submittedAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}` : ""}</span>
-                {canManage && (
-                  <span className="ml-auto flex items-center gap-1.5">
-                    <button onClick={() => void approve(p)} disabled={busy === p.docId} className="inline-flex items-center gap-1.5 h-10 pointer-coarse:h-11 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">
-                      {busy === p.docId ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />} Approve
+  const day = (iso: string) => new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  const active = links.filter((l) => !l.revokedAt);
+  const revoked = links.filter((l) => l.revokedAt);
+  const btn = "ui-press inline-flex items-center justify-center gap-1.5 h-10 pointer-coarse:h-11 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors";
+  const moreBtn = "ui-press inline-flex items-center justify-center w-10 h-10 pointer-coarse:w-11 pointer-coarse:h-11 rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]";
+  const lab = "block text-caption font-medium text-[var(--color-text-muted)] mb-1";
+  const copy = (l: IntakeLink) => { void navigator.clipboard.writeText(portalUrl(l.token)).then(() => setMsg(`Copied ${l.companyName}'s link.`), () => setMsg(`Couldn't copy: your browser blocked it. The link is ${portalUrl(l.token)}`)); };
+  const openExtend = (l: IntakeLink) => { setExtendOpen(extendOpen === l.id ? null : l.id); setExtendDay(dayOfIso(extendedExpiry(l.expiresAt, 7))); };
+  const openAssign = (l: IntakeLink) => { setAssignOpen(assignOpen === l.id ? null : l.id); setAssignQ(""); setAssignResults([]); };
+
+  const linkRow = (l: IntakeLink) => {
+    const expired = !!l.expiresAt && isExpired(l.expiresAt);
+    const usable = !l.revokedAt && (!l.expiresAt || Date.parse(l.expiresAt) > Date.now());
+    const more = [
+      // An expired link shows Extend as its button, so it isn't offered twice.
+      ...(l.expiresAt && !expired ? [{ icon: <CalendarPlus className="w-4 h-4" />, label: "Extend", onClick: () => openExtend(l) }] : []),
+      { icon: <FilePlus2 className="w-4 h-4" />, label: "Assign documents", onClick: () => openAssign(l) },
+      { icon: <Ban className="w-4 h-4" />, label: "Revoke link", tone: "bad" as const, line: true, onClick: () => revoke(l) },
+    ];
+    return (
+      <li key={l.id} className="py-2.5 text-body">
+        <div className="flex items-start gap-2">
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-x-2 gap-y-0.5 flex-wrap">
+              <span className={`font-medium ${l.revokedAt ? "text-[var(--color-text-muted)]" : "text-[var(--color-text)]"}`}>{l.companyName}</span>
+              {l.allowAutoSupersede && <span className="inline-flex items-center gap-1 text-caption font-medium text-[var(--color-text)]"><ShieldCheck className="w-3.5 h-3.5" /> Trusted</span>}
+              {l.revokedAt && <span className="ui-pill is-muted">Revoked</span>}
+              {expired && !l.revokedAt && <span className="ui-pill is-bad">Expired {day(l.expiresAt!)}</span>}
+            </div>
+            <div className="text-[var(--color-text-muted)]">
+              {l.submissionCount} submission{l.submissionCount === 1 ? "" : "s"}{l.expiresAt && !expired ? ` · works through ${day(l.expiresAt)}` : !l.expiresAt && !l.revokedAt ? " · no end date" : ""}{l.contactEmail ? ` · ${l.contactEmail}` : ""}
+            </div>
+          </div>
+          {canManage && !l.revokedAt && (busy === l.id
+            ? <Loader2 className="w-4 h-4 mt-1 animate-spin text-[var(--color-text-muted)] shrink-0" />
+            : <span className="shrink-0 flex items-center gap-1">
+                {usable
+                  ? <button onClick={() => copy(l)} className={btn}><Copy className="w-3.5 h-3.5" /> Copy link</button>
+                  : expired && <button onClick={() => openExtend(l)} className={btn}><CalendarPlus className="w-3.5 h-3.5" /> Extend</button>}
+                <MoreMenu iconOnly label={`More for ${l.companyName}'s link`} triggerClass={moreBtn} items={more} />
+              </span>)}
+        </div>
+        {extendOpen === l.id && canManage && !l.revokedAt && (
+          <div className="mt-2 pt-2 border-t border-[var(--color-border)] flex items-end gap-2 flex-wrap">
+            <button onClick={() => void extend(l, extendedExpiry(l.expiresAt, 7))} disabled={busy === l.id} className={btn}>
+              {busy === l.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CalendarPlus className="w-3.5 h-3.5" />} 7 more days
+            </button>
+            <label className="block"><span className={lab}>Or works through</span>
+              <input type="date" value={extendDay} onChange={(e) => setExtendDay(e.target.value)} min={dayOfIso(new Date().toISOString())}
+                className={`${controlClass} !w-auto [color-scheme:light] dark:[color-scheme:dark]`} /></label>
+            <button onClick={() => extendDay && void extend(l, endOfDayIso(extendDay))} disabled={busy === l.id || !extendDay} className={btn}>Set date</button>
+            <button onClick={() => void extend(l, null)} disabled={busy === l.id} className={btn}>No end date</button>
+            <button onClick={() => setExtendOpen(null)} className={btn}>Cancel</button>
+          </div>
+        )}
+        {/* Assigned org documents: on the company's portal; their revisions always come to review. */}
+        {(l.assignedDocIds.length > 0 || assignOpen === l.id) && !l.revokedAt && (
+          <div className="mt-2 pt-2 border-t border-[var(--color-border)] space-y-2">
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="inline-flex items-center gap-1 text-caption font-medium text-[var(--color-text-muted)]">Assigned <HelpTooltip><span className="font-normal">Assigned documents appear on {l.companyName}&rsquo;s portal. Their revisions of your documents <b>always</b> go through review, even on trusted links.</span></HelpTooltip></span>
+              {l.assignedDocIds.length === 0 && <span className="text-caption text-[var(--color-text-muted)]">none yet</span>}
+              {l.assignedDocIds.map((id) => (
+                <span key={id} className="inline-flex items-center gap-1 pl-2 rounded-md bg-[var(--color-surface-2)] border border-[var(--color-border-strong)] text-caption font-medium text-[var(--color-text)]">
+                  {docLabels.get(id) ?? "Document"}
+                  {canManage && (
+                    <button onClick={() => void updateAssigned(l, l.assignedDocIds.filter((x) => x !== id))} disabled={busy === l.id} title="Unassign" aria-label={`Unassign ${docLabels.get(id) ?? "document"}`} className="ui-hit inline-flex items-center justify-center w-6 h-6 text-[var(--color-text-faint)] hover:text-[var(--state-overdue-text)]">
+                      <X className="w-3 h-3" />
                     </button>
-                    <button onClick={() => void reject(p)} disabled={busy === p.docId} className="inline-flex items-center gap-1.5 h-10 pointer-coarse:h-11 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--state-overdue-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">
-                      <X className="w-3 h-3" /> Reject
-                    </button>
-                  </span>
+                  )}
+                </span>
+              ))}
+            </div>
+            {assignOpen === l.id && canManage && (
+              <div>
+                <div className="relative">
+                  <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-text-faint)]" />
+                  <input
+                    type="search" aria-label="Search documents to assign"
+                    value={assignQ}
+                    onChange={(e) => searchAssignable(e.target.value)}
+                    placeholder="Search documents by number or title…"
+                    autoFocus
+                    className={`${controlClass} pl-8`}
+                  />
+                </div>
+                {assignSearching && <div className="mt-1 text-body text-[var(--color-text-muted)]">Searching…</div>}
+                {assignResults.length > 0 && (
+                  <ul className="mt-1 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] divide-y divide-[var(--color-border)] overflow-hidden">
+                    {assignResults.filter((r) => !l.assignedDocIds.includes(r.id)).map((r) => (
+                      <li key={r.id}>
+                        <button
+                          onClick={() => void updateAssigned(l, [...l.assignedDocIds, r.id], r.label)}
+                          disabled={busy === l.id}
+                          className="w-full text-left px-3 min-h-10 pointer-coarse:min-h-11 text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
+                        >
+                          {r.label}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
                 )}
               </div>
-              {p.changeLog && <div className="mt-1 text-caption text-[var(--color-text-muted)] italic">&ldquo;{p.changeLog}&rdquo;</div>}
-            </li>
-          ))}
-        </ul>
+            )}
+          </div>
+        )}
+      </li>
+    );
+  };
+
+  return (
+    <div className="space-y-6">
+      {/* The answer first: what is waiting for a decision. */}
+      <Card>
+        <p className="text-reading text-[var(--color-text)]">
+          {pending.length
+            ? <><b className="font-display text-title leading-none font-bold tabular-nums">{pending.length}</b> submission{pending.length === 1 ? "" : "s"} waiting for review</>
+            : "Nothing waiting for review."}
+        </p>
+        {msg && <div role="status" className="mt-2 text-body font-medium text-[var(--color-text)] flex items-center gap-2"><span className="min-w-0 flex-1">{msg}</span><button onClick={() => setMsg(null)} aria-label="Dismiss" className="ui-hit shrink-0 p-1 text-[var(--color-text-faint)] hover:text-[var(--color-text)]"><X className="w-3.5 h-3.5" /></button></div>}
+        {pending.length > 0 && (
+          <ul className="mt-2 divide-y divide-[var(--color-border)] border-t border-[var(--color-border)]">
+            {pending.map((p) => (
+              <li key={p.docId} className="py-2.5">
+                <div className="flex items-start gap-2 flex-wrap">
+                  <Clock className="w-4 h-4 mt-0.5 text-[var(--state-held-text)] shrink-0" aria-hidden />
+                  <div className="min-w-0 flex-1">
+                    <span className="text-body font-medium text-[var(--color-text)]">{p.label}</span>
+                    <div className="text-body text-[var(--color-text-muted)]">Rev {p.revLabel ?? "-"} · {p.company ?? "external"}{p.submittedAt ? ` · ${day(p.submittedAt)}` : ""}</div>
+                    {p.changeLog && <div className="mt-0.5 text-body text-[var(--color-text-muted)] italic">&ldquo;{p.changeLog}&rdquo;</div>}
+                  </div>
+                  {canManage && (
+                    <span className="shrink-0 flex items-center gap-1.5">
+                      <button onClick={() => void approve(p)} disabled={busy === p.docId} className={btn}>
+                        {busy === p.docId ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />} Approve
+                      </button>
+                      <button onClick={() => void reject(p)} disabled={busy === p.docId} className={`${btn} !text-[var(--state-overdue-text)]`}>
+                        <X className="w-3.5 h-3.5" /> Reject
+                      </button>
+                    </span>
+                  )}
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
       </Card>
 
       {/* Transition-in: adopt intake sheets into the controlled register. */}
@@ -366,134 +489,46 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
       )}
 
       {/* Submit links */}
-      <Card label="Contractor submit links">
-        <p className="-mt-1 mb-2 text-body text-[var(--color-text-muted)]">No account needed, upload only.</p>
-        <ul className="divide-y divide-[var(--color-border)] mb-3">
-          {links.map((l) => (
-            <li key={l.id} className={`text-body py-2 ${l.revokedAt ? "opacity-60" : ""}`}>
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="font-medium text-[var(--color-text)]">{l.companyName}</span>
-                {l.allowAutoSupersede && <span className="inline-flex items-center gap-0.5 text-caption font-medium text-[var(--color-text)]"><ShieldCheck className="w-3 h-3" /> trusted</span>}
-                <span className="text-[var(--color-text-faint)]">{l.submissionCount} submission{l.submissionCount === 1 ? "" : "s"}{l.expiresAt && !isExpired(l.expiresAt) ? ` · expires ${new Date(l.expiresAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}` : ""}{l.revokedAt ? " · REVOKED" : ""}</span>
-                {l.expiresAt && isExpired(l.expiresAt) && !l.revokedAt && (
-                  <span className="text-caption font-medium text-[var(--state-overdue-text)]">expired {new Date(l.expiresAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}</span>
-                )}
-                {!l.revokedAt && (
-                  <span className="ml-auto flex items-center gap-1 flex-wrap">
-                    {canManage && l.expiresAt && (
-                      <button onClick={() => { setExtendOpen(extendOpen === l.id ? null : l.id); setExtendDay(dayOfIso(extendedExpiry(l.expiresAt, 7))); }}
-                        title="Give the company more time. Same link, nothing to resend."
-                        className="inline-flex items-center gap-1 px-2 py-0.5 pointer-coarse:min-h-11 rounded-md border border-[var(--color-border-strong)] font-medium hover:border-[var(--color-accent-ring)]">
-                        <CalendarPlus className="w-3 h-3" /> Extend
-                      </button>
-                    )}
-                    {canManage && (!l.expiresAt || Date.parse(l.expiresAt) > Date.now()) && (
-                      <button onClick={() => { void navigator.clipboard.writeText(portalUrl(l.token)).then(() => setMsg(`Copied ${l.companyName}'s link.`), () => setMsg(`Couldn't copy: your browser blocked it. The link is ${portalUrl(l.token)}`)); }} className="inline-flex items-center gap-1 px-2 py-0.5 pointer-coarse:min-h-11 rounded-md border border-[var(--color-border-strong)] font-medium hover:border-[var(--color-accent-ring)]"><Copy className="w-3 h-3" /> Copy link</button>
-                    )}
-                    {canManage && (
-                      <button onClick={() => { setAssignOpen(assignOpen === l.id ? null : l.id); setAssignQ(""); setAssignResults([]); }} className="inline-flex items-center gap-1 px-2 py-0.5 pointer-coarse:min-h-11 rounded-md border border-[var(--color-border-strong)] font-medium hover:border-[var(--color-accent-ring)]">
-                        <FilePlus2 className="w-3 h-3" /> Assign docs
-                      </button>
-                    )}
-                    {canManage && <button onClick={() => void revoke(l)} disabled={busy === l.id} className="inline-flex items-center gap-1 px-2 py-0.5 pointer-coarse:min-h-11 rounded-md border border-[var(--state-overdue)] text-[var(--state-overdue-text)] font-medium hover:bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)]"><Ban className="w-3 h-3" /> Revoke</button>}
-                  </span>
-                )}
-              </div>
-              {extendOpen === l.id && canManage && !l.revokedAt && (
-                <div className="mt-1.5 pt-1.5 border-t border-[var(--color-border)] flex items-center gap-1.5 flex-wrap">
-                  <span className="text-caption font-medium text-[var(--color-text-muted)]">Works through:</span>
-                  <button onClick={() => void extend(l, extendedExpiry(l.expiresAt, 7))} disabled={busy === l.id}
-                    className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">
-                    {busy === l.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <CalendarPlus className="w-3 h-3" />} 7 more days
-                  </button>
-                  <input type="date" value={extendDay} onChange={(e) => setExtendDay(e.target.value)} min={dayOfIso(new Date().toISOString())} aria-label="New end date"
-                    className="h-7 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-caption [color-scheme:light] dark:[color-scheme:dark]" />
-                  <button onClick={() => extendDay && void extend(l, endOfDayIso(extendDay))} disabled={busy === l.id || !extendDay}
-                    className="px-2 py-1 pointer-coarse:min-h-11 rounded-md border border-[var(--color-border-strong)] text-caption font-medium hover:border-[var(--color-accent-ring)] disabled:opacity-50">Set date</button>
-                  <button onClick={() => void extend(l, null)} disabled={busy === l.id}
-                    className="inline-flex items-center justify-center gap-1.5 h-8 pointer-coarse:h-11 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">No end date</button>
-                  <button onClick={() => setExtendOpen(null)} className="inline-flex items-center justify-center gap-1.5 h-8 pointer-coarse:h-11 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>
-                </div>
-              )}
-              {/* Assigned org documents — visible on the company's portal, revisions always come to review. */}
-              {(l.assignedDocIds.length > 0 || assignOpen === l.id) && !l.revokedAt && (
-                <div className="mt-1.5 pt-1.5 border-t border-[var(--color-border)] space-y-1.5">
-                  {l.assignedDocIds.length > 0 && (
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className="text-caption font-medium text-[var(--color-text-muted)]">Assigned:</span>
-                      {l.assignedDocIds.map((id) => (
-                        <span key={id} className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-[var(--color-surface-2)] border border-[var(--color-border-strong)] text-caption font-medium text-[var(--color-text)]">
-                          {docLabels.get(id) ?? "Document"}
-                          {canManage && (
-                            <button onClick={() => void updateAssigned(l, l.assignedDocIds.filter((x) => x !== id))} disabled={busy === l.id} title="Unassign" aria-label={`Unassign ${docLabels.get(id) ?? "document"}`} className="ui-hit text-[var(--color-text-faint)] hover:text-[var(--state-overdue-text)]">
-                              <X className="w-3 h-3" />
-                            </button>
-                          )}
-                        </span>
-                      ))}
-                    </div>
-                  )}
-                  {assignOpen === l.id && canManage && (
-                    <div>
-                      <div className="relative">
-                        <Search className="w-3 h-3 absolute left-2 top-1/2 -translate-y-1/2 text-[var(--color-text-faint)]" />
-                        <input
-                          type="search" aria-label="Search documents to assign"
-                          value={assignQ}
-                          onChange={(e) => searchAssignable(e.target.value)}
-                          placeholder="Search documents by number or title…"
-                          autoFocus
-                          className="h-7 pointer-coarse:h-11 w-full rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] pl-6 pr-2 text-caption"
-                        />
-                      </div>
-                      {assignSearching && <div className="mt-1 text-caption text-[var(--color-text-faint)]">Searching…</div>}
-                      {assignResults.length > 0 && (
-                        <ul className="mt-1 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] divide-y divide-[var(--color-border)] overflow-hidden">
-                          {assignResults.filter((r) => !l.assignedDocIds.includes(r.id)).map((r) => (
-                            <li key={r.id}>
-                              <button
-                                onClick={() => void updateAssigned(l, [...l.assignedDocIds, r.id], r.label)}
-                                disabled={busy === l.id}
-                                className="w-full text-left px-2 py-1 text-caption font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
-                              >
-                                {r.label}
-                              </button>
-                            </li>
-                          ))}
-                        </ul>
-                      )}
-                      <div className="mt-1 text-caption text-[var(--color-text-faint)]">Assigned documents appear on {l.companyName}&rsquo;s portal. Their revisions of your documents <b>always</b> go through review, even on trusted links.</div>
-                    </div>
-                  )}
-                </div>
-              )}
-            </li>
-          ))}
-          {links.length === 0 && <li className="py-1 text-body text-[var(--color-text-muted)]">No links yet.</li>}
-        </ul>
+      <Card label={<span className="inline-flex items-center gap-1.5">Contractor submit links <HelpTooltip><span className="font-normal">Each company gets its own link to upload to this project. No account needed, upload only.</span></HelpTooltip></span>}>
+        {active.length === 0 && <p className="text-body text-[var(--color-text-muted)]">{revoked.length ? "No links in use." : "No links yet."}</p>}
+        {active.length > 0 && <ul className="-mt-2.5 divide-y divide-[var(--color-border)]">{active.map(linkRow)}</ul>}
+        {revoked.length > 0 && (
+          <div className="mt-1">
+            <button onClick={() => setShowRevoked((v) => !v)} aria-expanded={showRevoked} className="ui-press inline-flex items-center gap-1.5 min-h-8 pointer-coarse:min-h-11 px-2 -mx-2 rounded-md text-body font-medium text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]">
+              <ChevronRight className={`w-4 h-4 transition-transform ${showRevoked ? "rotate-90" : ""}`} /> {revoked.length} revoked
+            </button>
+            {showRevoked && <ul className="divide-y divide-[var(--color-border)]">{revoked.map(linkRow)}</ul>}
+          </div>
+        )}
 
         {canManage && (
-          <div className="pt-3 border-t border-[var(--color-border)] space-y-2">
-            <div className="text-body font-medium text-[var(--color-text-muted)]">New submit link</div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              <input value={company} onChange={(e) => setCompany(e.target.value)} aria-label="Company name" placeholder="Company name (stamped on every submission)" className="h-9 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-body" />
-              <input type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} aria-label="Contact email (optional)" placeholder="Contact email (optional)" className="h-9 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-body" />
+          <form onSubmit={(e) => { e.preventDefault(); void createLink(); }} className="mt-4 pt-4 border-t border-[var(--color-border)] space-y-3">
+            <h3 className="text-body font-semibold text-[var(--color-text)]">New submit link</h3>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <label className="block min-w-0"><span className={lab}>Company name <span className="font-normal">· stamped on every submission</span></span>
+                <input value={company} onChange={(e) => setCompany(e.target.value)} autoComplete="organization" className={controlClass} /></label>
+              <label className="block min-w-0"><span className={lab}>Contact email (optional)</span>
+                <input type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} className={controlClass} /></label>
               {!intakeLibraryId && (
-                <select value={libPick} onChange={(e) => setLibPick(e.target.value)} aria-label="Library for intake documents" className="h-9 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-body">
-                  <option value="">Intake documents live in library…</option>
-                  {libs.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
-                </select>
+                <label className="block min-w-0"><span className={lab}>Intake documents go to the library</span>
+                  <select value={libPick} onChange={(e) => setLibPick(e.target.value)} className={controlClass}>
+                    <option value="">Pick a library</option>
+                    {libs.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+                  </select></label>
               )}
-              <input type="date" value={expires} onChange={(e) => setExpires(e.target.value)} aria-label="Link expires on" min={new Date().toISOString().slice(0, 10)} className="h-9 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-body [color-scheme:light] dark:[color-scheme:dark]" title="Expiry (optional)" />
             </div>
-            <label className="flex items-start gap-2 text-body text-[var(--color-text)]">
-              <input type="checkbox" checked={trusted} onChange={(e) => setTrusted(e.target.checked)} className="mt-0.5" />
-              <span>Trusted: their revisions of <b>their own documents</b> publish immediately (skip review)</span>
-            </label>
-            <button onClick={() => void createLink()} disabled={busy === "create"} className="inline-flex items-center gap-1.5 h-10 pointer-coarse:h-11 px-3.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-body font-medium hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
+            <MoreDetails label="End date and trust" filled={(expires ? 1 : 0) + (trusted ? 1 : 0)} total={2}>
+              <label className="block max-w-xs"><span className={lab}>Link works through (optional)</span>
+                <input type="date" value={expires} onChange={(e) => setExpires(e.target.value)} min={new Date().toISOString().slice(0, 10)} className={`${controlClass} [color-scheme:light] dark:[color-scheme:dark]`} /></label>
+              <label className="flex items-start gap-2 text-body text-[var(--color-text)]">
+                <input type="checkbox" checked={trusted} onChange={(e) => setTrusted(e.target.checked)} className="mt-0.5 w-4 h-4" />
+                <span>Trusted: their revisions of <b>their own documents</b> publish immediately (skip review)</span>
+              </label>
+            </MoreDetails>
+            <button type="submit" disabled={busy === "create"} className="inline-flex items-center gap-1.5 h-10 pointer-coarse:h-11 px-3.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-body font-medium hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
               {busy === "create" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Link2 className="w-3.5 h-3.5" />} {busy === "create" ? "Creating link" : "Create link"}
             </button>
-          </div>
+          </form>
         )}
       </Card>
     </div>

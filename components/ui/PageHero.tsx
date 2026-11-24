@@ -69,6 +69,7 @@ export function PageHero({
   children,
   size = "lg",
   compactOnPhone = false,
+  slim = false,
   className = "",
 }: {
   /** Where you are (e.g. "Documents / Drawings"). */
@@ -95,11 +96,14 @@ export function PageHero({
   /** On a phone: the answer in one small line, no kicker, no short line,
    *  no facts. For a page whose real content needs the screen (a map). */
   compactOnPhone?: boolean;
+  /** The tabs under an overview: the answer and its short line small,
+   *  the facts in one line under it (no big number). */
+  slim?: boolean;
   /** Kept for older callers; the header never overlaps content now. */
   overlap?: boolean;
   className?: string;
 }) {
-  const big = compactOnPhone
+  const big = compactOnPhone || slim
     ? "text-section"
     : size === "lg" ? "text-title" : "text-section sm:text-title";
   const phoneHide = compactOnPhone ? "max-sm:hidden" : "";
@@ -133,8 +137,20 @@ export function PageHero({
         <div className="flex flex-wrap items-end gap-x-6 gap-y-4">
           <div className="min-w-0 flex-1 basis-[300px]">
             <h1 className={`font-display ${big} leading-[1.2] font-semibold tracking-[-0.005em] text-[var(--color-text)] [overflow-wrap:anywhere]`}>{title}</h1>
-            {sub && <p className={`${phoneHide} mt-1.5 text-reading leading-snug text-[var(--color-text-muted)] max-w-[72ch]`}>{sub}</p>}
-            {list.length > 0 && (
+            {sub && (slim
+              ? <p className="mt-0.5 text-body leading-snug text-[var(--color-text-muted)] max-w-[90ch]">{sub}</p>
+              : <p className={`${phoneHide} mt-1.5 text-reading leading-snug text-[var(--color-text-muted)] max-w-[72ch]`}>{sub}</p>)}
+            {slim && list.length > 0 && (
+              <dl className="mt-1 flex flex-wrap items-baseline gap-x-4 gap-y-1 text-body">
+                {list.map((f, i) => (
+                  <div key={i} className="inline-flex items-baseline gap-1.5 min-w-0">
+                    <dt className="text-[var(--color-text-muted)]">{f.label}</dt>
+                    <dd className={`font-semibold tabular-nums whitespace-nowrap ${factColor(f)}`}>{f.value}</dd>
+                  </div>
+                ))}
+              </dl>
+            )}
+            {!slim && list.length > 0 && (
               <dl className={`${phoneHide} mt-4 flex flex-wrap items-end gap-x-7 gap-y-3`}>
                 {hero && (
                   <div className="min-w-0 sm:mr-2">
@@ -222,9 +238,12 @@ export function CardStrip({ children, className = "" }: { children: React.ReactN
 }
 
 /** Steps or phases joined by one line, so they read as one path. */
-export function StepLine({ steps, onDark = false }: {
-  steps: Array<{ label: React.ReactNode; note?: React.ReactNode; tone?: "bad" | "ok" | "muted"; state: "done" | "now" | "next" }>;
+export function StepLine({ steps, onDark = false, compact = false }: {
+  steps: Array<{ label: React.ReactNode; note?: React.ReactNode; short?: React.ReactNode; tone?: "bad" | "ok" | "muted"; state: "done" | "now" | "next" }>;
   onDark?: boolean;
+  /** One line per step: its name and where it stands (`short`), for the
+   *  tabs below the overview. */
+  compact?: boolean;
 }) {
   void onDark; // the header is on the page now: one look everywhere
   const fg = "var(--color-text)";
@@ -241,8 +260,13 @@ export function StepLine({ steps, onDark = false }: {
                 style={filled ? { background: fg } : { border: `2px solid ${s.state === "now" ? "var(--color-current)" : line}` }} />
               {!last && <span className="flex-1 h-px" style={{ background: filled && steps[i + 1]?.state !== "next" ? fg : line }} />}
             </div>
-            <div className="mt-2.5 pr-3 text-body font-medium truncate text-[var(--color-text)]">{s.label}</div>
-            {s.note && (
+            {compact ? (
+              <div className="mt-1.5 pr-3 text-body truncate">
+                <span className="font-medium text-[var(--color-text)]">{s.label}</span>
+                {(s.short ?? null) != null && <span className={s.tone === "bad" ? "text-[var(--state-overdue-text)] font-medium" : "text-[var(--color-text-muted)]"}> · {s.short}</span>}
+              </div>
+            ) : <div className="mt-2.5 pr-3 text-body font-medium truncate text-[var(--color-text)]">{s.label}</div>}
+            {!compact && s.note && (
               <div className={`pr-3 text-body mt-0.5 tabular-nums ${s.tone === "bad" ? "text-[var(--state-overdue-text)] font-medium" : "text-[var(--color-text-muted)]"}`}>{s.note}</div>
             )}
           </li>

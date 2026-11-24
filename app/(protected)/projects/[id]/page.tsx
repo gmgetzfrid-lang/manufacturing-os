@@ -524,6 +524,20 @@ export default function ProjectDetailPage() {
     answer = `${joinWords(st.filter((s) => s.state === "finished").map((s) => s.name))} done.`;
     sub = `${joinWords(unscheduled.map((p) => p.name))} ${unscheduled.length === 1 ? "has" : "have"} no schedule yet.`;
     facts = [finishFact(true), stepsFact];
+  } else if (running && running.plannedFinish && Date.now() > Date.parse(running.plannedFinish)) {
+    // Past its planned finish with work still open: say that, with what is
+    // left, not a percent that reads as nearly done.
+    const left = Math.max(0, running.steps - running.done);
+    answer = `${who(running)} is past its planned finish, ${left} step${left === 1 ? "" : "s"} left.`;
+    const late = lateWords(running.lateHours);
+    // Each number says what it is measured against: the last step's date in
+    // the current plan, and the forecast against the original plan.
+    sub = `Its last step is planned for ${when(running.plannedFinish)}.${running.forecastFinish ? ` Forecast end ${when(running.forecastFinish)}${late ? `, ${late} against the original plan` : ""}.` : ""}`;
+    facts = [
+      { label: "Steps left", value: left, tone: "bad", hero: true },
+      { label: "Overdue", value: running.overdue, tone: running.overdue ? "bad" : undefined },
+      { label: "Done", value: `${running.pct}%` },
+    ];
   } else if (running) {
     answer = `${who(running)} is ${running.pct}% done.`;
     const late = lateWords(running.lateHours);
@@ -561,12 +575,14 @@ export default function ProjectDetailPage() {
         </span>
       )
       : s.state === "running" ? (
-        <span className="block truncate">{s.pct}% done{s.standing === "behind" && <span className={`max-sm:hidden ${red}`}>, {h1(s.gapHours)} h behind</span>}</span>
+        <span className="block truncate">{s.pct}% done{(s.lateHours ?? 0) >= 0.5 ? <span className={`max-sm:hidden ${red}`}>, forecast {late}</span> : s.standing === "behind" && <span className={`max-sm:hidden ${red}`}>, {h1(s.gapHours)} h behind</span>}</span>
       )
         : s.state === "not started" ? <span className="block">Not started</span> : <span className="block">No schedule yet</span>;
     return {
       label: s.id === "all" ? "Work" : s.name,
       state: (s.state === "finished" ? "done" : s.state === "running" ? "now" : "next") as "done" | "now" | "next",
+      tone: bad ? "bad" as const : undefined,
+      short: s.state === "finished" ? (late ?? "Done") : s.state === "running" ? `${s.pct}% done${(s.lateHours ?? 0) >= 0.5 ? `, forecast ${late}` : s.standing === "behind" ? `, ${h1(s.gapHours)} h behind` : ""}` : s.state === "not started" ? "Not started" : "No schedule yet",
       note: <>
         {ph && <span className="block max-sm:hidden">{phaseDates(ph).replace(" – ", " to ")}</span>}
         {where}
@@ -574,7 +590,7 @@ export default function ProjectDetailPage() {
     };
   });
   const closeNote = project.status === "completed" ? "Complete" : close ? (close.open.length ? <><span className="max-sm:hidden">{close.open[0].name}</span><span className="sm:hidden">{close.open.length} left</span></> : "Ready to close") : workDone ? "Next" : "After the work";
-  const lineSteps = standings ? [...bandSteps, { label: "Close-out", state: (project.status === "completed" ? "done" : workDone ? "now" : "next") as "done" | "now" | "next", note: closeNote }] : null;
+  const lineSteps = standings ? [...bandSteps, { label: "Close-out", state: (project.status === "completed" ? "done" : workDone ? "now" : "next") as "done" | "now" | "next", note: closeNote, short: closeNote }] : null;
 
   // The one orange action: what's next for the project, unless the tab
   // that does it is the one open (its own button is the orange one there).
@@ -691,18 +707,9 @@ export default function ProjectDetailPage() {
         title={answer}
         sub={sub}
         facts={heroFacts}
+        slim={tab !== "plan"}
         primary={primary}
         tools={<>
-          {phases.length > 0 && (isScheduleTab(tab) || tab === "costs") && (
-            <label className="inline-flex items-center">
-              <span className="sr-only">Phase</span>
-              <select value={phase ?? ""} onChange={(e) => setPhase(e.target.value || null)}
-                className={`${heroQuiet} max-sm:max-w-[8.5rem] pr-7 cursor-pointer [&_option]:bg-[var(--color-surface)] [&_option]:text-[var(--color-text)]`}>
-                <option value="">All phases</option>
-                {phases.map((ph) => <option key={ph.id} value={ph.id}>{ph.name}</option>)}
-              </select>
-            </label>
-          )}
           {project.id && project.orgId && uid && (
             <span className="max-md:hidden inline-flex items-center gap-2">
               <PresenceIndicator resourceType="project" resourceId={project.id} userId={uid} userName={userEmail?.split("@")[0]} role={activeRole || undefined} />
@@ -733,7 +740,7 @@ export default function ProjectDetailPage() {
         )}
         {lineSteps && lineSteps.length > 1 && (
           <div className="max-w-[860px]" aria-label="Phases">
-            <StepLine onDark steps={lineSteps} />
+            <StepLine onDark compact={tab !== "plan"} steps={lineSteps} />
           </div>
         )}
         {/* TABS: the five for running the job, then the records used every
@@ -780,6 +787,20 @@ export default function ProjectDetailPage() {
       {/* CONTENT: white cards on the paper, over the band's bottom edge. The
           schedule's tabs use the full width; the rest a reading width. */}
       <PageBody>
+        {/* Which phase this tab shows, in sight right above what it filters,
+            with each phase's step count; the chosen one is marked. */}
+        {phases.length > 0 && (isScheduleTab(tab) || tab === "costs") && (
+          <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Phase shown">
+            <span className="text-body font-medium text-[var(--color-text-muted)] mr-1">Showing</span>
+            {[{ id: null as string | null, name: "All phases", steps: (standings ?? []).reduce((n, s) => n + s.steps, 0) },
+              ...phases.map((ph) => ({ id: ph.id as string | null, name: ph.name, steps: standings?.find((s) => s.id === ph.id)?.steps ?? 0 }))].map((o) => (
+              <button key={o.id ?? "all"} type="button" aria-pressed={(phase ?? null) === o.id} onClick={() => setPhase(o.id)} className="ui-chip">
+                {o.name}
+                {standings && <span className="tabular-nums font-normal text-[var(--color-text-muted)]">{o.steps} steps</span>}
+              </button>
+            ))}
+          </div>
+        )}
         {askStep && project.id && <ProjectAsk stepId={askStep} projectId={project.id} onWorkTab={tab === "work"} />}
         {/* The work is done: what's left to close, as one path. */}
         {tab === "plan" && closing && (

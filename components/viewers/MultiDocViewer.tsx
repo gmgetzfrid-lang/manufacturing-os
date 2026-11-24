@@ -60,9 +60,9 @@ pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
 // The sheet's state in words on the charcoal: status colors keep their
 // meanings (green issued, amber not yet / not current, red void).
 const STATUS_TONE: Record<ViewBadgeTone, string> = {
-  controlled: "text-emerald-400",
-  caution: "text-amber-400",
-  danger: "text-rose-400",
+  controlled: "text-[var(--on-dark-good)]",
+  caution: "text-[var(--on-dark-warn)]",
+  danger: "text-[var(--on-dark-bad)]",
   muted: "text-[var(--color-text-muted)]",
 };
 
@@ -1136,7 +1136,7 @@ export default function MultiDocViewer({ docs, onClose, embedded = false, action
                 className="bg-transparent text-body font-medium text-[var(--color-text)] placeholder:text-[var(--color-text-muted)] outline-none w-full min-w-0"
                 title="Search anything: equipment tag, sheet #, document name or any metadata. Typo-tolerant (P-34 = p34). Enter jumps; + pins a sheet to your focus set."
               />
-              {searchMsg && <span className={`text-body font-medium shrink-0 ${searchMsg === "No match" ? "text-rose-400" : "text-[var(--color-text-muted)]"}`}>{searchMsg}</span>}
+              {searchMsg && <span className={`text-body font-medium shrink-0 ${searchMsg === "No match" ? "text-[var(--on-dark-bad)]" : "text-[var(--color-text-muted)]"}`}>{searchMsg}</span>}
               {search ? (
                 <button type="button" onMouseDown={(e) => { e.preventDefault(); setSearch(""); setSearchMsg(null); setShowSuggest(false); searchInputRef.current?.focus(); }} title="Clear" aria-label="Clear the search" className="ui-hit shrink-0 w-6 h-6 grid place-items-center rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)]"><X className="w-3.5 h-3.5" /></button>
               ) : (
@@ -1300,7 +1300,7 @@ export default function MultiDocViewer({ docs, onClose, embedded = false, action
         </header>
 
         {note && (
-          <p role="alert" className={`${vNote} text-amber-300`}>
+          <p role="alert" className={`${vNote} text-[var(--on-dark-warn)]`}>
             <ShieldAlert className="w-3.5 h-3.5 shrink-0" />
             <span className="min-w-0">{note}</span>
             {onDismissNote && (
@@ -1310,7 +1310,7 @@ export default function MultiDocViewer({ docs, onClose, embedded = false, action
         )}
 
         {actionError && !downloadConfirm && (
-          <p role="alert" className={`${vNote} text-rose-300`}>
+          <p role="alert" className={`${vNote} text-[var(--on-dark-bad)]`}>
             <ShieldAlert className="w-3.5 h-3.5 shrink-0" />
             <span className="min-w-0">{actionError}</span>
             <button type="button" onClick={() => setActionError(null)} aria-label="Dismiss" className="ui-hit ml-auto shrink-0 w-7 h-7 grid place-items-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-ink-2)]"><X className="w-3.5 h-3.5" /></button>
@@ -1456,7 +1456,7 @@ export default function MultiDocViewer({ docs, onClose, embedded = false, action
             </button>
           ))}
           <div className="w-px h-5 shrink-0 bg-[var(--color-ink-line)] mx-0.5" aria-hidden="true" />
-          <button type="button" onClick={() => clearActiveMarkup(activeEntry?.doc.id)} title="Clear this sheet's markup" aria-label="Clear this sheet's markup" className="pointer-coarse:w-11 pointer-coarse:h-11 w-9 h-9 shrink-0 rounded-lg grid place-items-center text-[var(--color-text-muted)] hover:text-rose-400 hover:bg-[var(--color-ink-2)] transition-colors"><Trash2 className="w-4 h-4" /></button>
+          <button type="button" onClick={() => clearActiveMarkup(activeEntry?.doc.id)} title="Clear this sheet's markup" aria-label="Clear this sheet's markup" className="pointer-coarse:w-11 pointer-coarse:h-11 w-9 h-9 shrink-0 rounded-lg grid place-items-center text-[var(--color-text-muted)] hover:text-[var(--on-dark-bad)] hover:bg-[var(--color-ink-2)] transition-colors"><Trash2 className="w-4 h-4" /></button>
           <button type="button" onClick={() => setMarkupMode(false)} title="Done marking up" className="pointer-coarse:h-11 ml-1 shrink-0 h-8 px-3 rounded-lg bg-[var(--color-ink-2)] hover:bg-[var(--color-ink-line)] text-[var(--color-text)] text-body font-medium">Done</button>
         </div>
       )}

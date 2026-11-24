@@ -257,7 +257,7 @@ export default function SecureDocViewer({
 
       {/* Someone else is mid-change on this document: a plain line. */}
       {lockHolder && (
-        <div className="px-3 py-1.5 border-b border-[var(--color-border)] flex items-center gap-2 text-body text-amber-300 shrink-0 z-50">
+        <div className="px-3 py-1.5 border-b border-[var(--color-border)] flex items-center gap-2 text-body text-[var(--on-dark-warn)] shrink-0 z-50">
           <Lock className="w-3.5 h-3.5 shrink-0" />
           <span className="truncate">
             <b>{lockHolder.name || 'Another user'}</b> has this checked out
@@ -315,7 +315,7 @@ export default function SecureDocViewer({
           </div>
         ) : error ? (
           <div role="alert" className="absolute inset-0 flex flex-col items-center justify-center z-20 px-6 text-center">
-            <AlertTriangle className="w-8 h-8 mb-3 text-rose-400" />
+            <AlertTriangle className="w-8 h-8 mb-3 text-[var(--on-dark-bad)]" />
             <h3 className="font-display text-section font-semibold text-[var(--color-text)]">Couldn&apos;t open the preview</h3>
             <p className="text-body mt-1 text-[var(--color-text-muted)] max-w-md">{error}</p>
           </div>

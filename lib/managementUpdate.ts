@@ -512,14 +512,16 @@ export function discoveryBlock(list: Discovery[], f: { DTs: (ms: number) => stri
   /** The close-out: the work as the schedule has it now (and the first estimate when it changed). */
   now = false): ExportBlock {
   return {
-    k: "table", head: ["When", "Task", "What", "Work it added", "What it did"], align: ["left", "left", "left", "left", "left"], nowrap: [0],
+    // Short columns on the row; what was found and the work it added, the
+    // long part, on one full-width line under it (nothing left out).
+    k: "table", head: ["When", "Task", "Kind", "What it did"], align: ["left", "left", "left", "left"], nowrap: [0],
     rows: list.map((d) => [
       f.DTs(d.record.foundAt),
       { t: d.task?.name ?? "", bold: true, ...(d.task?.workOrderRef ? { sub: [{ t: `WO ${d.task.workOrderRef}` }] } : {}) },
-      { t: d.record.what, sub: [{ t: ADDED[addedKind(d.record)].word, tone: "slate" as const }, ...(d.record.approvedBy ? [{ t: `Approved by ${d.record.approvedBy}`, tone: "muted" as const }] : [])] },
-      { t: `${d.steps.length} step${d.steps.length === 1 ? "" : "s"}:`, lines: d.steps.map((m) => ({ t: discoveryStepLine(m, f.hrs) })) },
+      { t: ADDED[addedKind(d.record)].word, ...(d.record.approvedBy ? { sub: [{ t: `Approved by ${d.record.approvedBy}`, tone: "muted" as const }] } : {}) },
       { t: now ? impactNowLine(d, f.hrs, f.word, f.tz) : impactLine(d.record.impact, f.hrs, f.word), tone: d.record.impact.critical ? "rose" : "slate", bold: d.record.impact.critical },
     ] as ExportCell[]),
+    notes: list.map((d) => `${d.record.what.trim().replace(/\.$/, "")}. Work it added, ${d.steps.length} step${d.steps.length === 1 ? "" : "s"}: ${d.steps.map((m) => discoveryStepLine(m, f.hrs)).join("; ")}.`),
   } as ExportBlock;
 }
 

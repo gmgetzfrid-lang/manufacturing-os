@@ -65,16 +65,22 @@ export function WoClassSelects({ c, units, types, onUnits, onTypes, className = 
   return (
     <span className={`inline-flex flex-wrap items-center gap-1.5 min-w-0 max-w-full ${className}`}>
       {showUnit && (
-        <select value={units[0] ?? ""} onChange={(e) => onUnits(e.target.value ? [e.target.value] : [])} aria-label="Unit" className={sel(units.length > 0)}>
-          <option value="">All units</option>
-          {c.choices.units.map((u) => <option key={u.code} value={u.code}>{u.label} · {u.n}</option>)}
-        </select>
+        <label className="inline-flex items-center gap-1.5 min-w-0 flex-1 sm:flex-none">
+          <span className="shrink-0 text-body text-[var(--color-text-muted)]">Unit</span>
+          <select value={units[0] ?? ""} onChange={(e) => onUnits(e.target.value ? [e.target.value] : [])} className={sel(units.length > 0)}>
+            <option value="">All units</option>
+            {c.choices.units.map((u) => <option key={u.code} value={u.code}>{u.label} · {u.n}</option>)}
+          </select>
+        </label>
       )}
       {showType && (
-        <select value={types[0] ?? ""} onChange={(e) => onTypes(e.target.value ? [e.target.value] : [])} aria-label="Equipment type" className={sel(types.length > 0)}>
-          <option value="">All equipment types</option>
-          {c.choices.types.map((t) => <option key={t.code} value={t.code}>{t.label} · {t.n}</option>)}
-        </select>
+        <label className="inline-flex items-center gap-1.5 min-w-0 flex-1 sm:flex-none">
+          <span className="shrink-0 text-body text-[var(--color-text-muted)]">Type</span>
+          <select value={types[0] ?? ""} onChange={(e) => onTypes(e.target.value ? [e.target.value] : [])} className={sel(types.length > 0)}>
+            <option value="">All equipment types</option>
+            {c.choices.types.map((t) => <option key={t.code} value={t.code}>{t.label} · {t.n}</option>)}
+          </select>
+        </label>
       )}
     </span>
   );

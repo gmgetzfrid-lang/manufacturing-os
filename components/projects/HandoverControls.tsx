@@ -3,7 +3,7 @@
 // The turnover's draft controls (screen only — never printed):
 //   TryControl — on a step carried to the other crew: "night could try",
 //                which crew (the app's guesses first, with why), a note
-//   ShipBar    - Draft / Locked: Lock report, Unlock
+//   ShipBar    - Open / Locked, in one phrase: Lock report, Unlock
 
 import React, { useState } from "react";
 import { Lock, Unlock } from "lucide-react";
@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/Button";
 import { ErrorNote } from "@/components/ui/ErrorNote";
 import type { HandoverDecision } from "@/lib/shiftHandover";
 import { appConfirm } from "@/components/providers/DialogProvider";
+import HelpTooltip from "@/components/ui/HelpTooltip";
 
 export function TryControl({ kind, decision, suggestions, crews, disabled, onChange, inherit }: {
   kind: "day" | "night";
@@ -64,8 +65,10 @@ export function TryControl({ kind, decision, suggestions, crews, disabled, onCha
 
 /** The report's lock: open while it's being filled in; locked once the
  *  turnover is done, so nobody changes the wrong day's report by mistake.
- *  Unlocking asks first. Locking or unlocking swaps the line at once, so
- *  the line itself is the answer to the tap. */
+ *  Unlocking asks first. One short phrase and one quiet button, on the
+ *  line under the toolbar (beside the shifts it covers), never a banner
+ *  of its own; why it matters sits behind the "?". Locking or unlocking
+ *  swaps the phrase at once, so the line itself is the answer to the tap. */
 export function ShipBar({ shippedAt, shippedBy, tries, canShip, busy, err, onShip, onUnship, when, label, endedAt }: {
   shippedAt: string | null; shippedBy: string | null; tries: number; canShip: boolean; busy: boolean; err: string | null;
   onShip: () => void; onUnship: () => void; when: (iso: string) => string;
@@ -81,11 +84,14 @@ export function ShipBar({ shippedAt, shippedBy, tries, canShip, busy, err, onShi
     <ErrorNote compact className="w-full" title="Couldn't read or save this report's lock."
       next="The report below is still up to date. Reload to try again." retryLabel="Reload" onRetry={() => window.location.reload()} />
   ) : null;
+  const asked = tries ? `${tries} step${tries === 1 ? "" : "s"} asked to try` : null;
+  const row = "flex flex-wrap items-center gap-x-2 gap-y-1 text-body print:hidden";
   if (shippedAt) {
     return (
-      <div role="status" className="px-4 sm:px-5 py-2 border-b border-[var(--color-border)] flex flex-wrap items-center gap-x-3 gap-y-2 text-body text-[var(--color-text)] print:hidden">
+      <div role="status" className={`${row} text-[var(--color-text)]`}>
         <Lock aria-hidden className="w-4 h-4 shrink-0 text-[var(--state-released-text)]" />
-        <span className="flex-1 min-w-[200px]"><b className="font-medium">Locked</b> {when(shippedAt)}{shippedBy ? ` by ${shippedBy}` : ""}{tries ? `, ${tries} step${tries === 1 ? "" : "s"} asked to try` : ""}. It can&apos;t be changed.</span>
+        <span><b className="font-medium">Locked</b> {when(shippedAt)}{shippedBy ? ` by ${shippedBy}` : ""}{asked ? `, ${asked}` : ""}</span>
+        <HelpTooltip>It can&apos;t be changed. Unlock it on purpose to change it; it can be changed again until it&apos;s locked.</HelpTooltip>
         {canShip && (
           <Button size="sm" variant="secondary" loading={busy}
             onClick={() => { void appConfirm({ title: `Unlock the ${label} report?`, message: "It can be changed again until it's locked.", confirmLabel: "Unlock report" }).then((ok) => { if (ok) onUnship(); }); }}>
@@ -96,18 +102,13 @@ export function ShipBar({ shippedAt, shippedBy, tries, canShip, busy, err, onShi
       </div>
     );
   }
-  // Open: one quiet line and a quiet Lock button (the report's one accent
-  // button is Email / Print). Once the shift is over, the line says the
-  // report is waiting to be locked, with the late edge.
+  // Open, the shift over: a held dot and the word, the late edge with it.
   if (endedAt) {
     return (
-      <div className="relative px-4 sm:px-5 py-2 border-b border-[var(--color-border)] flex flex-wrap items-center gap-x-3 gap-y-2 text-body text-[var(--color-text)] print:hidden">
-        <span aria-hidden className="absolute left-0 top-0 bottom-0 w-[3px] bg-[var(--state-held)]" />
-        <Unlock aria-hidden className="w-4 h-4 shrink-0 text-[var(--state-held-text)]" />
-        <span className="flex-1 min-w-[200px]">
-          <b className="font-medium">Lock the {label} report.</b> The shift ended {when(endedAt)} and its report is still open for changes{tries ? ` (${tries} asked to try)` : ""}.
-          {canShip ? " Locking it keeps anyone from changing the wrong day's report." : " Someone who can edit the schedule locks it."}
-        </span>
+      <div className={`${row} text-[var(--color-text)]`}>
+        <span aria-hidden className="w-2 h-2 shrink-0 rounded-full bg-[var(--state-held)]" />
+        <span><b className="font-medium text-[var(--state-held-text)]">Not locked</b> · shift ended {when(endedAt)}{asked ? ` · ${asked}` : ""}</span>
+        <HelpTooltip>The {label} report is still open for changes. {canShip ? "Locking it keeps anyone from changing the wrong day's report." : "Someone who can edit the schedule locks it."}</HelpTooltip>
         {canShip && (
           <Button size="sm" variant="secondary" loading={busy} onClick={onShip}>
             <Lock className="w-4 h-4" /> Lock report
@@ -118,14 +119,15 @@ export function ShipBar({ shippedAt, shippedBy, tries, canShip, busy, err, onShi
     );
   }
   return (
-    <div className="px-4 sm:px-5 py-2 border-b border-[var(--color-border)] flex flex-wrap items-center gap-x-3 gap-y-2 text-body text-[var(--color-text-muted)] print:hidden">
+    <div className={`${row} text-[var(--color-text-muted)]`}>
       <Unlock aria-hidden className="w-4 h-4 shrink-0" />
-      <span className="flex-1 min-w-[200px]">Open for changes{tries ? ` (${tries} asked to try)` : ""}. Lock it when the turnover is done.</span>
-      {canShip ? (
+      <span>Open for changes{asked ? ` · ${asked}` : ""}</span>
+      <HelpTooltip>Lock it when the turnover is done. {canShip ? "A locked report can't be changed by mistake." : "Only someone who can edit the schedule can lock it."}</HelpTooltip>
+      {canShip && (
         <Button size="sm" variant="secondary" loading={busy} onClick={onShip}>
           <Lock className="w-4 h-4" /> Lock report
         </Button>
-      ) : <span className="text-body">Only someone who can edit the schedule can lock it.</span>}
+      )}
       {problem}
     </div>
   );

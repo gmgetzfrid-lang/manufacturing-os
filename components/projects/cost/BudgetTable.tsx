@@ -1,15 +1,16 @@
 "use client";
 
 // BudgetTable: the budget lines as a table you fully control: change any
-// cell where it is (name, type, contractor, phase, budget), add a line on
-// the last row, pick lines and set their phase, close or delete them
+// cell where it is (name, type, contractor, phase, budget), add a line the
+// way you would in a spreadsheet (under the header; Enter adds it, rows
+// pasted from Excel are added all at once), pick lines and set their phase, close or delete them
 // together, group them with subtotals, and from a line's menu move its
 // spending to another line, close it or delete it (with Undo). A line
 // with spending booked on it is closed rather than deleted, so no money
 // record is ever lost. Each line still opens to its entries and history.
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Plus, MoreHorizontal, ChevronRight, Loader2, Undo2, Search } from "lucide-react";
+import { MoreHorizontal, ChevronRight, Loader2, Undo2, Search } from "lucide-react";
 import type { Actor, CostAccount, CostEntry, CostParty } from "@/lib/costs";
 import { saveAccount } from "@/lib/costs";
 import { reviseAccount } from "@/lib/costRevisions";
@@ -18,6 +19,9 @@ import { phaseAmount, type ProjectPhase } from "@/lib/projectPhases";
 import { appConfirm } from "@/components/providers/DialogProvider";
 import { fmtMoney as fmtMoneyCents } from "@/lib/costs";
 import { sayError } from "@/components/projects/sayError";
+import HelpTooltip from "@/components/ui/HelpTooltip";
+import { InlineAddRow } from "@/components/ui/InlineAddRow";
+import { SpendBar } from "@/components/projects/cost/Answer";
 
 /** Whole dollars unless there are cents ("$0", "$8,000", "$1,250.50"). */
 function fmtMoney(n: number, cur = "USD"): string {
@@ -48,7 +52,6 @@ export default function BudgetTable({ orgId, projectId, accounts, numbers, entri
   const [moving, setMoving] = useState<{ from: CostAccount; to: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [undo, setUndo] = useState<{ row: Record<string, unknown>; name: string } | null>(null);
-  const [draft, setDraft] = useState({ name: "", type: "subcontract", budget: "" });
   const undoTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => { if (undoTimer.current) clearTimeout(undoTimer.current); }, []);
 
@@ -110,13 +113,45 @@ export default function BudgetTable({ orgId, projectId, accounts, numbers, entri
     closed ? `${list.length === 1 ? list[0].name : `${list.length} lines`} closed: kept for the record, out of the totals.` : `${list.length === 1 ? list[0].name : `${list.length} lines`} open again.`).then((ok) => { if (ok) setSel(new Set()); });
   const setPhase = (list: CostAccount[], phaseId: string | null) => run(() => setLinesPhase({ orgId, ids: list.map((a) => a.id), phaseId, actor }),
     `${list.length === 1 ? list[0].name : `${list.length} lines`}: ${phaseId ? `${phaseName(phaseId)} only` : "split by the phases"}.`).then((ok) => { if (ok) setSel(new Set()); });
-  const add = async () => {
-    const budget = Number(draft.budget.replace(/[$,\s]/g, "") || 0);
-    if (!draft.name.trim()) { setErr("Give the line a name."); return; }
-    if (!Number.isFinite(budget) || budget < 0) { setErr("The budget must be a number, 0 or more."); return; }
-    const ok = await run(() => saveAccount({ orgId, projectId, patch: { name: draft.name.trim(), costType: draft.type, budget, currency: cur }, actor }), `${draft.name.trim()} added.`);
-    if (ok) setDraft({ name: "", type: draft.type, budget: "" });
+  // A new line: its name, budget and type (subcontract unless typed). The
+  // contractor and phase are set on the line itself.
+  const lineOf = (name: string, budgetText: string, typeText: string): { name: string; budget: number; type: string } | string => {
+    const budget = Number(budgetText.replace(/[$,\s]/g, "") || 0);
+    if (!name.trim()) return "Type the budget line's name to add it.";
+    if (!Number.isFinite(budget) || budget < 0) return `${name.trim()}: type the budget as a number, 0 or more.`;
+    const t = typeText.trim().toLowerCase();
+    const type = !t ? "subcontract" : TYPES.find((x) => x === t || x.startsWith(t));
+    if (!type) return `${name.trim()}: type one of ${TYPES.map(cap).join(", ")}.`;
+    return { name: name.trim(), budget, type };
   };
+  const addLine = async (l: { name: string; budget: number; type: string }) => {
+    const r = await saveAccount({ orgId, projectId, patch: { name: l.name, costType: l.type, budget: l.budget, currency: cur }, actor });
+    if (!r.ok) throw new Error(r.error ?? `${l.name} wasn't added. Try again.`);
+  };
+  const addRow = (
+    <InlineAddRow what="budget line" addLabel="Add line"
+      fields={[
+        { key: "name", label: "Budget line", placeholder: "New budget line", required: true },
+        { key: "budget", label: `Budget (${cur})`, type: "number", width: "w-full sm:w-36" },
+        { key: "type", label: "Type", placeholder: "Type: subcontract", list: TYPES.map(cap), width: "w-full sm:w-40" },
+      ]}
+      onAdd={async (v) => {
+        const l = lineOf(v.name, v.budget, v.type);
+        if (typeof l === "string") return l;
+        await addLine(l);
+        onChanged();
+      }}
+      onPasteRows={async (pasted) => {
+        let added = 0;
+        try {
+          for (const [name = "", budget = "", type = ""] of pasted) {
+            const l = lineOf(name, budget, type);
+            if (typeof l === "string") return added ? `${added} added, then: ${l}` : l;
+            await addLine(l); added++;
+          }
+        } finally { if (added) onChanged(); }
+      }} />
+  );
 
   const pickedAccounts = accounts.filter((a) => sel.has(a.id));
   const allShown = rows.length > 0 && rows.every((r) => sel.has(r.account.id));
@@ -124,11 +159,23 @@ export default function BudgetTable({ orgId, projectId, accounts, numbers, entri
   const td = "px-2 py-1.5 align-middle";
   const sharePhase = phase ? phases.find((p) => p.id === phase) ?? null : null;
 
+  // No lines yet: only the row to type them in (the Budget sub-tab above
+  // says there are none and offers the AFE drop).
+  if (accounts.length === 0) {
+    if (!canManage) return null;
+    return (
+      <div className="bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] px-4 sm:px-5 pt-3 pb-1">
+        <h3 className="text-body font-medium text-[var(--color-text)] mb-2">Or type the lines in</h3>
+        {addRow}
+      </div>
+    );
+  }
+
   return (
     <div className="bg-[var(--color-surface)] rounded-lg border border-[var(--color-border)] overflow-hidden">
       <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap">
-        <span className="text-body font-medium text-[var(--color-text-muted)]">Budget lines</span>
-        <span className="text-caption text-[var(--color-text-muted)]">{accounts.length - closedCount} open{closedCount ? ` · ${closedCount} closed` : ""}</span>
+        <span className="text-body font-medium text-[var(--color-text)]">Budget lines</span>
+        <span className="text-body text-[var(--color-text-muted)]">{accounts.length - closedCount} open{closedCount ? ` · ${closedCount} closed` : ""}</span>
         <span className="relative ml-auto">
           <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[var(--color-text-faint)]" />
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Find a line" aria-label="Find a line" className="h-8 pointer-coarse:h-11 w-40 pl-7 pr-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-caption" />
@@ -144,6 +191,8 @@ export default function BudgetTable({ orgId, projectId, accounts, numbers, entri
           </label>
         )}
       </div>
+
+      {canManage && <div className="px-4 pt-3 pb-1 border-b border-[var(--color-border)]">{addRow}</div>}
 
       {canManage && sel.size > 0 && (
         <div className="px-4 py-2 border-b border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center gap-2 flex-wrap text-caption">
@@ -189,7 +238,7 @@ export default function BudgetTable({ orgId, projectId, accounts, numbers, entri
               <th className={`${th} text-right`}>Budget</th>
               {sharePhase && <th className={`${th} text-right`}>{sharePhase.name}</th>}
               <th className={`${th} text-right`}>Committed</th><th className={`${th} text-right`}>Spent</th><th className={`${th} text-right`}>Left</th>
-              <th className={`${th} w-28`}>Used</th><th className="w-10" />
+              <th className={`${th} w-36`}>Spent of budget</th><th className="w-10" />
             </tr>
           </thead>
           <tbody>
@@ -201,7 +250,7 @@ export default function BudgetTable({ orgId, projectId, accounts, numbers, entri
                     <td className={`${td} text-right font-medium tabular-nums`}>{fmtMoney(g.budget, cur)}</td>
                     {sharePhase && <td />}
                     <td className={`${td} text-right tabular-nums`}>{fmtMoney(g.committed, cur)}</td><td className={`${td} text-right tabular-nums`}>{fmtMoney(g.spent, cur)}</td>
-                    <td className={`${td} text-right tabular-nums`}>{fmtMoney(g.budget - g.spent, cur)}</td><td colSpan={2} />
+                    <td className={`${td} text-right tabular-nums`}>{g.spent === 0 ? <NoInvoices /> : fmtMoney(g.budget - g.spent, cur)}</td><td colSpan={2} />
                   </tr>
                 )}
                 {g.rows.map(({ account: a, committed, spent }) => {
@@ -245,8 +294,13 @@ export default function BudgetTable({ orgId, projectId, accounts, numbers, entri
                         {sharePhase && <td className={`${td} text-right tabular-nums text-[var(--color-text-muted)]`}>{fmtMoney(share, cur)}</td>}
                         <td className={`${td} text-right tabular-nums`}>{fmtMoney(committed, cur)}</td>
                         <td className={`${td} text-right tabular-nums ${spent > a.budget && a.budget > 0 ? "text-[var(--state-overdue-text)] font-medium" : ""}`}>{fmtMoney(spent, cur)}</td>
-                        <td className={`${td} text-right tabular-nums ${left < 0 ? "text-[var(--state-overdue-text)] font-medium" : ""}`}>{fmtMoney(left, cur)}</td>
-                        <td className={td}><div className="h-2 rounded-full bg-[var(--color-accent-soft)] overflow-hidden"><div className={`h-full rounded-full ${spent > a.budget && a.budget > 0 ? "bg-[var(--state-overdue)]" : "bg-[var(--color-main)]"}`} style={{ width: `${used}%` }} /></div></td>
+                        <td className={`${td} text-right tabular-nums ${left < 0 ? "text-[var(--state-overdue-text)] font-medium" : ""}`}>{spent === 0 ? <NoInvoices /> : fmtMoney(left, cur)}</td>
+                        <td className={td}>
+                          <div className="flex items-center gap-2" title={`${Math.round(used)}% of the line's budget spent`}>
+                            <div className="flex-1 h-2.5 rounded-[3px] bg-[var(--viz-track)] border border-[var(--color-border-strong)] overflow-hidden"><div className={`h-full ${spent > a.budget && a.budget > 0 ? "bg-[var(--state-overdue)]" : "bg-[var(--color-main)]"}`} style={{ width: `${used}%` }} /></div>
+                            <span className="w-10 text-right tabular-nums text-caption text-[var(--color-text-muted)]">{a.budget > 0 ? `${Math.round((spent / a.budget) * 100)}%` : "-"}</span>
+                          </div>
+                        </td>
                         <td className={`${td} relative`}>
                           {canManage && (
                             <button type="button" onClick={() => setMenu(menu === a.id ? null : a.id)} aria-label={`${a.name} actions`} className="ui-hit w-8 h-8 rounded-lg hover:bg-[var(--color-surface-2)] flex items-center justify-center"><MoreHorizontal className="w-4 h-4" /></button>
@@ -270,17 +324,7 @@ export default function BudgetTable({ orgId, projectId, accounts, numbers, entri
               </React.Fragment>
             ))}
             {rows.length === 0 && (
-              <tr><td colSpan={99} className="px-4 py-8 text-center text-[var(--color-text-muted)]">{accounts.length ? "No line matches." : "No budget lines yet. Add the first one below, or drop the AFE above to build them."}</td></tr>
-            )}
-            {canManage && (
-              <tr className="border-t border-[var(--color-border)] bg-[var(--color-surface-2)]/40">
-                <td className={td} />
-                <td className={td}><input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} onKeyDown={(e) => { if (e.key === "Enter") void add(); }} placeholder="+ Add a line: name" aria-label="New line name" className="h-8 pointer-coarse:h-11 w-full rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2" /></td>
-                <td className={td}><select value={draft.type} onChange={(e) => setDraft({ ...draft, type: e.target.value })} aria-label="New line type" className="h-8 pointer-coarse:h-11 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1">{TYPES.map((t) => <option key={t} value={t}>{cap(t)}</option>)}</select></td>
-                <td className={td} />{phases.length > 0 && <td className={td} />}
-                <td className={td}><input value={draft.budget} onChange={(e) => setDraft({ ...draft, budget: e.target.value })} onKeyDown={(e) => { if (e.key === "Enter") void add(); }} inputMode="decimal" placeholder="$0" aria-label="New line budget" className="h-8 pointer-coarse:h-11 w-28 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-right" /></td>
-                <td colSpan={99} className={td}><button type="button" disabled={busy || !draft.name.trim()} onClick={() => void add()} className="inline-flex items-center gap-1 h-8 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] font-medium hover:bg-[var(--color-surface-2)] disabled:opacity-50"><Plus className="w-4 h-4" /> Add</button></td>
-              </tr>
+              <tr><td colSpan={99} className="px-4 py-6 text-center text-body text-[var(--color-text-muted)]">{q ? "No line matches." : "Every line is closed. Tick Closed to see them."}{q ? <> <button type="button" onClick={() => setQ("")} className="text-[var(--color-accent-text)] hover:underline">Clear</button></> : null}</td></tr>
             )}
           </tbody>
           {rows.length > 0 && (
@@ -290,7 +334,7 @@ export default function BudgetTable({ orgId, projectId, accounts, numbers, entri
                 <td className={`${td} text-right tabular-nums`}>{fmtMoney(totals.budget, cur)}</td>
                 {sharePhase && <td className={`${td} text-right tabular-nums`}>{fmtMoney(rows.filter((r) => r.account.status !== "closed").reduce((s, r) => s + (r.account.phaseId ? (r.account.phaseId === sharePhase.id ? r.account.budget : 0) : phaseAmount(r.account.budget, sharePhase.share)), 0), cur)}</td>}
                 <td className={`${td} text-right tabular-nums`}>{fmtMoney(totals.committed, cur)}</td><td className={`${td} text-right tabular-nums`}>{fmtMoney(totals.spent, cur)}</td>
-                <td className={`${td} text-right tabular-nums`}>{fmtMoney(totals.budget - totals.spent, cur)}</td><td colSpan={2} />
+                <td className={`${td} text-right tabular-nums`}>{totals.spent === 0 ? <NoInvoices /> : fmtMoney(totals.budget - totals.spent, cur)}</td><td colSpan={2} />
               </tr>
             </tfoot>
           )}
@@ -298,6 +342,12 @@ export default function BudgetTable({ orgId, projectId, accounts, numbers, entri
       </div>
     </div>
   );
+}
+
+/** In a "Left" cell when nothing is invoiced: the budget is not money to
+ *  spare until invoices say so (next-update 1). */
+function NoInvoices() {
+  return <span className="text-caption font-normal text-[var(--color-text-muted)] whitespace-nowrap">No invoices in yet</span>;
 }
 
 function MenuItem({ children, onClick, danger }: { children: React.ReactNode; onClick: () => void; danger?: boolean }) {
@@ -318,36 +368,44 @@ function Cell({ value, display, onSave, disabled, numeric, aria, className = "" 
   );
 }
 
-/** Each line: budget, committed and spent, side by side (the Overview). */
+/** How many lines the chart shows before "Show all". */
+const LINES_SHOWN = 14;
+
+/** Each budget line against its own budget, biggest first: the track is
+ *  that line's whole budget, filled with committed (gray) and spent
+ *  (solid), the line's size as its number and the words on the row. The
+ *  Overview and Close-out both draw it (docs/next-update.md 5). */
 export function LinesChart({ rows, cur, bare }: { rows: Array<{ name: string; budget: number; committed: number; spent: number }>; cur: string;
   /** Inside another card: no card of its own. */
   bare?: boolean }) {
-  const shown = rows.filter((r) => r.budget || r.committed || r.spent).sort((a, b) => b.budget - a.budget).slice(0, 14);
-  if (!shown.length) return null;
-  const max = Math.max(...shown.map((r) => Math.max(r.budget, r.committed, r.spent)), 1);
+  const [all, setAll] = useState(false);
+  const lines = rows.filter((r) => r.budget || r.committed || r.spent).sort((a, b) => b.budget - a.budget);
+  if (!lines.length) return null;
+  const shown = all ? lines : lines.slice(0, LINES_SHOWN);
+  const noneSpent = lines.every((r) => r.spent <= 0);
   return (
-    <div className={bare ? "" : "rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] px-4 sm:px-5 py-4"}>
-      <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
-        <span className="text-body font-medium text-[var(--color-text-muted)]">Each budget line</span>
-        <span className="flex items-center gap-3 text-body text-[var(--color-text-muted)]">
-          <span className="inline-flex items-center gap-1.5"><span className="w-3 h-2 rounded-sm bg-[var(--color-accent-soft)] ring-1 ring-inset ring-[var(--color-main)]/25" /> Budget</span>
-          <span className="inline-flex items-center gap-1.5"><span className="w-3 h-2 rounded-sm bg-[var(--color-main)]/55" /> Committed</span>
-          <span className="inline-flex items-center gap-1.5"><span className="w-3 h-2 rounded-sm bg-[var(--color-main)]" /> Spent</span>
-        </span>
+    <div className={bare ? "" : "rounded-xl bg-[var(--color-surface)] border border-[var(--color-border)] px-4 sm:px-5 py-4"}>
+      <div className="flex items-center gap-x-2 gap-y-1 mb-3 flex-wrap">
+        <h3 className="text-body font-medium text-[var(--color-text)]">Each budget line</h3>
+        <HelpTooltip>Each bar is that line&apos;s own budget, end to end. The solid part is what is spent (invoices posted); the gray part is what is committed (awarded quotes and POs). Biggest line first.</HelpTooltip>
+        <span className="text-body text-[var(--color-text-muted)]">{lines.length} line{lines.length === 1 ? "" : "s"}, biggest first{noneSpent ? " · No invoices in yet" : ""}</span>
       </div>
-      <div className="space-y-2">
-        {shown.map((r) => (
-          <div key={r.name} className="grid grid-cols-[minmax(0,180px)_minmax(0,1fr)_auto] gap-2 items-center text-body">
-            <span className="truncate text-[var(--color-text)]" title={r.name}>{r.name}</span>
-            <div className="space-y-0.5">
-              <div className="h-2 rounded-sm bg-[var(--color-accent-soft)] ring-1 ring-inset ring-[var(--color-main)]/25" style={{ width: `${(r.budget / max) * 100}%` }} />
-              <div className="h-1.5 rounded-sm bg-[var(--color-main)]/55" style={{ width: `${(r.committed / max) * 100}%` }} />
-              <div className={`h-2 rounded-sm ${r.spent > r.budget && r.budget > 0 ? "bg-[var(--state-overdue)]" : "bg-[var(--color-main)]"}`} style={{ width: `${(r.spent / max) * 100}%` }} />
+      <ul className="space-y-3">
+        {shown.map((r, i) => (
+          <li key={`${r.name}-${i}`} className="min-w-0">
+            <div className="flex items-baseline gap-3 mb-1">
+              <span className="min-w-0 flex-1 truncate text-body font-medium text-[var(--color-text)]" title={r.name}>{r.name}</span>
+              <span className="shrink-0 font-display tabular-nums text-body font-medium text-[var(--color-text)]">{r.budget > 0 ? fmtMoney(r.budget, cur) : "No budget"}</span>
             </div>
-            <span className={`font-display tabular-nums text-right ${r.spent > r.budget && r.budget > 0 ? "text-[var(--state-overdue-text)] font-semibold" : "text-[var(--color-text-muted)]"}`}>{fmtMoney(r.spent, cur)} / {fmtMoney(r.budget, cur)}</span>
-          </div>
+            <SpendBar name={r.name} budget={r.budget} committed={r.committed} spent={r.spent} cur={cur} />
+          </li>
         ))}
-      </div>
+      </ul>
+      {lines.length > LINES_SHOWN && (
+        <button type="button" onClick={() => setAll((v) => !v)} className="mt-3 inline-flex items-center min-h-10 pointer-coarse:min-h-11 text-body font-medium text-[var(--color-accent-text)] hover:underline">
+          {all ? `Show the biggest ${LINES_SHOWN}` : `Show all ${lines.length} lines`}
+        </button>
+      )}
     </div>
   );
 }

@@ -636,6 +636,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
               groups={planGroups}
               matchCount={planLeafStats.shown}
               totalCount={planLeafStats.total}
+              scope={pickedPhase ? pickedPhase.name : phases.length > 1 ? "All phases" : "Whole job"}
               classSelects={<WoClassSelects c={woClasses} units={planFilter.units ?? []} types={planFilter.types ?? []}
                 onUnits={(v) => setPlanFilter((f) => ({ ...f, units: v }))} onTypes={(v) => setPlanFilter((f) => ({ ...f, types: v }))} />}
             />

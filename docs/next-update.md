@@ -1,69 +1,74 @@
 # Next update: what we agreed to fix
 
-Collected Nov 24, 2026 from the owner's review of the project pages and reports. Nothing here is built yet. Rules referenced are in `docs/design-rules.md`.
+Collected Nov 24, 2026 from the owner's review of the project pages and reports. Rules referenced are in `docs/design-rules.md`.
 
-## 1. The screen must never contradict itself (do first)
-- Shift email and printout header says "ON TRACK" while the line under it says the phase finished 43.5 h late.
-- Project header: "Phase 1 is 99% done, forecast Dec 3, 791.4 h late"; the Work tab says Phase 1 "on track"; the project list says it ended 9 days ago. One story everywhere.
-- Hours over 24 read as days too ("791 h" means nothing; "33 days" does).
-- Close-out "Spent $0, Left $1,260,000" in green when no invoices are in: say "No invoices in yet".
+**Status (Nov 24, 2026, preview build):** built and checked on test data (type check, lint, 3,100+ tests, production build, phone crawl of 35 screens at 375 px). Each item says **Done** or **Open**. The open ones are listed again at the end.
+
+## 1. The screen must never contradict itself
+- **Done.** Shift email and printout header said "ON TRACK" while the line under it said the phase finished 43.5 h late. A phase past its planned finish now reads behind, everywhere (`lib/phaseStanding.ts`).
+- **Done.** Project header, Work tab and project list now tell one story: a running phase past its planned finish reads "past its planned finish, N steps left", with the forecast and how late against the original plan.
+- **Done.** Hours over 24 also read as days ("791.4 h late (33 days)").
+- **Done.** Close-out says "No invoices in yet" instead of a green "Left $1,260,000".
 
 ## 2. Project pages: stop the hunting
-- Project header (title, stats, phase stepper) takes about 400 px on every tab and the whole first phone screen. Full header on Plan only; one line on the other tabs (name, status, key number, small stepper).
-- Shift tab: 5 rows of controls before content; merge to 2, section links stay on screen while scrolling.
-- Shift tab: empty sections (Done 0, Waiting, Next, Discovery) each take about 100 px; fold into one line.
-- Shift tab: section titles repeat the full date ("Done - Day shift Thu, Nov 19 6:00 AM-6:00 PM"); use "Done · 0".
-- Shift tab: "Where we stand" shows 4 equal numbers; the one that needs action (Past due) is the big one.
-- Shift tab: pencil and trash on every attendee chip; show them only in "Edit attendees".
-- Work tab: opens at the job's first day with 235 rows expanded, mostly done. Default to open and late work first, finished groups folded ("112 of 113 done"), timeline starting at today.
-- Work tab: names cut at about 15 characters; widen. Done rows carry 4 "done" signals; one quiet gray.
-- Plan tab: 14 setup rows, 12 of them "Set". To-do rows first; fold the rest ("12 set · Show").
-- Project list: hide zero stats, show owner names not emails, pair the 99% bar with "1 step left · late".
-- Phone: the round account button floats over report text (rule T4).
+- **Done.** Full header on Plan only; one line on the other tabs (name, status, key number, small stepper).
+- **Done.** Shift tab: controls merged; section links stay on screen while scrolling.
+- **Done.** Shift tab: an empty section is one line ("Nothing added this shift.").
+- **Done.** Shift tab: short section titles ("Done · 0"); times go in the row.
+- **Done.** Shift tab: "Where we stand" leads with Past due.
+- **Done.** Shift tab: pencil and trash on attendees only after "Edit attendees".
+- **Done.** Work tab: open and late work first, finished groups folded ("112 of 113 done"); done rows one quiet gray.
+- **Done.** Work orders: which phase is shown is in sight above the list ("Showing: All phases · Phase 1 · Phase 2", each with its step count), and tapping one changes it. Same on the schedule tabs and Costs.
+- **Done.** Plan tab: to-do rows first; the rest fold ("12 set · Show").
+- **Done.** Project list: no zero stats, owner names not emails, "N steps left · late" beside a 90% or fuller bar.
+- **Not an app issue.** The round button floating over report text on the phone was the Next.js development indicator; it does not appear in the live app.
 
 ## 3. Shift email and printout (what management reads)
-- Order: status sentence, done, next shift, problems and follow-ups, safety, people. Today the attendee list (32 names on the Nov 19 day shift) fills the first screen; put a one-line head count up top in the form "<n> on site: <crew> <n>, <crew> <n>..." and the names at the end.
-- 21 checkboxes to set before each send: save the choice per project, one "Sections" link to change it.
-- Short labels ("Done", "Next shift"); times go in the row.
-- One status sentence with the key number, smaller tiles; drop bars that repeat 100%.
+- **Done.** Order: status sentence, done, next shift, problems and follow-ups, safety, people. A one-line head count up top; the names at the end.
+- **Done.** The section choice is saved per project; one "Sections" link changes it.
+- **Done.** Short labels ("Done", "Next shift"); times in the row.
+- **Done.** One status sentence with the key number.
+- **Open (kept on purpose).** The plant's own shift table has no "Next shift" row; it is the plant's form, so it was left as is. The Word file's header has no head count or key number yet.
 
 ## 4. Printed reports
-- Lead with the answer: "Where the time went" (late by, causes) right under the opening tiles of the close-out report.
-- Collapse repeated rows: 8 identical "Completed at Redman" rows into one with a count; about 20 identical "past plan, 99.7%" shift rows in the phase report into one line or a single plan-versus-actual chart.
-- Long notes get a full-width line under their row, not a narrow column.
+- **Done.** "Where the time went" sits right under the opening tiles of the close-out report.
+- **Done.** Phase report: three or more shifts in a row that say the same are one line ("Sun, Nov 1 to Mon, Nov 9: no change, 18 shifts").
+- **Open.** Other tables with identical rows (the 8 "Completed at Redman" rows in the close-out report) are not merged yet.
+- **Done.** Long notes get a full-width line under their row.
 
 ## 5. Charts the owner could not read
-- **Budget lines** (Costs): each bar is scaled to the biggest line ($720,000), so the longest pale bar looks like "100% used" when nothing is spent. Fix: each row's track is that line's own budget, filled with committed and spent; line size shown as a number.
-- **Where the late hours went** (post-event review): bars and causes are tied only by color; three similar grays; the palest bar is nearly invisible; numbers shown twice. Fix: each cause written on its own bar's row ("E-12 · 24 h · material shortfall set the finish"). Also check the E-17 bar, whose finding is titled "E-12 - Transmix Feed/Trans. Diesel Exchanger No. 2".
-- **As-built schedule**: colors mean crews but the legend does not say so; 50 shift columns squeezed so most steps are dots; the red line is the whole job's finish, not each phase's; no row says how late it was; plan line is a faint 4 px gray; rows in planned-start order. Fix: one row per work order with planned finish, actual finish, late by and waits; one bar (plan gray, actual solid, the part past its own plan in red, waits hatched); most late first; each phase its own block with its own finish line and fitted dates; crew colors only when a row is opened.
-- Build a mock-up of all three on the real project data and show the owner before changing the app.
+- **Done.** Budget lines: each row's track is that line's own budget, filled with committed and spent; the line's size is a number.
+- **Done.** Where the late hours went: each cause is written on its own bar's row; the bar's title comes from the job it was written on (the E-17 bar no longer carries E-12's title).
+- **Done.** As-built schedule: one row per work order, most late first, each phase its own block with its own planned finish line; plan gray, actual solid, the part past its own plan in red, waits hatched; the legend says what each color means.
+- These were built straight into the app (the owner asked for everything at once), not shown as mock-ups first.
 
 ## 6. Suggested schedule for next time: replay first, add people last
-The owner's principle: first see how the job could have been run better on what really happened, by timing and sequencing (logistics and execution). Add time or people only as a last resort.
-
-What it does today (lib/nextPlan.ts, lib/nextPlanLessons.ts):
-- Each activity gets its **planned** hours (shorter only if it was done in fewer shifts); work found by inspection is left out and shown as a risk; missed scope is put in from the start.
-- Each crew is held for the whole job at the size of its first shifts (CREW_RULE); work over that waits.
-- When the result misses this year's planned finish, it pulls the finish in with, in order of what saves most: start sooner, add nights, add another crew for the whole job; more time only when none of them closes the gap.
-- It has no step that asks "with the same people and the same work, how should it have been sequenced?" So the first levers it reaches for are more people and more shifts.
-
-What it should do, in this order:
-1. **Replay as built.** The real hours each step took, the discovery and added work at the time it was really found (not before), the same crews at the head counts recorded each shift, the same shutdown and start-up.
-2. **Better run, same resources.** Re-sequence only: start ready work as soon as a crew from that company is free, move a crew off a work order that sat with nothing logged onto ready work, keep only the links the work really needed. Show the new finish and each move with the hours it saves, written from the record in the form "<step> was ready at <time> and sat <n> shifts while <crew> was on <other work>; starting it then saves <n> h".
-3. **One-off events as a what-if.** A switch to take out a one-off delay (the owner names the leak) to show what the finish would have been without it. The post-event review's own split puts 24 of Phase 1's 33.5 late hours on "a material shortfall on E-12"; if that is the leak, about 9.5 h would remain by that split. The replay checks it properly, because taking one delay out can let another path set the finish.
-4. **Only then, the gap to the target**: the smallest added people or time that closes what is left, each with its hours saved and its cost.
-5. Say plainly what the replay cannot know (a wait with no reason logged, a crew move nobody recorded).
+- **Done.** The Suggested view opens with "Same people, same work, better sequence" (`lib/asBuiltReplay.ts`): this year replayed on what really happened, the same crews at the most steps they really worked at once, only the links the work needed, waits with a recorded reason kept, waits with nothing logged taken out. Each move says what was ready, when, and the hours it saves.
+- **Done.** One-off delays as a what-if, one line per work order, each with what was written: waits, trips off site, and steps that ran past their planned shifts after a leak, failure or shortfall was written on the work order. Tick one to see the finish without it, and the finish against the plan.
+  - On the test data for Phase 1: with the same crews nothing could have been pulled in. Taking out E-12 (the seal rings: 20 of 24 ordered, re-used ones leaked on the hydro) brings the finish in 25 h, to 8.5 h late against the planned finish instead of 33.5 h.
+- **Done.** A step left open (work logged, never marked done) no longer stops the replay: it stays as it ran and is named. Phase 1 has one: "Set Blinds; Verify LOTO".
+- **Done.** Added people or time come after, under "If it still misses the target", with how far sequencing alone got.
+- **Done.** What the replay can't know is listed (waits with no reason, crews with no head count, steps with no times).
 
 ## 7. Materials: add a line like a spreadsheet, two owners
-Today "Add an item" is a dialog with 14 fields (item, spec, missing from spec, quantity, work order, owner, supplier, status, need-by, ETA, about the date, question, answer, note, phase). It breaks the rules on short forms and filling in what we know (W1, F12, A6), and it is slower than typing a line in Excel.
-- **Add from the list.** A blank row always waits at the bottom of the register: item, quantity, work order, need-by. Enter saves it and opens the next row. Pasting rows copied from Excel adds them all.
-- **Everything else in the row,** edited in place or in a side panel when the row is opened: spec, supplier, ETA, question, note. Never needed to add a line. The phase comes from the work order.
-- **Two owners, as the owner's turnaround execution and management method says:** the warehouse person (gets it in and checks it) and the turnaround crew person (makes sure it is used on the job). The row is flagged when either is missing.
-- **Close the loop:** the list does not end at "Received, checked". The crew owner marks it used or installed, so "done" means done on the job.
-- Off-site repair stays the same kind of row, with a return date in place of the ETA.
-- Ask the owner for the simplified version of the book, so the steps and words match it exactly.
+- **Done.** A row always waits at the bottom of the register: item, quantity, work order, need-by. Enter saves it; rows pasted from Excel are added at once.
+- **Done.** Everything else is edited on the line. The phase comes from the work order.
+- **Done.** Two owners: warehouse (gets it in and checks it) and crew (makes sure it is used). The row is flagged when either is missing.
+- **Done.** The crew owner marks it used, so done means done on the job.
+- **Done.** Off-site repair is the same kind of row, with "Needed back by" and "Return date".
+- **Needs the owner:** run `supabase/migrations/20261125_materials_two_owners.sql` (adds the crew owner and the "used" status).
+- **Needs the owner:** upload the simplified turnaround execution and management book, so the steps and words match it exactly.
 
 ## 8. Rules still open (from docs/design-rules.md status)
-- 91 tap targets under 44 px on touch, starting with the "All" and "Ask" tabs (under 24 px).
-- Status colors on the dark document viewer; timeline and calendar bar colors need chart tokens.
-- Compact inline add rows with only a screen-reader name.
+- 42 tap targets under 44 px on touch (down from 192); none under 24 px is a real target.
+- Fixed: status colors on the dark document viewer; timeline and calendar bar colors; add rows with only a screen-reader name.
+
+## Still open, in one list
+- 42 tap targets under 44 px (rule T1).
+- Budget table as cards on the phone (T3); a "⋯" menu on invoice and change-order rows (A3).
+- The cost chart example still uses a plain bar list.
+- The project's "Ask" box sits above the tabs.
+- Close-out report: identical rows (the 8 "Completed at Redman") are not merged.
+- On screens under 768 px the shift picker takes its own row.
+- The plant's shift table has no "Next shift" row (kept); the Word header has no head count or key number.
+- Waiting on the owner: the materials SQL, and the book.

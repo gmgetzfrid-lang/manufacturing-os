@@ -63,7 +63,7 @@ export default function HelpTooltip({
       </button>
       {open && (
         <div
-          className={`on-sheet absolute z-[300] ${popClass} w-72 max-w-[calc(100vw-2rem)] bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border-strong)] text-body leading-snug rounded-lg ui-float p-3 animate-in fade-in zoom-in-95 duration-150`}
+          className={`on-sheet absolute z-[300] ${popClass} w-72 max-w-[calc(100vw-2rem)] max-sm:fixed max-sm:inset-x-4 max-sm:bottom-4 max-sm:top-auto max-sm:left-4 max-sm:right-4 max-sm:w-auto max-sm:max-w-none max-sm:m-0 max-sm:translate-x-0 max-sm:translate-y-0 max-sm:z-[400] bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border-strong)] text-body leading-snug rounded-lg ui-float p-3 animate-in fade-in zoom-in-95 duration-150`}
           role="tooltip"
         >
           {children}

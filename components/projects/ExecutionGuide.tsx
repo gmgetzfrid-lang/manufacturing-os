@@ -56,6 +56,7 @@ export default function ExecutionGuide({ open: openProp, onOpenChange, buttonCla
               <Section title="Two ways to look at the schedule">
                 <Row icon={<ListTree className="w-4 h-4 text-[var(--color-text-muted)]" />} label="Timeline">
                   The work breakdown on the left, bars on a time axis on the right. Best for seeing sequence and overlap.
+                  It opens on today with the open work first, late work at the top; finished work folds into one line (&quot;112 steps done · Show&quot;). <b>All rows</b> shows every row as planned.
                 </Row>
                 <Row icon={<CalendarDays className="w-4 h-4 text-[var(--color-text-muted)]" />} label="Calendar">
                   Each task sits on the day tiles it runs. Best for &quot;what&apos;s happening today.&quot;
@@ -91,7 +92,7 @@ export default function ExecutionGuide({ open: openProp, onOpenChange, buttonCla
 
               <Section title="Fix the plan to match the field">
                 <Row icon={<CalendarRange className="w-4 h-4 text-[var(--color-text-muted)]" />} label="Edit anything">
-                  Open a task to change dates, who actually did it (vs. who was planned), work order #, location, add notes, or delete it.
+                  Open a task: status, % done, comments and who are on top; dates, work order #, location and links are under <b>Plan and details</b>. The pencil edits the plan (who actually did it, too); Cancel job and Delete task are at the bottom.
                 </Row>
               </Section>
             </div>

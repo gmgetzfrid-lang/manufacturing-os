@@ -3,7 +3,8 @@
 
 import { describe, it, expect } from "vitest";
 import type { Milestone } from "@/types/schema";
-import { buildAsBuilt, asBuiltDocument, varianceWords, laneSteps, stepBar } from "@/lib/asBuiltSchedule";
+import { buildAsBuilt, asBuiltDocument, varianceWords, laneSteps, stepBar, phaseBlocks, mostLateFirst, lateWords, answerOf } from "@/lib/asBuiltSchedule";
+import { PHASE_ATTR, type ProjectPhase } from "@/lib/projectPhases";
 
 const tz = "America/Los_Angeles";
 const at = (d: string, h: string) => `${d}T${h}:00-07:00`;
@@ -79,11 +80,14 @@ describe("a work order's bar, one piece per step", () => {
     expect(stepBar(weld, now)).toEqual({ from: Date.parse(at("2026-10-29", "07:00")), to: now });
     expect(stepBar({ ...weld, status: "not_started", barStart: null }, now)).toBeNull();
   });
-  it("the printed report draws each work order's steps on the same days, with the plan above", () => {
+  it("the printed report: the work orders first, then each with every step, on the same days", () => {
     const a = buildAsBuilt({ milestones: ms, childrenByParent: kids, tz });
     const html = asBuiltDocument(a, { project: "Transmix", scope: "Phase 1", tz, now: Date.parse(at("2026-10-29", "12:00")) });
-    expect(html).toContain("Work orders and steps");
-    expect(html).toContain("one piece each");
+    expect(html.indexOf("Work orders, most late first")).toBeLessThan(html.indexOf("Work orders and steps"));
+    for (const col of ["Planned finish", "Actual finish", "Late by", "Shifts waited", "Took", "Status"]) expect(html).toContain(col);
+    expect(html).toContain("Plan h and exact times are in the Excel file.");
+    // Without the record of the shifts worked, the page says so, never a made-up 0.
+    expect(html).toContain("Shifts waited weren't read for this copy.");
     expect(html).not.toContain("Plan start");
   });
 });
@@ -103,5 +107,51 @@ describe("found work given its own WO", () => {
     // Found work on E-12's own number stays on E-12.
     expect(a.orders.find((o) => o.wo === "301502")!.steps.map((s) => s.name)).toContain("Welded pipe");
     expect(a.orders.find((o) => o.wo === "301502")!.foundOn).toBeNull();
+  });
+});
+
+describe("each phase on its own plan, most late first", () => {
+  const P: ProjectPhase[] = [
+    { id: "p1", name: "Phase 1", start: "2026-10-28", end: "2026-10-31", share: 50 },
+    { id: "p2", name: "Phase 2", start: "2026-11-05", end: "2026-11-08", share: 50 },
+  ];
+  const done = (id: string, parentId: string, d0: string, p0: string, p1: string, a1: string, hours: number) =>
+    m(id, { parentId, durationHours: hours, plannedStartAt: at(d0, p0), plannedAt: at(d0, p1), status: "completed", percentComplete: 100, actualStartAt: at(d0, p0), actualAt: a1 });
+  const two: Milestone[] = [
+    m("E-14", { workOrderRef: "301504" }), done("blinds", "E-14", "2026-10-29", "08:00", "10:00", at("2026-10-29", "09:00"), 2),
+    m("E-12", { workOrderRef: "301502" }), done("hydro", "E-12", "2026-10-28", "08:00", "10:00", at("2026-10-28", "20:00"), 2),
+    m("E-17", { workOrderRef: "301507", attributes: { [PHASE_ATTR]: "p2" } }), done("pull", "E-17", "2026-11-05", "08:00", "12:00", at("2026-11-06", "14:00"), 4),
+  ];
+  const k = new Map<string, Milestone[]>([["E-14", [two[1]]], ["E-12", [two[3]]], ["E-17", [two[5]]]]);
+  const a = buildAsBuilt({ milestones: two, childrenByParent: k, phases: P, tz });
+  const now = Date.parse(at("2026-11-10", "09:00"));
+  const blocks = phaseBlocks(a, now);
+  it("a block per phase, each with its own planned finish and finish", () => {
+    expect(blocks.map((b) => [b.name, b.orders.map((o) => o.wo).sort(), b.planFinish, b.finish])).toEqual([
+      ["Phase 1", ["301502", "301504"], Date.parse(at("2026-10-29", "10:00")), Date.parse(at("2026-10-29", "09:00"))],
+      ["Phase 2", ["301507"], Date.parse(at("2026-11-05", "12:00")), Date.parse(at("2026-11-06", "14:00"))],
+    ]);
+    // Phase 1 finished early on its own plan, though one of its work orders ran late.
+    expect(blocks.map((b) => answerOf(b, now).text)).toEqual(["Finished 1 h early", "Finished 26 h (1.1 days) late"]);
+  });
+  it("most late first, each against its own planned finish", () => {
+    const [e12, e14] = mostLateFirst(blocks[0].orders, now);
+    expect([e12.wo, e14.wo]).toEqual(["301502", "301504"]);
+    expect(lateWords(e12, now)).toEqual({ text: "10 h", late: true });
+    expect(lateWords(e14, now)).toEqual({ text: "on time (1 h early)", late: false });
+    expect(lateWords({ planFinish: now - 30 * 3_600_000, finish: null }, now)).toEqual({ text: "30 h (1.3 days) so far", late: true });
+    expect(lateWords({ planFinish: now + 3_600_000, finish: null }, now)).toEqual({ text: "not due yet", late: false });
+  });
+  it("the page: the answer, each phase, most late first, and the shifts each waited", () => {
+    const e12 = a.orders.find((o) => o.wo === "301502")!;
+    const html = asBuiltDocument(a, { project: "Transmix", scope: "All phases", tz, now, work: { shifts: [], steps: new Map(), orders: new Map([[e12.key, { cells: [], worked: 2, waited: 3 }]]) } });
+    expect(html).toContain("Phase 1: <span");
+    expect(html).toContain("finished 26 h (1.1 days) late");
+    const first = html.slice(html.indexOf("Work orders, most late first"), html.indexOf("Work orders and steps"));
+    expect(first.indexOf("WO 301502")).toBeLessThan(first.indexOf("WO 301504"));
+    expect(first.indexOf("Phase 1</b>")).toBeLessThan(first.indexOf("Phase 2</b>"));
+    expect(first).toMatch(/WO 301502[\s\S]*?>10 h<\/td>[\s\S]*?>3<\/td>/);
+    expect(html).toContain("Whole job vs plan");
+    expect(html).not.toMatch(/[—–]/);
   });
 });

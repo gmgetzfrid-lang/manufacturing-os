@@ -207,7 +207,7 @@ export function ShiftHourlyBox({ h, edit, print, tz, meetings }: {
             const head = r.slot.key === "ot";
             const ot = h.overtime;
             return (
-              <li key={r.slot.key} className="flex items-start gap-2 px-3 py-1.5 text-caption leading-snug bg-[var(--color-surface-2)]">
+              <li key={r.slot.key} className="group/hr flex items-start gap-2 px-3 py-1.5 text-caption leading-snug bg-[var(--color-surface-2)]">
                 <span className="w-[66px] shrink-0 font-medium text-[var(--color-text)] whitespace-nowrap tabular-nums">{clocks[i]}</span>
                 <span className="min-w-0 flex-1 font-medium text-[var(--color-text)]">{r.slot.label}</span>
                 {head && edit && ot && otForm == null && (
@@ -226,7 +226,7 @@ export function ShiftHourlyBox({ h, edit, print, tz, meetings }: {
             // hour can still be typed into or have work added.
             const hr = r.hour;
             return (
-              <li key={r.slot.key} className="flex items-start gap-2 px-3 py-1 text-caption leading-snug bg-[var(--color-surface-2)]/60">
+              <li key={r.slot.key} className="group/hr flex items-start gap-2 px-3 py-1 text-caption leading-snug bg-[var(--color-surface-2)]/60">
                 <span className="w-[66px] shrink-0 font-medium text-[var(--color-text-muted)] whitespace-nowrap tabular-nums">{clocks[i]}</span>
                 <div className="min-w-0 flex-1">
                   <span className="font-medium text-[var(--color-text-muted)]">{breakLabel(r.slot)}</span>
@@ -235,17 +235,19 @@ export function ShiftHourlyBox({ h, edit, print, tz, meetings }: {
                   )}
                 </div>
                 {hr && editing !== hr.key && (
-                  <div className="flex items-center justify-end gap-1">
+                  // The hour's own buttons show when its row is pointed at
+                  // (always on touch): 13 rows of the same buttons were clutter.
+                  <div className="flex items-center justify-end gap-1 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover/hr:opacity-100 focus-within:opacity-100 transition-opacity">
                     {h.onAddWork && (
                       <>
                       <button type="button" onClick={() => h.onAddWork?.(hr.start)} aria-label={`Add discovery or added scope at ${clocks[i]}`}
                         title="Add discovery or added scope at this hour: it goes into the schedule"
-                        className="shrink-0 inline-flex items-center gap-0.5 h-8 px-2 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-caption font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+                        className="shrink-0 inline-flex items-center gap-0.5 h-8 pointer-coarse:h-11 px-2 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-caption font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
                         <Plus className="w-3 h-3" /> Add work
                       </button>
                     <button type="button" onClick={() => newFinding({ at: hr.start })} aria-label={`Add a finding at ${clocks[i]}`}
                       title="A problem, a lesson, a material shortfall or missed scope, kept for the next job"
-                      className="shrink-0 inline-flex items-center gap-0.5 h-8 px-2 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-caption font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+                      className="shrink-0 inline-flex items-center gap-0.5 h-8 pointer-coarse:h-11 px-2 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-caption font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
                       <Plus className="w-3 h-3" /> Finding
                     </button>
                       </>
@@ -262,7 +264,7 @@ export function ShiftHourlyBox({ h, edit, print, tz, meetings }: {
           }
           const note = m ? noteOf(m) : [];
           return (
-            <li key={r.slot.key} className={`grid grid-cols-[66px_minmax(0,1fr)_auto] max-sm:grid-cols-[minmax(0,1fr)_auto] items-start gap-x-2 gap-y-0.5 px-3 py-1.5 text-caption leading-snug ${isMeeting ? "bg-[var(--color-surface-2)]/30" : ""}`}>
+            <li key={r.slot.key} className={`group/hr grid grid-cols-[66px_minmax(0,1fr)_auto] max-sm:grid-cols-[minmax(0,1fr)_auto] items-start gap-x-2 gap-y-0.5 px-3 py-1.5 text-caption leading-snug ${isMeeting ? "bg-[var(--color-surface-2)]/30" : ""}`}>
               <span className="font-medium text-[var(--color-text)] whitespace-nowrap tabular-nums">{clocks[i]}{isMeeting && <span className="sm:hidden font-medium"> {label}</span>}</span>
               {/* On a phone the time and its buttons share a line; what happened gets the full width under them. */}
               <div className="min-w-0 max-sm:order-last max-sm:col-span-2">
@@ -301,17 +303,17 @@ export function ShiftHourlyBox({ h, edit, print, tz, meetings }: {
                   </button>
                 )}
               </div>
-              <div className="flex items-center justify-end gap-1">
+              <div className={`flex items-center justify-end gap-1 ${isMeeting ? "" : "[@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover/hr:opacity-100 focus-within:opacity-100 transition-opacity"}`}>
               {h.onAddWork && editing !== r.slot.key && !isMeeting && (
                 <>
                 <button type="button" onClick={() => h.onAddWork?.(r.slot.start)} aria-label={`Add discovery or added scope at ${clocks[i]}`}
                   title="Add discovery or added scope at this hour: it goes into the schedule"
-                  className="shrink-0 inline-flex items-center gap-0.5 h-8 px-2 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-caption font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+                  className="shrink-0 inline-flex items-center gap-0.5 h-8 pointer-coarse:h-11 px-2 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-caption font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
                   <Plus className="w-3 h-3" /> Add work
                 </button>
                     <button type="button" onClick={() => newFinding({ at: r.slot.start })} aria-label={`Add a finding at ${clocks[i]}`}
                       title="A problem, a lesson, a material shortfall or missed scope, kept for the next job"
-                      className="shrink-0 inline-flex items-center gap-0.5 h-8 px-2 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-caption font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+                      className="shrink-0 inline-flex items-center gap-0.5 h-8 pointer-coarse:h-11 px-2 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-caption font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
                       <Plus className="w-3 h-3" /> Finding
                     </button>
                 </>
@@ -512,10 +514,13 @@ function Items({ text, going, closed }: { text: string; going: string[]; closed:
   );
 }
 
-/** The meeting: each crew, who attended (a name each, added sideways) and
- *  its head count on site; the total; then the safety topic. */
+/** The meeting: each crew, who attended and its head count on site; the
+ *  total; then the safety topic. The names read plainly; the controls to
+ *  change them (a pencil and a remove on each, + for the next, the counts)
+ *  come out only after "Edit attendees". */
 export function MeetingBox({ m, edit }: { m: MeetingCtx; edit: boolean }) {
   const [msg, setMsg] = useState<string | null>(null);
+  const [editOpen, setEditOpen] = useState(false);
   const crews = m.record?.crews ?? {};
   // The crews on the plan, then any added at the meeting.
   const list = [...m.crews, ...Object.keys(crews).filter((k) => !m.crews.includes(k))];
@@ -532,6 +537,8 @@ export function MeetingBox({ m, edit }: { m: MeetingCtx; edit: boolean }) {
     return { ...base, crews: cs };
   });
   const entered = list.some((c) => crewNames(crews[c]).length || crews[c]?.headcount != null || crews[c]?.plant);
+  // The roster's own controls: only while editing it.
+  const rowEdit = edit && editOpen;
   // Each contractor's staffing plan for this shift, beside its count.
   const crewSettings = useCrewSettings(m.projectId);
   const plans = plansAt(crewSettings, m.shiftKey, list, (c) => !!crews[c]?.plant);
@@ -542,10 +549,10 @@ export function MeetingBox({ m, edit }: { m: MeetingCtx; edit: boolean }) {
       {m.carried ? (
         <div role="status" className="flex flex-wrap items-center gap-x-2 gap-y-1 border-l-2 border-[var(--state-held)] pl-2 py-0.5 text-caption text-[var(--state-held-text)]">
           <AlertTriangle className="w-3.5 h-3.5 shrink-0" aria-hidden />
-          <span className="min-w-0 flex-1"><b>Not updated for this shift.</b> Same people and head counts as {m.carried.label}{edit ? ": change anyone who's different." : "."}</span>
+          <span className="min-w-0 flex-1"><b>Not updated for this shift.</b> Same people and head counts as {m.carried.label}{edit ? ": edit anyone who's different." : "."}</span>
           {edit && (
             <button type="button" onClick={() => void save(own).catch(() => undefined)}
-              className="shrink-0 inline-flex items-center gap-1 h-8 px-2.5 rounded-lg bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-border)] text-caption font-medium shadow-[0_1px_2px_rgb(11_18_32/0.08)]">
+              className="shrink-0 inline-flex items-center gap-1 h-8 pointer-coarse:h-11 px-2.5 rounded-lg bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-border)] text-caption font-medium shadow-[0_1px_2px_rgb(11_18_32/0.08)]">
               <Check className="w-3.5 h-3.5" /> Looks right
             </button>
           )}
@@ -554,21 +561,31 @@ export function MeetingBox({ m, edit }: { m: MeetingCtx; edit: boolean }) {
         <div className="inline-flex items-center gap-1 text-caption font-medium text-[var(--state-released-text)]"><Check className="w-3.5 h-3.5" aria-hidden /> Updated for this shift</div>
       ) : null}
       <div className="rounded-lg bg-[var(--color-surface-2)]/60">
-        <div className={`${grid} px-2 py-1 text-body font-medium text-[var(--color-text-muted)]`}>
-          <span className="max-sm:hidden">Resource</span><span>Meeting attendees</span><span className="w-[6.5rem] text-right" title="Everyone on site from the resource. Split gives direct (on the tools) and indirect (supervision, safety, hole and fire watch, QC, tool room).">On site</span>
+        <div className={`${grid} items-center px-2 py-1 text-body font-medium text-[var(--color-text-muted)]`}>
+          <span className="max-sm:hidden">Resource</span>
+          <span className="flex flex-wrap items-center gap-x-3">
+            Meeting attendees
+            {edit && (
+              <button type="button" onClick={() => setEditOpen((v) => !v)} aria-pressed={editOpen}
+                className="inline-flex items-center gap-1 min-h-8 pointer-coarse:min-h-11 px-1.5 -mx-1.5 rounded-md text-body font-medium text-[var(--color-accent-text)] hover:bg-[var(--color-surface)]">
+                {editOpen ? <><Check className="w-3.5 h-3.5" aria-hidden /> Done editing</> : <><Pencil className="w-3.5 h-3.5" aria-hidden /> {entered || m.carried ? "Edit attendees" : "Enter attendees"}</>}
+              </button>
+            )}
+          </span>
+          <span className="w-[6.5rem] text-right" title="Everyone on site from the resource. Split gives direct (on the tools) and indirect (supervision, safety, hole and fire watch, QC, tool room).">On site</span>
         </div>
-        {list.length === 0 && <div className="px-2 py-1 text-caption italic text-[var(--color-text-muted)]">No crews on the plan{edit ? ". Add a company below." : ""}</div>}
+        {list.length === 0 && <div className="px-2 py-1 text-caption italic text-[var(--color-text-muted)]">No crews on the plan{rowEdit ? ". Add a company below." : edit ? ". Edit attendees to add a company." : ""}</div>}
         {list.map((crew) => (
-          <CrewRow key={crew} grid={grid} crew={crew} value={crews[crew]} known={m.known?.[crew]} edit={edit} plan={plans.get(crew) ?? null}
+          <CrewRow key={crew} grid={grid} crew={crew} value={crews[crew]} known={m.known?.[crew]} edit={rowEdit} plan={plans.get(crew) ?? null}
             onNames={(f) => setCrew(crew, (c) => setNames(c, f))}
             onCount={(d, i) => void setCrew(crew, (c) => withCounts(c, d, i)).catch(() => undefined)}
             onTotal={(t) => void setCrew(crew, (c) => withTotal(c, t)).catch(() => undefined)}
             onPlant={(on) => void setCrew(crew, (c) => ({ ...(c ?? {}), plant: on || undefined, ...(on ? { headcount: null } : {}) })).catch(() => undefined)}
             onRemove={m.crews.includes(crew) ? undefined : () => void setCrew(crew, () => null).catch(() => undefined)} />
         ))}
-        {(edit || (total != null && list.length > 1)) && (
+        {(rowEdit || (total != null && list.length > 1)) && (
           <div className={`${grid} items-center px-2 py-1 border-t border-[var(--color-border)]`}>
-            <span className="min-w-0 sm:col-span-2">{edit && <AddCompany onAdd={(name) => void setCrew(cleanName(name), (c) => c ?? {}).catch(() => undefined)} />}</span>
+            <span className="min-w-0 sm:col-span-2">{rowEdit && <AddCompany onAdd={(name) => void setCrew(cleanName(name), (c) => c ?? {}).catch(() => undefined)} />}</span>
             <span className="text-right text-caption tabular-nums whitespace-nowrap">{total != null && <><span className="text-caption font-medium text-[var(--color-text-muted)]">Total on the job </span><b>{total}</b></>}</span>
           </div>
         )}

@@ -3,7 +3,8 @@
 
 import { describe, it, expect } from "vitest";
 import type { Milestone } from "@/types/schema";
-import { phaseStats, phaseReportHtml, slipWords, type CostLine, type CostEntry } from "@/lib/phaseReport";
+import { phaseStats, phaseReportHtml, slipWords, shiftLines, runLabel, hoursDays, withDays, closeoutPrint, type CostLine, type CostEntry, type ShiftRow } from "@/lib/phaseReport";
+import { toEmailHtml, toPlainText, type ExportDoc } from "@/lib/reportExport";
 import { PHASE_ATTR, type ProjectPhase } from "@/lib/projectPhases";
 
 const tz = "America/Los_Angeles";
@@ -158,5 +159,95 @@ describe("phaseStats", () => {
     expect(html).toContain("Whole project");
     expect(html).toContain("$1,000");
     expect(html).not.toMatch(/[—]/);
+  });
+});
+
+describe("the shift-by-shift chart", () => {
+  const row = (dayKey: string, kind: "day" | "night", plan: number | null, done: number | null, extra: Partial<ShiftRow> = {}): ShiftRow =>
+    ({ kind, dayKey, start: 0, end: 0, plan, planEnds: false, done, addedKnown: 0, addedDone: 0, current: false, finishes: false, ...extra });
+  const days = Array.from({ length: 9 }, (_, i) => `2026-11-0${i + 1}`);
+  const rows = [
+    row("2026-10-31", "day", 90, 80),
+    row("2026-10-31", "night", 100, 99.7, { planEnds: true }),
+    ...days.flatMap((d) => [row(d, "day", null, 99.7), row(d, "night", null, 99.7)]),
+    row("2026-11-10", "day", null, 100, { finishes: true }),
+  ];
+  it("shifts that all say the same are one line, never a column of identical rows", () => {
+    const lines = shiftLines(rows);
+    expect(lines.map((l) => (l.kind === "same" ? `same ${l.rows.length}` : l.row.dayKey))).toEqual(["2026-10-31", "2026-10-31", "same 18", "2026-11-10"]);
+    const same = lines[2];
+    expect(same.kind === "same" && runLabel(same.rows)).toBe("Sun, Nov 1 to Mon, Nov 9");
+  });
+  it("the plan's end and the finish stay rows of their own; two alike stay two", () => {
+    expect(shiftLines([row("2026-11-01", "day", null, 50), row("2026-11-01", "night", null, 50)]).map((l) => l.kind)).toEqual(["shift", "shift"]);
+    expect(shiftLines([row("2026-11-01", "day", 100, 50, { planEnds: true }), row("2026-11-01", "night", 100, 50), row("2026-11-02", "day", 100, 50)]).map((l) => l.kind)).toEqual(["shift", "shift", "shift"]);
+    expect(runLabel([row("2026-11-01", "night", null, 1), row("2026-11-02", "day", null, 1)])).toBe("Sun, Nov 1 Night to Mon, Nov 2 Day");
+  });
+});
+
+describe("hours over a day say days", () => {
+  it("hoursDays and withDays", () => {
+    expect(hoursDays(791.4)).toBe("791.4 h (33 days)");
+    expect(hoursDays(33.5)).toBe("33.5 h (1.4 days)");
+    expect(hoursDays(24)).toBe("24 h (1 day)");
+    expect(hoursDays(-12)).toBe("12 h");
+    expect(withDays("+791.4 h")).toBe("+791.4 h (33 days)");
+    expect(withDays("made up 26 h")).toBe("made up 26 h (1.1 days)");
+    expect(withDays("12 h")).toBe("12 h");
+    expect(withDays("-")).toBe("-");
+  });
+});
+
+describe("the close-out as printed", () => {
+  const doc: ExportDoc = {
+    kind: "Close-out meeting", project: "T", when: "Planned finish Sat", asOf: "Nov 24",
+    sections: [
+      { id: "final", title: "Final standing", sub: "Planned finish Sat · finished Mon (791.4321 h after plan)", blocks: [{ k: "stats", items: [{ label: "Complete", value: "100%", tone: "emerald" }] }] },
+      { id: "open", title: "Still open", blocks: [{ k: "empty", text: "Nothing open." }] },
+      { id: "cancelled", title: "Cancelled from this schedule", blocks: [{ k: "table", head: ["Job", "Moved to", "Note", "Cancelled"], rows: [
+        ["E-12: Hotshot", "Redman", "Completed at Redman", "Oct 30 · Pat"],
+        ["E-13: Hotshot", "Redman", "Completed at Redman", "Oct 30 · Pat"],
+        ["E-14: Hotshot", "Redman", "Completed at Redman", "Oct 31 · Pat"],
+        ["V-7: Inspect", "-", "Moved to the 2027 turnaround: the vessel goes back in service before then", "Nov 1 · Lee"],
+      ] }] },
+      { id: "lookback", title: "Look back - where the time went", blocks: [
+        { k: "stats", items: [{ label: "Planned finish", value: "Sat 10/31 6:00 PM", tone: "slate" }, { label: "Finished", value: "Mon 11/2 3:30 AM", tone: "slate" }, { label: "Late by", value: "33.5 h", tone: "rose" }, { label: "Steps that lost time", value: "3", tone: "amber" }] },
+        { k: "table", head: ["Cause", "Hours lost", "Steps"], rows: [["On hold / blocked", "24 h", "1"], ["Took longer than planned", "9.5 h", "2"]] },
+      ] },
+      { id: "setbacks", title: "What set us back", blocks: [{ k: "table", head: ["Step", "WO", "Who", "Lost", "Why"], nowrap: [3], rows: [
+        [{ t: "Pull bundle", note: "E-12" }, "12", "Ancon", { t: "+26 h", tone: "rose", bold: true }, "on hold 20 h, waiting on material; ran 6 h longer than planned"],
+      ] }] },
+    ],
+  };
+  const out = closeoutPrint(doc);
+  it("where the time went comes right under the opening tiles", () => {
+    expect(out.sections.map((s) => s.id)).toEqual(["final", "lookback", "open", "cancelled", "setbacks"]);
+    expect(out.sections[0].sub).toBe("Current plan finish Sat · finished Mon (791.4 h (33 days) after the original plan)");
+    expect(out.sections[1].blocks[0]).toMatchObject({ k: "stats", items: [{ label: "Original plan finish" }, { label: "Finished" }, { label: "Late by", value: "33.5 h (1.4 days)" }, { value: "3" }] });
+    expect(out.sections[1].blocks[1]).toMatchObject({ rows: [["On hold / blocked", "24 h (1 day)", "1"], ["Took longer than planned", "9.5 h", "2"]] });
+  });
+  it("a late by worked out from a forecast says so", () => {
+    const open = closeoutPrint({ ...doc, sections: [{ id: "lookback", title: "Look back", blocks: [{ k: "stats", items: [{ label: "Forecast finish", value: "Tue", tone: "slate" }, { label: "Late by", value: "30 h", tone: "rose" }] }] }] });
+    expect(open.sections[0].blocks[0]).toMatchObject({ items: [{ label: "Forecast finish" }, { label: "Forecast late by", value: "30 h (1.3 days)" }] });
+  });
+  it("jobs cancelled the same way are one counted row that still lists each; the note goes under its row", () => {
+    const t = out.sections[3].blocks[0];
+    expect(t.k === "table" && t.head).toEqual(["Cancelled", "Job", "Moved to"]);
+    expect(t.k === "table" && t.rows).toEqual([
+      ["Oct 30 · Pat; Oct 31 · Pat", { t: "3 jobs", bold: true, sub: [{ t: "E-12: Hotshot; E-13: Hotshot; E-14: Hotshot" }, { t: "Note: Completed at Redman", italic: true }] }, "Redman"],
+      ["Nov 1 · Lee", { t: "V-7: Inspect", sub: [{ t: "Note: Moved to the 2027 turnaround: the vessel goes back in service before then", italic: true }] }, "-"],
+    ]);
+  });
+  it("a long why is a line under its step, the hours lead the row", () => {
+    const t = out.sections[4].blocks[0];
+    expect(t.k === "table" && t.head).toEqual(["Lost", "Step", "WO", "Who"]);
+    expect(t.k === "table" && t.nowrap).toEqual([0]);
+    expect(t.k === "table" && t.rows[0][0]).toEqual({ t: "+26 h (1.1 days)", tone: "rose", bold: true });
+    expect(t.k === "table" && t.rows[0][1]).toEqual({ t: "Pull bundle", note: "E-12", sub: [{ t: "Why: on hold 20 h, waiting on material; ran 6 h longer than planned", italic: false }] });
+  });
+  it("nothing is lost in the email or the plain text", () => {
+    for (const text of [toPlainText(out), toEmailHtml(out)]) {
+      for (const w of ["3 jobs", "E-13: Hotshot", "Completed at Redman", "Oct 31 · Pat", "2027 turnaround", "waiting on material", "33.5 h (1.4 days)"]) expect(text).toContain(w);
+    }
   });
 });

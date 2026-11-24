@@ -79,8 +79,13 @@ export function standingOf(ms: Milestone[], o: StandingOpts): Standing {
   const started = r.done > 0 || r.inProgress > 0 || r.pctComplete > 0;
   const startMs = Date.parse(String(r.start ?? ""));
   if (!started && Number.isFinite(startMs) && o.now < startMs) return { ...base, state: "not started" };
+  // Past its planned finish with work still open: it is behind, whatever
+  // its percent says (99% of 100% would otherwise read "on track" while
+  // the same screen says it is weeks late).
+  const pastPlan = Number.isFinite(planMs) && o.now > planMs;
   return {
     ...base, state: "running",
+    standing: pastPlan ? "behind" : base.standing,
     forecastFinish: linked ? new Date(cpm!.forecastFinish).toISOString() : r.forecastFinish,
     lateHours: linked ? round1(cpm!.slipH) : null,
   };
@@ -128,8 +133,10 @@ export function verdictParts(s: { aheadHours: number; behindHours: number; behin
 /** "33.5 h late", "2 h early", "on time". */
 export function lateWords(lateHours: number | null): string | null {
   if (lateHours == null) return null;
-  if (lateHours >= 0.5) return `${round1(lateHours)} h late`;
-  if (lateHours <= -0.5) return `${round1(-lateHours)} h early`;
+  // Over a day, the days too: "791.4 h" alone means nothing at a glance.
+  const days = (h: number) => { if (h < 24) return ""; const d = h / 24 < 10 ? round1(h / 24) : Math.round(h / 24); return ` (${d} day${d === 1 ? "" : "s"})`; };
+  if (lateHours >= 0.5) return `${round1(lateHours)} h late${days(lateHours)}`;
+  if (lateHours <= -0.5) return `${round1(-lateHours)} h early${days(-lateHours)}`;
   return "on time";
 }
 
@@ -150,6 +157,20 @@ export function standingWords(s: Standing, when: (iso: string) => string): { hea
   }
   const gap = round1(Math.abs(s.gapHours));
   const verdict = s.standing === "behind" ? `${gap} h behind plan` : s.standing === "ahead" ? `${gap} h ahead of plan` : "on plan";
+  // Forecast to finish late: that is the headline, never a small "behind
+  // plan" figure beside a forecast that says weeks.
+  if ((s.lateHours ?? 0) >= 0.5 && late) {
+    return {
+      head: `${s.pct}% done, forecast ${late}`,
+      lines: [
+        s.forecastFinish ? `forecast end ${when(s.forecastFinish)}` : null,
+        s.plannedFinish ? `planned finish ${when(s.plannedFinish)}` : null,
+        `plan by now ${s.planPct}%`,
+        s.overdue ? `${s.overdue} step${s.overdue === 1 ? "" : "s"} overdue` : null,
+      ].filter((x): x is string => !!x),
+      tone: "rose",
+    };
+  }
   return {
     head: `${s.pct}% done, plan by now ${s.planPct}%, ${verdict}`,
     lines: [
@@ -166,5 +187,6 @@ export function standingShort(s: PhaseStanding): string {
   if (s.state === "no schedule") return `${s.name}: no schedule`;
   if (s.state === "not started") return `${s.name}: not started`;
   if (s.state === "finished") { const l = lateWords(s.lateHours); return `${s.name}: finished${l ? `, ${l}` : ""}`; }
-  return `${s.name}: ${s.pct}% (plan ${s.planPct}%), ${s.standing}`;
+  const l = (s.lateHours ?? 0) >= 0.5 ? lateWords(s.lateHours) : null;
+  return l ? `${s.name}: ${s.pct}% done, forecast ${l}` : `${s.name}: ${s.pct}% (plan ${s.planPct}%), ${s.standing}`;
 }

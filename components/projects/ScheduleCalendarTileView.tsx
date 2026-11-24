@@ -400,7 +400,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
     const head = (
       <button type="button" onClick={() => openShift(key, band)}
         title={`${band === "day" ? "Day" : "Night"} shift ${clockLabel(w.start, tz)}–${clockLabel(w.end, tz)}${band === "night" ? ` (into ${fmtInTz(w.end, tz, { weekday: "short" })} morning)` : ""}: open its list to enter progress`}
-        className={`shrink-0 flex items-center gap-1 px-1 min-w-0 ${big ? "text-caption" : "text-caption"} font-medium hover:underline ${band === "day" ? "text-sky-900/80 dark:text-sky-300" : "text-violet-900/80 dark:text-violet-200"}`}>
+        className={`shrink-0 flex items-center gap-1 px-1 min-w-0 ${big ? "text-caption" : "text-caption"} font-medium hover:underline ${band === "day" ? "text-[var(--shift-day-text)]" : "text-[var(--shift-night-text)]"}`}>
         {band === "day" ? <Sun className="w-2.5 h-2.5 shrink-0" aria-hidden /> : <Moon className="w-2.5 h-2.5 shrink-0" aria-hidden />}
         {band === "day" ? "Day" : "Night"}
         <span className="font-medium normal-case tracking-normal opacity-80 truncate">{clockLabel(w.start, tz)}–{band === "night" && !short ? `${fmtInTz(w.end, tz, { weekday: "short" })} ` : ""}{clockLabel(w.end, tz)}</span>
@@ -432,7 +432,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
   const renderBands = (key: string, big = false) => {
     const b = partsOf(key);
     const out = (["day", "night"] as const).filter((band) => b[band].length > 0).map((band) => (
-      <div key={band} className={`shrink-0 rounded-md p-0.5 flex flex-col gap-1 ${band === "day" ? "bg-sky-50/50 dark:bg-sky-950/15" : "bg-violet-50/70 dark:bg-violet-950/25"}`}>
+      <div key={band} className={`shrink-0 rounded-md p-0.5 flex flex-col gap-1 ${band === "day" ? "bg-[var(--shift-day-bg)]" : "bg-[var(--shift-night-bg)]"}`}>
         {bandHead(key, band, b[band].length, big)}
         {doneLast(b[band]).map((p) => chipFor(p, key))}
       </div>
@@ -789,7 +789,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
                   return (
                     <div key={key} data-daykey={key} style={{ gridColumn: `${2 * i + 1} / span 2` }}
                       onDragOver={(e) => { if (canEdit) e.preventDefault(); }} onDrop={(e) => void onDropDay(key, e)}
-                      className={`min-h-0 min-w-0 border-r border-[var(--color-border)] p-1 flex flex-col gap-1 bg-sky-50/40 dark:bg-sky-950/15 ${live ? "ring-2 ring-inset ring-[var(--color-border)]" : ""}`}>
+                      className={`min-h-0 min-w-0 border-r border-[var(--color-border)] p-1 flex flex-col gap-1 bg-[var(--shift-day-bg)] ${live ? "ring-2 ring-inset ring-[var(--color-border)]" : ""}`}>
                       {bandHead(key, "day", b.day.length, false, true)}
                       {isToday && overdueToday.length > 0 && (
                         <button type="button" onClick={() => openShift(key, "day")}
@@ -813,7 +813,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
                 {/* The night before the week: half a box, its count. */}
                 <button type="button" onClick={() => openShift(prevKey, "night")} style={{ gridColumn: "1 / span 1" }}
                   title={`${fmtInTz(addDaysUTC(weekDays[0], -1, tz), tz, { weekday: "long" })} night: open its list`}
-                  className="min-w-0 border-r border-[var(--color-border)] bg-violet-50/60 dark:bg-violet-950/20 flex flex-col items-center justify-center gap-1 text-violet-900/80 dark:text-violet-200 hover:bg-violet-100/70">
+                  className="min-w-0 border-r border-[var(--color-border)] bg-[var(--shift-night-bg)] flex flex-col items-center justify-center gap-1 text-[var(--shift-night-text)] hover:bg-[var(--shift-night-chip-bg)]">
                   <Moon className="w-3.5 h-3.5" aria-hidden />
                   <span className="text-body font-medium">{fmtInTz(addDaysUTC(weekDays[0], -1, tz), tz, { weekday: "short" })}</span>
                   {prevNight.length > 0 && <span className="text-caption font-medium tabular-nums">{prevNight.length}</span>}
@@ -825,9 +825,9 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
                   return (
                     <div key={key} data-daykey={key} style={{ gridColumn: `${2 * i + 2} / span 2` }}
                       onDragOver={(e) => { if (canEdit) e.preventDefault(); }} onDrop={(e) => void onDropDay(key, e)}
-                      className={`relative min-h-0 min-w-0 border-r border-[var(--color-border)] p-1 flex flex-col gap-1 bg-violet-50/60 dark:bg-violet-950/25 ${live ? "ring-2 ring-inset ring-[var(--color-border)]" : ""}`}>
+                      className={`relative min-h-0 min-w-0 border-r border-[var(--color-border)] p-1 flex flex-col gap-1 bg-[var(--shift-night-bg)] ${live ? "ring-2 ring-inset ring-[var(--color-border)]" : ""}`}>
                       {/* Midnight: where the night crosses into the next date. */}
-                      <span aria-hidden className="pointer-events-none absolute top-0 bottom-0 left-1/2 border-l border-dashed border-violet-300/70 dark:border-violet-800/70" />
+                      <span aria-hidden className="pointer-events-none absolute top-0 bottom-0 left-1/2 border-l border-dashed border-[var(--shift-night-line)]" />
                       {bandHead(key, "night", b.night.length, false, true)}
                       <DayScroller fade="from-[var(--color-surface)]">
                         {doneLast(b.night).map((p) => chipFor(p, key))}
@@ -899,7 +899,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
                     </button>
                     {items.length > 0 && (
                       <span className={`ml-auto min-w-0 truncate whitespace-nowrap text-caption font-medium tabular-nums ${inMonth ? "text-[var(--color-text-faint)]" : "text-[var(--color-text-faint)] opacity-70"}`}>
-                        {items.length} task{items.length === 1 ? "" : "s"}{nightN > 0 && <span className="text-violet-700 dark:text-violet-300"> · {nightN} night</span>}{doneHere ? ` · ${doneHere} done` : ""}
+                        {items.length} task{items.length === 1 ? "" : "s"}{nightN > 0 && <span className="text-[var(--shift-night-text)]"> · {nightN} night</span>}{doneHere ? ` · ${doneHere} done` : ""}
                       </span>
                     )}
                     {addBtn(key, `${items.length ? "" : "ml-auto "}w-[18px] h-[18px]`)}
@@ -1186,7 +1186,7 @@ function Chip({
   // isn't already colored by its status) and a NIGHT tag, both kept subtle.
   const night = crew === "night";
   const toneClass = night && effStatus === "planned"
-    ? "bg-indigo-50 dark:bg-indigo-950/40 border-indigo-200 dark:border-indigo-800 text-[var(--color-text)]"
+    ? "bg-[var(--shift-night-bg)] border-[var(--shift-night-line)] text-[var(--color-text)]"
     : tone;
   // The quiet second line: where it belongs, when today, which day of a
   // multi-day job.
@@ -1257,7 +1257,7 @@ function Chip({
                   className={`shrink-0 rounded border px-1 text-caption font-medium leading-[13px] ${ADDED_TONE[k]}`}>{ADDED[k].word}</span>
               ))}
               {night && bandStart == null && (
-                <span title="Night-shift work" className="shrink-0 inline-flex items-center gap-0.5 rounded px-1 text-caption font-medium leading-[14px] bg-indigo-100 text-indigo-800 dark:bg-indigo-950/60 dark:text-indigo-200">
+                <span title="Night-shift work" className="shrink-0 inline-flex items-center gap-0.5 rounded px-1 text-caption font-medium leading-[14px] bg-[var(--shift-night-chip-bg)] text-[var(--shift-night-text)]">
                   <Moon className="w-2.5 h-2.5" />NIGHT
                 </span>
               )}
@@ -1269,7 +1269,7 @@ function Chip({
               )}
               {crew === "both" && <ShiftMark work="both" />}
               {crew === "mixed" && (
-                <span title="Day and night work today" className="shrink-0 inline-flex items-center gap-0.5 rounded px-1 text-caption font-medium leading-[14px] bg-indigo-100 text-indigo-800 dark:bg-indigo-950/60 dark:text-indigo-200">
+                <span title="Day and night work today" className="shrink-0 inline-flex items-center gap-0.5 rounded px-1 text-caption font-medium leading-[14px] bg-[var(--shift-night-chip-bg)] text-[var(--shift-night-text)]">
                   <Sun className="w-2.5 h-2.5" />+<Moon className="w-2.5 h-2.5" />
                 </span>
               )}

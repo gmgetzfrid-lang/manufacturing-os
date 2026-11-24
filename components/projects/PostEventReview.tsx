@@ -44,7 +44,7 @@ import { linksOf, type PartyLoad } from "@/lib/partyLoad";
 import { changeReview, loadAtOnce, loadReview, reviewScope, saveAtOnce, syncLesson } from "@/lib/reviewStore";
 import { appliesWord, deckSlides, fileStem, plannedWord, reviewDocx, reviewPptx, saveFile, type ReviewFileOpts } from "@/lib/reviewFiles";
 import { bookOf, scoreInputsFrom, type Action, type ScoreInputs } from "@/lib/reviewBook";
-import { phaseStats, type CostEntry, type CostLine } from "@/lib/phaseReport";
+import { hoursDays, phaseStats, type CostEntry, type CostLine } from "@/lib/phaseReport";
 import type { AreaId } from "@/lib/postEventReview";
 import ReviewSlides from "@/components/projects/ReviewSlides";
 import { IdleBars, LateHours, LoadChart, LoadStrip } from "@/components/projects/ReviewCharts";
@@ -68,6 +68,7 @@ import { useProjectType } from "@/lib/shiftTimesStore";
 import { typeWord } from "@/lib/projectType";
 import { appAlert } from "@/components/providers/DialogProvider";
 import MoreMenu from "@/components/ui/MoreMenu";
+import HelpTooltip from "@/components/ui/HelpTooltip";
 import { useDraft, clearDraft } from "@/hooks/useDraft";
 import { sayError } from "@/components/projects/sayError";
 import { SubTabs } from "@/components/projects/SubTabs";
@@ -493,13 +494,15 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
           <dl className="mt-3 grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-2.5 text-body">
             <div><dt className="text-[var(--color-text-muted)]">Baseline finish</dt><dd className="font-medium text-reading text-[var(--color-text)]">{at(m.baselineFinish)}</dd></div>
             <div><dt className="text-[var(--color-text-muted)]">Actual finish</dt><dd className="font-medium text-reading text-[var(--color-text)]">{at(m.actualFinish)}</dd></div>
-            <div className="col-span-2 sm:col-span-1"><dt className="text-[var(--color-text-muted)]">Against the baseline</dt><dd className={`font-medium text-reading ${m.varianceH == null ? "text-[var(--color-text)]" : m.varianceH >= 1 ? "text-[var(--state-overdue-text)]" : "text-[var(--state-released-text)]"}`}>{m.varianceH == null ? `${m.steps - m.stepsDone} of ${m.steps} activities still open` : Math.abs(m.varianceH) < 1 ? "On the baseline finish" : `${Math.abs(m.varianceH)} h ${m.varianceH > 0 ? "late" : "early"}`}</dd></div>
+            <div className="col-span-2 sm:col-span-1"><dt className="text-[var(--color-text-muted)]">Against the baseline</dt><dd className={`font-medium text-reading ${m.varianceH == null ? "text-[var(--color-text)]" : m.varianceH >= 1 ? "text-[var(--state-overdue-text)]" : "text-[var(--state-released-text)]"}`}>{m.varianceH == null ? `${m.steps - m.stepsDone} of ${m.steps} activities still open` : Math.abs(m.varianceH) < 1 ? "On the baseline finish" : `${hoursDays(m.varianceH)} ${m.varianceH > 0 ? "late" : "early"}`}</dd></div>
           </dl>
           {late && review.lateBars.length > 0 && (
             <div className="mt-5">
-              <h4 className="text-reading font-medium text-[var(--color-text)]">Where the {m.varianceH} h went</h4>
-              <p className="mb-2.5 text-caption text-[var(--color-text-muted)]">Each piece of the late finish and the finding that explains it. A bar goes to its finding.</p>
-              <LateHours bars={review.lateBars} late={m.varianceH!} onPick={go} />
+              <div className="mb-1 flex items-center gap-1.5">
+                <h4 className="text-reading font-medium text-[var(--color-text)]">Where the {m.varianceH} h went</h4>
+                <HelpTooltip>Each piece of the late finish, its hours, and the finding that explains it. The pieces add up to the late finish. Tap a row to go to its finding.</HelpTooltip>
+              </div>
+              <LateHours bars={review.lateBars} late={m.varianceH!} onPick={go} findings={review.findings} />
             </div>
           )}
           {!m.done && <p className="mt-3 text-caption text-[var(--color-text-muted)]">{m.steps - m.stepsDone} of {m.steps} activities are not done yet, so these numbers are to date.</p>}

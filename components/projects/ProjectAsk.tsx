@@ -72,16 +72,40 @@ export default function ProjectAsk({ stepId, projectId, onWorkTab }: {
     if (!onWorkTab) window.dispatchEvent(new CustomEvent("project:tab", { detail: "work" }));
     openStep(step.id, edit);
   };
+  // One short question: the step and its date; where it stands under it, and
+  // why it matters one tap away (the buttons say what to do).
   return (
     <NeededFromYou
       what={due?.late
-        ? <>{step.name} was due {plainDate(step.plannedAt)} and is still open: record where it stands, or move its date.</>
-        : <>{step.name} is due {plainDate(step.plannedAt)}: record its progress as it goes, or move its date if it won&apos;t make it.</>}
-      why={<>{step.kids > 0 ? where.charAt(0).toUpperCase() + where.slice(1) : <>It&apos;s {where}</>}. Late steps show red on the plan, the shift report and the project&apos;s reports until they&apos;re updated.</>}
+        ? <>{step.name} is late: due {plainDate(step.plannedAt)}.</>
+        : <>{step.name} is due {plainDate(step.plannedAt)}.</>}
+      why={<>
+        {step.kids > 0 ? where.charAt(0).toUpperCase() + where.slice(1) : <>It&apos;s {where}</>}.{" "}
+        <MoreWhy>
+          {due?.late
+            ? <>Record where it stands, or move its date. Late steps show red on the plan, the shift report and the project&apos;s reports until they&apos;re updated.</>
+            : <>Record its progress as it goes, or move its date if it won&apos;t make it. Late steps show red on the plan, the shift report and the project&apos;s reports until they&apos;re updated.</>}
+        </MoreWhy>
+      </>}
       when={due}
     >
       <Button onClick={() => open(false)}>Update it</Button>
       <Button variant="secondary" onClick={() => open(true)}>Move its date</Button>
     </NeededFromYou>
+  );
+}
+
+/** Why it matters, one tap away under the line (in the box's flow, so
+ *  nothing is cut off at its edge). */
+function MoreWhy({ children }: { children: React.ReactNode }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open}
+        className="inline-flex items-center min-h-8 pointer-coarse:min-h-11 font-medium text-[var(--color-accent-text)] hover:underline underline-offset-2">
+        {open ? "Less" : "Why it matters"}
+      </button>
+      {open && <span className="block mt-1 text-[var(--color-text-muted)]">{children}</span>}
+    </>
   );
 }

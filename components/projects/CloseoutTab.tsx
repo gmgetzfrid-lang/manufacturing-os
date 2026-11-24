@@ -26,7 +26,7 @@ import { listTurnoverItems, seedTurnoverItems, addTurnoverItem, updateTurnoverIt
 import { uploadProjectFile, projectFileHome, type ProjectFileHome } from "@/lib/projectUpload";
 import ProjectFilePlace from "@/components/projects/ProjectFilePlace";
 import { loadCloseoutSettings, saveCloseoutSettings, savePssrNeeded, CLOSEOUT_CHANGED, type CloseoutSettings } from "@/lib/closeoutSettings";
-import { pssrSource, turnoverSource, JOB_SIZES, type Source } from "@/lib/requirementSource";
+import { pssrSource, turnoverSource, sourceWords, JOB_SIZES, type Source } from "@/lib/requirementSource";
 import { saveJobKind } from "@/lib/projectStamps";
 import { loadAfeHistory, readAfe, type Afe, type AfeRevision } from "@/lib/costRevisions";
 import { AfeEditor } from "@/components/projects/cost/CostEdits";
@@ -64,6 +64,15 @@ const money = (n: number) => `$${Math.round(n).toLocaleString("en-US")}`;
 const PUNCH_RULE: Source = { kind: "default", note: "open punch items count as left to close" };
 const CO_RULE: Source = { kind: "default", note: "change orders waiting on a decision count as left to close" };
 const upper = (x: string) => (x ? x[0].toUpperCase() + x.slice(1) : x);
+/** "33.5 h late", "791.4 h late (33 days)": hours, and the days too once
+ *  it's over a day (the same as lib/phaseStanding's lateWords). */
+const hrs = (h: number, word = "") => {
+  const a = Math.round(Math.abs(h) * 10) / 10;
+  const d = a / 24 < 10 ? Math.round((a / 24) * 10) / 10 : Math.round(a / 24);
+  return `${a.toLocaleString("en-US")} h${word ? ` ${word}` : ""}${a >= 24 ? ` (${d} day${d === 1 ? "" : "s"})` : ""}`;
+};
+/** "33.5 h after plan", "on plan": against the plan, with days once over a day. */
+const planWords = (h: number | null) => (h == null ? "" : Math.abs(h) < 0.5 ? vsPlanWords(h) : hrs(h, h > 0 ? "after plan" : "before plan"));
 
 export type PssrList = { list: Checklist; satisfied: number; applicable: number };
 
@@ -378,6 +387,9 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
   const btn = `${heroQuiet} whitespace-nowrap`;
   const pri = `${heroPrimary} !h-9 whitespace-nowrap`;
   const quiet = "inline-flex items-center h-9 pointer-coarse:h-11 text-body text-[var(--color-accent-text)] hover:underline whitespace-nowrap disabled:opacity-50";
+  // Where a step's rule or setting came from ("App default: …", "Set for
+  // this project …"): in the "?" by its title, not a line under every step.
+  const whereFrom = (src: Source, first = false) => <span className={`block text-[var(--color-text-muted)] ${first ? "" : "mt-1.5"}`}>{sourceWords(src, tz)}</span>;
   // One main next step, the only orange button: schedule a phase that has
   // none, else upload the PSSR that's missing, else Mark complete once
   // everything is clear.
@@ -457,7 +469,7 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
           {w.total === 0 ? <span className="min-w-0 flex-1 basis-40 text-[var(--state-held-text)] font-medium">{upper(noScheduleWords(p, now, tz).replace(`${p.name}: `, ""))}</span>
             : w.allDone ? <>
               <span className="min-w-0 flex-1 basis-44">Done {w.finishedAt != null ? when(w.finishedAt) : ""}</span>
-              {w.finishedAt != null && w.plannedFinish != null && <span className={`sm:w-40 ${w.hoursAfterPlan != null && w.hoursAfterPlan >= 0.5 ? "text-[var(--state-overdue-text)] font-medium" : "text-[var(--color-text-muted)]"}`}>{vsPlanWords(w.hoursAfterPlan)}</span>}
+              {w.finishedAt != null && w.plannedFinish != null && <span className={`sm:w-40 ${w.hoursAfterPlan != null && w.hoursAfterPlan >= 0.5 ? "text-[var(--state-overdue-text)] font-medium" : "text-[var(--color-text-muted)]"}`}>{planWords(w.hoursAfterPlan)}</span>}
               <span className="sm:w-28 sm:text-right font-display tabular-nums text-[var(--color-text-muted)]">{w.done}/{w.total} steps</span>
             </>
               : <span className="min-w-0 flex-1 basis-40 text-[var(--color-text-muted)]"><span className="font-display tabular-nums">{w.done}/{w.total}</span> steps done</span>}
@@ -471,20 +483,19 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
     {
       state: stateAt(0), title: allWorkDone ? "Work done" : "The work",
       detail: phases.length ? undefined
-        : work.allDone ? <>{work.done} of {work.total} steps{work.finishedAt != null ? `, finished ${when(work.finishedAt)}` : ""}{work.finishedAt != null && work.plannedFinish != null ? <span className={work.hoursAfterPlan != null && work.hoursAfterPlan >= 0.5 ? "text-[var(--state-overdue-text)] font-medium" : ""}> ({vsPlanWords(work.hoursAfterPlan)})</span> : null}.</>
+        : work.allDone ? <>{work.done} of {work.total} steps{work.finishedAt != null ? `, finished ${when(work.finishedAt)}` : ""}{work.finishedAt != null && work.plannedFinish != null ? <span className={work.hoursAfterPlan != null && work.hoursAfterPlan >= 0.5 ? "text-[var(--state-overdue-text)] font-medium" : ""}> ({planWords(work.hoursAfterPlan)})</span> : null}.</>
           : work.total ? `${work.total - work.done} of ${work.total} steps not marked done.` : "No schedule yet.",
       action: !allWorkDone && !unscheduled.length ? <button type="button" onClick={() => onTab("work")} className={btn}>Open the work <ArrowRight className="w-3.5 h-3.5" /></button> : null,
       children: workRows,
     },
     phases.length ? {
-      state: stateAt(1), title: <>PSSR for each phase <HelpTooltip>Pre-startup safety review. Each phase starts up on its own, so each has its own PSSR. Upload it as a PDF: it is saved to the project&rsquo;s documents and read into items you check off. Or mark it not needed.</HelpTooltip></>,
-      detail: pssrs === undefined ? "Checking…" : <>Upload each phase&rsquo;s PSSR, or mark it not needed for this project.<SourceLine source={{ kind: "default", note: "each phase needs its own PSSR, because the project is split into phases" }} tz={tz} /></>,
+      state: stateAt(1), title: <>PSSR for each phase <HelpTooltip>Pre-startup safety review. Each phase starts up on its own, so each has its own PSSR. Upload it as a PDF: it is saved to the project&rsquo;s documents and read into items you check off. Or mark it not needed.{whereFrom({ kind: "default", note: "each phase needs its own PSSR, because the project is split into phases" })}</HelpTooltip></>,
+      detail: pssrs === undefined ? "Checking…" : "Upload each phase’s PSSR, or mark it not needed for this project.",
       children: pssrRows,
     } : {
-      state: stateAt(1), title: <>PSSR <HelpTooltip>Pre-startup safety review. Upload it as a PDF: it is saved to the project&rsquo;s documents and read into items you check off. Or mark it not needed for this job.</HelpTooltip></>,
-      detail: <>{pssrNotNeeded ? "Not needed for this project." : pssr === undefined ? "Checking…" : pssr ? `${pssr.list.title}: ${pssr.satisfied} of ${pssr.applicable} items done${pssr.list.status === "complete" ? ", complete" : ""}`
-        : "Upload the PSSR, or mark it not needed for this project."}
-        <SourceLine source={pssrSource({ notNeeded: pssrNotNeeded, at: settings.pssrAt ?? null, by: settings.pssrBy ?? null }, false)} tz={tz} /></>,
+      state: stateAt(1), title: <>PSSR <HelpTooltip>Pre-startup safety review. Upload it as a PDF: it is saved to the project&rsquo;s documents and read into items you check off. Or mark it not needed for this job.{whereFrom(pssrSource({ notNeeded: pssrNotNeeded, at: settings.pssrAt ?? null, by: settings.pssrBy ?? null }, false))}</HelpTooltip></>,
+      detail: pssrNotNeeded ? "Not needed for this project." : pssr === undefined ? "Checking…" : pssr ? `${pssr.list.title}: ${pssr.satisfied} of ${pssr.applicable} items done${pssr.list.status === "complete" ? ", complete" : ""}`
+        : "Upload the PSSR, or mark it not needed for this project.",
       action: pssr ? <button type="button" onClick={() => onTab("quality")} className={btn}>Open <ArrowRight className="w-3.5 h-3.5" /></button>
         : canManage ? <span className="flex items-center gap-3 flex-wrap">
           {!pssrNotNeeded && <button type="button" onClick={() => { setErr(null); setUploading("all"); }} className={main === "pssr" ? pri : btn}><UploadCloud className="w-4 h-4" /> Upload PSSR</button>}
@@ -492,8 +503,8 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
         </span> : null,
     },
     {
-      state: stateAt(2), title: <>Turnover documents {items && items.length > 0 && <HelpTooltip>Switch off the documents this job doesn&rsquo;t need. Attach each one as it comes in, then accept it.</HelpTooltip>}</>,
-      detail: !items ? "Checking…" : <>{required.length === 0 ? "None needed for this project yet." : `${inCount} of ${required.length} needed in and accepted`}<SourceLine source={turnoverSource(items, madeAt ?? null, nameOf)} tz={tz} /></>,
+      state: stateAt(2), title: <>Turnover documents {items && <HelpTooltip>{items.length > 0 && <>Switch off the documents this job doesn&rsquo;t need. Attach each one as it comes in, then accept it.</>}{whereFrom(turnoverSource(items, madeAt ?? null, nameOf), items.length === 0)}</HelpTooltip>}</>,
+      detail: !items ? "Checking…" : required.length === 0 ? "None needed for this project yet." : `${inCount} of ${required.length} needed in and accepted`,
       children: items && (
         <div className="mt-2 divide-y divide-[var(--color-border)] border-y border-[var(--color-border)]">
           {/* Where attached files go: asked once, picked by the person, changeable here. */}
@@ -530,13 +541,13 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
         </div>
       ),
     },
-    { state: stateAt(3), title: "Punch list", detail: <>{!snap ? "Checking…" : snap.punchOpen === 0 ? "Nothing open" : `${snap.punchOpen} open`}<SourceLine source={PUNCH_RULE} tz={tz} /></>,
+    { state: stateAt(3), title: <>Punch list <HelpTooltip>{whereFrom(PUNCH_RULE, true)}</HelpTooltip></>, detail: !snap ? "Checking…" : snap.punchOpen === 0 ? "Nothing open" : `${snap.punchOpen} open`,
       action: <button type="button" onClick={() => onTab("quality")} className={btn}>Open</button> },
-    { state: stateAt(4), title: "Change orders", detail: <>{!snap ? "Checking…" : snap.openChangeOrders === 0 ? "None waiting on a decision" : `${snap.openChangeOrders} waiting on a decision`}<SourceLine source={CO_RULE} tz={tz} /></>,
+    { state: stateAt(4), title: <>Change orders <HelpTooltip>{whereFrom(CO_RULE, true)}</HelpTooltip></>, detail: !snap ? "Checking…" : snap.openChangeOrders === 0 ? "None waiting on a decision" : `${snap.openChangeOrders} waiting on a decision`,
       action: snap && snap.openChangeOrders > 0 ? <button type="button" onClick={() => onTab("costs")} className={btn}>Decide <ArrowRight className="w-3.5 h-3.5" /></button> : null },
-    { state: stateAt(5), title: <>Final cost <HelpTooltip>Post the last invoices on Costs before closing.</HelpTooltip></>,
-      detail: <>{money0 ? `${money(invoiced)} invoiced${money0.afe != null ? ` of ${money(money0.afe)} AFE` : ""}` : "Checking…"}
-        {afe && <SourceLine source={afe.afe?.authorized != null ? { kind: "set", stamp: afe.last ? { at: afe.last.at, by: afe.last.by } : null, note: afe.last?.note ? `${afe.last.note[0].toLowerCase()}${afe.last.note.slice(1)}` : undefined } : { kind: "default", note: "no AFE, so nothing to measure the cost against" }} tz={tz} />}</>,
+    { state: stateAt(5), title: <>Final cost <HelpTooltip>Post the last invoices on Costs before closing.{afe && whereFrom(afe.afe?.authorized != null ? { kind: "set", stamp: afe.last ? { at: afe.last.at, by: afe.last.by } : null, note: afe.last?.note ? `${afe.last.note[0].toLowerCase()}${afe.last.note.slice(1)}` : undefined } : { kind: "default", note: "no AFE, so nothing to measure the cost against" })}</HelpTooltip></>,
+      // Nothing invoiced is not a cost of $0: it's not known yet.
+      detail: !money0 ? "Checking…" : invoiced === 0 ? `No invoices in yet${money0.afe != null ? ` (AFE ${money(money0.afe)})` : ""}` : `${money(invoiced)} invoiced${money0.afe != null ? ` of ${money(money0.afe)} AFE` : ""}`,
       action: <span className="flex items-center gap-2 flex-wrap">
         {canManage && afe && !afeEdit && <button type="button" onClick={() => setAfeEdit(true)} className={quiet}>{afe.afe?.authorized != null ? "Change the AFE" : "Set the AFE"}</button>}
         <button type="button" onClick={() => onTab("costs")} className={btn}>Invoices</button>
@@ -601,12 +612,18 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
                       ? <Fact k="Finish" v="Not finished" s={`${stats.missing.map((p) => p.name).join(", ")} not scheduled`} tone="warn" />
                       : <Fact k={stats.finishedAt != null ? "Finished" : "Planned finish"} v={stats.finishedAt != null ? short(stats.finishedAt) : stats.plannedFinish != null ? short(stats.plannedFinish) : "-"}
                         tone={stats.finishedAt != null && stats.plannedFinish != null && stats.finishedAt - stats.plannedFinish >= 1_800_000 ? "bad" : undefined}
-                        s={stats.finishedAt != null && stats.plannedFinish != null ? `${upper(vsPlanWords(lateBy(stats.finishedAt, stats.plannedFinish)))} (${short(stats.plannedFinish)})` : !pickedPhase && phases.length > 0 ? `${stats.phasesDone} of ${phases.length} phases done` : `${stats.actualPct}% done, plan ${stats.plannedPct}%`} />}
+                        s={stats.finishedAt != null && stats.plannedFinish != null ? `${upper(planWords(lateBy(stats.finishedAt, stats.plannedFinish)))} (${short(stats.plannedFinish)})` : !pickedPhase && phases.length > 0 ? `${stats.phasesDone} of ${phases.length} phases done` : `${stats.actualPct}% done, plan ${stats.plannedPct}%`} />}
                     <Fact k="Steps" v={`${stats.done} of ${stats.steps}`} s={`${Math.round(stats.hours).toLocaleString("en-US")} h of work`} bar={stats.steps ? { pct: (stats.done / stats.steps) * 100 } : undefined} />
                     <Fact k="Added work" v={`${stats.added.count} added`} s={stats.added.count ? `${stats.added.steps} step${stats.added.steps === 1 ? "" : "s"}, +${stats.added.hours} h of work` : "Nothing added to the plan"} />
                     <Fact k={pickedPhase ? "Phase budget" : money0?.afe != null ? "AFE" : "Budget"} v={money(stats.budget)} s={`Budget lines ${money(stats.lines.reduce((a, l) => a + l.budget, 0))}`} />
-                    <Fact k="Spent" v={money(stats.spent)} s={stats.budget ? `${Math.round((stats.spent / stats.budget) * 100)}% of the ${afeWord}` : "No budget"} bar={stats.budget ? { pct: (stats.spent / stats.budget) * 100, over: stats.spent > stats.budget } : undefined} />
-                    <Fact k={stats.budget - stats.spent >= 0 ? "Left" : "Over"} v={money(Math.abs(stats.budget - stats.spent))} tone={stats.budget - stats.spent >= 0 ? "good" : "bad"} s={stats.budget - stats.spent >= 0 ? "Invoices may still come in" : "Over the budget"} />
+                    {/* No invoices in: the cost isn't known, so nothing is "left" or saved yet. */}
+                    {stats.spent === 0 ? (
+                      <Fact k="Spent" v="No invoices in yet" s={stats.budget ? `Nothing invoiced against the ${money(stats.budget)} ${afeWord} so far` : "No budget"} />
+                    ) : <>
+                      <Fact k="Spent" v={money(stats.spent)} s={stats.budget ? `${Math.round((stats.spent / stats.budget) * 100)}% of the ${afeWord}` : "No budget"} bar={stats.budget ? { pct: (stats.spent / stats.budget) * 100, over: stats.spent > stats.budget } : undefined} />
+                      {/* Left is not a saving until the last invoice is in: plain, not green. */}
+                      <Fact k={stats.budget - stats.spent >= 0 ? "Left" : "Over"} v={money(Math.abs(stats.budget - stats.spent))} tone={stats.budget - stats.spent >= 0 ? undefined : "bad"} s={stats.budget - stats.spent >= 0 ? "Invoices may still come in" : "Over the budget"} />
+                    </>}
                   </tbody>
                 </table>
                 {!pickedPhase && phases.length > 0 ? (
@@ -638,7 +655,7 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
                                       : <span className="text-[var(--color-text-muted)]"><span className="font-display tabular-nums text-[var(--color-text)]">{ps.actualPct}%</span> done, plan by now {ps.plannedPct}%</span>}
                                 </td>
                                 <td className={`py-2.5 text-right whitespace-nowrap font-display tabular-nums font-semibold ${lateH != null && lateH >= 0.5 ? "text-[var(--state-overdue-text)]" : "text-[var(--color-text)]"}`}>
-                                  {lateH == null ? "-" : Math.abs(lateH) < 0.5 ? "On plan" : `${Math.abs(lateH)} h ${lateH > 0 ? "late" : "early"}`}
+                                  {lateH == null ? "-" : Math.abs(lateH) < 0.5 ? "On plan" : hrs(lateH, lateH > 0 ? "late" : "early")}
                                 </td>
                               </tr>
                             );
@@ -795,7 +812,7 @@ function SlipStory({ stats, tz, look, lookById, setbacks, steps, loading, counts
     const c = causeOf(lookById, x.id);
     if (!c) continue;
     const g = groups.get(c.id) ?? { cause: c, held: [], self: 0, hours: 0 };
-    if (c.id !== x.id) g.held.push({ s: x, right: `${x.hoursBehind} h behind` });
+    if (c.id !== x.id) g.held.push({ s: x, right: hrs(x.hoursBehind, "behind") });
     else g.self += x.hoursBehind;
     g.hours += x.hoursBehind;
     groups.set(c.id, g);
@@ -838,7 +855,7 @@ function SlipStory({ stats, tz, look, lookById, setbacks, steps, loading, counts
             <li key={x.id} className="py-1.5">
               <div className="flex items-start gap-2">
                 <span className="min-w-0 flex-1 text-caption text-[var(--color-text)] leading-snug">{label(x)}</span>
-                <span className="shrink-0 text-caption tabular-nums text-[var(--state-overdue-text)]">lost {x.lostH} h</span>
+                <span className="shrink-0 text-caption tabular-nums text-[var(--state-overdue-text)]">lost {hrs(x.lostH)}</span>
               </div>
               {lostWords(x).slice(0, 3).map((w) => <div key={w} className="text-caption text-[var(--state-held-text)] leading-snug">{w}</div>)}
               {hands(x) && <div className="text-caption text-[var(--color-text-muted)] leading-snug">{hands(x)}</div>}
@@ -854,7 +871,7 @@ function SlipStory({ stats, tz, look, lookById, setbacks, steps, loading, counts
             <div key={x.c} className="grid grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_auto] gap-2 items-center text-caption">
               <span className="text-[var(--color-text)] leading-tight">{CAUSE_LABEL[x.c]}</span>
               <div className="h-2 rounded-full bg-[var(--color-accent-soft)] overflow-hidden"><div className="h-full rounded-full bg-[var(--state-overdue)]" style={{ width: `${(x.h / maxH) * 100}%` }} /></div>
-              <span className="tabular-nums text-[var(--color-text-muted)]">{x.h} h · {x.n} step{x.n === 1 ? "" : "s"}</span>
+              <span className="tabular-nums text-[var(--color-text-muted)]">{hrs(x.h)} · {x.n} step{x.n === 1 ? "" : "s"}</span>
             </div>
           ))}</div>
         </>

@@ -67,9 +67,15 @@ interface Props {
   /** Starting work with a comment: "In progress" asks how far and what got
    *  done, and saves both (status + % + note). */
   onStartWithNote?: (percent: number, note: string, forShift?: ShiftCredit) => Promise<unknown> | unknown;
+  /** Done in a long list (the timeline): a quiet gray check instead of the
+   *  green one, so the late and open rows are what stand out. */
+  quietDone?: boolean;
 }
 
-export default function StatusControl({ status, onPick, disabled, onDisabledClick, busy, variant = "pill", size = "md", readOnly, title, percent, onSetProgress, onStartWithNote }: Props) {
+/** The dot's look for done when it should recede: gray, with its check. */
+const QUIET_DONE_DOT = "bg-[var(--color-text-faint)] border-[var(--color-text-faint)]";
+
+export default function StatusControl({ status, onPick, disabled, onDisabledClick, busy, variant = "pill", size = "md", readOnly, title, percent, onSetProgress, onStartWithNote, quietDone }: Props) {
   const [open, setOpen] = useState(false);
   // Esc closes the menu.
   useEffect(() => {
@@ -102,7 +108,7 @@ export default function StatusControl({ status, onPick, disabled, onDisabledClic
     const top = below + h > window.innerHeight - 8 ? Math.max(8, pos.anchorTop - h - 4) : below;
     el.style.top = `${top}px`;
   }, [open, pctStep, reasonFor, pos]);
-  const meta = STATUS_META[status];
+  const meta = quietDone && status === "completed" ? { ...STATUS_META.completed, dot: QUIET_DONE_DOT } : STATUS_META[status];
 
   const openMenu = () => {
     if (disabled) return;

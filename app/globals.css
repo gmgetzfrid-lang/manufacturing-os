@@ -156,6 +156,7 @@
   --viz-cat-4: #047857;  /* emerald-700 */
   --viz-cat-5: #be123c;  /* rose-700   */
   --viz-cat-6: #0891b2;  /* cyan-600   */
+  --viz-cat-7: #4d7c0f;  /* lime-700   */
   --viz-neutral: #9aa1ad;
   --viz-track: color-mix(in oklab, var(--color-border) 55%, transparent);
   --viz-up:    #047857;  /* trend up (paired with ▲, never color-alone) */
@@ -230,6 +231,7 @@
   --viz-cat-4: #059669;  /* emerald-600 */
   --viz-cat-5: #f43f5e;  /* rose-500   */
   --viz-cat-6: #0891b2;  /* cyan-600   */
+  --viz-cat-7: #65a30d;  /* lime-600   */
   --viz-up:    #34d399;  /* emerald-400 — reads on dark, always with ▲ */
   --viz-down:  #fb7185;  /* rose-400 — always with ▼ */
   --color-text: #e8ebf0;
@@ -270,6 +272,32 @@
   --color-heading: var(--color-text);
 }
 
+:root {
+  /* Status colors for words on any dark viewer background (drawings,
+     photos, the charcoal), the same in light and dark theme: 4.7:1 or
+     better on #29323f and darker. */
+  --on-dark-bad: #f87171;
+  --on-dark-warn: #fbbf24;
+  --on-dark-good: #4ade80;
+}
+:root {
+  /* Day and night shifts on calendars and timelines: a faint tint for the
+     band, a readable shade for its words (4.5:1 on the tint). */
+  --shift-day-bg: color-mix(in srgb, #0ea5e9 6%, transparent);
+  --shift-day-text: #0c4a6e;
+  --shift-night-bg: color-mix(in srgb, #8b5cf6 8%, transparent);
+  --shift-night-text: #4c1d95;
+  --shift-night-line: color-mix(in srgb, #8b5cf6 45%, transparent);
+  --shift-night-chip-bg: #e0e7ff;
+}
+.dark {
+  --shift-day-bg: color-mix(in srgb, #0ea5e9 9%, transparent);
+  --shift-day-text: #7dd3fc;
+  --shift-night-bg: color-mix(in srgb, #8b5cf6 14%, transparent);
+  --shift-night-text: #ddd6fe;
+  --shift-night-line: color-mix(in srgb, #8b5cf6 50%, transparent);
+  --shift-night-chip-bg: color-mix(in srgb, #6366f1 25%, transparent);
+}
 :root {
   --background: var(--color-canvas);
   --foreground: var(--color-text);
@@ -335,6 +363,10 @@ body {
    a drawing, toasts. */
 .surface-charcoal {
   --color-canvas: #1f2733;
+  /* Status words on the charcoal: the light shades, 4.5:1 or better. */
+  --state-overdue-text: var(--on-dark-bad);
+  --state-held-text: var(--on-dark-warn);
+  --state-released-text: var(--on-dark-good);
   --color-surface: #29323f;
   --color-surface-2: #29323f;
   --color-text: #f2f4f7;
@@ -1019,7 +1051,7 @@ html.vt-on .side-marker { view-transition-name: side-marker; }
 }
 @media (pointer: coarse) {
   .ui-chip { height: 36px; position: relative; }
-  .ui-chip::after { content: ""; position: absolute; inset: -4px 0; } /* 44 px to tap (rule T1) */
+  .ui-chip::after { content: ""; position: absolute; inset: -5px 0; } /* 44 px to tap (rule T1): 36 px less its border, plus 5 above and below */
 }
 @media (prefers-reduced-motion: reduce) { .ui-chip:active { transform: none; } }
 
@@ -1041,6 +1073,19 @@ html.vt-on .side-marker { view-transition-name: side-marker; }
 @layer base {
   @media (pointer: coarse) {
     :is(a, button)[class*="hover:underline"] { padding-block: 12px; margin-block: -12px; }
+    /* Document numbers and IDs drawn as links (.ui-id), the same way. */
+    a.ui-id, button.ui-id { padding-block: 10px; margin-block: -10px; }
+  }
+}
+
+/* Touch safety net (design rule T1): a button or link drawn 32 to 40 px
+   (h-8, h-9, h-10; w-8 to w-10 for square icons) with no touch size of its
+   own is at least 44 px on a touch screen. In the base layer, so any size a
+   control sets for itself still wins. */
+@layer base {
+  @media (pointer: coarse) {
+    :is(button, a, [role="button"], [role="tab"], select):is([class~="h-8"], [class~="h-9"], [class~="h-10"]):not([class*="pointer-coarse:h-"]):not([class*="pointer-coarse:size-"]):not([class*="pointer-coarse:min-h-"]) { min-height: 44px; }
+    :is(button, a, [role="button"]):is([class~="w-8"], [class~="w-9"], [class~="w-10"]):not([class*="pointer-coarse:w-"]):not([class*="pointer-coarse:size-"]):not([class*="pointer-coarse:min-w-"]) { min-width: 44px; }
   }
 }
 

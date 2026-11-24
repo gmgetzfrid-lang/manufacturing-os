@@ -11,6 +11,7 @@
 // and aren't written: an update to management is the facts.
 
 import { noEmDash } from "@/lib/noEmDash";
+import type { FormLine, FormRow, FormRowId, ShiftForm } from "@/lib/shiftForm";
 
 export type Tone = "rose" | "amber" | "emerald" | "slate" | "muted";
 
@@ -43,7 +44,9 @@ export type ExportCell = string | {
 const cellText = (c: ExportCell) => (typeof c === "string" ? c : c.t);
 
 export type ExportBlock =
-  | { k: "stats"; items: Array<{ label: string; value: string; tone: Tone }> }
+  | { k: "stats"; items: Array<{ label: string; value: string; tone: Tone }>;
+    /** Quiet tiles under a status sentence that already gives the answer. */
+    small?: boolean }
   | { k: "note"; text: string; tone?: Tone }
   | { k: "sub"; title: string; count: number; tone: Tone }
   /** A small heading inside a section ("Completed"). */
@@ -56,6 +59,9 @@ export type ExportBlock =
     textLabels?: string[];
     /** Columns kept on one line ("10:00–12:00" never breaks). */
     nowrap?: number[];
+    /** A line under a row, the table's whole width (by row, as `rows`): a
+     *  long note that a narrow column would squeeze into a strip. */
+    notes?: Array<string | null | undefined>;
   }
   /** The numbers, two bars (done and planned, of the whole job) and the
    *  bottom line beside them — the update's first glance. */
@@ -65,6 +71,8 @@ export type ExportBlock =
     bars?: { done: number; plan: number; from: string; to: string };
     title: string;
     lines: Array<{ label?: string; text: string; tone?: Tone }>;
+    /** Quiet tiles (the status sentence above already gives the answer). */
+    small?: boolean;
   }
   /** Short labelled boxes side by side ("Crews on day shift" | "Safety
    *  focus"), each a list of lines. */
@@ -110,7 +118,12 @@ export interface ExportDoc {
   project: string;
   when: string;          // "Day shift Wed Oct 22 5:30–17:30 → Night shift …"
   asOf: string;
-  status?: { label: string; tone: Tone; detail?: string };
+  /** The verdict. With `key` it leads the update as one sentence (`detail`)
+   *  beside its one number, big ("43.5 h"); without, a small box. */
+  status?: { label: string; tone: Tone; detail?: string; key?: string };
+  /** The head count in one line, up top: "38 on site: Schultz 12, Ancon 20".
+   *  The names are at the end, with the people. */
+  headcount?: string;
   sections: ExportSection[];
   footer?: string;
 }
@@ -130,6 +143,79 @@ export function groupRows(rows: ExportStepRow[], flat?: boolean): Array<{ group?
   return out;
 }
 
+/** Done and plan bars say something only while one of them is short of
+ *  100%: two full bars just repeat "100%" from the tiles. */
+export const barsShown = (b: { done: number; plan: number }) => b.done < 100 || b.plan < 100;
+
+/** "38 on site: Schultz 12, Ancon 20, Brand 6": the head count in one line,
+ *  from the counts entered (plant staff are not on the job and not counted).
+ *  Undefined when no count was entered: nothing is made up. */
+export function headcountLine(rows: Array<{ crew: string; n: number }>): string | undefined {
+  const counted = rows.filter((r) => Number.isFinite(r.n));
+  if (!counted.length) return undefined;
+  const total = counted.reduce((a, r) => a + r.n, 0);
+  return `${total} on site: ${counted.map((r) => `${r.crew} ${r.n}`).join(", ")}`;
+}
+
+/** The order the turnover goes out in, by section id: the answer (where we
+ *  stand), what got done, what is next, problems and follow-ups, safety,
+ *  then the people (who was at the meeting) last. */
+export const MANAGEMENT_ORDER = ["stand", "done", "next", "after", "carries", "waiting", "discovery", "notes", "incidents", "safety", "hourly", "meetings"];
+
+/** Short section titles for management ("Done", "Next shift"). The shift
+ *  and its times move into the line beside the title. */
+const SHORT_TITLE: Record<string, string> = { done: "Done", next: "Next shift", after: "Shift after", meetings: "People" };
+
+/** The turnover as management reads it: sections in MANAGEMENT_ORDER (any
+ *  other keeps its place after them), short titles with the shift and its
+ *  times beside them (`when` per id, else the part of the title after
+ *  " - "), quiet tiles under the status sentence, and no bars that only
+ *  repeat 100%. Nothing is left out. */
+export function forManagement(d: ExportDoc, when: Record<string, string> = {}): ExportDoc {
+  const rank = (id?: string) => { const i = id ? MANAGEMENT_ORDER.indexOf(id) : -1; return i < 0 ? MANAGEMENT_ORDER.length : i; };
+  const sections = d.sections.map((s, i) => ({ s, i })).sort((a, b) => rank(a.s.id) - rank(b.s.id) || a.i - b.i).map(({ s }) => {
+    const cut = s.title.indexOf(" - ");
+    const head = cut > 0 ? s.title.slice(0, cut) : s.title;
+    const rest = s.id && when[s.id] ? when[s.id] : cut > 0 ? s.title.slice(cut + 3) : "";
+    const title = (s.id && SHORT_TITLE[s.id]) || head;
+    const blocks = s.blocks.map((b): ExportBlock => (b.k === "overview"
+      ? { ...b, small: !!d.status?.key, bars: b.bars && barsShown(b.bars) ? b.bars : undefined }
+      : b));
+    return { ...s, title, sub: [rest, s.sub].filter(Boolean).join(" · ") || undefined, blocks };
+  });
+  return { ...d, sections };
+}
+
+/** The plant's shift table as management reads it: the same rows and
+ *  lines, in the update's order (done, the plan, waiting, follow-ups,
+ *  safety, notes, then the people), with short row names; the times a
+ *  long name carried ("Work Completed Between 5:30 AM and 6:00 PM") go on
+ *  the row's first line. */
+export function managementForm(f: ShiftForm, o: { meeting: string; end: string }): ShiftForm {
+  const order: FormRowId[] = ["done", "plan", "waiting", "followup", "safety", "notes", "attend", "headcount"];
+  const short: Record<FormRowId, { label: string; first?: string }> = {
+    done: { label: "Done", first: `${o.meeting} to ${o.end}` },
+    // "Plan", "Attendees", "Head count": short, and still the headings a
+    // pasted update is read by (lib/emailShifts), so a plan and the people
+    // are never read back as progress.
+    plan: { label: "Plan", first: `After the ${o.meeting} meeting` },
+    waiting: { label: "Waiting and ready" },
+    followup: { label: "Follow-ups" },
+    safety: { label: "Safety" },
+    notes: { label: "Shift notes" },
+    attend: { label: "Attendees", first: `At the ${o.meeting} meeting` },
+    headcount: { label: "Head count" },
+  };
+  const rank = (id: FormRowId) => { const i = order.indexOf(id); return i < 0 ? order.length : i; };
+  const rows: FormRow[] = [...f.rows].sort((a, b) => rank(a.id) - rank(b.id)).map((r) => {
+    const s = short[r.id];
+    if (!s) return r;
+    const lines: FormLine[] = s.first ? [{ k: "text", text: s.first }, ...r.lines] : r.lines;
+    return { ...r, label: s.label, lines };
+  });
+  return { ...f, rows };
+}
+
 // ── Plain text ───────────────────────────────────────────────────────
 
 const tagText = (tags?: ExportTag[]) => (tags?.length ? ` [${tags.map((t) => t.t).join(", ")}]` : "");
@@ -144,6 +230,7 @@ function plainText(d: ExportDoc): string {
   out.push(`${d.kind.toUpperCase()} - ${d.project}`);
   out.push(`${d.when} · as of ${d.asOf}`);
   if (d.status) out.push(`Status: ${d.status.label}${d.status.detail ? ` - ${d.status.detail}` : ""}`);
+  if (d.headcount) out.push(d.headcount);
   for (const s of d.sections) {
     out.push("");
     out.push(`${s.title.toUpperCase()}${s.sub ? ` - ${s.sub}` : ""}`);
@@ -182,7 +269,7 @@ function plainText(d: ExportDoc): string {
           break;
         case "overview":
           out.push(`   ${b.stats.map((x) => `${x.label}: ${x.value}`).join("  |  ")}`);
-          if (b.bars) out.push(`   Job progress: ${b.bars.done}% done, ${b.bars.plan}% planned by now`);
+          if (b.bars && barsShown(b.bars)) out.push(`   Job progress: ${b.bars.done}% done, ${b.bars.plan}% planned by now`);
           if (b.lines.length) {
             out.push(`   ${b.title.toUpperCase()}`);
             for (const l of b.lines) out.push(`   ${l.label ? `${l.label}: ` : ""}${l.text}`);
@@ -195,23 +282,35 @@ function plainText(d: ExportDoc): string {
           }
           break;
         case "table": {
+          // What a cell carries besides its value: its comment, its lines
+          // (after a heading like "3 steps:" they follow it; after a line of
+          // its own, a "; "), and its short lines under it. The first cell's
+          // too: a task's "task 40% done" or a note is never dropped.
+          const extra = (c: ExportCell, v: string) => {
+            if (typeof c === "string") return "";
+            const note = c.note ? ` ("${c.note}")` : "";
+            const lines = c.lines?.length ? `${/:$/.test(v) ? " " : "; "}${c.lines.map((x) => `${x.lead ? `${x.lead} ` : ""}${x.t}${x.note ? ` ("${x.note}")` : ""}`).join("; ")}` : "";
+            const sub = c.sub?.length ? ` (${c.sub.map((x) => x.t).join("; ")})` : "";
+            return note + lines + sub;
+          };
           // A blank first cell continues the task above: its rows indent
-          // under it. Blank cells are skipped, not printed.
-          for (const r of b.rows) {
-            const first = cellText(r[0] ?? "");
+          // under it. Blank cells are skipped, not printed. A row's own
+          // note goes on an indented line under it.
+          b.rows.forEach((r, i) => {
+            const c0 = r[0] ?? "";
+            const v0 = cellText(c0);
+            const first = v0 ? v0 + extra(c0, v0) : "";
             const tail = r.slice(1).map((c, j) => {
               const v = cellText(c);
               if (!v) return "";
               const label = b.textLabels ? b.textLabels[j + 1] ?? "" : (b.head[j + 1] ?? "").toLowerCase();
-              const note = typeof c !== "string" && c.note ? ` ("${c.note}")` : "";
-              // After a heading ("3 steps:") the lines follow it; after a line of its own, a "; ".
-              const lines = typeof c !== "string" && c.lines?.length ? `${/:$/.test(v) ? " " : "; "}${c.lines.map((x) => `${x.lead ? `${x.lead} ` : ""}${x.t}${x.note ? ` ("${x.note}")` : ""}`).join("; ")}` : "";
-              const sub = typeof c !== "string" && c.sub?.length ? ` (${c.sub.map((x) => x.t).join("; ")})` : "";
-              return (label && (typeof c === "string" || (!c.tone && !c.bold)) ? `${label} ${v}` : v) + note + lines + sub;
+              return (label && (typeof c === "string" || (!c.tone && !c.bold)) ? `${label} ${v}` : v) + extra(c, v);
             }).filter(Boolean).join(" · ");
             if (first) out.push(`   • ${first}${tail ? ` - ${tail}` : ""}`);
             else if (tail) out.push(`       ${tail}`);
-          }
+            const note = b.notes?.[i]?.trim();
+            if (note) out.push(`       ${note}`);
+          });
           break;
         }
         case "steps": {
@@ -267,10 +366,11 @@ function blockHtml(b: ExportBlock): string {
     case "stats":
       return `<table role="presentation" cellpadding="0" cellspacing="3" border="0" style="border-collapse:separate;margin:2px 0 4px -3px;"><tr>${b.items.map((x) => {
         const t = TONE[x.tone];
-        // Narrow enough that four tiles fit a phone screen (375px).
-        return td(`border:1px solid ${t.bd};background-color:${t.bg};padding:4px 8px;min-width:60px;`,
+        // Narrow enough that four tiles fit a phone screen (375px). Under a
+        // status sentence the tiles are quiet: the sentence has the answer.
+        return td(`border:1px solid ${t.bd};background-color:${t.bg};padding:${b.small ? "3px 6px" : "4px 8px"};min-width:60px;`,
           `<div style="${FONT}font-size:9px;font-weight:bold;text-transform:uppercase;letter-spacing:0.5px;color:${MUTED};white-space:nowrap;">${esc(x.label)}</div>` +
-          `<div style="${FONT}font-size:17px;font-weight:bold;color:${t.fg};white-space:nowrap;">${esc(x.value)}</div>`, `bgcolor="${t.bg}" `);
+          `<div style="${FONT}font-size:${b.small ? 13 : 17}px;font-weight:bold;color:${t.fg};white-space:nowrap;">${esc(x.value)}</div>`, `bgcolor="${t.bg}" `);
       }).join("")}</tr></table>`;
     case "note":
       return `<p style="${FONT}font-size:12px;margin:3px 0;color:${b.tone ? TONE[b.tone].fg : INK};${b.tone ? "font-weight:bold;" : ""}">${esc(b.text)}</p>`;
@@ -301,9 +401,15 @@ function blockHtml(b: ExportBlock): string {
       // A column with nothing in it (no step started yet) isn't drawn.
       const keep = b.head.map((_, j) => j === 0 || b.rows.some((r) => cellText(r[j] ?? "") !== ""));
       const al = (j: number) => b.align?.[j] ?? "left";
+      // A row's own note: a second row across every column, no rule
+      // between them, so a long note reads as one line under its row.
+      const noteRow = (i: number) => {
+        const n = b.notes?.[i]?.trim();
+        return n ? `<tr>${td(`font-size:12px;line-height:1.4;color:#475569;padding:0 8px 6px;text-align:left;vertical-align:top;`, esc(n), `colspan="${keep.filter(Boolean).length}" `)}</tr>` : "";
+      };
       return `<table cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;border:1px solid ${LINE};">` +
         `<tr>${b.head.map((h, j) => !keep[j] ? "" : td(`font-size:10px;font-weight:bold;text-transform:uppercase;letter-spacing:0.3px;color:${MUTED};background-color:#f8fafc;padding:5px 8px;border-bottom:1px solid ${LINE};text-align:${al(j)};white-space:nowrap;`, esc(h), `bgcolor="#f8fafc" `)).join("")}</tr>` +
-        b.rows.map((r) => {
+        b.rows.map((r, i) => {
           // A row that continues the task above has no line between them.
           const cont = cellText(r[0] ?? "") === "";
           return `<tr>${r.map((c, j) => {
@@ -319,7 +425,7 @@ function blockHtml(b: ExportBlock): string {
               `<div style="${FONT}font-size:11px;font-weight:normal;${x.italic ? "font-style:italic;" : ""}color:${x.tone ? (x.tone === "muted" ? MUTED : TONE[x.tone].fg) : MUTED};margin-top:2px;">${esc(x.t)}</div>`).join("") : "";
             const nw = b.nowrap?.includes(j) ? "white-space:nowrap;" : "";
             return td(`font-size:13px;color:${color};padding:5px 8px;${cont ? "" : "border-top:1px solid #e2e8f0;"}text-align:${al(j)};vertical-align:top;${nw}${o.bold ? "font-weight:bold;" : ""}`, esc(o.t) + lines + note + sub);
-          }).join("")}</tr>`;
+          }).join("")}</tr>` + noteRow(i);
         }).join("") +
         `</table>`;
     }
@@ -334,7 +440,7 @@ function blockHtml(b: ExportBlock): string {
             `</tr></table>`) +
           td(`font-size:10px;color:${INK};font-weight:bold;padding:1px 0 1px 6px;white-space:nowrap;width:30px;text-align:right;`, `${w}%`) + `</tr>`;
       };
-      const left = blockHtml({ k: "stats", items: b.stats }) + (b.bars
+      const left = blockHtml({ k: "stats", items: b.stats, small: b.small }) + (b.bars && barsShown(b.bars)
         ? `<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;margin-top:4px;">` +
           bar("Done", b.bars.done, "#0f766e") + bar("Plan", b.bars.plan, "#94a3b8") +
           `<tr>${td("", "")}${td(`font-size:9px;color:${MUTED};padding-top:1px;`, `${esc(b.bars.from)} → ${esc(b.bars.to)} · whole job`)}${td("", "")}</tr></table>`
@@ -403,10 +509,10 @@ export function toEmailHtml(d: ExportDoc): string {
 /** The pieces of the update's header, each one on or off for the email and
  *  the export: the masthead's lines, its verdict, and Where we stand's
  *  line, numbers and bars. */
-export type HeaderPart = "kind" | "project" | "when" | "asof" | "status" | "standLine" | "complete" | "plan" | "gap" | "steps" | "bars";
+export type HeaderPart = "kind" | "project" | "when" | "asof" | "status" | "headcount" | "standLine" | "complete" | "plan" | "gap" | "steps" | "bars";
 export const HEADER_PARTS: Array<{ id: HeaderPart; word: string }> = [
   { id: "kind", word: "Shift turnover" }, { id: "project", word: "Project name" }, { id: "when", word: "Shifts" }, { id: "asof", word: "As of" },
-  { id: "status", word: "Ahead / behind" }, { id: "standLine", word: "Day, finish dates" }, { id: "complete", word: "Complete" },
+  { id: "status", word: "Status" }, { id: "headcount", word: "Head count" }, { id: "standLine", word: "Day, finish dates" }, { id: "complete", word: "Complete" },
   { id: "plan", word: "Plan by now" }, { id: "gap", word: "Work ahead / behind" }, { id: "steps", word: "Steps done" }, { id: "bars", word: "Done / plan bars" },
 ];
 /** Which piece a Where we stand number is. */
@@ -425,7 +531,9 @@ function mastheadHtml(d: ExportDoc, off: ReadonlySet<HeaderPart> = new Set()): s
   // light / dark mode recolor text and backgrounds separately, and white
   // text on a kept-dark background comes out black on navy. Light panels
   // with dark text (every color set on the element itself) flip cleanly.
-  const status = d.status && !off.has("status")
+  // A status with its key number leads the update as a sentence of its own
+  // (leadHtml, under this); without one, the verdict is a small box here.
+  const status = d.status && !d.status.key && !off.has("status")
     ? td(`padding:6px 10px;background-color:${TONE[d.status.tone].bg};border:1px solid ${TONE[d.status.tone].bd};border-left:4px solid ${SOLID[d.status.tone]};text-align:right;white-space:nowrap;vertical-align:middle;`,
       `<div style="${FONT}font-size:14px;font-weight:bold;color:${TONE[d.status.tone].fg};">${esc(d.status.label)}</div>` +
       (d.status.detail ? `<div style="${FONT}font-size:10px;color:${TONE[d.status.tone].fg};">${esc(d.status.detail)}</div>` : ""), `bgcolor="${TONE[d.status.tone].bg}" `)
@@ -434,10 +542,31 @@ function mastheadHtml(d: ExportDoc, off: ReadonlySet<HeaderPart> = new Set()): s
   const left = (off.has("kind") ? "" : `<div style="${FONT}font-size:10px;font-weight:bold;text-transform:uppercase;letter-spacing:1.5px;color:${MUTED};">${esc(d.kind)}</div>`) +
     (off.has("project") ? "" : `<div style="${FONT}font-size:18px;font-weight:bold;color:${INK};">${esc(d.project)}</div>`) +
     (whenLine ? `<div style="${FONT}font-size:11px;color:#334155;">${esc(whenLine)}</div>` : "");
-  if (!left && !status) return "";
+  const lead = leadHtml(d, off);
+  if (!left && !status) return lead;
   return `<table cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;max-width:820px;"><tr>` +
     (left ? td(`padding:8px 12px;background-color:#f8fafc;border-top:4px solid ${INK};border-bottom:1px solid ${LINE};border-left:1px solid ${LINE};`, left, `bgcolor="#f8fafc" `) : "") +
-    status + `</tr></table>`;
+    status + `</tr></table>` + lead;
+}
+
+/** The answer first: the status as one sentence with its key number big
+ *  beside it (never wrapped), the verdict's word over the sentence; then
+ *  the head count in one line. A light panel with dark text, its color set
+ *  on the cell itself (mail apps in dark mode recolor safely). */
+function leadHtml(d: ExportDoc, off: ReadonlySet<HeaderPart>): string {
+  const s = d.status && d.status.key && !off.has("status") ? d.status : null;
+  const head = d.headcount && !off.has("headcount") ? d.headcount : "";
+  if (!s && !head) return "";
+  const t = s ? TONE[s.tone] : null;
+  const row = s && t
+    ? `<tr>${td(`padding:8px 12px;background-color:${t.bg};border:1px solid ${t.bd};border-left:4px solid ${SOLID[s.tone]};border-right:0;vertical-align:middle;white-space:nowrap;width:1%;`,
+      `<div style="${FONT}font-size:24px;font-weight:bold;color:${t.fg};white-space:nowrap;">${esc(s.key!).replace(/ /g, "&nbsp;")}</div>`, `bgcolor="${t.bg}" `)}` +
+      td(`padding:8px 12px 8px 4px;background-color:${t.bg};border:1px solid ${t.bd};border-left:0;vertical-align:middle;`,
+        `<div style="${FONT}font-size:10px;font-weight:bold;letter-spacing:1px;text-transform:uppercase;color:${t.fg};">${esc(s.label)}</div>` +
+        (s.detail ? `<div style="${FONT}font-size:14px;line-height:1.4;color:${INK};">${esc(s.detail)}</div>` : ""), `bgcolor="${t.bg}" `) + `</tr>`
+    : "";
+  const count = head ? `<tr>${td(`padding:${s ? 6 : 0}px 0 0;font-size:12px;color:#334155;`, esc(head), s ? `colspan="2" ` : "")}</tr>` : "";
+  return `<table cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;max-width:820px;margin-top:8px;">${row}${count}</table>`;
 }
 
 /** The header as picked: the masthead, then Where we stand's line,
@@ -447,13 +576,13 @@ export function headerHtml(d: ExportDoc, off: ReadonlySet<HeaderPart>): string {
   const stand = d.sections.find((s) => s.id === "stand");
   const ov = stand?.blocks.find((b): b is Extract<ExportBlock, { k: "overview" }> => b.k === "overview");
   const stats = (ov?.stats ?? []).filter((x) => { const p = tilePart(x.label); return !p || !off.has(p); });
-  const bars = ov?.bars && !off.has("bars") ? ov.bars : undefined;
+  const bars = ov?.bars && barsShown(ov.bars) && !off.has("bars") ? ov.bars : undefined;
   const line = stand && !off.has("standLine");
   if (line || stats.length || bars) {
     html += `<table cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;max-width:820px;margin-top:${html ? 14 : 0}px;">` +
       (line ? `<tr>${td(`border-bottom:2px solid ${stand!.flag === "rose" ? SOLID.rose : INK};padding:0 0 3px;`,
         `<span style="${FONT}font-size:15px;font-weight:bold;color:${INK};">${esc(stand!.title)}</span>` + (stand!.sub ? `<span style="${FONT}font-size:12px;color:${MUTED};">&nbsp;&nbsp;${esc(stand!.sub)}</span>` : ""))}</tr>` : "") +
-      (stats.length || bars ? `<tr>${td("padding:6px 0 0;", blockHtml({ k: "overview", stats, bars, title: "", lines: [] }))}</tr>` : "") +
+      (stats.length || bars ? `<tr>${td("padding:6px 0 0;", blockHtml({ k: "overview", stats, bars, title: "", lines: [], small: !!d.status?.key || ov?.small }))}</tr>` : "") +
       `</table>`;
   }
   return html ? `<div style="${FONT}color:${INK};max-width:820px;margin-bottom:14px;">${html}</div>` : "";
@@ -467,12 +596,13 @@ export function headerText(d: ExportDoc, off: ReadonlySet<HeaderPart>): string {
   const whenLine = [off.has("when") ? "" : d.when, off.has("asof") ? "" : `as of ${d.asOf}`].filter(Boolean).join(" · ");
   if (whenLine) out.push(whenLine);
   if (d.status && !off.has("status")) out.push(`${d.status.label}${d.status.detail ? ` - ${d.status.detail}` : ""}`);
+  if (d.headcount && !off.has("headcount")) out.push(d.headcount);
   const stand = d.sections.find((s) => s.id === "stand");
   const ov = stand?.blocks.find((b): b is Extract<ExportBlock, { k: "overview" }> => b.k === "overview");
   if (stand && !off.has("standLine")) out.push(`Where we stand${stand.sub ? ` - ${stand.sub}` : ""}`);
   const stats = (ov?.stats ?? []).filter((x) => { const p = tilePart(x.label); return !p || !off.has(p); });
   if (stats.length) out.push(stats.map((x) => `${x.label}: ${x.value}`).join(" · "));
-  if (ov?.bars && !off.has("bars")) out.push(`Done ${ov.bars.done}% · Plan ${ov.bars.plan}% (${ov.bars.from} to ${ov.bars.to})`);
+  if (ov?.bars && barsShown(ov.bars) && !off.has("bars")) out.push(`Done ${ov.bars.done}% · Plan ${ov.bars.plan}% (${ov.bars.from} to ${ov.bars.to})`);
   return noEmDash(out.join("\n"));
 }
 

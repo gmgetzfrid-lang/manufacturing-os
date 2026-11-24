@@ -103,7 +103,7 @@ export default function ViewTabs({
                 onTransitionClick(e, () => router.push(hrefFor(t.href)));
               }}
               aria-current={active ? "page" : undefined}
-              className={`shrink-0 whitespace-nowrap inline-flex items-center gap-1.5 h-10 pointer-coarse:h-11 border-b-2 text-body transition-colors ${
+              className={`shrink-0 whitespace-nowrap inline-flex items-center justify-center gap-1.5 h-10 pointer-coarse:h-11 pointer-coarse:min-w-11 border-b-2 text-body transition-colors ${
                 active
                   ? "border-[var(--color-current)] text-[var(--color-text)] font-medium"
                   : "border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-border-strong)]"

@@ -5,10 +5,13 @@
 // through intake transition-in (project_documents rows) never appeared,
 // and there was no way to attach a document to a project by hand. This
 // card reads the actual link table, badges where each link came from, and
-// gives managers attach/remove — with doc_added / doc_removed activity
-// (two enum values that existed since day one and were never written).
+// gives managers attach/remove (remove asks first, naming the document) —
+// with doc_added / doc_removed activity (two enum values that existed
+// since day one and were never written).
 
 import HelpTooltip from "@/components/ui/HelpTooltip";
+import { appConfirm } from "@/components/providers/DialogProvider";
+import { controlClass } from "@/components/ui/Field";
 import { Card } from "@/components/ui/PageHero";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
@@ -147,6 +150,13 @@ export default function ProjectDocumentsCard({ orgId, projectId, canManage, uid,
   };
 
   const detach = async (r: LinkedDoc) => {
+    if (!(await appConfirm({
+      title: `Remove ${r.label} from this project?`,
+      message: r.source === "checkout"
+        ? "The document stays in document control. It links itself here again the next time it is checked out under this project."
+        : "The document stays in document control. You can attach it again.",
+      tone: "danger", confirmLabel: "Remove from project",
+    }))) return;
     setBusy(r.linkId); setErr(null);
     try {
       const { error } = await supabase.from("project_documents").delete().eq("id", r.linkId);
@@ -158,12 +168,16 @@ export default function ProjectDocumentsCard({ orgId, projectId, canManage, uid,
   };
 
   return (
-    <Card pad={false} className="overflow-hidden" label={<>Project documents <span className="ml-1 text-reading font-normal tabular-nums text-[var(--color-text-muted)]">{rows.length}</span></>}
+    <Card pad={false} className="overflow-hidden" label={<span className="inline-flex items-center gap-1.5">Project documents <span className="text-reading font-normal tabular-nums text-[var(--color-text-muted)]">{rows.length}</span>
+      {/* What links a document here, and what each "Linked by" word means (outside the card, so nothing clips it). */}
+      <HelpTooltip><span className="block font-normal">A document checked out under this project links itself here{canManage ? ". Attach document links one by hand" : ""}.</span>
+        <span className="block mt-1 font-normal">{SOURCE_BADGE.checkout.label}: {SOURCE_BADGE.checkout.hint.toLowerCase()}.</span>
+        <span className="block mt-1 font-normal">{SOURCE_BADGE.manual.label}: {SOURCE_BADGE.manual.hint.toLowerCase()}.</span></HelpTooltip></span>}
       action={canManage ? (
         <button
           onClick={() => { setAttachOpen((v) => !v); setQ(""); setResults([]); }}
           aria-expanded={attachOpen}
-          className={`inline-flex items-center gap-1.5 h-10 px-3.5 rounded-md text-body font-medium whitespace-nowrap transition-colors ${attachOpen ? "border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] text-[var(--color-text)]" : "bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]"}`}
+          className={`inline-flex items-center gap-1.5 h-10 pointer-coarse:h-11 px-3.5 rounded-md text-body font-medium whitespace-nowrap transition-colors ${attachOpen ? "border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] text-[var(--color-text)]" : "bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]"}`}
         >
           <Plus className="w-3.5 h-3.5" /> Attach<span className="max-sm:hidden"> document</span>
         </button>
@@ -174,14 +188,15 @@ export default function ProjectDocumentsCard({ orgId, projectId, canManage, uid,
       {attachOpen && canManage && (
         <div className="px-4 sm:px-5 py-3 border-b border-[var(--color-border)] bg-[var(--color-surface-2)]">
           <div className="relative">
-            <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--color-text-faint)]" />
+            <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-text-faint)]" />
             <input
+              type="search"
               value={q}
               onChange={(e) => searchDocs(e.target.value)}
               placeholder="Search documents by number or title…"
               autoFocus
               aria-label="Search documents"
-              className="h-10 w-full rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] pl-8 pr-2 text-reading"
+              className={`${controlClass} pl-8`}
             />
           </div>
           {searching && <div className="mt-1.5 text-body text-[var(--color-text-muted)]">Searching…</div>}
@@ -193,7 +208,7 @@ export default function ProjectDocumentsCard({ orgId, projectId, canManage, uid,
                   <button
                     onClick={() => void attach(r)}
                     disabled={busy === r.id}
-                    className="w-full text-left px-3 py-2 text-body text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors"
+                    className="w-full text-left px-3 min-h-10 pointer-coarse:min-h-11 text-body text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors"
                   >
                     {r.label}
                   </button>
@@ -207,9 +222,7 @@ export default function ProjectDocumentsCard({ orgId, projectId, canManage, uid,
       {loading ? (
         <SkeletonRows rows={3} cols={2} what="the project's documents" sheet={false} />
       ) : rows.length === 0 ? (
-        <div className="px-4 sm:px-5 py-4 text-reading text-[var(--color-text-muted)]">
-          None linked yet. <HelpTooltip>A document checked out under this project links itself here{canManage ? ". Attach document links one by hand" : ""}.</HelpTooltip>
-        </div>
+        <p className="px-4 sm:px-5 py-3 text-reading text-[var(--color-text-muted)]">None linked yet.</p>
       ) : (
         <table className="w-full text-body">
           <thead className="max-sm:hidden bg-[var(--color-surface-2)] text-body text-[var(--color-text-muted)] text-left">
@@ -245,7 +258,7 @@ export default function ProjectDocumentsCard({ orgId, projectId, canManage, uid,
                         disabled={busy === r.linkId}
                         title={r.source === "checkout" ? "Remove (it will re-link on the next checkout under this project)" : "Remove from project"}
                         aria-label={`Remove ${r.label} from the project`}
-                        className="ui-hit w-9 h-9 inline-flex items-center justify-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--state-overdue-text)] hover:bg-[var(--color-surface-2)] transition-colors disabled:opacity-40"
+                        className="ui-hit w-9 h-9 pointer-coarse:w-11 pointer-coarse:h-11 inline-flex items-center justify-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--state-overdue-text)] hover:bg-[var(--color-surface-2)] transition-colors disabled:opacity-40"
                       >
                         <X className="w-4 h-4" />
                       </button>

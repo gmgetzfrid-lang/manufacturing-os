@@ -38,6 +38,8 @@ import CrewPicker from "@/components/projects/CrewPicker";
 import ProgressControl, { ProgressSlider, ProgressNoteForm } from "@/components/projects/ProgressControl";
 import { appAlert, appConfirm } from "@/components/providers/DialogProvider";
 import { useDraft } from "@/hooks/useDraft";
+import { MoreDetails } from "@/components/ui/MoreDetails";
+import HelpTooltip from "@/components/ui/HelpTooltip";
 
 interface Props {
   milestone: Milestone;
@@ -83,6 +85,8 @@ import { EQUIP_REQUEST } from "@/lib/equipmentPick";
 import { sayError, rawMessage } from "@/components/projects/sayError";
 
 const HIDDEN_ATTRS = new Set(["ms_critical", "discovery", IMPORT_KEY, EQUIP_REQUEST]);
+// Comments shown before "Show all".
+const NOTES_SHOWN = 3;
 
 export default function TaskDetailPanel({
   milestone, subtasks, allTasks, childCount, ancestors, canEdit, userId, userName, userEmail, userRole,
@@ -99,6 +103,8 @@ export default function TaskDetailPanel({
   useDraft<string>(canEdit && milestone.id ? `task-note:${milestone.id}` : null, noteDraft, setNoteDraft, (v) => !v.trim());
   // The activity list couldn't be read: said, not shown as "no activity".
   const [notesErr, setNotesErr] = useState(false);
+  // The latest few comments show; the rest are one tap away.
+  const [allNotes, setAllNotes] = useState(false);
   // Escape closes the panel, as its X does (an open field's own Escape
   // first, and a dialog opened over the panel closes before it).
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -173,6 +179,13 @@ export default function TaskDetailPanel({
       pct: effPct,
     };
   }, [isLeaf, progressInfo, subtasks, effPct]);
+
+  // What the folded "Plan and details" holds, and how much of it is filled in.
+  const detailsFilled = useMemo(() => {
+    const facts = [true, isLeaf ? !!(m.actualStartAt || m.actualAt) : null, m.durationHours != null, !!m.workOrderRef, !!m.location, !!m.description, (m.dependsOn?.length ?? 0) > 0, !!discoveryOf(m)]
+      .filter((x): x is boolean => x !== null);
+    return { filled: facts.filter(Boolean).length, total: facts.length };
+  }, [m, isLeaf]);
 
   const loadNotes = useCallback(() => {
     if (!m.id) return;
@@ -321,6 +334,7 @@ export default function TaskDetailPanel({
             <div className="mt-2.5 flex items-center gap-2 flex-wrap">
               <StatusPill status={effStatus} />
               <span className="text-body font-medium tabular-nums text-[var(--color-text)]">{effPct}% done</span>
+              <span className="text-body tabular-nums text-[var(--color-text-muted)]">{spanLabel(span.start, span.finish, tz)}</span>
               {m.wbs && <span className="font-display tabular-nums text-caption text-[var(--color-text-muted)]">{m.wbs}</span>}
               {!isLeaf && <span className="text-body font-medium text-[var(--color-text-muted)]">Summary</span>}
             </div>
@@ -349,9 +363,15 @@ export default function TaskDetailPanel({
                 onCancel={() => setEditing(false)}
               />
               {/* Its links are part of the plan too: what it waits on, what
-                  waits on it (each saves as it's changed). */}
-              <DependencyEditor key={`d:${m.id}`} milestone={m} allTasks={allTasks ?? []} canEdit={canEdit} userId={userId} onChanged={onChanged} onSelectMilestone={onSelectMilestone} />
-              <HoldsUpEditor key={`h:${m.id}`} milestone={m} allTasks={allTasks ?? []} canEdit={canEdit} userId={userId} onChanged={onChanged} onSelectMilestone={onSelectMilestone} />
+                  waits on it (each saves as it's changed), one tap away. */}
+              <div className="px-4 py-3 border-t border-[var(--color-border)]">
+                <MoreDetails label="Links: what it waits on, what waits on it" filled={m.dependsOn?.length ?? 0} defaultOpen={false}>
+                  <div className="-mx-4 border-t border-[var(--color-border)]">
+                    <DependencyEditor key={`d:${m.id}`} milestone={m} allTasks={allTasks ?? []} canEdit={canEdit} userId={userId} onChanged={onChanged} onSelectMilestone={onSelectMilestone} />
+                    <HoldsUpEditor key={`h:${m.id}`} milestone={m} allTasks={allTasks ?? []} canEdit={canEdit} userId={userId} onChanged={onChanged} onSelectMilestone={onSelectMilestone} />
+                  </div>
+                </MoreDetails>
+              </div>
             </>
           ) : (
             <>
@@ -396,20 +416,201 @@ export default function TaskDetailPanel({
                 <div className="px-5 py-4 border-b border-[var(--color-border)]">
                   <div className="flex items-center gap-2">
                     <span className="text-body font-medium text-[var(--color-text-muted)]">Phase status</span>
+                    <HelpTooltip>Its status and % roll up from its steps. Set each step&apos;s progress in the list below.</HelpTooltip>
                     <StatusControl status={effStatus} variant="pill" readOnly title="Rolls up from sub-tasks" onPick={() => {}} />
                     <span className="text-body font-medium tabular-nums text-[var(--color-text)]">{effPct}%</span>
                   </div>
                   {/* Rolled-up progress bar. */}
                   <div className="mt-2 h-1.5 rounded-full bg-[var(--color-surface-2)] overflow-hidden">
-                    <div className={`h-full ${effPct === 100 ? "bg-[var(--state-released)]" : "bg-[var(--color-text)]"}`} style={{ width: `${effPct}%` }} />
-                  </div>
-                  <div className="mt-2 text-caption text-[var(--color-text-faint)] flex items-start gap-1">
-                    <Layers className="w-3 h-3 mt-0.5 shrink-0" />
-                    Its status and % roll up from its steps. Set each step&apos;s progress in the list below.
+                    <div className="h-full bg-[var(--color-text)]" style={{ width: `${effPct}%` }} />
                   </div>
                 </div>
               )}
 
+              {/* Subtasks: for a work order, its steps are the work. */}
+              {subtasks.length > 0 && (
+                <div className="px-5 py-4 border-b border-[var(--color-border)]">
+                  <div className="flex items-center gap-1.5 mb-1">
+                    <Layers className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
+                    <span className="text-body font-medium text-[var(--color-text-muted)]">Subtasks</span>
+                    <HelpTooltip>% = progress and what got done · dot = status · ◀ ▶ = move this step a day (the rest stay put) · name = open it</HelpTooltip>
+                    {leafProgress && <span className="text-body tabular-nums text-[var(--color-text-muted)] ml-auto">{leafProgress.done} of {leafProgress.total} done · {leafProgress.pct}%</span>}
+                  </div>
+                  <ul className="space-y-1">
+                    {subtasks.map((s) => {
+                      const sInfo = s.id ? progressIndex.get(s.id) : undefined;
+                      const sIsSummary = (s.id ? childCount(s.id) : 0) > 0;
+                      const sStatus = sIsSummary && sInfo ? sInfo.status : s.status;
+                      return (
+                      <li key={s.id} className="flex items-center gap-2 py-1 px-1.5 rounded-md hover:bg-[var(--color-surface-2)] group">
+                        <span className="shrink-0">
+                          {sIsSummary ? (
+                            <StatusControl status={sStatus} size="sm" variant="dot" readOnly title="Phase - rolls up from its sub-tasks" onPick={() => {}} />
+                          ) : (
+                            <StatusControl
+                              status={s.status}
+                              size="sm"
+                              variant="dot"
+                              disabled={!canEdit}
+                              percent={sInfo?.percent ?? (s.status === "completed" ? 100 : Math.round(s.percentComplete ?? 0))}
+                              onPick={(st, reason, p, w) => s.id && void (onSetStatus ? onSetStatus(s.id, st, reason, p, w) : setMilestoneStatus({
+                                id: s.id, status: st, statusReason: reason, percentComplete: p,
+                                ...(w ? { at: new Date(w.at).toISOString() } : {}),
+                                actorUserId: userId, actorUserName: userName, actorUserEmail: userEmail, actorUserRole: userRole,
+                              }).then(() => (w && Math.abs(w.at - Date.now()) > 120_000 ? creditProgressTo(s.id!, w.at) : undefined))).catch(failed).finally(onChanged)}
+                              onStartWithNote={onStartNote && s.id ? async (p, n, w) => { const ok = await onStartNote(s.id!, p, n, w); onChanged(); return ok; } : undefined}
+                            />
+                          )}
+                        </span>
+                        <button onClick={() => onSelectSubtask?.(s)} className="flex-1 min-w-0 text-left" title="Open subtask">
+                          <span className={`block text-body truncate ${sStatus === "completed" ? "text-[var(--color-text-muted)]" : "text-[var(--color-text)]"}`}>{s.name}</span>
+                          <span className="block text-caption text-[var(--color-text-muted)] font-display tabular-nums">{spanLabel(startOf(s), finishOf(s), tz)}{sInfo ? ` · ${sInfo.percent}%` : ""}</span>
+                        </button>
+                        {/* A step's % with what got done — right here, no need to open it. */}
+                        {!sIsSummary && s.id && (
+                          <span className="shrink-0">
+                            <ProgressControl
+                              percent={sInfo?.percent ?? (s.status === "completed" ? 100 : Math.round(s.percentComplete ?? 0))}
+                              onPick={(v) => void setMilestoneProgress({
+                                id: s.id!, percentComplete: v,
+                                actorUserId: userId, actorUserName: userName, actorUserEmail: userEmail, actorUserRole: userRole,
+                              }).catch(failed).finally(onChanged)}
+                              onSaveWithNote={onSetProgressNote ? async (v, n, w) => { const ok = await onSetProgressNote(s.id!, v, n, w); onChanged(); return ok; } : undefined}
+                              disabled={!canEdit}
+                              size="sm"
+                            />
+                          </span>
+                        )}
+                        {canEdit && onMoveDays && s.id && (
+                          <span className="shrink-0 flex items-center gap-0.5">
+                            <button
+                              onClick={(e) => { e.stopPropagation(); onMoveDays(s.id!, -1); }}
+                              title="Move this step 1 day earlier" aria-label={`Move ${s.name} 1 day earlier`}
+                              className="w-5 h-5 pointer-coarse:size-11 inline-flex items-center justify-center rounded text-[var(--color-text-faint)] hover:text-[var(--color-accent-text)] hover:bg-[var(--color-surface-2)]"
+                            >
+                              <ChevronLeft className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={(e) => { e.stopPropagation(); onMoveDays(s.id!, 1); }}
+                              title="Move this step 1 day later" aria-label={`Move ${s.name} 1 day later`}
+                              className="w-5 h-5 pointer-coarse:size-11 inline-flex items-center justify-center rounded text-[var(--color-text-faint)] hover:text-[var(--color-accent-text)] hover:bg-[var(--color-surface-2)]"
+                            >
+                              <ChevronRight className="w-3.5 h-3.5" />
+                            </button>
+                          </span>
+                        )}
+                        {s.id && childCount(s.id) > 0 && <span className="text-caption text-[var(--color-text-faint)] font-display tabular-nums shrink-0">{childCount(s.id)}</span>}
+                      </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              )}
+
+
+              {/* Who: the crew planned, who really did it, and the member who owns it. */}
+              <div className="px-5 py-4 border-b border-[var(--color-border)] space-y-2.5">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-body font-medium text-[var(--color-text-muted)]">Who</span>
+                  {canEdit && !(m.responsibleParty || m.responsibleOrg) && (
+                    <button type="button" onClick={() => setEditing(true)} className="ml-auto inline-flex items-center min-h-8 pointer-coarse:min-h-11 text-body font-medium text-[var(--color-accent-text)] hover:underline">Set the crew</button>
+                  )}
+                </div>
+                {!(m.responsibleParty || m.responsibleOrg) && !(m.actualParty || m.actualOrg) && (
+                  <Field icon={<User className="w-3.5 h-3.5" />} label="Responsible (planned)"><span className="text-[var(--color-text-muted)]">Not set</span></Field>
+                )}
+                {(m.responsibleParty || m.responsibleOrg) && (
+                  <Field icon={<User className="w-3.5 h-3.5" />} label="Responsible (planned)">
+                    {[m.responsibleParty, m.responsibleOrg].filter(Boolean).join(" · ")}
+                    {m.responsibleKind && <span className="ml-1.5 text-caption text-[var(--color-text-faint)]">{m.responsibleKind}</span>}
+                  </Field>
+                )}
+                {(m.actualParty || m.actualOrg) && (
+                  <Field icon={<HardHat className="w-3.5 h-3.5" />} label="Actually performed by">
+                    {[m.actualParty, m.actualOrg].filter(Boolean).join(" · ")}
+                    {m.actualKind && <span className="ml-1.5 text-caption text-[var(--color-text-faint)]">{m.actualKind}</span>}
+                  </Field>
+                )}
+                <AssigneeEditor milestone={m} canEdit={canEdit} userId={userId} onChanged={onChanged} bare />
+              </div>
+
+              {/* Activity / breadcrumb trail */}
+              <div className="px-5 py-4 border-b border-[var(--color-border)]">
+                <div className="flex items-center gap-1.5 mb-2">
+                  <History className="w-3.5 h-3.5 text-[var(--color-text-faint)]" />
+                  <span className="text-body font-medium text-[var(--color-text-muted)]">Comments and activity</span>
+                  {notes.length > 0 && <span className="text-body tabular-nums text-[var(--color-text-muted)]">{notes.length}</span>}
+                </div>
+                {canEdit && (
+                  <div className="flex items-start gap-2 mb-3">
+                    <input
+                      value={noteDraft} onChange={(e) => setNoteDraft(e.target.value)}
+                      aria-label="Add a note" enterKeyHint="send"
+                      placeholder="Add a note…"
+                      className="flex-1 text-caption px-2 py-1.5 border border-[var(--color-border-strong)] rounded-md"
+                      onKeyDown={(e) => { if (e.key === "Enter") void addNote(); }}
+                    />
+                    <button onClick={() => void addNote()} disabled={!noteDraft.trim()} aria-label="Add note" className="ui-hit p-1.5 rounded-md text-[var(--color-accent-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40" title="Add note">
+                      <MessageSquarePlus className="w-4 h-4" />
+                    </button>
+                  </div>
+                )}
+                {notesErr ? (
+                  <div role="alert" className="text-caption font-medium text-[var(--state-overdue-text)]">Couldn&apos;t read the activity. <button type="button" onClick={loadNotes} className="underline">Try again</button></div>
+                ) : notes.length === 0 ? (
+                  <div className="text-caption text-[var(--color-text-faint)] italic">No activity yet.</div>
+                ) : (
+                  <>
+                  <ul className="space-y-2">
+                    {(allNotes ? notes : notes.slice(0, NOTES_SHOWN)).map((n) => (
+                      <li key={n.id} className="text-caption">
+                        <div className="flex items-center gap-1.5">
+                          {n.kind === "reschedule"
+                            ? <CalendarDays className="w-3 h-3 text-[var(--color-text-muted)] shrink-0" />
+                            : n.statusAt
+                              ? <StatusPill status={n.statusAt} dotOnly />
+                              : <MessageSquarePlus className="w-3 h-3 text-[var(--color-text-faint)] shrink-0" />}
+                          <span className="font-medium text-[var(--color-text)]">{n.createdByName ?? "Someone"}</span>
+                          <span className="text-[var(--color-text-faint)]">{n.kind === "status" ? "set status" : n.kind === "reschedule" ? "rescheduled" : "noted"}{n.kind === "status" && n.statusAt ? ` · ${labelOf(n.statusAt)}` : ""}</span>
+                          <span className="text-[var(--color-text-faint)] ml-auto">{fmtWhen(n.createdAt, tz)}</span>
+                        </div>
+                        {editNote && editNote.id === n.id ? (
+                          <div className="mt-1 flex items-center gap-1.5">
+                            <input value={editNote.body} autoFocus aria-label="Edit note" onChange={(e) => setEditNote({ id: editNote.id, body: e.target.value })}
+                              onKeyDown={(e) => { if (e.key === "Enter") void saveNoteEdit(); if (e.key === "Escape") setEditNote(null); }}
+                              className="flex-1 text-caption px-2 py-1 border border-[var(--color-border-strong)] rounded-md bg-[var(--color-surface)]" />
+                            <button onClick={() => void saveNoteEdit()} className="text-body text-[var(--color-accent-text)] hover:underline">Save</button>
+                            <button onClick={() => setEditNote(null)} className="text-caption text-[var(--color-text-muted)]">Cancel</button>
+                          </div>
+                        ) : n.body && (
+                          <div className="group flex items-start gap-1.5 mt-0.5 pl-1 border-l-2 border-[var(--color-border)] ml-1">
+                            <span className="flex-1 text-[var(--color-text-muted)]">{n.body}</span>
+                            {/* A comment is its author's to change. */}
+                            {canEdit && n.kind === "note" && n.id && n.createdBy === userId && (
+                              <span className="shrink-0 flex gap-1.5 text-caption font-medium">
+                                <button onClick={() => setEditNote({ id: n.id!, body: n.body ?? "" })} className="text-[var(--color-text-faint)] hover:text-[var(--color-text)]">Edit</button>
+                                <button onClick={() => void removeNote(n.id!)} className="text-[var(--color-text-faint)] hover:text-[var(--state-overdue-text)]">Delete</button>
+                              </span>
+                            )}
+                          </div>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                  {notes.length > NOTES_SHOWN && (
+                    <button type="button" onClick={() => setAllNotes((v) => !v)} aria-expanded={allNotes}
+                      className="mt-2 inline-flex items-center min-h-8 pointer-coarse:min-h-11 text-body font-medium text-[var(--color-accent-text)] hover:underline">
+                      {allNotes ? "Show the latest 3" : `Show all ${notes.length}`}
+                    </button>
+                  )}
+                  </>
+                )}
+              </div>
+
+              {/* The rest of the plan, one tap away: when, where, the links, where it came from. */}
+              <div className="px-5 py-3">
+                <MoreDetails label="Plan and details" filled={detailsFilled.filled} total={detailsFilled.total} defaultOpen={false}>
+                  <div className="-mx-5 border-t border-[var(--color-border)]">
               {/* Move — reschedule the whole task without dragging. */}
               {canEdit && onMoveDays && m.id && (
                 <div className="px-5 py-3 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap">
@@ -467,18 +668,6 @@ export default function TaskDetailPanel({
                 {m.id && (
                   <Field icon={<Wrench className="w-3.5 h-3.5" />} label="Equipment (work order)">
                     <EquipmentField milestone={m} milestones={allTasks ?? []} compact />
-                  </Field>
-                )}
-                {(m.responsibleParty || m.responsibleOrg) && (
-                  <Field icon={<User className="w-3.5 h-3.5" />} label="Responsible (planned)">
-                    {[m.responsibleParty, m.responsibleOrg].filter(Boolean).join(" · ")}
-                    {m.responsibleKind && <span className="ml-1.5 text-caption text-[var(--color-text-faint)]">{m.responsibleKind}</span>}
-                  </Field>
-                )}
-                {(m.actualParty || m.actualOrg) && (
-                  <Field icon={<HardHat className="w-3.5 h-3.5" />} label="Actually performed by">
-                    {[m.actualParty, m.actualOrg].filter(Boolean).join(" · ")}
-                    {m.actualKind && <span className="ml-1.5 text-caption text-[var(--color-text-faint)]">{m.actualKind}</span>}
                   </Field>
                 )}
                 {m.location && (
@@ -572,9 +761,6 @@ export default function TaskDetailPanel({
                 </div>
               )}
 
-              {/* Responsible member (deliverable owner) */}
-              <AssigneeEditor milestone={m} canEdit={canEdit} userId={userId} onChanged={onChanged} />
-
               {/* Dependencies (finish-to-start) */}
               <DependencyEditor
                 // A fresh editor per task: nothing typed on one carries to the next.
@@ -588,150 +774,8 @@ export default function TaskDetailPanel({
               />
               <HoldsUpEditor key={`h:${m.id}`} milestone={m} allTasks={allTasks ?? []} canEdit={canEdit} userId={userId} onChanged={onChanged} onSelectMilestone={onSelectMilestone} />
 
-              {/* Subtasks */}
-              {subtasks.length > 0 && (
-                <div className="px-5 py-4 border-b border-[var(--color-border)]">
-                  <div className="flex items-center gap-1.5 mb-1">
-                    <Layers className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
-                    <span className="text-body font-medium text-[var(--color-text-muted)]">Subtasks</span>
-                    {leafProgress && <span className="text-caption font-display tabular-nums text-[var(--color-text)] dark:text-[var(--color-text)] font-bold ml-auto">{leafProgress.done}/{leafProgress.total} · {leafProgress.pct}%</span>}
                   </div>
-                  <div className="text-caption text-[var(--color-text-faint)] mb-2">
-                    % = progress and what got done · dot = status · ◀ ▶ = move this step a day (the rest stay put) · name = open it
-                  </div>
-                  <ul className="space-y-1">
-                    {subtasks.map((s) => {
-                      const sInfo = s.id ? progressIndex.get(s.id) : undefined;
-                      const sIsSummary = (s.id ? childCount(s.id) : 0) > 0;
-                      const sStatus = sIsSummary && sInfo ? sInfo.status : s.status;
-                      return (
-                      <li key={s.id} className="flex items-center gap-2 py-1 px-1.5 rounded-md hover:bg-[var(--color-surface-2)] group">
-                        <span className="shrink-0">
-                          {sIsSummary ? (
-                            <StatusControl status={sStatus} size="sm" variant="dot" readOnly title="Phase - rolls up from its sub-tasks" onPick={() => {}} />
-                          ) : (
-                            <StatusControl
-                              status={s.status}
-                              size="sm"
-                              variant="dot"
-                              disabled={!canEdit}
-                              percent={sInfo?.percent ?? (s.status === "completed" ? 100 : Math.round(s.percentComplete ?? 0))}
-                              onPick={(st, reason, p, w) => s.id && void (onSetStatus ? onSetStatus(s.id, st, reason, p, w) : setMilestoneStatus({
-                                id: s.id, status: st, statusReason: reason, percentComplete: p,
-                                ...(w ? { at: new Date(w.at).toISOString() } : {}),
-                                actorUserId: userId, actorUserName: userName, actorUserEmail: userEmail, actorUserRole: userRole,
-                              }).then(() => (w && Math.abs(w.at - Date.now()) > 120_000 ? creditProgressTo(s.id!, w.at) : undefined))).catch(failed).finally(onChanged)}
-                              onStartWithNote={onStartNote && s.id ? async (p, n, w) => { const ok = await onStartNote(s.id!, p, n, w); onChanged(); return ok; } : undefined}
-                            />
-                          )}
-                        </span>
-                        <button onClick={() => onSelectSubtask?.(s)} className="flex-1 min-w-0 text-left" title="Open subtask">
-                          <span className={`block text-caption truncate ${sStatus === "completed" ? "line-through text-[var(--color-text-faint)]" : "text-[var(--color-text)]"}`}>{s.name}</span>
-                          <span className="block text-caption text-[var(--color-text-muted)] font-display tabular-nums">{spanLabel(startOf(s), finishOf(s), tz)}{sInfo ? ` · ${sInfo.percent}%` : ""}</span>
-                        </button>
-                        {/* A step's % with what got done — right here, no need to open it. */}
-                        {!sIsSummary && s.id && (
-                          <span className="shrink-0">
-                            <ProgressControl
-                              percent={sInfo?.percent ?? (s.status === "completed" ? 100 : Math.round(s.percentComplete ?? 0))}
-                              onPick={(v) => void setMilestoneProgress({
-                                id: s.id!, percentComplete: v,
-                                actorUserId: userId, actorUserName: userName, actorUserEmail: userEmail, actorUserRole: userRole,
-                              }).catch(failed).finally(onChanged)}
-                              onSaveWithNote={onSetProgressNote ? async (v, n, w) => { const ok = await onSetProgressNote(s.id!, v, n, w); onChanged(); return ok; } : undefined}
-                              disabled={!canEdit}
-                              size="sm"
-                            />
-                          </span>
-                        )}
-                        {canEdit && onMoveDays && s.id && (
-                          <span className="shrink-0 flex items-center gap-0.5">
-                            <button
-                              onClick={(e) => { e.stopPropagation(); onMoveDays(s.id!, -1); }}
-                              title="Move this step 1 day earlier" aria-label={`Move ${s.name} 1 day earlier`}
-                              className="w-5 h-5 pointer-coarse:size-11 inline-flex items-center justify-center rounded text-[var(--color-text-faint)] hover:text-[var(--color-accent-text)] hover:bg-[var(--color-surface-2)]"
-                            >
-                              <ChevronLeft className="w-3.5 h-3.5" />
-                            </button>
-                            <button
-                              onClick={(e) => { e.stopPropagation(); onMoveDays(s.id!, 1); }}
-                              title="Move this step 1 day later" aria-label={`Move ${s.name} 1 day later`}
-                              className="w-5 h-5 pointer-coarse:size-11 inline-flex items-center justify-center rounded text-[var(--color-text-faint)] hover:text-[var(--color-accent-text)] hover:bg-[var(--color-surface-2)]"
-                            >
-                              <ChevronRight className="w-3.5 h-3.5" />
-                            </button>
-                          </span>
-                        )}
-                        {s.id && childCount(s.id) > 0 && <span className="text-caption text-[var(--color-text-faint)] font-display tabular-nums shrink-0">{childCount(s.id)}</span>}
-                      </li>
-                      );
-                    })}
-                  </ul>
-                </div>
-              )}
-
-              {/* Activity / breadcrumb trail */}
-              <div className="px-5 py-4">
-                <div className="flex items-center gap-1.5 mb-2">
-                  <History className="w-3.5 h-3.5 text-[var(--color-text-faint)]" />
-                  <span className="text-body font-medium text-[var(--color-text-muted)]">Activity</span>
-                </div>
-                {canEdit && (
-                  <div className="flex items-start gap-2 mb-3">
-                    <input
-                      value={noteDraft} onChange={(e) => setNoteDraft(e.target.value)}
-                      aria-label="Add a note" enterKeyHint="send"
-                      placeholder="Add a note…"
-                      className="flex-1 text-caption px-2 py-1.5 border border-[var(--color-border-strong)] rounded-md"
-                      onKeyDown={(e) => { if (e.key === "Enter") void addNote(); }}
-                    />
-                    <button onClick={() => void addNote()} disabled={!noteDraft.trim()} aria-label="Add note" className="ui-hit p-1.5 rounded-md text-[var(--color-accent-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40" title="Add note">
-                      <MessageSquarePlus className="w-4 h-4" />
-                    </button>
-                  </div>
-                )}
-                {notesErr ? (
-                  <div role="alert" className="text-caption font-medium text-[var(--state-overdue-text)]">Couldn&apos;t read the activity. <button type="button" onClick={loadNotes} className="underline">Try again</button></div>
-                ) : notes.length === 0 ? (
-                  <div className="text-caption text-[var(--color-text-faint)] italic">No activity yet.</div>
-                ) : (
-                  <ul className="space-y-2">
-                    {notes.map((n) => (
-                      <li key={n.id} className="text-caption">
-                        <div className="flex items-center gap-1.5">
-                          {n.kind === "reschedule"
-                            ? <CalendarDays className="w-3 h-3 text-[var(--color-text-muted)] shrink-0" />
-                            : n.statusAt
-                              ? <StatusPill status={n.statusAt} dotOnly />
-                              : <MessageSquarePlus className="w-3 h-3 text-[var(--color-text-faint)] shrink-0" />}
-                          <span className="font-medium text-[var(--color-text)]">{n.createdByName ?? "Someone"}</span>
-                          <span className="text-[var(--color-text-faint)]">{n.kind === "status" ? "set status" : n.kind === "reschedule" ? "rescheduled" : "noted"}{n.kind === "status" && n.statusAt ? ` · ${labelOf(n.statusAt)}` : ""}</span>
-                          <span className="text-[var(--color-text-faint)] ml-auto">{fmtWhen(n.createdAt, tz)}</span>
-                        </div>
-                        {editNote && editNote.id === n.id ? (
-                          <div className="mt-1 flex items-center gap-1.5">
-                            <input value={editNote.body} autoFocus aria-label="Edit note" onChange={(e) => setEditNote({ id: editNote.id, body: e.target.value })}
-                              onKeyDown={(e) => { if (e.key === "Enter") void saveNoteEdit(); if (e.key === "Escape") setEditNote(null); }}
-                              className="flex-1 text-caption px-2 py-1 border border-[var(--color-border-strong)] rounded-md bg-[var(--color-surface)]" />
-                            <button onClick={() => void saveNoteEdit()} className="text-body text-[var(--color-accent-text)] hover:underline">Save</button>
-                            <button onClick={() => setEditNote(null)} className="text-caption text-[var(--color-text-muted)]">Cancel</button>
-                          </div>
-                        ) : n.body && (
-                          <div className="group flex items-start gap-1.5 mt-0.5 pl-1 border-l-2 border-[var(--color-border)] ml-1">
-                            <span className="flex-1 text-[var(--color-text-muted)]">{n.body}</span>
-                            {/* A comment is its author's to change. */}
-                            {canEdit && n.kind === "note" && n.id && n.createdBy === userId && (
-                              <span className="shrink-0 flex gap-1.5 text-caption font-medium">
-                                <button onClick={() => setEditNote({ id: n.id!, body: n.body ?? "" })} className="text-[var(--color-text-faint)] hover:text-[var(--color-text)]">Edit</button>
-                                <button onClick={() => void removeNote(n.id!)} className="text-[var(--color-text-faint)] hover:text-[var(--state-overdue-text)]">Delete</button>
-                              </span>
-                            )}
-                          </div>
-                        )}
-                      </li>
-                    ))}
-                  </ul>
-                )}
+                </MoreDetails>
               </div>
             </>
           )}
@@ -916,33 +960,36 @@ function EditForm({
             <span className="block mt-1 text-caption text-[var(--color-text-muted)]">From its dates{crewWord ? `, ${crewWord}` : ""}.</span>
           ))}
         </L>
+        <L label="Crew (planned)"><CrewPicker value={responsibleParty} onChange={setResponsibleParty} crews={crewList} className="w-full" label="Crew (planned)" /></L>
+      </div>
+      {/* The rest, folded: filled in when there's a reason to. */}
+      <MoreDetails filled={[workOrderRef, responsibleOrg, responsibleKind, actualParty, actualOrg, actualKind, location, shift, description].filter((x) => x.trim()).length} total={9} defaultOpen={false}>
         <L label="Work order #"><input value={workOrderRef} onChange={(e) => setWorkOrderRef(e.target.value)} className={inp} /></L>
-      </div>
-      <div className="text-body font-medium text-[var(--color-text-muted)] pt-1">Responsible (planned)</div>
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-        <L label="Person / crew"><CrewPicker value={responsibleParty} onChange={setResponsibleParty} crews={crewList} className="w-full" label="Person / crew" /></L>
-        <L label="Dept / company"><input value={responsibleOrg} onChange={(e) => setResponsibleOrg(e.target.value)} className={inp} /></L>
-      </div>
-      <L label="Type"><KindSelect value={responsibleKind} onChange={setResponsibleKind} /></L>
-      <div className="text-body font-medium text-[var(--color-text-muted)] pt-1">Actually performed by</div>
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-        <L label="Person / crew"><input value={actualParty} onChange={(e) => setActualParty(e.target.value)} className={inp} /></L>
-        <L label="Dept / company"><input value={actualOrg} onChange={(e) => setActualOrg(e.target.value)} className={inp} /></L>
-      </div>
-      <L label="Type"><KindSelect value={actualKind} onChange={setActualKind} /></L>
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-        <L label="Location"><input value={location} onChange={(e) => setLocation(e.target.value)} className={inp} /></L>
-        <L label="Shift">
-          <select value={shift} onChange={(e) => setShift(e.target.value)} className={inp}
-            title="Which crew does this work. The shift report counts its planned hours only on that shift.">
-            <option value="">Auto - from its times</option>
-            <option value="day">Day shift</option>
-            <option value="night">Night shift</option>
-            <option value="swing">Round the clock</option>
-          </select>
-        </L>
-      </div>
-      <L label="Description"><textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={3} className={`${inp} resize-y`} /></L>
+        <div className="text-body font-medium text-[var(--color-text-muted)]">Responsible (planned)</div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 -mt-2">
+          <L label="Dept / company"><input value={responsibleOrg} onChange={(e) => setResponsibleOrg(e.target.value)} className={inp} /></L>
+          <L label="Type"><KindSelect value={responsibleKind} onChange={setResponsibleKind} /></L>
+        </div>
+        <div className="text-body font-medium text-[var(--color-text-muted)]">Actually performed by</div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 -mt-2">
+          <L label="Person / crew"><input value={actualParty} onChange={(e) => setActualParty(e.target.value)} className={inp} /></L>
+          <L label="Dept / company"><input value={actualOrg} onChange={(e) => setActualOrg(e.target.value)} className={inp} /></L>
+        </div>
+        <L label="Type"><KindSelect value={actualKind} onChange={setActualKind} /></L>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          <L label="Location"><input value={location} onChange={(e) => setLocation(e.target.value)} className={inp} /></L>
+          <L label="Shift">
+            <select value={shift} onChange={(e) => setShift(e.target.value)} className={inp}
+              title="Which crew does this work. The shift report counts its planned hours only on that shift.">
+              <option value="">Auto - from its times</option>
+              <option value="day">Day shift</option>
+              <option value="night">Night shift</option>
+              <option value="swing">Round the clock</option>
+            </select>
+          </L>
+        </div>
+        <L label="Description"><textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={3} className={`${inp} resize-y`} /></L>
+      </MoreDetails>
       {error && <div role="alert" className="text-caption text-[var(--state-overdue-text)] flex items-start gap-1.5"><CircleAlert aria-hidden className="w-3.5 h-3.5 shrink-0 mt-0.5" /><span>{error}</span></div>}
       <div className="flex items-center justify-end gap-2 pt-1">
         <button onClick={onCancel} disabled={saving} className="text-body text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5">Cancel</button>
@@ -1257,8 +1304,10 @@ function HoldsUpEditor({ milestone, allTasks, canEdit, userId, onChanged, onSele
 }
 
 // ─── Assignee (responsible deliverable owner) ──────────────────
-function AssigneeEditor({ milestone, canEdit, userId, onChanged }: {
+function AssigneeEditor({ milestone, canEdit, userId, onChanged, bare }: {
   milestone: Milestone; canEdit: boolean; userId: string; onChanged: () => void;
+  /** Inside the panel's Who group: no box of its own. */
+  bare?: boolean;
 }) {
   const [members, setMembers] = useState<ProjectMember[]>([]);
   const [membersErr, setMembersErr] = useState(false);
@@ -1293,10 +1342,10 @@ function AssigneeEditor({ milestone, canEdit, userId, onChanged }: {
   if (!milestone.projectId) return null;
 
   return (
-    <div className="px-5 py-4 border-b border-[var(--color-border)]">
+    <div className={bare ? "" : "px-5 py-4 border-b border-[var(--color-border)]"}>
       <div className="flex items-center gap-1.5 mb-1.5">
         <Target className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
-        <span className="text-body font-medium text-[var(--color-text-muted)]">Responsible</span>
+        <span className={bare ? "text-caption text-[var(--color-text-muted)]" : "text-body font-medium text-[var(--color-text-muted)]"}>{bare ? "Owner" : "Responsible"}</span>
         <span className="text-caption text-[var(--color-text-faint)]">: the member who owns this deliverable</span>
       </div>
       {membersErr && <div role="alert" className="mb-1 text-caption font-medium text-[var(--state-overdue-text)]">Couldn&apos;t read the project&apos;s members, so the list below is short.</div>}

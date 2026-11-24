@@ -3,9 +3,10 @@
 // ReviewCharts - the pictures the post-event review draws from its own
 // numbers (lib/postEventReview, lib/partyLoad):
 //
-//   - LateHours: where the late hours went. One bar per piece of the late
-//     finish (they add up to it), split by the finding that explains it;
-//     what is left is gray (not explained by the records).
+//   - LateHours: where the late hours went. One row per piece of the late
+//     finish (they add up to it): its name, its hours and the cause in
+//     words on the row, then its bar, split by the finding that explains
+//     it; what the records don't explain is hatched.
 //   - LoadChart: one party over the event. Ready (open) and being worked as
 //     step lines, the number it was planned to work at once as a flat line,
 //     and the time its ready jobs waited shaded: amber while it was working
@@ -25,10 +26,9 @@
 // a desktop. Waiting is the app's waiting color (amber), as everywhere.
 
 import React, { useEffect, useRef, useState } from "react";
-import type { LateBar } from "@/lib/postEventReview";
+import type { Finding, LateBar } from "@/lib/postEventReview";
 import type { LoadJob, PartyLoad, HeldJob } from "@/lib/partyLoad";
 import { fmtInTz, startOfDay, addDays } from "@/lib/scheduleTz";
-import { neutralStep } from "@/components/dashboard/viz";
 
 const WAIT = "var(--state-held)";
 const OPEN = "var(--color-main)";
@@ -61,49 +61,77 @@ const jobName = (j: { name: string; order: string }) => {
 
 // ─── Where the late hours went ─────────────────────────────────────
 
-export function LateHours({ bars, late, onPick }: { bars: LateBar[]; late: number; onPick: (key: string) => void }) {
-  // Each finding keeps its shade wherever it shows, darkest first in the
-  // order it first appears (the app draws parts of a whole in steps of
-  // graphite; the legend carries the names). Not explained: the track.
-  const keys = [...new Set(bars.flatMap((b) => b.segs.map((x) => x.key)).filter((k): k is string => !!k))];
-  // The finding that explains the most hours is the one accent; the others
-  // are graphite steps; what the records don't explain is the track.
+/** The finding that explains the most hours: the one accent. */
+const LEAD = "var(--color-main)";
+/** Every other piece: one gray that reads on a sheet (3:1, both themes). */
+const PIECE = "var(--color-border-control)";
+/** What the records don't explain: the same gray, hatched, with its edge. */
+const UNEXPLAINED: React.CSSProperties = { background: `repeating-linear-gradient(135deg, ${PIECE} 0 3px, var(--color-surface) 3px 6px)`, boxShadow: `inset 0 0 0 1px ${PIECE}` };
+type Seg = LateBar["segs"][number];
+
+/** Why a piece went, in the record's own words. A finding written on the
+ *  job is headed with the job it was written on ("E-12 - Transmix Feed/
+ *  Trans. Diesel Exchanger No. 2"); when what was written there names
+ *  another work order (E-17), that piece goes to it, and its heading reads
+ *  as the wrong work order's name on E-17's bar. So a note written on the
+ *  job says what it says (its first sentence) and where it was written. A
+ *  headline (from the records, a person's own, or a heading a person
+ *  changed) is said as it is. */
+export function causeWords(seg: Seg, f: Pick<Finding, "source" | "title" | "drafted" | "proof" | "observation"> | undefined): string {
+  if (!f) return seg.title;
+  if (f.source !== "job" || f.title !== f.drafted.title) return f.title;
+  const said = (f.proof || f.observation.split("\n")[0] || "").trim().replace(/\.$/, "");
+  const on = f.title.split(" - ")[0].trim() || f.title;
+  return said ? `“${said}”, written on ${on}` : `Written on ${f.title}`;
+}
+
+export function LateHours({ bars, late, onPick, findings = [] }: { bars: LateBar[]; late: number; onPick: (key: string) => void; findings?: Finding[] }) {
+  // Each cause is written on its own bar's row: nothing to match by color.
+  // The finding that explains the most hours (over every bar) is the one
+  // accent; the rest one gray; what the records don't explain is hatched.
   const totals = new Map<string, number>();
   for (const b of bars) for (const x of b.segs) if (x.key) totals.set(x.key, (totals.get(x.key) ?? 0) + x.hours);
   const lead = [...totals.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
-  const rest = keys.filter((k) => k !== lead);
-  const color = (k: string | null) => (k == null ? "var(--viz-track)" : k === lead ? "var(--color-main)" : neutralStep(Math.min(rest.indexOf(k) + 1, 5)));
+  const byKey = new Map(findings.map((f) => [f.key, f]));
+  const fill = (k: string | null): React.CSSProperties => (k == null ? UNEXPLAINED : { background: k === lead ? LEAD : PIECE });
+  const why = (x: Seg) => causeWords(x, x.key ? byKey.get(x.key) : undefined);
   const max = Math.max(1, ...bars.map((b) => b.hours));
-  const legend = new Map<string, { key: string | null; title: string; hours: number }>();
-  for (const b of bars) for (const x of b.segs) { const k = x.key ?? (b.kind === "work" ? "~none" : `~${b.label}`); const e = legend.get(k) ?? { key: x.key, title: x.title, hours: 0 }; e.hours = Math.round((e.hours + x.hours) * 10) / 10; legend.set(k, e); }
+  const rowBtn = "block w-[calc(100%+1rem)] text-left rounded-md -mx-2 px-2 py-1.5 pointer-coarse:min-h-11 hover:bg-[var(--color-surface-2)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--color-accent)]";
+  const bar = (b: LateBar) => (
+    <span role="img" aria-label={`${b.label}: ${b.hours} h. ${b.segs.map((x) => `${x.hours} h, ${why(x)}`).join("; ")}`} className="mt-1.5 flex gap-[2px] h-4" style={{ width: `${Math.max(2, (b.hours / max) * 100)}%` }}>
+      {b.segs.map((x, k) => <span key={k} aria-hidden className="h-full rounded-[4px]" style={{ flexGrow: x.hours, flexBasis: 0, minWidth: 3, ...fill(x.key) }} />)}
+    </span>
+  );
   return (
-    <div data-late-hours>
-      <ul className="space-y-2.5" aria-label={`Where the ${late} h went`}>
-        {bars.map((b, i) => (
-          <li key={i} className="grid grid-cols-[minmax(0,1fr)_auto] sm:grid-cols-[150px_minmax(0,1fr)_64px] items-center gap-x-3 gap-y-1">
-            <span className="text-body font-medium text-[var(--color-text)] truncate" title={b.line}>{b.label}</span>
-            <span className="sm:order-last text-right text-body font-medium tabular-nums text-[var(--color-text)]">{b.hours} h</span>
-            <div className="col-span-2 sm:col-span-1 flex gap-[2px] h-4" style={{ width: `${Math.max(3, (b.hours / max) * 100)}%` }}>
+    <ul className="divide-y divide-[var(--color-border)]" aria-label={`Where the ${late} h went`} data-late-hours>
+      {bars.map((b, i) => {
+        const one = b.segs.length === 1 ? b.segs[0] : null;
+        // One cause: the whole row says it, and goes to its finding.
+        if (one) {
+          const body = (
+            <>
+              <span className="block text-body text-[var(--color-text)]"><b className="font-medium">{b.label}</b> · <b className="font-medium tabular-nums">{b.hours} h</b> · <span className={one.key ? "" : "text-[var(--color-text-muted)]"}>{why(one)}</span></span>
+              {bar(b)}
+            </>
+          );
+          return <li key={i} className="py-1">{one.key ? <button type="button" onClick={() => onPick(one.key!)} className={rowBtn}>{body}</button> : <div className="py-1.5">{body}</div>}</li>;
+        }
+        // Split among causes: the total once, then each cause under the
+        // bar, left to right, with its hours.
+        return (
+          <li key={i} className="py-2">
+            <span className="block text-body text-[var(--color-text)]"><b className="font-medium">{b.label}</b> · <b className="font-medium tabular-nums">{b.hours} h</b></span>
+            {bar(b)}
+            <ul className="mt-1">
               {b.segs.map((x, k) => {
-                const tip = `${b.label}: ${x.hours} h, ${x.title}`;
-                const style = { flexGrow: x.hours, flexBasis: 0, background: color(x.key), borderRadius: 4, minWidth: 3 };
-                return x.key ? <button key={k} type="button" onClick={() => onPick(x.key!)} title={tip} aria-label={tip} className="h-full hover:opacity-80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--color-accent)]" style={style} />
-                  : <span key={k} title={tip} className="h-full" style={style} />;
+                const line = <span className="flex items-start gap-2 text-body"><span aria-hidden className="mt-[5px] w-3 h-3 rounded-[3px] shrink-0" style={fill(x.key)} /><span className="min-w-0"><b className="font-medium tabular-nums">{x.hours} h</b> · <span className={x.key ? "text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}>{why(x)}</span></span></span>;
+                return <li key={k}>{x.key ? <button type="button" onClick={() => onPick(x.key!)} className={rowBtn}>{line}</button> : <div className="py-1.5">{line}</div>}</li>;
               })}
-            </div>
+            </ul>
           </li>
-        ))}
-      </ul>
-      <ul className="mt-3 flex flex-col gap-1.5 text-body" data-late-legend>
-        {[...legend.values()].map((e, i) => (
-          <li key={i} className="flex items-start gap-2 min-w-0">
-            <span aria-hidden className="mt-[5px] w-2.5 h-2.5 rounded-md shrink-0" style={{ background: color(e.key) }} />
-            {e.key ? <button type="button" onClick={() => onPick(e.key!)} className="min-w-0 text-left text-[var(--color-text)] hover:underline">{e.title}</button> : <span className="min-w-0 text-[var(--color-text-muted)]">{e.title}</span>}
-            <span className="ml-auto pl-2 shrink-0 tabular-nums font-medium text-[var(--color-text)]">{e.hours} h</span>
-          </li>
-        ))}
-      </ul>
-    </div>
+        );
+      })}
+    </ul>
   );
 }
 

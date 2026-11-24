@@ -38,6 +38,7 @@ import { exportAllProjectsToCsv } from "@/lib/projectExport";
 import StaleCheckoutBanner from "@/components/projects/StaleCheckoutBanner";
 import type { Project, ProjectStatus, Timestamp } from "@/types/schema";
 import { sayError } from "@/components/projects/sayError";
+import PersonName from "@/components/ui/PersonName";
 
 const STATUS_TABS: { value: ProjectStatus | "all"; label: string }[] = [
   { value: "active",    label: "Active" },
@@ -229,11 +230,12 @@ export default function ProjectsPage() {
           : `${nActive} active project${nActive === 1 ? "" : "s"}.`;
   // The title already says how many are running: the one number that
   // matters is how many are late (muted when none), the rest small.
-  const facts: HeroFact[] | undefined = loading || (tabCounts.all ?? 0) === 0 || noneOfYours ? undefined : [
+  const facts: HeroFact[] | undefined = loading || (tabCounts.all ?? 0) === 0 || noneOfYours ? undefined : ([
     { label: "Late", value: nLate, tone: nLate > 0 ? "bad" : undefined, hero: nLate > 0 },
     { label: "Paused", value: nPaused, tone: nPaused > 0 ? "warn" : undefined },
     { label: "Completed", value: tabCounts.completed ?? 0 },
-  ];
+  // A zero is not news: only the counts that have something in them.
+  ] as HeroFact[]).filter((f) => f.value !== 0);
   const shownCount = shownGroups.reduce((n, g) => n + g.items.length, 0);
 
   return (
@@ -432,6 +434,12 @@ function ProgressBar({ f, className = "" }: { f: RowFacts; className?: string })
         <span className="absolute inset-y-0 left-0 rounded-full" style={{ width: `${Math.min(100, Math.max(0, pr.pct))}%`, background: fill }} />
       </span>
       <span className="font-display text-reading font-semibold tabular-nums text-[var(--color-text)]">{pr.pct}%</span>
+      {/* 99% reads as nearly done: say what is left, and that it is late. */}
+      {pr.steps > pr.done && pr.pct >= 90 && (
+        <span className={`text-body whitespace-nowrap ${f.late ? "font-medium text-[var(--state-overdue-text)]" : "text-[var(--color-text-muted)]"}`}>
+          {pr.steps - pr.done} step{pr.steps - pr.done === 1 ? "" : "s"} left{f.late ? " · late" : ""}
+        </span>
+      )}
     </span>
   );
 }
@@ -484,7 +492,7 @@ function ProjectTable({ projects, factsOf }: { projects: Project[]; factsOf: (p:
                 ) : null}
               </td>
               <td className="px-4 py-3 hidden lg:table-cell">
-                <span className="block max-w-[200px] truncate text-body text-[var(--color-text)]" title={p.ownerUserName}>{p.ownerUserName || null}</span>
+                <PersonName uid={p.ownerUserId} fallback={p.ownerUserName} className="block max-w-[200px] truncate text-body text-[var(--color-text)]" />
               </td>
               <td className="px-4 py-3 hidden md:table-cell text-body text-[var(--color-text-muted)] whitespace-nowrap">{formatRelative(p.lastActivityAt)}</td>
             </tr>

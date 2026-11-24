@@ -16,6 +16,7 @@ import TimeZoneSelect from "@/components/projects/TimeZoneSelect";
 import { DEFAULT_SCHEDULE_TZ, normalizeTimeZone, tzLabel } from "@/lib/scheduleTz";
 import { sayError } from "@/components/projects/sayError";
 import { Button } from "@/components/ui/Button";
+import { MoreDetails } from "@/components/ui/MoreDetails";
 
 const JOB_KINDS = [
   { v: "small", label: "Small job" },
@@ -33,7 +34,7 @@ function localDay(v: unknown): string {
 
 const inputCls = "mt-1 w-full h-9 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-body ";
 const areaCls = "mt-1 w-full rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 py-2 text-body resize-y ";
-const labelCls = "text-caption font-medium text-[var(--color-text-muted)]";
+const labelCls = "text-body font-medium text-[var(--color-text)]";
 
 export default function EditProjectModal({ project, actorUserId, actorEmail, actorRole, onClose, onSaved }: {
   project: Project;
@@ -168,36 +169,28 @@ export default function EditProjectModal({ project, actorUserId, actorEmail, act
           <button onClick={onClose} aria-label="Close" className="ui-hit ml-auto p-1 rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
         </div>
         <div className="p-5 space-y-3">
+          {/* What a person changes most: the name and the dates. */}
           <label className="block">
-            <span className="text-caption font-medium text-[var(--color-text-muted)]">Name</span>
+            <span className="text-body font-medium text-[var(--color-text)]">Name</span>
             <input value={name} onChange={(e) => setName(e.target.value)} className="mt-1 w-full h-9 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-body" />
           </label>
-          <label className="block">
-            <span className="text-caption font-medium text-[var(--color-text-muted)]">Description</span>
-            <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={3} className="mt-1 w-full rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 py-2 text-body resize-y" />
-          </label>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <label className="block">
-              <span className="text-caption font-medium text-[var(--color-text-muted)]">MOC reference</span>
-              <input value={moc} onChange={(e) => setMoc(e.target.value)} className="mt-1 w-full h-9 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-body font-display tabular-nums" />
-            </label>
-            <label className="block">
-              <span className="text-caption font-medium text-[var(--color-text-muted)]">Target completion</span>
-              <input type="date" value={target} onChange={(e) => setTarget(e.target.value)} className="mt-1 w-full h-9 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-body [color-scheme:light] dark:[color-scheme:dark]" />
-            </label>
             <label className="block">
               <span className={labelCls}>Start date</span>
               <input type="date" value={start} onChange={(e) => setStart(e.target.value)} className={`${inputCls} [color-scheme:light] dark:[color-scheme:dark]`} />
             </label>
-            {wizardLoaded === "ok" && (
-              <label className="block">
-                <span className={labelCls}>Job size</span>
-                <select value={jobKind} onChange={(e) => setJobKind(e.target.value)} className={inputCls} title="Sets the turnover package and defaults, never permissions">
-                  {JOB_KINDS.map((k) => <option key={k.v} value={k.v}>{k.label}</option>)}
-                </select>
-              </label>
-            )}
+            <label className="block">
+              <span className="text-body font-medium text-[var(--color-text)]">Target completion</span>
+              <input type="date" value={target} onChange={(e) => setTarget(e.target.value)} className="mt-1 w-full h-9 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-body [color-scheme:light] dark:[color-scheme:dark]" />
+            </label>
           </div>
+          {/* The rest, folded with how much is filled, all still here. */}
+          <MoreDetails label="Description, purpose and goals" total={5}
+            filled={[description, purpose, successCriteria].filter((x) => x.trim()).length + (goals.length ? 1 : 0) + (sowDoc ? 1 : 0)}>
+          <label className="block">
+            <span className="text-body font-medium text-[var(--color-text)]">Description</span>
+            <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={3} className="mt-1 w-full rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 py-2 text-body resize-y" />
+          </label>
           {wizardLoaded === "ok" && (
             <>
               <label className="block">
@@ -265,8 +258,25 @@ export default function EditProjectModal({ project, actorUserId, actorEmail, act
           {wizardLoaded === "missing" && (
             <div className="text-caption text-[var(--color-text-faint)]">Purpose, goals, success criteria, job size and the Summary of Work need the database update 20261013_project_controls_program.sql.</div>
           )}
+          </MoreDetails>
+          <MoreDetails label="Settings: MOC, job size, time zone, visibility" total={4}
+            filled={(moc.trim() ? 1 : 0) + (jobKind ? 1 : 0) + 2} defaultOpen={tzChanged}>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <label className="block">
+              <span className="text-body font-medium text-[var(--color-text)]">MOC reference</span>
+              <input value={moc} onChange={(e) => setMoc(e.target.value)} className="mt-1 w-full h-9 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-body font-display tabular-nums" />
+            </label>
+            {wizardLoaded === "ok" && (
+              <label className="block">
+                <span className={labelCls}>Job size</span>
+                <select value={jobKind} onChange={(e) => setJobKind(e.target.value)} className={inputCls} title="Sets the turnover package and defaults, never permissions">
+                  {JOB_KINDS.map((k) => <option key={k.v} value={k.v}>{k.label}</option>)}
+                </select>
+              </label>
+            )}
+            </div>
           <div>
-            <span className="text-caption font-medium text-[var(--color-text-muted)]">Plant timezone</span>
+            <span className="text-body font-medium text-[var(--color-text)]">Plant timezone</span>
             <TimeZoneSelect value={timezone} onChange={setTimezone} className="mt-1" />
             <div className="mt-1 text-caption text-[var(--color-text-faint)]">
               Everyone on the project sees and enters dates, days and shifts in this zone.
@@ -283,7 +293,7 @@ export default function EditProjectModal({ project, actorUserId, actorEmail, act
             )}
           </div>
           <div>
-            <span className="text-caption font-medium text-[var(--color-text-muted)]">Visibility</span>
+            <span className="text-body font-medium text-[var(--color-text)]">Visibility</span>
             <div className="mt-1 inline-flex items-center rounded-xl border border-[var(--color-border)] p-0.5 gap-0.5">
               {([
                 { v: "public" as const, label: "Public", Icon: Globe },
@@ -305,6 +315,7 @@ export default function EditProjectModal({ project, actorUserId, actorEmail, act
               <div className="mt-1 text-caption text-[var(--color-text-faint)]">Only members, the owner, and Document Control can see private projects.</div>
             )}
           </div>
+          </MoreDetails>
           {error && <div role="alert" className="border-l-2 border-[var(--state-overdue)] pl-3 py-1 text-caption font-medium text-[var(--state-overdue-text)] flex items-start gap-1.5"><CircleAlert aria-hidden className="w-3.5 h-3.5 shrink-0 mt-0.5" /><span>{error}</span></div>}
         </div>
         <div className="px-5 py-3.5 border-t border-[var(--color-border)] flex items-center justify-end gap-2">

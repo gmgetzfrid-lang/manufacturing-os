@@ -11,7 +11,7 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { ChevronRight, Sparkles, ArrowRight } from "lucide-react";
+import { ChevronRight, ChevronLeft, Sparkles, ArrowRight } from "lucide-react";
 import { gatherProjectSnapshot } from "@/lib/projectSnapshot";
 import { computeProjectHealth, buildCoachItems, type ProjectHealth, type CoachItem } from "@/lib/projectHealth";
 import { ScoreDial, scoreBandColor } from "@/components/ui/ChartKit";
@@ -26,7 +26,8 @@ export default function ProjectCoach({ orgId, projectId, refreshKey }: {
   const [items, setItems] = useState<CoachItem[]>([]);
   // Folded to one line: the job's own results lead the Plan tab.
   const [open, setOpen] = useState(false);
-  const [showAll, setShowAll] = useState(false);
+  // One thing to feed it at a time: which one is showing (Next / Back step through them all).
+  const [at, setAt] = useState(0);
   const [failed, setFailed] = useState(false);
 
   useEffect(() => {
@@ -62,7 +63,8 @@ export default function ProjectCoach({ orgId, projectId, refreshKey }: {
       <span className="text-body text-[var(--color-text-muted)]">{failed ? "Couldn't be checked right now." : "Checking…"}</span>
     </div>
   );
-  const shown = showAll ? items : items.slice(0, 4);
+  const cur = items.length ? items[Math.min(at, items.length - 1)] : null;
+  const idx = cur ? items.indexOf(cur) : 0;
 
   return (
     <div className="rounded-lg bg-[var(--color-surface)] overflow-hidden border border-[var(--color-border)]">
@@ -106,32 +108,37 @@ export default function ProjectCoach({ orgId, projectId, refreshKey }: {
             </div>
           </div>
 
-          {/* The coach: what to feed the system next, payoff stated. */}
+          {/* The coach: the one thing to feed the system next, payoff stated;
+              the rest one at a time, never stacked. */}
           <div className="pt-2 min-w-0">
-            {items.length === 0 ? (
-              <div className="text-caption text-[var(--color-text-muted)] italic">
+            {!cur ? (
+              <div className="text-body text-[var(--color-text-muted)]">
                 Nothing missing. New gaps show up here as the job runs.
               </div>
             ) : (
-              <ul className="space-y-1.5">
-                {shown.map((it) => (
-                  <li key={it.id}>
-                    <Link href={it.href}
-                      className="group flex items-start gap-2 rounded-lg px-2.5 py-2 hover:bg-[var(--color-surface-2)] transition-colors">
-                      <ArrowRight className="w-3.5 h-3.5 mt-0.5 text-[var(--color-text-muted)] shrink-0 group-hover:translate-x-0.5 transition-transform" />
-                      <span className="min-w-0">
-                        <span className="block text-body font-medium text-[var(--color-text)]">{it.title}</span>
-                        <span className="block text-caption text-[var(--color-text-muted)]">{it.payoff}</span>
-                      </span>
-                    </Link>
-                  </li>
-                ))}
-              </ul>
-            )}
-            {items.length > 4 && (
-              <button onClick={() => setShowAll((v) => !v)} className="mt-1.5 px-2.5 text-body hover:underline text-[var(--color-accent-text)]">
-                {showAll ? "Show fewer" : `Show ${items.length - 4} more`}
-              </button>
+              <>
+                <Link href={cur.href}
+                  className="group flex items-start gap-2 rounded-lg px-2.5 py-2 -mx-2.5 hover:bg-[var(--color-surface-2)] transition-colors">
+                  <ArrowRight className="w-3.5 h-3.5 mt-1 text-[var(--color-text-muted)] shrink-0 group-hover:translate-x-0.5 transition-transform" />
+                  <span className="min-w-0">
+                    <span className="block text-body font-medium text-[var(--color-text)]">{cur.title}</span>
+                    <span className="block text-body text-[var(--color-text-muted)]">{cur.payoff}</span>
+                  </span>
+                </Link>
+                {items.length > 1 && (
+                  <div className="mt-1 flex items-center gap-1 text-body text-[var(--color-text-muted)]">
+                    <button type="button" onClick={() => setAt((i) => (i - 1 + items.length) % items.length)} aria-label="Previous" title="Previous"
+                      className="ui-hit w-8 h-8 pointer-coarse:size-11 inline-flex items-center justify-center rounded-md hover:bg-[var(--color-surface-2)] hover:text-[var(--color-text)]">
+                      <ChevronLeft className="w-4 h-4" />
+                    </button>
+                    <span className="tabular-nums">{idx + 1} of {items.length}</span>
+                    <button type="button" onClick={() => setAt((i) => (i + 1) % items.length)}
+                      className="inline-flex items-center gap-0.5 h-8 pointer-coarse:h-11 px-2 rounded-md font-medium text-[var(--color-accent-text)] hover:bg-[var(--color-surface-2)]">
+                      Next <ChevronRight className="w-4 h-4" />
+                    </button>
+                  </div>
+                )}
+              </>
             )}
           </div>
         </div>

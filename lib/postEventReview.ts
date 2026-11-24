@@ -1393,6 +1393,17 @@ const namesTag = (text: string | undefined, tag: string) => !!text && new RegExp
  *  the hours that came through their waits; the rest of a work order's piece
  *  goes to the finding that names it (in its headline first, then the one
  *  that moved the finish most); what is left is not explained by the records. */
+/** How a finding reads as the cause of a late bar: its own title, except a
+ *  note written on a job, whose title is that job's name. Then it is what
+ *  the note says, and the job it was written on, so a bar on E-17 never
+ *  shows only "E-12 - ..." as its cause. */
+export function causeTitle(f: Pick<Finding, "source" | "title" | "drafted" | "proof" | "observation">): string {
+  if (f.source !== "job" || f.title !== f.drafted.title) return f.title;
+  const said = (f.proof || f.observation.split("\n")[0] || "").trim().replace(/\.$/, "");
+  const on = f.title.split(" - ")[0].trim() || f.title;
+  return said ? `"${said}", written on ${on}` : `Written on ${f.title}`;
+}
+
 function barsOf(fin: FinishStory | null, findings: Finding[], loads: PartyLoad[], varianceH: number | null): LateBar[] {
   void loads;
   if (!fin || varianceH == null || varianceH < 1) return [];
@@ -1406,13 +1417,13 @@ function barsOf(fin: FinishStory | null, findings: Finding[], loads: PartyLoad[]
     if (d.kind === "work") {
       // The cause written on the work that set the finish keeps its piece whole.
       const named = others.filter((f) => f.moved === 3 && f.effect.includes(d.line))[0];
-      if (named) { segs.push({ key: named.key, title: named.title, hours: r1(left) }); left = 0; }
+      if (named) { segs.push({ key: named.key, title: causeTitle(named), hours: r1(left) }); left = 0; }
       for (const f of through) {
         if (left < 0.5) break;
         const part = (f.load ? f.load.down : f.idle!.down).parts.find((x) => x.order === d.order);
         const h = part ? r1(Math.min(part.hours, left)) : 0;
         if (h < 0.5) continue;
-        segs.push({ key: f.key, title: f.title, hours: h }); left = r1(left - h);
+        segs.push({ key: f.key, title: causeTitle(f), hours: h }); left = r1(left - h);
       }
       if (left >= 0.5) {
         // The finding whose own work orders this piece is (what it said it
@@ -1421,7 +1432,7 @@ function barsOf(fin: FinishStory | null, findings: Finding[], loads: PartyLoad[]
         const claim = others.filter((f) => f.effect.includes(d.line));
         const hits = (claim.length ? claim : others.filter((f) => namesTag(f.source === "job" ? f.observation : `${f.title} ${f.because}`, label))).map((f) => ({ f }))
           .sort((x, y) => (y.f.moved ?? 0) - (x.f.moved ?? 0) || (y.f.hours ?? 0) - (x.f.hours ?? 0));
-        if (hits.length) { segs.push({ key: hits[0].f.key, title: hits[0].f.title, hours: r1(left) }); left = 0; }
+        if (hits.length) { segs.push({ key: hits[0].f.key, title: causeTitle(hits[0].f), hours: r1(left) }); left = 0; }
       }
     }
     if (left >= 0.5) segs.push({ key: null, title: d.kind === "work" ? "Not explained by the records" : d.line.replace(/\.$/, ""), hours: r1(left) });

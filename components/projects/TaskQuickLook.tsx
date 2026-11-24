@@ -9,7 +9,7 @@
 // Plus a search box to pull up any step, on tonight's report or not.
 // Screen only — the printout is unchanged.
 
-import { createContext, useContext, useMemo, useRef, useState } from "react";
+import { createContext, useContext, useId, useMemo, useRef, useState } from "react";
 import { Search, Wrench } from "lucide-react";
 import { Modal, ModalHeader, ModalBody } from "@/components/ui/Modal";
 import { searchSteps, type QuickLook, type QuickLookIndex } from "@/lib/taskQuickLook";
@@ -167,19 +167,31 @@ export function QuickLookCard({ look, goalAt, noteOf, fmt, onOpen, onClose }: {
 }
 
 /** Type a tag, a step or a crew — pick a step to open its card. */
-export function TaskSearch({ idx, fmt, onPick }: { idx: QuickLookIndex; fmt: QuickLookFmt; onPick: (id: string) => void }) {
+export function TaskSearch({ idx, fmt, onPick, compact }: { idx: QuickLookIndex; fmt: QuickLookFmt; onPick: (id: string) => void;
+  /** A narrow row: a search button that opens into the box when tapped. */
+  compact?: boolean }) {
   const [q, setQ] = useState("");
   const [open, setOpen] = useState(false);
   const [hi, setHi] = useState(0);
+  const [shown, setShown] = useState(false);
   const box = useRef<HTMLDivElement>(null);
+  const id = useId();
   const hits = useMemo(() => searchSteps(q, idx), [q, idx]);
-  const pick = (id: string) => { onPick(id); setOpen(false); setQ(""); };
+  const pick = (stepId: string) => { onPick(stepId); setOpen(false); setQ(""); setShown(false); };
+  if (compact && !shown) {
+    return (
+      <button type="button" onClick={() => setShown(true)} aria-label="Look up a step" title="Look up a step"
+        className="shrink-0 inline-flex items-center justify-center w-9 h-9 pointer-coarse:w-11 pointer-coarse:h-11 rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+        <Search className="w-4 h-4" aria-hidden="true" />
+      </button>
+    );
+  }
   return (
-    <div ref={box} className="relative shrink-0 w-full sm:w-auto"
-      onBlur={(e) => { if (!box.current?.contains(e.relatedTarget as Node | null)) setOpen(false); }}>
-      <label className="sr-only" htmlFor="report-task-search">Look up a step</label>
+    <div ref={box} className={`relative shrink-0 ${compact ? "w-44 sm:w-52" : "w-full"}`}
+      onBlur={(e) => { if (!box.current?.contains(e.relatedTarget as Node | null)) { setOpen(false); if (!q.trim()) setShown(false); } }}>
+      <label className="sr-only" htmlFor={id}>Look up a step</label>
       <Search className="w-3.5 h-3.5 absolute left-2 top-1/2 -translate-y-1/2 text-[var(--color-text-faint)] pointer-events-none" aria-hidden="true" />
-      <input id="report-task-search" value={q} placeholder="Look up a step…" autoComplete="off"
+      <input id={id} value={q} placeholder="Look up a step…" autoComplete="off" autoFocus={compact}
         onChange={(e) => { setQ(e.target.value); setOpen(true); setHi(0); }}
         onFocus={() => setOpen(true)}
         onKeyDown={(e) => {
@@ -188,9 +200,9 @@ export function TaskSearch({ idx, fmt, onPick }: { idx: QuickLookIndex; fmt: Qui
           if (e.key === "Enter" && hits[hi]) { e.preventDefault(); pick(hits[hi].id); }
           if (e.key === "Escape") { setOpen(false); (e.target as HTMLInputElement).blur(); }
         }}
-        className="w-full sm:w-52 h-9 pointer-coarse:h-11 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] pl-7 pr-2 text-body text-[var(--color-text)] placeholder:text-[var(--color-text-faint)]" />
+        className="w-full h-9 pointer-coarse:h-11 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] pl-7 pr-2 text-body max-sm:text-reading text-[var(--color-text)] placeholder:text-[var(--color-text-faint)]" />
       {open && q.trim() && (
-        <div className="absolute right-0 top-full mt-1 z-30 w-[min(22rem,calc(100vw-2rem))] rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] shadow-lg py-1">
+        <div className={`absolute ${compact ? "right-0" : "left-0"} top-full mt-1 z-30 w-[min(22rem,calc(100vw-2rem))] rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] shadow-lg py-1`}>
           {hits.length === 0 ? (
             <div className="px-3 py-2 text-caption text-[var(--color-text-muted)]">No step matches “{q.trim()}”.</div>
           ) : hits.map((h, i) => (

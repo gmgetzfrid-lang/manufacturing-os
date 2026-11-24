@@ -152,7 +152,7 @@ Our tokens live in `app/globals.css`. Type: 12 / 14 / 16 / 20 / 26 / 42 px (capt
 
 **S1. Status is a small colored dot plus one word in text color.** Color never fills a card, row or pill in a long list: 20 items with one error look calm, and the error stands out. (DfMkz9JB-xC, Df9fWE8hcgI, Dc-4jNbtyJg)
 
-**S2. One status vocabulary with fixed colors everywhere:** green done, amber in progress, red act now. (DfMkz9JB-xC)
+**S2. One status vocabulary with fixed colors everywhere:** green done, amber in progress, red act now. (DfMkz9JB-xC) Settled: on a dense timeline, done steps go one quiet gray so late and open work stands out (the owner's "done things recede"); a status word or dot elsewhere keeps green for done.
 
 **S3. A red number means something waits on this person's decision;** a dot means status. Never both on one row. Plain totals are gray text. (Df5UFrADYCN)
 
@@ -393,13 +393,11 @@ Checked on every page of the app (35 screens, test data) on a phone 375 px wide 
 - T2: no page is wider than the screen. Passes.
 - TY3: no text under 12 px. Passes.
 - F2: every field and control has a name. Passes.
-- T1: 91 tap targets across the 35 screens are still under 44 px on touch (down from 192). All are 24 px or more, except the "All" tab on Companies (15 px wide) and the "Ask" tab on Knowledge and Graph (22 px wide). The rest are mostly 40 px buttons ("Update by note", "Plan this shift", "Filter", "Project"), 28 to 32 px segment tabs ("Whole estate", "All libraries", "Release"), the shift report's section links (32 px), and 24 px document-number links in list rows.
+- T1: 42 tap targets across the 35 screens are still under 44 px on touch (down from 192). None is a real tap target under 24 px: the four under 24 are two hidden file inputs (their visible button is the target) and two file names 20 px tall in rows that open when the row is tapped. The rest are mostly 40 px buttons, 28 to 32 px segment tabs on the graph and library pages ("Whole estate", "Map", "2D", "3D"), and 24 px item names in package rows.
 - C3 / F4: text tokens pass 4.5:1 and the field edge passes 3:1 in both themes and for any workspace color (tested in `lib/__tests__/brandColors.test.ts`).
 - D1: no browser confirm boxes are left (`window.confirm` only remains as the fallback inside `DialogProvider`).
 - F8: every password and key field has a Show button.
 
 Known gaps, not yet fixed:
-- T1: the 91 targets above, starting with the "All" and "Ask" tabs (under the 24 px floor).
-- Status colors on the dark document viewer have no token that reads on charcoal (C5).
-- Timeline and calendar bar colors (day and night, planned bars) need chart tokens (C5, C3).
-- Some compact inline add rows (costs, quality, intake) have only a screen-reader name, not a visible label (F2).
+- T1: the 42 targets above.
+- Fixed since the last check: status colors on the dark document viewer (`--on-dark-*`, C5), timeline and calendar bar colors (`--shift-*`, `--viz-cat-*`, C5, C3), and add rows with only a screen-reader name (costs, quality and materials now add through `InlineAddRow`, with a visible name over each box; intake's form has a visible name on each field, F2).

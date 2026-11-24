@@ -110,14 +110,12 @@ export default function StaleCheckoutBanner({ userId }: StaleCheckoutBannerProps
     <section aria-label="Checkouts held too long" className="relative rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
       <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] bg-[var(--state-held)]" />
       <div className="flex items-center gap-3 pl-4 sm:pl-5 pr-2 py-2.5">
-        <span className="shrink-0 inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-body font-medium bg-[color-mix(in_srgb,var(--state-held)_14%,transparent)] text-[var(--state-held-text)]">
-          Held too long
-        </span>
+        <span className="shrink-0 ui-pill is-warn">Held too long</span>
         <p className="min-w-0 flex-1 text-reading text-[var(--color-text)]">
           {n === 1 ? "1 of your checkouts is" : `${n} of your checkouts are`} past the release date
         </p>
         <button onClick={dismissForToday} aria-label="Hide for today" title="Hide for today"
-          className="ui-hit shrink-0 w-8 h-8 inline-flex items-center justify-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
+          className="ui-hit shrink-0 w-8 h-8 pointer-coarse:w-11 pointer-coarse:h-11 inline-flex items-center justify-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
           <X className="w-4 h-4" />
         </button>
       </div>
@@ -141,17 +139,17 @@ export default function StaleCheckoutBanner({ userId }: StaleCheckoutBannerProps
             </div>
             <div className="ml-auto shrink-0 flex items-center gap-2">
               {r.libraryId && (
-                <Link href={`/documents/${r.libraryId}?doc=${r.documentId}`} className="text-body text-[var(--color-accent-text)] hover:underline">
+                <Link href={`/documents/${r.libraryId}?doc=${r.documentId}`} className="inline-flex items-center min-h-8 pointer-coarse:min-h-11 px-2 rounded-md text-body font-medium text-[var(--color-accent-text)] hover:bg-[var(--color-surface-2)]">
                   Open
                 </Link>
               )}
               <button
                 onClick={() => void release(r)}
                 disabled={releasingId === r.id}
-                className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-body font-medium hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors"
+                className="inline-flex items-center gap-1.5 h-8 pointer-coarse:h-11 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-body font-medium hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors"
               >
                 {releasingId === r.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
-                Release
+                {releasingId === r.id ? "Releasing" : "Release"}
               </button>
             </div>
           </li>
@@ -176,10 +174,11 @@ function formatRelative(ts: unknown): string {
     const abs = Math.abs(diff);
     const min = Math.floor(abs / 60000);
     if (min < 1) return future ? "any moment" : "just now";
-    if (min < 60) return future ? `in ${min}m` : `${min}m ago`;
+    if (min < 60) return future ? `in ${min} min` : `${min} min ago`;
     const hr = Math.floor(min / 60);
-    if (hr < 24) return future ? `in ${hr}h` : `${hr}h ago`;
+    if (hr < 24) return future ? `in ${hr} h` : `${hr} h ago`;
+    // Over a day reads in days.
     const days = Math.floor(hr / 24);
-    return future ? `in ${days}d` : `${days}d ago`;
+    return future ? `in ${days} day${days === 1 ? "" : "s"}` : `${days} day${days === 1 ? "" : "s"} ago`;
   } catch { return "-"; }
 }

@@ -1175,9 +1175,9 @@ export default function FullScreenViewer({
   const vb = docRecord ? viewerStatusBadge({ status: docRecord.status, rev: docRecord.rev ?? rev }) : null;
   const statusWord = vb ? vb.label.replace(/\s·\sRev\s.*$/, "") : null;
   const statusTone: Record<ViewBadgeTone, string> = {
-    controlled: "text-emerald-400",
-    caution: "text-amber-400",
-    danger: "text-rose-400",
+    controlled: "text-[var(--on-dark-good)]",
+    caution: "text-[var(--on-dark-warn)]",
+    danger: "text-[var(--on-dark-bad)]",
     muted: "text-[var(--color-text-muted)]",
   };
   const lockedByOther = !!(docRecord?.checkedOutBy && currentUserId && String(docRecord.checkedOutBy) !== String(currentUserId));
@@ -1309,7 +1309,7 @@ export default function FullScreenViewer({
         {/* Someone ELSE holds the checkout: said here, on the drawing it's
             about, passively (who, why, since when, one tap to their thread). */}
         {lockedByOther && docRecord && (
-          <div className={`${vNote} text-amber-300`}>
+          <div className={`${vNote} text-[var(--on-dark-warn)]`}>
             <Lock className="w-3.5 h-3.5 shrink-0" />
             <span className="truncate">
               <b>{docRecord.checkedOutByName || "Another user"}</b> is working on this drawing
@@ -1327,7 +1327,7 @@ export default function FullScreenViewer({
         )}
 
         {chromeError && (
-          <p role="alert" className={`${vNote} text-rose-300`}>
+          <p role="alert" className={`${vNote} text-[var(--on-dark-bad)]`}>
             <ShieldAlert className="w-3.5 h-3.5 shrink-0" />
             <span className="truncate">{chromeError}</span>
             <button type="button" onClick={() => { setActionError(null); setMarkupError(null); }} aria-label="Dismiss"
@@ -1413,7 +1413,7 @@ export default function FullScreenViewer({
             </div>
             {railLine}
             {toolBtn("eraser", Eraser, "Eraser (E)")}
-            <button type="button" onClick={deleteSelected} className={`${railBtn} hover:text-rose-400`} title="Delete what's selected" aria-label="Delete what's selected"><Trash2 className="w-5 h-5" /></button>
+            <button type="button" onClick={deleteSelected} className={`${railBtn} hover:text-[var(--on-dark-bad)]`} title="Delete what's selected" aria-label="Delete what's selected"><Trash2 className="w-5 h-5" /></button>
             {railLine}
             <button type="button" onClick={() => void undo()} className={railBtn} title="Undo (Ctrl+Z)" aria-label="Undo"><Undo2 className="w-5 h-5" /></button>
             <button type="button" onClick={() => void redo()} className={railBtn} title="Redo (Ctrl+Y)" aria-label="Redo"><Redo2 className="w-5 h-5" /></button>
@@ -1513,7 +1513,7 @@ export default function FullScreenViewer({
               {/* Couldn't open it / opening: said in place of the drawing */}
               {!archivedInfo && fetchError && (
                 <div role="alert" className="absolute inset-0 flex flex-col items-center justify-center p-8 text-center">
-                  <ShieldAlert className="w-10 h-10 text-rose-400 mb-3" />
+                  <ShieldAlert className="w-10 h-10 text-[var(--on-dark-bad)] mb-3" />
                   <div className="text-reading font-medium text-[var(--color-text)] mb-1">{notViewable ? `${fileTypeName({ fileName: shownFileName, path: url })} can't be shown here` : "Couldn't open this drawing"}</div>
                   <div className="text-body text-[var(--color-text-muted)] max-w-md">{notViewable ? "Close this and use Download in the document's panel to open it in its own program." : fetchError}</div>
                 </div>

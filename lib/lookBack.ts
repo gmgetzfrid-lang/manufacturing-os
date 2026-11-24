@@ -22,6 +22,7 @@ import { startMsOf, finishMsOf } from "@/lib/calendarPlacement";
 import { discoveryOf, kindOf, ADDED, type Discovery, type AddedKind } from "@/lib/discovery";
 import { woOf } from "@/lib/workOrderCrew";
 import type { ProgressLogRow } from "@/lib/progressHistory";
+import { originalPlan, workSteps } from "@/lib/closeoutStatus";
 
 const H = 3_600_000;
 /** Within this of the plan counts as on plan — times are as entered. */
@@ -96,8 +97,12 @@ export interface ChainLink {
 }
 
 export interface LookBack {
-  /** The turnaround: baseline finish, actual (or forecast) finish. */
-  finish: { baseline: number; actual: number; slipH: number; done: boolean };
+  /** The turnaround: the original plan's finish, the actual (or forecast)
+   *  finish, and what the plan is: the baseline as saved (when), else the
+   *  schedule as planned (none saved). The same plan and steps the
+   *  close-out's Final standing measures (lib/closeoutStatus workSummary),
+   *  so both say one number. */
+  finish: { baseline: number; actual: number; slipH: number; done: boolean; basis: { kind: "baseline" | "schedule"; savedAt: number | null } };
   steps: StepLook[];
   /** Steps that lost the most time on their own, worst first. */
   setbacks: StepLook[];
@@ -182,10 +187,13 @@ export function buildLookBack(input: {
   // Where each step was meant to be, and where it really was (or will be).
   const at = new Map<string, { bs: number; bf: number; as: number; af: number; done: boolean }>();
   for (const m of leaves) {
+    // The work only: not a summary, not taken off the schedule.
+    if (m.isSummary || (m as { cancelledAt?: unknown }).cancelledAt) continue;
     const bs0 = ms(m.baselineStartAt), bf0 = ms(m.baselineFinishAt);
     const bs = Number.isFinite(bs0) ? bs0 : startMsOf(m), bf = Number.isFinite(bf0) ? bf0 : finishMsOf(m);
     const c = cpm.steps.get(m.id!);
-    const done = m.status === "completed";
+    // Done as everywhere else: completed, or 100% entered.
+    const done = m.status === "completed" || Number(m.percentComplete ?? 0) >= 100;
     const as = Number.isFinite(ms(m.actualStartAt)) ? ms(m.actualStartAt) : c?.es ?? NaN;
     const af = done && Number.isFinite(ms(m.actualAt)) ? ms(m.actualAt) : c?.ef ?? NaN;
     if (!Number.isFinite(bs) || !Number.isFinite(bf) || !Number.isFinite(as) || !Number.isFinite(af)) continue;
@@ -348,9 +356,14 @@ export function buildLookBack(input: {
     });
   }
 
-  // The finish: the plan's last finish, and where the work landed it.
-  const finishB = Math.max(...steps.map((s) => s.bf)), finishA = Math.max(...steps.map((s) => s.af));
-  const finish = { baseline: finishB, actual: finishA, slipH: r1((finishA - finishB) / H), done: steps.every((s) => s.done) };
+  // The finish: the original plan's last finish (the baseline as saved,
+  // else the schedule as planned; work added after it isn't in it), and
+  // where the work landed it. Each step above is still measured against its
+  // own plan (added work against its own dates); the job is measured
+  // against the plan it was signed off on, as Final standing is.
+  const plan = originalPlan(workSteps(milestones as Array<Milestone & { cancelledAt?: unknown }>));
+  const finishB = plan.finish ?? Math.max(...steps.map((s) => s.bf)), finishA = Math.max(...steps.map((s) => s.af));
+  const finish = { baseline: finishB, actual: finishA, slipH: r1((finishA - finishB) / H), done: steps.every((s) => s.done), basis: { kind: plan.finish != null ? plan.kind : "schedule" as const, savedAt: plan.finish != null ? plan.savedAt : null } };
 
   // The chain of events: from the step that finished last, back through
   // the work whose finish let each one start — first to last.

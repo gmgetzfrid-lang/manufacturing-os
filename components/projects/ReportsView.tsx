@@ -22,12 +22,13 @@ import { dayKey, fmtInTz } from "@/lib/scheduleTz";
 import { useLetterhead } from "@/lib/letterheadStore";
 import { REPORTS, type ReportId, type ReportLink, type ShiftPick } from "@/lib/reportLinks";
 import type { ExportDoc } from "@/lib/reportExport";
-import { copyUpdateForEmail, copyRich, sendParts, printHtml, sendPrintDocument, updateToSend, updateDocx, updateFileName, saveFile } from "@/lib/updatePrint";
+import { copyUpdateForEmail, copyRich, sendParts, printHtml, sendPrintDocument, updateToSend, updateDocx, updateFileName, saveFile, setSendScope } from "@/lib/updatePrint";
 import { supabase } from "@/lib/supabase";
 import { fetchAllRows } from "@/lib/fetchAllRows";
 import { usePhases } from "@/components/projects/PhaseContext";
-import { phaseStats, phaseReportHtml, phaseReportDocument, phaseReportText, howItDidHtml, type CostLine, type CostEntry } from "@/lib/phaseReport";
+import { phaseStats, phaseReportHtml, phaseReportDocument, phaseReportText, howItDidHtml, closeoutPrint, type CostLine, type CostEntry } from "@/lib/phaseReport";
 import { buildAsBuilt, asBuiltDocument, downloadAsBuilt } from "@/lib/asBuiltSchedule";
+import { buildAsBuiltWork } from "@/lib/asBuiltWork";
 import { withWorkOrderCrews } from "@/lib/workOrderCrew";
 import { loadProgressLog } from "@/lib/progressHistory";
 import { loadShiftRecords, saveShiftRecord, useShiftRecords, type ShiftRecord } from "@/lib/shiftRecord";
@@ -49,6 +50,8 @@ import { typeLabel, unitLabel, NONE } from "@/lib/woClass";
 import { appAlert } from "@/components/providers/DialogProvider";
 import { requestSetup } from "@/lib/scheduleSetup";
 import { sayError } from "@/components/projects/sayError";
+import MoreMenu, { type MoreItem } from "@/components/ui/MoreMenu";
+import HelpTooltip from "@/components/ui/HelpTooltip";
 
 interface Props {
   milestones: Milestone[];
@@ -78,6 +81,9 @@ const lastOpen = new Map<string, ReportId>();
 // opened straight, on a phone too.
 const askedOpen = new Set<string>();
 const upper = (x: string) => (x ? x[0].toUpperCase() + x.slice(1) : x);
+/** A meeting's update as it goes out: the sections picked; the close-out
+ *  with its answer first and its repeats folded (lib/phaseReport closeoutPrint). */
+const toSend = (d: ExportDoc, m: MeetingKind) => (m === "closeout" ? closeoutPrint(updateToSend(d, m)) : updateToSend(d, m));
 export function openReportNext(projectId: string, id: ReportId): void { lastOpen.set(projectId, id); askedOpen.add(projectId); }
 
 const SHOWS: Array<[Show, string]> = [["all", "All"], ["open", "Open"], ["behind", "Behind"], ["critical", "Critical path"], ["notStarted", "Not started"], ["held", "Held"], ["done", "Done"], ["added", "Discovery & added"]];
@@ -95,6 +101,8 @@ function readMade(projectId: string): Made[] {
 }
 
 export default function ReportsView(p: Props) {
+  // The Email / Print choices are kept per project (lib/updatePrint).
+  setSendScope(p.projectId);
   const tz = useScheduleTz();
   const word = useProjectWord();
   const { projectId, shiftTimes: times } = p;
@@ -305,7 +313,16 @@ export default function ReportsView(p: Props) {
   // The as-built schedule: the phase picked (else the whole job), as built.
   const asBuiltScope = ph.phase ? ph.phases.find((x) => x.id === ph.phase)?.name ?? "Phase" : ph.phases.length ? "All phases" : "Whole project";
   const asBuilt = () => buildAsBuilt({ milestones: p.milestones, childrenByParent: p.childrenByParent, cancelled: p.cancelled, phases: ph.phases, tz });
-  const asBuiltDoc = () => asBuiltDocument(asBuilt(), { project: name, scope: asBuiltScope, tz, now: Date.now() });
+  // The page, with the shifts each work order waited counted as the screen
+  // counts them (lib/asBuiltWork); without the record, it says so.
+  const asBuiltDoc = async () => {
+    const built = asBuilt();
+    const at = Date.now();
+    const work = await loadJob()
+      .then(({ log, records, notes }) => buildAsBuiltWork({ built, milestones: p.milestones, log: log ?? [], notes, records, companyOf: (c) => c, tz, times, now: at }))
+      .catch(() => null);
+    return asBuiltDocument(built, { project: name, scope: asBuiltScope, tz, now: at, work });
+  };
   const phaseBody = async (): Promise<{ html: string; text: string; title: string }> => {
     const { at, stats } = await statsMaker();
     const each = ph.phases.map(stats);
@@ -321,7 +338,7 @@ export default function ReportsView(p: Props) {
       setPreviewErr(null);
       try {
         if (meeting) {
-          const page = doc ? sendPrintDocument(updateToSend(doc, meeting), lhOn) : null;
+          const page = doc ? sendPrintDocument(toSend(doc, meeting), lhOn) : null;
           setPreview(page ? { kind: "html", html: page } : null);
           setPreviewBusy(!doc);
           // The close-out: how the job did, under it.
@@ -357,7 +374,8 @@ export default function ReportsView(p: Props) {
           const b = await phaseBody();
           if (alive) setPreview({ kind: "html", html: phaseReportDocument(b.title, b.html) });
         } else if (sel === "asbuilt") {
-          if (alive) setPreview({ kind: "html", html: asBuiltDoc(), landscape: true });
+          const html = await asBuiltDoc();
+          if (alive) setPreview({ kind: "html", html, landscape: true });
         }
       } catch (e) {
         if (alive) { setPreview(null); setPreviewErr(sayError(e)); }
@@ -383,7 +401,7 @@ export default function ReportsView(p: Props) {
     try {
       if (meeting) {
         if (!doc) throw new Error("Still getting the report ready.");
-        const picked = updateToSend(doc, meeting);
+        const picked = toSend(doc, meeting);
         if (what === "email") {
           let ok: boolean;
           if (meeting === "closeout") {
@@ -425,7 +443,7 @@ export default function ReportsView(p: Props) {
         if (what === "download") {
           await downloadAsBuilt(asBuilt(), { project: name, scope: asBuiltScope, tz, fileName: `${fileBase} - as-built schedule${ph.phase ? ` ${ph.phases.find((x) => x.id === ph.phase)?.name ?? ""}` : ""}.xlsx` });
           setMsg("Excel file saved.");
-        } else printHtml(asBuiltDoc(), w);
+        } else printHtml(await asBuiltDoc(), w);
         remember({ report: "asbuilt", label: `${asBuiltScope} · ${what === "download" ? "Excel" : "printed"}` });
       } else if (sel === "phase") {
         const b = await phaseBody();
@@ -506,7 +524,6 @@ export default function ReportsView(p: Props) {
     </span>)
   ) : null;
   const primary = "inline-flex items-center gap-1.5 h-10 pointer-coarse:h-11 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-body font-medium hover:bg-[var(--color-accent-hover)] disabled:opacity-50";
-  const secondary = "inline-flex items-center gap-1.5 h-10 pointer-coarse:h-11 px-3.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50";
 
   const options = (
     <div className="space-y-2">
@@ -581,29 +598,32 @@ export default function ReportsView(p: Props) {
     </div>
   );
 
+  // One main button for each report; the rest one tap away in More.
+  const printOff = busy || (!!meeting && !doc) || (sel === "sheet" && !sheetDoc) || (sel === "workorders" && woShown.length === 0);
+  const ifFree = (what: "download" | "print" | "email" | "word") => () => { if (!busy) void run(what); };
+  const more: MoreItem[] = [
+    ...(sel === "hourly" && format !== "xlsx" ? [{ icon: <Printer className="w-4 h-4" />, label: "Print", onClick: ifFree("print") }] : []),
+    ...(sel === "asbuilt" ? [{ icon: <Download className="w-4 h-4" />, label: "Excel", onClick: ifFree("download") }] : []),
+    ...(sel === "sheet" ? [{ icon: <ClipboardPen className="w-4 h-4" />, label: "Enter what's written", onClick: () => setSheetEntry(true) }] : []),
+    ...(meeting || sel === "phase" ? [{ icon: <Mail className="w-4 h-4" />, label: "Copy for email", onClick: ifFree("email") }] : []),
+    ...(meeting === "turnover" && doc?.form ? [{ icon: <FileText className="w-4 h-4" />, label: "Export Word", onClick: ifFree("word") }] : []),
+    ...(meeting === "kickoff" || meeting === "closeout" ? [
+      { icon: <Maximize2 className="w-4 h-4" />, label: "Open on screen", onClick: () => setOnScreen("open"), line: true },
+      { icon: <Presentation className="w-4 h-4" />, label: "Present", onClick: () => setOnScreen("present") },
+    ] : []),
+    // What the job taught: kept for the next one before the project closes.
+    ...(meeting === "closeout" ? [{ icon: <Lightbulb className="w-4 h-4" />, label: "Lessons & findings", onClick: () => { openFindingsReview(); } }] : []),
+  ];
   const actions = sel === "schedule" ? null : (
     <div className="flex flex-wrap items-center gap-2">
-      {sel === "hourly" && <button type="button" disabled={busy} onClick={() => void run("download")} className={primary}>{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />} Download</button>}
-      {sel === "hourly" && format !== "xlsx" && <button type="button" disabled={busy} onClick={() => void run("print")} className={secondary}><Printer className="w-4 h-4" /> Print</button>}
-      {sel === "timelog" && <button type="button" disabled={busy} onClick={() => void run("download")} className={primary}>{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />} Download</button>}
-      {sel === "asbuilt" && <button type="button" disabled={busy} onClick={() => void run("download")} className={secondary}><Download className="w-4 h-4" /> Excel</button>}
-      {(meeting || sel === "workorders" || sel === "sheet" || sel === "phase" || sel === "asbuilt") && (
-        <button type="button" disabled={busy || (!!meeting && !doc) || (sel === "sheet" && !sheetDoc) || (sel === "workorders" && woShown.length === 0)} onClick={() => void run("print")} className={primary}>
+      {sel === "hourly" || sel === "timelog" ? (
+        <button type="button" disabled={busy} onClick={() => void run("download")} className={primary}>{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />} Download</button>
+      ) : (
+        <button type="button" disabled={printOff} onClick={() => void run("print")} className={primary}>
           {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Printer className="w-4 h-4" />} Print
         </button>
       )}
-      {sel === "sheet" && <button type="button" onClick={() => setSheetEntry(true)} className={secondary}><ClipboardPen className="w-4 h-4" /> Enter what&apos;s written</button>}
-      {meeting && <button type="button" disabled={busy || !doc} onClick={() => void run("email")} className={secondary}><Mail className="w-4 h-4" /> Copy for email</button>}
-      {sel === "phase" && <button type="button" disabled={busy} onClick={() => void run("email")} className={secondary}><Mail className="w-4 h-4" /> Copy for email</button>}
-      {meeting === "turnover" && doc?.form && <button type="button" disabled={busy} onClick={() => void run("word")} className={secondary}><FileText className="w-4 h-4" /> Export Word</button>}
-      {(meeting === "kickoff" || meeting === "closeout") && (
-        <>
-          <button type="button" onClick={() => setOnScreen("open")} className={secondary} title="The whole meeting on screen: hide sections, lessons, copy as text"><Maximize2 className="w-4 h-4" /> Open</button>
-          <button type="button" onClick={() => setOnScreen("present")} className={secondary}><Presentation className="w-4 h-4" /> Present</button>
-        </>
-      )}
-      {/* What the job taught: kept for the next one before the project closes. */}
-      {meeting === "closeout" && <button type="button" onClick={openFindingsReview} className={secondary}><Lightbulb className="w-4 h-4" /> Lessons &amp; findings</button>}
+      {more.length > 0 && <MoreMenu items={more} />}
       {msg && <span role="status" className={`text-caption font-medium ${/^Not made|blocked/.test(msg) ? "text-[var(--state-overdue-text)]" : "text-[var(--state-released-text)]"}`}>{msg}</span>}
     </div>
   );
@@ -615,8 +635,11 @@ export default function ReportsView(p: Props) {
         <button type="button" onClick={() => setPhoneOpen(false)} className="sm:hidden mb-2 inline-flex items-center gap-1 text-body text-[var(--color-accent-text)] hover:underline">
           <ChevronLeft className="w-4 h-4" /> Reports
         </button>
-        <h2 className="text-reading font-medium text-[var(--color-text)]">{meta.name}</h2>
-        <p className="text-body text-[var(--color-text-muted)] mt-0.5">{DESCRIBE[sel]}</p>
+        {/* What it is, one tap away: no paragraph between the title and the report. */}
+        <div className="flex items-center gap-1.5">
+          <h2 className="text-reading font-medium text-[var(--color-text)]">{meta.name}</h2>
+          <HelpTooltip>{DESCRIBE[sel]}</HelpTooltip>
+        </div>
       </div>
       {sel === "schedule" ? (
         <ExecutionReportView milestones={p.milestones} shiftTimes={times} critical={p.critical} criticalSource={p.criticalSource} projectId={projectId} projectName={p.projectName} />
@@ -716,7 +739,7 @@ const DESCRIBE: Record<ReportId, string> = {
   timelog: "Every step and the time each thing was done, for the project file.",
   schedule: "Complete, pace and the forecast finish, with what's blocked and overdue.",
   workorders: "Each work order opened up with all its steps: plan against actual, status, % and the latest comment.",
-  asbuilt: "The job as it was really worked, shift by shift: when each activity moved, when it sat and why, and the hands against the work. Suggested shows it with what it taught put in.",
+  asbuilt: "The job as it was really worked: each work order against its own plan, most late first, phase by phase. Open one for its steps, crews and shifts; Shift by shift shows when each activity moved, when it sat and why, and the hands against the work. Suggested shows it with what it taught put in.",
   kickoff: "The start of the project: the job, the first shifts, readiness and safety.",
   closeout: "The end of the project: how it went, what was added, what's open, and the Lessons & findings review for next time.",
   phase: "How the phase picked at the top did against its plan, beside the other phases and the whole project.",

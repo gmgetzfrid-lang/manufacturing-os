@@ -99,11 +99,11 @@ export function headerShift(line: string, tz: string, times: ShiftTimes, now: nu
 function sectionKind(line: string): SectionKind | null {
   const l = line.trim().replace(/[:\-–—\s]+$/, "");
   if (!l || l.length > 70) return null;
-  if (/attendees|head\s*count|personnel|manpower|roster/i.test(l)) return "people";
+  if (/attendees|head\s*count|personnel|manpower|roster|^people$/i.test(l)) return "people";
   if (/^safety\b/i.test(l)) return "safety";
-  if (/to be (completed|done|worked)|^goals?\b|\bgoals? for\b|look\s*ahead|plan(ned)? for|scheduled for (today|tonight)|^plan$/i.test(l)) return "plan";
+  if (/to be (completed|done|worked)|^goals?\b|\bgoals? for\b|look\s*ahead|plan(ned)? for|scheduled for (today|tonight)|^plan$|^next shift\b/i.test(l)) return "plan";
   if (/^follow[- ]?up|action items|open items/i.test(l)) return "followup";
-  if (/work (completed|done)|completed between|overall status|status on|accomplishments?|progress (today|tonight)/i.test(l)) return "done";
+  if (/work (completed|done)|completed between|overall status|status on|accomplishments?|progress (today|tonight)|^done$|^done\s*[·:]/i.test(l)) return "done";
   if (/^shift notes?$|^notes$|hour[- ]by[- ]hour|^log$/i.test(l)) return "notes";
   return null;
 }

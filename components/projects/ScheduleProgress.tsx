@@ -117,6 +117,8 @@ export default function ScheduleProgress({ milestones, metrics, projectId, onSho
   const finLate = finished ? (linked ? slipH : r.finishedAt && plannedEndAt ? (Date.parse(r.finishedAt) - Date.parse(plannedEndAt)) / 3_600_000 : null) : null;
   const finWords = lateWords(finLate == null ? null : Math.round(finLate * 10) / 10);
   const finIsLate = (finLate ?? 0) >= 0.5;
+  // Work still open past the plan's finish is late, whatever the hours say.
+  const pastPlan = !finished && !!plannedEndAt && nowMs > Date.parse(plannedEndAt);
   const parts = finished ? null : verdictParts(r);
   const held = r.onHold + r.blocked;
   const heldWord = [r.onHold ? `${r.onHold} on hold` : null, r.blocked ? `${r.blocked} blocked` : null].filter(Boolean).join(", ");
@@ -138,9 +140,11 @@ export default function ScheduleProgress({ milestones, metrics, projectId, onSho
             {/* Finished: when and how late is on the card beside this, once. */}
             {!finished && (
               <p className="mt-0.5 text-body text-[var(--color-text-muted)] inline-flex flex-wrap items-center gap-x-1.5">
-                <span className={`inline-flex items-center gap-1 font-medium ${verdictTone}`}>
-                  {verdict === "behind" ? <TrendingDown className="w-3.5 h-3.5" /> : <TrendingUp className="w-3.5 h-3.5" />}
-                  {verdict === "behind" ? `${fmtH(gapH)} behind plan` : verdict === "ahead" ? `${fmtH(gapH)} ahead of plan` : "On plan"}
+                {/* Late is late: a forecast past the plan's finish is never "on plan",
+                    whatever the hours earned say (the same story as the header). */}
+                <span className={`inline-flex items-center gap-1 font-medium ${(linked && slipH >= 0.5) || pastPlan ? "text-[var(--state-overdue-text)]" : verdictTone}`}>
+                  {verdict === "behind" || (linked && slipH >= 0.5) || pastPlan ? <TrendingDown className="w-3.5 h-3.5" /> : <TrendingUp className="w-3.5 h-3.5" />}
+                  {verdict === "behind" ? `${fmtH(gapH)} behind plan` : linked && slipH >= 0.5 ? `Forecast ${lateWords(slipH)}` : pastPlan ? "Past its planned finish" : verdict === "ahead" ? `${fmtH(gapH)} ahead of plan` : "On plan"}
                 </span>
                 <span>· SPI <b className="text-[var(--color-text)] tabular-nums">{spi.toFixed(2)}</b></span>
                 {parts && <span data-verdict-parts>· {parts}</span>}
@@ -187,7 +191,7 @@ export default function ScheduleProgress({ milestones, metrics, projectId, onSho
           </div>
           <div className={`text-caption mt-0.5 inline-flex items-center gap-1 ${late ? "text-[var(--state-overdue-text)] font-medium" : "text-[var(--state-released-text)]"}`}>
             {linked
-              ? (slipH >= 0.5 ? <><AlertTriangle className="w-3.5 h-3.5" /> {fmtH(slipH)} late</> : slipH <= -0.5 ? <><CheckCircle2 className="w-3.5 h-3.5" /> {fmtH(-slipH)} early</> : <><CheckCircle2 className="w-3.5 h-3.5" /> On plan</>)
+              ? (slipH >= 0.5 ? <><AlertTriangle className="w-3.5 h-3.5" /> {lateWords(slipH)}</> : slipH <= -0.5 ? <><CheckCircle2 className="w-3.5 h-3.5" /> {lateWords(slipH)}</> : <><CheckCircle2 className="w-3.5 h-3.5" /> On plan</>)
               : late
                 ? <><AlertTriangle className="w-3.5 h-3.5" /> {!forecastEndAt ? "Behind: no work recorded yet to forecast from" : slipDays > 0 ? `${slipDays}d slip vs plan` : "Behind plan: under a day of slip so far"}</>
                 : plannedEndAt ? <><CheckCircle2 className="w-3.5 h-3.5" /> On plan</> : "Plan not yet set"

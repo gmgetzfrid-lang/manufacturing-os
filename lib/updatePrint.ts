@@ -1,5 +1,5 @@
 // updatePrint - the shift turnover, kick-off or close-out as it goes out:
-// the sections chosen in the Email / Print box (remembered on this device),
+// the sections chosen in the Email / Print box (remembered per project),
 // as an email body or a printed page (on the letterhead when the project
 // has one). The Shift tab's Email / Print and Reports print the same thing.
 
@@ -12,8 +12,18 @@ export const offKey = (meeting: MeetingKind) => `shiftReport.copyOff.${meeting}`
 export const onKey = (meeting: MeetingKind) => `shiftReport.copyOn.${meeting}`;
 const idOf = (s: ExportDoc["sections"][number]) => s.id ?? s.title;
 
+// The choices are kept per project: the screen sending the update says
+// which project it is (setSendScope). A project with no choice of its own
+// yet starts from the last one made on this device.
+let scope: string | null = null;
+export const setSendScope = (projectId: string | null) => { scope = projectId || null; };
+export const scopedKey = (k: string) => (scope ? `${k}@${scope}` : k);
+const scoped = scopedKey;
+export const readRaw = (k: string): string | null => {
+  try { return localStorage.getItem(scoped(k)) ?? (scope ? localStorage.getItem(k) : null); } catch { return null; }
+};
 const readList = (k: string): string[] => {
-  try { const v = JSON.parse(localStorage.getItem(k) ?? "[]"); return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []; }
+  try { const v = JSON.parse(readRaw(k) ?? "[]"); return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []; }
   catch { return []; }
 };
 
@@ -96,10 +106,12 @@ export const FORMAT_KEY = "shiftReport.format";
 export const HEADER_OFF_KEY = "shiftReport.headerOff";
 export const FORM_OFF_KEY = "shiftReport.formOff";
 
-export const readFormat = (): SendFormat => { try { return localStorage.getItem(FORMAT_KEY) === "detail" ? "detail" : "form"; } catch { return "form"; } };
+export const readFormat = (): SendFormat => (readRaw(FORMAT_KEY) === "detail" ? "detail" : "form");
 export const readHeaderOff = () => new Set(readList(HEADER_OFF_KEY) as HeaderPart[]);
 export const readFormOff = () => new Set(readList(FORM_OFF_KEY) as FormRowId[]);
-export const saveList = (k: string, v: Iterable<string>) => { try { localStorage.setItem(k, JSON.stringify([...v])); } catch { /* private mode */ } };
+export const saveList = (k: string, v: Iterable<string>) => { try { localStorage.setItem(scoped(k), JSON.stringify([...v])); } catch { /* private mode */ } };
+/** Save one choice (the format) for this project. */
+export const saveChoice = (k: string, v: string) => { try { localStorage.setItem(scoped(k), v); } catch { /* private mode */ } };
 
 /** What goes out: the email body and its text. The required format when
  *  the update has it and it's chosen; else the detailed update. */

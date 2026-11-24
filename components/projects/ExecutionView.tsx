@@ -28,7 +28,7 @@ import React, { useCallback, useDeferredValue, useEffect, useMemo, useRef, useSt
 import { SubTabs } from "@/components/projects/SubTabs";
 import {
   ChevronDown, ChevronRight as ChevronRightIcon, ChevronLeft,
-  CalendarDays, CircleCheck, Loader2,
+  CalendarDays, Loader2,
   FolderPlus, CalendarRange, X as XIcon, CheckSquare, Square,
   ZoomIn, ZoomOut, ListTree, Crosshair, Info, Zap, Check, Eye, ListOrdered, Link2, Replace,
   Trash2,
@@ -55,7 +55,8 @@ import { computeExecutionReport } from "@/lib/executionReport";
 import { assignGroupColors, type GroupColor } from "@/lib/scheduleColors";
 import ScheduleProgress from "@/components/projects/ScheduleProgress";
 import { usePhaseStandings } from "@/components/projects/PhaseLines";
-import { lateWords, standingOf, standingShort } from "@/lib/phaseStanding";
+import { usePhases } from "@/components/projects/PhaseContext";
+import { lateWords, standingOf, type Standing } from "@/lib/phaseStanding";
 import TaskDetailPanel from "@/components/projects/TaskDetailPanel";
 import { takePendingStep, STEP_OPEN_EVENT } from "@/lib/stepOpen";
 import ScheduleCalendarTileView from "@/components/projects/ScheduleCalendarTileView";
@@ -148,9 +149,13 @@ const MAX_PX_PER_DAY = 1440; // 60 px an hour — a turnaround is planned in hou
 const ZOOM_STEP = 1.35;
 const ROW_H = 40;     // height of each timeline row, px
 const AXIS_H = 58;    // height of the date axis header (days / shifts / hours), px
-const LEFT_W = 320;   // width of the frozen outline column, px
-const MIN_LEFT_W = 220, MAX_LEFT_W = 640;
+// Wide enough for a turnaround step's full name (they run 40 to 50
+// characters); drag the edge for more or less.
+const LEFT_W = 440;   // width of the frozen outline column, px
+const MIN_LEFT_W = 220, MAX_LEFT_W = 720;
 const PAD_DAYS = 2;   // padding on each side of the schedule span
+// The top level's key for "finished work shown" (it has no parent id).
+const ROOT_KEY = "root";
 
 interface TreeNode { ms: Milestone; children: TreeNode[]; depth: number }
 interface FlatRow {
@@ -160,7 +165,14 @@ interface FlatRow {
   pct: number;
   /** Effective status: a leaf's own, a summary's derived roll-up. */
   derivedStatus: MilestoneStatus;
+  /** Steps at or under it that need action now: late, blocked, missed or on hold. */
+  attention: number;
 }
+/** One line standing for the finished work folded under a group (or at
+ *  the top level): "112 steps done · Show". */
+interface FoldRow { fold: true; key: string; parentId: string | null; depth: number; items: number; steps: number; shown: boolean }
+type ViewRow = FlatRow | FoldRow;
+const isFold = (r: ViewRow): r is FoldRow => "fold" in r;
 
 export default function ExecutionView({
   milestones, cancelled, canEdit, orgId, projectId, projectName, userId, userName, userEmail, userRole,
@@ -168,6 +180,9 @@ export default function ExecutionView({
 }: Props) {
   const tz = useScheduleTz();
   const projectWord = useProjectWord();
+  // What the board covers, said on its first line: the phase picked, all of them, or the whole job.
+  const ph = usePhases();
+  const scopeName = ph.phase ? ph.phases.find((p) => p.id === ph.phase)?.name ?? "This phase" : ph.phases.length > 1 ? "All phases" : "Whole job";
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState<Set<string>>(new Set());
   const [optimistic, setOptimistic] = useState<Map<string, MilestoneStatus>>(new Map());
@@ -234,9 +249,11 @@ export default function ExecutionView({
   }, []);
   // On a phone the task column is a lean list (status, name, dates) taking
   // a bit over half the width; folded, it keeps only the status dots so the
-  // bars have the room.
+  // bars have the room. On a desk the names get their width, up to half
+  // the board so the bars keep the rest.
   const [namesFolded, setNamesFolded] = useState(false);
-  const leftW = compact ? (namesFolded ? 44 : Math.round(Math.min(260, Math.max(180, viewportW * 0.56)))) : userLeftW;
+  const leftW = compact ? (namesFolded ? 44 : Math.round(Math.min(260, Math.max(180, viewportW * 0.56))))
+    : viewportW > 0 ? Math.max(MIN_LEFT_W, Math.min(userLeftW, Math.round(viewportW * 0.5))) : userLeftW;
   const startResize = (e: React.PointerEvent) => {
     e.preventDefault();
     const x0 = e.clientX, w0 = userLeftW;
@@ -543,29 +560,98 @@ export default function ExecutionView({
     setView((v) => (Math.abs(v.top - top) < ROW_H * 5 && v.height === height ? v : { top, height }));
   }, []);
 
+  // The clock, ticking each minute: the now-line moves and "today" rolls
+  // over at midnight for a night crew with the board open.
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => { const t = setInterval(() => setNowMs(Date.now()), 60_000); return () => clearInterval(t); }, []);
+  const todayKey = dayKey(nowMs, tz);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- "today" changes when the plant day does, not every minute
+  const today = useMemo(() => startOfDayUTC(new Date(nowMs), tz), [tz, todayKey]);
+  const nowDate = useMemo(() => new Date(nowMs), [nowMs]);
+
+  // Steps that need action now (late, blocked, missed, on hold), counted on
+  // each step and every task above it: those rows come first.
+  const attention = useMemo(() => {
+    const out = new Map<string, number>();
+    for (const m of items) {
+      if (!m.id || (childrenOf.get(m.id) ?? []).length > 0) continue;
+      const pct = progressIndex.get(m.id)?.percent ?? leafPercent(m);
+      const needs = m.status === "blocked" || m.status === "missed" || m.status === "on_hold" || isOverdue(m, nowMs, tz, pct, shiftTimes);
+      if (!needs) continue;
+      const seen = new Set<string>();
+      for (let t: Milestone | undefined = m; t?.id && !seen.has(t.id); t = t.parentId ? byId.get(t.parentId) : undefined) {
+        seen.add(t.id);
+        out.set(t.id, (out.get(t.id) ?? 0) + 1);
+      }
+    }
+    return out;
+  }, [items, childrenOf, progressIndex, nowMs, tz, shiftTimes, byId]);
+
+  // Which rows show. "Open work first" (the default): under each task the
+  // open work shows, what needs action at the top; its finished work folds
+  // into one line ("112 steps done · Show"), and a finished task is one
+  // line until it's opened. "Every row": the whole outline, as planned.
+  const [rowView, setRowView] = useState<"open" | "all">("open");
+  // Finished tasks opened, and the groups whose finished work is shown (open view).
+  const [openDone, setOpenDone] = useState<Set<string>>(new Set());
+  const [showDoneIn, setShowDoneIn] = useState<Set<string>>(new Set());
+  const folding = rowView === "open" && !filterOn;
+  const finishedRow = (r: FlatRow) => r.hasChildren && r.total > 0 && r.done >= r.total;
+  const shutOf = (r: FlatRow) => !!r.ms.id && (folding && finishedRow(r) ? !openDone.has(r.ms.id) : collapsed.has(r.ms.id));
+  const flip = (set: Set<string>, id: string) => { const n = new Set(set); if (n.has(id)) n.delete(id); else n.add(id); return n; };
+  const toggleRow = (r: FlatRow) => {
+    if (!r.ms.id) return;
+    const id = r.ms.id;
+    if (folding && finishedRow(r)) setOpenDone((s) => flip(s, id));
+    else setCollapsed((s) => flip(s, id));
+  };
+  const toggleShowDone = (parentId: string | null) => setShowDoneIn((s) => flip(s, parentId ?? ROOT_KEY));
+
   // Flatten to the rows actually visible given collapse state.
   const rows = useMemo(() => {
-    const out: FlatRow[] = [];
-    const walk = (nodes: TreeNode[]) => {
-      for (const n of nodes) {
-        const hasChildren = n.children.length > 0;
-        const info = n.ms.id ? progressIndex.get(n.ms.id) : undefined;
-        out.push({
-          ms: n.ms,
-          depth: n.depth,
-          hasChildren,
-          done: info?.leafDone ?? (n.ms.status === "completed" ? 1 : 0),
-          total: info?.leafTotal ?? 1,
-          pct: info?.percent ?? 0,
-          derivedStatus: info?.status ?? n.ms.status,
-        });
-        // While searching, matches show even under a collapsed phase.
-        if (hasChildren && n.ms.id && (filterOn || !collapsed.has(n.ms.id))) walk(n.children);
-      }
+    const out: ViewRow[] = [];
+    const flat = (n: TreeNode): FlatRow => {
+      const info = n.ms.id ? progressIndex.get(n.ms.id) : undefined;
+      return {
+        ms: n.ms,
+        depth: n.depth,
+        hasChildren: n.children.length > 0,
+        done: info?.leafDone ?? (n.ms.status === "completed" ? 1 : 0),
+        total: info?.leafTotal ?? 1,
+        pct: info?.percent ?? 0,
+        derivedStatus: info?.status ?? n.ms.status,
+        attention: n.ms.id ? attention.get(n.ms.id) ?? 0 : 0,
+      };
     };
-    walk(roots);
+    const walk = (nodes: TreeNode[], parentId: string | null, depth: number) => {
+      const flats = nodes.map((n) => ({ n, r: flat(n) }));
+      let list = flats;
+      let fold: FoldRow | null = null;
+      if (folding) {
+        const isDone = (r: FlatRow) => r.total > 0 && r.done >= r.total;
+        // Needs action first, then the rest of the open work, each in the order it runs.
+        const open = flats.filter((x) => !isDone(x.r)).sort((a, b) => Number(b.r.attention > 0) - Number(a.r.attention > 0));
+        const done = flats.filter((x) => isDone(x.r));
+        if (open.length && done.length) {
+          const key = parentId ?? ROOT_KEY;
+          const shown = showDoneIn.has(key);
+          list = shown ? [...open, ...done] : open;
+          fold = { fold: true, key: `fold:${key}`, parentId, depth, items: done.length, steps: done.reduce((s, x) => s + Math.max(1, x.r.total), 0), shown };
+        }
+      }
+      for (const { n, r } of list) {
+        out.push(r);
+        // While searching, matches show even under a collapsed phase.
+        if (r.hasChildren && n.ms.id && (filterOn || !shutOf(r))) walk(n.children, n.ms.id, depth + 1);
+      }
+      if (fold) out.push(fold);
+    };
+    walk(roots, null, 0);
     return out;
-  }, [roots, collapsed, progressIndex, filterOn]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- shutOf reads collapsed / openDone, listed
+  }, [roots, collapsed, openDone, showDoneIn, progressIndex, filterOn, folding, attention]);
+  // The task rows (not the fold lines), for the keyboard.
+  const taskRows = useMemo(() => rows.filter((r): r is FlatRow => !isFold(r)), [rows]);
   // Small schedules draw every row (printing, find-in-page); big ones a
   // window around the screen, with room above and below for fast scrolling.
   const win = useMemo(() => {
@@ -575,7 +661,8 @@ export default function ExecutionView({
     return { first, last };
   }, [rows.length, view]);
 
-  // Date domain across the whole schedule.
+  // Date domain across the whole schedule, and on to today while work is
+  // still open (a late step's bar sits left of the now-line, so it reads late).
   const domain = useMemo(() => {
     let min = Infinity, max = -Infinity;
     for (const m of items) {
@@ -584,11 +671,13 @@ export default function ExecutionView({
       if (Number.isFinite(f)) max = Math.max(max, f);
     }
     if (!Number.isFinite(min) || !Number.isFinite(max)) return null;
+    const t = today.getTime();
+    if (items.some((m) => m.status !== "completed") && t > max) max = Math.min(t + 86_400_000 - 1, max + 365 * 86_400_000);
     const start = addDaysUTC(startOfDayUTC(new Date(min), tz), -PAD_DAYS, tz);
     const end = addDaysUTC(startOfDayUTC(new Date(max), tz), PAD_DAYS, tz);
     const totalDays = Math.max(1, dayDiff(start, end, tz) + 1);
     return { start, end, totalDays };
-  }, [items, tz]);
+  }, [items, tz, today]);
 
   // The px/day that exactly fills the available timeline width with the
   // whole schedule (clamped so days never get unreadably narrow). This
@@ -607,28 +696,23 @@ export default function ExecutionView({
   }, [zoomFactor, fitPxPerDay]);
 
   const timelineW = domain ? domain.totalDays * pxPerDay : 0;
-  // The clock, ticking each minute: the now-line moves and "today" rolls
-  // over at midnight for a night crew with the board open.
-  const [nowMs, setNowMs] = useState(() => Date.now());
-  useEffect(() => { const t = setInterval(() => setNowMs(Date.now()), 60_000); return () => clearInterval(t); }, []);
-  const todayKey = dayKey(nowMs, tz);
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- "today" changes when the plant day does, not every minute
-  const today = useMemo(() => startOfDayUTC(new Date(nowMs), tz), [tz, todayKey]);
-  const nowDate = useMemo(() => new Date(nowMs), [nowMs]);
   // Each task's planned % by now over the whole schedule (not a filtered view).
   const planNowAll = useMemo(() => expectedByParent(items, nowMs, tz, shiftTimes), [items, nowMs, tz, shiftTimes]);
   // The red line is NOW, at its clock time — not the middle of today.
   const todayX = domain ? xAt(nowMs, domain.start.getTime(), pxPerDay, tz) : -1;
+  // Where the chart scrolls to show today: a third of the way in, so the
+  // late work just before it is in view too.
+  const todayScroll = useCallback((el: HTMLDivElement) => Math.max(0, todayX - (el.clientWidth - leftW) / 3), [todayX, leftW]);
 
-  // Center the viewport on "today" (or schedule start) on first paint.
+  // Open on today (once the board is measured, so the day width is final);
+  // a job not started yet opens at its first day.
   useEffect(() => {
-    if (didCenter.current || !scrollRef.current || !domain) return;
-    const el = scrollRef.current;
-    const inSpan = today >= domain.start && today <= domain.end;
-    const target = inSpan ? todayX : 0;
-    el.scrollLeft = Math.max(0, target - (el.clientWidth - leftW) / 2);
+    if (didCenter.current || !scrollEl || !domain || viewportW <= 0) return;
+    const el = scrollEl;
+    const t = today.getTime();
+    el.scrollLeft = t < domain.start.getTime() ? 0 : t > domain.end.getTime() ? el.scrollWidth : todayScroll(el);
     didCenter.current = true;
-  }, [domain, today, todayX, leftW]);
+  }, [domain, today, todayScroll, scrollEl, viewportW]);
 
   // ── Mutations ────────────────────────────────────────────────
   // One cheap guard against the wrong-day mis-click: recording progress on
@@ -1208,16 +1292,15 @@ export default function ExecutionView({
     }
   }, [canEdit, onMoveMany, reflowNodes, byId, announce, notify, withCascade, tz]);
 
-  const toggleCollapse = useCallback((id: string) => {
-    setCollapsed((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
-  }, []);
   const toggleSelected = useCallback((id: string) => {
     setSelectedIds((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   }, []);
   const collapseAll = useCallback(() => {
     setCollapsed(new Set(items.filter((m) => (childrenOf.get(m.id!) ?? []).length > 0).map((m) => m.id!)));
+    setOpenDone(new Set());
   }, [items, childrenOf]);
-  const expandAll = useCallback(() => setCollapsed(new Set()), []);
+  // Expand all: every row, finished work too.
+  const expandAll = useCallback(() => { setCollapsed(new Set()); setRowView("all"); }, []);
 
   // ── Keyboard navigation (power-user speed) ───────────────────
   // ↑/↓ move focus · ←/→ nudge the focused task a day · Enter/Space
@@ -1225,11 +1308,11 @@ export default function ExecutionView({
   const onTimelineKeyDown = useCallback((e: React.KeyboardEvent) => {
     const tag = (e.target as HTMLElement).tagName;
     if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
-    if (rows.length === 0) return;
-    const idx = Math.max(0, rows.findIndex((r) => r.ms.id === focusedId));
-    const cur = rows[idx]?.ms;
+    if (taskRows.length === 0) return;
+    const idx = Math.max(0, taskRows.findIndex((r) => r.ms.id === focusedId));
+    const cur = taskRows[idx]?.ms;
     const move = (delta: number) => {
-      const next = rows[Math.min(rows.length - 1, Math.max(0, idx + delta))];
+      const next = taskRows[Math.min(taskRows.length - 1, Math.max(0, idx + delta))];
       if (next?.ms.id) {
         setFocusedId(next.ms.id);
         const el = document.getElementById(`exec-row-${next.ms.id}`);
@@ -1248,7 +1331,7 @@ export default function ExecutionView({
       case "]": if (cur?.id) { e.preventDefault(); setCollapsed((s) => { const n = new Set(s); n.delete(cur.id!); return n; }); } break;
       case "Escape": setFocusedId(null); break;
     }
-  }, [rows, focusedId, requestMove, canEdit, toggleSelected]);
+  }, [rows, taskRows, focusedId, requestMove, canEdit, toggleSelected]);
 
   // ── Drag a bar to reschedule ─────────────────────────────────
   const dragState = useRef<{ id: string; ms: Milestone; startX: number } | null>(null);
@@ -1417,6 +1500,7 @@ export default function ExecutionView({
             groups={topGroups}
             matchCount={matchStats.shown}
             totalCount={matchStats.total}
+            scope={scopeName}
             classSelects={<WoClassSelects c={woClasses} units={filter.units ?? []} types={filter.types ?? []}
               onUnits={(v) => setFilter((f) => ({ ...f, units: v }))} onTypes={(v) => setFilter((f) => ({ ...f, types: v }))} />}
           />
@@ -1448,7 +1532,7 @@ export default function ExecutionView({
           onUpdate={canEdit ? updateStep : undefined} onFixTimes={canEdit ? fixTimes : undefined}
           onOpenDetail={(m) => m.id && setDetailId(m.id)}
           onMoveDays={(id, days) => { const target = byId.get(id); if (target) void moveByDays(target, days); }}
-          onDiscovery={canEdit ? openDiscovery : undefined} onNewWorkOrder={canEdit ? openNewWorkOrder : undefined} onOpenReport={onMode ? openReport : undefined} quietMain={quietMain} />
+          onDiscovery={canEdit ? openDiscovery : undefined} onNewWorkOrder={canEdit ? openNewWorkOrder : undefined} onOpenReport={onMode ? openReport : undefined} quietMain={quietMain} scope={scopeName} />
       ) : layout === "calendar" ? (
         <ScheduleCalendarTileView
           quietMain={quietMain}
@@ -1492,8 +1576,9 @@ export default function ExecutionView({
           onFit={() => setZoomFactor(null)}
           onToday={() => {
             const el = scrollRef.current; if (!el) return;
-            el.scrollTo({ left: Math.max(0, todayX - (el.clientWidth - leftW) / 2), behavior: "smooth" });
+            el.scrollTo({ left: todayScroll(el), behavior: "smooth" });
           }}
+          rowView={rowView} onRowView={setRowView} rowTotal={items.length}
           onCollapseAll={collapseAll} onExpandAll={expandAll}
           selectedCount={selectedIds.size}
           onClearSelection={() => setSelectedIds(new Set())}
@@ -1533,7 +1618,9 @@ export default function ExecutionView({
                 )}
               </div>
               {win.first > 0 && <div style={{ height: win.first * ROW_H }} aria-hidden />}
-              {rows.slice(win.first, win.last).map((r) => (
+              {rows.slice(win.first, win.last).map((r) => isFold(r) ? (
+                <FoldLine key={r.key} row={r} lean={compact ? (namesFolded ? "dot" : "list") : undefined} onToggle={() => toggleShowDone(r.parentId)} />
+              ) : (
                 <OutlineRow
                   key={r.ms.id}
                   lean={compact ? (namesFolded ? "dot" : "list") : undefined}
@@ -1542,12 +1629,12 @@ export default function ExecutionView({
                   work={r.hasChildren ? null : workShiftOf(r.ms, tz, shiftTimes)}
                   late={!r.hasChildren && isOverdue(r.ms, nowMs, tz, r.pct, shiftTimes)}
                   color={colors.colorOf(r.ms)}
-                  collapsed={!!r.ms.id && collapsed.has(r.ms.id)}
+                  collapsed={shutOf(r)}
                   selected={!!r.ms.id && selectedIds.has(r.ms.id)}
                   focused={!!r.ms.id && focusedId === r.ms.id}
                   canEdit={canEdit}
                   busy={!!r.ms.id && busy.has(r.ms.id)}
-                  onToggleCollapse={() => r.ms.id && toggleCollapse(r.ms.id)}
+                  onToggleCollapse={() => toggleRow(r)}
                   onToggleSelected={() => r.ms.id && toggleSelected(r.ms.id)}
                   onSetStatus={(s, reason, p, w) => { if (r.ms.id) void setStatus(r.ms.id, s, reason, p, w); }}
                   onSetProgress={(p) => { if (r.ms.id) void setProgress(r.ms.id, p); }}
@@ -1578,7 +1665,7 @@ export default function ExecutionView({
                   <div className="absolute -top-0 -left-[3px] w-[7px] h-[7px] rounded-full bg-[var(--state-overdue)] shadow" />
                 </div>
               )}
-              {rows.slice(win.first, win.last).map((r, j) => (
+              {rows.slice(win.first, win.last).map((r, j) => isFold(r) ? null : (
                 <Bar
                   key={r.ms.id}
                   row={r}
@@ -1750,52 +1837,72 @@ function statusWord(s: MilestoneStatus): string {
 
 // ─── Summary strip ─────────────────────────────────────────────
 
-/** The summary in one line, for a phone: tap for the full cards. */
+/** "19 h", "1.5 h": work hours. */
+function hoursWords(h: number): string { return `${Math.round(Math.abs(h) * 10) / 10} h`; }
+
+/** Where one phase (or the job) stands, in a few words: the same story the
+ *  project header tells (lib/phaseStanding, with the project's critical
+ *  path): a forecast or a finish past its plan is late, whatever the
+ *  hours-earned verdict says. */
+function standingPhrase(s: Standing, tz: string, now: number): { text: string; bad: boolean } {
+  const late = s.lateHours != null && s.lateHours >= 0.5;
+  if (s.state === "no schedule") return { text: "no schedule", bad: false };
+  if (s.state === "not started") return { text: "not started", bad: false };
+  if (s.state === "finished") {
+    return { text: `finished${s.lateHours == null ? "" : `, ${lateWords(s.lateHours)}`}`, bad: late };
+  }
+  const day = s.forecastFinish ? fmtInTz(Date.parse(s.forecastFinish), tz, { month: "short", day: "numeric" }) : null;
+  // Late and early say the days too once over a day ("791.4 h late (33 days)").
+  const pastPlan = !!s.plannedFinish && now > Date.parse(s.plannedFinish);
+  const verdict = late ? `forecast ${day ? `${day}, ` : ""}${lateWords(s.lateHours)}`
+    : pastPlan ? "past its planned finish"
+    : s.standing === "behind" ? `${hoursWords(s.gapHours)} behind plan`
+      : s.standing === "ahead" ? `${hoursWords(s.gapHours)} ahead of plan`
+        : "on plan";
+  return { text: `${s.pct}% done (plan by now ${s.planPct}%), ${verdict}`, bad: late || pastPlan || s.standing === "behind" };
+}
+
+/** The summary in one line: tap for the full cards. */
 function CompactSummary({ items, now, shiftTimes, projectId, onOpen }: { items: Milestone[]; now: Date; shiftTimes: ShiftTimes; projectId?: string; onOpen: () => void }) {
   const tz = useScheduleTz();
+  const criticalMode = useCriticalMode(projectId);
   const r = useMemo(() => computeExecutionReport(items, { tz, now, shiftTimes }), [items, tz, now, shiftTimes]);
-  const standing = r.standing;
   // All phases: each phase in a few words, never one blended percent.
   const byPhase = usePhaseStandings(projectId, now.getTime());
-  // Finished work says so; a net verdict with late steps under it says that too.
-  const fin = r.allDone ? standingOf(items, { now: now.getTime(), tz, shiftTimes }) : null;
-  const finLate = fin ? lateWords(fin.lateHours) : null;
+  // One phase (or none): the job's own standing, read the way the header reads it.
+  const one = useMemo(() => (byPhase ? null : standingOf(items, { now: now.getTime(), tz, shiftTimes, criticalMode })), [byPhase, items, now, tz, shiftTimes, criticalMode]);
+  const bad = "font-medium text-[var(--state-overdue-text)]";
   return (
     // A row on the board's card: where the job stands, problems in their colour.
     <button onClick={onOpen} aria-label="Show the summary" className="group w-full flex items-center gap-x-3 gap-y-1 flex-wrap py-2.5 text-body text-left">
-      {byPhase ? byPhase.map((s) => (
-        <span key={s.id} className={s.state === "finished" && (s.lateHours ?? 0) >= 0.5 || s.standing === "behind" ? "font-medium text-[var(--state-overdue-text)]" : "font-medium text-[var(--color-text)]"}>{standingShort(s)}</span>
-      )) : fin ? (
-        <>
-          <b className="text-[var(--color-text)]">Finished</b>
-          {finLate && <span className={(fin.lateHours ?? 0) >= 0.5 ? "font-medium text-[var(--state-overdue-text)]" : "text-[var(--color-text-muted)]"}>{finLate}</span>}
-        </>
-      ) : (
-        <>
-      <b className="text-[var(--color-text)]">{r.pctComplete}%</b>
-      <span className={standing === "behind" ? "font-medium text-[var(--state-overdue-text)]" : standing === "ahead" ? "font-medium text-[var(--state-released-text)]" : "text-[var(--color-text-muted)]"}>
-        {standing === "on track" ? "on track" : standing} · plan {r.expectedPct}%
-      </span>
-        </>
-      )}
-      {r.overdue > 0 && <span className="font-medium text-[var(--state-overdue-text)]">{r.overdue} overdue</span>}
+      {byPhase ? byPhase.map((s) => {
+        const p = standingPhrase(s, tz, now.getTime());
+        return <span key={s.id} className={p.bad ? bad : "font-medium text-[var(--color-text)]"}>{s.name}: {p.text}</span>;
+      }) : one && (() => {
+        const p = standingPhrase(one, tz, now.getTime());
+        return <span className={p.bad ? bad : "font-medium text-[var(--color-text)]"}>{upperFirst(p.text)}</span>;
+      })()}
+      {r.overdue > 0 && <span className={bad}>{r.overdue} overdue</span>}
       {r.blocked + r.onHold > 0 && <span className="font-medium text-[var(--state-held-text)]">{r.blocked + r.onHold} stuck</span>}
       <span className="ml-auto inline-flex items-center gap-0.5 text-caption font-medium text-[var(--color-text-muted)] group-hover:text-[var(--color-text)]">Summary <ChevronRightIcon className="w-3.5 h-3.5" /></span>
     </button>
   );
 }
+const upperFirst = (x: string) => (x ? x[0].toUpperCase() + x.slice(1) : x);
 
 // ─── Toolbar ───────────────────────────────────────────────────
 
 function Toolbar({
   canEdit, isAutoFit, canZoomIn, canZoomOut, onZoomIn, onZoomOut, onFit,
-  onToday, onCollapseAll, onExpandAll,
+  onToday, rowView, onRowView, rowTotal, onCollapseAll, onExpandAll,
   selectedCount, onClearSelection, onGroup, onBulkSet, onBulkStatus, onBulkMove, onBulkDelete,
 }: {
   canEdit: boolean;
   isAutoFit: boolean; canZoomIn: boolean; canZoomOut: boolean;
   onZoomIn: () => void; onZoomOut: () => void; onFit: () => void;
   onToday: () => void;
+  /** Open work first (finished work folded), or every row as planned. */
+  rowView: "open" | "all"; onRowView: (v: "open" | "all") => void; rowTotal: number;
   onCollapseAll: () => void; onExpandAll: () => void;
   selectedCount: number; onClearSelection: () => void; onGroup: () => void; onBulkSet: () => void;
   onBulkStatus: (s: MilestoneStatus) => void; onBulkMove: (deltaDays: number) => void;
@@ -1843,6 +1950,15 @@ function Toolbar({
           <button onClick={onToday} className="inline-flex items-center gap-1.5 h-8 pointer-coarse:h-11 px-2.5 rounded-md text-body font-medium text-[var(--color-text)] border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)]">
             <Crosshair className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> Today
           </button>
+          {/* Which rows: the open work first (finished work folded), or all of them. */}
+          <div role="group" aria-label="Rows shown" className="inline-flex rounded-md border border-[var(--color-border-strong)] overflow-hidden">
+            {([["open", "Open work first"], ["all", `All ${rowTotal} rows`]] as const).map(([v, label]) => (
+              <button key={v} type="button" onClick={() => onRowView(v)} aria-pressed={rowView === v}
+                className={`h-8 pointer-coarse:h-11 px-2.5 text-body font-medium border-l first:border-l-0 border-[var(--color-border-strong)] transition-colors ${rowView === v ? "bg-[var(--color-surface-2)] text-[var(--color-text)]" : "bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"}`}>
+                {label}
+              </button>
+            ))}
+          </div>
           <div className="w-px h-5 bg-[var(--color-border)]" />
           <button onClick={onExpandAll} className="h-8 pointer-coarse:h-11 px-2 rounded-lg text-body font-medium text-[var(--color-accent-text)] hover:bg-[var(--color-surface-2)]">Expand all</button>
           <button onClick={onCollapseAll} className="h-8 pointer-coarse:h-11 px-2 rounded-lg text-body font-medium text-[var(--color-accent-text)] hover:bg-[var(--color-surface-2)]">Collapse all</button>
@@ -1908,10 +2024,13 @@ function OutlineRow({
   const effStatus = hasChildren ? derivedStatus : ms.status;
   const checked = effStatus === "completed";
   const indent = 8 + depth * 16;
+  // Finished: one quiet signal (the gray check in the status dot, the name
+  // in gray), so the late and open work is what stands out.
+  const finished = hasChildren ? total > 0 && done >= total : checked;
   const status = hasChildren ? (
-    <StatusControl status={derivedStatus} variant="dot" size="md" readOnly title="Phase status: rolls up from sub-tasks" onPick={() => {}} />
+    <StatusControl status={derivedStatus} variant="dot" size="md" readOnly quietDone title="Phase status: rolls up from sub-tasks" onPick={() => {}} />
   ) : (
-    <StatusControl status={ms.status} busy={busy} disabled={!canEdit} onDisabledClick={onViewOnly} variant="dot" size="md" onPick={onSetStatus} percent={pct} onSetProgress={onSetProgress} onStartWithNote={onStartNote} />
+    <StatusControl status={ms.status} busy={busy} disabled={!canEdit} onDisabledClick={onViewOnly} variant="dot" size="md" quietDone onPick={onSetStatus} percent={pct} onSetProgress={onSetProgress} onStartWithNote={onStartNote} />
   );
   const problem = !hasChildren && (ms.status === "blocked" || ms.status === "missed" || ms.status === "on_hold" || late)
     ? (ms.status === "blocked" ? "Blocked" : ms.status === "missed" ? "Missed" : ms.status === "on_hold" ? "On hold" : "Late") : null;
@@ -1934,11 +2053,14 @@ function OutlineRow({
         {status}
         {lean === "list" && (
           <button onClick={onOpenDetail} className="flex-1 min-w-0 text-left" title={`${ms.name} - open details`}>
-            <div className={`truncate text-body leading-tight text-[var(--color-text)] ${ms.isSummary || hasChildren ? "font-medium" : ""} ${checked && !hasChildren ? "text-[var(--color-text-muted)]" : ""}`}>{ms.name}</div>
+            <div className={`truncate text-body leading-tight ${finished ? "text-[var(--color-text-muted)]" : "text-[var(--color-text)]"} ${(ms.isSummary || hasChildren) && !finished ? "font-medium" : ""}`}>{ms.name}</div>
             <div className="flex items-center gap-1.5 text-caption leading-tight text-[var(--color-text-muted)] min-w-0">
               {problem && <span className={`shrink-0 font-medium ${problem === "On hold" ? "text-[var(--state-held-text)]" : "text-[var(--state-overdue-text)]"}`}>{problem}</span>}
+              {hasChildren && row.attention > 0 && <span className="shrink-0 font-medium text-[var(--state-overdue-text)]">{row.attention} need{row.attention === 1 ? "s" : ""} action</span>}
               <span className="truncate font-display tabular-nums">{spanLabel(span.start, span.finish, tz)}</span>
-              <span className="ml-auto shrink-0 font-display tabular-nums font-semibold text-[var(--color-text)]">{pct}%</span>
+              {hasChildren
+                ? <span className="ml-auto shrink-0 tabular-nums">{done} of {total} done</span>
+                : !finished && <span className="ml-auto shrink-0 font-display tabular-nums font-semibold text-[var(--color-text)]">{pct}%</span>}
             </div>
           </button>
         )}
@@ -1983,18 +2105,14 @@ function OutlineRow({
         <span className="shrink-0 w-5 inline-flex justify-center"><span className="w-1.5 h-1.5 rounded-full bg-[var(--color-border-strong)]" /></span>
       )}
 
-      {hasChildren ? (
-        <StatusControl status={derivedStatus} variant="dot" size="md" readOnly title="Phase status: rolls up from sub-tasks" onPick={() => {}} />
-      ) : (
-        <StatusControl status={ms.status} busy={busy} disabled={!canEdit} onDisabledClick={onViewOnly} variant="dot" size="md" onPick={onSetStatus} percent={pct} onSetProgress={onSetProgress} onStartWithNote={onStartNote} />
-      )}
+      {status}
 
       <button
         onClick={onOpenDetail}
         className="flex-1 min-w-0 text-left"
         title={`${ms.name} - open details`}
       >
-        <div className={`truncate text-body leading-tight ${checked ? "line-through text-[var(--color-text-faint)]" : ms.isSummary ? "font-medium text-[var(--color-text)]" : "font-medium text-[var(--color-text)]"}`}>
+        <div className={`truncate text-body leading-tight ${finished ? "text-[var(--color-text-muted)]" : "font-medium text-[var(--color-text)]"}`}>
           {ms.name}
         </div>
         <div className="flex items-center gap-1.5 text-caption text-[var(--color-text-faint)] font-display tabular-nums leading-tight min-w-0">
@@ -2013,32 +2131,65 @@ function OutlineRow({
               <Link2 className="w-2.5 h-2.5" />{ms.dependsOn!.length}
             </span>
           )}
-          {hasChildren && <span className="text-[var(--color-text-muted)] font-medium shrink-0">{done}/{total}</span>}
+          {/* A task: how much is done in plain words, and what needs action under it. */}
+          {hasChildren && <span className={`shrink-0 font-sans ${finished ? "" : "font-medium text-[var(--color-text-muted)]"}`}>{done} of {total} done</span>}
+          {hasChildren && row.attention > 0 && <span className="shrink-0 font-sans font-medium text-[var(--state-overdue-text)]">{row.attention} need{row.attention === 1 ? "s" : ""} action</span>}
         </div>
       </button>
 
       {hasChildren ? (
-        // Summary: read-only rolled-up progress bar.
-        <div className="shrink-0 flex items-center gap-1" title={`${pct}% complete (rolled up from ${done}/${total} sub-tasks)`}>
-          <div className="w-9 h-1.5 rounded-full bg-[var(--color-accent-soft)] overflow-hidden">
-            <div className="h-full bg-[var(--color-main)]" style={{ width: `${pct}%` }} />
+        // Summary: read-only rolled-up progress bar (finished: its words say so).
+        !finished && (
+          <div className="shrink-0 flex items-center gap-1" title={`${pct}% complete (rolled up from ${done} of ${total} sub-tasks)`}>
+            <div className="w-9 h-1.5 rounded-full bg-[var(--color-accent-soft)] overflow-hidden">
+              <div className="h-full bg-[var(--color-main)]" style={{ width: `${pct}%` }} />
+            </div>
+            <span className="text-caption font-medium tabular-nums text-[var(--color-text-muted)] w-7 text-right">{pct}%</span>
           </div>
-          <span className="text-caption font-medium tabular-nums text-[var(--color-text-faint)] w-7 text-right">{pct}%</span>
-        </div>
+        )
       ) : (
-        // Leaf: editable % complete.
-        <ProgressControl percent={pct} onPick={onSetProgress} onSaveWithNote={onSetProgressNote} disabled={!canEdit} onDisabledClick={onViewOnly} busy={busy} size="sm" />
+        // Leaf: editable % complete. Done: no 100% chip (the status dot sets it back).
+        !finished && <ProgressControl percent={pct} onPick={onSetProgress} onSaveWithNote={onSetProgressNote} disabled={!canEdit} onDisabledClick={onViewOnly} busy={busy} size="sm" />
       )}
+      {/* Row tools take no room until the row is pointed at (always on touch). */}
       {canEdit && !ms.isSummary && (
-        <button onClick={onSetDuration} title="Set duration" aria-label={`Set duration of ${ms.name}`} className="shrink-0 p-1 rounded text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] opacity-60 sm:opacity-0 group-hover:opacity-100 pointer-coarse:opacity-100 transition-opacity">
+        <button onClick={onSetDuration} title="Set duration" aria-label={`Set duration of ${ms.name}`} className="shrink-0 p-1 rounded text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] max-sm:inline-flex sm:hidden sm:group-hover:inline-flex sm:group-focus-within:inline-flex pointer-coarse:inline-flex">
           <CalendarRange className="w-3.5 h-3.5" />
         </button>
       )}
       {canEdit && hasChildren && onSequence && (
-        <button onClick={onSequence} title="Sequence sub-tasks end-to-end (each starts when the prior finishes)" aria-label={`Sequence the steps under ${ms.name} end to end`} className="shrink-0 p-1 rounded text-[var(--color-text-faint)] hover:text-[var(--color-accent-text)] hover:bg-[var(--color-surface-2)] opacity-60 sm:opacity-0 group-hover:opacity-100 pointer-coarse:opacity-100 transition-opacity">
+        <button onClick={onSequence} title="Sequence sub-tasks end-to-end (each starts when the prior finishes)" aria-label={`Sequence the steps under ${ms.name} end to end`} className="shrink-0 p-1 rounded text-[var(--color-text-faint)] hover:text-[var(--color-accent-text)] hover:bg-[var(--color-surface-2)] max-sm:inline-flex sm:hidden sm:group-hover:inline-flex sm:group-focus-within:inline-flex pointer-coarse:inline-flex">
           <ListOrdered className="w-3.5 h-3.5" />
         </button>
       )}
+    </div>
+  );
+}
+
+/** The finished work folded under a group, as one quiet line: "112 steps
+ *  done · Show". Show lists it after the open work; Hide folds it again. */
+function FoldLine({ row, lean, onToggle }: { row: FoldRow; lean?: "list" | "dot"; onToggle: () => void }) {
+  const what = `${row.steps} step${row.steps === 1 ? "" : "s"} done`;
+  if (lean === "dot") {
+    return (
+      <div className="flex items-center justify-center border-b border-[var(--color-border)]" style={{ height: ROW_H }}>
+        <button type="button" onClick={onToggle} aria-expanded={row.shown} aria-label={`${row.shown ? "Hide" : "Show"} ${what}`} title={`${row.shown ? "Hide" : "Show"} ${what}`}
+          className="ui-hit w-6 h-6 inline-flex items-center justify-center rounded text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]">
+          <ChevronDown className={`w-3.5 h-3.5 transition-transform ${row.shown ? "" : "-rotate-90"}`} strokeWidth={2.5} />
+        </button>
+      </div>
+    );
+  }
+  return (
+    <div className="flex items-center border-b border-[var(--color-border)] pr-2" style={{ height: ROW_H, paddingLeft: lean ? 6 + Math.min(row.depth, 5) * 10 : 8 + row.depth * 16 }}>
+      <button type="button" onClick={onToggle} aria-expanded={row.shown}
+        className="inline-flex items-center gap-1.5 min-h-8 pointer-coarse:min-h-11 px-1.5 -ml-1.5 rounded-md text-body text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+        <ChevronDown className={`w-3.5 h-3.5 shrink-0 transition-transform ${row.shown ? "" : "-rotate-90"}`} strokeWidth={2.5} aria-hidden />
+        <span className="tabular-nums">{what}</span>
+        {row.items !== row.steps && <span className="tabular-nums">in {row.items} task{row.items === 1 ? "" : "s"}</span>}
+        <span aria-hidden>·</span>
+        <span className="font-medium text-[var(--color-accent-text)]">{row.shown ? "Hide" : "Show"}</span>
+      </button>
     </div>
   );
 }
@@ -2104,6 +2255,7 @@ function Bar({
   // Leaf = its own % complete; summary = weighted roll-up of its children.
   const pct = row.pct;
   const tone = statusTone(ms.status);
+  const done = ms.status === "completed";
   // Completed leaves are locked (actuals) — no drag, nudge, or resize handles.
   const draggable = canEdit && !ms.isSummary && ms.status !== "completed";
   // MS Project milestones (zero-duration markers) render as a diamond, not a bar.
@@ -2128,7 +2280,8 @@ function Bar({
           <div className={`absolute inset-0 rounded-full ${color.rail} opacity-70`} />
           <div className={`absolute -left-px -top-1 w-[3px] h-4 rounded-sm ${color.rail}`} />
           <div className={`absolute -right-px -top-1 w-[3px] h-4 rounded-sm ${color.rail}`} />
-          <div className="absolute inset-y-0 left-0 rounded-full bg-[var(--state-released)]" style={{ width: `${pct}%` }} />
+          {/* How much is done, in gray: done is quiet; red and amber are for what needs action. */}
+          <div className="absolute inset-y-0 left-0 rounded-full bg-[var(--color-text-muted)]" style={{ width: `${pct}%` }} />
         </div>
         {/* Edge handles — drag to proportionally stretch the whole subtree. */}
         {summaryResizable && (
@@ -2163,7 +2316,7 @@ function Bar({
     return (
       <div className={`absolute group/bar flex items-center gap-1.5 transition-opacity ${dimmed ? "opacity-25" : ""} ${onPath ? "z-10" : ""}`} style={{ top, left: left - 6, height: ROW_H }} title={`${ms.name} - milestone · ${fmtDateUTC(finish, tz)}`}>
         <button onClick={onOpenDetail} className="ui-hit relative shrink-0" aria-label={`Milestone ${ms.name}`}>
-          <span className={`block w-3 h-3 rotate-45 border-2 border-[var(--color-surface)] shadow ${ms.status === "completed" ? "bg-[var(--state-released)]" : onPath ? "bg-[var(--state-overdue)]" : "bg-[var(--color-text)]"}`} />
+          <span className={`block w-3 h-3 rotate-45 border-2 border-[var(--color-surface)] shadow ${ms.status === "completed" ? "bg-[var(--color-text-faint)]" : onPath ? "bg-[var(--state-overdue)]" : "bg-[var(--color-text)]"}`} />
         </button>
         <span className="whitespace-nowrap text-caption font-medium text-[var(--color-text)] max-w-[200px] truncate bg-[var(--color-surface)]/80 rounded px-1">{ms.name}</span>
       </div>
@@ -2188,10 +2341,10 @@ function Bar({
         {/* Group-hue cap on the left edge — a quiet identity marker that
             ties the leaf to its phase without overriding the status fill. */}
         <span className={`absolute left-0 top-0 bottom-0 w-1.5 ${color.rail} brightness-90`} aria-hidden />
-        <div className="absolute inset-y-0 left-0 bg-white/35" style={{ width: `${pct}%` }} />
+        {/* Done: a quiet gray bar, its name in gray (one signal, not four). */}
+        {!done && <div className="absolute inset-y-0 left-0 bg-white/35" style={{ width: `${pct}%` }} />}
         <div className="relative h-full flex items-center pl-2.5 pr-1.5 gap-1">
-          {ms.status === "completed" && <CircleCheck className="w-3 h-3 text-white shrink-0" />}
-          {labelFits && <span className="truncate text-caption font-medium text-white drop-shadow-sm">{ms.name}{resize ? ` (${spanDays + previewSpanShift}d)` : ""}</span>}
+          {labelFits && <span className={`truncate text-caption font-medium ${tone.fg}`}>{ms.name}{resize ? ` (${spanDays + previewSpanShift}d)` : ""}</span>}
         </div>
         {/* Edge resize handles — only on leaves the user can edit. */}
         {draggable && (
@@ -2349,7 +2502,7 @@ function Gridlines({ domain, pxPerDay, rowCount, shiftTimes }: { domain: { start
 // ─── Dependency arrows (finish-to-start connectors) ─────────────
 
 function DependencyArrows({ rows, byId, domain, pxPerDay, spanOf }: {
-  rows: FlatRow[];
+  rows: ViewRow[];
   byId: Map<string, Milestone>;
   domain: { start: Date; end: Date; totalDays: number };
   pxPerDay: number;
@@ -2357,11 +2510,12 @@ function DependencyArrows({ rows, byId, domain, pxPerDay, spanOf }: {
 }) {
   const tz = useScheduleTz();
   const indexById = new Map<string, number>();
-  rows.forEach((r, i) => { if (r.ms.id) indexById.set(r.ms.id, i); });
+  rows.forEach((r, i) => { if (!isFold(r) && r.ms.id) indexById.set(r.ms.id, i); });
   const parentOf = (id: string) => byId.get(id)?.parentId ?? null;
 
+  // Only task rows are indexed, so every index here is one.
   const geom = (i: number) => {
-    const ms = rows[i].ms;
+    const ms = (rows[i] as FlatRow).ms;
     const sp = spanOf(ms);
     const g = barGeometry(sp.start, sp.finish, domain.start.getTime(), pxPerDay, tz);
     return {
@@ -2443,7 +2597,7 @@ function Legend() {
         <span className="text-body font-medium text-[var(--color-text-muted)]">Status</span>
         {entries.map(([s, label]) => (
           <span key={s} className="inline-flex items-center gap-1.5 text-caption text-[var(--color-text-muted)]">
-            <span className={`w-2.5 h-2.5 rounded-sm ${statusTone(s).bar}`} /> {label}
+            <span className={`w-2.5 h-2.5 rounded-sm border ${statusTone(s).bar} ${statusTone(s).border}`} /> {label}
           </span>
         ))}
       </div>
@@ -2454,13 +2608,13 @@ function Legend() {
           <span className="relative w-7 h-2.5 rounded bg-[var(--color-text-muted)] overflow-hidden"><span className="absolute inset-y-0 left-0 bg-white/40" style={{ width: "55%" }} /></span> Task (fill = % done)
         </span>
         <span className="inline-flex items-center gap-1.5 text-caption text-[var(--color-text-muted)]" title="A summary / phase that rolls up its children">
-          <span className="relative w-7 flex items-center"><span className="h-1 w-full rounded-full bg-slate-400" /><span className="absolute -left-px w-[3px] h-3 rounded-sm bg-slate-400" /><span className="absolute -right-px w-[3px] h-3 rounded-sm bg-slate-400" /></span> Phase / summary
+          <span className="relative w-7 flex items-center"><span className="h-1 w-full rounded-full bg-[var(--color-border-control)]" /><span className="absolute -left-px w-[3px] h-3 rounded-sm bg-[var(--color-border-control)]" /><span className="absolute -right-px w-[3px] h-3 rounded-sm bg-[var(--color-border-control)]" /></span> Phase / summary
         </span>
         <span className="inline-flex items-center gap-1.5 text-caption text-[var(--color-text-muted)]" title="A milestone: a zero-duration marker">
           <span className="w-2.5 h-2.5 rotate-45 bg-[var(--color-text)] border border-[var(--color-surface)]" /> Milestone
         </span>
         <span className="inline-flex items-center gap-1.5 text-caption text-[var(--color-text-muted)]" title="On the critical path: drives the finish date">
-          <span className="w-3 h-2.5 rounded-sm bg-slate-300 ring-2 ring-[var(--state-overdue)] ring-offset-1" /> Critical path
+          <span className="w-3 h-2.5 rounded-sm bg-[var(--color-border-strong)] ring-2 ring-[var(--state-overdue)] ring-offset-1" /> Critical path
         </span>
         <span className="inline-flex items-center gap-1.5 text-caption text-[var(--color-text-muted)]" title="Finish-to-start dependency between linked tasks">
           <svg width="22" height="10" className="overflow-visible"><path d="M1 2 L11 2 L11 8 L20 8" fill="none" stroke="#6366f1" strokeWidth="1.5" /><path d="M16 5 L20 8 L16 11" fill="none" stroke="#6366f1" strokeWidth="1.5" /></svg> Dependency
@@ -2645,14 +2799,19 @@ function SetDurationModal({ task, actorUserId, onClose, onDone }: { task: Milest
 /** "7:00 PM" for "19:00". */
 function clock12(hm: string): string { const [h, m] = hm.split(":").map(Number); return `${(h || 0) % 12 || 12}:${String(m || 0).padStart(2, "0")} ${(h || 0) < 12 ? "AM" : "PM"}`; }
 
-function statusTone(status: MilestoneStatus): { bar: string; border: string; dotBg: string; dotBorder: string } {
+function statusTone(status: MilestoneStatus): { bar: string; border: string; dotBg: string; dotBorder: string; fg: string } {
+  // A bar's label must read on its fill (4.5:1, both themes): solid dark
+  // fill with white words for work under way; a light tint of the status
+  // color with a strong edge and dark words for the rest.
+  const tint = (v: string) => `bg-[color-mix(in_srgb,var(${v})_20%,var(--color-surface))]`;
   switch (status) {
-    case "completed":   return { bar: "bg-[var(--state-released)]", border: "border-[var(--state-released)]", dotBg: "bg-[var(--state-released)]", dotBorder: "border-[var(--state-released)]" };
-    case "in_progress": return { bar: "bg-slate-600 dark:bg-slate-500",    border: "border-slate-700 dark:border-slate-400",    dotBg: "bg-slate-600 dark:bg-slate-500",    dotBorder: "border-slate-700 dark:border-slate-400" };
-    case "blocked":     return { bar: "bg-[var(--state-overdue)]",    border: "border-[var(--state-overdue)]",    dotBg: "bg-[var(--state-overdue)]",    dotBorder: "border-[var(--state-overdue)]" };
-    case "on_hold":     return { bar: "bg-[var(--state-held)]",   border: "border-[var(--state-held)]",   dotBg: "bg-[var(--state-held)]",   dotBorder: "border-[var(--state-held)]" };
-    case "missed":      return { bar: "bg-[var(--state-overdue)]",    border: "border-[var(--state-overdue)]",    dotBg: "bg-[var(--state-overdue)]",    dotBorder: "border-[var(--state-overdue)]" };
-    default:            return { bar: "bg-slate-400",   border: "border-slate-500",   dotBg: "bg-[var(--color-surface)]",       dotBorder: "border-[var(--color-border-strong)]" };
+    // Done is quiet gray on the timeline, so late and open work stands out.
+    case "completed":   return { bar: "bg-[var(--color-surface-2)]", border: "border-[var(--color-border-strong)]", dotBg: "bg-[var(--color-text-faint)]", dotBorder: "border-[var(--color-text-faint)]", fg: "text-[var(--color-text-muted)]" };
+    case "in_progress": return { bar: "bg-[#475569] dark:bg-[#64748b]", border: "border-[#334155] dark:border-[#94a3b8]", dotBg: "bg-[#475569] dark:bg-[#64748b]", dotBorder: "border-[#334155] dark:border-[#94a3b8]", fg: "text-white" };
+    case "blocked":
+    case "missed":      return { bar: tint("--state-overdue"), border: "border-2 border-[var(--state-overdue)]", dotBg: "bg-[var(--state-overdue)]", dotBorder: "border-[var(--state-overdue)]", fg: "text-[var(--color-text)]" };
+    case "on_hold":     return { bar: tint("--state-held"), border: "border-2 border-[var(--state-held)]", dotBg: "bg-[var(--state-held)]", dotBorder: "border-[var(--state-held)]", fg: "text-[var(--color-text)]" };
+    default:            return { bar: tint("--color-text-faint"), border: "border-[var(--color-border-control)]", dotBg: "bg-[var(--color-surface)]", dotBorder: "border-[var(--color-border-strong)]", fg: "text-[var(--color-text)]" };
   }
 }
 

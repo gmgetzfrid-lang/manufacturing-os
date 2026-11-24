@@ -38,16 +38,23 @@ import type { CancelledJob } from "@/lib/cancelledJobs";
 import AddWorkPicker from "@/components/projects/AddWorkPicker";
 import { useWoClasses, passes, WoClassSelects } from "@/components/projects/WoClassFilter";
 import { typeLabel, unitLabel } from "@/lib/woClass";
-import MoreMenu from "@/components/ui/MoreMenu";
 import { sayError } from "@/components/projects/sayError";
 
 // A quiet button on the white card; the one orange one is New work order.
 const QUIET = "inline-flex items-center justify-center gap-1.5 h-10 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors";
 // The list: this many work orders, then "Show N more".
 const WO_STEP = 40;
+// Every "Show" choice, in sight: the everyday ones first.
+const SHOW_CHIPS: ReadonlyArray<readonly [Show, string]> = [["all", "All"], ["open", "Open"], ["behind", "Behind"], ["held", "Held"], ["critical", "Critical path"], ["notStarted", "Not started"], ["done", "Done"], ["added", "Discovery & added"]];
+// Each one in words, for the list's first line.
+const SHOW_SAID: Record<string, string> = { open: "open", critical: "on the critical path", behind: "behind plan", notStarted: "not started", held: "held", done: "done", added: "with discovery or added scope" };
+// A filter's name, over it.
+const FILTER_LABEL = "mb-1 text-body font-medium text-[var(--color-text-muted)]";
 
-export default function WorkOrdersView({ milestones, cancelled = [], childrenByParent, tz, times, progress, canEdit, onUpdate, onFixTimes, onOpenDetail, onMoveDays, marks, onDiscovery, onNewWorkOrder, projectId, projectName, user, onCancelled, onOpenReport, quietMain = false }: {
+export default function WorkOrdersView({ milestones, cancelled = [], childrenByParent, tz, times, progress, canEdit, onUpdate, onFixTimes, onOpenDetail, onMoveDays, marks, onDiscovery, onNewWorkOrder, projectId, projectName, user, onCancelled, onOpenReport, quietMain = false, scope }: {
   milestones: Milestone[];
+  /** What the list covers, said first: the phase picked, "All phases" or the whole job. */
+  scope?: string;
   /** The page's one orange action is elsewhere (the band): New work order is quiet. */
   quietMain?: boolean;
   /** Work orders taken off the schedule: the Cancelled filter. */
@@ -182,8 +189,8 @@ export default function WorkOrdersView({ milestones, cancelled = [], childrenByP
     if (!w) { setPrintMsg("Your browser blocked the print window. Allow pop-ups for this site and try again."); return; }
     w.document.write(`<p style="font:14px Arial,sans-serif;padding:24px">Getting ${shown.length} work order${shown.length === 1 ? "" : "s"} ready to print…</p>`);
     try {
-      const scope = `${SHOW_WORD[show]}${query.trim() ? ` · search “${query.trim()}”` : ""}${format === "history" ? " · with each step's history" : ""}`;
-      printHtml(await workOrdersPrintDocument({ shown, milestones, projectId, projectName, tz, times, progress, format, scope, lh, word }), w);
+      const printScope = `${SHOW_WORD[show]}${query.trim() ? ` · search “${query.trim()}”` : ""}${format === "history" ? " · with each step's history" : ""}`;
+      printHtml(await workOrdersPrintDocument({ shown, milestones, projectId, projectName, tz, times, progress, format, scope: printScope, lh, word }), w);
     } catch (e) {
       w.document.body.textContent = `Couldn't get the work orders ready: ${sayError(e)}`;
     }
@@ -251,6 +258,20 @@ export default function WorkOrdersView({ milestones, cancelled = [], childrenByP
     </span>
   );
 
+  // The filter in words, for the first line: "open, crew Smith, search “E-12”".
+  const whoName = who == null ? null : who === "" ? "no crew named" : `crew ${whoList.find(([k]) => k === who)?.[1].name ?? who}`;
+  const filterSaid = [
+    showCancelled ? "cancelled" : show !== "all" ? SHOW_SAID[show] : null,
+    query.trim() ? `search “${query.trim()}”` : null,
+    whoName,
+    ...units.map((u) => `unit ${wc.choices.units.find((x) => x.code === u)?.label ?? u}`),
+    ...types.map((t) => `type ${wc.choices.types.find((x) => x.code === t)?.label ?? t}`),
+  ].filter((x): x is string => !!x).join(", ");
+  const filtered = filterSaid.length > 0;
+  const clearAll = () => { setShow("all"); setShowCancelled(false); setQuery(""); setWho(null); setUnits([]); setTypes([]); };
+  // The unit and type pickers show only when there's something to pick (WoClassSelects).
+  const classShown = wc.ready && (wc.choices.units.length > 1 || units.length > 0 || wc.choices.types.some((t) => t.code !== "-") || types.length > 0);
+
   // A long list ends with "Show N more", so it's plain there's more.
   const listed = shown.slice(0, limit);
   return (
@@ -261,66 +282,32 @@ export default function WorkOrdersView({ milestones, cancelled = [], childrenByP
         <AddWorkPicker day={today} tz={tz} milestones={milestones}
           onPick={(t) => { setPicking(false); onDiscovery(t); }} onNew={onNewWorkOrder ? () => { setPicking(false); onNewWorkOrder(); } : undefined} onClose={() => setPicking(false)} />
       )}
-      <div className="px-3 sm:px-4 py-3 flex flex-wrap items-center gap-2">
-        <label className="flex items-center gap-1.5 h-10 flex-1 min-w-[220px] max-w-[420px] rounded-lg bg-[var(--color-surface-2)] border border-transparent px-2.5 focus-within:bg-[var(--color-surface)]">
-          <Search className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
-          <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="WO #, equipment, step, crew…" aria-label="Search work orders"
-            className="flex-1 min-w-0 bg-transparent text-body" />
-          {query && <button type="button" onClick={() => setQuery("")} className="inline-flex items-center justify-center gap-1.5 h-8 pointer-coarse:h-11 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Clear</button>}
-        </label>
-        <select value={who ?? "__all"} onChange={(e) => setWho(e.target.value === "__all" ? null : e.target.value)} aria-label="Who"
-          className={`h-9 pointer-coarse:h-11 rounded-lg border px-2 text-body font-medium text-[var(--color-text)] ${who != null ? "border-[var(--color-text)] bg-[var(--color-surface)]" : "border-transparent bg-[var(--color-surface-2)]"}`}>
-          <option value="__all">Everyone</option>
-          {whoList.map(([k, x]) => <option key={k || "__none"} value={k}>{k ? x.name : "No crew named"} ({x.steps} step{x.steps === 1 ? "" : "s"})</option>)}
-        </select>
-        <WoClassSelects c={wc} units={units} types={types} onUnits={setUnits} onTypes={setTypes} />
-        {/* The everyday filters in sight; the rest folded under More. */}
-        {(() => {
-          const ALL = [["all", "All"], ["open", "Open"], ["critical", "Critical path"], ["behind", "Behind"], ["notStarted", "Not started"], ["held", "Held"], ["done", "Done"], ["added", "Discovery & added"]] as const;
-          const UP_FRONT: Show[] = ["all", "open", "behind", "held"];
-          const chip = (on: boolean) => `inline-flex items-center gap-1.5 h-9 pl-3 pr-1.5 rounded-full text-body font-medium ${on ? "bg-[var(--color-main)] text-white" : "border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`;
-          const n = (on: boolean, v: number, bad = false) => <span className={`ui-count ${on ? "!bg-white !text-[var(--color-main)]" : bad && v > 0 ? "is-bad" : ""}`}>{v}</span>;
-          const folded = ALL.filter(([k]) => !UP_FRONT.includes(k));
-          const pickedFolded = !showCancelled && !UP_FRONT.includes(show) ? ALL.find(([k]) => k === show) : undefined;
-          return (
-            <div className="inline-flex flex-wrap items-center gap-1" role="group" aria-label="Show">
-              {ALL.filter(([k]) => UP_FRONT.includes(k)).map(([k, l]) => (
-                <button key={k} type="button" aria-pressed={!showCancelled && show === k} onClick={() => { setShow(k); setShowCancelled(false); }} className={chip(!showCancelled && show === k)}>
-                  {l} {n(!showCancelled && show === k, found.filter(is(k)).length, k === "behind" || k === "held")}
-                </button>
-              ))}
-              {/* A folded filter in use shows as a chip of its own. */}
-              {pickedFolded && (
-                <button type="button" aria-pressed onClick={() => setShow("all")} title="Show all again" className={chip(true)}>
-                  {pickedFolded[1]} {n(true, found.filter(is(pickedFolded[0])).length)}
-                </button>
-              )}
-              {showCancelled && (
-                <button type="button" aria-pressed onClick={() => setShowCancelled(false)} title="Back to the live work orders" className={chip(true)}>
-                  Cancelled {n(true, cancelledShown.length)}
-                </button>
-              )}
-              <MoreMenu label="More filters" triggerClass="inline-flex items-center gap-1 h-10 px-3 rounded-full text-body font-medium border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
-                items={[
-                  ...folded.map(([k, l]) => ({ icon: <span aria-hidden className="w-4 text-center tabular-nums text-caption">{found.filter(is(k)).length}</span>, label: l, current: !showCancelled && show === k, onClick: () => { setShow(k); setShowCancelled(false); } })),
-                  { icon: <Ban className="w-4 h-4" />, label: `Cancelled (${cancelled.length})`, current: showCancelled, line: true, onClick: () => setShowCancelled(true) },
-                ]} />
-            </div>
-          );
-        })()}
+      {/* First line: what this list is, in words, from what it shows (rule
+          L1), with Clear one tap away; the actions on the right. */}
+      <div className="px-3 sm:px-4 pt-3 pb-2 flex flex-wrap items-center gap-2">
+        <p role="status" className="min-w-0 flex-1 basis-64 text-body text-[var(--color-text-muted)]">
+          {scope && <><b className="font-medium text-[var(--color-text)]">{scope}</b> · </>}
+          <span className="tabular-nums">{orders.length} work order{orders.length === 1 ? "" : "s"}</span>
+          {filtered
+            ? <> · showing <b className="font-medium tabular-nums text-[var(--color-text)]">{showCancelled ? cancelledShown.length : shown.length}</b>: {filterSaid}</>
+            : <> · showing all</>}
+          {filtered && (
+            <button type="button" onClick={clearAll} className="ml-2 inline-flex items-center h-8 pointer-coarse:h-11 px-2 rounded-lg text-body font-medium text-[var(--color-accent-text)] hover:bg-[var(--color-surface-2)]">Clear</button>
+          )}
+        </p>
         {canEdit && onNewWorkOrder && (
           <button type="button" onClick={() => onNewWorkOrder()}
-            className={`ml-auto ${quietMain ? QUIET : "inline-flex items-center gap-1.5 h-10 px-3.5 rounded-lg bg-[var(--color-accent)] text-body font-medium text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)] shadow-[0_10px_20px_-10px_var(--color-accent)]"}`}>
+            className={`${quietMain ? QUIET : "inline-flex items-center gap-1.5 h-10 px-3.5 rounded-lg bg-[var(--color-accent)] text-body font-medium text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)] shadow-[0_10px_20px_-10px_var(--color-accent)]"}`}>
             <Plus className="w-3.5 h-3.5" /> New work order
           </button>
         )}
         {canEdit && onDiscovery && (
           <button type="button" onClick={() => setPicking(true)}
-            className={`${onNewWorkOrder ? "" : "ml-auto "}${QUIET}`}>
+            className={QUIET}>
             <Plus className="w-3.5 h-3.5" /> Add to a work order
           </button>
         )}
-        <span className={`relative inline-flex ${canEdit && (onDiscovery || onNewWorkOrder) ? "" : "ml-auto"}`}>
+        <span className="relative inline-flex">
           <button type="button" onClick={() => setPrintMenu((v) => !v)} aria-expanded={printMenu} disabled={shown.length === 0 || showCancelled}
             className={QUIET}>
             <Printer className="w-3.5 h-3.5" /> Print
@@ -348,6 +335,52 @@ export default function WorkOrdersView({ milestones, cancelled = [], childrenByP
             </>
           )}
         </span>
+      </div>
+      {/* Every control that decides which work orders show, together and
+          labeled, right above the list; the ones in use are filled. */}
+      <div role="group" aria-label="Which work orders show" className="px-3 sm:px-4 pb-3 flex flex-wrap items-end gap-x-4 gap-y-2.5">
+        <div className="flex-1 min-w-[220px] max-w-[420px]">
+          <div className={FILTER_LABEL}>Search</div>
+          <label className={`flex items-center gap-1.5 h-10 rounded-lg border px-2.5 focus-within:bg-[var(--color-surface)] ${query ? "border-[var(--color-text)] bg-[var(--color-surface)]" : "border-transparent bg-[var(--color-surface-2)]"}`}>
+            <Search className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
+            <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="WO #, equipment, step, crew…" aria-label="Search work orders"
+              className="flex-1 min-w-0 bg-transparent text-body" />
+            {query && <button type="button" onClick={() => setQuery("")} className="inline-flex items-center justify-center gap-1.5 h-8 pointer-coarse:h-11 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Clear</button>}
+          </label>
+        </div>
+        <div className="min-w-0">
+          <div className={FILTER_LABEL} aria-hidden>Show</div>
+          {(() => {
+            const chip = (on: boolean) => `inline-flex items-center gap-1.5 h-9 pointer-coarse:h-11 pl-3 pr-1.5 rounded-full text-body font-medium ${on ? "bg-[var(--color-main)] text-white" : "border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`;
+            const n = (on: boolean, v: number, bad = false) => <span className={`ui-count ${on ? "!bg-white !text-[var(--color-main)]" : bad && v > 0 ? "is-bad" : ""}`}>{v}</span>;
+            return (
+              <div className="flex flex-wrap items-center gap-1" role="group" aria-label="Show">
+                {SHOW_CHIPS.map(([k, l]) => (
+                  <button key={k} type="button" aria-pressed={!showCancelled && show === k} onClick={() => { setShow(k); setShowCancelled(false); }} className={chip(!showCancelled && show === k)}>
+                    {l} {n(!showCancelled && show === k, found.filter(is(k)).length, k === "behind" || k === "held")}
+                  </button>
+                ))}
+                <button type="button" aria-pressed={showCancelled} onClick={() => setShowCancelled((v) => !v)} title={showCancelled ? "Back to the live work orders" : "The work orders taken off this schedule"} className={chip(showCancelled)}>
+                  <Ban className="w-3.5 h-3.5" aria-hidden /> Cancelled {n(showCancelled, showCancelled ? cancelledShown.length : cancelled.length)}
+                </button>
+              </div>
+            );
+          })()}
+        </div>
+        <label className="block">
+          <span className={`block ${FILTER_LABEL}`}>Crew</span>
+          <select value={who ?? "__all"} onChange={(e) => setWho(e.target.value === "__all" ? null : e.target.value)}
+            className={`block h-9 pointer-coarse:h-11 rounded-lg border px-2 text-body font-medium text-[var(--color-text)] ${who != null ? "border-[var(--color-text)] bg-[var(--color-surface)]" : "border-transparent bg-[var(--color-surface-2)]"}`}>
+            <option value="__all">Everyone</option>
+            {whoList.map(([k, x]) => <option key={k || "__none"} value={k}>{k ? x.name : "No crew named"} ({x.steps} step{x.steps === 1 ? "" : "s"})</option>)}
+          </select>
+        </label>
+        {classShown && (
+          <div className="min-w-0 self-end">
+            {/* Each select carries its own label ("Unit", "Type"). */}
+            <WoClassSelects c={wc} units={units} types={types} onUnits={setUnits} onTypes={setTypes} />
+          </div>
+        )}
       </div>
       {printMsg && <div role="alert" className="px-3 sm:px-4 pb-2 text-caption font-medium text-[var(--state-overdue-text)]">{printMsg}</div>}
       {preErr && <div role="alert" className="px-3 sm:px-4 pb-2 text-caption font-medium text-[var(--state-overdue-text)]">Couldn&apos;t read the steps&apos; comments and history. They&apos;re missing below until the page is opened again.</div>}
@@ -488,7 +521,7 @@ export default function WorkOrdersView({ milestones, cancelled = [], childrenByP
           <button type="button" onClick={() => setLimit(Infinity)} className="h-9 pointer-coarse:h-11 px-3 rounded-lg text-body font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">Show all {shown.length}</button>
         </div>
       )}
-      <div className="px-3 sm:px-4 py-3 border-t border-[var(--color-border)] text-caption text-[var(--color-text-muted)]">{shown.length} of {orders.length} work orders · tap one to update its steps</div>
+      <div className="px-3 sm:px-4 py-3 border-t border-[var(--color-border)] text-caption text-[var(--color-text-muted)]">{shown.length} of {orders.length} work orders shown · tap one to update its steps</div>
     </div>
   );
 }

@@ -165,20 +165,26 @@ export function BudgetImportSheet({ orgId, projectId, actor, result, accounts, p
         <button onClick={onClose} disabled={applying} aria-label="Close" className="ui-hit p-1 rounded-lg text-[var(--color-text-faint)] hover:text-[var(--color-text)]"><X className="w-4 h-4" /></button>
       </div>
 
-      {/* Reconciliation — the three numbers that have to agree */}
-      <div className="px-4 pb-2 grid grid-cols-1 sm:grid-cols-3 gap-2">
-        <Fact label="Authorized" value={recon.authorized != null ? fmtMoney(recon.authorized, cur) : "-"} />
-        <Fact label={`Lines (${included.length})`} value={fmtMoney(recon.linesTotal, cur)}
-          tone={recon.balanced ? "ok" : "warn"}
-          sub={recon.unallocated != null && !recon.balanced
-            ? `${fmtMoney(Math.abs(recon.unallocated), cur)} ${recon.unallocated > 0 ? "not in any line" : "more than authorized"}`
-            : recon.authorized != null ? "match the authorized total" : undefined} />
-        <Fact label="Against approved budget"
-          value={recon.budgeted != null ? fmtMoney(recon.budgeted, cur) : "-"}
-          tone={recon.overBudgetBy != null && recon.overBudgetBy > 0 ? "warn" : undefined}
-          sub={recon.overBudgetBy != null && recon.overBudgetBy !== 0
-            ? `${fmtMoney(Math.abs(recon.overBudgetBy), cur)} ${recon.overBudgetBy > 0 ? "over" : "under"} budget`
-            : p.budgetReferences.length === 0 ? "no budget item cited" : "on budget"} />
+      {/* Reconciliation: the numbers that have to agree, as one answer
+          (the lines' total big, what it's held against beside it). */}
+      <div className="px-4 pb-2 space-y-0.5">
+        <p className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+          <span className="font-display text-section font-bold tabular-nums whitespace-nowrap text-[var(--color-text)]">{fmtMoney(recon.linesTotal, cur)}</span>
+          <span className="text-body text-[var(--color-text)]">
+            in {included.length} line{included.length === 1 ? "" : "s"}{recon.authorized != null ? <>, against <b className="font-medium tabular-nums">{fmtMoney(recon.authorized, cur)}</b> authorized</> : ", no authorized amount read"}.
+            {" "}{recon.unallocated != null && !recon.balanced
+              ? <span className="font-medium text-[var(--state-held-text)]">{fmtMoney(Math.abs(recon.unallocated), cur)} {recon.unallocated > 0 ? "not in any line" : "more than authorized"}.</span>
+              : recon.authorized != null ? <span className="text-[var(--color-text-muted)]">They match the authorized total.</span> : null}
+          </span>
+        </p>
+        <p className="text-body text-[var(--color-text-muted)]">
+          Against the approved budget: <span className="font-medium tabular-nums text-[var(--color-text)]">{recon.budgeted != null ? fmtMoney(recon.budgeted, cur) : "-"}</span>,{" "}
+          <span className={recon.overBudgetBy != null && recon.overBudgetBy > 0 ? "font-medium text-[var(--state-held-text)]" : ""}>
+            {recon.overBudgetBy != null && recon.overBudgetBy !== 0
+              ? `${fmtMoney(Math.abs(recon.overBudgetBy), cur)} ${recon.overBudgetBy > 0 ? "over" : "under"} budget`
+              : p.budgetReferences.length === 0 ? "no budget item cited" : "on budget"}
+          </span>
+        </p>
       </div>
       {result.blankPages.length > 0 && <BlankPagesNote pages={result.blankPages} />}
       {p.varianceNote && (
@@ -280,17 +286,6 @@ export function BudgetImportSheet({ orgId, projectId, actor, result, accounts, p
           </button>
         </span>
       </div>
-    </div>
-  );
-}
-
-function Fact({ label, value, sub, tone }: { label: string; value: string; sub?: string; tone?: "ok" | "warn" }) {
-  const ring = tone === "warn" ? "border-[var(--state-held)] bg-[var(--state-held)]/[0.06]" : tone === "ok" ? "border-[var(--state-released)] bg-[var(--state-released)]/[0.05]" : "border-[var(--color-border)] bg-[var(--color-surface)]";
-  return (
-    <div className={`rounded-xl border px-3 py-2 ${ring}`}>
-      <div className="text-body font-medium text-[var(--color-text-muted)]">{label}</div>
-      <div className="text-body font-medium tabular-nums text-[var(--color-text)]">{value}</div>
-      {sub && <div className={`text-caption font-medium ${tone === "warn" ? "text-[var(--state-held-text)]" : "text-[var(--color-text-muted)]"}`}>{sub}</div>}
     </div>
   );
 }

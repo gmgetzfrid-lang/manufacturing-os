@@ -72,7 +72,7 @@ describe("phaseStandings", () => {
   });
 
   it("one phase in a few words", () => {
-    expect(standingShort(rows[0])).toBe("Phase 1: finished, 33.5 h late");
+    expect(standingShort(rows[0])).toBe("Phase 1: finished, 33.5 h late (1.4 days)");
     expect(standingShort(rows[1])).toMatch(/^Phase 2: \d+% \(plan \d+%\), ahead$/);
   });
 
@@ -92,7 +92,9 @@ describe("verdictParts / lateWords", () => {
     expect(verdictParts({ aheadHours: 77.6, behindHours: 34.5, behindSteps: 6 })).toBe("77.6 h done early, 34.5 h late on 6 steps");
   });
   it("late, early, on time", () => {
-    expect(lateWords(33.5)).toBe("33.5 h late");
+    expect(lateWords(33.5)).toBe("33.5 h late (1.4 days)");
+    expect(lateWords(791.4)).toBe("791.4 h late (33 days)");
+    expect(lateWords(12)).toBe("12 h late");
     expect(lateWords(-2)).toBe("2 h early");
     expect(lateWords(0.2)).toBe("on time");
     expect(lateWords(null)).toBeNull();

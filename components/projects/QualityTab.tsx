@@ -23,12 +23,11 @@
 // taken back, an accepted or waived turnover item reopens, and a punch item
 // can be edited, reopened, or voided (with a confirm and an Undo).
 
-import { Card } from "@/components/ui/PageHero";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useFileDrag } from "@/hooks/useFileDrag";
 import Link from "next/link";
 import {
-  ClipboardCheck, FileText, Loader2, Sparkles, Search, X, Plus, Check, ChevronRight, ShieldCheck, ListChecks, Ban, Wand2, Pencil, RotateCcw, Paperclip, Trash2, UploadCloud,
+  FileText, Loader2, Sparkles, Search, X, Plus, Check, ChevronRight, ShieldCheck, ListChecks, Ban, Wand2, Pencil, RotateCcw, Paperclip, Trash2, UploadCloud,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { listParties, type Actor, type CostParty } from "@/lib/costs";
@@ -49,13 +48,15 @@ import { uploadProjectFile } from "@/lib/projectUpload";
 import ProjectFilePlace, { useProjectFileHome } from "@/components/projects/ProjectFilePlace";
 import UndoToastHost from "@/components/projects/UndoToastHost";
 import { useUndoableActions } from "@/components/projects/useUndoableActions";
-import LoadingBlock from "@/components/ui/LoadingBlock";
 import FileThumb from "@/components/ui/FileThumb";
 import { tryUpload } from "@/lib/uploadRetry";
 import { fileSize } from "@/components/projects/cost/FilePreview";
-import { useDraft } from "@/hooks/useDraft";
 import { turnoverSource, jobSizeWord } from "@/lib/requirementSource";
-import { SourceLine } from "@/components/projects/NeedParts";
+import { SourceHelp } from "@/components/projects/NeedParts";
+import { InlineAddRow, type AddField } from "@/components/ui/InlineAddRow";
+import HelpTooltip from "@/components/ui/HelpTooltip";
+import MoreMenu from "@/components/ui/MoreMenu";
+import { parseDay } from "@/lib/materials";
 import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
 import { sayError } from "@/components/projects/sayError";
 import { ErrorNote } from "@/components/ui/ErrorNote";
@@ -113,28 +114,29 @@ export default function QualityTab({ orgId, projectId, canManage, canEditPunch, 
   useEffect(() => { void refresh(); }, [refresh]);
 
   if (loading) return <SkeletonRows rows={6} cols={2} what="checklists, turnover and punch list" />;
-  // Where quality stands, in one line, before the three lists.
+  // Where quality stands: one number (what's left to close), then where it
+  // is, in one small line, before the three lists.
   const punchOpen = punch.filter((i) => i.status === "open").length;
   const tp = computeTurnoverProgress(turnover);
   const lists = checklists.filter((c) => c.status !== "void");
+  const listsDone = lists.filter((c) => c.status === "complete").length;
+  const left = punchOpen + (tp.required - tp.accepted) + (lists.length - listsDone);
+  const anything = lists.length > 0 || turnover.length > 0 || punch.length > 0;
+  const parts = [
+    `Punch list ${punchOpen ? `${punchOpen} open` : "clear"}`,
+    `Turnover ${tp.required ? `${tp.accepted} of ${tp.required} accepted${tp.received ? `, ${tp.received} awaiting review` : ""}` : "none required yet"}`,
+    `Checklists ${lists.length ? `${listsDone} of ${lists.length} complete` : "none yet"}`,
+  ];
 
   return (
-    <div className="space-y-4">
-      {/* Where quality stands, as small labelled figures: a count when
-          there is one, words when there's nothing (never a dash). */}
+    <div className="space-y-6">
       <div>
-        <dl className="flex flex-wrap gap-x-10 gap-y-3">
-          {([
-            ["Punch items open", punchOpen ? String(punchOpen) : "None open", punchOpen ? "text-[var(--state-held-text)]" : "text-[var(--color-text-muted)]", !!punchOpen],
-            ["Turnover accepted", tp.required ? `${tp.accepted} of ${tp.required}` : "None required yet", "text-[var(--color-text)]", !!tp.required],
-            ["Checklists complete", lists.length ? `${lists.filter((c) => c.status === "complete").length} of ${lists.length}` : "No checklists yet", "text-[var(--color-text)]", !!lists.length],
-          ] as Array<[string, string, string, boolean]>).map(([k, v, tone, figure]) => (
-            <div key={k} className="min-w-0">
-              <dt className="text-body text-[var(--color-text-muted)]">{k}</dt>
-              <dd className={`mt-0.5 ${figure ? `font-display text-section leading-tight font-semibold tabular-nums ${tone}` : "text-reading leading-[26px] text-[var(--color-text-muted)]"}`}>{v}</dd>
-            </div>
-          ))}
-        </dl>
+        <p className="text-reading text-[var(--color-text)]">
+          {!anything ? "Nothing on quality yet."
+            : left ? <><b className="font-display text-title leading-none font-bold tabular-nums">{left}</b> left to close</>
+            : "Nothing left to close."}
+        </p>
+        {anything && <p className="mt-1 text-body text-[var(--color-text-muted)]">{parts.join(" · ")}</p>}
         {err && (
           <div className="mt-3 flex items-start gap-2">
             <ErrorNote compact className="flex-1" title={err} next="" />
@@ -154,8 +156,18 @@ export default function QualityTab({ orgId, projectId, canManage, canEditPunch, 
   );
 }
 
-const quietBtn = "inline-flex items-center gap-1 px-2 py-1 pointer-coarse:min-h-11 rounded text-caption font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50";
-const fieldCls = "h-9 pointer-coarse:h-11 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-body ";
+const quietBtn = "inline-flex items-center gap-1 px-2 py-1 min-h-9 pointer-coarse:min-h-11 rounded text-body font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50";
+// Fields: 16 px text, 40 px tall (44 on touch), the 3:1 edge.
+const fieldCls = "h-10 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-control)] bg-[var(--color-surface)] px-3 text-reading text-[var(--color-text)] ";
+const fieldLabel = "block text-caption font-medium text-[var(--color-text-muted)] mb-1";
+// A row's next decision (outline), its other actions under More, and a fold.
+const rowBtn = "ui-press inline-flex items-center h-9 pointer-coarse:h-11 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50";
+const moreBtn = "ui-press inline-flex items-center justify-center w-9 h-9 pointer-coarse:w-11 pointer-coarse:h-11 rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]";
+const foldBtn = "ui-press inline-flex items-center gap-1.5 min-h-8 pointer-coarse:min-h-11 px-2 -mx-2 rounded-md text-body font-medium text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]";
+// Turnover rows: waiting on review first, then rejected, then not received; done ones last.
+const TURNOVER_RANK: Record<TurnoverItem["status"], number> = { received: 0, rejected: 1, open: 2, accepted: 3, waived: 4 };
+/** The project's company with this name, as typed or pasted (case aside). */
+const companyNamed = (list: CostParty[], name: string) => { const n = name.trim().toLowerCase(); return list.find((p) => p.name.trim().toLowerCase() === n) ?? null; };
 
 // ── Checklists ───────────────────────────────────────────────────────────
 
@@ -165,37 +177,35 @@ function ChecklistsSection({ orgId, projectId, canManage, actor, checklists, onC
   announce: Announce;
 }) {
   const [showNew, setShowNew] = useState(false);
-  const none = checklists.filter((c) => c.status !== "void").length === 0;
+  // Open lists first; complete ones after them.
+  const live = checklists.filter((c) => c.status !== "void").sort((a, b) => Number(a.status === "complete") - Number(b.status === "complete"));
+  const none = live.length === 0;
   return (
     <section className="min-w-0">
-      <div className="flex items-center gap-2.5 mb-2.5 min-h-8">
+      <div className="flex items-center gap-2 mb-2 min-h-8">
         <h2 className="min-w-0 font-display text-section leading-tight font-semibold text-[var(--color-text)]">Checklists: PSSR, MI, QA/QC</h2>
+        <HelpTooltip><span className="font-normal">Upload your PSSR or QA/QC checklist (PDF) with New checklist. It&apos;s read into items you check off.</span></HelpTooltip>
         {canManage && (
           // Orange only while there's none yet and the form isn't open.
           <button onClick={() => setShowNew((v) => !v)} aria-expanded={showNew}
-            className={`ml-auto shrink-0 whitespace-nowrap inline-flex items-center gap-1.5 h-10 px-3.5 rounded-md text-body font-medium transition-colors ${none && !showNew ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]" : showNew ? "bg-[var(--color-surface-2)] text-[var(--color-text)] border border-[var(--color-border-strong)]" : "border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
+            className={`ml-auto shrink-0 whitespace-nowrap inline-flex items-center gap-1.5 h-10 pointer-coarse:h-11 px-3.5 rounded-md text-body font-medium transition-colors ${none && !showNew ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]" : showNew ? "bg-[var(--color-surface-2)] text-[var(--color-text)] border border-[var(--color-border-strong)]" : "border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
             <Plus className="w-3 h-3" /> New checklist
           </button>
         )}
       </div>
-      <div className="bg-[var(--color-surface)] rounded-lg overflow-hidden border border-[var(--color-border)]">
+      {/* No clipping here: the new-checklist flow has "?" popovers near its edge. */}
+      <div className="bg-[var(--color-surface)] rounded-lg border border-[var(--color-border)]">
 
       {showNew && canManage && (
         <NewChecklistFlow orgId={orgId} projectId={projectId} actor={actor}
           onDone={() => { setShowNew(false); onChanged(); }} onCancel={() => setShowNew(false)} setErr={setErr} />
       )}
 
-      {checklists.filter((c) => c.status !== "void").length === 0 ? (
-        <div className="px-4 py-8 text-center">
-          <ClipboardCheck className="w-7 h-7 mx-auto text-[var(--color-text-faint)] mb-2" />
-          <div className="text-body font-medium text-[var(--color-text)]">No checklists yet</div>
-          <div className="text-caption text-[var(--color-text-muted)] mt-1 max-w-lg mx-auto">
-            Upload your PSSR or QA/QC checklist (PDF) with New checklist. It&apos;s read into items you check off.
-          </div>
-        </div>
+      {none ? (
+        !showNew && <p className="px-4 py-3 text-body text-[var(--color-text-muted)]">No checklists yet.</p>
       ) : (
         <div className="divide-y divide-[var(--color-border)]">
-          {checklists.filter((c) => c.status !== "void").map((c) => (
+          {live.map((c) => (
             <ChecklistCard key={c.id} orgId={orgId} projectId={projectId} checklist={c}
               canManage={canManage} actor={actor} onChanged={onChanged} setErr={setErr} announce={announce} />
           ))}
@@ -315,7 +325,7 @@ export function NewChecklistFlow({ orgId, projectId, projectName, actor, onDone,
             <div className={`rounded-xl border-2 border-dashed border-[var(--color-border-strong)] bg-[var(--color-surface)] p-3 flex items-center gap-3 flex-wrap ${drag.ring}`}>
               <input ref={fileRef} type="file" accept="application/pdf,.pdf" className="hidden" onChange={(e) => void upload(e.target.files?.[0])} />
               <button type="button" onClick={() => fileRef.current?.click()} disabled={!!uploading || reading || !home?.place}
-                className={`h-10 inline-flex items-center gap-1.5 px-3.5 rounded-lg text-caption font-medium disabled:opacity-50 ${home?.place ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]" : "border border-[var(--color-border-strong)] text-[var(--color-text)]"}`}>
+                className={`h-10 pointer-coarse:h-11 inline-flex items-center gap-1.5 px-3.5 rounded-lg text-body font-medium disabled:opacity-50 ${home?.place ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]" : "border border-[var(--color-border-strong)] text-[var(--color-text)]"}`}>
                 {uploading || reading ? <Loader2 className="w-4 h-4 animate-spin" /> : <UploadCloud className="w-4 h-4" />} {uploading ? "Uploading…" : reading ? "Reading it…" : `Upload the ${kind === "pssr" ? "PSSR" : "checklist"} (PDF)`}
               </button>
               {(uploading || failed) && (
@@ -329,7 +339,7 @@ export function NewChecklistFlow({ orgId, projectId, projectName, actor, onDone,
                   )}
                 </span>
               )}
-              <span className={`text-caption flex-1 min-w-48 ${drag.over ? "font-medium text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>{drag.over ? drag.say : <>Or drop it here. It&apos;s filed where you pick below, then read into items for you to check.</>}</span>
+              <span className={`text-body flex-1 min-w-48 inline-flex items-center gap-1.5 ${drag.over ? "font-medium text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>{drag.over ? drag.say : <>Or drop it here. <HelpTooltip><span className="font-normal">It&apos;s filed where you pick below, then read into items for you to check.</span></HelpTooltip></>}</span>
               <div className="basis-full">
                 <ProjectFilePlace orgId={orgId} projectId={projectId} uid={actor.uid} canManage home={home} onChange={setHome} what={kind === "pssr" ? "the PSSR" : "the checklist"} />
               </div>
@@ -346,21 +356,21 @@ export function NewChecklistFlow({ orgId, projectId, projectName, actor, onDone,
                 <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[var(--color-text-faint)]" />
                 <input type="search" value={query} onChange={(e) => setQuery(e.target.value)} autoFocus aria-label="Find a document in document control"
                   placeholder="Or find one already in document control (number or title)…"
-                  className="w-full h-8 pointer-coarse:h-11 pl-8 pr-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-caption" />
+                  className="w-full h-10 pointer-coarse:h-11 pl-8 pr-2 rounded-lg border border-[var(--color-border-control)] bg-[var(--color-surface)] text-reading" />
               </span>
             )}
             <select value={kind} onChange={(e) => setKind(e.target.value as ChecklistKind)} aria-label="Kind of list"
-              className="h-8 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-caption">
+              className="h-10 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-control)] bg-[var(--color-surface)] px-2 text-reading">
               {(Object.keys(CHECKLIST_KIND_LABEL) as ChecklistKind[]).map((k) => (
                 <option key={k} value={k}>{CHECKLIST_KIND_LABEL[k]}</option>
               ))}
             </select>
             <button onClick={() => void read()} disabled={!doc || reading || !!uploading}
-              className={`h-8 inline-flex items-center gap-1 px-3 rounded-lg text-caption font-medium disabled:opacity-50 transition-colors ${doc ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]" : "border border-[var(--color-border-strong)] text-[var(--color-text)]"}`}
+              className={`h-10 pointer-coarse:h-11 inline-flex items-center gap-1 px-3 rounded-lg text-body font-medium disabled:opacity-50 transition-colors ${doc ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]" : "border border-[var(--color-border-strong)] text-[var(--color-text)]"}`}
               title="Reads the pages into items you check before anything saves.">
               {reading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />} {reading ? "Reading" : "Read it"}
             </button>
-            <button onClick={onCancel} className="inline-flex items-center justify-center gap-1.5 h-8 pointer-coarse:h-11 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>
+            <button onClick={onCancel} className="inline-flex items-center justify-center gap-1.5 h-10 pointer-coarse:h-11 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>
           </div>
           {results.length > 0 && !doc && (
             <ul className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] divide-y divide-[var(--color-border)] overflow-hidden">
@@ -378,13 +388,13 @@ export function NewChecklistFlow({ orgId, projectId, projectName, actor, onDone,
         <>
           <div className="flex items-center gap-2 flex-wrap">
             <input value={title} onChange={(e) => setTitle(e.target.value)} aria-label="List name"
-              className="h-8 pointer-coarse:h-11 flex-1 min-w-48 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-caption font-medium" />
-            <span className="text-caption text-[var(--color-text-muted)]">Read {doc?.label ?? "it"}: found {proposed.length} item{proposed.length === 1 ? "" : "s"}. Remove any that aren&apos;t real items, then save.</span>
+              className="h-10 pointer-coarse:h-11 flex-1 min-w-48 rounded-lg border border-[var(--color-border-control)] bg-[var(--color-surface)] px-3 text-reading font-medium" />
+            <span className="text-body text-[var(--color-text-muted)]">Read {doc?.label ?? "it"}: found {proposed.length} item{proposed.length === 1 ? "" : "s"}. Remove any that aren&apos;t real items, then save.</span>
             <button onClick={() => void save()} disabled={saving || proposed.length === 0}
-              className="h-8 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-caption font-medium hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
+              className="h-10 pointer-coarse:h-11 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-body font-medium hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
               {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />} {saving ? "Saving" : "Save checklist"}
             </button>
-            <button onClick={() => setProposed(null)} className="inline-flex items-center justify-center gap-1.5 h-8 pointer-coarse:h-11 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Back</button>
+            <button onClick={() => setProposed(null)} className="inline-flex items-center justify-center gap-1.5 h-10 pointer-coarse:h-11 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Back</button>
           </div>
           <ul className="max-h-72 overflow-y-auto rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] divide-y divide-[var(--color-border)]">
             {proposed.map((p, i) => (
@@ -514,10 +524,10 @@ function ChecklistCard({ orgId, projectId, checklist, canManage, actor, onChange
 
   return (
     <div>
-      <button onClick={() => setOpen((v) => !v)} className="w-full px-4 py-3 flex items-center gap-2 text-left hover:bg-[var(--color-surface-2)]/40 transition-colors">
-        <ChevronRight className={`w-4 h-4 text-[var(--color-text-faint)] ui-chevron${(open) ? " rotate-90" : ""}`} />
-        <span className="text-caption font-medium text-[var(--color-text)]">{checklist.title}</span>
-        <span className="text-body font-medium text-[var(--color-text-muted)]">{CHECKLIST_KIND_LABEL[checklist.kind]}</span>
+      <button onClick={() => setOpen((v) => !v)} aria-expanded={open} className="w-full px-4 py-3 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-left hover:bg-[var(--color-surface-2)]/40 transition-colors">
+        <ChevronRight className={`w-4 h-4 shrink-0 text-[var(--color-text-faint)] ui-chevron${(open) ? " rotate-90" : ""}`} />
+        <span className="min-w-0 text-body font-medium text-[var(--color-text)]">{checklist.title}</span>
+        <span className="text-caption text-[var(--color-text-muted)]">{CHECKLIST_KIND_LABEL[checklist.kind]}</span>
         {checklist.status === "complete" && (
           <span className="inline-flex items-center gap-0.5 text-caption font-medium text-[var(--state-released-text)]"><ShieldCheck className="w-3 h-3" /> Complete</span>
         )}
@@ -691,7 +701,8 @@ function TurnoverSection({ orgId, projectId, canManage, actor, items, jobKind, p
   onChanged: () => void; setErr: (m: string | null) => void;
 }) {
   const [busy, setBusy] = useState<string | null>(null);
-  const [addName, setAddName] = useState("");
+  // Accepted and waived documents fold away under the ones still owed.
+  const [showSettled, setShowSettled] = useState(false);
   const progress = useMemo(() => computeTurnoverProgress(items), [items]);
   const tz = useScheduleTz();
   const usual = seedsForJobKind(jobKind).length;
@@ -764,109 +775,136 @@ function TurnoverSection({ orgId, projectId, canManage, actor, items, jobKind, p
     if (!res.ok) setErr(res.error ?? "Couldn't update."); else onChanged();
   };
 
+  const sorted = [...items].sort((a, b) => TURNOVER_RANK[a.status] - TURNOVER_RANK[b.status] || Number(b.required) - Number(a.required));
+  const owed = sorted.filter((i) => i.status !== "accepted" && i.status !== "waived");
+  const settled = sorted.filter((i) => i.status === "accepted" || i.status === "waived");
+  const companies = parties.filter((p) => p.status !== "inactive");
+
+  // Add like a spreadsheet: the document, what it is, who owes it.
+  const addOne = async (name: string, description: string, owes: string): Promise<string | undefined> => {
+    const party = owes ? companyNamed(companies, owes) : null;
+    if (owes && !party) return `No company named \u201c${owes}\u201d on this project. Pick one from the list, or leave it blank.`;
+    const r = await addTurnoverItem({ orgId, projectId, name, description: description || null, partyId: party?.id ?? null, actor });
+    return r.ok ? undefined : r.error ?? "It wasn't added. Try again.";
+  };
+  const addFields: AddField[] = [
+    { key: "name", label: "Document", required: true, width: "w-full sm:min-w-0 md:flex-1" },
+    { key: "description", label: "What it is", width: "w-full sm:min-w-0 md:w-56 md:shrink-0" },
+    ...(companies.length ? [{ key: "owes", label: "Who owes it", list: companies.map((p) => p.name), width: "w-full sm:min-w-0 md:w-44 md:shrink-0" }] : []),
+  ];
+  const onAdd = async (v: Record<string, string>) => { const m = await addOne(v.name, v.description, v.owes ?? ""); if (!m) onChanged(); return m; };
+  const onPasteRows = async (rows: string[][]) => {
+    const named = rows.filter((r) => (r[0] ?? "").trim());
+    let added = 0, miss: string | null = null;
+    for (const [name = "", description = "", owes = ""] of named) {
+      const m = await addOne(name.trim(), description.trim(), companies.length ? owes.trim() : "");
+      if (m) miss = miss ?? `${name.trim()}: ${m}`; else added++;
+    }
+    onChanged();
+    return added === rows.length ? undefined : `Added ${added} of ${rows.length}.${miss ? ` ${miss}` : rows.length > named.length ? " Rows with no document name were left out." : ""}`;
+  };
+
+  const row = (it: TurnoverItem) => {
+    if (editing === it.id) return (
+      <li key={it.id} className="px-4 py-3">
+        <TurnoverEditor item={it} parties={parties} actor={actor} setErr={setErr}
+          onCancel={() => setEditing(null)} onSaved={() => { setEditing(null); onChanged(); }} />
+      </li>
+    );
+    const done = it.status === "accepted" || it.status === "waived";
+    // The one decision that comes next stays in sight; the rest are under More.
+    const next = it.status === "open" ? { label: "Received", status: "received" as const }
+      : it.status === "received" || it.status === "rejected" ? { label: "Accept", status: "accepted" as const } : null;
+    const more = [
+      { icon: <Paperclip className="w-4 h-4" />, label: it.documentId ? "Change document" : "Attach document", onClick: () => setAttaching(attaching === it.id ? null : it.id) },
+      { icon: <Pencil className="w-4 h-4" />, label: "Edit", onClick: () => setEditing(it.id) },
+      ...(it.status === "received" ? [{ icon: <X className="w-4 h-4" />, label: "Reject", tone: "bad" as const, onClick: () => review(it, "rejected") }] : []),
+      ...(it.status === "open" || it.status === "received" ? [{ icon: <Ban className="w-4 h-4" />, label: "Waive", onClick: () => review(it, "waived") }] : []),
+      ...(done ? [{ icon: <RotateCcw className="w-4 h-4" />, label: "Reopen", onClick: () => reopen(it) }] : []),
+    ];
+    const meta = [
+      it.partyId ? partyName.get(it.partyId) ?? null : null,
+      it.description,
+      it.reviewedByName ? `${it.status} by ${it.reviewedByName}${it.reviewedAt ? ` on ${new Date(it.reviewedAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}` : ""}` : null,
+      it.reviewNote ? `\u201c${it.reviewNote}\u201d` : null,
+    ].filter(Boolean).join(" · ");
+    return (
+      <li key={it.id} className="px-4 py-2.5 text-body">
+        <div className="flex items-start gap-2">
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-x-2 gap-y-0.5 flex-wrap">
+              <span className={`font-medium ${done ? "text-[var(--color-text-muted)]" : "text-[var(--color-text)]"}`}>{it.name}</span>
+              {!it.required && <span className="text-caption text-[var(--color-text-muted)]">optional</span>}
+              <TurnoverChip status={it.status} />
+            </div>
+            {(meta || it.documentId) && (
+              <div className="mt-0.5 text-body text-[var(--color-text-muted)]">
+                {it.documentId && (docs.get(it.documentId)
+                  ? <Link href={docs.get(it.documentId)!.href} className="inline-flex items-center gap-1 font-medium text-[var(--color-accent-text)] hover:underline"><Paperclip className="w-3.5 h-3.5" /> {docs.get(it.documentId)!.label}</Link>
+                  : <span className="inline-flex items-center gap-1"><Paperclip className="w-3.5 h-3.5" /> document attached</span>)}
+                {it.documentId && meta ? " · " : null}{meta}
+              </div>
+            )}
+          </div>
+          {canManage && (busy === it.id
+            ? <Loader2 className="w-4 h-4 mt-1 animate-spin text-[var(--color-text-muted)] shrink-0" />
+            : <span className="shrink-0 flex items-center gap-1">
+                {next && <button onClick={() => void review(it, next.status)} className={rowBtn}>{next.label}</button>}
+                <MoreMenu iconOnly label={`More for ${it.name}`} items={more} triggerClass={moreBtn} />
+              </span>)}
+        </div>
+        {attaching === it.id && canManage && (
+          <DocPicker orgId={orgId} busy={busy === it.id}
+            onPick={(d) => void attach(it, d)}
+            onClear={it.documentId ? () => void attach(it, null) : undefined}
+            onCancel={() => setAttaching(null)} />
+        )}
+      </li>
+    );
+  };
+
   return (
     <section className="min-w-0">
-      <div className="flex items-center gap-2.5 mb-2.5 min-h-8 flex-wrap">
+      <div className="flex items-center gap-2 mb-2 min-h-8 flex-wrap">
         <h2 className="font-display text-section leading-tight font-semibold text-[var(--color-text)]">Turnover package: QA/QC sign-off</h2>
+        {/* Where this list came from (the app's default, or set for this project), behind the "?". */}
+        <SourceHelp source={turnoverSource(items, null)} tz={tz}>The quality documents this job needs, each from not received to accepted, with the reviewer&rsquo;s name on the record.</SourceHelp>
         {progress.required > 0 && (
           <span className="text-body tabular-nums text-[var(--color-text-muted)]">
-            {progress.accepted}/{progress.required} accepted{progress.received > 0 ? `, ${progress.received} awaiting review` : ""}
+            {progress.accepted} of {progress.required} accepted{progress.received > 0 ? `, ${progress.received} awaiting review` : ""}
           </span>
         )}
         {canManage && (
           <button onClick={() => void seed()} disabled={busy != null}
-            className="ml-auto inline-flex items-center gap-1.5 h-10 px-3.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors"
+            className="ml-auto inline-flex items-center gap-1.5 h-10 pointer-coarse:h-11 px-3.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors"
             title={`Adds the usual documents for a ${jobSizeWord(jobKind).toLowerCase()} (the ones already here are kept).`}>
             {busy === "seed" ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />} Add the usual list ({usual} for a {jobSizeWord(jobKind).toLowerCase()})
           </button>
         )}
-        {/* Where this list came from: the app's default (none), or set for this project. */}
-        <SourceLine source={turnoverSource(items, null)} tz={tz} className="basis-full -mt-1.5" />
       </div>
-      <div className="bg-[var(--color-surface)] rounded-lg overflow-hidden border border-[var(--color-border)]">
-
-      {items.length === 0 ? (
-        <div className="px-4 py-6 text-center text-caption text-[var(--color-text-muted)]">
-          Nothing required yet. Add the usual list for the job size, or add documents below.
-        </div>
-      ) : (
-        <ul className="divide-y divide-[var(--color-border)]">
-          {items.map((it) => editing === it.id ? (
-            <li key={it.id} className="px-4 py-2.5">
-              <TurnoverEditor item={it} parties={parties} actor={actor} setErr={setErr}
-                onCancel={() => setEditing(null)} onSaved={() => { setEditing(null); onChanged(); }} />
-            </li>
-          ) : (
-            <li key={it.id} className="px-4 py-2.5 text-caption">
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="font-medium text-[var(--color-text)]">{it.name}</span>
-                {!it.required && <span className="text-caption font-medium text-[var(--color-text-faint)]">optional</span>}
-                <TurnoverChip status={it.status} />
-                {it.partyId && partyName.get(it.partyId) && <span className="text-caption text-[var(--color-text-muted)]">{partyName.get(it.partyId)}</span>}
-                {it.documentId && (
-                  docs.get(it.documentId)
-                    ? <Link href={docs.get(it.documentId)!.href} className="inline-flex items-center gap-1 text-caption font-medium text-[var(--color-accent-text)] hover:underline"><Paperclip className="w-3 h-3" /> {docs.get(it.documentId)!.label}</Link>
-                    : <span className="inline-flex items-center gap-1 text-caption text-[var(--color-text-muted)]"><Paperclip className="w-3 h-3" /> document attached</span>
-                )}
-                {canManage && busy !== it.id && (
-                  <span className="ml-auto flex items-center gap-1 flex-wrap">
-                    {(it.status === "accepted" || it.status === "waived") && (
-                      <button onClick={() => void reopen(it)} className="inline-flex items-center gap-1 px-1.5 py-0.5 pointer-coarse:min-h-11 rounded text-caption font-medium text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]" title="Back into the review. The decision stays on the record.">
-                        <RotateCcw className="w-3 h-3" /> Reopen
-                      </button>
-                    )}
-                    <button onClick={() => setAttaching(attaching === it.id ? null : it.id)} className={quietBtn} title="The document the contractor submitted for this">
-                      <Paperclip className="w-3 h-3" /> {it.documentId ? "Change document" : "Attach document"}
-                    </button>
-                    <button onClick={() => setEditing(it.id)} className={quietBtn} title="Change the name, what it means, required or not, who owes it">
-                      <Pencil className="w-3 h-3" /> Edit
-                    </button>
-                    {it.status === "open" && (
-                      <button onClick={() => void review(it, "received")} className="px-1.5 py-0.5 pointer-coarse:min-h-11 rounded text-caption font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">Received</button>
-                    )}
-                    {(it.status === "received" || it.status === "rejected") && (
-                      <button onClick={() => void review(it, "accepted")} className="px-1.5 py-0.5 pointer-coarse:min-h-11 rounded text-caption font-medium text-[var(--state-released-text)] hover:bg-[color-mix(in_srgb,var(--state-released)_10%,transparent)]">Accept</button>
-                    )}
-                    {it.status === "received" && (
-                      <button onClick={() => void review(it, "rejected")} className="px-1.5 py-0.5 pointer-coarse:min-h-11 rounded text-caption font-medium text-[var(--state-overdue-text)] hover:bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)]">Reject</button>
-                    )}
-                    {(it.status === "open" || it.status === "received") && (
-                      <button onClick={() => void review(it, "waived")} className="px-1.5 py-0.5 pointer-coarse:min-h-11 rounded text-caption font-medium text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]">Waive</button>
-                    )}
-                  </span>
-                )}
-                {busy === it.id && <Loader2 className="w-3 h-3 animate-spin text-[var(--color-text-muted)] ml-auto" />}
-              </div>
-              <div className="mt-0.5 text-caption text-[var(--color-text-muted)]">
-                {[
-                  it.description,
-                  it.reviewedByName ? `${it.status} by ${it.reviewedByName}${it.reviewedAt ? ` on ${new Date(it.reviewedAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}` : ""}` : null,
-                  it.reviewNote ? `“${it.reviewNote}”` : null,
-                ].filter(Boolean).join(" · ")}
-              </div>
-              {attaching === it.id && canManage && (
-                <DocPicker orgId={orgId} busy={busy === it.id}
-                  onPick={(d) => void attach(it, d)}
-                  onClear={it.documentId ? () => void attach(it, null) : undefined}
-                  onCancel={() => setAttaching(null)} />
-              )}
-            </li>
-          ))}
-        </ul>
-      )}
-
-      {canManage && (
-        <div className="px-4 py-2.5 border-t border-[var(--color-border)] flex items-center gap-2">
-          <input value={addName} onChange={(e) => setAddName(e.target.value)} aria-label="New required item"
-            onKeyDown={(e) => { if (e.key === "Enter" && addName.trim()) { void (async () => { const r = await addTurnoverItem({ orgId, projectId, name: addName, actor }); if (!r.ok) setErr(r.error ?? null); else { setAddName(""); onChanged(); } })(); } }}
-            placeholder="Add a required item, e.g. Torque records"
-            className="h-8 pointer-coarse:h-11 flex-1 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-caption" />
-          <button onClick={() => { if (addName.trim()) void (async () => { const r = await addTurnoverItem({ orgId, projectId, name: addName, actor }); if (!r.ok) setErr(r.error ?? null); else { setAddName(""); onChanged(); } })(); }}
-            className="h-8 inline-flex items-center gap-1 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-caption font-medium hover:bg-[var(--color-surface-2)]">
-            <Plus className="w-3 h-3" /> Add
-          </button>
-        </div>
-      )}
+      {/* No clipping here: the document picker has a "?" popover. */}
+      <div className="bg-[var(--color-surface)] rounded-lg border border-[var(--color-border)]">
+        {canManage && (
+          <div className="px-4 pt-3 border-b border-[var(--color-border)]">
+            <InlineAddRow fields={addFields} onAdd={onAdd} onPasteRows={onPasteRows} what="document" />
+          </div>
+        )}
+        {items.length === 0 ? (
+          <p className="px-4 py-3 text-body text-[var(--color-text-muted)]">Nothing required yet.</p>
+        ) : (
+          <ul className="divide-y divide-[var(--color-border)]">
+            {owed.map(row)}
+            {settled.length > 0 && (
+              <li className="px-4 py-1.5">
+                <button onClick={() => setShowSettled((v) => !v)} aria-expanded={showSettled} className={foldBtn}>
+                  <ChevronRight className={`w-4 h-4 transition-transform ${showSettled ? "rotate-90" : ""}`} />
+                  {[settled.filter((i) => i.status === "accepted").length, settled.filter((i) => i.status === "waived").length].map((n, i) => n ? `${n} ${i ? "waived" : "accepted"}` : null).filter(Boolean).join(", ")}
+                </button>
+              </li>
+            )}
+            {showSettled && settled.map(row)}
+          </ul>
+        )}
       </div>
     </section>
   );
@@ -896,24 +934,27 @@ function TurnoverEditor({ item, parties, actor, setErr, onCancel, onSaved }: {
     onSaved();
   };
   return (
-    <div className="space-y-2 text-caption">
-      <div className="flex items-center gap-2 flex-wrap">
-        <input value={name} onChange={(e) => setName(e.target.value)} aria-label="Name" autoFocus className={`${fieldCls} flex-1 min-w-48 font-medium`} />
+    <div className="space-y-3 text-body">
+      <div className="grid gap-3 sm:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+        <label className="block min-w-0"><span className={fieldLabel}>Document</span>
+          <input value={name} onChange={(e) => setName(e.target.value)} autoFocus className={`${fieldCls} w-full font-medium`} /></label>
         {pick.length > 0 && (
-          <select value={partyId} onChange={(e) => setPartyId(e.target.value)} aria-label="Who owes it" className={fieldCls}>
-            <option value="">Any contractor</option>
-            {pick.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-          </select>
+          <label className="block min-w-0"><span className={fieldLabel}>Who owes it</span>
+            <select value={partyId} onChange={(e) => setPartyId(e.target.value)} className={`${fieldCls} w-full`}>
+              <option value="">Any contractor</option>
+              {pick.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select></label>
         )}
-        <label className="inline-flex items-center gap-1.5 text-caption font-medium text-[var(--color-text)]">
-          <input type="checkbox" checked={required} onChange={(e) => setRequired(e.target.checked)} className="w-4 h-4" /> Required
-        </label>
       </div>
-      <input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="What it is, in plain words" aria-label="What it is" className={`${fieldCls} w-full`} />
+      <label className="block"><span className={fieldLabel}>What it is</span>
+        <input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="In plain words" className={`${fieldCls} w-full`} /></label>
+      <label className="inline-flex items-center gap-2 min-h-10 pointer-coarse:min-h-11 text-body font-medium text-[var(--color-text)]">
+        <input type="checkbox" checked={required} onChange={(e) => setRequired(e.target.checked)} className="w-4 h-4" /> Required for this job
+      </label>
       <div className="flex items-center justify-end gap-2">
-        <button onClick={onCancel} className="inline-flex items-center justify-center gap-1.5 h-8 pointer-coarse:h-11 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>
+        <button onClick={onCancel} className="inline-flex items-center justify-center gap-1.5 h-10 pointer-coarse:h-11 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>
         <button onClick={() => void save()} disabled={saving}
-          className="h-8 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-caption font-medium hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
+          className="h-10 pointer-coarse:h-11 inline-flex items-center gap-1 px-3.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-body font-medium hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
           {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />} {saving ? "Saving" : "Save"}
         </button>
       </div>
@@ -953,7 +994,7 @@ function DocPicker({ orgId, busy, onPick, onClear, onCancel }: {
         <span className="relative flex-1 min-w-56">
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[var(--color-text-faint)]" />
           <input type="search" value={query} onChange={(e) => setQuery(e.target.value)} autoFocus aria-label="Find the submitted document" placeholder="Find the submitted document (by number or title)…"
-            className="w-full h-8 pointer-coarse:h-11 pl-8 pr-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-caption" />
+            className="w-full h-10 pointer-coarse:h-11 pl-8 pr-2 rounded-lg border border-[var(--color-border-control)] bg-[var(--color-surface)] text-reading" />
         </span>
         {onClear && <button onClick={onClear} disabled={busy} className={quietBtn}>Take it off</button>}
         <button onClick={onCancel} className={quietBtn}>Cancel</button>
@@ -969,7 +1010,7 @@ function DocPicker({ orgId, busy, onPick, onClear, onCancel }: {
           ))}
         </ul>
       )}
-      <div className="text-caption text-[var(--color-text-faint)]">From document control. A submission through the contractor&apos;s link lands there once it&apos;s approved under Intake.</div>
+      <div className="text-body text-[var(--color-text-muted)] inline-flex items-center gap-1.5">From document control. <HelpTooltip><span className="font-normal">A submission through the contractor&apos;s link lands there once it&apos;s approved under Intake.</span></HelpTooltip></div>
     </div>
   );
 }
@@ -982,30 +1023,48 @@ function PunchSection({ orgId, projectId, canManage, actor, items, parties, peop
   onChanged: () => void; setErr: (m: string | null) => void;
   announce: Announce;
 }) {
-  const [title, setTitle] = useState("");
-  // A punch item being written comes back after a reload.
-  useDraft<string>(`punch:${projectId}`, title, setTitle, (v) => !v.trim());
-  const [due, setDue] = useState("");
-  const [location, setLocation] = useState("");
-  const [partyId, setPartyId] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
-  // The item being edited in place.
+  // The item being edited in place, and whether the closed ones are shown.
   const [editing, setEditing] = useState<string | null>(null);
-  const open = items.filter((i) => i.status === "open");
-  const closed = items.filter((i) => i.status !== "open");
+  const [showClosed, setShowClosed] = useState(false);
   // Captured once at mount — render stays pure.
   const [now] = useState(() => Date.now());
   const partyName = useMemo(() => new Map(parties.map((p) => [p.id, p.name])), [parties]);
   // Companies taken off the job aren't offered for new items.
   const pickParties = parties.filter((p) => p.status !== "inactive");
+  // Overdue starts AFTER the due day ends, in the viewer's timezone — an
+  // item due today is due, not late.
+  const overdue = (it: PunchItem) => it.status === "open" && !!it.dueDate && new Date(`${it.dueDate}T23:59:59`).getTime() < now;
+  // Late first, then by due date; done and void fold under them.
+  const open = items.filter((i) => i.status === "open").sort((a, b) => Number(overdue(b)) - Number(overdue(a)) || (a.dueDate ?? "9").localeCompare(b.dueDate ?? "9"));
+  const closed = items.filter((i) => i.status !== "open");
 
-  const add = async () => {
-    if (!title.trim()) return;
-    setBusy("add");
-    const res = await addPunchItem({ orgId, projectId, title, dueDate: due || null, location: location || null, partyId: partyId || null, actor });
-    setBusy(null);
-    if (!res.ok) { setErr(res.error ?? "Couldn't add."); return; }
-    setTitle(""); setDue(""); setLocation(""); setPartyId(""); onChanged();
+  // Add like a spreadsheet: what, where, due, contractor.
+  const addOne = async (title: string, location: string, due: string, contractor: string): Promise<string | undefined> => {
+    const dueDate = due ? parseDay(due, `${new Date().getFullYear()}-01-01`) : null;
+    if (due && !dueDate) return `\u201c${due}\u201d isn't a date. Type the due date as month/day/year.`;
+    const party = contractor ? companyNamed(pickParties, contractor) : null;
+    if (contractor && !party) return `No company named \u201c${contractor}\u201d on this project. Pick one from the list, or leave it blank.`;
+    const res = await addPunchItem({ orgId, projectId, title, dueDate, location: location || null, partyId: party?.id ?? null, actor });
+    return res.ok ? undefined : res.error ?? "It wasn't added. Try again.";
+  };
+  const cols = [
+    { key: "title", label: "Punch item", required: true, placeholder: "Reinstall insulation at E-301 north nozzle", width: "w-full sm:min-w-0 md:flex-1" },
+    { key: "location", label: "Where", width: "w-full sm:min-w-0 md:w-36 md:shrink-0" },
+    { key: "due", label: "Due", type: "date" as const, width: "w-full sm:min-w-0 md:w-40 md:shrink-0" },
+    ...(pickParties.length ? [{ key: "contractor", label: "Contractor", list: pickParties.map((p) => p.name), width: "w-full sm:min-w-0 md:w-40 md:shrink-0" }] : []),
+  ];
+  const addFields: AddField[] = cols;
+  const onAdd = async (v: Record<string, string>) => { const m = await addOne(v.title, v.location, v.due, v.contractor ?? ""); if (!m) onChanged(); return m; };
+  const onPasteRows = async (rows: string[][]) => {
+    const named = rows.filter((r) => (r[0] ?? "").trim());
+    let added = 0, miss: string | null = null;
+    for (const [title = "", location = "", due = "", contractor = ""] of named) {
+      const m = await addOne(title.trim(), location.trim(), due.trim(), pickParties.length ? contractor.trim() : "");
+      if (m) miss = miss ?? `${title.trim()}: ${m}`; else added++;
+    }
+    onChanged();
+    return added === rows.length ? undefined : `Added ${added} of ${rows.length}.${miss ? ` ${miss}` : rows.length > named.length ? " Rows with nothing in the first column were left out." : ""}`;
   };
 
   const setStatus = async (it: PunchItem, status: PunchItem["status"]) => {
@@ -1033,89 +1092,80 @@ function PunchSection({ orgId, projectId, canManage, actor, items, parties, peop
     }
   };
 
+  const row = (it: PunchItem) => {
+    if (editing === it.id) return (
+      <li key={it.id} className="px-4 py-3">
+        <PunchEditor item={it} parties={parties} people={people} actor={actor} setErr={setErr}
+          onCancel={() => setEditing(null)} onSaved={() => { setEditing(null); onChanged(); }} />
+      </li>
+    );
+    const isOpen = it.status === "open";
+    const late = overdue(it);
+    const meta = [
+      it.location,
+      it.assignee ? `on it: ${it.assignee}` : null,
+      it.partyId ? partyName.get(it.partyId) ?? null : null,
+      it.createdByName ? `by ${it.createdByName}` : null,
+    ].filter(Boolean).join(" · ");
+    return (
+      <li key={it.id} className="px-4 py-2.5 flex items-start gap-2 text-body">
+        <span className={`ui-pill mt-0.5 ${it.status === "done" ? "is-good" : it.status === "void" ? "is-muted" : late ? "is-bad" : "is-warn"}`}>{it.status === "done" ? "Done" : it.status === "void" ? "Void" : late ? "Late" : "Open"}</span>
+        <div className="min-w-0 flex-1">
+          <div className={isOpen ? "text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}>{it.title}</div>
+          {(meta || (it.dueDate && isOpen)) && (
+            <div className="text-body text-[var(--color-text-muted)]">
+              {it.dueDate && isOpen && <span className={late ? "font-medium text-[var(--state-overdue-text)]" : ""}>due {new Date(it.dueDate + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })}{late ? ", overdue" : ""}</span>}
+              {it.dueDate && isOpen && meta ? " · " : null}{meta}
+            </div>
+          )}
+        </div>
+        {canManage && (busy === it.id
+          ? <Loader2 className="w-4 h-4 mt-1 animate-spin text-[var(--color-text-muted)] shrink-0" />
+          : isOpen
+            ? <span className="shrink-0 flex items-center gap-1">
+                <button onClick={() => void setStatus(it, "done")} className={rowBtn}>Done</button>
+                <MoreMenu iconOnly label={`More for ${it.title}`} triggerClass={moreBtn} items={[
+                  { icon: <Pencil className="w-4 h-4" />, label: "Edit", onClick: () => setEditing(it.id) },
+                  { icon: <Ban className="w-4 h-4" />, label: "Void: not a real snag", tone: "bad", onClick: () => voidItem(it) },
+                ]} />
+              </span>
+            : <button onClick={() => void setStatus(it, "open")} className={`shrink-0 ${quietBtn}`} title="Back on the open list">
+                <RotateCcw className="w-3.5 h-3.5" /> Reopen
+              </button>)}
+      </li>
+    );
+  };
+
   return (
     <section className="min-w-0">
-      <div className="flex items-center gap-2.5 mb-2.5 min-h-8">
+      <div className="flex items-center gap-2 mb-2 min-h-8">
         <h2 className="font-display text-section leading-tight font-semibold text-[var(--color-text)]">Punch list</h2>
-        {open.length > 0 && (
-          <span className="ml-auto inline-flex items-center gap-1.5 text-body font-medium text-[var(--color-text)]"><span className="ui-count is-warn">{open.length}</span> open</span>
-        )}
+        <span className="text-body tabular-nums text-[var(--color-text-muted)]">
+          {open.length ? <><b className="font-semibold text-[var(--color-text)]">{open.length}</b> open{open.filter(overdue).length ? <>, <b className="font-semibold text-[var(--state-overdue-text)]">{open.filter(overdue).length}</b> overdue</> : null}</> : items.length ? "nothing open" : null}
+        </span>
       </div>
       <div className="bg-[var(--color-surface)] rounded-lg overflow-hidden border border-[var(--color-border)]">
-
-      {canManage && (
-        <div className="px-4 py-2.5 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap">
-          <input value={title} onChange={(e) => setTitle(e.target.value)} aria-label="New punch item"
-            onKeyDown={(e) => { if (e.key === "Enter") void add(); }}
-            placeholder="e.g. Reinstall insulation at E-301 north nozzle"
-            className="h-8 pointer-coarse:h-11 flex-1 min-w-56 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-caption" />
-          <input value={location} onChange={(e) => setLocation(e.target.value)} placeholder="Where (optional)" aria-label="Where"
-            className={`${fieldCls} w-36`} />
-          <input type="date" value={due} onChange={(e) => setDue(e.target.value)} aria-label="Due"
-            className="h-8 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-caption [color-scheme:light] dark:[color-scheme:dark]" />
-          {pickParties.length > 0 && (
-            <select value={partyId} onChange={(e) => setPartyId(e.target.value)} aria-label="Contractor" className={fieldCls}>
-              <option value="">Contractor…</option>
-              {pickParties.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-            </select>
-          )}
-          <button onClick={() => void add()} disabled={busy === "add"}
-            className="h-8 inline-flex items-center gap-1 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-caption font-medium hover:bg-[var(--color-surface-2)] disabled:opacity-50">
-            {busy === "add" ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />} {busy === "add" ? "Adding" : "Add"}
-          </button>
-        </div>
-      )}
-
-      {items.length === 0 ? (
-        <div className="px-4 py-5 text-center text-caption text-[var(--color-text-muted)]">Nothing on the punch list.</div>
-      ) : (
-        <ul className="divide-y divide-[var(--color-border)]">
-          {[...open, ...closed].map((it) => {
-            if (editing === it.id) {
-              return (
-                <li key={it.id} className="px-4 py-2.5">
-                  <PunchEditor item={it} parties={parties} people={people} actor={actor} setErr={setErr}
-                    onCancel={() => setEditing(null)} onSaved={() => { setEditing(null); onChanged(); }} />
-                </li>
-              );
-            }
-            // Overdue starts AFTER the due day ends, in the viewer's timezone
-            // — an item due today is due, not late.
-            const overdue = it.status === "open" && it.dueDate && new Date(`${it.dueDate}T23:59:59`).getTime() < now;
-            const where = [it.location, it.assignee ? `on it: ${it.assignee}` : null, it.partyId ? partyName.get(it.partyId) ?? null : null].filter(Boolean).join(" · ");
-            return (
-              <li key={it.id} className={`px-4 py-2 flex items-center gap-2 flex-wrap text-caption ${it.status !== "open" ? "opacity-55" : ""}`}>
-                <span className={`ui-pill !h-5 !px-2 !text-caption ${it.status === "done" ? "is-good" : it.status === "void" ? "is-muted" : overdue ? "is-bad" : "is-warn"}`}>{it.status === "done" ? "Done" : it.status === "void" ? "Void" : overdue ? "Late" : "Open"}</span>
-                <span className={`text-[var(--color-text)] ${it.status !== "open" ? "line-through" : ""}`}>{it.title}</span>
-                {where && <span className="text-caption text-[var(--color-text-muted)]">{where}</span>}
-                {it.dueDate && it.status === "open" && (
-                  <span className={`text-caption font-medium ${overdue ? "text-[var(--state-overdue-text)]" : "text-[var(--color-text-muted)]"}`}>
-                    due {new Date(it.dueDate + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })}{overdue ? ", overdue" : ""}
-                  </span>
-                )}
-                {it.createdByName && <span className="text-caption text-[var(--color-text-faint)]">by {it.createdByName}</span>}
-                {canManage && it.status === "open" && busy !== it.id && (
-                  <span className="ml-auto flex items-center gap-1">
-                    <button onClick={() => setEditing(it.id)} className={quietBtn} title="Change what it is, where, when it's due, who's on it">
-                      <Pencil className="w-3 h-3" /> Edit
-                    </button>
-                    <button onClick={() => void setStatus(it, "done")}
-                      className="px-2 py-1 pointer-coarse:min-h-11 rounded text-caption font-medium text-[var(--state-released-text)] hover:bg-[color-mix(in_srgb,var(--state-released)_10%,transparent)]">Done</button>
-                    <button onClick={() => void voidItem(it)}
-                      className="inline-flex items-center justify-center p-1.5 pointer-coarse:size-11 rounded text-caption font-medium text-[var(--color-text-faint)] hover:text-[var(--state-overdue-text)] hover:bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)]" title="Void: not a real snag" aria-label="Void: not a real snag"><Ban className="w-3.5 h-3.5" /></button>
-                  </span>
-                )}
-                {canManage && it.status !== "open" && busy !== it.id && (
-                  <button onClick={() => void setStatus(it, "open")} className={`ml-auto ${quietBtn}`} title="Back on the open list">
-                    <RotateCcw className="w-3 h-3" /> Reopen
-                  </button>
-                )}
-                {busy === it.id && <Loader2 className="w-3 h-3 animate-spin text-[var(--color-text-muted)] ml-auto" />}
+        {canManage && (
+          <div className="px-4 pt-3 border-b border-[var(--color-border)]">
+            <InlineAddRow fields={addFields} onAdd={onAdd} onPasteRows={onPasteRows} what="punch item" draftKey={`punch-add:${projectId}`} />
+          </div>
+        )}
+        {items.length === 0 ? (
+          <p className="px-4 py-3 text-body text-[var(--color-text-muted)]">Nothing on the punch list.</p>
+        ) : (
+          <ul className="divide-y divide-[var(--color-border)]">
+            {open.map(row)}
+            {closed.length > 0 && (
+              <li className="px-4 py-1.5">
+                <button onClick={() => setShowClosed((v) => !v)} aria-expanded={showClosed} className={foldBtn}>
+                  <ChevronRight className={`w-4 h-4 transition-transform ${showClosed ? "rotate-90" : ""}`} />
+                  {[closed.filter((i) => i.status === "done").length, closed.filter((i) => i.status === "void").length].map((n, i) => n ? `${n} ${i ? "void" : "done"}` : null).filter(Boolean).join(", ")}
+                </button>
               </li>
-            );
-          })}
-        </ul>
-      )}
+            )}
+            {showClosed && closed.map(row)}
+          </ul>
+        )}
       </div>
     </section>
   );
@@ -1142,24 +1192,29 @@ function PunchEditor({ item, parties, people, actor, setErr, onCancel, onSaved }
     onSaved();
   };
   return (
-    <div className="space-y-2 text-caption">
-      <input value={title} onChange={(e) => setTitle(e.target.value)} aria-label="What it is" autoFocus className={`${fieldCls} w-full`} />
-      <div className="flex items-center gap-2 flex-wrap">
-        <input value={location} onChange={(e) => setLocation(e.target.value)} placeholder="Where" aria-label="Where" className={`${fieldCls} flex-1 min-w-36`} />
-        <input type="date" value={due} onChange={(e) => setDue(e.target.value)} aria-label="Due" className={`${fieldCls} [color-scheme:light] dark:[color-scheme:dark]`} />
-        <input value={assignee} onChange={(e) => setAssignee(e.target.value)} placeholder="Who's on it" aria-label="Who's on it" list={listId} className={`${fieldCls} w-40`} />
+    <div className="space-y-3 text-body">
+      <label className="block"><span className={fieldLabel}>Punch item</span>
+        <input value={title} onChange={(e) => setTitle(e.target.value)} autoFocus className={`${fieldCls} w-full`} /></label>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <label className="block min-w-0"><span className={fieldLabel}>Where</span>
+          <input value={location} onChange={(e) => setLocation(e.target.value)} className={`${fieldCls} w-full`} /></label>
+        <label className="block min-w-0"><span className={fieldLabel}>Due</span>
+          <input type="date" value={due} onChange={(e) => setDue(e.target.value)} className={`${fieldCls} w-full [color-scheme:light] dark:[color-scheme:dark]`} /></label>
+        <label className="block min-w-0"><span className={fieldLabel}>Who&apos;s on it</span>
+          <input value={assignee} onChange={(e) => setAssignee(e.target.value)} list={listId} className={`${fieldCls} w-full`} /></label>
         <datalist id={listId}>{people.map((p) => <option key={p} value={p} />)}</datalist>
         {pick.length > 0 && (
-          <select value={partyId} onChange={(e) => setPartyId(e.target.value)} aria-label="Contractor" className={fieldCls}>
-            <option value="">No contractor</option>
-            {pick.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-          </select>
+          <label className="block min-w-0"><span className={fieldLabel}>Contractor</span>
+            <select value={partyId} onChange={(e) => setPartyId(e.target.value)} className={`${fieldCls} w-full`}>
+              <option value="">No contractor</option>
+              {pick.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select></label>
         )}
       </div>
       <div className="flex items-center justify-end gap-2">
-        <button onClick={onCancel} className="inline-flex items-center justify-center gap-1.5 h-8 pointer-coarse:h-11 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>
+        <button onClick={onCancel} className="inline-flex items-center justify-center gap-1.5 h-10 pointer-coarse:h-11 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>
         <button onClick={() => void save()} disabled={saving}
-          className="h-8 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-caption font-medium hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
+          className="h-10 pointer-coarse:h-11 inline-flex items-center gap-1 px-3.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-body font-medium hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
           {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />} {saving ? "Saving" : "Save"}
         </button>
       </div>

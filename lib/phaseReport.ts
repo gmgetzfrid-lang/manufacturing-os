@@ -22,6 +22,7 @@ import { woOf } from "@/lib/workOrderCrew";
 import { originalPlan } from "@/lib/closeoutStatus";
 import { noEmDash } from "@/lib/noEmDash";
 import { discoveryOf } from "@/lib/discovery";
+import type { ExportBlock, ExportCell, ExportDoc, ExportSection } from "@/lib/reportExport";
 
 export interface CostLine { id: string; name: string; cost_type?: string | null; budget: number | null; phase_id?: string | null; status?: string | null }
 export interface CostEntry { cost_account_id: string; entry_type: string; amount: number | null; entry_date: string | null; status?: string | null; phase_id?: string | null }
@@ -378,8 +379,49 @@ const dayWords = (dayKey: string) => { const [y, m, d] = dayKey.split("-").map(N
 const dateTime = (t: number, tz: string) => `${fmtInTz(t, tz, { weekday: "short", month: "short", day: "numeric" })}, ${fmtInTz(t, tz, { hour: "numeric", minute: "2-digit", hour12: true })}`;
 const hrs = (h: number) => `${Math.round(h * 10) / 10} h`;
 
+/** Hours of calendar time, and over a day the days too: "791.4 h (33
+ *  days)", "33.5 h (1.4 days)". "791 h" alone means nothing at a glance.
+ *  The size only: the caller says late or early. */
+export function hoursDays(h: number): string {
+  const a = Math.abs(h);
+  if (a < 24) return hrs(a);
+  const d = a / 24 < 10 ? Math.round((a / 24) * 10) / 10 : Math.round(a / 24);
+  return `${hrs(a)} (${d} day${d === 1 ? "" : "s"})`;
+}
+
 /** "Sat, Oct 24 · Night" */
 export const shiftLabel = (r: ShiftRow) => `${dayWords(r.dayKey)} · ${r.kind === "day" ? "Day" : "Night"}`;
+
+/** A line of the shift-by-shift chart: one shift, or a run of shifts in a
+ *  row that all say the same thing. */
+export type ShiftLine = { kind: "shift"; row: ShiftRow } | { kind: "same"; rows: ShiftRow[] };
+
+/** The shift rows as drawn: three or more shifts in a row with the same
+ *  plan, done and added work, and nothing marked on them (the plan's end,
+ *  the finish, now), are one line ("Sun, Nov 1 to Mon, Nov 9: no change,
+ *  18 shifts"), never a column of identical rows. */
+export function shiftLines(rows: ShiftRow[], min = 3): ShiftLine[] {
+  const quiet = (r: ShiftRow) => !r.planEnds && !r.finishes && !r.current;
+  const same = (a: ShiftRow, b: ShiftRow) => a.plan === b.plan && a.done === b.done && a.addedKnown === b.addedKnown && a.addedDone === b.addedDone;
+  const out: ShiftLine[] = [];
+  for (let i = 0; i < rows.length;) {
+    let j = i;
+    if (quiet(rows[i])) while (j + 1 < rows.length && quiet(rows[j + 1]) && same(rows[i], rows[j + 1])) j++;
+    if (j - i + 1 >= min) out.push({ kind: "same", rows: rows.slice(i, j + 1) });
+    else for (let k = i; k <= j; k++) out.push({ kind: "shift", row: rows[k] });
+    i = j + 1;
+  }
+  return out;
+}
+
+/** "Sun, Nov 1 to Mon, Nov 9": a run's days, with the shift named only
+ *  where the run starts on a night or ends on a day. */
+export function runLabel(rows: ShiftRow[]): string {
+  const a = rows[0], b = rows[rows.length - 1];
+  const from = `${dayWords(a.dayKey)}${a.kind === "night" ? " Night" : ""}`;
+  const to = `${dayWords(b.dayKey)}${b.kind === "day" ? " Day" : ""}`;
+  return `${from} to ${to}`;
+}
 
 
 /** What the chart shows, in words: what the gray is measured from, how the
@@ -414,7 +456,7 @@ export function phaseSectionHtml(s: PhaseStats, tz: string, now: number,
     return `<div style="${FONT}font-size:13px;color:${AMBER};margin-top:8px;padding:8px 10px;border:1px solid #fcd34d;background:#fffbeb;"><b>${esc(noScheduleWords(s.phase, now, tz))}.</b> Nothing to measure until its schedule is imported.</div>` + moneyHtml(s);
   }
   const late = s.finishedAt != null && s.plannedFinish != null ? s.finishedAt - s.plannedFinish : null;
-  const lateWords = late == null ? null : Math.abs(late) < 1_800_000 ? "on plan" : `${hrs(Math.abs(late) / 3_600_000)} ${late > 0 ? "after" : "before"} plan`;
+  const lateWords = late == null ? null : Math.abs(late) < 1_800_000 ? "on plan" : `${hoursDays(late / 3_600_000)} ${late > 0 ? "after" : "before"} plan`;
   const gap = s.actualPct - s.plannedPct;
   const left = s.budget - s.spent;
   const notAll = s.missing.length > 0;
@@ -438,14 +480,21 @@ export function phaseSectionHtml(s: PhaseStats, tz: string, now: number,
   if (s.shifts.length) {
     html += h2("Progress against the original plan, shift by shift");
     html += `<div style="${FONT}font-size:11px;color:${MUTED};margin:0 0 6px;line-height:1.45;">${chartKey(s, tz).map(esc).join("<br>")}</div>`;
+    // A run of shifts that all say the same is one line: its days and how
+    // many shifts, then the same bars and numbers once.
     html += `<table cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;${FONT}font-size:11.5px;">` +
-      s.shifts.map((r) => {
+      shiftLines(s.shifts).map((line) => {
+        const r = line.kind === "shift" ? line.row : line.rows[0];
         const red = behindAt(r);
         const doneColor = red ? RED : GREEN;
         const planCell = r.plan != null ? bar(r.plan, "#94a3b8") : `<div style="font-size:10px;color:${MUTED};">plan done</div>`;
         const doneCell = r.done != null ? bar(r.done, doneColor) : `<div style="font-size:10px;color:${MUTED};">to come</div>`;
         const added = r.addedKnown > 0 ? `<div style="font-size:10px;color:${AMBER};">added ${hrs(r.addedDone ?? 0)} of ${hrs(r.addedKnown)}</div>` : "";
-        return `<tr${r.kind === "night" ? ` style="background:#f8fafc;"` : ""}><td style="padding:2px 6px 2px 0;white-space:nowrap;color:${INK};">${esc(shiftLabel(r))}${r.planEnds && s.plannedFinish != null ? `<div style="font-size:10px;font-weight:bold;color:${NAVY};">plan finish ${esc(fmtInTz(s.plannedFinish, tz, { hour: "numeric", minute: "2-digit", hour12: true }))}</div>` : ""}${r.finishes && s.finishedAt != null ? `<div style="font-size:10px;font-weight:bold;color:${GREEN};">all done ${esc(fmtInTz(s.finishedAt, tz, { hour: "numeric", minute: "2-digit", hour12: true }))}</div>` : ""}${r.current ? `<div style="font-size:10px;color:${MUTED};">now</div>` : ""}</td>` +
+        const name = line.kind === "same"
+          ? `<b>${esc(runLabel(line.rows))}</b><div style="font-size:10px;color:${MUTED};">no change, ${line.rows.length} shifts</div>`
+          : `${esc(shiftLabel(r))}${r.planEnds && s.plannedFinish != null ? `<div style="font-size:10px;font-weight:bold;color:${NAVY};">plan finish ${esc(fmtInTz(s.plannedFinish, tz, { hour: "numeric", minute: "2-digit", hour12: true }))}</div>` : ""}${r.finishes && s.finishedAt != null ? `<div style="font-size:10px;font-weight:bold;color:${GREEN};">all done ${esc(fmtInTz(s.finishedAt, tz, { hour: "numeric", minute: "2-digit", hour12: true }))}</div>` : ""}${r.current ? `<div style="font-size:10px;color:${MUTED};">now</div>` : ""}`;
+        const shade = line.kind === "same" ? ` style="border-top:1px solid ${RULE};border-bottom:1px solid ${RULE};"` : r.kind === "night" ? ` style="background:#f8fafc;"` : "";
+        return `<tr${shade}><td style="padding:2px 6px 2px 0;white-space:nowrap;color:${INK};">${name}</td>` +
           `<td style="padding:2px 0;">${planCell}<div style="height:2px;font-size:0;line-height:0;">&nbsp;</div>${doneCell}</td>` +
           `<td style="padding:2px 0 2px 8px;white-space:nowrap;text-align:right;color:${MUTED};" width="22%">${r.plan != null ? `${r.plan}%` : "past plan"}${r.done != null ? ` / <b style="color:${doneColor};">${r.done}%</b>${r.plan == null && red ? ` <b style="color:${RED};">late</b>` : ""}` : ""}${added}</td></tr>`;
       }).join("") + `</table>`;
@@ -563,3 +612,111 @@ export function phaseReportText(input: { project: string; picked: PhaseStats | n
 /** The close-out's "How the job did": the same numbers, progress and money. */
 export const howItDidHtml = (s: PhaseStats, tz: string, now: number, opts: { chart?: boolean } = {}) =>
   `<div style="${FONT}color:${INK};max-width:820px;margin:18px auto 0;">${h2(s.phase ? `How ${s.phase.name} did` : "How the job did")}${phaseSectionHtml(s, tz, now, opts)}</div>`;
+
+// ─── The close-out as printed and sent ───────────────────────────────────
+
+type TableBlock = Extract<ExportBlock, { k: "table" }>;
+const cellOf = (c: ExportCell | undefined) => (c == null ? "" : typeof c === "string" ? c : c.t);
+const withT = (c: ExportCell, t: string): ExportCell => (typeof c === "string" ? t : { ...c, t });
+/** A note longer than this goes under its row, not in a narrow column. */
+const LONG_NOTE = 40;
+
+/** An hours figure over a day says the days too: "+791.4 h" to "+791.4 h
+ *  (33 days)", "made up 26 h" to "made up 26 h (1.1 days)". Anything else
+ *  is left as it is. */
+export function withDays(s: string): string {
+  const m = /^(\D*?)(\d+(?:\.\d+)?) h$/.exec(s);
+  return m && Number(m[2]) >= 24 ? `${m[1]}${hoursDays(Number(m[2]))}` : s;
+}
+
+function mapCol(b: TableBlock, head: string, f: (c: ExportCell) => ExportCell): TableBlock {
+  const j = b.head.indexOf(head);
+  return j < 0 ? b : { ...b, rows: b.rows.map((r) => r.map((c, k) => (k === j ? f(c) : c))) };
+}
+const daysCell = (c: ExportCell) => withT(c, withDays(cellOf(c)));
+
+/** Jobs cancelled the same way (moved to the same place, with the same
+ *  note): one row that counts them and still lists each one. */
+export function collapseCancelled(b: TableBlock): TableBlock {
+  const [job, moved, note, when] = ["Job", "Moved to", "Note", "Cancelled"].map((h) => b.head.indexOf(h));
+  if ([job, moved, note, when].some((j) => j < 0)) return b;
+  const groups = new Map<string, ExportCell[][]>();
+  for (const r of b.rows) {
+    const k = `${cellOf(r[moved])}\u0000${cellOf(r[note])}`;
+    groups.set(k, [...(groups.get(k) ?? []), r]);
+  }
+  const rows = [...groups.values()].map((rs) => {
+    if (rs.length < 2) return rs[0];
+    const names = new Map<string, number>();
+    for (const r of rs) names.set(cellOf(r[job]), (names.get(cellOf(r[job])) ?? 0) + 1);
+    const out = [...rs[0]];
+    out[job] = { t: `${rs.length} jobs`, bold: true, sub: [{ t: [...names].map(([n, c]) => (c > 1 ? `${n} (${c} times)` : n)).join("; ") }] };
+    out[when] = [...new Set(rs.map((r) => cellOf(r[when])).filter(Boolean))].join("; ");
+    return out;
+  });
+  return { ...b, rows };
+}
+
+/** A table whose notes run long: each note goes on a line of its own under
+ *  its row's name (the wide column), not in a narrow column; a short column
+ *  (the hours, the date) leads the row instead, so every row still starts
+ *  with its key figure. `always`: even when the notes are short. */
+export function noteUnder(b: TableBlock, noteHead: string, leadHead: string, always = false): TableBlock {
+  const n = b.head.indexOf(noteHead), l = b.head.indexOf(leadHead);
+  if (n <= 0 || l <= 0 || (!always && !b.rows.some((r) => cellOf(r[n]).length > LONG_NOTE))) return b;
+  const order = [l, 0, ...b.head.map((_, j) => j).filter((j) => j !== 0 && j !== l && j !== n)];
+  const pick = <T,>(xs: T[] | undefined) => (xs ? order.map((j) => xs[j]) : undefined);
+  const name = (r: ExportCell[]): ExportCell => {
+    const text = cellOf(r[n]).trim();
+    const c0 = r[0] ?? "";
+    if (!text) return c0;
+    const o: Exclude<ExportCell, string> = typeof c0 === "string" ? { t: c0 } : c0;
+    return { ...o, sub: [...(o.sub ?? []), { t: `${noteHead}: ${text}`, italic: noteHead === "Note" }] };
+  };
+  return {
+    ...b,
+    head: order.map((j) => b.head[j]),
+    align: pick(b.align),
+    textLabels: pick(b.textLabels),
+    nowrap: b.nowrap?.map((j) => order.indexOf(j)).filter((j) => j >= 0),
+    // A blank first cell reads as "continues the row above": never blank.
+    rows: b.rows.map((r) => order.map((j) => (j === 0 ? name(r) : j === l && !cellOf(r[j]) ? "-" : r[j] ?? ""))),
+  };
+}
+
+function blockForPrint(id: string | undefined, b: ExportBlock): ExportBlock {
+  if (b.k === "stats" && id === "lookback") {
+    // Measured from the original plan's finish (lib/lookBack), as Final
+    // standing is: named so, and a figure from a forecast says it is one.
+    const forecast = b.items.some((x) => x.label === "Forecast finish");
+    return { ...b, items: b.items.map((x) => (x.label === "Planned finish" ? { ...x, label: "Original plan finish" }
+      : /^(Late|Ahead) by$/.test(x.label) ? { ...x, label: forecast ? `Forecast ${x.label.toLowerCase()}` : x.label, value: withDays(x.value) } : x)) };
+  }
+  if (b.k !== "table") return b;
+  if (id === "lookback") return mapCol(b, "Hours lost", daysCell);
+  if (id === "setbacks") return noteUnder(mapCol(b, "Lost", daysCell), "Why", "Lost");
+  if (id === "chain") return noteUnder(mapCol(b, "Added", daysCell), "Why", "Added");
+  if (id === "cancelled") return noteUnder(collapseCancelled(b), "Note", "Cancelled", true);
+  return b;
+}
+
+/** The close-out as printed, copied and sent: the answer first. Where the
+ *  time went (late by, hours by cause) comes right under the opening
+ *  tiles; jobs cancelled the same way are one counted row that lists them;
+ *  a long note is a line under its row; hours over a day say days too.
+ *  Nothing is left out: every section, table and word is still there. */
+export function closeoutPrint(d: ExportDoc): ExportDoc {
+  // Final standing names both plans: the schedule's planned finish as it is
+  // now (re-planned dates and added work in it), and the hours after the
+  // original plan (the baseline as saved), the same figure as Late by.
+  const days = (t: string) => t.replace(/^Planned finish /, "Current plan finish ")
+    .replace(/(\d+(?:\.\d+)?) h (after|before) plan/g, (_, h: string, w: string) => `${hoursDays(Number(h))} ${w} the original plan`)
+    .replace(/\(on plan\)/, "(on the original plan)");
+  const sections: ExportSection[] = d.sections.map((s) => ({ ...s, sub: s.id === "final" && s.sub ? days(s.sub) : s.sub, blocks: s.blocks.map((b) => blockForPrint(s.id, b)) }));
+  const at = sections.findIndex((s) => s.id === "lookback");
+  if (at > 0) {
+    const [lb] = sections.splice(at, 1);
+    sections.splice(sections.findIndex((s) => s.id === "final") + 1, 0, lb);
+  }
+  return { ...d, sections };
+}

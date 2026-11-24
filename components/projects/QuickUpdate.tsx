@@ -31,6 +31,7 @@ import FileThumb from "@/components/ui/FileThumb";
 import { useFileDrag } from "@/hooks/useFileDrag";
 import { tryUpload } from "@/lib/uploadRetry";
 import { sayError } from "@/components/projects/sayError";
+import { MoreDetails } from "@/components/ui/MoreDetails";
 
 /** A picked file's size: 1.2 MB, 340 KB. */
 const sizeOf = (n: number) => (n >= 1024 * 1024 ? `${(n / (1024 * 1024)).toFixed(1)} MB` : n >= 1024 ? `${Math.round(n / 1024)} KB` : `${n} B`);
@@ -205,6 +206,11 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
     if (latest && from.id === "now") setFrom({ id: "shift", w: shiftAt(Math.min(latest, Date.now()), tz, times), auto: true });
     if (fileRef.current) fileRef.current.value = "";
   };
+  // What's folded in More details, and how much of it is set.
+  const aboutShown = !!note.trim() || !!parts?.length;
+  const moreTotal = (aboutShown ? 1 : 0) + 1;
+  const moreFilled = (parts?.length ? (skip.size > 0 ? 1 : 0) : aboutShown && from.id === "shift" ? 1 : 0) + (words.length ? 1 : 0);
+  const moreKey = `${from.id === "shift" && from.auto ? "file" : ""}${parts?.length ? "email" : ""}`;
   // Drop files on the note box, as well as Add a file.
   const drag = useFileDrag((fs) => void addFiles(fs), !!fileBusy || busy);
 
@@ -441,33 +447,6 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
               {hearing && <div className="mt-0.5 italic text-[var(--color-text-muted)]">Hearing: {hearing}</div>}
             </div>
           )}
-          <div className="text-caption text-[var(--color-text-muted)]">
-            <button type="button" onClick={() => setShowWords((v) => !v)} aria-expanded={showWords} className="text-[var(--color-accent-text)] hover:underline">Your words ({words.length})</button>
-            {showWords && (
-              <div className="mt-1 space-y-1.5">
-                <div>What talk-to-text keeps getting wrong, and what you meant. It&apos;s fixed as you talk, and the reader knows it.</div>
-                {words.length > 0 && (
-                  <ul className="flex flex-wrap gap-1.5">
-                    {words.map((w) => (
-                      <li key={w.said} className="inline-flex items-center gap-1 rounded-full border border-[var(--color-border)] px-2 py-0.5">
-                        “{w.said}” = {w.as}
-                        <button type="button" onClick={() => keepWords(words.filter((x) => x !== w))} aria-label={`Forget “${w.said}”`} className="ui-hit p-0.5 hover:text-[var(--state-overdue-text)]"><X className="w-3 h-3" /></button>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-                <form onSubmit={(e) => { e.preventDefault(); addWord(); }} className="flex flex-wrap items-center gap-1.5">
-                  <span>It hears</span>
-                  <input value={teach.said} onChange={(e) => setTeach((t) => ({ ...t, said: e.target.value }))} placeholder="mee too" aria-label="It hears"
-                    className="h-8 pointer-coarse:h-11 w-28 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-caption text-[var(--color-text)]" />
-                  <span>I mean</span>
-                  <input value={teach.as} onChange={(e) => setTeach((t) => ({ ...t, as: e.target.value }))} placeholder="E-2" aria-label="I mean"
-                    className="h-8 pointer-coarse:h-11 w-24 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-caption text-[var(--color-text)]" />
-                  <button type="submit" disabled={!teach.said.trim() || !teach.as.trim()} className="h-8 pointer-coarse:h-11 rounded-md border border-[var(--color-border-strong)] px-2.5 font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">Add word</button>
-                </form>
-              </div>
-            )}
-          </div>
           {fileBusy && <div className="inline-flex items-center gap-1.5 text-caption font-medium text-[var(--color-text-muted)]"><Loader2 className="w-3.5 h-3.5 animate-spin" /> {fileBusy}</div>}
           {files.length > 0 && (
             <div className="space-y-1 text-caption text-[var(--color-text-muted)]">
@@ -492,6 +471,11 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
               {files.some((f) => f.chars != null) && <div>Their words are in the box above: read them over and fix anything before you tap Read it.</div>}
             </div>
           )}
+          {/* Filled in already, folded: which shift the notes are about (now,
+              or the shift a file was saved in), the parts of a pasted email
+              to read, and your words for tags. Opens by itself when the app
+              picked a shift from a file or found shifts in your note. */}
+          <MoreDetails key={moreKey} defaultOpen={moreKey !== ""} total={moreTotal} filled={moreFilled}>
           {/* A pasted email: the shifts it names, and its sections to read or leave out. */}
           {parts && parts.length > 0 && (
             <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2.5 py-2 text-caption space-y-1.5">
@@ -553,6 +537,34 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
               </div>
             </div>
           )}
+          <div className="text-caption text-[var(--color-text-muted)]">
+            <button type="button" onClick={() => setShowWords((v) => !v)} aria-expanded={showWords} className="text-[var(--color-accent-text)] hover:underline">Your words ({words.length})</button>
+            {showWords && (
+              <div className="mt-1 space-y-1.5">
+                <div>What talk-to-text keeps getting wrong, and what you meant. It&apos;s fixed as you talk, and the reader knows it.</div>
+                {words.length > 0 && (
+                  <ul className="flex flex-wrap gap-1.5">
+                    {words.map((w) => (
+                      <li key={w.said} className="inline-flex items-center gap-1 rounded-full border border-[var(--color-border)] px-2 py-0.5">
+                        “{w.said}” = {w.as}
+                        <button type="button" onClick={() => keepWords(words.filter((x) => x !== w))} aria-label={`Forget “${w.said}”`} className="ui-hit p-0.5 hover:text-[var(--state-overdue-text)]"><X className="w-3 h-3" /></button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                <form onSubmit={(e) => { e.preventDefault(); addWord(); }} className="flex flex-wrap items-center gap-1.5">
+                  <span>It hears</span>
+                  <input value={teach.said} onChange={(e) => setTeach((t) => ({ ...t, said: e.target.value }))} placeholder="mee too" aria-label="It hears"
+                    className="h-8 pointer-coarse:h-11 w-28 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-caption text-[var(--color-text)]" />
+                  <span>I mean</span>
+                  <input value={teach.as} onChange={(e) => setTeach((t) => ({ ...t, as: e.target.value }))} placeholder="E-2" aria-label="I mean"
+                    className="h-8 pointer-coarse:h-11 w-24 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-caption text-[var(--color-text)]" />
+                  <button type="submit" disabled={!teach.said.trim() || !teach.as.trim()} className="h-8 pointer-coarse:h-11 rounded-md border border-[var(--color-border-strong)] px-2.5 font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">Add word</button>
+                </form>
+              </div>
+            )}
+          </div>
+          </MoreDetails>
           {err && <div role="alert" className="text-caption font-medium text-[var(--state-overdue-text)] flex items-start gap-1.5"><CircleAlert aria-hidden className="w-3.5 h-3.5 shrink-0 mt-0.5" /><span>{err}</span></div>}
           {done && (
             <div role="status" className={`border-l-2 pl-3 py-1 text-caption text-[var(--color-text)] ${done.failed.length ? "border-[var(--state-overdue)]" : "border-[var(--state-released)]"}`}>

@@ -4,6 +4,7 @@
 
 import { describe, it, expect } from "vitest";
 import { buildLookBack } from "@/lib/lookBack";
+import { workSummary } from "@/lib/closeoutStatus";
 import type { Milestone, MilestoneNote } from "@/types/schema";
 
 const UTC = "UTC";
@@ -69,5 +70,27 @@ describe("the look back", () => {
   });
   it("crews: done, on plan, hours lost on their own", () => {
     expect(lb.crews).toEqual([{ crew: "Schultz", done: 3, onPlan: 1, lostH: 6 }, { crew: "Ancon", done: 3, onPlan: 1, lostH: 7 }]);
+  });
+});
+
+describe("the finish, as Final standing measures it", () => {
+  // Work found on the job, planned past the baseline's end: each step is
+  // measured against its own plan, the job against the plan it was signed
+  // off on. Final standing (workSummary) and Late by say one number.
+  const found = step("weld", "v7", 30, 40, 36, 44, { name: "Weld repair", responsibleParty: "Schultz", baselineStartAt: undefined, baselineFinishAt: undefined,
+    // The record keeps the discovery as a nested object; the type says flat values.
+    attributes: { discovery: { id: "d1", seq: 1, what: "crack in the nozzle", foundAt: Date.parse(h(30)), impact: { hours: 10 } } } as unknown as Record<string, string | number | boolean | null> });
+  const ms2 = [...ms, found];
+  const lb2 = buildLookBack({ milestones: ms2, notes, now: T0 + 60 * 3_600_000, tz: UTC });
+  it("against the original plan's finish, the same figure as Final standing", () => {
+    expect(lb2.finish.baseline).toBe(Date.parse(h(30)));
+    expect(lb2.finish.slipH).toBe(14);
+    expect(lb2.finish.slipH).toBe(workSummary(ms2).hoursAfterPlan);
+    expect(lb2.finish.basis).toEqual({ kind: "baseline", savedAt: null });
+  });
+  it("a step taken off the schedule isn't in it", () => {
+    const off = buildLookBack({ milestones: [...ms, { ...found, status: "planned", percentComplete: 0, actualStartAt: undefined, actualAt: undefined, cancelledAt: h(20) } as Milestone], notes, now: T0 + 60 * 3_600_000, tz: UTC });
+    expect(off.steps.map((x) => x.id)).not.toContain("weld");
+    expect(off.finish).toMatchObject({ slipH: 6, done: true });
   });
 });

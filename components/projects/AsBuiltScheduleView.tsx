@@ -2,9 +2,12 @@
 
 // AsBuiltScheduleView - the job as it was really worked (As-built), and the
 // schedule suggested for next time made from it (Suggested), side by side
-// behind one toggle. As-built: each activity's shifts with progress, the
-// shifts it sat (and why, in the crew's own comments), the shifts it was
-// ready but its crew was elsewhere (and where), the crews and their hands
+// behind one toggle. As-built opens on each work order against its own
+// plan, most late first, phase by phase (how late, the shifts it waited);
+// opened, a work order shows each activity's shifts with progress in its
+// crew's color, the shifts it sat (and why, in the crew's own comments) and
+// the shifts it was ready but its crew was elsewhere (and where). Shift by
+// shift is the whole job on one grid, with the crews and their hands
 // against the work. Suggested: this year's job with the found work in, the
 // waits planned for, a person's changes ("Tell the schedule", hands typed
 // in), the crew load and the hands it needs. lib/asBuiltWork, lib/nextPlan.
@@ -13,14 +16,15 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Loader2, Send, Undo2, Check, X, Download, Printer, CalendarClock, ChevronRight, ChevronsDownUp, ChevronsUpDown, Maximize2, Minimize2, CalendarDays } from "lucide-react";
 import type { Milestone, MilestoneNote } from "@/types/schema";
 import type { CancelledJob } from "@/lib/cancelledJobs";
-import type { ProjectPhase } from "@/lib/projectPhases";
+import { phaseIndex, type ProjectPhase } from "@/lib/projectPhases";
 import type { ShiftTimes } from "@/lib/shiftReport";
 import type { ShiftRecord } from "@/lib/shiftRecord";
 import type { ProgressLogRow } from "@/lib/progressHistory";
-import { buildAsBuilt, laneSteps, stepBar, type BuiltStep } from "@/lib/asBuiltSchedule";
+import { buildAsBuilt, laneSteps, stepBar, BUILT_WORD, lateOf, answerOf, phaseBlocks, mostLateFirst, type BuiltStep, type PhaseBlock } from "@/lib/asBuiltSchedule";
 import { buildAsBuiltWork, shiftKey, type AsBuiltWork, type WaitRun } from "@/lib/asBuiltWork";
 import { nextPlan, finishLever, dayNumber, shiftParts, rampWarning, CREW_RULE, type NextPlan, type PlanChange, type CrewSize } from "@/lib/nextPlan";
 import { checkPlan, planRisks, CHECK_H, type PlanCheck, type PlanRisk } from "@/lib/nextPlanCheck";
+import { replayAsBuilt, oneOffDelays, CAPACITY_RULE, type Replay, type ReplayInput, type OneOffDelay } from "@/lib/asBuiltReplay";
 import { loadNextPlanSettings, saveNextPlanChanges, type NextPlanSettings } from "@/lib/nextPlanStore";
 import { planLessons, lessonChanges, lessonEffects, toTarget, type Lesson } from "@/lib/nextPlanLessons";
 import { msProjectXml, asBuiltTasks, suggestedTasks } from "@/lib/msProject";
@@ -32,13 +36,15 @@ import { loadProgressLog } from "@/lib/progressHistory";
 import { notesFor } from "@/lib/milestones";
 import { loadShiftRecords } from "@/lib/shiftRecord";
 import { loadManpowerSettings, companyOf as companyOfCrew, type ManpowerSettings } from "@/lib/manpower";
-import { fmtInTz } from "@/lib/scheduleTz";
+import { fmtInTz, startOfDay, addDays } from "@/lib/scheduleTz";
+import { hoursDays } from "@/lib/phaseReport";
 import { supabase } from "@/lib/supabase";
 import { useDraft } from "@/hooks/useDraft";
 import { sayError } from "@/components/projects/sayError";
 import { SubTabs } from "@/components/projects/SubTabs";
 import { SkeletonRows } from "@/components/ui/Skeleton";
 import { ErrorNote } from "@/components/ui/ErrorNote";
+import HelpTooltip from "@/components/ui/HelpTooltip";
 
 /** Width of one shift on the chart: fitted to the space it has (see the
  *  view), between 14 and 56 px. */
@@ -74,6 +80,8 @@ export default function AsBuiltScheduleView(p: Props) {
   const [err, setErr] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [cols, setCols] = useState(false);
+  // As-built: each work order against its own plan, or the shift-by-shift grid.
+  const [mode, setMode] = useState<"orders" | "shifts">("orders");
   const [full, setFull] = useState(false);
   // The view's own box (shown once the job is read): its width sets the chart's.
   const [box, setBox] = useState<HTMLDivElement | null>(null);
@@ -175,15 +183,15 @@ export default function AsBuiltScheduleView(p: Props) {
         <SubTabs label="Schedule" value={view} onChange={(k) => setView(k)} className="mr-2"
           items={[{ id: "built" as const, label: "As-built" }, { id: "next" as const, label: "Suggested for next time" }]} />
         <button type="button" onClick={() => setFull(!full)} className={btnQuiet}>{full ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />} {full ? "Close full screen" : "Full screen"}</button>
-        <button type="button" aria-pressed={cols} onClick={() => setCols(!cols)} className={btnQuiet}><CalendarDays className="w-4 h-4" /> {cols ? "Hide dates" : "Show dates"}</button>
+        {(view === "next" || mode === "shifts") && <button type="button" aria-pressed={cols} onClick={() => setCols(!cols)} className={btnQuiet}><CalendarDays className="w-4 h-4" /> {cols ? "Hide dates" : "Show dates"}</button>}
         {p.onExcel && view === "built" && <button type="button" onClick={p.onExcel} className={btnQuiet}><Download className="w-4 h-4" /> Excel</button>}
         <button type="button" onClick={() => void toProject()} className={btnQuiet} title="A file Microsoft Project opens: File, Open, XML Format"><Download className="w-4 h-4" /> Microsoft Project</button>
         {p.onPrint && <button type="button" onClick={p.onPrint} className={btnQuiet}><Printer className="w-4 h-4" /> Print</button>}
         {msg && <ErrorNote compact title={msg} next="" />}
       </div>
       {view === "built"
-        ? <BuiltView {...p} cols={cols} built={built} work={work} colorOf={colorOf} changes={changes} onAdd={(c) => void saveChanges([...changes, c])} />
-        : <NextView {...p} cols={cols} built={built} work={work} plan={plan} colorOf={colorOf} changes={changes} applied={applied} check={check} risks={risks} lessons={lessons} skipped={skipped} settings={data.settings} onChanges={(n) => void saveChanges(n)}
+        ? <BuiltView {...p} cols={cols} built={built} work={work} colorOf={colorOf} changes={changes} onAdd={(c) => void saveChanges([...changes, c])} mode={mode} onMode={setMode} boxW={boxW} />
+        : <NextView {...p} cols={cols} built={built} work={work} notes={data.notes} plan={plan} colorOf={colorOf} changes={changes} applied={applied} check={check} risks={risks} lessons={lessons} skipped={skipped} settings={data.settings} onChanges={(n) => void saveChanges(n)}
             onStaffing={(next) => setData({ ...data, settings: { ...data.settings, staffing: next } })} />}
     </div>
     </PxCtx.Provider>
@@ -291,7 +299,7 @@ function FoldAll({ open, total, onAll }: { open: number; total: number; onAll: (
 
 function OrderName({ open, onToggle, children }: { open: boolean; onToggle: () => void; children: React.ReactNode }) {
   return (
-    <button type="button" onClick={onToggle} aria-expanded={open} className="w-full text-left flex items-start gap-1 cursor-pointer">
+    <button type="button" onClick={onToggle} aria-expanded={open} className="w-full text-left flex items-start gap-1 cursor-pointer pointer-coarse:min-h-11">
       <ChevronRight className={`w-4 h-4 mt-0.5 shrink-0 text-[var(--color-text-muted)] transition-transform ${open ? "rotate-90" : ""}`} />
       <span className="min-w-0 flex-1">{children}</span>
     </button>
@@ -302,9 +310,291 @@ const cellAct = "sticky left-0 z-[2] bg-[var(--color-surface)] border-r border-[
 const cellDt = "col-x align-top px-2 py-1.5 text-caption whitespace-nowrap text-[var(--color-text)]";
 const cellN = "col-x align-top px-1.5 py-1.5 text-center font-medium text-caption min-w-[44px]";
 
-// ── As-built ─────────────────────────────────────────────────────────────
+// ── As-built: each work order against its own plan (the default) ────────
+//
+// One row per work order: its full name, planned finish, actual finish,
+// how late against its own planned finish, and the shifts it waited; one
+// bar (the plan a gray box, as built solid, the part past its own planned
+// finish red, the shifts it waited hatched). Most late first. Each phase
+// is its own block, on its own dates, with its own planned-finish line.
+// Crews and shift-by-shift marks show when a row is opened.
 
-function BuiltView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsBuiltWork; colorOf: (c: string) => string; changes: PlanChange[]; onAdd: (c: PlanChange) => void }) {
+const HOUR = 3_600_000;
+type BuiltProps = Props & { built: ReturnType<typeof buildAsBuilt>; work: AsBuiltWork; colorOf: (c: string) => string; changes: PlanChange[]; onAdd: (c: PlanChange) => void };
+type Order = BuiltProps["built"]["orders"][number];
+type Planning = { step: string; run: number } | null;
+/** A phase on screen: its span with a little room each side, and its midnights. */
+interface Block extends PhaseBlock { t0: number; t1: number; days: number[] }
+const NIGHTS = "Night shifts count as waiting only for work that ran on nights (its crew worked that work order on two or more nights). Day work sitting overnight is not waiting.";
+const MARKS = "Each solid mark is a shift where that crew logged progress (at the time set, not when it was typed). Amber hatched: it sat in progress with nothing logged; the reason is the crew's own comments. Gray hatched: everything before it was done, but its crew was elsewhere. Calendar time between start and finish is never counted as work.";
+/** The plan: a gray box with an edge that reads on a sheet (3:1). */
+const PLAN_BOX: React.CSSProperties = { background: "color-mix(in srgb, var(--color-text) 8%, var(--color-surface))", boxShadow: "inset 0 0 0 1.5px var(--color-border-control)" };
+const ACTUAL = "var(--color-main)";
+const LATE = "var(--state-overdue)";
+/** Stripes laid over the bar: the shifts it waited with nothing logged. */
+const WAITED: React.CSSProperties = { background: "repeating-linear-gradient(135deg, transparent 0 3px, var(--color-surface) 3px 6px)" };
+const WAITED_KEY: React.CSSProperties = { background: `repeating-linear-gradient(135deg, ${ACTUAL} 0 3px, var(--color-surface) 3px 6px)` };
+/** Work order, planned finish, actual finish, late by, waited, the bar. */
+const COLS = "grid-cols-[minmax(0,1.6fr)_5.75rem_5.75rem_6.5rem_4.5rem_minmax(0,2.4fr)]";
+const pct = (x: (t: number) => number, a: number, b: number): React.CSSProperties => ({ left: `${x(a)}%`, width: `${Math.max(0.5, x(b) - x(a))}%` });
+/** One shift's mark, a pixel in from each side. */
+const mark = (x: (t: number) => number, a: number, b: number): React.CSSProperties => ({ left: `calc(${x(a)}% + 1px)`, width: `max(2px, calc(${Math.max(0, x(b) - x(a))}% - 2px))` });
+const lowerFirst = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
+
+/** The work orders by phase (lib/asBuiltSchedule phaseBlocks, the same as
+ *  the printout), each on its own dates. */
+function blocksOf(built: BuiltProps["built"], now: number, tz: string): Block[] {
+  return phaseBlocks(built, now).map((b) => {
+    const pad = (b.to - b.from) * 0.015;
+    const t0 = b.from - pad, t1 = b.to + pad;
+    const days: number[] = [];
+    for (let d = addDays(startOfDay(t0, tz), 1, tz), g = 0; d < t1 && g < 400; d = addDays(d, 1, tz), g++) days.push(d);
+    return { ...b, t0, t1, days };
+  });
+}
+
+/** "12 h", "26 h (1.1 days)", "on time (3 h early)", "6 h so far". */
+function LateWords({ item, now, words }: { item: { planFinish: number | null; finish: number | null }; now: number; words?: boolean }) {
+  const { h, sofar } = lateOf(item, now);
+  if (h == null) return <span className="text-[var(--color-text-muted)]">{item.planFinish == null ? "no plan" : "not due yet"}</span>;
+  if (h >= 0.5) return <b className="font-medium text-[var(--state-overdue-text)]">{hoursDays(h)}{words ? " late" : ""}{sofar ? " so far" : ""}</b>;
+  if (sofar) return <span className="text-[var(--color-text)]">due now</span>;
+  return <span className="text-[var(--color-text)]">on time{h <= -0.5 ? <span className="text-[var(--color-text-muted)]"> ({hoursDays(-h)} early)</span> : null}</span>;
+}
+
+function WhenCell({ t, tz }: { t: number | null; tz: string }) {
+  if (t == null) return <span className="text-caption text-[var(--color-text-muted)]">-</span>;
+  return <span className="text-caption text-[var(--color-text)]">{fmtInTz(t, tz, { weekday: "short", month: "numeric", day: "numeric" })}<br />{fmtInTz(t, tz, { hour: "numeric", minute: "2-digit", hour12: true })}</span>;
+}
+
+/** A row's bar area on its phase's dates: a line each midnight, and the
+ *  phase's planned finish as a dark line. */
+function Track({ b, x, children }: { b: Block; x: (t: number) => number; children?: React.ReactNode }) {
+  return (
+    <div className="relative h-7">
+      {b.days.map((t) => <i key={t} aria-hidden className="absolute inset-y-0 border-l border-[var(--color-border)]" style={{ left: `${x(t)}%` }} />)}
+      {children}
+      {b.planFinish != null && <i aria-hidden className="absolute -inset-y-1 border-l-2 border-[var(--color-text)]" style={{ left: `${x(b.planFinish)}%` }} />}
+    </div>
+  );
+}
+
+/** The phase's days over the bars (as many as there's room to read), and
+ *  its planned finish named where its line is. */
+function Axis({ b, x, tz, room }: { b: Block; x: (t: number) => number; tz: string; room: number }) {
+  const step = Math.max(1, Math.ceil(b.days.length / Math.max(2, Math.floor(room / 64))));
+  // Near the right edge a label reads leftward from its line, so it never runs off.
+  const at = (t: number) => (x(t) > 75 ? { st: { right: `${100 - x(t)}%` }, thin: "border-r", thick: "border-r-2" } : { st: { left: `${x(t)}%` }, thin: "border-l", thick: "border-l-2" });
+  return (
+    <div aria-hidden className="relative h-9 overflow-hidden text-caption text-[var(--color-text-muted)]">
+      {b.days.map((t, i) => { if (i % step) return null; const a = at(t); return <span key={t} className={`absolute top-0 px-1 whitespace-nowrap ${a.thin} border-[var(--color-border)]`} style={a.st}>{fmtInTz(t, tz, { month: "short", day: "numeric" })}</span>; })}
+      {b.planFinish != null && (() => { const a = at(b.planFinish); return <span className={`absolute bottom-0 px-1 whitespace-nowrap font-medium text-[var(--color-text)] ${a.thick} border-[var(--color-text)]`} style={a.st}>Plan finish</span>; })()}
+    </div>
+  );
+}
+
+function BuiltView(p: BuiltProps & { mode: "orders" | "shifts"; onMode: (m: "orders" | "shifts") => void; boxW: number }) {
+  const { tz, built, work } = p;
+  const [now] = useState(() => Date.now());
+  const [order, setOrder] = useState<"late" | "plan">("late");
+  const [open, setOpen] = useState<Set<string>>(new Set());
+  const [planning, setPlanning] = useState<Planning>(null);
+  const blocks = useMemo(() => blocksOf(built, now, tz), [built, now, tz]);
+  const idx = useMemo(() => new Map(work.shifts.map((w, i) => [shiftKey(w), i])), [work]);
+  const t = work.totals;
+  // Wide: the numbers in columns beside the bar; narrow: under the name.
+  const wide = p.boxW >= 880;
+  const room = wide ? Math.max(120, Math.round((p.boxW - 420) * 0.6)) : Math.max(120, p.boxW - 32);
+  const all = built.orders.map((o) => o.key);
+  const flip = (k: string) => setOpen((o) => { const n = new Set(o); if (n.has(k)) n.delete(k); else n.add(k); return n; });
+  const sorted = (os: Order[]) => (order === "plan" ? os : mostLateFirst(os, now));
+  const answers = blocks.map((b) => answerOf(b, now));
+
+  return (
+    <div className="space-y-3">
+      <div>
+        {blocks.length === 1 ? (
+          <p className={`text-section font-semibold ${answers[0].late ? "text-[var(--state-overdue-text)]" : "text-[var(--color-text)]"}`}>{answers[0].text}</p>
+        ) : (
+          <p className="text-reading text-[var(--color-text)]">
+            {blocks.map((b, i) => <React.Fragment key={b.name ?? i}>{i > 0 && " · "}<b className="font-medium">{b.name ?? "No phase"}:</b> <span className={answers[i].late ? "font-semibold text-[var(--state-overdue-text)]" : ""}>{lowerFirst(answers[i].text)}</span></React.Fragment>)}
+          </p>
+        )}
+        <p className="mt-0.5 text-caption text-[var(--color-text-muted)]">{built.steps} activities, {built.added} added during the job · sat in progress: {t.waitedSteps} activities, {t.waitedShifts} shifts · ready but not started: {t.readySteps} activities, {t.readyShifts} shifts</p>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+        <div className="flex flex-wrap items-center gap-x-2"><span className="text-caption font-medium text-[var(--color-text-muted)]">Show</span>
+          <Choice label="Show" value={p.mode} onChange={p.onMode} options={[["orders", "Work orders"], ["shifts", "Shift by shift"]] as const} /></div>
+        {p.mode === "orders" && <div className="flex flex-wrap items-center gap-x-2"><span className="text-caption font-medium text-[var(--color-text-muted)]">Order</span>
+          <Choice label="Order" value={order} onChange={setOrder} options={[["late", "Most late first"], ["plan", "Schedule order"]] as const} /></div>}
+        {p.mode === "orders" && (
+          <button type="button" onClick={() => setOpen(open.size >= all.length ? new Set() : new Set(all))} className={btnQuiet}>
+            {open.size >= all.length ? <ChevronsDownUp className="w-4 h-4" /> : <ChevronsUpDown className="w-4 h-4" />} {open.size >= all.length ? "Fold the steps away" : "Show every step"}
+          </button>
+        )}
+      </div>
+
+      {p.mode === "shifts" ? <ShiftGrid {...p} /> : (
+        <>
+          <div className="flex flex-wrap items-center gap-2">
+            <Legend items={[[PLAN_BOX, "Plan"], [{ background: ACTUAL }, "As built"], [{ background: LATE }, "Past its own planned finish"], [WAITED_KEY, "Shifts waited, nothing logged"], [{ borderLeft: "2px solid var(--color-text)", width: 2 }, blocks.some((x) => x.name) ? "The phase's planned finish" : "Planned finish"]]} />
+            <HelpTooltip>{NIGHTS}</HelpTooltip>
+          </div>
+          {blocks.map((b, bi) => {
+            const x = (v: number) => Math.max(0, Math.min(100, ((v - b.t0) / (b.t1 - b.t0)) * 100));
+            return (
+              <section key={b.name ?? bi} className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 sm:px-4 py-3" data-phase-block={b.name ?? ""}>
+                <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
+                  {b.name && <h3 className="text-reading font-semibold text-[var(--color-text)]">{b.name}</h3>}
+                  <span className="text-caption text-[var(--color-text-muted)]">
+                    Planned finish <b className="font-medium text-[var(--color-text)]">{when(b.planFinish, tz)}</b> · {b.finish != null ? <>finished <b className="font-medium text-[var(--color-text)]">{when(b.finish, tz)}</b></> : "not done yet"}
+                    {blocks.length > 1 && <> · <span className={answers[bi].late ? "font-medium text-[var(--state-overdue-text)]" : ""}>{lowerFirst(answers[bi].text)}</span></>} · {b.orders.length} work order{b.orders.length === 1 ? "" : "s"}
+                  </span>
+                </div>
+                {wide ? (
+                  <div className={`mt-2 grid ${COLS} gap-x-3 items-end border-b border-[var(--color-border)] pb-1 text-caption font-medium text-[var(--color-text-muted)]`}>
+                    <span>Work order</span><span>Planned finish</span><span>Actual finish</span><span className="text-right">Late by</span><span className="text-right">Shifts waited</span>
+                    <Axis b={b} x={x} tz={tz} room={room} />
+                  </div>
+                ) : <div className="mt-2 border-b border-[var(--color-border)] pb-1"><Axis b={b} x={x} tz={tz} room={room} /></div>}
+                <div className="divide-y divide-[var(--color-border)]">
+                  {sorted(b.orders).map((o) => (
+                    <React.Fragment key={o.key}>
+                      <OrderRow o={o} b={b} x={x} p={p} now={now} wide={wide} open={open.has(o.key)} onToggle={() => flip(o.key)} />
+                      {open.has(o.key) && <StepsOpen o={o} b={b} x={x} p={p} now={now} wide={wide} idx={idx} planning={planning} setPlanning={setPlanning} />}
+                    </React.Fragment>
+                  ))}
+                </div>
+              </section>
+            );
+          })}
+        </>
+      )}
+    </div>
+  );
+}
+
+/** A work order: its numbers in words, and its one bar. */
+function OrderRow({ o, b, x, p, now, wide, open, onToggle }: { o: Order; b: Block; x: (t: number) => number; p: BuiltProps; now: number; wide: boolean; open: boolean; onToggle: () => void }) {
+  const { tz } = p;
+  const ow = p.work.orders.get(o.key);
+  const added = o.steps.filter((s) => !s.inPlan).length;
+  const pf = o.planFinish, start = o.barStart;
+  const end = o.finish ?? (o.status !== "not_started" ? now : null);
+  const meta = [o.wo ? `WO ${o.wo}` : null, `${o.steps.length} step${o.steps.length === 1 ? "" : "s"}`, added ? `${added} added` : null].filter(Boolean).join(" · ");
+  const name = (
+    <OrderName open={open} onToggle={onToggle}>
+      <span className="block font-medium text-body text-[var(--color-text)]">{o.name}</span>
+      {o.foundOn && <span className="block text-caption text-[var(--color-text-muted)]">Found on {o.foundOn}</span>}
+      <span className="block text-caption text-[var(--color-text-muted)]">{meta}</span>
+    </OrderName>
+  );
+  const bar = (
+    <Track b={b} x={x}>
+      {o.planStart != null && pf != null && <i title={`Plan: ${when(o.planStart, tz)} to ${when(pf, tz)}`} className="absolute top-0.5 h-6 rounded-md" style={{ ...pct(x, o.planStart, pf), ...PLAN_BOX }} />}
+      {start != null && end != null && end > start && (pf == null || start < pf) && (
+        <i title={`As built: ${when(start, tz)} to ${o.finish != null ? when(o.finish, tz) : "still going"}`} className="absolute top-2 h-3 rounded-[3px]" style={{ ...pct(x, start, pf == null ? end : Math.min(end, pf)), background: ACTUAL }} />
+      )}
+      {start != null && end != null && pf != null && end > pf && (
+        <i title={`Past its planned finish: ${hoursDays((end - pf) / HOUR)}`} className="absolute top-2 h-3 rounded-[3px]" style={{ ...pct(x, Math.max(start, pf), end), background: LATE }} />
+      )}
+      {ow?.cells.map((c, i) => (c === "wait" ? <i key={i} title={`${shiftWords(shiftKey(p.work.shifts[i]), p.work, tz)}: work order open, nothing logged`} className="absolute top-2 h-3" style={{ ...pct(x, p.work.shifts[i].start, p.work.shifts[i].end), ...WAITED }} /> : null))}
+    </Track>
+  );
+  const waited = ow?.waited ?? 0;
+  if (wide) {
+    return (
+      <div className={`grid ${COLS} gap-x-3 items-start py-2`} data-order={o.key}>
+        <div className="min-w-0">{name}</div>
+        <WhenCell t={pf} tz={tz} />
+        {o.finish != null ? <WhenCell t={o.finish} tz={tz} /> : <span className="text-caption text-[var(--color-text-muted)]">{BUILT_WORD[o.status].toLowerCase()}</span>}
+        <span className="text-body text-right"><LateWords item={o} now={now} /></span>
+        <span className={`text-body text-right tabular-nums ${waited ? "font-medium text-[var(--state-held-text)]" : "text-[var(--color-text-muted)]"}`}>{waited || "-"}</span>
+        <div className="pt-1">{bar}</div>
+      </div>
+    );
+  }
+  return (
+    <div className="py-2 space-y-1" data-order={o.key}>
+      <div className="flex items-start gap-3"><div className="min-w-0 flex-1">{name}</div><span className="shrink-0 pt-0.5 text-body text-right"><LateWords item={o} now={now} words /></span></div>
+      <div className="pl-5 text-caption text-[var(--color-text-muted)]">
+        Planned finish {when(pf, tz)} · {o.finish != null ? `finished ${when(o.finish, tz)}` : BUILT_WORD[o.status].toLowerCase()}
+        {waited ? <> · <b className="font-medium text-[var(--state-held-text)]">{waited} shift{waited === 1 ? "" : "s"} waited</b></> : null}
+      </div>
+      {bar}
+    </div>
+  );
+}
+
+/** A work order opened: each step, its crew in its color, and a mark for
+ *  each shift it was worked, sat or was ready, on the phase's dates. */
+function StepsOpen({ o, b, x, p, now, wide, idx, planning, setPlanning }: { o: Order; b: Block; x: (t: number) => number; p: BuiltProps; now: number; wide: boolean; idx: Map<string, number>; planning: Planning; setPlanning: (v: Planning) => void }) {
+  const { tz, work } = p;
+  const steps = [...o.steps].sort((a, c) => (a.start ?? a.planStart ?? 0) - (c.start ?? c.planStart ?? 0));
+  const crews = [...new Set(steps.map((s) => work.steps.get(s.id)?.crew).filter((c): c is string => !!c))];
+  const at = (k: string) => { const i = idx.get(k); return i == null ? null : work.shifts[i]; };
+  return (
+    <div className="pb-2" data-order-steps={o.key}>
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 py-1.5 pl-5 text-caption text-[var(--color-text-muted)]">
+        <span className="font-medium text-[var(--color-text)]">Color = crew:</span>
+        {crews.map((c) => <span key={c} className="inline-flex items-center gap-1"><span aria-hidden className="inline-block w-3 h-3 rounded-sm" style={{ background: p.colorOf(c) }} />{c}</span>)}
+        <Legend items={[[WAIT, "In progress, nothing logged"], [READY, "Ready, not started"], [PLAN_BOX, "Plan"]]} />
+        <HelpTooltip>{MARKS}</HelpTooltip>
+      </div>
+      <div className="divide-y divide-[var(--color-border)] border-t border-[var(--color-border)]">
+        {steps.map((s) => {
+          const w = work.steps.get(s.id);
+          if (!w) return null;
+          const waited = w.waits.reduce((n, r) => n + r.shifts, 0) + (w.ready?.shifts.length ?? 0);
+          const took = s.elapsedH != null ? `took ${s.elapsedH} h` : s.status === "done" ? "start not recorded" : s.status === "not_started" ? "not started" : "still going";
+          const text = (
+            <div className="min-w-0 flex-1 pl-5">
+              <div className="font-medium text-body text-[var(--color-text)]">{s.name}{!s.inPlan && <span className="ml-1 rounded border border-[var(--color-border-strong)] px-1 text-caption font-medium text-[var(--color-text)]">Added</span>}</div>
+              <div className="text-caption text-[var(--color-text-muted)]"><b aria-hidden className="inline-block w-2 h-2 rounded-full mr-1 align-middle" style={{ background: p.colorOf(w.crew) }} />{w.crew} · plan {r1(s.plannedH)} h · {took}</div>
+              {w.ready && <div className="text-caption text-[var(--color-text-muted)]">Ready {when(w.ready.at, tz)}, waited {w.ready.shifts.length} shift{w.ready.shifts.length === 1 ? "" : "s"} to start: {w.ready.busyOn.length ? `${w.crew} was on ${[...new Set(w.ready.busyOn.map((y) => y.split(" - ")[0]))].join(", ")}` : `${w.crew} logged nothing those shifts`}</div>}
+              {w.waits.map((r, i) => (
+                <div key={i} className="text-caption text-[var(--state-held-text)]">
+                  Waited {r.shifts} shift{r.shifts === 1 ? "" : "s"}: {r.why.length ? r.why.map((y) => `"${y}"`).join(" · ") : "no reason recorded"}
+                  {p.canEdit && r.why.length > 0 && <button type="button" onClick={() => setPlanning({ step: s.id, run: i })} className="ml-1 underline cursor-pointer text-[var(--color-accent-text)]">Plan for it next time</button>}
+                  {planning?.step === s.id && planning.run === i && <PlanFor run={r} stepName={s.name} crews={work.crews.map((c) => c.crew)} doneBefore={progressBefore(w.moved, r, idx)} onCancel={() => setPlanning(null)} onSave={(c) => { p.onAdd({ ...c, ...(c.kind === "split" ? { actId: s.id } : {}) } as PlanChange); setPlanning(null); }} />}
+                </div>
+              ))}
+            </div>
+          );
+          const marks = (
+            <Track b={b} x={x}>
+              {s.planStart != null && s.planFinish != null && <i title={`Plan: ${when(s.planStart, tz)} to ${when(s.planFinish, tz)}`} className="absolute top-0.5 h-6 rounded-md" style={{ ...pct(x, s.planStart, s.planFinish), ...PLAN_BOX }} />}
+              {w.worked.map((k) => { const sh = at(k); return sh ? <i key={k} title={`${shiftWords(k, work, tz)}: ${w.crew}, ${w.moved[k] ? `${r1(w.moved[k])}% moved` : "started"}`} className="absolute top-2 h-3 rounded-[2px]" style={{ ...mark(x, sh.start, sh.end), background: p.colorOf(w.crew) }} /> : null; })}
+              {w.waits.flatMap((r) => r.keys).map((k) => { const sh = at(k); return sh ? <i key={`w${k}`} title={`${shiftWords(k, work, tz)}: in progress, nothing logged`} className="absolute top-2 h-3 rounded-[2px]" style={{ ...mark(x, sh.start, sh.end), ...WAIT }} /> : null; })}
+              {w.ready?.shifts.map((k) => { const sh = at(k); return sh ? <i key={`r${k}`} title={`${shiftWords(k, work, tz)}: ready, not started`} className="absolute top-2 h-3 rounded-[2px]" style={{ ...mark(x, sh.start, sh.end), ...READY }} /> : null; })}
+            </Track>
+          );
+          return wide ? (
+            <div key={s.id} className={`grid ${COLS} gap-x-3 items-start py-1.5`} data-step={s.id}>
+              {text}
+              <WhenCell t={s.planFinish} tz={tz} />
+              {s.finish != null ? <WhenCell t={s.finish} tz={tz} /> : <span className="text-caption text-[var(--color-text-muted)]">{BUILT_WORD[s.status].toLowerCase()}</span>}
+              <span className="text-body text-right"><LateWords item={s} now={now} /></span>
+              <span className={`text-body text-right tabular-nums ${waited ? "font-medium text-[var(--state-held-text)]" : "text-[var(--color-text-muted)]"}`}>{waited || "-"}</span>
+              <div className="pt-1">{marks}</div>
+            </div>
+          ) : (
+            <div key={s.id} className="py-1.5 space-y-1" data-step={s.id}>
+              <div className="flex items-start gap-3">{text}<span className="shrink-0 text-body text-right"><LateWords item={s} now={now} words /></span></div>
+              <div className="pl-5 text-caption text-[var(--color-text-muted)]">Planned finish {when(s.planFinish, tz)} · {s.finish != null ? `finished ${when(s.finish, tz)}` : BUILT_WORD[s.status].toLowerCase()}{waited ? ` · ${waited} shift${waited === 1 ? "" : "s"} waited` : ""}</div>
+              {marks}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ── As-built, shift by shift (the whole job on one grid) ─────────────────
+
+function ShiftGrid(p: BuiltProps) {
   const { tz, built, work } = p;
   const PX = React.useContext(PxCtx);
   const { x, width } = useAxis(work);
@@ -314,10 +604,8 @@ function BuiltView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: As
   const [open, setOpen] = useState<Set<string>>(new Set());
   const [now] = useState(() => Date.now());
   const planFin = built.planFinish;
-  const line = planFin != null ? <i aria-hidden title="Planned finish" className="absolute top-0 bottom-0 border-l-2 border-[var(--state-overdue)]" style={{ left: x(planFin) }} /> : null;
+  const line = planFin != null ? <i aria-hidden title="Whole job's planned finish" className="absolute top-0 bottom-0 border-l-2 border-[var(--state-overdue)]" style={{ left: x(planFin) }} /> : null;
   const orders = [...built.orders].sort((a, b) => (a.planStart ?? Infinity) - (b.planStart ?? Infinity));
-  const t = work.totals;
-  const late = built.finish != null && built.planFinish != null ? r1((built.finish - built.planFinish) / 3_600_000) : null;
   const flip = (k: string) => setOpen((o) => { const n = new Set(o); if (n.has(k)) n.delete(k); else n.add(k); return n; });
   // A step's piece: its start to its finish as built; with no start
   // recorded, from the first shift it was worked.
@@ -331,15 +619,10 @@ function BuiltView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: As
 
   return (
     <div className="space-y-2">
-      <div className="flex flex-wrap gap-2 text-caption">
-        <Chip>Planned finish <b>{when(built.planFinish, tz)}</b></Chip>
-        <Chip>Actual finish <b className={late != null && late > 0.5 ? "text-[var(--state-overdue-text)]" : ""}>{built.finish != null ? when(built.finish, tz) : "not done yet"}</b>{late != null && Math.abs(late) >= 0.5 ? <span className="text-[var(--color-text-muted)]"> {Math.abs(late)} h {late > 0 ? "late" : "early"}</span> : null}</Chip>
-        <Chip><b>{built.steps}</b> activities · <b>{built.added}</b> added during the job</Chip>
-        <Chip>Sat in progress: <b>{t.waitedSteps}</b> activities, <b>{t.waitedShifts}</b> shifts</Chip>
-        <Chip>Ready but not started: <b>{t.readySteps}</b> activities, <b>{t.readyShifts}</b> shifts</Chip>
+      <div className="flex flex-wrap items-center gap-2">
+        <Legend items={[[{ background: "var(--color-main)" }, "Color = crew: a step, start to finish (on a step's own line, each shift it was worked)"], [ORDER_WAIT, "Work order open, nothing logged that shift"], [WAIT, "Activity in progress, nothing logged"], [READY, "Ready, not started"], [{ background: "var(--color-border-control)", height: 6 }, "Plan"], [{ borderLeft: "2px solid var(--state-overdue)", width: 2 }, "Whole job's planned finish"]]} />
+        <HelpTooltip>{NIGHTS}</HelpTooltip>
       </div>
-      <Legend items={[[{ background: "var(--color-main)" }, "A step, start to finish (on a step's own line: each shift it was worked)"], [ORDER_WAIT, "Work order open, nothing logged that shift"], [WAIT, "Activity in progress, nothing logged"], [READY, "Ready, not started"], [{ background: "var(--viz-neutral)", height: 4 }, "Plan"], [{ borderLeft: "2px solid var(--state-overdue)", width: 2 }, "Planned finish"]]} />
-      <div className="text-caption text-[var(--color-text-muted)]">Night shifts count as waiting only for work that ran on nights (its crew worked that work order on two or more nights). Day work sitting overnight is not waiting.</div>
       <FoldAll open={open.size} total={orders.length} onAll={(all) => setOpen(all ? new Set(orders.map((o) => o.key)) : new Set())} />
       <div className="overflow-auto max-h-[75vh] rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
         <table className={`border-separate border-spacing-0 w-max text-caption ${p.cols ? "" : "[&_.col-x]:hidden"}`}>
@@ -376,7 +659,7 @@ function BuiltView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: As
                     <td className={`${cellN} ${ow?.waited ? "text-[var(--state-held-text)]" : ""}`}>{ow?.waited || "-"}</td>
                     <td className="p-0 relative"><div className="relative" style={{ width, height: Math.max(44, 12 + bar.h + 7) }}>
                       <Grid shifts={work.shifts} />
-                      {o.planStart != null && o.planFinish != null && <i className="absolute top-1.5 h-1 rounded bg-[var(--color-border-strong)]" style={{ left: x(o.planStart), width: Math.max(2, x(o.planFinish) - x(o.planStart)) }} />}
+                      {o.planStart != null && o.planFinish != null && <i title="Plan" className="absolute top-1 h-1.5 rounded bg-[var(--color-border-control)]" style={{ left: x(o.planStart), width: Math.max(2, x(o.planFinish) - x(o.planStart)) }} />}
                       {bar.nodes}
                       {ow?.cells.map((c, i) => c === "wait" && <i key={i} className="absolute bottom-1 h-[4px] rounded-sm" style={{ left: i * PX + 1, width: PX - 2, ...ORDER_WAIT }} title="Work order open, nothing logged that shift" />)}
                       {line}
@@ -406,7 +689,7 @@ function BuiltView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: As
                         <td className={`${cellN} ${waited ? "text-[var(--state-held-text)]" : ""}`}>{waited || "-"}</td>
                         <td className="p-0 relative"><div className="relative min-h-[42px] h-full" style={{ width }}>
                           <Grid shifts={work.shifts} />
-                          {s.planStart != null && s.planFinish != null && <i className="absolute top-1.5 h-1 rounded bg-[var(--color-border-strong)]" style={{ left: x(s.planStart), width: Math.max(2, x(s.planFinish) - x(s.planStart)) }} />}
+                          {s.planStart != null && s.planFinish != null && <i title="Plan" className="absolute top-1 h-1.5 rounded bg-[var(--color-border-control)]" style={{ left: x(s.planStart), width: Math.max(2, x(s.planFinish) - x(s.planStart)) }} />}
                           {w.worked.map((k) => idx.has(k) && <i key={k} title={`${w.moved[k] ? `${r1(w.moved[k])}% moved` : "started"}`} className="absolute top-3.5 h-4 rounded-sm" style={{ left: idx.get(k)! * PX + 2, width: PX - 4, background: p.colorOf(w.crew) }} />)}
                           {w.waits.flatMap((r) => r.keys).map((k) => <i key={`w${k}`} className="absolute top-3.5 h-4 rounded-sm" style={{ left: idx.get(k)! * PX + 2, width: PX - 4, ...WAIT }} />)}
                           {w.ready?.shifts.map((k) => idx.has(k) && <i key={`r${k}`} className="absolute top-3.5 h-4 rounded-sm" style={{ left: idx.get(k)! * PX + 2, width: PX - 4, ...READY }} />)}
@@ -455,7 +738,7 @@ function BuiltView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: As
           </tbody>
         </table>
       </div>
-      <p className="text-caption text-[var(--color-text-muted)]">A solid block is a shift where that crew logged progress (at the time you set, not when you typed it). Yellow: it sat in progress with nothing logged; the reason is the crew&apos;s own comments. Blue: everything before it was done, but its crew was elsewhere. Calendar time between start and finish is never counted as work.</p>
+      <p className="text-caption text-[var(--color-text-muted)]">A solid block is a shift where that crew logged progress (at the time you set, not when you typed it); its color is the crew. Amber hatched: it sat in progress with nothing logged; the reason is the crew&apos;s own comments. Gray hatched: everything before it was done, but its crew was elsewhere. Calendar time between start and finish is never counted as work.</p>
     </div>
   );
 }
@@ -514,9 +797,151 @@ function PlanFor({ run, stepName, crews, doneBefore, onSave, onCancel }: { run: 
   );
 }
 
+// ── Same people, same work, better sequence (lib/asBuiltReplay) ──────────
+//
+// The owner's rule (docs/next-update.md, section 6): first how the job could
+// have run on what really happened, by timing and sequence alone; time or
+// people only after that. So the suggestion opens on the replay: its finish,
+// each move with the hours it saves and why, the one-off delays to take out
+// as a what-if, and what the replay can't know.
+
+/** The replay, never a crash: a record it can't read says so. */
+function safeReplay(input: ReplayInput): Replay | null {
+  try { return replayAsBuilt(input); } catch { return null; }
+}
+
+/** "Before adding anything: ..." said wherever the suggestion adds people,
+ *  nights or time, so how far sequencing alone got is always in sight. */
+function replayWords(r: Replay | null, tz: string): string {
+  if (!r) return "Before adding anything: the record couldn't be replayed with the same crews.";
+  if (r.replayFinish == null) return "Before adding anything: the replay above couldn't run on this record.";
+  if (r.savedH > 0) return `Before adding anything: the same crews, better sequenced, finish ${when(r.replayFinish, tz)}, ${hoursDays(r.savedH)} sooner than this year${r.actualFinish != null ? ` (${when(r.actualFinish, tz)})` : ""}.`;
+  return "Before adding anything: the record shows no way to finish sooner with the same crews.";
+}
+
+const MOVES_SHOWN = 8;
+
+function ReplaySection({ input, replay, delays, tz, finished, planFinish }: { input: ReplayInput; replay: Replay | null; delays: OneOffDelay[]; tz: string;
+  /** The planned finish of the work shown (its steps' latest planned finish). */
+  planFinish: number | null;
+  /** With all phases shown and the job not finished: the phases that are,
+   *  which can be replayed one at a time. */
+  finished?: string[] }) {
+  const [all, setAll] = useState(false);
+  const [limitsOpen, setLimitsOpen] = useState(false);
+  // One-off delays taken out as a what-if: none until a person ticks one.
+  const [out, setOut] = useState<string[]>([]);
+  const whatIf = useMemo(() => (out.length ? safeReplay({ ...input, without: out })?.whatIf ?? null : null), [input, out]);
+  const ran = !!replay && replay.replayFinish != null;
+  const moves = useMemo(() => [...(replay?.moves ?? [])].sort((a, b) => b.savedH - a.savedH), [replay]);
+  const shown = all ? moves : moves.slice(0, MOVES_SHOWN);
+  // The first sentence of what the replay says is the headline's: the rest
+  // (what sets the finish) goes under it, never the same number twice.
+  const rest = replay ? replay.said.replace(/^Same crews, same work, better timed: [^\n]*?sooner\.\s*/, "") : "";
+  const limits = replay?.limits ?? [];
+  const flip = (id: string) => setOut((xs) => (xs.includes(id) ? xs.filter((x) => x !== id) : [...xs, id]));
+  return (
+    <section className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3 sm:p-4 space-y-3" data-replay>
+      <div>
+        <h3 className="text-section font-semibold text-[var(--color-text)]">Same people, same work, better sequence</h3>
+        {!replay ? (
+          <p className="mt-1 text-reading text-[var(--color-text)]">The record couldn&apos;t be replayed.</p>
+        ) : !ran ? (
+          <p className="mt-1 text-reading text-[var(--color-text)]">{replay.said}{finished?.length ? <> {finished.join(" and ")} {finished.length === 1 ? "is" : "are"} finished: pick {finished.length === 1 ? "it" : "one"} under Showing at the top to replay {finished.length === 1 ? "it" : "that phase"}.</> : null}</p>
+        ) : replay.savedH > 0 ? (
+          <p className="mt-1 text-reading text-[var(--color-text)]" data-replay-answer>
+            Could have finished <b className="font-medium">{when(replay.replayFinish, tz)}</b>, <b className="text-title font-bold tabular-nums whitespace-nowrap text-[var(--color-text)]">{hoursDays(replay.savedH)}</b> sooner
+          </p>
+        ) : (
+          <p className="mt-1 text-reading font-medium text-[var(--color-text)]" data-replay-answer>The record shows no way to finish sooner with the same crews</p>
+        )}
+        {ran && (
+          <div className="mt-0.5 flex items-start gap-1">
+            <p className="min-w-0 text-body text-[var(--color-text-muted)]">{replay!.savedH > 0 && replay!.actualFinish != null ? `It really finished ${when(replay!.actualFinish, tz)}. ` : ""}{replay!.savedH > 0 ? rest : replay!.said}</p>
+            <HelpTooltip placement="left">{REPLAY_RULES}</HelpTooltip>
+          </div>
+        )}
+        {ran && replay!.notDone.length > 0 && (
+          <p className="mt-0.5 text-body text-[var(--color-text)]" data-not-done>
+            {replay!.notDone.join("; ")} {replay!.notDone.length === 1 ? "isn't" : "aren't"} marked done: kept as {replay!.notDone.length === 1 ? "it" : "they"} ran, to {replay!.notDone.length === 1 ? "its" : "their"} last logged shift.
+          </p>
+        )}
+      </div>
+
+      {ran && (moves.length ? (
+        <div>
+          <div className="text-body font-medium text-[var(--color-text-muted)]">What moves, most hours saved first <span className="font-normal">· {moves.length}</span></div>
+          <ul className="mt-1 divide-y divide-[var(--color-border)] border-y border-[var(--color-border)]">
+            {shown.map((m) => (
+              <li key={m.stepId} className="py-2" data-move={m.stepId}>
+                <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                  <b className="font-medium text-body text-[var(--color-text)]">{m.stepName}</b>
+                  <span className="text-caption text-[var(--color-text-muted)]">{m.order} · {m.crew}</span>
+                  <span className={`ml-auto text-body font-medium tabular-nums whitespace-nowrap ${m.savedH < 0 ? "text-[var(--state-held-text)]" : "text-[var(--color-text)]"}`}>{m.savedH > 0 ? `${hoursDays(m.savedH)} sooner` : m.savedH < 0 ? `${hoursDays(-m.savedH)} later` : "same finish"}</span>
+                </div>
+                <div className="text-caption text-[var(--color-text)]">was {when(m.wasStart, tz)} → could start {when(m.nowStart, tz)}</div>
+                <p className="text-caption text-[var(--color-text-muted)]">{m.why}</p>
+              </li>
+            ))}
+          </ul>
+          {moves.length > MOVES_SHOWN && (
+            <button type="button" onClick={() => setAll(!all)} className="mt-1 min-h-10 pointer-coarse:min-h-11 text-body font-medium text-[var(--color-accent-text)] hover:underline cursor-pointer">
+              {all ? `Show the top ${MOVES_SHOWN}` : `Show all ${moves.length}`}
+            </button>
+          )}
+        </div>
+      ) : <p className="text-body text-[var(--color-text-muted)]">No step could have started sooner with the same crews.</p>)}
+
+      {ran && delays.length > 0 && (
+        <div data-one-off>
+          <div className="text-body font-medium text-[var(--color-text-muted)]">One-off delays <span className="font-normal">· tick one to see the finish without it</span></div>
+          <ul className="mt-1">
+            {delays.map((d) => (
+              <li key={d.id}>
+                <label className="flex items-start gap-2 min-h-10 pointer-coarse:min-h-11 py-1 text-body text-[var(--color-text)] cursor-pointer">
+                  <input type="checkbox" checked={out.includes(d.id)} onChange={() => flip(d.id)} className="mt-0.5 w-4 h-4 shrink-0 accent-[var(--color-accent)]" />
+                  <span className="min-w-0">
+                    {d.short} <span className="text-[var(--color-text-muted)] tabular-nums whitespace-nowrap">· {hoursDays(d.hours)}</span>
+                    {d.said && <span className="block text-caption text-[var(--color-text-muted)]">Written: &ldquo;{d.said}&rdquo;</span>}
+                  </span>
+                </label>
+              </li>
+            ))}
+          </ul>
+          {whatIf && (
+            <p role="status" className="mt-1 text-body text-[var(--color-text)]" data-what-if>
+              {whatIf.savedH > 0 && whatIf.finishWithout != null
+                ? <>Without {whatIf.without.length === 1 ? "it" : `these ${whatIf.without.length}`}: <b className="font-medium">{when(whatIf.finishWithout, tz)}</b>, <b className="font-medium">{hoursDays(whatIf.savedH)} sooner</b>{whatIf.finishWith != null ? <span className="text-[var(--color-text-muted)]"> (with {whatIf.without.length === 1 ? "it" : "them"}: {when(whatIf.finishWith, tz)})</span> : null}</>
+                : whatIf.said}
+              {whatIf.finishWithout != null && planFinish != null && (() => {
+                const late = (whatIf.finishWithout - planFinish) / 3_600_000;
+                return <span className="block font-medium" data-what-if-plan>Against the planned finish ({when(planFinish, tz)}): {late >= 0.5 ? `${hoursDays(r1(late))} late` : late <= -0.5 ? `${hoursDays(r1(-late))} early` : "on time"}.</span>;
+              })()}
+            </p>
+          )}
+        </div>
+      )}
+
+      {limits.length > 0 && (
+        <div>
+          {/* Folded, with its count: what the replay can't know. */}
+          <button type="button" onClick={() => setLimitsOpen(!limitsOpen)} aria-expanded={limitsOpen}
+            className="inline-flex items-center gap-1.5 min-h-10 pointer-coarse:min-h-11 -ml-1 px-1 rounded-md text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+            <ChevronRight aria-hidden className={`w-4 h-4 text-[var(--color-text-muted)] transition-transform ${limitsOpen ? "rotate-90" : ""}`} />
+            What the replay can&apos;t know <span className="font-normal text-[var(--color-text-muted)]">· {limits.length}</span>
+          </button>
+          {limitsOpen && <ul className="mt-1 list-disc pl-5 space-y-1 text-caption text-[var(--color-text)]">{limits.map((l, i) => <li key={i}>{l}</li>)}</ul>}
+        </div>
+      )}
+    </section>
+  );
+}
+
+const REPLAY_RULES = `This year replayed on what really happened: each step takes the shifts it was really worked, on its crew's real days or nights. ${CAPACITY_RULE} Only the links the work really needed are kept. A trip off site keeps its real time, and a wait with a recorded reason (parts, material, vendor, inspection, permit, weather, a hold) keeps its real length. Found and added work starts no sooner than it really did. The shutdown stays as it ran; start-up starts once every work order is done. Only waits with nothing logged and no reason, and shifts a step sat ready while its crew had room, are taken out.`;
+
 // ── Suggested for next time ──────────────────────────────────────────────
 
-function NextView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsBuiltWork; plan: NextPlan; colorOf: (c: string) => string; changes: PlanChange[]; applied: PlanChange[]; check: PlanCheck; risks: PlanRisk[]; lessons: Lesson[]; skipped: Set<string>; settings: NextPlanSettings; onChanges: (c: PlanChange[]) => void; onStaffing: (s: NextPlanSettings["staffing"]) => void }) {
+function NextView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsBuiltWork; notes: MilestoneNote[]; plan: NextPlan; colorOf: (c: string) => string; changes: PlanChange[]; applied: PlanChange[]; check: PlanCheck; risks: PlanRisk[]; lessons: Lesson[]; skipped: Set<string>; settings: NextPlanSettings; onChanges: (c: PlanChange[]) => void; onStaffing: (s: NextPlanSettings["staffing"]) => void }) {
   const { tz, times, built, work, plan, changes } = p;
   const PX = React.useContext(PxCtx);
   const { x, width } = useAxis(plan);
@@ -525,6 +950,34 @@ function NextView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsB
   const at = (t: number) => `Day ${dayOf(t)} · ${fmtInTz(t, tz, { weekday: "short" })} ${fmtInTz(t, tz, { hour: "numeric", minute: "2-digit", hour12: true })}`;
   const orderName = useMemo(() => new Map(built.orders.map((o) => [o.key, o.name])), [built]);
   const actName = useMemo(() => new Map(plan.acts.map((a) => [a.id, a.name])), [plan]);
+  // Same people, same work, better sequence: first, before anything is added.
+  // The phase picked at the top: its steps only, as the rest of the page.
+  const phaseIds = useMemo(() => {
+    if (!p.phase || !p.phases.length) return null;
+    const idx = phaseIndex(p.milestones, p.phases);
+    return built.orders.flatMap((o) => o.steps.map((s) => s.id)).filter((id) => idx.get(id) === p.phase);
+  }, [p.phase, p.phases, p.milestones, built]);
+  const replayInput = useMemo<ReplayInput>(() => ({ built, work, milestones: p.milestones, tz, times, notes: p.notes, phaseIds }), [built, work, p.milestones, tz, times, p.notes, phaseIds]);
+  const replay = useMemo(() => safeReplay(replayInput), [replayInput]);
+  const delays = useMemo(() => { try { return oneOffDelays(replayInput); } catch { return []; } }, [replayInput]);
+  const sayReplay = replayWords(replay, tz);
+  // The planned finish of what's shown: its planned steps' latest finish.
+  const scopePlanFinish = useMemo(() => {
+    const ids = phaseIds ? new Set(phaseIds) : null;
+    const xs = built.orders.flatMap((o) => o.steps).filter((s) => (!ids || ids.has(s.id)) && s.inPlan && s.planFinish != null).map((s) => s.planFinish as number);
+    return xs.length ? Math.max(...xs) : null;
+  }, [built, phaseIds]);
+  // All phases shown and the job not finished: which phases can be replayed
+  // on their own (each one run, not guessed).
+  const finished = useMemo(() => {
+    if (p.phase || !p.phases.length || !replay || replay.replayFinish != null) return [];
+    const idx = phaseIndex(p.milestones, p.phases);
+    const ids = built.orders.flatMap((o) => o.steps.map((s) => s.id));
+    return p.phases.filter((ph) => {
+      const mine = ids.filter((id) => idx.get(id) === ph.id);
+      return mine.length > 0 && safeReplay({ ...replayInput, phaseIds: mine })?.replayFinish != null;
+    }).map((ph) => ph.name);
+  }, [p.phase, p.phases, p.milestones, built, replay, replayInput]);
   const driving = useMemo(() => new Set(plan.driving), [plan]);
   const crewWork = useMemo(() => new Map(work.crews.map((c) => [c.crew, c])), [work]);
   const [open, setOpen] = useState<Set<string>>(new Set());
@@ -581,7 +1034,12 @@ function NextView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsB
 
   return (
     <div className="space-y-2">
-      <Taught {...p} at={at} orderName={(k) => orderName.get(k) ?? k} />
+      <ReplaySection input={replayInput} replay={replay} delays={delays} tz={tz} finished={finished} planFinish={scopePlanFinish} />
+      <div className="pt-3" data-adds>
+        <h3 className="text-section font-semibold text-[var(--color-text)]">If it still misses the target: added people or time</h3>
+        <p className="mt-0.5 text-body text-[var(--color-text-muted)]">{sayReplay} The suggested schedule below is worked out on its own from this year&apos;s record; each change it makes is listed with what it does.</p>
+      </div>
+      <Taught {...p} at={at} orderName={(k) => orderName.get(k) ?? k} replayWords={sayReplay} />
       {p.canEdit && (
         <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3 space-y-2">
           <div className="font-medium text-body">Tell the schedule</div>
@@ -598,7 +1056,7 @@ function NextView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsB
               {answer.changes.length > 0 && <ul className="list-disc pl-5">{answer.changes.map((c) => <li key={c.id}>{describe(c, orderName, actName, dayOf)}</li>)}</ul>}
               {answer.finish != null && <p>Finish: <b>{at(plan.finish)}</b> to <b>{at(answer.finish)}</b>, {finishWords(answer.finish)}.</p>}
               {answer.lever && (
-                <p><b>{answer.finish != null && answer.finish < plan.finish - 30 * 60_000 ? "Also" : "What pulls the finish in"}:</b> {answer.lever.change.kind === "nights" ? `run ${answer.lever.acts} day-shift activities on the finish path (${drivingOrders.slice(0, 3).join(", ")}) on nights too, ${answer.lever.hours} h of work, with the night shift already on site (no one added)` :`let ${orderName.get((answer.lever.change as { target: { order?: string } }).target.order ?? "") ?? "it"} start as soon as its links allow`}. Finish {at(answer.lever.finish)}, {answer.lever.savedH} h sooner.</p>
+                <p><b>{answer.finish != null && answer.finish < plan.finish - 30 * 60_000 ? "Also" : "What pulls the finish in"}:</b> {answer.lever.change.kind === "nights" ? `run ${answer.lever.acts} day-shift activities on the finish path (${drivingOrders.slice(0, 3).join(", ")}) on nights too, ${answer.lever.hours} h of work, with the night shift already on site (no one added)` :`let ${orderName.get((answer.lever.change as { target: { order?: string } }).target.order ?? "") ?? "it"} start as soon as its links allow`}. Finish {at(answer.lever.finish)}, {answer.lever.savedH} h sooner. <span className="text-[var(--color-text-muted)]">{sayReplay}</span></p>
               )}
               {!answer.changes.length && !answer.lever && !answer.err && !answer.question && <p>Nothing to change for that. The finish is set by {drivingOrders.slice(0, 3).join(", ")}.</p>}
               <div className="flex flex-wrap gap-2 pt-1">
@@ -762,7 +1220,9 @@ const AREA_WORD: Record<Lesson["area"], string> = { logistics: "Logistics", cont
 
 /** What this job taught, put into the suggested schedule, and what it
  *  takes to make this year's target. */
-function Taught(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsBuiltWork; plan: NextPlan; changes: PlanChange[]; applied: PlanChange[]; check: PlanCheck; risks: PlanRisk[]; lessons: Lesson[]; skipped: Set<string>; onChanges: (c: PlanChange[]) => void; at: (t: number) => string; orderName: (k: string) => string }) {
+function Taught(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsBuiltWork; plan: NextPlan; changes: PlanChange[]; applied: PlanChange[]; check: PlanCheck; risks: PlanRisk[]; lessons: Lesson[]; skipped: Set<string>; onChanges: (c: PlanChange[]) => void; at: (t: number) => string; orderName: (k: string) => string;
+  /** How far the same crews got by sequence alone (the replay), said before any lever that adds people, nights or time. */
+  replayWords?: string }) {
   const { built, work, plan, tz, times, lessons, skipped } = p;
   const input = useMemo(() => ({ built, work, milestones: p.milestones, tz, times }), [built, work, p.milestones, tz, times]);
   const person = useMemo(() => { const mine = new Set(lessons.flatMap((l) => l.changes.map((c) => c.id))); return p.applied.filter((c) => !mine.has(c.id)); }, [p.applied, lessons]);
@@ -799,12 +1259,14 @@ function Taught(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsBui
           ) : reach && reach.shortH <= 0.5 && reach.levers.length ? (
             <div className="mt-1 space-y-1.5">
               <p className="text-reading font-medium leading-snug text-[var(--color-text)]">Misses this year&apos;s target ({p.at(target)}) by {lateH} h. {reach.levers.length === 1 ? "This makes it" : `These ${reach.levers.length} make it`}:</p>
+              {p.replayWords && <p className="text-body text-[var(--color-text-muted)]" data-replay-first>{p.replayWords}</p>}
               <ol className="list-decimal pl-5 text-body space-y-0.5">{reach.levers.map((l) => <li key={l.change.id}>{l.words}: <b>{r1(l.savedH)} h sooner</b></li>)}</ol>
               {p.canEdit && <button type="button" onClick={() => p.onChanges([...p.changes, ...reach.levers.map((l, i) => ({ ...l.change, id: `t${Date.now().toString(36)}${i}`, said: "to make the target", at: Date.now() }))])} className={btnPri}><Check className="w-4 h-4" /> Put {reach.levers.length === 1 ? "it" : "them"} in</button>}
             </div>
           ) : (
             <div className="mt-1 space-y-1.5">
               <p className="text-reading font-medium leading-snug text-[var(--color-text)]">Misses this year&apos;s target ({p.at(target)}) by {reach ? reach.shortH : lateH} h{reach?.levers.length ? " even with the changes below" : ""}. What sets the finish: {pathOrders.slice(0, 3).join(", ")}.</p>
+              {reach?.levers.length && p.replayWords ? <p className="text-body text-[var(--color-text-muted)]" data-replay-first>{p.replayWords}</p> : null}
               {reach?.levers.length ? <ol className="list-decimal pl-5 text-body space-y-0.5">{reach.levers.map((l) => <li key={l.change.id}>{l.words}: <b>{r1(l.savedH)} h sooner</b></li>)}</ol> : null}
               <p className="text-body text-[var(--color-text)]">Only that much more time is needed{offPath ? `, or ${offPath.name.replace(/\s*\(\d of 2\)$/, "")} back sooner than ${offPath.hours >= 36 ? `${r1(offPath.hours / 24)} days` : `${Math.round(offPath.hours)} h`}` : ""}.</p>
               {p.canEdit && reach?.levers.length ? <button type="button" onClick={() => p.onChanges([...p.changes, ...reach.levers.map((l, i) => ({ ...l.change, id: `t${Date.now().toString(36)}${i}`, said: "to close on the target", at: Date.now() }))])} className={btnQuiet}><Check className="w-4 h-4" /> Put {reach.levers.length === 1 ? "it" : "them"} in</button> : null}

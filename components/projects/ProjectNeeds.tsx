@@ -114,13 +114,15 @@ function Mark({ state }: { state: State }) {
  *  that came from), where it stands, and the one way to change it. */
 const COLS = "md:grid md:grid-cols-[minmax(10rem,15rem)_minmax(0,1fr)_7.5rem_10rem] md:gap-x-6 md:items-start";
 
-function NeedRow({ r, tz }: { r: Row; tz: string }) {
+function NeedRow({ r, tz, quiet }: { r: Row; tz: string; quiet?: boolean }) {
   return (
-    <li className="px-4 sm:px-5 py-3" data-need-row={r.id} data-need-state={r.state}>
+    <li className={`px-4 sm:px-5 ${quiet ? "py-2.5" : "py-3"}`} data-need-row={r.id} data-need-state={r.state}>
       <div className={`${COLS} max-md:flex max-md:flex-wrap max-md:items-baseline max-md:gap-x-3 max-md:gap-y-1`}>
-        <div className="min-w-0 max-md:flex-1 text-body leading-snug font-medium text-[var(--color-text)]">{r.name}</div>
+        <div className={`min-w-0 max-md:flex-1 text-body leading-snug ${quiet ? "text-[var(--color-text-muted)]" : "font-medium text-[var(--color-text)]"}`}>{r.name}</div>
         <div className="min-w-0 max-md:order-3 max-md:basis-full">
           <div className="text-body leading-snug text-[var(--color-text)]">{r.value}</div>
+          {/* Where the setting came from ("App default: …", "Set for this
+              project …"): said on the folded list, where it's looked for. */}
           {r.source && <SourceLine source={r.source} tz={tz} className="mt-0.5" />}
         </div>
         <div className="max-md:order-2 md:pt-px"><Mark state={r.state} /></div>
@@ -131,15 +133,25 @@ function NeedRow({ r, tz }: { r: Row; tz: string }) {
   );
 }
 
-/** One stage: a heading row and its lines, folded only when the person
- *  folds it (remembered on this device). */
-function Stage({ id, projectId, title, rows, tz }: { id: string; projectId: string; title: string; rows: Row[]; tz: string }) {
+/** One stage: a heading row, then what is still to do, then what's there
+ *  to know; what is already set (or left on the app's default) folds into
+ *  one line, "12 set · Show", each with where it came from when shown.
+ *  The stage itself folds only when the person folds it (remembered on
+ *  this device). */
+function Stage({ id, projectId, title, rows, tz, editing }: { id: string; projectId: string; title: string; rows: Row[]; tz: string; editing?: string | null }) {
   const key = `needs.fold:${projectId}:${id}`;
   const [folded, setFolded] = useState(() => { try { return localStorage.getItem(key) === "1"; } catch { return false; } });
   const fold = (v: boolean) => { setFolded(v); try { if (v) localStorage.setItem(key, "1"); else localStorage.removeItem(key); } catch { /* this device only */ } };
+  const [showSettled, setShowSettled] = useState(false);
   const open = rows.filter((r) => r.state === "open").length;
   const set = rows.filter((r) => r.state === "set").length;
   const settings = rows.filter((r) => r.state !== "info").length;
+  const todo = rows.filter((r) => r.state === "open");
+  const info = rows.filter((r) => r.state === "info");
+  const settled = rows.filter((r) => r.state === "set" || r.state === "default");
+  const onDefault = settled.length - set;
+  // A setting being changed stays in sight while it's open.
+  const settledOpen = showSettled || settled.some((r) => r.id === editing);
   return (
     <section className="min-w-0 border-t border-[var(--color-border)] first:border-t-0" data-need-stage={id}>
       <h3>
@@ -150,7 +162,26 @@ function Stage({ id, projectId, title, rows, tz }: { id: string; projectId: stri
           <span className={`text-body tabular-nums ${open ? "font-medium text-[var(--state-held-text)]" : "text-[var(--color-text-muted)]"}`}>{open ? `${open} to do` : settings ? `${set} of ${settings} set` : `${rows.length}`}</span>
         </button>
       </h3>
-      {!folded && <ul className="divide-y divide-[var(--color-border)] border-t border-[var(--color-border)]">{rows.map((r) => <NeedRow key={r.id} r={r} tz={tz} />)}</ul>}
+      {!folded && (
+        <ul className="divide-y divide-[var(--color-border)] border-t border-[var(--color-border)]">
+          {todo.map((r) => <NeedRow key={r.id} r={r} tz={tz} />)}
+          {info.map((r) => <NeedRow key={r.id} r={r} tz={tz} />)}
+          {settled.length > 0 && (
+            <li>
+              <button type="button" onClick={() => setShowSettled((v) => !v)} aria-expanded={settledOpen}
+                className="w-full flex items-center gap-2 px-4 sm:px-5 min-h-11 text-left text-body text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] transition-colors">
+                <ChevronDown aria-hidden className={`ui-chevron w-4 h-4 shrink-0 ${settledOpen ? "" : "-rotate-90"}`} />
+                <span className="tabular-nums">
+                  {set > 0 && `${set} set`}{set > 0 && onDefault > 0 && ", "}{onDefault > 0 && `${onDefault} on the app default`}
+                </span>
+                <span aria-hidden>·</span>
+                <span className="font-medium text-[var(--color-accent-text)]">{settledOpen ? "Hide" : "Show"}</span>
+              </button>
+            </li>
+          )}
+          {settledOpen && settled.map((r) => <NeedRow key={r.id} r={r} tz={tz} quiet />)}
+        </ul>
+      )}
     </section>
   );
 }
@@ -475,7 +506,7 @@ export default function ProjectNeeds({ orgId, project, jobKind, phases, steps, m
     },
     {
       id: "cost", name: "Final cost posted",
-      value: !snap ? checking : `${money(snap.spent)} invoiced${afe?.authorized != null ? ` of ${money(afe.authorized)} AFE` : ""}`,
+      value: !snap ? checking : snap.spent === 0 ? `No invoices in yet${afe?.authorized != null ? ` (AFE ${money(afe.authorized)})` : ""}` : `${money(snap.spent)} invoiced${afe?.authorized != null ? ` of ${money(afe.authorized)} AFE` : ""}`,
       source: { kind: "asked", by: "Close-out", note: "post the last invoices before closing" }, state: "info",
       action: <button type="button" onClick={() => onTab("costs")} className={changeLink}>Open Costs</button>,
     },
@@ -494,6 +525,8 @@ export default function ProjectNeeds({ orgId, project, jobKind, phases, steps, m
   ];
 
   const todo = toDo(setup).length;
+  // The row whose editor is open (the AFE's is the Budget row).
+  const editingRow = editing === "afe" ? "budget" : editing;
   return (
     <Card label="What this project needs" pad={false} className="overflow-hidden"
       action={<span className="flex items-center gap-3">
@@ -514,9 +547,9 @@ export default function ProjectNeeds({ orgId, project, jobKind, phases, steps, m
       <div aria-hidden className={`${COLS} max-md:hidden px-4 sm:px-5 h-9 items-center text-body text-[var(--color-text-muted)] border-b border-[var(--color-border)]`}>
         <span>Need</span><span>Set to, and where that came from</span><span>Status</span><span />
       </div>
-      <Stage id="before" projectId={projectId} title="Before the work" rows={before} tz={tz} />
-      <Stage id="shift" projectId={projectId} title="Every shift" rows={shift} tz={tz} />
-      <Stage id="close" projectId={projectId} title="To close" rows={close} tz={tz} />
+      <Stage id="before" projectId={projectId} title="Before the work" rows={before} tz={tz} editing={editingRow} />
+      <Stage id="shift" projectId={projectId} title="Every shift" rows={shift} tz={tz} editing={editingRow} />
+      <Stage id="close" projectId={projectId} title="To close" rows={close} tz={tz} editing={editingRow} />
     </Card>
   );
 }

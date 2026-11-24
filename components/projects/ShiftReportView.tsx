@@ -35,8 +35,9 @@ import { createPortal } from "react-dom";
 import {
   Printer, ChevronLeft, ChevronRight, ChevronDown, Sun, Moon, Flag, FastForward,
   Zap, Presentation, X, Settings2, Rocket, ArrowLeftRight, Trophy,
-  Mail, FileText, Hourglass, Clock, Pencil, Plus, CalendarClock, Eye, EyeOff, ListChecks,
+  Mail, FileText, Hourglass, Clock, Pencil, Plus, CalendarClock, Eye, EyeOff, ListChecks, ListFilter,
 } from "lucide-react";
+import HelpTooltip from "@/components/ui/HelpTooltip";
 import MoreMenu from "@/components/ui/MoreMenu";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { OPEN_SETUP_EVENT } from "@/lib/scheduleSetup";
@@ -54,7 +55,7 @@ import {
 import { buildKickoff, buildCloseout, defaultMeeting, type MeetingKind, type PlanRow } from "@/lib/meetingPlan";
 import { clockLabel, fmtInTz, tzAbbrev, toDateTimeInput } from "@/lib/scheduleTz";
 import { startMsOf, finishMsOf } from "@/lib/calendarPlacement";
-import { type ExportBlock, type ExportCell, type ExportDoc, type ExportSection, type ExportStepRow } from "@/lib/reportExport";
+import { forManagement, managementForm, headcountLine, type ExportBlock, type ExportCell, type ExportDoc, type ExportSection, type ExportStepRow, type Tone } from "@/lib/reportExport";
 import { turnoverUpdate, withoutEmpty, noteLine, hazardJobsOf, forecastText, discoverySub, discoveryBlock } from "@/lib/managementUpdate";
 import { useShiftTimes, useShiftTimesSaved, saveProjectShiftTimes, shiftTimesProblem } from "@/lib/shiftTimesStore";
 import { isDefaultType, typeWord } from "@/lib/projectType";
@@ -76,8 +77,8 @@ import { CAUSE_WORD, jobWord, orderWord } from "@/lib/postEventReview";
 import { workSummary, workSteps, vsPlanWords, type WorkSummary } from "@/lib/closeoutStatus";
 import { usePhases } from "@/components/projects/PhaseContext";
 import { inPhase } from "@/lib/projectPhases";
-import { phaseOfDay } from "@/lib/phaseStanding";
-import { noScheduleWords } from "@/lib/phaseReport";
+import { phaseOfDay, lateWords } from "@/lib/phaseStanding";
+import { noScheduleWords, closeoutPrint, withDays } from "@/lib/phaseReport";
 import { resolveCriticalPath, floatsOf, pathMarks, CRITICAL_MODES, type PathMarks } from "@/lib/criticalPath";
 import { useCriticalMode, saveCriticalMode } from "@/lib/criticalModeStore";
 import { effectiveSpans } from "@/lib/scheduleTime";
@@ -85,7 +86,7 @@ import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/ui/Moda
 import { SafetyMomentBox } from "@/components/projects/SafetyMomentBox";
 import { useLetterhead } from "@/lib/letterheadStore";
 import { letterheadLayersHtml, letterheadPrintCss, type Letterhead } from "@/lib/letterhead";
-import { copyRich, printHtml, sectionsOff, updatePrintDocument, updateSubject, sendParts, sendPrintDocument, updateDocx, updateFileName, saveFile, saveList, readFormat, readHeaderOff, readFormOff, FORMAT_KEY, HEADER_OFF_KEY, FORM_OFF_KEY, type SendFormat } from "@/lib/updatePrint";
+import { copyRich, printHtml, sectionsOff, updatePrintDocument, updateSubject, sendParts, sendPrintDocument, updateDocx, updateFileName, saveFile, saveList, readFormat, readHeaderOff, readFormOff, FORMAT_KEY, HEADER_OFF_KEY, FORM_OFF_KEY, type SendFormat, setSendScope, scopedKey, readRaw, saveChoice } from "@/lib/updatePrint";
 import { HEADER_PARTS, type HeaderPart } from "@/lib/reportExport";
 import type { ReportLink, ShiftPick } from "@/lib/reportLinks";
 import { riskHistory, safetyBrief, projectFacts, RISKS_RANKED, type ProjectBase } from "@/lib/safetyTalk";
@@ -174,6 +175,10 @@ const QUIET = "inline-flex items-center justify-center gap-1.5 h-10 pointer-coar
 const PICK = "h-9 pointer-coarse:h-11 min-w-0 rounded-lg border border-[var(--color-border-control)] bg-[var(--color-surface)] px-2.5 text-body max-sm:text-reading text-[var(--color-text)] tabular-nums";
 // Back / forward a shift: an icon button.
 const ARROW = "w-9 h-9 pointer-coarse:w-11 pointer-coarse:h-11 shrink-0 inline-flex items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]";
+// A small add button on a line of text (the folded empty sections' line).
+const SMALL = "inline-flex items-center gap-1.5 h-8 pointer-coarse:h-11 px-2.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]";
+// The sections that list steps: the step filters live in the first of them.
+const STEP_SECTIONS = ["done", "next", "after"];
 // A quiet text action in the toolbar.
 const LINK = "inline-flex items-center gap-1.5 min-h-9 pointer-coarse:min-h-11 px-1 text-body font-medium text-[var(--color-accent-text)] hover:underline underline-offset-2 whitespace-nowrap";
 
@@ -189,6 +194,8 @@ const MEETINGS: Array<{ id: MeetingKind; label: string; Icon: typeof Rocket }> =
 ];
 
 export default function ShiftReportView({ milestones: rawLive, progress: liveProgress, projectId, projectName, cancelled = NONE_CANCELLED, userId, userName, canEdit = false, onUpdateStep, onDiscovery, onNewWorkOrder, pathNow, onPlanNext, onFixTimes, meetingFixed, shiftPick, docOnly, onDoc, onOpenReport, presentOnOpen, tools, notice, quietMain }: Props) {
+  // The Email / Print choices are kept per project (lib/updatePrint).
+  setSendScope(projectId);
   const tz = useScheduleTz();
   // What kind of project it is: the word the report says (Setup › Project type).
   const ptype = useProjectTypeCtx();
@@ -449,6 +456,14 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
   // y% planned" next to its progress.
   const planByTask = useMemo(() => expectedByParent(milestones, asOf, tz, times), [milestones, asOf, tz, times]);
   const ctx = useMemo(() => makeCtx(tz, byId, progress, planByTask, word), [tz, byId, progress, planByTask, word]);
+  // Where the job (or the phase the shift is in) stands, in one sentence
+  // with its one number: the same words on screen, in the email and in
+  // print, named the way the page header names it ("Phase 1", "The work"),
+  // and never "on track" over a finish that came late.
+  const standWork = useMemo(() => workSummary(standMs), [standMs]);
+  const scopeName = standPhase?.name ?? (phx.phase ? phx.phases.find((p) => p.id === phx.phase)?.name : undefined) ?? "The work";
+  const say = useMemo(() => standSay({ overall: report.overall, gap: report.goals.gapHours, forecast, work: standWork, scope: scopeName, c: ctx, now: report.now }),
+    [report, forecast, standWork, scopeName, ctx]);
 
   const { update: updateDraft } = hand;
   const setDecision = useCallback((id: string, d: HandoverDecision) => { void updateDraft((cur) => ({ ...cur, [id]: d })); }, [updateDraft]);
@@ -748,8 +763,8 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
   const baseSections = useMemo(() => meeting === "kickoff"
     ? kickoffSections(kickoff, ctx, findingsCtx)
     : meeting === "closeout"
-      ? closeoutSections(closeout, report, ctx, cancelled, discoveryList, lookBack, findingsCtx, workDone, unscheduledWords)
-      : turnoverSections(view, ctx, { onJump: jumpTarget ? () => pick(jumpTarget) : undefined, jumpTarget, noteOf: noteThen, times, crew, whole: report, handover: handoverCtx, safety, sheet, hourlyExport, onEdit: canEdit && onUpdateStep && !locked ? setEditing : undefined, forecast, standPhase: standPhase?.name, pathSource, discovery: discoveryList, why, taskSteps: (id) => stepTally.get(id),
+      ? closeoutOrder(closeoutSections(closeout, report, ctx, cancelled, discoveryList, lookBack, findingsCtx, workDone, unscheduledWords))
+      : turnoverSections(view, ctx, { say, onJump: jumpTarget ? () => pick(jumpTarget) : undefined, jumpTarget, noteOf: noteThen, times, crew, whole: report, handover: handoverCtx, safety, sheet, hourlyExport, onEdit: canEdit && onUpdateStep && !locked ? setEditing : undefined, forecast, standPhase: standPhase?.name, pathSource, discovery: discoveryList, why, taskSteps: (id) => stepTally.get(id),
         onDiscovery: onDiscovery && !locked ? () => { const first = view.goals.all[0]?.parentId ?? view.review.done[0]?.parentId; const t = (first ? live.find((m) => m.id === first) : undefined) ?? live.find((m) => live.some((k) => k.parentId === m.id)); if (t) onDiscovery(t); } : undefined,
         // Only while the next shift is still ahead (or on).
         onPlanNext: onPlanNext && report.next.end > now && !locked ? () => onPlanNext(report.next) : undefined,
@@ -758,7 +773,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
         // This shift's own plan: the work after its meeting, set (or fixed) here.
         thisPlan: { plan: thisPlan, open: canShip || thisPlan ? () => setPlanFor("this") : undefined } }),
   // eslint-disable-next-line react-hooks/exhaustive-deps -- setPlanOpen / setPlanFor are state setters
-  [meeting, kickoff, closeout, report, view, ctx, jumpTarget, noteThen, times, crew, cancelled, handoverCtx, safety, sheet, canEdit, onUpdateStep, forecast, standPhase, pathSource, discoveryList, why, stepTally, onDiscovery, live, onPlanNext, now, lookBack, hourlyExport, locked, findingsCtx, nextPlan, canShip, workDone, unscheduledWords, afterReport, afterPlan, afterWin, thisPlan]);
+  [meeting, kickoff, closeout, report, view, ctx, say, jumpTarget, noteThen, times, crew, cancelled, handoverCtx, safety, sheet, canEdit, onUpdateStep, forecast, standPhase, pathSource, discoveryList, why, stepTally, onDiscovery, live, onPlanNext, now, lookBack, hourlyExport, locked, findingsCtx, nextPlan, canShip, workDone, unscheduledWords, afterReport, afterPlan, afterWin, thisPlan]);
   // Waiting and ready sits right after what the shift got done.
   const allSections = useMemo(() => {
     if (meeting !== "turnover" || !waitList) return baseSections;
@@ -854,7 +869,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
 
   // The report as data — for Copy (text / email).
   const exportDoc = (): ExportDoc => {
-    const { overall, shift: sh, next } = report;
+    const { shift: sh, next } = report;
     const hourlyList = sheet.hourly ? (() => {
             const h = sheet.hourly;
             const hr = hourlyRows(h.notes, h.slots, h.upTo, h.entries, tz, { ...h.meet, closes: h.closes });
@@ -877,9 +892,12 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
       : meeting === "closeout"
         ? (unscheduled.length ? { label: `${unscheduled.map((p) => p.name).join(", ").toUpperCase()} NOT SCHEDULED`, tone: "amber" }
           : closeout.done >= closeout.steps ? { label: "COMPLETE", tone: "emerald" } : { label: `${closeout.steps - closeout.done} OPEN`, tone: "amber" })
-        : { label: overall.standing === "ahead" ? "AHEAD" : overall.standing === "behind" ? "BEHIND" : "ON TRACK",
-          tone: overall.standing === "ahead" ? "emerald" : overall.standing === "behind" ? "rose" : "slate",
-          detail: `${standPhase ? `${standPhase.name}: ` : ""}${overall.actualPct}% vs ${overall.plannedPct}% plan` };
+        // One sentence and its number, the same as Where we stand on screen:
+        // a phase that finished late says so, never "on track".
+        : { label: say.label, tone: say.tone, key: say.key, detail: say.text };
+    // Who is on site, in one line up top (the names go at the end): the
+    // counts entered at this shift's meeting, plant staff not counted.
+    const counts = meetingParts(sheet.recThis, view.shift.start).rows.filter((x) => !x.plant && x.onSite != null).map((x) => ({ crew: x.crew, n: x.onSite! }));
     // The plant's required format (lib/shiftForm): the shift's own record
     // and what the report has planned and done, by crew.
     const formOf = (): ExportDoc["form"] => {
@@ -908,7 +926,8 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
         const a = Date.parse(String(r.leaf.actualStartAt ?? ""));
         return Number.isFinite(a) && a >= meetAt && a < w.end;
       });
-      return shiftForm({
+      // The plant's table in the update's order, with short row names (lib/reportExport).
+      return managementForm(shiftForm({
         project: projectName ?? "Schedule",
         date: fmtInTz(w.start, tz, { month: "long", day: "numeric", year: "numeric" }), start: ctx.T(w.start), end: ctx.T(w.end),
         weekday: fmtInTz(w.start, tz, { weekday: "long" }), shift: w.kind === "night" ? "Night shift" : "Day shift",
@@ -939,14 +958,14 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
         notes: sheet.hourly
           ? briefNotes(hourlyRows(sheet.hourly.notes, sheet.hourly.slots, sheet.hourly.upTo, sheet.hourly.entries, tz, { ...sheet.hourly.meet, closes: sheet.hourly.closes }), sheet.hourly.entries, sheet.hourly.slots, tz)
           : [],
-        headcount: parts.rows.filter((x) => !x.plant && x.onSite != null).map((x) => ({ crew: x.crew, n: x.onSite! })),
-      });
+        headcount: counts,
+      }), { meeting: ctx.T(meetAt), end: ctx.T(w.end) });
     };
     const formCheck = meeting === "turnover" ? [
       ...(sheet.carriedThis ? [`Attendees and head count are carried from the ${sheet.carriedThis.label}: update them on the Meeting before you send.`] : []),
       ...(!sheet.incidents || !(sheet.incidents.none || sheet.incidents.items?.length) ? ["Incidents aren't entered for this shift: mark none, or add them, in Safety."] : []),
     ] : [];
-    return {
+    const doc: ExportDoc = {
       ...(meeting === "turnover" ? { form: formOf(), formCheck } : {}),
       kind, project: projectName ?? "Schedule", when,
       asOf: `${ctx.DT(meeting === "turnover" ? asOf : now)} ${tzAbbrev(ctx.tz, now)}${meeting === "turnover" && rehearsal ? " · rehearsal - shift not started" : meeting === "turnover" && historyNote ? ` · ${historyNote}` : ""}`,
@@ -991,6 +1010,20 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
         }), waitList ? waitingExport(waitList, view.shift, ctx) : null)
         : withoutEmpty(allSections.filter((x) => x.data).map((x) => ({ id: x.id, title: x.title, sub: x.sub, flag: x.flag ?? null, blocks: x.data!() }))),
     };
+    // The close-out as it prints and goes out from Reports too: where the
+    // time went under the opening tiles, repeats counted, long notes under
+    // their rows (lib/phaseReport).
+    if (meeting === "closeout") return closeoutPrint(doc);
+    if (meeting !== "turnover") return doc;
+    // What management reads: the status sentence and the head count first,
+    // then done, the next shift, problems and follow-ups, safety, and the
+    // people last; short titles with each shift's times beside them.
+    const after = afterReport?.next;
+    return forManagement({ ...doc, ...(headcountLine(counts) ? { headcount: headcountLine(counts) } : {}) }, {
+      done: `${shiftName(sh)} ${ctx.D(sh.start)} ${ctx.win(sh)}`,
+      next: `${shiftName(next)} ${ctx.D(next.start)} ${ctx.win(next)}`,
+      ...(after ? { after: `${shiftName(after)} ${ctx.D(after.start)} ${ctx.win(after)}` } : {}),
+    });
   };
 
   // Reports: the update as it goes out, each time it changes.
@@ -1002,9 +1035,94 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
     if (k !== lastDoc.current) { lastDoc.current = k; onDoc(d); }
   });
 
+  // ── Empty sections fold into one line together ("Nothing finished,
+  // waiting or added this shift."), their add buttons small on that line.
+  // Show opens them all; an add with nothing of its own to run opens its
+  // section. Nothing is dropped: each is still in the section list.
+  const [unfoldAll, setUnfoldAll] = useState(false);
+  const [unfolded, setUnfolded] = useState<Set<string>>(() => new Set());
+  const isFolded = useCallback((x: Sec) => !!x.fold && !unfoldAll && !unfolded.has(x.id), [unfoldAll, unfolded]);
+  const folded = sections.filter(isFolded);
+  const firstFold = sections.findIndex(isFolded);
+  const openSection = (id: string) => {
+    setUnfolded((u) => new Set(u).add(id));
+    requestAnimationFrame(() => refs.current.get(id)?.scrollIntoView({ behavior: "smooth", block: "start" }));
+  };
+  const foldActions = folded.flatMap((x) => (x.fold?.actions ?? []).map((a, i) => ({ ...a, key: `${x.id}:${i}`, open: () => (a.run ? a.run() : openSection(x.id)) })));
+  // Each section's number on the path (and on paper); the folded ones have none.
+  const numOf = new Map<string, number>();
+  sections.filter((x) => !isFolded(x)).forEach((x, i) => numOf.set(x.id, i + 1));
+
+  // ── The filters live with the steps they narrow: in the first section
+  // that lists steps (Done, the next shift, the shift after), folded behind
+  // one "Filter steps" line; the other step sections say what is on.
+  const filtersOn = !!crew || criticalOnly || addedOnly || classOn;
+  const filterWords = [crew ? `${crew} only` : null, criticalOnly ? "critical path only" : null, addedOnly ? "discovery and added only" : null, classOnly ? `${classOnly} only` : null].filter(Boolean).join(", ");
+  const clearFilters = () => { setCrewPick(null); setOnlyPick({ critical: false, added: false }); setClassPick({ units: [], types: [] }); };
+  const [filterOpen, setFilterOpen] = useState(false);
+  const filterHost = meeting !== "turnover" ? null
+    : sections.find((x) => STEP_SECTIONS.includes(x.id) && !isFolded(x))?.id ?? (filtersOn && folded.length ? "fold" : null);
+  const filterBar = (
+    <div className="mb-2.5 print:hidden">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <button type="button" onClick={() => setFilterOpen((v) => !v)} aria-expanded={filterOpen}
+          className="inline-flex items-center gap-1.5 min-h-9 pointer-coarse:min-h-11 -ml-1 px-1 rounded-md text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+          <ListFilter aria-hidden className="w-4 h-4 text-[var(--color-text-muted)]" /> Filter steps
+          {filtersOn && <span className="font-normal text-[var(--color-text-muted)]">· {filterWords}</span>}
+          <ChevronDown aria-hidden className={`w-4 h-4 text-[var(--color-text-muted)] transition-transform ${filterOpen ? "" : "-rotate-90"}`} />
+        </button>
+        {filtersOn && <button type="button" onClick={clearFilters} className={LINK}>Clear</button>}
+      </div>
+      {filterOpen && (
+        <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1.5 ui-reveal">
+          {crews.length > 1 && (
+            <label className="min-w-0 max-sm:w-full flex items-center gap-2">
+              <span className="shrink-0 text-body text-[var(--color-text-muted)]">Crew</span>
+              <select value={crew ?? ""} onChange={(e) => setCrewPick(e.target.value || null)} aria-label="Show one crew"
+                className={`${PICK} pr-7 max-sm:flex-1 ${crew ? "font-medium" : ""}`}>
+                <option value="">All crews</option>
+                {crews.map((x) => <option key={x.who} value={x.who}>{x.who} ({x.steps})</option>)}
+              </select>
+            </label>
+          )}
+          <div className="shrink-0 flex flex-wrap items-center gap-x-4" role="group" aria-label="Show only">
+            <label className="inline-flex items-center gap-2 min-h-9 pointer-coarse:min-h-11 text-body text-[var(--color-text)] cursor-pointer select-none">
+              <input type="checkbox" checked={criticalOnly} onChange={() => setOnlyPick((v) => ({ ...v, critical: !v.critical }))} className="w-4 h-4 accent-[var(--color-current)]" />
+              Critical path only
+            </label>
+            <label className="inline-flex items-center gap-2 min-h-9 pointer-coarse:min-h-11 text-body text-[var(--color-text)] cursor-pointer select-none">
+              <input type="checkbox" checked={addedOnly} onChange={() => setOnlyPick((v) => ({ ...v, added: !v.added }))} className="w-4 h-4 accent-[var(--color-current)]" />
+              Discovery &amp; added only
+            </label>
+          </div>
+          <WoClassSelects c={wc} units={classPick.units} types={classPick.types} className="max-sm:w-full"
+            onUnits={(v) => setClassPick((c) => ({ ...c, units: v }))} onTypes={(v) => setClassPick((c) => ({ ...c, types: v }))} />
+        </div>
+      )}
+    </div>
+  );
+  const filterNote = filtersOn ? (
+    <div className="mb-2 flex flex-wrap items-center gap-x-2 text-body text-[var(--color-text-muted)] print:hidden">
+      <ListFilter aria-hidden className="w-4 h-4 shrink-0" /> <span>Showing {filterWords}.</span>
+      <button type="button" onClick={clearFilters} className={LINK}>Clear</button>
+    </div>
+  ) : null;
+  const stepTools = (id: string) => (meeting !== "turnover" ? null : id === filterHost ? filterBar : STEP_SECTIONS.includes(id) ? filterNote : null);
+
+  // The report's lock: one phrase and one button on the line under the
+  // toolbar, beside the shifts it covers (never a banner of its own).
+  const lockEl = meeting === "turnover" ? (
+    <ShipBar shippedAt={shippedAt} shippedBy={hand.shippedByName} canShip={canShip} busy={shipBusy} err={hand.err} label={`${fmtInTz(shift.start, tz, { weekday: "short", month: "short", day: "numeric" })} ${shift.kind} shift`}
+      endedAt={now >= shift.end ? new Date(shift.end).toISOString() : null}
+      tries={Object.keys(decisionsToShip(decisions, carried)).length}
+      when={(iso) => `${ctx.DTs(Date.parse(iso))}`}
+      onShip={() => { setShipBusy(true); void hand.ship((d) => decisionsToShip(d, carried, (hand.pullDraft ?? pullSet)?.crew ?? null), hand.pullDraft ?? pullSet, exportDoc, userName).finally(() => setShipBusy(false)); }}
+      onUnship={() => { setShipBusy(true); void hand.unship().finally(() => setShipBusy(false)); }} />
+  ) : null;
   const head = (print: boolean) => (
     <Masthead meeting={meeting} report={report} kickoff={kickoff} closeout={closeout} ctx={ctx} asOf={asOf} now={now}
-      rehearsal={rehearsal} historyNote={historyNote} projectName={projectName} print={print} crew={crew} addedOnly={addedOnly} criticalOnly={criticalOnly} classOnly={classOnly} />
+      rehearsal={rehearsal} historyNote={historyNote} projectName={projectName} print={print} crew={crew} addedOnly={addedOnly} criticalOnly={criticalOnly} classOnly={classOnly}
+      kindShown={!meetingFixed} lock={print ? undefined : lockEl} />
   );
 
   if (docOnly) return null;
@@ -1115,14 +1233,8 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
             )}
           </div>
           {!inMeetingView && <div className="contents">
-            {/* Sections left off are always said, never silently gone. */}
-            {hiddenSecs.length > 0 && (
-              <button type="button" onClick={() => setShowSecs((v) => !v)} aria-expanded={showSecs}
-                className={`${LINK} max-md:hidden`}
-                title="Sections left off the report, on screen and in print">
-                <EyeOff className="w-4 h-4" /> {hiddenSecs.length} hidden
-              </button>
-            )}
+            {/* Sections left off are always said, never silently gone: under
+                the report (each with Show), and in More, which opens this. */}
             {showSecs && (
               <>
                 <div className="fixed inset-0 z-20" onClick={() => setShowSecs(false)} aria-hidden />
@@ -1132,7 +1244,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
                     {reportAll.map((x) => (
                       <label key={x.id} className="flex items-center gap-2.5 cursor-pointer select-none min-h-9 pointer-coarse:min-h-11">
                         <input type="checkbox" className="accent-[var(--color-current)] w-4 h-4" checked={!hiddenSecs.includes(x)} onChange={(e) => setHidden(x.id, !e.target.checked)} />
-                        <span className="text-[var(--color-text)]">{x.title.split(" - ")[0]}</span>
+                        <span className="text-[var(--color-text)]">{x.short}</span>
                       </label>
                     ))}
                   </div>
@@ -1204,64 +1316,15 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
           <ErrorNote compact title="Didn't save to the shift's record." next={recFail.msg} onRetry={recFail.retry} />
         </div>
       )}
-      {meeting === "turnover" && (
-        <ShipBar shippedAt={shippedAt} shippedBy={hand.shippedByName} canShip={canShip} busy={shipBusy} err={hand.err} label={`${fmtInTz(shift.start, tz, { weekday: "short", month: "short", day: "numeric" })} ${shift.kind} shift`}
-          endedAt={now >= shift.end ? new Date(shift.end).toISOString() : null}
-          tries={Object.keys(decisionsToShip(decisions, carried)).length}
-          when={(iso) => `${ctx.DTs(Date.parse(iso))}`}
-          onShip={() => { setShipBusy(true); void hand.ship((d) => decisionsToShip(d, carried, (hand.pullDraft ?? pullSet)?.crew ?? null), hand.pullDraft ?? pullSet, exportDoc, userName).finally(() => setShipBusy(false)); }}
-          onUnship={() => { setShipBusy(true); void hand.unship().finally(() => setShipBusy(false)); }} />
-      )}
       {head(false)}
 
-      {/* ── Agenda bar: stays on screen, jumps to each item ───────────── */}
-      <div className="sticky top-0 z-20 border-b border-[var(--color-border)] bg-[var(--color-surface)]/95 backdrop-blur">
-      {/* The agenda: each item's number and name, a problem marked with a
-          dot in its colour. A tap jumps to it. */}
-      <nav className="px-2 sm:px-3 py-1.5 flex items-center gap-0.5 overflow-x-auto overflow-y-hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" aria-label="Agenda">
-        {sections.map((s, i) => {
-          const active = presenting === i;
-          const flag = s.flag === "rose" ? "var(--state-overdue)" : s.flag === "amber" ? "var(--state-held)" : null;
-          return (
-            <button key={s.id} type="button" onClick={() => goTo(s.id)} aria-current={active ? "step" : undefined}
-              className={`shrink-0 inline-flex items-center gap-1.5 h-8 px-2.5 rounded-md text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] ${active ? "bg-[var(--color-accent-soft)] ring-1 ring-[var(--color-main)]" : ""}`}>
-              <span className={`font-display tabular-nums text-body font-medium ${active ? "text-[var(--color-main)]" : "text-[var(--color-text-muted)]"}`}>{i + 1}</span>
-              {s.short}
-              {s.count != null && <span className={`ui-count ${s.flag === "rose" && s.count > 0 ? "is-bad" : s.flag === "amber" && s.count > 0 ? "is-warn" : active ? "is-solid" : ""}`}>{badgeText(s.count)}</span>}
-              {flag && <span aria-label={s.flag === "rose" ? "needs attention" : "waiting"} className="w-2 h-2 rounded-full" style={{ background: flag }} />}
-            </button>
-          );
-        })}
-      </nav>
-      {/* ── One crew at a time, and look up any step ───────────────── */}
-      {meeting === "turnover" && (
-        <div className="px-3 sm:px-4 pb-2 flex flex-wrap sm:flex-nowrap items-center gap-x-2 gap-y-1.5">
-          {crews.length > 1 && (
-            <label className="min-w-0 max-sm:w-full flex items-center gap-2">
-              <span className="shrink-0 text-body text-[var(--color-text-muted)]">Crew</span>
-              <select value={crew ?? ""} onChange={(e) => setCrewPick(e.target.value || null)} aria-label="Show one crew"
-                className={`${PICK} pr-7 max-sm:flex-1 ${crew ? "font-medium" : ""}`}>
-                <option value="">All crews</option>
-                {crews.map((x) => <option key={x.who} value={x.who}>{x.who} ({x.steps})</option>)}
-              </select>
-            </label>
-          )}
-          <div className="shrink-0 flex items-center gap-4" role="group" aria-label="Show only">
-            <label className="inline-flex items-center gap-2 min-h-9 pointer-coarse:min-h-11 text-body text-[var(--color-text)] cursor-pointer select-none">
-              <input type="checkbox" checked={criticalOnly} onChange={() => setOnlyPick((v) => ({ ...v, critical: !v.critical }))} className="w-4 h-4 accent-[var(--color-current)]" />
-              Critical path only
-            </label>
-            <label className="inline-flex items-center gap-2 min-h-9 pointer-coarse:min-h-11 text-body text-[var(--color-text)] cursor-pointer select-none">
-              <input type="checkbox" checked={addedOnly} onChange={() => setOnlyPick((v) => ({ ...v, added: !v.added }))} className="w-4 h-4 accent-[var(--color-current)]" />
-              Discovery &amp; added only
-            </label>
-          </div>
-          <span className="flex-1 max-sm:hidden" />
-          <WoClassSelects c={wc} units={classPick.units} types={classPick.types} className="max-sm:w-full"
-            onUnits={(v) => setClassPick((c) => ({ ...c, units: v }))} onTypes={(v) => setClassPick((c) => ({ ...c, types: v }))} />
-          <TaskSearch idx={qlIndex} fmt={ctx} onPick={openLook} />
-        </div>
-      )}
+      {/* ── Sections: a compact list that stays on screen ─────────────── */}
+      {/* Narrow screens: one row that scrolls sideways (the next name shows
+          in part) and stays at the top while the report scrolls, with step
+          look-up at its end. Wide screens: a column beside the report. */}
+      <div className="xl:hidden sticky top-0 z-20 border-b border-[var(--color-border)] bg-[var(--color-surface)]/95 backdrop-blur pl-2 pr-2 sm:pl-3 py-1 flex items-center gap-2">
+        <SectionNav sections={sections} current={presenting} folded={isFolded} onGo={goTo} />
+        {meeting === "turnover" && <TaskSearch idx={qlIndex} fmt={ctx} onPick={openLook} compact />}
       </div>
 
       {/* ── Screen body ─────────────────────────────────────────────── */}
@@ -1271,6 +1334,14 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
           onNew={onNewWorkOrder ? () => { const at = toDateTimeInput(addAt, tz); setAddAt(null); onNewWorkOrder(at); } : undefined}
           onClose={() => setAddAt(null)} />
       )}
+      <div className="xl:grid xl:grid-cols-[11rem_minmax(0,1fr)]">
+        <div className="hidden xl:block border-r border-[var(--color-border)]">
+          <div className="sticky top-0 max-h-dvh overflow-y-auto px-2 py-3 space-y-2">
+            {meeting === "turnover" && <TaskSearch idx={qlIndex} fmt={ctx} onPick={openLook} />}
+            <SectionNav sections={sections} current={presenting} folded={isFolded} onGo={goTo} vertical />
+          </div>
+        </div>
+        <div className="min-w-0">
       <QuickLookOpen.Provider value={openLook}>
       {presenting != null && sections[presenting] ? (
         <div className="px-6 py-5 min-h-[420px] text-body">
@@ -1290,36 +1361,65 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
         <div className="px-3 sm:px-5 pt-4 pb-4 text-body text-[var(--color-text)]">
           {/* The report's sections in order, joined by one line down the
               left: a sequence reads as one path. A flagged one's number is
-              in its colour. */}
+              in its colour. The empty ones are one line, where the first
+              of them was. */}
           <ol>
-          {sections.map((s, i) => {
-            const isCollapsed = collapsed.has(s.id);
-            const last = i === sections.length - 1;
-            // The number in a hairline ring; a flagged one's number and ring in its color (never a filled disc).
-            const dot = s.flag === "rose" ? "bg-[var(--color-surface)] text-[var(--state-overdue-text)] ring-[1.5px] ring-inset ring-[var(--state-overdue)]" : s.flag === "amber" ? "bg-[var(--color-surface)] text-[var(--state-held-text)] ring-[1.5px] ring-inset ring-[var(--state-held)]" : "bg-[var(--color-surface)] text-[var(--color-text-muted)] ring-1 ring-inset ring-[var(--color-border-strong)]";
-            return (
-              <li key={s.id} className="flex gap-2.5 sm:gap-4">
-                <div aria-hidden className="flex flex-col items-center shrink-0 w-6">
-                  <span className={`w-6 h-6 rounded-full font-display tabular-nums text-body font-semibold flex items-center justify-center ${dot}`}>{i + 1}</span>
-                  {!last && <span className="flex-1 w-0.5 mt-1 bg-[var(--color-border-strong)]" />}
-                </div>
-                <section ref={(el) => { if (el) refs.current.set(s.id, el); else refs.current.delete(s.id); }} className={`min-w-0 flex-1 scroll-mt-28 ${last ? "" : "pb-6"}`}>
-                  <button className="w-full text-left" onClick={() => setCollapsed((c) => { const n = new Set(c); if (n.has(s.id)) n.delete(s.id); else n.add(s.id); return n; })} aria-expanded={!isCollapsed}>
-                    <SectionHead n={i + 1} s={s} collapsed={isCollapsed} onPath />
-                  </button>
-                  {!isCollapsed && <div className="mt-2.5">{s.body(false)}</div>}
-                </section>
-              </li>
-            );
-          })}
+          {(() => {
+            const rows = sections.flatMap((x, i) => (isFolded(x) ? (i === firstFold ? [null] : []) : [x]));
+            return rows.map((s, j) => {
+              const last = j === rows.length - 1;
+              const rail = !last && <span className="flex-1 w-0.5 mt-1 bg-[var(--color-border-strong)]" />;
+              if (!s) return (
+                <li key="fold" className="flex gap-2.5 sm:gap-4">
+                  <div aria-hidden className="flex flex-col items-center shrink-0 w-6">
+                    <span className="mt-1.5 w-2.5 h-2.5 rounded-full bg-[var(--color-surface)] ring-1 ring-inset ring-[var(--color-border-strong)]" />
+                    {rail}
+                  </div>
+                  <div ref={(el) => { for (const f of folded) { if (el) refs.current.set(f.id, el); else refs.current.delete(f.id); } }}
+                    className={`min-w-0 flex-1 scroll-mt-28 ${last ? "" : "pb-6"}`}>
+                    {filterHost === "fold" && filterBar}
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+                      <span className="text-body text-[var(--color-text-muted)]">{foldSentence(folded)}</span>
+                      {foldActions.map((x) => (
+                        <button key={x.key} type="button" onClick={x.open} className={SMALL}>
+                          {x.icon === "jump" ? <FastForward aria-hidden className="w-3.5 h-3.5" /> : x.icon === "plan" ? <ListChecks aria-hidden className="w-3.5 h-3.5" /> : <Plus aria-hidden className="w-3.5 h-3.5" />} {x.label}
+                        </button>
+                      ))}
+                      <button type="button" onClick={() => setUnfoldAll(true)} className={LINK} aria-label={`Show ${folded.map((f) => f.short).join(", ")}`}>Show</button>
+                    </div>
+                  </div>
+                </li>
+              );
+              const isCollapsed = collapsed.has(s.id);
+              const flagged = s.flag === "rose" || s.flag === "amber";
+              // The number in a hairline ring; a flagged one's number and ring in its color (never a filled disc).
+              const dot = s.flag === "rose" ? "bg-[var(--color-surface)] text-[var(--state-overdue-text)] ring-[1.5px] ring-inset ring-[var(--state-overdue)]" : s.flag === "amber" ? "bg-[var(--color-surface)] text-[var(--state-held-text)] ring-[1.5px] ring-inset ring-[var(--state-held)]" : "bg-[var(--color-surface)] text-[var(--color-text-muted)] ring-1 ring-inset ring-[var(--color-border-strong)]";
+              return (
+                <li key={s.id} className="flex gap-2.5 sm:gap-4">
+                  <div aria-hidden className="flex flex-col items-center shrink-0 w-6">
+                    <span className={`w-6 h-6 rounded-full font-display tabular-nums text-body font-semibold flex items-center justify-center ${dot}`} title={flagged ? (s.flag === "rose" ? "Needs attention" : "Waiting") : undefined}>{numOf.get(s.id)}</span>
+                    {rail}
+                  </div>
+                  <section ref={(el) => { if (el) refs.current.set(s.id, el); else refs.current.delete(s.id); }} className={`min-w-0 flex-1 scroll-mt-28 ${last ? "" : "pb-6"}`}>
+                    <SectionHead n={numOf.get(s.id) ?? 0} s={s} collapsed={isCollapsed} onPath
+                      onToggle={() => setCollapsed((c) => { const n = new Set(c); if (n.has(s.id)) n.delete(s.id); else n.add(s.id); return n; })} />
+                    {!isCollapsed && <div className="mt-2.5">{stepTools(s.id)}{s.body(false)}</div>}
+                  </section>
+                </li>
+              );
+            });
+          })()}
           </ol>
+          {(unfoldAll || unfolded.size > 0) && sections.some((x) => x.fold) && (
+            <button type="button" onClick={() => { setUnfoldAll(false); setUnfolded(new Set()); }} className={`${LINK} mt-1 print:hidden`}>Fold the empty sections into one line</button>
+          )}
           {hiddenSecs.length > 0 && (
             <div className="mt-4 flex flex-wrap items-center gap-x-2 gap-y-1 border-t border-[var(--color-border)] pt-3 text-caption text-[var(--color-text-muted)] print:hidden">
               <EyeOff className="w-3.5 h-3.5" /> Hidden:
               {hiddenSecs.map((x) => (
                 <button key={x.id} type="button" onClick={() => setHidden(x.id, false)} title="Show it again"
-                  className="inline-flex items-center gap-1 h-8 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
-                  {x.title.split(" - ")[0]} <Eye className="inline w-3 h-3 -mt-px" />
+                  className="inline-flex items-center gap-1 h-8 pointer-coarse:h-11 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+                  {x.short} <Eye className="inline w-3 h-3 -mt-px" />
                 </button>
               ))}
               <button type="button" onClick={() => setHidden(null, false)} className="ml-auto text-body text-[var(--color-accent-text)] hover:underline">Show all</button>
@@ -1329,6 +1429,8 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
         </div>
       )}
       </QuickLookOpen.Provider>
+        </div>
+      </div>
       {look && (
         <QuickLookCard look={look} fmt={ctx} onOpen={openLook} onClose={() => setLookId(null)}
           goalAt={report.next} noteOf={noteThen} />
@@ -1355,9 +1457,12 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
               <>
                 {head(true)}
                 <div style={{ padding: "4px 0" }}>
-                  {sections.map((s, i) => (i === safetyAt ? null : (
+                  {sections.map((s, i) => (i === safetyAt ? null : isFolded(s) ? (i === firstFold ? (
+                    // The empty sections, as on screen: one line.
+                    <p key="fold" style={{ marginTop: 10 }} className="text-[8pt] text-slate-600">{foldSentence(folded)}</p>
+                  ) : null) : (
                     <section key={s.id} style={{ marginTop: 10 }}>
-                      <div className="sec-head"><SectionHead n={i + 1} s={s} print /></div>
+                      <div className="sec-head"><SectionHead n={numOf.get(s.id) ?? i + 1} s={s} print /></div>
                       <div style={{ marginTop: 4 }}>{s.body(true)}</div>
                     </section>
                   )))}
@@ -1367,7 +1472,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
                   <section style={{ breakBefore: "page" }}>
                     <div className="sec-head">
                       <div className="text-[8pt] text-slate-500">{projectName ?? "Schedule"} · shift turnover</div>
-                      <div style={{ marginTop: 2 }}><SectionHead n={safetyAt + 1} s={sections[safetyAt]} print /></div>
+                      <div style={{ marginTop: 2 }}><SectionHead n={numOf.get(sections[safetyAt].id) ?? safetyAt + 1} s={sections[safetyAt]} print /></div>
                     </div>
                     <div style={{ marginTop: 6 }}>{sections[safetyAt].body(true)}</div>
                   </section>
@@ -1475,10 +1580,10 @@ function CopyUpdate({ doc, meeting, lh, stamps, primary }: { primary?: boolean; 
     if (n.has(id)) n.delete(id); else n.add(id);
     const byDefault = new Set((d?.sections ?? []).filter((x) => x.offByDefault).map((x) => x.id ?? x.title));
     try {
-      localStorage.setItem(key, JSON.stringify([...n].filter((x) => !byDefault.has(x))));
+      localStorage.setItem(scopedKey(key), JSON.stringify([...n].filter((x) => !byDefault.has(x))));
       // Keep a choice for a section that isn't in today's update (no safety focus today).
-      const before = (JSON.parse(localStorage.getItem(onKey) ?? "[]") as string[]).filter((x) => !byDefault.has(x));
-      localStorage.setItem(onKey, JSON.stringify([...before, ...[...byDefault].filter((x) => !n.has(x))]));
+      const before = (JSON.parse(readRaw(onKey) ?? "[]") as string[]).filter((x) => !byDefault.has(x));
+      localStorage.setItem(scopedKey(onKey), JSON.stringify([...before, ...[...byDefault].filter((x) => !n.has(x))]));
     } catch { /* ignore */ }
     return n;
   });
@@ -1490,15 +1595,20 @@ function CopyUpdate({ doc, meeting, lh, stamps, primary }: { primary?: boolean; 
   const [format, setFormatState] = useState<SendFormat>(() => (typeof window === "undefined" ? "form" : readFormat()));
   const [headerOff, setHeaderOff] = useState<Set<HeaderPart>>(() => (typeof window === "undefined" ? new Set() : readHeaderOff()));
   const [formOff, setFormOff] = useState<Set<FormRowId>>(() => (typeof window === "undefined" ? new Set() : readFormOff()));
-  const setFormat = (f: SendFormat) => { setFormatState(f); try { localStorage.setItem(FORMAT_KEY, f); } catch { /* private mode */ } };
+  const setFormat = (f: SendFormat) => { setFormatState(f); saveChoice(FORMAT_KEY, f); };
   const flip = <T extends string>(set: (fn: (s: Set<T>) => Set<T>) => void, key: string, id: T) => set((cur) => { const n = new Set(cur); if (n.has(id)) n.delete(id); else n.add(id); saveList(key, n); return n; });
   const useForm = !!d?.form && format === "form";
   const out = picked ? sendParts(picked, { format, headerOff, formOff }) : null;
+  // The ticks, folded: how many pieces go out, of how many.
+  const [secsOpen, setSecsOpen] = useState(false);
   const html = out?.html ?? "";
   const subject = d ? updateSubject(d) : "";
   // The header pieces this update has.
   const hasStand = !!d?.sections.some((s) => s.id === "stand");
-  const parts = HEADER_PARTS.filter((p) => (p.id === "status" ? !!d?.status : ["standLine", "complete", "plan", "gap", "steps", "bars"].includes(p.id) ? hasStand : true));
+  const parts = HEADER_PARTS.filter((p) => (p.id === "status" ? !!d?.status : p.id === "headcount" ? !!d?.headcount : ["standLine", "complete", "plan", "gap", "steps", "bars"].includes(p.id) ? hasStand : true));
+  const secsAll = useForm ? parts.length + FORM_ROWS.length : (d?.sections.length ?? 0);
+  const secsOn = useForm ? parts.filter((p) => !headerOff.has(p.id)).length + FORM_ROWS.filter((r) => !formOff.has(r.id)).length
+    : (d?.sections ?? []).filter((x) => !off.has(idOf(x))).length;
 
   // Print what goes in the email — the safety topics on a page of their
   // own at the end, on the company letterhead when there is one.
@@ -1528,7 +1638,7 @@ function CopyUpdate({ doc, meeting, lh, stamps, primary }: { primary?: boolean; 
       </Button>
       {d && picked && (
         <Modal onClose={() => setIsOpen(false)} size="xl">
-          <ModalHeader icon={Mail} title="Email or print the update" subtitle="What you'll send or print - leave out any section for today." onClose={() => setIsOpen(false)} />
+          <ModalHeader icon={Mail} title="Email or print the update" subtitle="What you'll send or print. Pick what goes in under Sections: it's kept for next time." onClose={() => setIsOpen(false)} />
           <ModalBody className="space-y-3">
             {d.form && (
               <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-body" role="radiogroup" aria-label="Format">
@@ -1540,48 +1650,59 @@ function CopyUpdate({ doc, meeting, lh, stamps, primary }: { primary?: boolean; 
                 ))}
               </div>
             )}
-            {useForm && (
-              <>
-                <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-caption">
-                  <span className="text-caption font-medium text-[var(--color-text-muted)]">Header</span>
-                  {parts.map((p) => (
-                    <label key={p.id} className="inline-flex items-center gap-1.5 cursor-pointer select-none">
-                      <input type="checkbox" className="accent-[var(--color-main)]" checked={!headerOff.has(p.id)} onChange={() => flip(setHeaderOff, HEADER_OFF_KEY, p.id)} />
-                      <span className="font-medium text-[var(--color-text)]">{p.word}</span>
+            {/* What goes in: every piece still a tick away, folded behind one
+                Sections line that says how many are on. Remembered on this
+                device as before, for Print, Copy and the Word file alike. */}
+            <div>
+              <button type="button" onClick={() => setSecsOpen((v) => !v)} aria-expanded={secsOpen}
+                className="inline-flex items-center gap-1.5 min-h-9 pointer-coarse:min-h-11 -ml-1 px-1 rounded-md text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+                <ChevronRight aria-hidden className={`w-4 h-4 text-[var(--color-text-muted)] transition-transform ${secsOpen ? "rotate-90" : ""}`} />
+                Sections
+                <span className="font-normal text-[var(--color-text-muted)]">· {secsOn} of {secsAll} on</span>
+              </button>
+              {secsOpen && (useForm ? (
+                <div className="mt-2 space-y-2 ui-reveal">
+                  <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-body">
+                    <span className="font-medium text-[var(--color-text-muted)]">Header</span>
+                    {parts.map((p) => (
+                      <label key={p.id} className="inline-flex items-center gap-1.5 min-h-8 pointer-coarse:min-h-11 cursor-pointer select-none">
+                        <input type="checkbox" className="w-4 h-4 accent-[var(--color-main)]" checked={!headerOff.has(p.id)} onChange={() => flip(setHeaderOff, HEADER_OFF_KEY, p.id)} />
+                        <span className="text-[var(--color-text)]">{p.word}</span>
+                      </label>
+                    ))}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-body">
+                    <span className="font-medium text-[var(--color-text-muted)]">Table</span>
+                    {FORM_ROWS.map((r) => (
+                      <label key={r.id} className="inline-flex items-center gap-1.5 min-h-8 pointer-coarse:min-h-11 cursor-pointer select-none">
+                        <input type="checkbox" className="w-4 h-4 accent-[var(--color-main)]" checked={!formOff.has(r.id)} onChange={() => flip(setFormOff, FORM_OFF_KEY, r.id)} />
+                        <span className="text-[var(--color-text)]">{d.form?.rows.find((x) => x.id === r.id)?.label ?? r.word}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-body ui-reveal">
+                  {d.sections.map((s) => (
+                    <label key={idOf(s)} className="inline-flex items-center gap-1.5 min-h-8 pointer-coarse:min-h-11 cursor-pointer select-none">
+                      <input type="checkbox" className="w-4 h-4 accent-[var(--color-main)]" checked={!off.has(idOf(s))} onChange={() => toggle(idOf(s))} />
+                      <span className="text-[var(--color-text)]">{s.title.split(" - ")[0]}</span>
                     </label>
                   ))}
-                </div>
-                <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-caption">
-                  <span className="text-caption font-medium text-[var(--color-text-muted)]">Table</span>
-                  {FORM_ROWS.map((r) => (
-                    <label key={r.id} className="inline-flex items-center gap-1.5 cursor-pointer select-none">
-                      <input type="checkbox" className="accent-[var(--color-main)]" checked={!formOff.has(r.id)} onChange={() => flip(setFormOff, FORM_OFF_KEY, r.id)} />
-                      <span className="font-medium text-[var(--color-text)]">{r.word}</span>
+                  {stamps && (
+                    <label className="inline-flex items-center gap-1.5 min-h-8 pointer-coarse:min-h-11 cursor-pointer select-none border-l border-[var(--color-border)] pl-3" title="The time each step was done, in Done - the time log has them all">
+                      <input type="checkbox" className="w-4 h-4 accent-[var(--color-main)]" checked={stamps.on} onChange={() => stamps.set(!stamps.on)} />
+                      <span className="text-[var(--color-text)]">Times in Done</span>
                     </label>
-                  ))}
+                  )}
                 </div>
-                {(d.formCheck?.length ?? 0) > 0 && (
-                  <ul className="border-l-2 border-[var(--state-held)] py-0.5 text-caption font-medium text-[var(--state-held-text)] list-disc pl-7">
-                    {d.formCheck!.map((c) => <li key={c}>{c}</li>)}
-                  </ul>
-                )}
-              </>
-            )}
-            {!useForm && <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-caption">
-              <span className="text-caption font-medium text-[var(--color-text-muted)]">Include</span>
-              {d.sections.map((s) => (
-                <label key={idOf(s)} className="inline-flex items-center gap-1.5 cursor-pointer select-none">
-                  <input type="checkbox" className="accent-[var(--color-main)]" checked={!off.has(idOf(s))} onChange={() => toggle(idOf(s))} />
-                  <span className="font-medium text-[var(--color-text)]">{s.title.split(" - ")[0]}</span>
-                </label>
               ))}
-              {stamps && (
-                <label className="inline-flex items-center gap-1.5 cursor-pointer select-none border-l border-[var(--color-border)] pl-3" title="The time each step was done, in Done - the time log has them all">
-                  <input type="checkbox" className="accent-[var(--color-main)]" checked={stamps.on} onChange={() => stamps.set(!stamps.on)} />
-                  <span className="font-medium text-[var(--color-text)]">Times in Done</span>
-                </label>
-              )}
-            </div>}
+            </div>
+            {useForm && (d.formCheck?.length ?? 0) > 0 && (
+              <ul className="border-l-2 border-[var(--state-held)] py-0.5 text-caption font-medium text-[var(--state-held-text)] list-disc pl-7">
+                {d.formCheck!.map((c) => <li key={c}>{c}</li>)}
+              </ul>
+            )}
             <div className="rounded-lg border border-[var(--color-border)] bg-white p-4 max-h-[58vh] overflow-y-auto">
               {/* The email body itself — escaped text in inline-styled tables. */}
               <div dangerouslySetInnerHTML={{ __html: html }} />
@@ -1683,6 +1804,61 @@ function makeCtx(tz: string, byId: Map<string, Milestone>, progress?: Map<string
   };
 }
 
+/** Where the job stands, as one sentence with its one number. */
+interface StandSay {
+  /** The verdict's word ("BEHIND", "FINISHED LATE"). */
+  label: string;
+  tone: Tone;
+  /** Its one number, said big: "43.5 h", "62%". */
+  key: string;
+  /** The sentence: "Phase 1 finished Sat, Nov 21 1:30 AM, 43.5 h late (1.8 days)." */
+  text: string;
+  /** Late or behind: someone has to act on it. */
+  bad: boolean;
+}
+const round1 = (n: number) => Math.round(n * 10) / 10;
+
+/** The status in the page header's words (lib/phaseStanding): finished,
+ *  and how late against the plan when it finished late; past its planned
+ *  finish or behind by the work-hours; on plan by the hours but a late
+ *  forecast; ahead; on track. One verdict, so the header, the sentence and
+ *  the line under it never say two things. */
+function standSay(o: { overall: ShiftReport["overall"]; gap: number; forecast?: { finish: number; slipH: number }; work: WorkSummary; scope: string; c: Ctx; now: number }): StandSay {
+  const { overall: ov, c, scope, forecast: fc } = o;
+  const pct = `${ov.actualPct}% done, plan by now ${ov.plannedPct}%`;
+  const slip = fc ? round1(fc.slipH) : null;
+  const fcText = fc ? ` Forecast finish ${c.DT(fc.finish)}, ${lateWords(fc.slipH)}.` : "";
+  if (o.work.allDone) {
+    // The schedule's own forecast of finished work is its real finish
+    // (the same number the line under the header gives).
+    const late = slip ?? o.work.hoursAfterPlan;
+    const at = fc?.finish ?? o.work.finishedAt;
+    const when = at != null ? ` ${c.DT(at)}` : "";
+    if (late == null) return { label: "FINISHED", tone: "slate", key: "100%", text: `${scope} finished${when}.`, bad: false };
+    if (late >= 0.5) return { label: "FINISHED LATE", tone: "rose", key: `${round1(late)} h`, text: `${scope} finished${when}, ${lateWords(late)}.`, bad: true };
+    if (late <= -0.5) return { label: "FINISHED EARLY", tone: "emerald", key: `${round1(-late)} h`, text: `${scope} finished${when}, ${lateWords(late)}.`, bad: false };
+    return { label: "FINISHED ON TIME", tone: "emerald", key: "On time", text: `${scope} finished${when}, on time.`, bad: false };
+  }
+  const gap = round1(Math.abs(o.gap));
+  // Past its planned finish with work still open: behind, whatever the
+  // percent says (as the page header says it).
+  const pastPlan = ov.plannedFinish != null && o.now > ov.plannedFinish;
+  if (ov.standing === "behind" || pastPlan) {
+    const left = Math.max(0, ov.stepsTotal - ov.stepsDone);
+    const leftWords = `${left} step${left === 1 ? "" : "s"} left`;
+    const text = pastPlan
+      ? `${scope} is past its planned finish (${c.DT(ov.plannedFinish!)}), ${leftWords}: ${pct}.`
+      : `${scope} is ${pct}: ${c.hrs(gap)} of work behind.`;
+    const key = ov.standing === "behind" && gap >= 0.5 ? `${gap} h` : slip != null && slip >= 0.5 ? `${slip} h` : leftWords;
+    return { label: "BEHIND", tone: "rose", key, text: text + fcText, bad: true };
+  }
+  if (fc && slip != null && slip >= 0.5) {
+    return { label: "FORECAST LATE", tone: "rose", key: `${slip} h`, text: `${scope} is ${pct}, but the forecast finish is ${c.DT(fc.finish)}, ${lateWords(fc.slipH)}.`, bad: true };
+  }
+  if (ov.standing === "ahead") return { label: "AHEAD", tone: "emerald", key: `${gap} h`, text: `${scope} is ${pct}: ${c.hrs(gap)} of work ahead.${fcText}`, bad: false };
+  return { label: "ON TRACK", tone: "slate", key: `${ov.actualPct}%`, text: `${scope} is ${pct}.${fcText}`, bad: false };
+}
+
 /** Breaks and lunch for each shift: blocked off in the notes by the hour.
  *  Picked, not typed: the shift, the time, how long, and what it is. */
 function BreaksEditor({ breaks, onChange, times }: { breaks: ShiftBreak[]; onChange: (b: ShiftBreak[]) => void; times: ShiftTimes }) {
@@ -1738,6 +1914,51 @@ interface Sec {
   /** On the meeting's agenda (Today › Meeting): only there, or there and
    *  on the report. */
   agenda?: "only" | "also";
+  /** Nothing in it: it folds into one line with the other empty sections
+   *  ("Nothing finished, waiting or added this shift."), from `what` and
+   *  `scope`. Its `actions` stay on that line as small buttons; one with no
+   *  `run` opens the section itself. */
+  fold?: { what: string; scope: string; actions?: Array<{ label: string; run?: () => void; icon?: "add" | "plan" | "jump" }> };
+  /** Why the section is there, behind a "?" by its title. */
+  help?: string;
+}
+
+/** "Nothing finished, waiting or added this shift. Nothing scheduled for
+ *  the night shift.": the folded sections, one sentence per time. */
+function foldSentence(list: Sec[]): string {
+  const by = new Map<string, string[]>();
+  for (const x of list) if (x.fold) by.set(x.fold.scope, [...(by.get(x.fold.scope) ?? []), x.fold.what]);
+  const or = (w: string[]) => (w.length < 2 ? w[0] ?? "" : `${w.slice(0, -1).join(", ")} or ${w[w.length - 1]}`);
+  return [...by.entries()].map(([scope, w]) => `Nothing ${or(w)} ${scope}.`).join(" ");
+}
+
+/** The report's sections as a compact list that stays on screen: each
+ *  name with its count and, on one that needs attention, a dot in its
+ *  color; a tap goes to it. A row that scrolls sideways (the next name
+ *  shows in part), or a column beside the report. An empty section is
+ *  quiet: it sits folded in the one line with the others. */
+function SectionNav({ sections, current, folded, onGo, vertical }: { sections: Sec[]; current: number | null; folded: (s: Sec) => boolean; onGo: (id: string) => void; vertical?: boolean }) {
+  return (
+    <nav aria-label="Sections" className={vertical ? "flex flex-col gap-0.5" : "min-w-0 flex-1 flex items-center gap-0.5 overflow-x-auto overflow-y-hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"}>
+      {sections.map((s, i) => {
+        const active = current === i;
+        const empty = folded(s);
+        const flag = s.flag === "rose" ? "var(--state-overdue)" : s.flag === "amber" ? "var(--state-held)" : null;
+        return (
+          <button key={s.id} type="button" onClick={() => onGo(s.id)} aria-current={active ? "step" : undefined}
+            className={`${vertical ? "w-full justify-between" : "shrink-0"} inline-flex items-center gap-1.5 h-8 pointer-coarse:h-11 px-2 rounded-md text-body hover:bg-[var(--color-surface-2)] ${active ? "bg-[var(--color-accent-soft)] font-medium text-[var(--color-accent-text)]" : empty ? "text-[var(--color-text-muted)]" : "font-medium text-[var(--color-text)]"}`}>
+            <span className="min-w-0 truncate">{s.short}</span>
+            {((s.count ?? 0) > 0 || flag) && (
+              <span className="shrink-0 inline-flex items-center gap-1">
+                {(s.count ?? 0) > 0 && <span className={`ui-count ${s.flag === "rose" ? "is-bad" : s.flag === "amber" ? "is-warn" : active ? "is-solid" : ""}`}>{badgeText(s.count!)}</span>}
+                {flag && <span aria-label={s.flag === "rose" ? "needs attention" : "waiting"} className="w-2 h-2 rounded-full" style={{ background: flag }} />}
+              </span>
+            )}
+          </button>
+        );
+      })}
+    </nav>
+  );
 }
 
 /** Table rows as export rows: same text, tags without the null slots. */
@@ -1854,7 +2075,7 @@ function withWaiting<T extends ExportSection & { id: string }>(sections: T[], se
   const at = sections.findIndex((x) => x.id === "done");
   return at < 0 ? [...sections, sec] : [...sections.slice(0, at + 1), sec, ...sections.slice(at + 1)];
 }
-function waitingSection(w: WaitingReady, shift: ShiftWindow, c: Ctx): Sec {
+function waitingSection(w: WaitingReady, _shift: ShiftWindow, c: Ctx): Sec {
   const n = w.waiting.length + w.ready.length;
   const row = (key: string, lead: string, text: string, aside: string, note?: string | null) => (
     <li key={key} className="py-1.5 border-b last:border-b-0 border-[var(--color-border)]">
@@ -1863,7 +2084,10 @@ function waitingSection(w: WaitingReady, shift: ShiftWindow, c: Ctx): Sec {
     </li>
   );
   return {
-    id: "waiting", title: waitingTitle(shift, c), short: "Waiting", sub: WAIT_SUB, count: n || undefined, flag: w.waiting.length ? "amber" : null,
+    // The date is at the top of the report: the title says what and how many.
+    id: "waiting", title: `Waiting · ${n}`, short: "Waiting", help: `${WAIT_SUB[0].toUpperCase()}${WAIT_SUB.slice(1)}.`,
+    count: n || undefined, flag: w.waiting.length ? "amber" : null,
+    ...(!n && !w.service.length ? { fold: { what: "waiting", scope: "this shift" } } : {}),
     body: () => (!n && !w.service.length ? <div className="text-body text-[var(--color-text-muted)]">{WAIT_NONE}</div> : (
       <div className="space-y-3 text-body" data-waiting-ready>
         {!n && <div className="text-[var(--color-text-muted)]">{WAIT_NONE}</div>}
@@ -1912,7 +2136,9 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
   /** The shift after that: its list (the schedule's, or its plan) and the way to plan it. */
   after?: { report: ShiftReport; plan?: ShiftPlan; open?: () => void };
   /** This shift's own plan (the work after its meeting) and the way to set it. */
-  thisPlan?: { plan?: ShiftPlan; open?: () => void } }): Sec[] {
+  thisPlan?: { plan?: ShiftPlan; open?: () => void };
+  /** Where it stands in one sentence (the email's too). */
+  say?: StandSay }): Sec[] {
   const { overall, review, goals, shift, next } = report;
   // A step's latest comment, as one quiet line under it (each step shows once).
   const comment = (r: ShiftRow) => {
@@ -2062,9 +2288,11 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
     ? `Could try if possible: ${tryList.length} step${tryList.length === 1 ? "" : "s"}, ${c.hrs(capa.used)}${capa.hours > 0 && ho?.pullSet ? ` of ${c.hrs(capa.hours)}${capa.over ? ", over" : ""} (${ho.pullSet.crew ? `${ho.pullSet.crew}, ` : ""}${ho.pullSet.hands} × ${Math.min(ho.pullSet.hours, shiftHrs)} h)` : ""}.`
     : null;
   const nextSub = [
-    `${planList.length} step${planList.length === 1 ? "" : "s"} · ${c.hrs(planHrs)}`,
+    c.hrs(planHrs),
     tryList.length ? `${tryList.length} could try` : null,
   ].filter(Boolean).join(" · ");
+  // Night shifts not decided: the list follows the schedule file's hours (said in Next).
+  const nightUnset = next.kind === "night" && o.times.nightJobs === undefined && !goals.byPlan;
   // The shift after: its own list, numbered, read like the next shift's.
   const after = o.after;
   const afterNext = after?.report.next;
@@ -2103,7 +2331,8 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
       tone: (overall.standing === "behind" ? "rose" : overall.standing === "ahead" ? "emerald" : "slate") as "rose" | "emerald" | "slate" },
     { label: "Steps done", value: `${overall.stepsDone}/${overall.stepsTotal}`, tone: "slate" as const },
     // Past due across every crew (blocked work is counted under decisions).
-    { label: o.crew ? "Past due · all crews" : "Past due", value: `${pastDueAll}`, tone: (pastDueAll ? "amber" : "emerald") as "amber" | "emerald" },
+    // "Overdue", the page header's word for it.
+    { label: o.crew ? "Overdue · all crews" : "Overdue", value: `${pastDueAll}`, tone: (pastDueAll ? "amber" : "emerald") as "amber" | "emerald" },
   ];
   const nothingLast = review.scheduled.length === 0 && doneRows.length === 0;
 
@@ -2138,11 +2367,11 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
   const agendaItems: Sec[] = [
     ...(endMeeting && sh ? [{
       id: "attend", title: "Attendance & head count", short: "Attendance", agenda: "only" as const,
-      sub: `${meetingTitle(next.kind)} - who's here from each crew, and how many on site`,
+      sub: meetingTitle(next.kind), help: "Who's here from each crew, and how many are on site.",
       body: (print: boolean) => <MeetingBox m={endMeeting} edit={sh.edit && !print} />,
     }] : []),
     ...(hazardJobs.length ? [{
-      id: "topics", title: `Safety topic - ${shiftName(next)} ${c.D(next.start)}`, short: "Safety topic", agenda: "only" as const,
+      id: "topics", title: "Safety topic", short: "Safety topic", agenda: "only" as const,
       sub: endMeeting && sh?.edit ? "Pick one for the meeting, or present it full screen" : "Present one full screen",
       body: (print: boolean) => (
         <SafetyMomentBox jobs={hazardJobs} shift={next} T={c.T} print={print} project={o.safety?.project} recent={o.safety?.recent} label={`${shiftName(next)} ${c.D(next.start)}`}
@@ -2165,7 +2394,8 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
         <>
           <StandTiles print={print} actual={overall.actualPct} planned={overall.plannedPct} standing={overall.standing}
             gap={{ label: standStats[2].label, value: standStats[2].value }} done={overall.stepsDone} total={overall.stepsTotal}
-            pastDue={pastDueAll} pastDueHeld={pastDueHeld} pastDueLabel={standStats[4].label} />
+            pastDue={pastDueAll} pastDueHeld={pastDueHeld} pastDueLabel={standStats[4].label} say={o.say}
+            pastDueScope={`across ${o.standPhase ? "every phase" : "the work"}, all crews`} />
           {/* Only when the job is behind: on track or ahead, the order the work was done in is not reported. */}
           {o.why && o.why.total >= 0.5 && overall.standing === "behind" && <WhyBehind why={o.why} c={c} print={print} />}
           {!print && o.pathSource && (
@@ -2183,7 +2413,7 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
     },
     {
       id: "safety", title: "Safety & people", short: "Safety",
-      sub: "Incidents since the last turnover, and what's open across the change. The safety topics are on the meeting's agenda.",
+      help: "Incidents since the last turnover, and what's open across the change. The safety topics are on the meeting's agenda.",
       body: (print) => (
         <div className="space-y-2">
           {sh ? (
@@ -2204,10 +2434,13 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
     },
     {
       // ── Done — what the shift finished, and what it moved forward.
-      id: "done", title: `Done - ${shiftName(shift)} ${c.D(shift.start)} ${c.win(shift)}`, short: "Done",
-      sub: [`${plan.done.length} finished`, plan.moved.length ? `${plan.moved.length} moved forward` : null].filter(Boolean).join(" · "),
+      // The shift and its date are at the top: the title is what and how many.
+      id: "done", title: `Done · ${plan.done.length}`, short: "Done",
+      sub: plan.moved.length ? `${plan.moved.length} moved forward` : undefined,
       count: plan.done.length,
       flag: null,
+      ...(doneRows.length === 0 && !checkText && !askedText ? { fold: { what: nothingLast ? "planned" : "finished", scope: `${forCrew ? `${forCrew} ` : ""}this shift`.trim(),
+        actions: nothingLast && o.onJump && o.jumpTarget ? [{ label: `Jump to ${o.jumpTarget.kind} shift, ${c.D(o.jumpTarget.start)}`, run: o.onJump, icon: "jump" as const }] : [] } } : {}),
       data: () => [
         ...(checkText ? [{ k: "note", text: checkText } as ExportBlock] : []),
         ...(askedText ? [{ k: "note", text: askedText } as ExportBlock] : []),
@@ -2223,7 +2456,10 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
                 className="inline-flex items-center gap-1.5 h-10 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] print:hidden">
                 <ListChecks className="w-3.5 h-3.5" /> {o.thisPlan.plan ? "Change this shift's plan" : "Plan this shift"}
               </button>
-              <span className="text-caption text-[var(--color-text-muted)]">{o.thisPlan.plan ? `${planSetText(o.thisPlan.plan, c) ?? "Planned."} The update's "Work to be completed" is this plan.` : "The work after the meeting. Not set: the update lists the schedule's work for the shift."}</span>
+              {o.thisPlan.plan
+                ? <span className="text-caption text-[var(--color-text-muted)]">{planSetText(o.thisPlan.plan, c) ?? "Planned."}</span>
+                : <span className="text-caption text-[var(--color-text-muted)]">Not set</span>}
+              <HelpTooltip>{o.thisPlan.plan ? "The update's \"Plan\" row is this plan." : "This shift's plan is the work after its meeting. Not set: the update lists the schedule's work for the shift."}</HelpTooltip>
             </div>
           )}
           {checkText && <div className="text-caption font-medium text-[var(--color-text)]">{checkText}</div>}
@@ -2246,16 +2482,23 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
     },
     {
       // ── Next — one list, each step once, with what happens to it.
-      id: "next", title: `Next - ${shiftName(next)} ${c.D(next.start)} ${c.win(next)}`, short: "Next",
+      // Its shift and times are at the top of the report.
+      id: "next", title: `Next shift · ${planList.length} step${planList.length === 1 ? "" : "s"}`, short: "Next shift",
       agenda: "also",
       sub: nextSub,
       count: planList.length,
       flag: null,
+      ...(planList.length + tryList.length === 0 && !planSet && !nightUnset && !tryLine && !goals.pulledHeld.length && !offText ? { fold: {
+        what: goals.byPlan ? "left open on the plan" : "scheduled", scope: `for the ${next.kind} shift`,
+        actions: [
+          ...(np?.open ? [{ label: goals.byPlan ? `Change the ${next.kind} plan` : `Plan the ${next.kind} shift`, run: np.open, icon: "plan" as const }] : []),
+          ...(ho?.openPicker && !goals.byPlan ? [{ label: `Add work for the ${next.kind} shift`, run: ho.openPicker, icon: "add" as const }] : []),
+        ] } } : {}),
       body: (print) => (
         <div className="space-y-2">
-          {!print && planButton && <div className="flex flex-wrap items-center gap-2">{planButton}{!goals.byPlan && <span className="text-caption text-[var(--color-text-muted)]">No plan set: this list is the schedule&apos;s. Tick the work you&apos;re giving the {next.kind} shift.</span>}</div>}
+          {!print && planButton && <div className="flex flex-wrap items-center gap-2">{planButton}{!goals.byPlan && <><span className="text-caption text-[var(--color-text-muted)]">No plan set</span><HelpTooltip>This list is the schedule&apos;s. Tick the work you&apos;re giving the {next.kind} shift.</HelpTooltip></>}</div>}
           {planSet && <div className="text-caption font-medium text-[var(--color-text)]">{planSet} This list is the plan; nothing else is handed to the {next.kind} shift.</div>}
-          {next.kind === "night" && o.times.nightJobs === undefined && !goals.byPlan && (
+          {nightUnset && (
             // Not decided: the list follows the schedule file's hours.
             <div role="alert" className="border-l-2 border-[var(--state-overdue)] pl-3 py-1 text-caption text-[var(--color-text)]">
               <b className="text-[var(--state-overdue-text)]">Night shifts aren&apos;t set:</b> this list follows the schedule file&apos;s hours, which can hand day work to nights. Set them once in <b>Schedule setup → Night shifts</b>: which jobs run days and nights.
@@ -2292,14 +2535,18 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
     // as the next one. Its list is the schedule's (with what this crew
     // leaves open) until a plan is set; then the plan.
     ...(after && afterNext ? [{
-      id: "after", title: `Plan the ${afterNext.kind} shift - ${c.D(afterNext.start)} ${c.win(afterNext)}`, short: `${afterNext.kind === "day" ? "Day" : "Night"} shift plan`,
+      // Not on the line at the top: its shift and times go beside the title.
+      id: "after", title: `Shift after · ${afterList.length} step${afterList.length === 1 ? "" : "s"}`, short: "Shift after",
       agenda: "also",
-      sub: [`${afterList.length} step${afterList.length === 1 ? "" : "s"} · ${c.hrs(afterHrs)}`, plan.held.length ? `${plan.held.length} blocked or on hold` : null].filter(Boolean).join(" · "),
+      sub: [`${shiftName(afterNext)} ${c.D(afterNext.start)} ${c.win(afterNext)}`, c.hrs(afterHrs), plan.held.length ? `${plan.held.length} blocked or on hold` : null].filter(Boolean).join(" · "),
       count: afterList.length,
       flag: plan.held.some((r) => r.status === "blocked") ? "rose" : null,
+      ...(afterList.length === 0 && !afterSet && !plan.held.length ? { fold: {
+        what: after.report.goals.byPlan ? "left open on the plan" : "scheduled", scope: `for the ${afterNext.kind} shift after (${c.D(afterNext.start)})`,
+        actions: after.open ? [{ label: after.report.goals.byPlan ? `Change the ${afterNext.kind} plan` : `Plan the ${afterNext.kind} shift`, run: after.open, icon: "plan" as const }] : [] } } : {}),
       body: (print: boolean) => (
         <div className="space-y-2">
-          {!print && afterButton && <div className="flex flex-wrap items-center gap-2">{afterButton}{!after.report.goals.byPlan && <span className="text-caption text-[var(--color-text-muted)]">No plan set: this list is the schedule&apos;s, with what the {next.kind === "day" ? "night" : "day"} crew leaves open. Tick the work you&apos;re giving the {afterNext.kind} shift.</span>}</div>}
+          {!print && afterButton && <div className="flex flex-wrap items-center gap-2">{afterButton}{!after.report.goals.byPlan && <><span className="text-caption text-[var(--color-text-muted)]">No plan set</span><HelpTooltip>This list is the schedule&apos;s, with what the {next.kind === "day" ? "night" : "day"} crew leaves open. Tick the work you&apos;re giving the {afterNext.kind} shift.</HelpTooltip></>}</div>}
           {afterSet && <div className="text-caption font-medium text-[var(--color-text)]">{afterSet} This list is the plan; nothing else is handed to the {afterNext.kind} shift.</div>}
           {afterList.length === 0 ? <Empty>{after.report.goals.byPlan ? "Nothing left open on the plan." : `Nothing is scheduled for the ${afterNext.kind} shift.`}</Empty> : (
             <StepTable print={print} box whenHead="When" rightHead="Done → goal" rows={afterRows()} onEdit={print ? undefined : editRow} />
@@ -2324,9 +2571,10 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
     ...(sh ? [(() => {
       const open = sh.notes.filter((n) => n.followUp && !n.cleared);
       return {
-        id: "followups", title: "Follow-up items", short: "Follow-ups", agenda: "also",
-        sub: open.length ? `${open.length} open - on every update until marked done` : "None open",
+        id: "followups", title: `Follow-ups · ${open.length}`, short: "Follow-ups", agenda: "also",
+        help: "Each follow-up is on every update until someone marks it done.",
         count: open.length || undefined, flag: null,
+        ...(!open.length ? { fold: { what: "open", scope: "in follow-ups", actions: sh.edit ? [{ label: "Add a follow-up", icon: "add" as const }] : [] } } : {}),
         body: (print: boolean) => <FollowUpsBox open={open} edit={sh.edit && !print} T={c.T} onAdd={(text) => sh.addNote({ at: Date.now(), text, followUp: true })} onDone={(n) => sh.clearNote(n)} />,
         data: () => [open.length ? { k: "bullets", items: open.map((n) => `${n.text}${n.from ? ` (from ${n.from})` : ""}`) } as ExportBlock : { k: "empty", text: "None." } as ExportBlock],
       } as Sec;
@@ -2377,7 +2625,7 @@ function hourlySection(sh: SheetCtx, h: HourlyCtx, meetings?: { start?: MeetingC
   const said = rows.filter((r) => r.slot.kind !== "meeting" && r.slot.kind !== "handover" && r.text).length;
   const meetingOf = (k: string) => (k === "meeting" ? h.meet?.start : k === "handover" ? h.meet?.end : undefined);
   return {
-    id: "hourly", title: "Shift notes - hour by hour", short: "Hour by hour",
+    id: "hourly", title: "Shift notes, hour by hour", short: "Hour by hour",
     sub: sh.edit && sh.carriedThis ? "The meeting's names and head counts aren't updated for this shift yet" : "The meeting, then what happened each hour",
     count: said || undefined,
     // Names and head counts still carried from the last shift: check them.
@@ -2407,10 +2655,12 @@ function discoverySection(shift: ShiftWindow, c: Ctx, list: Discovery[], onAdd?:
   const ds = discoverySummary(list, shift.start, shift.end);
   if (!ds.inShift.length && !ds.open.length && !onAdd) return [];
   return [{
-    id: "discovery", title: addedTitle([...ds.inShift, ...ds.open].map((d) => kindOf(d.record))), short: "Added work",
+    id: "discovery", title: `${addedTitle([...ds.inShift, ...ds.open].map((d) => kindOf(d.record)))} · ${ds.inShift.length}`, short: "Added work",
     sub: discoverySub(ds, c.hrs, c.word),
     count: ds.inShift.length,
     flag: ds.shift.critical ? "rose" : null,
+    ...(!ds.inShift.length && !ds.open.length ? { fold: { what: "added", scope: "this shift",
+      actions: onAdd ? [{ label: "Add discovery or added scope", run: onAdd, icon: "add" as const }] : [] } } : {}),
     body: (print) => (
       <div className="space-y-2">
         {ds.inShift.length === 0 ? <Empty>Nothing added this shift.</Empty> : <DiscoveryList list={ds.inShift} c={c} print={print} />}
@@ -2661,6 +2911,15 @@ function findingsSection(f: FindingsCtx, c: Ctx): Sec {
   };
 }
 
+/** The close-out on screen in the order it prints and goes out (lib/
+ *  phaseReport closeoutPrint, the one rule for all three): where the time
+ *  went right under the opening tiles. */
+function closeoutOrder(secs: Sec[]): Sec[] {
+  const ids = closeoutPrint({ kind: "", project: "", when: "", asOf: "", sections: secs.map((x) => ({ id: x.id, title: x.title, blocks: [] })) }).sections.map((x) => x.id);
+  const byId = new Map(secs.map((x) => [x.id, x]));
+  return ids.map((id) => (id ? byId.get(id) : undefined)).filter((x): x is Sec => !!x);
+}
+
 function closeoutSections(co: ReturnType<typeof buildCloseout>, report: ShiftReport, c: Ctx, cancelled: CancelledJob[], found: Discovery[] = [], lookBack: LookBack | null = null, findings?: FindingsCtx, work?: WorkSummary,
   /** Phases with no schedule yet ("Phase 2: no schedule yet, ..."): the job isn't done. */
   unscheduled: string[] = []): Sec[] {
@@ -2677,12 +2936,15 @@ function closeoutSections(co: ReturnType<typeof buildCloseout>, report: ShiftRep
     extraTags: [r.leaf.status === "blocked" ? { t: "blocked", tone: "rose" } : { t: "on hold", tone: "amber" }],
     note: r.leaf.statusReason ? `Reason: ${r.leaf.statusReason}` : undefined,
   }));
+  // Worded as printed and sent (lib/phaseReport closeoutPrint): "Current
+  // plan finish …", "791.4 h (33 days) after the original plan".
+  const finalSub = [co.finish != null ? `Planned finish ${c.DT(co.finish)}` : null,
+    work?.finishedAt != null ? `${unscheduled.length ? "scheduled work " : ""}finished ${c.DT(work.finishedAt)}${work.hoursAfterPlan != null ? ` (${vsPlanWords(work.hoursAfterPlan)})` : ""}` : null,
+    ...unscheduled].filter(Boolean).join(" · ") || undefined;
   return [
     {
       id: "final", title: "Final standing", short: "Standing",
-      sub: [co.finish != null ? `Planned finish ${c.DT(co.finish)}` : null,
-        work?.finishedAt != null ? `${unscheduled.length ? "scheduled work " : ""}finished ${c.DT(work.finishedAt)}${work.hoursAfterPlan != null ? ` (${vsPlanWords(work.hoursAfterPlan)})` : ""}` : null,
-        ...unscheduled].filter(Boolean).join(" · ") || undefined,
+      sub: finalSub && closeoutPrint({ kind: "", project: "", when: "", asOf: "", sections: [{ id: "final", title: "", sub: finalSub, blocks: [] }] }).sections[0].sub,
       flag: co.done < co.steps || unscheduled.length ? "amber" : null,
       body: () => (
         <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5 keep">
@@ -2742,18 +3004,25 @@ function closeoutSections(co: ReturnType<typeof buildCloseout>, report: ShiftRep
 /** What a step lost, and why, in words (lib/lookBack lostWords). */
 const whyLost = (s: StepLook, c: Ctx): string[] => lostWords(s, c.hrs);
 
-function lookBackSections(lb: LookBack, report: ShiftReport, c: Ctx): Sec[] {
+function lookBackSections(lb: LookBack, _report: ShiftReport, c: Ctx): Sec[] {
   const signed = (h: number) => `${h > 0 ? "+" : h < 0 ? "−" : ""}${c.hrs(Math.abs(h))}`;
   const f = lb.finish;
   const stats = [
-    { label: "Planned finish", value: c.DTs(f.baseline), tone: "slate" as const },
+    // The same words as print and email (lib/phaseReport closeoutPrint):
+    // the original plan's finish, and a figure from a forecast says so.
+    { label: "Original plan finish", value: c.DTs(f.baseline), tone: "slate" as const },
     { label: f.done ? "Finished" : "Forecast finish", value: c.DTs(f.actual), tone: "slate" as const },
-    { label: f.slipH > 0 ? "Late by" : "Ahead by", value: c.hrs(Math.abs(f.slipH)), tone: (f.slipH >= 1 ? "rose" : f.slipH <= -1 ? "emerald" : "slate") as "rose" | "emerald" | "slate" },
+    { label: `${f.done ? "" : "Forecast "}${f.slipH > 0 ? "late by" : "ahead by"}`.replace(/^l|^a/, (x) => x.toUpperCase()), value: withDays(c.hrs(Math.abs(f.slipH))), tone: (f.slipH >= 1 ? "rose" : f.slipH <= -1 ? "emerald" : "slate") as "rose" | "emerald" | "slate" },
     { label: "Steps that lost time", value: `${lb.setbacks.length}`, tone: (lb.setbacks.length ? "amber" : "emerald") as "amber" | "emerald" },
     { label: "Ahead of plan", value: `${lb.ahead.length}`, tone: (lb.ahead.length ? "emerald" : "slate") as "emerald" | "slate" },
   ];
   const max = Math.max(1, ...lb.byCause.map((x) => x.hours));
-  const basis = `Against the baseline${report.overall.baselineSetAt ? ` (set ${c.D(Date.parse(report.overall.baselineSetAt))})` : ""} · times as entered${f.done ? "" : " · work still open at its forecast"}`;
+  // Which plan it is measured against: the baseline as saved, or the
+  // schedule as planned when no baseline was saved (lib/lookBack).
+  const against = f.basis.kind === "baseline"
+    ? `Against the baseline${f.basis.savedAt != null ? ` of ${c.D(f.basis.savedAt)}` : ""}`
+    : "Against the schedule as planned (no baseline saved)";
+  const basis = `${against} · times as entered${f.done ? "" : " · work still open at its forecast"}`;
   const setbacks = lb.setbacks.slice(0, 15);
   // The chain, with runs of steps that only passed the slip on folded.
   type Row = { kind: "step"; i: number } | { kind: "fold"; n: number };
@@ -2790,7 +3059,7 @@ function lookBackSections(lb: LookBack, report: ShiftReport, c: Ctx): Sec[] {
                 <div key={x.cause} className="grid grid-cols-[minmax(0,15rem)_1fr_auto] items-center gap-2 max-sm:grid-cols-[1fr_auto]">
                   <span className="text-[var(--color-text)] break-words max-sm:col-span-2">{CAUSE_LABEL[x.cause]}</span>
                   <span className="h-2.5 rounded-full bg-[var(--color-surface-2)] overflow-hidden"><span className="block h-full rounded-full bg-[var(--state-held)]" style={{ width: `${Math.round((x.hours / max) * 100)}%` }} /></span>
-                  <span className="tabular-nums text-[var(--color-text-muted)]"><b className="text-[var(--color-text)]">{c.hrs(x.hours)}</b> · {x.steps} step{x.steps === 1 ? "" : "s"}</span>
+                  <span className="tabular-nums text-[var(--color-text-muted)]"><b className="text-[var(--color-text)]">{withDays(c.hrs(x.hours))}</b> · {x.steps} step{x.steps === 1 ? "" : "s"}</span>
                 </div>
               ))}
               <div className="text-caption text-[var(--color-text-faint)]">Hours each step lost on its own, added up - work runs side by side, so this is more than the finish moved. What moved the finish is under The chain of events.</div>
@@ -2812,7 +3081,7 @@ function lookBackSections(lb: LookBack, report: ShiftReport, c: Ctx): Sec[] {
                 <span className="text-[var(--color-text-muted)]"> · {[s.task, s.wo ? `WO ${s.wo}` : null, s.crew].filter(Boolean).join(" · ")}{s.done ? "" : " · forecast"}</span>
                 <div className="text-[var(--color-text-muted)] break-words">{whyLost(s, c).join(" · ")}</div>
               </div>
-              <div className="text-right tabular-nums font-medium text-[var(--state-overdue-text)] whitespace-nowrap">{signed(s.lostH)}</div>
+              <div className="text-right tabular-nums font-medium text-[var(--state-overdue-text)] whitespace-nowrap">{withDays(signed(s.lostH))}</div>
             </div>
           ))}
           {lb.setbacks.length > setbacks.length && <div className="px-2.5 py-1 text-[var(--color-text-muted)]">+ {lb.setbacks.length - setbacks.length} more, each losing less</div>}
@@ -2840,7 +3109,7 @@ function lookBackSections(lb: LookBack, report: ShiftReport, c: Ctx): Sec[] {
                 <span className={`absolute -left-[5px] top-[9px] h-2 w-2 rounded-full ${l.addedH >= 1 ? "bg-[var(--state-overdue)]" : l.addedH <= -1 ? "bg-[var(--state-released)]" : "bg-[var(--color-border-control)]"}`} />
                 <div className="flex flex-wrap items-baseline gap-x-2">
                   <b className="text-[var(--color-text)] break-words">{name(s)}</b>
-                  <span className={`font-medium tabular-nums ${tone}`}>{l.addedH >= 1 ? `added ${signed(l.addedH)}` : l.addedH <= -1 ? `made up ${c.hrs(-l.addedH)}` : "passed it on"}</span>
+                  <span className={`font-medium tabular-nums ${tone}`}>{l.addedH >= 1 ? `added ${withDays(signed(l.addedH))}` : l.addedH <= -1 ? `made up ${withDays(c.hrs(-l.addedH))}` : "passed it on"}</span>
                   <span className="text-[var(--color-text-muted)] tabular-nums">· finish {signed(l.slipH)} after it</span>
                 </div>
                 <div className="text-[var(--color-text-muted)]">
@@ -2913,26 +3182,44 @@ function lookBackSections(lb: LookBack, report: ShiftReport, c: Ctx): Sec[] {
 function cancelledSection(jobs: CancelledJob[], c: Ctx): Sec {
   const when = (j: CancelledJob) => [j.at != null && Number.isFinite(j.at) ? c.D(j.at) : null, j.m.cancelledByName].filter(Boolean).join(" · ");
   const title = (j: CancelledJob) => (j.crumbs.length ? `${j.crumbs[j.crumbs.length - 1]}: ${j.m.name}` : j.m.name);
+  const byWay = new Map<string, CancelledJob[]>();
+  for (const j of jobs) { const k = `${j.m.movedTo || "-"}\u0000${j.m.cancelNote || ""}`; byWay.set(k, [...(byWay.get(k) ?? []), j]); }
+  const groups = [...byWay.values()];
   return {
     id: "cancelled", title: "Cancelled from this schedule", short: "Cancelled", count: jobs.length, flag: "amber",
     sub: "Still to be done: moved off this schedule",
+    // Jobs cancelled the same way (moved to the same place, with the same
+    // note) are one card that counts them and still names each, as they
+    // print and go out (lib/phaseReport closeoutPrint).
     body: (print) => (
       <div className={`rounded-md border border-[var(--color-border)] border-l-2 border-l-amber-500 divide-y divide-[var(--color-border)] ${print ? "text-[8.5pt]" : "text-caption"}`}>
-        {jobs.map((j) => (
-          <div key={j.m.id ?? j.m.name} className={`keep ${print ? "px-1.5 py-1" : "px-2.5 py-2"} flex flex-col gap-0.5`}>
-            <div className="flex items-baseline gap-x-2 flex-wrap">
-              <b className="text-[var(--color-text)]">{title(j)}</b>
-              {j.crumbs.length > 1 && <span className="text-caption text-[var(--color-text-faint)]">{j.crumbs.slice(0, -1).join(" › ")}</span>}
-              {j.steps > 1 && <span className="text-caption text-[var(--color-text-muted)]">{j.steps} steps</span>}
+        {groups.map((g) => {
+          const j = g[0];
+          const names = new Map<string, number>();
+          for (const x of g) names.set(title(x), (names.get(title(x)) ?? 0) + 1);
+          return (
+            <div key={j.m.id ?? j.m.name} className={`keep ${print ? "px-1.5 py-1" : "px-2.5 py-2"} flex flex-col gap-0.5`}>
+              {g.length > 1 ? (
+                <>
+                  <b className="text-[var(--color-text)]">{g.length} jobs</b>
+                  <div className="text-[var(--color-text)] break-words">{[...names].map(([n, k]) => (k > 1 ? `${n} (${k} times)` : n)).join("; ")}</div>
+                </>
+              ) : (
+                <div className="flex items-baseline gap-x-2 flex-wrap">
+                  <b className="text-[var(--color-text)]">{title(j)}</b>
+                  {j.crumbs.length > 1 && <span className="text-caption text-[var(--color-text-faint)]">{j.crumbs.slice(0, -1).join(" › ")}</span>}
+                  {j.steps > 1 && <span className="text-caption text-[var(--color-text-muted)]">{j.steps} steps</span>}
+                </div>
+              )}
+              <div className="text-[var(--color-text)]">
+                <span className="text-caption font-medium text-[var(--state-held-text)]">Moved to </span>
+                {j.m.movedTo ? <b>{j.m.movedTo}</b> : <span className="text-[var(--color-text-faint)]">not said</span>}
+              </div>
+              {j.m.cancelNote && <div className="text-[var(--color-text-muted)] italic">“{j.m.cancelNote}”</div>}
+              <div className="text-caption print:text-caption text-[var(--color-text-faint)]">Cancelled {[...new Set(g.map(when).filter(Boolean))].join("; ")}</div>
             </div>
-            <div className="text-[var(--color-text)]">
-              <span className="text-caption font-medium text-[var(--state-held-text)]">Moved to </span>
-              {j.m.movedTo ? <b>{j.m.movedTo}</b> : <span className="text-[var(--color-text-faint)]">not said</span>}
-            </div>
-            {j.m.cancelNote && <div className="text-[var(--color-text-muted)] italic">“{j.m.cancelNote}”</div>}
-            <div className="text-caption print:text-caption text-[var(--color-text-faint)]">Cancelled {when(j)}</div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     ),
     data: () => [{
@@ -2969,7 +3256,7 @@ function closeSection(title: string, signers: string[], sub = "Notes, actions an
 
 // ─── Masthead & footnote ─────────────────────────────────────────────
 
-function Masthead({ meeting, report, kickoff, closeout, ctx: c, asOf, now, rehearsal, historyNote, projectName, print, crew, addedOnly, criticalOnly, classOnly }: {
+function Masthead({ meeting, report, kickoff, closeout, ctx: c, asOf, now, rehearsal, historyNote, projectName, print, crew, addedOnly, criticalOnly, classOnly, kindShown = true, lock }: {
   meeting: MeetingKind; report: ShiftReport; kickoff: ReturnType<typeof buildKickoff>; closeout: ReturnType<typeof buildCloseout>;
   ctx: Ctx; asOf: number; now: number; rehearsal: boolean; historyNote: string | null; projectName?: string; print: boolean;
   /** The crew the report is narrowed to. */
@@ -2978,6 +3265,10 @@ function Masthead({ meeting, report, kickoff, closeout, ctx: c, asOf, now, rehea
   criticalOnly?: boolean;
   /** Narrowed to a unit or equipment type: its name ("Exchangers"). */
   classOnly?: string | null;
+  /** Say which meeting it is (off where the screen already says it). */
+  kindShown?: boolean;
+  /** On screen, at the line's end: the report's lock. */
+  lock?: React.ReactNode;
 }) {
   // No verdict badge here: Where we stand gives it (and the close-out's
   // tiles count what's open) - each number once.
@@ -2988,30 +3279,48 @@ function Masthead({ meeting, report, kickoff, closeout, ctx: c, asOf, now, rehea
     : meeting === "kickoff"
       ? <>{kickoff.start != null ? <>Job starts <b>{c.DL(kickoff.start)} {c.T(kickoff.start)}</b> · {kickoff.daysTotal} days</> : "No dated work yet"}</>
       : <>{closeout.finish != null ? <>Planned finish <b>{c.DT(closeout.finish)}</b></> : null}</>;
+  const chip = (text: React.ReactNode, tone: "plain" | "bad" = "plain") => (
+    <span className={`ml-2 whitespace-nowrap px-1.5 py-0.5 rounded text-caption print:text-caption font-medium ${print
+      ? tone === "bad" ? "border border-[var(--state-overdue)] text-[var(--state-overdue-text)]" : "border border-slate-700 text-slate-900"
+      : tone === "bad" ? "bg-transparent text-[var(--state-overdue-text)]" : "border border-[var(--color-border-strong)] text-[var(--color-text)]"}`}>{text}</span>
+  );
+  const marks = meeting === "turnover" && (
+    <>
+      {crew && chip(<>{crew} only</>)}
+      {criticalOnly && chip("Critical path only", "bad")}
+      {addedOnly && chip(<>Discovery &amp; added only</>)}
+      {classOnly && chip(<>{classOnly} only</>)}
+      {rehearsal && (print
+        ? <span className="ml-2 px-1.5 py-0.5 rounded text-caption print:text-caption font-medium border border-[var(--state-held)] text-[var(--state-held-text)]">Rehearsal: shift not started</span>
+        : <span className="ml-2 inline-flex items-center gap-1.5 whitespace-nowrap font-medium text-[var(--state-held-text)]"><span aria-hidden className="w-[7px] h-[7px] rounded-full bg-[var(--state-held)]" />Rehearsal: shift not started</span>)}
+      {historyNote && (print
+        ? <span className="ml-2 px-1.5 py-0.5 rounded text-caption print:text-caption font-medium border border-slate-500 text-slate-700">Earlier shift: {historyNote}</span>
+        : <span className="ml-2 text-[var(--color-text)]"><span className="font-medium">Earlier shift:</span> {historyNote}</span>)}
+    </>
+  );
+  // On screen: one line under the toolbar, the shifts and the time, the
+  // report's lock at its end (the page header already names the project).
+  if (!print) return (
+    <header className="px-3 sm:px-4 py-2 border-b border-[var(--color-border)] flex flex-wrap items-center gap-x-4 gap-y-1.5">
+      <div className="min-w-0 flex-1 text-body text-[var(--color-text)]">
+        {kindShown && <span className="font-medium text-[var(--color-text-muted)]">{title}: </span>}
+        {when}
+        <span className="text-[var(--color-text-muted)]"> · as of {c.T(meeting === "turnover" ? asOf : now)} {tzAbbrev(c.tz, now)}</span>
+        {marks}
+      </div>
+      {lock}
+    </header>
+  );
+  // On paper: the project's name in a dark band.
   return (
-    // On paper: the project's name in a dark band. On screen the page header
-    // already names the project, so the shift itself is the headline.
-    <header className={print ? "pb-1.5 border-b-2 border-slate-900" : "px-4 sm:px-5 pt-4 pb-3"}>
-      <div className="flex items-center gap-3 flex-wrap">
-        <div className="min-w-0 flex-1">
-          <div className="flex items-baseline gap-2 flex-wrap">
-            <span className={print ? "text-caption font-medium text-slate-500" : "text-body font-medium text-[var(--color-text-muted)]"}>{title}</span>
-            <h2 className={`${print ? "text-[14pt]" : "basis-full text-reading text-[var(--color-text)]"} font-medium tracking-tight leading-tight ${print ? "truncate" : ""}`}>{print ? (projectName ?? "Schedule") : when}</h2>
-          </div>
-          <div className={print ? "text-caption text-slate-700" : "mt-0.5 text-caption text-[var(--color-text-muted)]"}>
-            {print ? <>{when} · </> : null}as of {c.T(meeting === "turnover" ? asOf : now)} {tzAbbrev(c.tz, now)}
-            {crew && meeting === "turnover" && <span className={`ml-2 whitespace-nowrap px-1.5 py-0.5 rounded text-caption print:text-caption font-medium ${print ? "border border-slate-700 text-slate-900" : "border border-[var(--color-border-strong)] text-[var(--color-text)]"}`}>{crew} only</span>}
-            {criticalOnly && meeting === "turnover" && <span className={`ml-2 whitespace-nowrap px-1.5 py-0.5 rounded text-caption print:text-caption font-medium ${print ? "border border-[var(--state-overdue)] text-[var(--state-overdue-text)]" : "bg-transparent text-[var(--state-overdue-text)]"}`}>Critical path only</span>}
-            {addedOnly && meeting === "turnover" && <span className={`ml-2 whitespace-nowrap px-1.5 py-0.5 rounded text-caption print:text-caption font-medium ${print ? "border border-slate-700 text-slate-900" : "border border-[var(--color-border-strong)] text-[var(--color-text)]"}`}>Discovery &amp; added only</span>}
-            {classOnly && meeting === "turnover" && <span className={`ml-2 whitespace-nowrap px-1.5 py-0.5 rounded text-caption print:text-caption font-medium ${print ? "border border-slate-700 text-slate-900" : "border border-[var(--color-border-strong)] text-[var(--color-text)]"}`}>{classOnly} only</span>}
-            {rehearsal && meeting === "turnover" && (print
-              ? <span className="ml-2 px-1.5 py-0.5 rounded text-caption print:text-caption font-medium border border-[var(--state-held)] text-[var(--state-held-text)]">Rehearsal: shift not started</span>
-              : <span className="ml-2 inline-flex items-center gap-1.5 whitespace-nowrap font-medium text-[var(--state-held-text)]"><span aria-hidden className="w-[7px] h-[7px] rounded-full bg-[var(--state-held)]" />Rehearsal: shift not started</span>)}
-            {historyNote && meeting === "turnover" && (print
-              ? <span className="ml-2 px-1.5 py-0.5 rounded text-caption print:text-caption font-medium border border-slate-500 text-slate-700">Earlier shift: {historyNote}</span>
-              : <span className="ml-2 text-[var(--color-text)]"><span className="font-medium">Earlier shift:</span> {historyNote}</span>)}
-          </div>
-        </div>
+    <header className="pb-1.5 border-b-2 border-slate-900">
+      <div className="flex items-baseline gap-2 flex-wrap">
+        <span className="text-caption font-medium text-slate-500">{title}</span>
+        <h2 className="text-[14pt] font-medium tracking-tight leading-tight truncate">{projectName ?? "Schedule"}</h2>
+      </div>
+      <div className="text-caption text-slate-700">
+        {when} · as of {c.T(meeting === "turnover" ? asOf : now)} {tzAbbrev(c.tz, now)}
+        {marks}
       </div>
     </header>
   );
@@ -3031,33 +3340,45 @@ function Footnote({ meeting, ctx: c, asOf, now, projectName }: { meeting: Meetin
 
 // ─── Building blocks ─────────────────────────────────────────────────
 
-function SectionHead({ n, s, collapsed, big, print, onPath }: { n: number; s: Sec; collapsed?: boolean; big?: boolean; print?: boolean;
+function SectionHead({ n, s, collapsed, big, print, onPath, onToggle }: { n: number; s: Sec; collapsed?: boolean; big?: boolean; print?: boolean;
   /** On screen, on the report's path: the number is on the line, so here
-   *  just the name, a short line, and the fold arrow. */
-  onPath?: boolean }) {
+   *  the name (which folds the section, its arrow beside it), the "?" with
+   *  why it's there, and a short line. */
+  onPath?: boolean; onToggle?: () => void }) {
   if (onPath && !print && !big) return (
-    <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-0.5 min-h-6">
-      <span className="min-w-0 font-display text-section font-semibold text-[var(--color-text)] leading-6">{s.title}</span>
+    <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 min-h-6">
+      <button type="button" onClick={onToggle} aria-expanded={!collapsed}
+        className="min-w-0 inline-flex items-center gap-1.5 min-h-8 pointer-coarse:min-h-11 -ml-1 px-1 rounded-md text-left hover:bg-[var(--color-surface-2)]">
+        <span className="min-w-0 font-display text-section font-semibold text-[var(--color-text)] leading-6">{s.title}</span>
+        <ChevronDown aria-hidden className={`w-4 h-4 shrink-0 text-[var(--color-text-muted)] transition-transform ${collapsed ? "-rotate-90" : ""}`} />
+      </button>
+      {s.help && <HelpTooltip>{s.help}</HelpTooltip>}
       {s.sub && <span className="min-w-0 text-body text-[var(--color-text-muted)]">{s.sub}</span>}
-      <ChevronDown className={`ml-auto self-center w-4 h-4 shrink-0 text-[var(--color-text-muted)] transition-transform ${collapsed ? "-rotate-90" : ""}`} />
     </div>
   );
   return (
     <div className={`flex flex-wrap items-baseline gap-x-2.5 gap-y-0.5 ${print ? "pb-[2px] border-b-[1.5px] border-slate-900" : "pb-1.5 border-b-2 border-[var(--color-text)]"}`}>
       <span className={`${big ? "w-7 h-7 text-body" : print ? "w-4 h-4 text-[7.5pt]" : "w-5 h-5 text-caption"} self-center rounded-full bg-slate-900 text-white dark:bg-slate-200 dark:text-slate-900 font-medium flex items-center justify-center shrink-0`}>{n}</span>
       <span className={`${big ? "text-section" : print ? "text-[11pt]" : "text-body"} min-w-0 font-bold tracking-tight`}>{s.title}</span>
+      {big && s.help && <span className="self-center"><HelpTooltip>{s.help}</HelpTooltip></span>}
       {s.sub && <span className={`min-w-0 ${big ? "text-body" : print ? "text-[8pt]" : "text-caption"} text-[var(--color-text-muted)]`}>{s.sub}</span>}
       {!print && !big && <ChevronDown className={`ml-auto self-center w-4 h-4 shrink-0 text-[var(--color-text-muted)] transition-transform ${collapsed ? "-rotate-90" : ""}`} />}
     </div>
   );
 }
 
-/** Where the job stands, four tiles: progress against the plan (with the
- *  plan marked), work behind or ahead, steps done, past due. Colour only
- *  on a number that's off. */
-function StandTiles({ actual, planned, standing, gap, done, total, pastDue, pastDueHeld = 0, pastDueLabel, print }: {
-  actual: number; planned: number; standing: "ahead" | "behind" | "on track"; gap: { label: string; value: string };
+/** Where the job stands. On screen: the one number that needs action
+ *  big (steps overdue, with its scope said in the page header's words; with
+ *  none overdue, the verdict's own number when it is bad), then the status
+ *  sentence, then the rest small on one line. On paper: the sentence, then
+ *  four tiles. Colour only on a number that's off. */
+function StandTiles({ actual, planned, standing, gap, done, total, pastDue, pastDueHeld = 0, pastDueLabel, pastDueScope, say, print }: {
+  actual: number; planned: number; standing: "ahead" | "on track" | "behind"; gap: { label: string; value: string };
   done: number; total: number; pastDue: number; pastDueHeld?: number; pastDueLabel: string; print: boolean;
+  /** Where the overdue count is counted: "across the work, all crews". */
+  pastDueScope?: string;
+  /** The status in one sentence (the email's too). */
+  say?: StandSay;
 }) {
   const tile = `rounded-lg border border-[var(--color-border)] ${print ? "px-2 py-1" : "px-3 py-2"}`;
   const label = `font-medium text-[var(--color-text-muted)] ${print ? "text-[7.5pt]" : "text-caption"}`;
@@ -3065,35 +3386,63 @@ function StandTiles({ actual, planned, standing, gap, done, total, pastDue, past
   const small = `font-medium text-[var(--color-text-muted)] ${print ? "text-[8pt]" : "text-body"}`;
   const sub = `text-[var(--color-text-muted)] ${print ? "text-[7pt]" : "text-caption"}`;
   const gapTone = standing === "behind" ? "text-[var(--state-overdue-text)]" : standing === "ahead" ? "text-[var(--state-released-text)]" : "";
-  // On screen: one compact row, no tiles (no big numbers in the content).
-  if (!print) return (
-    <dl className="grid grid-cols-2 sm:grid-cols-4 gap-x-6 gap-y-3 keep">
-      <div className="min-w-0">
-        <dt className="text-body font-medium text-[var(--color-text-muted)]">Progress</dt>
-        <dd className="mt-0.5 text-body font-medium tabular-nums">{actual}% <span className="text-caption font-medium text-[var(--color-text-muted)]">of {planned}% planned</span></dd>
-        <div className="relative mt-1.5 h-1.5 rounded-full bg-[var(--color-surface-2)]" aria-hidden>
-          <div className="absolute inset-y-0 left-0 rounded-full bg-[var(--color-main)]" style={{ width: `${Math.min(100, actual)}%` }} />
-          <div className={`absolute -top-[3px] w-0.5 h-3 ${standing === "behind" ? "bg-[var(--state-overdue)]" : "bg-[var(--color-text-muted)]"}`} style={{ left: `calc(${Math.min(100, planned)}% - 1px)` }} />
-        </div>
+  const sayWord = say ? say.label[0] + say.label.slice(1).toLowerCase() : "";
+  const sayDot = say?.tone === "rose" ? "var(--state-overdue)" : say?.tone === "emerald" ? "var(--state-released)" : "var(--color-text-faint)";
+  const pastDueSub = `steps past their finish${pastDueScope ? `, ${pastDueScope}` : ""}${pastDueHeld ? `; ${pastDueHeld} on hold or blocked` : ""}`;
+  if (!print) {
+    // The one big number: what needs someone now. Never a zero.
+    const hero = pastDue > 0 ? { n: String(pastDue), words: `step${pastDue === 1 ? "" : "s"} overdue`, sub: pastDueSub, tone: "text-[var(--state-held-text)]" }
+      : say?.bad ? { n: say.key, words: sayWord.toLowerCase(), sub: null, tone: "text-[var(--state-overdue-text)]" } : null;
+    return (
+      <div className="space-y-3 keep">
+        {hero && (
+          <div>
+            <div className="flex flex-wrap items-baseline gap-x-2">
+              <span className={`font-display text-title font-bold tabular-nums leading-none whitespace-nowrap ${hero.tone}`}>{hero.n}</span>
+              <span className="text-reading font-medium text-[var(--color-text)]">{hero.words}</span>
+            </div>
+            {hero.sub && <div className="mt-1 text-body text-[var(--color-text-muted)]">{hero.sub[0].toUpperCase() + hero.sub.slice(1)}</div>}
+          </div>
+        )}
+        {say && (
+          <p className="flex items-start gap-2 text-reading text-[var(--color-text)]">
+            <span aria-hidden className="mt-2 w-2 h-2 shrink-0 rounded-full" style={{ background: sayDot }} />
+            <span><b className="font-semibold">{sayWord}.</b> {say.text}</span>
+          </p>
+        )}
+        <dl className="grid grid-cols-2 sm:grid-cols-4 gap-x-6 gap-y-2">
+          <div className="min-w-0">
+            <dt className="text-body text-[var(--color-text-muted)]">Progress</dt>
+            <dd className="text-body font-medium tabular-nums">{actual}% <span className="font-normal text-[var(--color-text-muted)]">of {planned}% planned</span></dd>
+            <div className="relative mt-1.5 h-1.5 rounded-full bg-[var(--color-surface-2)]" aria-hidden>
+              <div className="absolute inset-y-0 left-0 rounded-full bg-[var(--color-main)]" style={{ width: `${Math.min(100, actual)}%` }} />
+              <div className={`absolute -top-[3px] w-0.5 h-3 ${standing === "behind" ? "bg-[var(--state-overdue)]" : "bg-[var(--color-text-muted)]"}`} style={{ left: `calc(${Math.min(100, planned)}% - 1px)` }} />
+            </div>
+          </div>
+          <div className="min-w-0">
+            <dt className="text-body text-[var(--color-text-muted)]">{gap.label}</dt>
+            <dd className={`text-body font-medium tabular-nums ${gapTone}`}>{gap.value}</dd>
+            <dd className="text-caption text-[var(--color-text-muted)]">{standing === "behind" ? "planned work-hours not done" : standing === "ahead" ? "work-hours done early" : "planned work-hours, either way"}</dd>
+          </div>
+          <div className="min-w-0">
+            <dt className="text-body text-[var(--color-text-muted)]">Steps done</dt>
+            <dd className="text-body font-medium tabular-nums">{done} <span className="font-normal text-[var(--color-text-muted)]">of {total}</span></dd>
+            <dd className="text-caption text-[var(--color-text-muted)]">all crews, whole job</dd>
+          </div>
+          {pastDue === 0 && (
+            <div className="min-w-0">
+              <dt className="text-body text-[var(--color-text-muted)]">{pastDueLabel}</dt>
+              <dd className="text-body font-medium">None</dd>
+              <dd className="text-caption text-[var(--color-text-muted)]">{pastDueSub}</dd>
+            </div>
+          )}
+        </dl>
       </div>
-      <div className="min-w-0">
-        <dt className="text-body font-medium text-[var(--color-text-muted)]">{gap.label}</dt>
-        <dd className={`mt-0.5 text-body font-medium tabular-nums ${gapTone}`}>{gap.value}</dd>
-        <dd className="text-caption text-[var(--color-text-muted)]">{standing === "behind" ? "planned work-hours not done" : standing === "ahead" ? "work-hours done early" : "planned work-hours, either way"}</dd>
-      </div>
-      <div className="min-w-0">
-        <dt className="text-body font-medium text-[var(--color-text-muted)]">Steps done</dt>
-        <dd className="mt-0.5 text-body font-medium tabular-nums">{done} <span className="text-caption font-medium text-[var(--color-text-muted)]">of {total}</span></dd>
-        <dd className="text-caption text-[var(--color-text-muted)]">all crews, whole job</dd>
-      </div>
-      <div className="min-w-0">
-        <dt className="text-body font-medium text-[var(--color-text-muted)]">{pastDueLabel}</dt>
-        <dd className={`mt-0.5 text-body font-medium tabular-nums ${pastDue ? "text-[var(--state-held-text)]" : ""}`}>{pastDue}</dd>
-        <dd className="text-caption text-[var(--color-text-muted)]">steps past their finish{pastDueHeld ? `, ${pastDueHeld} on hold or blocked` : ""}</dd>
-      </div>
-    </dl>
-  );
+    );
+  }
   return (
+    <>
+    {say && <div className="keep" style={{ marginBottom: 4 }}><b>{sayWord}.</b> {say.text}</div>}
     <div className={`grid grid-cols-2 sm:grid-cols-4 ${print ? "gap-1.5" : "gap-2"} keep`}>
       <div className={tile}>
         <div className={label}>Progress</div>
@@ -3116,9 +3465,10 @@ function StandTiles({ actual, planned, standing, gap, done, total, pastDue, past
       <div className={tile}>
         <div className={label}>{pastDueLabel}</div>
         <div className={`${value} ${pastDue ? "text-[var(--state-held-text)]" : ""}`}>{pastDue}</div>
-        <div className={sub}>steps past their finish{pastDueHeld ? `, ${pastDueHeld} on hold or blocked` : ""}</div>
+        <div className={sub}>{pastDueSub}</div>
       </div>
     </div>
+    </>
   );
 }
 

@@ -31,9 +31,31 @@ interface Props {
   totalCount: number;
   /** The unit and equipment type pickers (components/projects/WoClassFilter). */
   classSelects?: React.ReactNode;
+  /** What this list covers, said first: the phase picked ("Phase 1",
+   *  "All phases") or the whole job. */
+  scope?: string;
 }
 
-export default function ScheduleFilterBar({ filter, onChange, groups, matchCount, totalCount, classSelects }: Props) {
+/** The filter in words, for the scope line: "open, search “E-12”, night shift". */
+function filterWords(f: ScheduleFilter, groups: Milestone[]): string {
+  const join = (xs: string[]) => (xs.length <= 1 ? xs.join("") : `${xs.slice(0, -1).join(", ")} or ${xs[xs.length - 1]}`);
+  return [
+    f.query.trim() ? `search “${f.query.trim()}”` : null,
+    f.statuses.length ? join(f.statuses.map((s) => STATUS_CHIPS.find((c) => c.s === s)?.label.toLowerCase() ?? s)) : null,
+    f.groupIds.length ? `in ${join(f.groupIds.map((id) => groups.find((g) => g.id === id)?.name ?? "a group"))}` : null,
+    f.criticalOnly ? "on the critical path" : null,
+    f.behindOnly ? "behind plan" : null,
+    f.overdueOnly ? "overdue" : null,
+    f.notStartedOnly ? "not started" : null,
+    f.blockedOnly ? "needs attention" : null,
+    f.added?.length ? join(f.added.map((k) => ADDED[k].lower)) : null,
+    f.shifts.length ? `${join(f.shifts.map((x) => (x === "swing" ? "round the clock" : x)))} shift` : null,
+    f.units?.length ? `unit ${f.units.join(", ")}` : null,
+    f.types?.length ? `type ${f.types.join(", ")}` : null,
+  ].filter((x): x is string => !!x).join(", ");
+}
+
+export default function ScheduleFilterBar({ filter, onChange, groups, matchCount, totalCount, classSelects, scope }: Props) {
   const active = isFilterActive(filter);
   const [showMore, setShowMore] = React.useState(false);
 
@@ -58,6 +80,22 @@ export default function ScheduleFilterBar({ filter, onChange, groups, matchCount
   return (
     // A quiet row on the card it sits in (Plan's task list, the Work board).
     <div className="space-y-2">
+      {/* What is shown, first, in words: the scope, how many, and the filter
+          hiding any, with Clear one tap away (rule L1). */}
+      <div className="flex items-center gap-x-2 gap-y-1 flex-wrap min-h-8 text-body text-[var(--color-text-muted)]" role="status">
+        <span className="min-w-0">
+          {scope && <><b className="font-medium text-[var(--color-text)]">{scope}</b> · </>}
+          <span className="tabular-nums">{totalCount} step{totalCount === 1 ? "" : "s"}</span>
+          {active
+            ? <> · showing <b className="font-medium tabular-nums text-[var(--color-text)]">{matchCount}</b>: {filterWords(filter, groups)}</>
+            : <> · showing all</>}
+        </span>
+        {active && (
+          <button type="button" onClick={() => onChange(EMPTY_FILTER)} className="inline-flex items-center gap-1 h-8 pointer-coarse:h-11 px-2 rounded-lg text-body font-medium text-[var(--color-accent-text)] hover:bg-[var(--color-surface-2)] transition-colors">
+            <XIcon className="w-3 h-3" /> Clear
+          </button>
+        )}
+      </div>
       <div className="flex items-center gap-2 flex-wrap">
         {/* Search box */}
         <div className="relative flex-1 min-w-[200px]">
@@ -85,15 +123,6 @@ export default function ScheduleFilterBar({ filter, onChange, groups, matchCount
           >
             {(() => { const n = filter.statuses.length + filter.groupIds.length + filter.shifts.length + [filter.criticalOnly, filter.behindOnly, filter.overdueOnly, filter.notStartedOnly, filter.blockedOnly, !!filter.added?.length].filter(Boolean).length + (filter.units?.length ?? 0) + (filter.types?.length ?? 0); return <><SlidersHorizontal className="w-3.5 h-3.5" /> Filter{n > 0 ? ` (${n})` : ""}</>; })()}
           </button>
-        {/* Match count + clear */}
-        <span className="text-caption text-[var(--color-text-muted)] tabular-nums ml-auto">
-          {active ? <><b className="text-[var(--color-text)]">{matchCount}</b> of {totalCount}</> : <>{totalCount} tasks</>}
-        </span>
-        {active && (
-          <button onClick={() => onChange(EMPTY_FILTER)} className="inline-flex items-center gap-1 h-10 pointer-coarse:h-11 text-body font-medium text-[var(--color-text)] px-2 rounded-lg hover:bg-[var(--color-surface-2)] transition-colors">
-            <XIcon className="w-3 h-3" /> Clear
-          </button>
-        )}
       </div>
 
       {/* Expanded: status + group chips */}

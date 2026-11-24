@@ -1,249 +1,486 @@
 "use client";
 
 // MaterialsRegister: every material and off-site repair an event needs, in
-// one list: its specification, an owner, a status, a need-by date and any
-// question holding it up (lib/materials). A specification with something
-// missing can't be marked ready to order, and a question nobody has
+// one list (lib/materials). A line is added the way it is in a spreadsheet:
+// item, quantity, work order and need-by in the row under the list (Enter
+// adds it; rows copied from Excel are added all at once). Everything else
+// about it (spec, supplier, dates, question, note, phase) is filled in on
+// the line when it is opened, and the phase comes from the work order.
+//
+// Each line has two owners: the warehouse (gets it in and checks it) and the
+// crew (makes sure it is used on the job). A line missing either needs
+// someone, and it is done only when the crew marks it used. A specification
+// with something missing can't be ordered, and a question nobody has
 // answered in 24 hours shows in red until it is.
 
 import { Card } from "@/components/ui/PageHero";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { SubTabs } from "@/components/projects/SubTabs";
-import { Loader2, Plus, Trash2, CircleAlert } from "lucide-react";
-import type { ProjectPhase } from "@/lib/projectPhases";
+import { ChevronRight, CircleAlert, Loader2, Plus, Trash2 } from "lucide-react";
+import { phaseIndex, type ProjectPhase } from "@/lib/projectPhases";
+import type { Milestone } from "@/types/schema";
 import { supabase } from "@/lib/supabase";
 import { fetchAllRows } from "@/lib/fetchAllRows";
-import { Modal, ModalBody, ModalFooter, ModalHeader } from "@/components/ui/Modal";
 import {
-  QUESTION_LIMIT_H, STATUSES, STATUS_WORD, ageWord, arrived, attention, blankMaterial, deleteMaterial, late, listMaterials, questionAgeH, questionOpen,
-  saveMaterial, specIncomplete, statusAllowed, summarize, type Material, type MaterialFields, type MaterialStatus,
+  OWNER_WORD, QUESTION_LIMIT_H, STATUSES, STATUS_WORD, ageWord, attention, blankMaterial, closed, deleteMaterial, late, listMaterials, nextStatus,
+  parseDay, pastedLines, questionAgeH, questionOpen, saveMaterial, specIncomplete, statusAllowed, summarize,
+  type Material, type MaterialFields, type MaterialKind, type MaterialStatus, type NewLine, type SavedMaterial,
 } from "@/lib/materials";
 import { appConfirm } from "@/components/providers/DialogProvider";
-import { useDraft, clearDraft } from "@/hooks/useDraft";
 import { sayError } from "@/components/projects/sayError";
 import { SkeletonRows } from "@/components/ui/Skeleton";
+import { InlineAddRow, type AddField, type AddResult } from "@/components/ui/InlineAddRow";
+import { MoreDetails } from "@/components/ui/MoreDetails";
+import HelpTooltip from "@/components/ui/HelpTooltip";
+import { controlClass } from "@/components/ui/Field";
 
-const btn = "inline-flex items-center gap-1.5 h-10 pointer-coarse:h-11 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-caption font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] whitespace-nowrap disabled:opacity-50";
-const pri = "inline-flex items-center justify-center gap-1.5 h-10 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-caption font-medium whitespace-nowrap disabled:opacity-50";
-const field = "w-full rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 py-1.5 text-body text-[var(--color-text)]";
-const label = "text-caption font-medium text-[var(--color-text-muted)]";
-// State as soft pills (app/globals.css .ui-pill): red short, amber waiting, green here.
-const red = "is-bad";
-const amber = "is-warn";
-const green = "is-good";
-const quiet = "is-muted";
-const tag = "ui-pill";
-const statusTone = (s: MaterialStatus) => (s === "to_specify" || s === "short" ? red : arrived(s) ? green : s === "cancelled" ? quiet : amber);
+const btn = "ui-press inline-flex items-center justify-center gap-1.5 h-10 pointer-coarse:h-11 px-3.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] whitespace-nowrap disabled:opacity-50";
+const pri = "ui-press inline-flex items-center justify-center gap-1.5 h-10 pointer-coarse:h-11 px-3.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)] text-body font-medium whitespace-nowrap disabled:opacity-50";
+// A small action on a line or a summary: a link in looks, a full target on touch.
+const link = "ui-press inline-flex items-center gap-1.5 min-h-8 pointer-coarse:min-h-11 px-2 -mx-2 rounded-md text-body font-medium text-[var(--color-accent-text)] hover:bg-[var(--color-surface-2)] whitespace-nowrap disabled:opacity-50";
+const lab = "block text-caption font-medium text-[var(--color-text-muted)] mb-1";
+const groupHead = "text-body font-semibold text-[var(--color-text)]";
+const red = "text-[var(--state-overdue-text)]";
+const muted = "text-[var(--color-text-muted)]";
+// One status vocabulary: red needs someone now, amber on its way, green used on the job.
+const statusTone = (s: MaterialStatus) => (s === "to_specify" || s === "short" ? "is-bad" : s === "used" ? "is-good" : s === "cancelled" ? "is-muted" : "is-warn");
 const dateWord = (d: string | null) => { if (!d) return ""; const [, m, day] = d.split("-"); return `${Number(m)}/${Number(day)}`; };
+const pad2 = (n: number) => String(n).padStart(2, "0");
+const todayDay = () => { const d = new Date(); return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`; };
+const needWordOf = (k: MaterialKind) => (k === "offsite" ? "Needed back by" : "Need-by");
+const etaWordOf = (k: MaterialKind) => (k === "offsite" ? "Return date" : "ETA");
+const UPDATE_LINE = "Crew owners and “Used on the job” aren’t saved until the database update is applied (20261125_materials_two_owners.sql).";
 
 type Filter = "all" | "attention" | "offsite" | "received";
+type Step = { id: string; name: string; parent_id: string | null; is_summary: boolean | null; cancelled_at?: string | null; attributes?: Record<string, unknown> | null };
 
 export default function MaterialsRegister({ orgId, projectId, phases, canManage, actor }: {
   orgId: string; projectId: string; phases: ProjectPhase[];
   canManage: boolean; actor: { uid: string; email: string | null };
 }) {
-  // Work order names to pick from: the tasks the schedule's steps sit under.
-  const [workOrders, setWorkOrders] = useState<string[]>([]);
+  // The work orders to pick from (the tasks the schedule's steps sit under),
+  // and the phase each is in, so a line's phase fills itself.
+  const [steps, setSteps] = useState<Step[]>([]);
   useEffect(() => {
     let live = true;
-    void fetchAllRows<{ id: string; name: string; parent_id: string | null; is_summary: boolean | null; cancelled_at?: string | null }>((from, to) => supabase.from("milestones").select("id, name, parent_id, is_summary, cancelled_at").eq("project_id", projectId).order("id").range(from, to) as unknown as PromiseLike<{ data: unknown[] | null; error: { message: string } | null }>)
-      .then(({ rows }) => {
-        if (!live) return;
-        const parents = new Set(rows.filter((m) => !m.is_summary && m.parent_id && !m.cancelled_at).map((m) => m.parent_id!));
-        setWorkOrders([...new Set(rows.filter((m) => parents.has(m.id)).map((m) => (m.name ?? "").trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true })));
-      }).catch(() => {});
+    void fetchAllRows<Step>((from, to) => supabase.from("milestones").select("id, name, parent_id, is_summary, cancelled_at, attributes").eq("project_id", projectId).order("id").range(from, to) as unknown as PromiseLike<{ data: unknown[] | null; error: { message: string } | null }>)
+      .then(({ rows }) => { if (live) setSteps(rows); }).catch(() => {});
     return () => { live = false; };
   }, [projectId]);
+  const { workOrders, woPhase } = useMemo(() => {
+    const parents = new Set(steps.filter((m) => !m.is_summary && m.parent_id && !m.cancelled_at).map((m) => m.parent_id!));
+    const wos = steps.filter((m) => parents.has(m.id) && (m.name ?? "").trim());
+    const idx = phaseIndex(steps.map((m) => ({ id: m.id, parentId: m.parent_id, attributes: m.attributes ?? null }) as unknown as Milestone), phases);
+    // The same name in two phases: no guess.
+    const byName = new Map<string, string | null>();
+    for (const m of wos) {
+      const k = m.name.trim().toLowerCase(), ph = idx.get(m.id) ?? null;
+      byName.set(k, byName.has(k) && byName.get(k) !== ph ? null : ph);
+    }
+    return { workOrders: [...new Set(wos.map((m) => m.name.trim()))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true })), woPhase: byName };
+  }, [steps, phases]);
+  const phaseOf = useCallback((wo: string) => woPhase.get(wo.trim().toLowerCase()) ?? null, [woPhase]);
+
   const [rows, setRows] = useState<Material[] | null>(null);
+  // The table has no crew owner column yet (false), or a save left the crew owner or "used" out.
+  const [crewColumn, setCrewColumn] = useState<boolean | null>(null);
+  const [heldBack, setHeldBack] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [lineErr, setLineErr] = useState<{ id: string; text: string } | null>(null);
   const [filter, setFilter] = useState<Filter>("all");
   const [phaseId, setPhaseId] = useState<string | null>(null);
-  const [open, setOpen] = useState<{ row: Material | null; fields: MaterialFields } | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [openId, setOpenId] = useState<string | null>(null);
+  const [kind, setKind] = useState<MaterialKind>("material");
+  const [showDone, setShowDone] = useState(false);
+  const [stepping, setStepping] = useState<string | null>(null);
   // One "now" per load, so ages and lateness agree across the page.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const now = useMemo(() => Date.now(), [rows]);
+  const me = useMemo(() => ({ id: actor.uid, name: actor.email }), [actor.uid, actor.email]);
 
   const load = useCallback(() => {
-    listMaterials(projectId).then((r) => setRows(r.rows)).catch((e) => { setErr(sayError(e)); setRows([]); });
+    listMaterials(projectId).then((r) => { setRows(r.rows); setCrewColumn(r.crewColumn); }).catch((e) => { setErr(sayError(e)); setRows((o) => o ?? []); });
   }, [projectId]);
   useEffect(() => { load(); }, [load]);
+  const saved = (s: SavedMaterial) => { if (s.heldBack.length) setHeldBack(true); };
 
   const scoped = useMemo(() => (rows ?? []).filter((r) => !phaseId || r.phaseId === phaseId), [rows, phaseId]);
   const sum = useMemo(() => summarize(scoped, now), [scoped, now]);
-  const shown = useMemo(() => scoped.filter((r) => filter === "all" ? true : filter === "attention" ? attention(r, now).length > 0 : filter === "offsite" ? r.kind === "offsite" && r.status !== "cancelled" : arrived(r.status))
-    .sort((a, b) => Number(attention(b, now).length > 0) - Number(attention(a, now).length > 0) || (a.needBy ?? "9").localeCompare(b.needBy ?? "9") || a.item.localeCompare(b.item)), [scoped, filter, now]);
+  // What needs someone first, then by need-by; used and cancelled lines fold under the rest.
+  const { open, done } = useMemo(() => {
+    const pick = scoped.filter((r) => filter === "all" ? true : filter === "attention" ? attention(r, now).length > 0 : filter === "offsite" ? r.kind === "offsite" : r.status === "received" || r.status === "checked");
+    const order = (a: Material, b: Material) => Number(attention(b, now).length > 0) - Number(attention(a, now).length > 0) || (a.needBy ?? "9").localeCompare(b.needBy ?? "9") || a.item.localeCompare(b.item);
+    return { open: pick.filter((r) => !closed(r.status)).sort(order), done: pick.filter((r) => closed(r.status)).sort(order) };
+  }, [scoped, filter, now]);
+  const owners = useMemo(() => [...new Set((rows ?? []).flatMap((r) => [r.owner.trim(), r.crewOwner.trim()]).filter(Boolean))].sort(), [rows]);
 
-  const save = async () => {
-    if (!open) return;
-    setBusy(true); setErr(null);
-    try {
-      await saveMaterial({ id: open.row?.id, orgId, projectId, fields: open.fields, was: open.row, actor: { id: actor.uid, name: actor.email } });
-      if (!open.row) clearDraft(`material:${projectId}`);
-      setOpen(null); load();
-    }
-    catch (e) { setErr(sayError(e)); }
-    finally { setBusy(false); }
+  // ── Adding, like a spreadsheet ──
+  const addOne = async (l: NewLine) => {
+    saved(await saveMaterial({ orgId, projectId, actor: me, fields: { ...blankMaterial(phaseOf(l.workOrder) ?? phaseId), kind, item: l.item, qty: l.qty, workOrder: l.workOrder, needBy: l.needBy } }));
   };
-  const remove = async () => {
-    if (!open?.row || !(await appConfirm({ title: `Remove "${open.row.item}" from the register?`, tone: "danger", confirmLabel: "Remove item" }))) return;
-    setBusy(true); setErr(null);
-    try { await deleteMaterial(open.row.id, projectId); setOpen(null); load(); }
-    catch (e) { setErr(sayError(e)); }
-    finally { setBusy(false); }
+  const onAdd = async (v: Record<string, string>): Promise<string | undefined> => {
+    const needBy = v.needBy ? parseDay(v.needBy, todayDay()) : null;
+    if (v.needBy && !needBy) return `Type the ${needWordOf(kind).toLowerCase()} as a date.`;
+    try { await addOne({ item: v.item, qty: v.qty, workOrder: v.workOrder, needBy }); }
+    catch (e) { return sayError(e); }
+    load();
+    return undefined;
+  };
+  const onPasteRows = async (cells: string[][]): Promise<AddResult> => {
+    const { lines, header, noItem, badDates } = pastedLines(cells, todayDay());
+    if (!lines.length) return "Nothing added: the item goes in the first column, and it was empty.";
+    let added = 0;
+    try { for (const l of lines) { await addOne(l); added++; } }
+    catch (e) { load(); return `Added ${added} of ${lines.length} lines. The rest weren't added: ${sayError(e)}`; }
+    load();
+    if (!header && !noItem && !badDates.length) return undefined; // the row says "Added n lines."
+    const say = [`Added ${added} line${added === 1 ? "" : "s"}${header ? " and skipped the header row" : ""}.`];
+    if (noItem) say.push(`Left out ${noItem} row${noItem === 1 ? "" : "s"} with no item.`);
+    if (badDates.length) say.push(badDates.length === 1 ? `“${badDates[0]}” isn't a date: set it on its line.` : `${badDates.length} need-by dates weren't dates: set them on their lines.`);
+    return { ok: true, text: say.join(" ") };
+  };
+
+  // ── One tap on a line: received to checked, checked to used ──
+  const step = async (r: Material, to: MaterialStatus) => {
+    setStepping(r.id); setLineErr(null);
+    try { saved(await saveMaterial({ id: r.id, orgId, projectId, fields: { ...r, status: to }, was: r, actor: me })); load(); }
+    catch (e) { setLineErr({ id: r.id, text: sayError(e) }); }
+    finally { setStepping(null); }
   };
 
   if (!rows) return <SkeletonRows rows={6} cols={3} what="the materials register" />;
 
+  const toggle = (id: string) => { if (canManage) setOpenId((o) => (o === id ? null : id)); };
+  const counts = ([
+    [sum.specIncomplete, "spec incomplete"],
+    [sum.openQuestions, `question${sum.openQuestions === 1 ? "" : "s"} open over ${QUESTION_LIMIT_H} h`],
+    [sum.late, "short or late"],
+    [sum.noOwner, `missing an owner`],
+  ] as Array<[number, string]>).filter(([n]) => n > 0);
+  const doneWords = [done.filter((r) => r.status === "used").length, done.filter((r) => r.status === "cancelled").length];
 
-  // The counts in one line the eye runs along; a bad count in red.
-  const Kpi = ({ name, value, detail, bad }: { name: string; value: number; detail: string; bad?: boolean }) => (
-    <span className="inline-flex items-baseline gap-1 whitespace-nowrap" title={detail}>
-      <b className={`tabular-nums ${bad && value > 0 ? "text-[var(--state-overdue-text)]" : "text-[var(--color-text)]"}`}>{value}</b>
-      <span className="text-[var(--color-text-muted)]">{name.toLowerCase()}</span>
-    </span>
-  );
+  // ── The cells of a line ──
   const question = (r: Material) => {
     if (!r.question.trim()) return null;
-    if (!questionOpen(r)) return <span className="text-caption text-[var(--color-text-muted)]">&ldquo;{r.question}&rdquo; Answered: {r.answer}</span>;
+    if (!questionOpen(r)) return <span className={muted}>&ldquo;{r.question}&rdquo; Answered: {r.answer}</span>;
     const age = questionAgeH(r, now);
-    return <span className={`${tag} ${age >= QUESTION_LIMIT_H ? red : amber} !whitespace-normal !h-auto py-0.5`}>&ldquo;{r.question}&rdquo; · open {ageWord(age)}{r.questionBy ? ` · asked by ${r.questionBy}` : ""}</span>;
+    return <span className={`ui-pill ${age >= QUESTION_LIMIT_H ? "is-bad" : "is-warn"} !whitespace-normal`}>&ldquo;{r.question}&rdquo; · open {ageWord(age)}{r.questionBy ? ` · asked by ${r.questionBy}` : ""}</span>;
   };
-  const specCell = (r: Material) => <>{r.spec || <span className="text-[var(--color-text-muted)]">None written</span>}{r.qty ? <span className="text-[var(--color-text-muted)]"> · qty {r.qty}</span> : null}{r.specMissing.trim() ? <> <span className={`${tag} ${red} !whitespace-normal !h-auto py-0.5`}>Missing: {r.specMissing}</span></> : null}</>;
-  const etaCell = (r: Material) => <>{r.eta ? <span className={late(r, now) ? "font-medium text-[var(--state-overdue-text)]" : ""}>{dateWord(r.eta)}</span> : null}{r.etaNote ? <span className="text-[var(--color-text-muted)]">{r.eta ? " · " : ""}{r.etaNote}</span> : null}</>;
+  const specCell = (r: Material) => <>
+    {r.spec || <span className={r.kind === "material" && !closed(r.status) ? `font-medium ${red}` : muted}>None written</span>}
+    {r.specMissing.trim() ? <> <span className="ui-pill is-bad !whitespace-normal">Missing: {r.specMissing}</span></> : null}
+  </>;
+  const ownerCell = (r: Material, k: "warehouse" | "crew") => {
+    const name = k === "warehouse" ? r.owner : r.crewOwner;
+    return <><span className={muted}>{OWNER_WORD[k]}: </span>{name || <span className={closed(r.status) ? muted : `font-medium ${red}`}>none</span>}</>;
+  };
+  // Late is one of two things, each shown where it is: the need-by date has
+  // passed, or the date it comes is after the need-by date.
+  const pastNeed = (r: Material) => late(r, now) && !!r.needBy && now > Date.parse(`${r.needBy}T23:59:59Z`);
+  const etaAfter = (r: Material) => late(r, now) && !!r.eta && !!r.needBy && r.eta > r.needBy;
+  const needCell = (r: Material) => r.needBy
+    ? <span className={pastNeed(r) ? `font-medium ${red}` : ""}>{dateWord(r.needBy)}{pastNeed(r) ? " · late" : ""}</span>
+    : <span className={closed(r.status) || r.status === "received" || r.status === "checked" ? muted : `font-medium ${red}`}>Not set</span>;
+  const etaCell = (r: Material) => <>
+    {r.eta ? <span className={etaAfter(r) ? `font-medium ${red}` : ""}>{dateWord(r.eta)}{etaAfter(r) ? " · after need-by" : ""}</span> : null}
+    {r.etaNote ? <span className={muted}>{r.eta ? " · " : ""}{r.etaNote}</span> : null}
+  </>;
+  const itemSub = (r: Material) => [r.qty ? `qty ${r.qty}` : null, r.kind === "offsite" ? "Off-site repair" : null, r.vendor || null].filter(Boolean).join(" · ");
+  const phaseName = (id: string | null) => (phases.length > 1 && id ? phases.find((p) => p.id === id)?.name ?? null : null);
+  const stepButton = (r: Material) => {
+    const to = nextStatus(r);
+    if (!canManage || !to) return null;
+    const needCrew = to === "used" && !r.crewOwner.trim();
+    return (
+      <button type="button" disabled={stepping === r.id}
+        onClick={(e) => { e.stopPropagation(); if (needCrew) setOpenId(r.id); else void step(r, to); }}
+        className={link}>
+        {stepping === r.id ? <><Loader2 aria-hidden className="w-4 h-4 animate-spin" /> Saving</> : needCrew ? "Name the crew owner" : to === "used" ? "Mark used" : "Mark checked"}
+      </button>
+    );
+  };
+  const panel = (r: Material) => (
+    <LinePanel key={r.id} row={r} orgId={orgId} projectId={projectId} actor={me} phases={phases} workOrders={workOrders} owners={owners} phaseOf={phaseOf}
+      noCrewColumn={crewColumn === false}
+      onClose={() => setOpenId(null)}
+      onSaved={(s) => { saved(s); setOpenId(null); load(); }}
+      onRemoved={() => { setOpenId(null); load(); }} />
+  );
+  const lineNote = (r: Material) => lineErr?.id === r.id
+    ? <div role="alert" className={`mt-1 text-body font-medium ${red} flex items-start gap-1.5`}><CircleAlert aria-hidden className="w-4 h-4 shrink-0 mt-0.5" /><span>{lineErr.text}</span></div>
+    : null;
+
+  const foldRow = done.length > 0 && (
+    <button type="button" onClick={() => setShowDone((v) => !v)} aria-expanded={showDone} className={`${link} !text-[var(--color-text-muted)]`}>
+      <ChevronRight aria-hidden className={`w-4 h-4 transition-transform ${showDone ? "rotate-90" : ""}`} />
+      {[doneWords[0] ? `${doneWords[0]} used on the job` : null, doneWords[1] ? `${doneWords[1]} cancelled` : null].filter(Boolean).join(", ")}
+    </button>
+  );
+  const listed = [...open, ...(showDone ? done : [])];
+  const lineRow = (r: Material) => {
+    const isOpen = openId === r.id;
+    return (
+      <React.Fragment key={r.id}>
+        <tr onClick={() => toggle(r.id)} title={attention(r, now).join(" · ") || undefined}
+          className={`border-b border-[var(--color-border)] align-top ${canManage ? "cursor-pointer hover:bg-[var(--color-surface-2)]" : ""} ${isOpen ? "bg-[var(--color-surface-2)]" : ""} ${closed(r.status) ? muted : "text-[var(--color-text)]"}`}>
+          <td className="px-3 py-2.5 min-w-40">
+            {canManage
+              ? <button type="button" aria-expanded={isOpen} onClick={(e) => { e.stopPropagation(); toggle(r.id); }} className="text-left font-semibold hover:underline underline-offset-2">{r.item}</button>
+              : <b className="font-semibold">{r.item}</b>}
+            {itemSub(r) && <div className={`text-caption ${muted}`}>{itemSub(r)}</div>}
+          </td>
+          <td className="px-3 py-2.5">{specCell(r)}</td>
+          <td className="px-3 py-2.5">{r.workOrder}{phaseName(r.phaseId) && <div className={`text-caption ${muted}`}>{phaseName(r.phaseId)}</div>}</td>
+          <td className="px-3 py-2.5 whitespace-nowrap"><div>{ownerCell(r, "warehouse")}</div><div>{ownerCell(r, "crew")}</div></td>
+          <td className="px-3 py-2.5"><span className={`ui-pill ${statusTone(r.status)}`}>{STATUS_WORD[r.status]}</span><div>{stepButton(r)}</div>{lineNote(r)}</td>
+          <td className="px-3 py-2.5 whitespace-nowrap">{needCell(r)}</td>
+          <td className="px-3 py-2.5">{etaCell(r)}</td>
+          <td className="px-3 py-2.5">{question(r)}</td>
+        </tr>
+        {isOpen && <tr><td colSpan={8} className="p-0 border-b border-[var(--color-border)]">{panel(r)}</td></tr>}
+      </React.Fragment>
+    );
+  };
+  const lineCard = (r: Material) => {
+    const isOpen = openId === r.id;
+    const next = stepButton(r);
+    return (
+      <li key={r.id} className={isOpen ? "bg-[var(--color-surface-2)]" : ""}>
+        <div className="px-4 py-3">
+          <button type="button" disabled={!canManage} onClick={() => toggle(r.id)} aria-expanded={canManage ? isOpen : undefined} className={`w-full text-left text-body disabled:cursor-default ${closed(r.status) ? muted : "text-[var(--color-text)]"}`}>
+            <span className="flex items-start gap-2"><span className="min-w-0 flex-1 text-reading font-semibold">{r.item}</span><span className={`ui-pill ${statusTone(r.status)}`}>{STATUS_WORD[r.status]}</span></span>
+            {(itemSub(r) || r.workOrder) && <span className={`block ${muted}`}>{[itemSub(r), r.workOrder, phaseName(r.phaseId)].filter(Boolean).join(" · ")}</span>}
+            <span className="mt-1.5 grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5">
+              <span className={muted}>Spec</span><span className="min-w-0">{specCell(r)}</span>
+              <span className={muted}>Owners</span><span className="min-w-0">{ownerCell(r, "warehouse")} · {ownerCell(r, "crew")}</span>
+              <span className={muted}>{needWordOf(r.kind)}</span><span>{needCell(r)}</span>
+              {(r.eta || r.etaNote) && <><span className={muted}>{etaWordOf(r.kind)}</span><span className="min-w-0">{etaCell(r)}</span></>}
+              {r.question.trim() && <><span className={muted}>Question</span><span className="min-w-0">{question(r)}</span></>}
+            </span>
+          </button>
+          {next && <div className="mt-1">{next}</div>}
+          {lineNote(r)}
+        </div>
+        {isOpen && <div className="border-t border-[var(--color-border)]">{panel(r)}</div>}
+      </li>
+    );
+  };
+
+  // The add row's boxes: stacked on a phone, side by side from a small
+  // tablet up (even widths), item widest from md up.
+  const addFields: AddField[] = [
+    { key: "item", label: "Item", required: true, width: "w-full sm:min-w-0 md:flex-1" },
+    { key: "qty", label: "Qty", placeholder: "Qty", width: "w-full sm:min-w-0 md:w-28 md:shrink-0" },
+    { key: "workOrder", label: "Work order", list: workOrders, width: "w-full sm:min-w-0 md:w-36 md:shrink-0" },
+    { key: "needBy", label: needWordOf(kind), type: "date", width: "w-full sm:min-w-0 md:w-40 md:shrink-0" },
+  ];
 
   return (
-    <div className="space-y-4" data-materials-register>
-      <Card label="Materials register" action={canManage ? <button type="button" onClick={() => setOpen({ row: null, fields: blankMaterial(phaseId) })} className={pri}><Plus className="w-4 h-4" /> Add item</button> : undefined}>
-      <p className="text-body font-medium text-[var(--color-text)]">{sum.lines === 0 ? "Nothing on it yet. Open it at scope freeze." : sum.needAttention ? `${sum.needAttention} line${sum.needAttention === 1 ? " needs" : "s need"} someone.` : "Every line is on track."}</p>
-      {err && <div role="alert" className="mt-1 text-body font-medium text-[var(--state-overdue-text)] flex items-start gap-1.5"><CircleAlert aria-hidden className="w-4 h-4 shrink-0 mt-0.5" /><span>{err}</span></div>}
+    <div data-materials-register>
+    <Card pad={false} className="overflow-hidden" label={<span className="inline-flex items-center gap-1.5">Materials register <HelpTooltip><span className="font-normal">
+      Each material to order and each item sent out for repair, with its two owners: the warehouse owner gets it in and checks it; the crew owner makes sure it is used on the job and marks it used. A line needs someone when its specification isn&rsquo;t complete, a question is open over {QUESTION_LIMIT_H} hours, it is short or late against its need-by date, or it is missing an owner. A line with something missing from its specification stays at &ldquo;Spec incomplete&rdquo; until that is filled in.
+    </span></HelpTooltip></span>}>
 
-      <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-body">
-        <Kpi name="Lines" value={sum.lines} detail={`${sum.materials} material${sum.materials === 1 ? "" : "s"} · ${sum.offsite} off-site repair${sum.offsite === 1 ? "" : "s"}`} />
-        <Kpi name="Spec incomplete" value={sum.specIncomplete} bad detail="can't be ordered yet" />
-        <Kpi name={`Questions open over ${QUESTION_LIMIT_H} h`} value={sum.openQuestions} bad detail="waiting on an answer" />
-        <Kpi name="Short or late" value={sum.late} bad detail="against the need-by date" />
+      {/* The answer: how many lines need someone, out of how many. */}
+      <div className="px-4 sm:px-5 pt-4 pb-3 space-y-1">
+        {sum.lines === 0 ? (
+          <p className="text-reading text-[var(--color-text)]">{!rows.length ? "Nothing on the register yet. Open it at scope freeze." : !scoped.length ? "Nothing in this phase yet." : "Every line is cancelled."}</p>
+        ) : (
+          <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+            <p className="text-reading text-[var(--color-text)]">
+              {sum.needAttention ? <><b className={`font-display text-title leading-none font-bold tabular-nums ${red}`}>{sum.needAttention}</b> of {sum.lines} line{sum.lines === 1 ? "" : "s"} need{sum.needAttention === 1 ? "s" : ""} someone</>
+                : <>Every line is on track.</>}
+            </p>
+            {sum.needAttention > 0 && filter !== "attention" && <button type="button" onClick={() => setFilter("attention")} className={link}>Show {sum.needAttention === 1 ? "it" : "them"}</button>}
+          </div>
+        )}
+        {sum.lines > 0 && (
+          <p className="text-body text-[var(--color-text-muted)]">
+            {counts.map(([n, w], i) => <React.Fragment key={w}>{i > 0 && " · "}<b className="font-semibold tabular-nums text-[var(--color-text)]">{n}</b> {w}</React.Fragment>)}
+            {counts.length > 0 && " · "}<b className="font-semibold tabular-nums text-[var(--color-text)]">{sum.used}</b> of {sum.lines} used on the job
+          </p>
+        )}
+        {err && <div role="alert" className={`text-body font-medium ${red} flex items-start gap-1.5`}><CircleAlert aria-hidden className="w-4 h-4 shrink-0 mt-0.5" /><span>{err}</span></div>}
+        {(heldBack || crewColumn === false) && <p role="status" className="text-body text-[var(--state-held-text)]">{UPDATE_LINE}</p>}
       </div>
 
-      <div className="mt-3 pt-3 border-t border-[var(--color-border)] flex gap-2 flex-wrap items-center">
-        <SubTabs label="Show" value={filter} onChange={setFilter} size="sm"
-          items={[
-            { id: "all" as Filter, label: "All", count: scoped.length },
-            { id: "attention" as Filter, label: "Needs attention", count: sum.needAttention, dot: sum.needAttention ? "warn" as const : undefined },
-            { id: "offsite" as Filter, label: "Off-site repairs", count: sum.offsite },
-            { id: "received" as Filter, label: "Received", count: sum.received },
-          ]} />
-        {phases.length > 0 && <select aria-label="Phase" value={phaseId ?? ""} onChange={(e) => setPhaseId(e.target.value || null)} className={`${field} !w-auto ml-auto h-8 pointer-coarse:h-11 !py-0`}><option value="">All phases</option>{phases.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select>}
-      </div>
-      </Card>
+      {/* Filters only when there is something to filter (L5). */}
+      {rows.length > 0 && (
+        <div className="px-4 sm:px-5 pb-2 flex gap-2 flex-wrap items-center">
+          <SubTabs label="Show" value={filter} onChange={setFilter} size="sm"
+            items={[
+              { id: "all" as Filter, label: "All", count: scoped.length },
+              { id: "attention" as Filter, label: "Needs someone", count: sum.needAttention, dot: sum.needAttention ? "warn" as const : undefined },
+              { id: "offsite" as Filter, label: "Off-site repairs", count: sum.offsite },
+              { id: "received" as Filter, label: "Received, not used", count: sum.received },
+            ]} />
+          {phases.length > 0 && <select aria-label="Phase" value={phaseId ?? ""} onChange={(e) => setPhaseId(e.target.value || null)} className={`${controlClass} !w-auto ml-auto`}><option value="">All phases</option>{phases.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select>}
+        </div>
+      )}
 
-      {shown.length === 0 ? (
-        <Card><p className="text-reading text-[var(--color-text-muted)]">{scoped.length ? <>Nothing under this filter. <button type="button" onClick={() => setFilter("all")} className="font-medium text-[var(--color-accent-text)] hover:underline underline-offset-2">Show all {scoped.length}</button></> : <>No lines yet. Each material and each item sent out for repair shows here, with who owns it and when it&apos;s needed.</>}</p></Card>
-      ) : <Card pad={false} className="overflow-hidden">
-        <div className="hidden md:block overflow-x-auto">
-          <table className="w-full text-caption border-collapse">
-            <thead><tr>{["Item", "Spec", "Work order", "Owner", "Status", "Need-by", "ETA / return", "Open question"].map((h) => <th key={h} className="text-left px-2.5 py-2 bg-[var(--color-surface-2)] text-caption font-medium text-[var(--color-text-muted)] border-b border-[var(--color-border)]">{h}</th>)}</tr></thead>
+      {scoped.length > 0 && listed.length === 0 && !foldRow && (
+        <p className="px-4 sm:px-5 py-3 border-t border-[var(--color-border)] text-reading text-[var(--color-text-muted)]">Nothing under this filter. <button type="button" onClick={() => setFilter("all")} className={link}>Show all {scoped.length}</button></p>
+      )}
+
+      {(listed.length > 0 || foldRow) && <>
+        {/* Wide screens: one row per line. */}
+        <div className="hidden lg:block overflow-x-auto border-t border-[var(--color-border)]">
+          <table className="w-full text-body border-collapse">
+            <thead><tr>{["Item", "Spec", "Work order", "Owners", "Status", "Need-by", "ETA / return", "Open question"].map((h) => <th key={h} scope="col" className="text-left px-3 py-2 bg-[var(--color-surface-2)] text-caption font-medium text-[var(--color-text-muted)] border-b border-[var(--color-border)] whitespace-nowrap">{h}</th>)}</tr></thead>
             <tbody>
-              {shown.map((r) => {
-                const why = attention(r, now);
-                return (
-                  <tr key={r.id} onClick={() => canManage && setOpen({ row: r, fields: { ...r } })} title={why.join(" · ")} className={`border-b last:border-b-0 border-[var(--color-border)] align-top ${canManage ? "cursor-pointer hover:bg-[var(--color-surface-2)]" : ""} ${why.length ? "bg-[var(--color-surface-2)]" : ""}`}>
-                    <td className="px-2.5 py-2"><b className="text-[var(--color-text)]">{r.item}</b>{(r.kind === "offsite" || r.vendor) && <div className="text-caption text-[var(--color-text-muted)]">{r.kind === "offsite" ? "Off-site repair" : ""}{r.kind === "offsite" && r.vendor ? " · " : ""}{r.vendor}</div>}</td>
-                    <td className="px-2.5 py-2 text-[var(--color-text)]">{specCell(r)}</td>
-                    <td className="px-2.5 py-2 text-[var(--color-text)]">{r.workOrder}</td>
-                    <td className="px-2.5 py-2 text-[var(--color-text)]">{r.owner || <span className={`${tag} ${red}`}>No owner</span>}</td>
-                    <td className="px-2.5 py-2"><span className={`${tag} ${statusTone(r.status)}`}>{STATUS_WORD[r.status]}</span></td>
-                    <td className="px-2.5 py-2 text-[var(--color-text)] whitespace-nowrap">{dateWord(r.needBy) || <span className="text-[var(--color-text-muted)]">Not set</span>}</td>
-                    <td className="px-2.5 py-2 text-[var(--color-text)]">{etaCell(r)}</td>
-                    <td className="px-2.5 py-2">{question(r)}</td>
-                  </tr>
-                );
-              })}
+              {open.map(lineRow)}
+              {foldRow && <tr><td colSpan={8} className="px-3 py-1.5 border-b border-[var(--color-border)]">{foldRow}</td></tr>}
+              {showDone && done.map(lineRow)}
             </tbody>
           </table>
         </div>
-        <ul className="md:hidden divide-y divide-[var(--color-border)]">
-          {shown.map((r) => {
-            const why = attention(r, now);
-            return (
-              <li key={r.id}>
-                <button type="button" disabled={!canManage} onClick={() => setOpen({ row: r, fields: { ...r } })} className={`w-full text-left px-4 py-3 text-body ${why.length ? "bg-[var(--color-surface-2)]" : ""}`}>
-                  <div className="flex items-start gap-2"><b className="min-w-0 flex-1 text-body text-[var(--color-text)]">{r.item}</b><span className={`${tag} ${statusTone(r.status)}`}>{STATUS_WORD[r.status]}</span></div>
-                  <div className="text-[var(--color-text-muted)]">{[r.kind === "offsite" ? "Off-site repair" : null, r.vendor, r.workOrder].filter(Boolean).join(" · ")}</div>
-                  <div className="mt-1 text-[var(--color-text)]"><span className="text-[var(--color-text-muted)]">Spec: </span>{specCell(r)}</div>
-                  <div className="text-[var(--color-text)]"><span className="text-[var(--color-text-muted)]">Owner: </span>{r.owner || "none"} · <span className="text-[var(--color-text-muted)]">Need-by: </span>{dateWord(r.needBy) || "not set"}{r.eta || r.etaNote ? <> · <span className="text-[var(--color-text-muted)]">ETA: </span>{etaCell(r)}</> : null}</div>
-                  {r.question.trim() && <div className="mt-1">{question(r)}</div>}
-                </button>
-              </li>
-            );
-          })}
+
+        {/* Phones and tablets: one card per line, its status on top. */}
+        <ul className="lg:hidden border-t border-[var(--color-border)] divide-y divide-[var(--color-border)]">
+          {open.map(lineCard)}
+          {foldRow && <li className="px-4 py-1.5">{foldRow}</li>}
+          {showDone && done.map(lineCard)}
         </ul>
-        <p className="px-4 sm:px-5 py-3 border-t border-[var(--color-border)] text-caption text-[var(--color-text-muted)]">Shaded rows need someone: a specification that isn&rsquo;t complete, a question open over {QUESTION_LIMIT_H} hours, short or late against the need-by date, or no owner. A line with something missing from its specification stays at &ldquo;Spec incomplete&rdquo; until that is filled in.</p>
-      </Card>}
+      </>}
 
-      {open && (
-        <Modal onClose={() => !busy && setOpen(null)} size="lg">
-          <ModalHeader title={open.row ? open.row.item : "Add an item"} subtitle={open.row ? `Last changed${open.row.updatedByName ? ` by ${open.row.updatedByName}` : ""}` : "A material to order, or an item sent out for repair"} onClose={() => !busy && setOpen(null)} />
-          <ModalBody>
-            {/* A new line being written comes back if the window closes or the page reloads. */}
-            {!open.row && <MaterialDraft draftKey={`material:${projectId}`} fields={open.fields} set={(v) => setOpen((o) => (o ? { ...o, fields: v } : o))} />}
-            <MaterialForm f={open.fields} set={(patch) => setOpen((o) => (o ? { ...o, fields: { ...o.fields, ...patch } } : o))} phases={phases} workOrders={workOrders} />
-          </ModalBody>
-          <ModalFooter>
-            {open.row && <button type="button" disabled={busy} onClick={() => void remove()} className={`${btn} mr-auto`}><Trash2 className="w-4 h-4" /> Remove</button>}
-            <button type="button" disabled={busy} onClick={() => setOpen(null)} className={btn}>Cancel</button>
-            <button type="button" disabled={busy || !open.fields.item.trim()} onClick={() => void save()} className={pri}>{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : null} {busy ? "Saving" : "Save"}</button>
-          </ModalFooter>
-        </Modal>
+      {/* Add a line the way it's done in a spreadsheet. */}
+      {canManage && (
+        <div className="px-4 sm:px-5 pt-3 pb-1 border-t border-[var(--color-border)]">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mb-2">
+            <h3 className={groupHead}>Add a line</h3>
+            <KindSwitch value={kind} onChange={setKind} />
+          </div>
+          <InlineAddRow fields={addFields} onAdd={onAdd} onPasteRows={onPasteRows} what="line" draftKey={`materials-add:${projectId}`} />
+        </div>
       )}
+    </Card>
     </div>
   );
 }
 
-function MaterialDraft({ draftKey, fields, set }: { draftKey: string; fields: MaterialFields; set: (v: MaterialFields) => void }) {
-  useDraft<MaterialFields>(draftKey, fields, set, (v) => !v.item?.trim() && !v.spec?.trim() && !v.note?.trim() && !v.question?.trim());
-  return null;
-}
-
-function MaterialForm({ f, set, phases, workOrders }: { f: MaterialFields; set: (patch: Partial<MaterialFields>) => void; phases: ProjectPhase[]; workOrders: string[] }) {
-  const incomplete = specIncomplete(f);
-  const text = (k: "item" | "spec" | "specMissing" | "qty" | "workOrder" | "owner" | "vendor" | "etaNote" | "question" | "answer" | "note", name: string, hint: string, list?: string) => (
-    <label className="block"><span className={label}>{name}</span><input list={list} value={f[k]} onChange={(e) => set({ [k]: e.target.value })} placeholder={hint} className={`${field} mt-0.5`} /></label>
-  );
+/** Material or off-site repair: the two kinds of line. */
+function KindSwitch({ value, onChange }: { value: MaterialKind; onChange: (k: MaterialKind) => void }) {
   return (
-    <div className="space-y-3">
-      <div className="flex gap-1.5">
-        {(["material", "offsite"] as const).map((k) => (
-          <button key={k} type="button" aria-pressed={f.kind === k} onClick={() => set({ kind: k })} className={`h-9 pointer-coarse:h-11 px-3 rounded-lg border text-caption font-medium ${f.kind === k ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30 border-transparent" : "bg-[var(--color-surface)] text-[var(--color-text)] border-[var(--color-border-strong)]"}`}>{k === "material" ? "Material to order" : "Off-site repair or calibration"}</button>
-        ))}
+    <span role="group" aria-label="Kind of line" className="inline-flex rounded-lg border border-[var(--color-border-strong)] overflow-hidden">
+      {(["material", "offsite"] as const).map((k) => (
+        <button key={k} type="button" aria-pressed={value === k} onClick={() => onChange(k)}
+          className={`ui-press h-8 pointer-coarse:h-11 px-3 text-body font-medium ${k === "offsite" ? "border-l border-[var(--color-border-strong)]" : ""} ${value === k ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)]" : "bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
+          {k === "material" ? "Material" : "Off-site repair"}
+        </button>
+      ))}
+    </span>
+  );
+}
+
+/** The opened line: every field of the record, grouped, changed in place. */
+function LinePanel({ row, orgId, projectId, actor, phases, workOrders, owners, phaseOf, noCrewColumn, onClose, onSaved, onRemoved }: {
+  row: Material; orgId: string; projectId: string; actor: { id: string; name: string | null };
+  phases: ProjectPhase[]; workOrders: string[]; owners: string[]; phaseOf: (wo: string) => string | null;
+  noCrewColumn: boolean;
+  onClose: () => void; onSaved: (s: SavedMaterial) => void; onRemoved: () => void;
+}) {
+  const [f, setF] = useState<MaterialFields>(() => ({ ...row }));
+  const [busy, setBusy] = useState<"save" | "remove" | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const set = (patch: Partial<MaterialFields>) => { setF((o) => ({ ...o, ...patch })); setErr(null); };
+  const incomplete = specIncomplete(f);
+  const id = React.useId();
+  const listWo = `${id}-wo`, listOwners = `${id}-owners`;
+
+  const save = async () => {
+    if (!f.item.trim()) { setErr("Name the item."); return; }
+    setBusy("save"); setErr(null);
+    try { onSaved(await saveMaterial({ id: row.id, orgId, projectId, fields: f, was: row, actor })); }
+    catch (e) { setErr(sayError(e)); setBusy(null); }
+  };
+  const remove = async () => {
+    if (!(await appConfirm({ title: `Remove “${row.item}” from the register?`, message: "You can't undo this.", tone: "danger", confirmLabel: "Remove line" }))) return;
+    setBusy("remove"); setErr(null);
+    try { await deleteMaterial(row.id, projectId); onRemoved(); }
+    catch (e) { setErr(sayError(e)); setBusy(null); }
+  };
+  // A work order picked fills the phase, unless the phase was set by hand.
+  const pickWorkOrder = (wo: string) => {
+    const ph = phaseOf(wo);
+    set({ workOrder: wo, ...(ph && (!f.phaseId || f.phaseId === phaseOf(f.workOrder)) ? { phaseId: ph } : {}) });
+  };
+  const text = (k: "item" | "spec" | "specMissing" | "qty" | "owner" | "crewOwner" | "vendor" | "etaNote" | "question" | "answer" | "note", name: React.ReactNode, list?: string) => (
+    <label className="block min-w-0"><span className={lab}>{name}</span><input list={list} value={f[k]} onChange={(e) => set({ [k]: e.target.value })} disabled={busy !== null} className={controlClass} /></label>
+  );
+  const date = (k: "needBy" | "eta", name: string) => (
+    <label className="block min-w-0"><span className={lab}>{name}</span><input type="date" value={f[k] ?? ""} onChange={(e) => set(k === "needBy" ? { needBy: e.target.value || null } : { eta: e.target.value || null })} disabled={busy !== null} className={controlClass} /></label>
+  );
+  const folded = [f.question, f.answer, f.note].filter((x) => x.trim()).length;
+  const changedAt = Number.isFinite(row.updatedAt) ? new Date(row.updatedAt).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : null;
+
+  return (
+    <form onSubmit={(e) => { e.preventDefault(); void save(); }} className="px-4 sm:px-5 py-4 space-y-5 bg-[var(--color-surface-2)] text-body text-[var(--color-text)]" aria-label={`Change ${row.item}`}>
+      <div className="grid gap-3 sm:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+        {text("item", "Item")}
+        {text("qty", "Quantity")}
+        <label className="block min-w-0"><span className={lab}>Work order or equipment</span><input list={listWo} value={f.workOrder} onChange={(e) => pickWorkOrder(e.target.value)} disabled={busy !== null} className={controlClass} /></label>
+        <div className="min-w-0"><span className={lab}>Kind</span><KindSwitch value={f.kind} onChange={(k) => set({ kind: k })} /></div>
+        {phases.length > 0 && (
+          <label className="block min-w-0"><span className={lab}>Phase</span>
+            <select value={f.phaseId ?? ""} onChange={(e) => set({ phaseId: e.target.value || null })} disabled={busy !== null} className={controlClass}><option value="">Whole project</option>{phases.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select>
+          </label>
+        )}
       </div>
-      {text("item", "Item", f.kind === "material" ? "Long weld neck flange" : "FV-008B control valve")}
-      <div className="grid gap-3 sm:grid-cols-2">
-        {text("spec", "Specification", f.kind === "material" ? "6 in 300# RF, Sch 80 bore, A105" : "Rebuild and calibrate")}
-        {text("specMissing", "Missing from the spec", "Length (leave blank when complete)")}
-        {text("qty", "Quantity", "24")}
-        {text("workOrder", "Work order or equipment", "E-12", "mr-work-orders")}
-        {text("owner", "Owner", "Who chases it")}
-        {text("vendor", f.kind === "material" ? "Supplier" : "Shop", "")}
+      <datalist id={listWo}>{workOrders.map((w) => <option key={w} value={w} />)}</datalist>
+      <datalist id={listOwners}>{owners.map((w) => <option key={w} value={w} />)}</datalist>
+
+      <fieldset className="space-y-2">
+        <legend className={`${groupHead} mb-2`}>Specification</legend>
+        <div className="grid gap-3 sm:grid-cols-2">
+          {text("spec", "Specification")}
+          {text("specMissing", "Missing from the spec")}
+        </div>
+        {incomplete && <p className={`text-body font-medium ${red}`}>{f.specMissing.trim() ? `It stays at “Spec incomplete” until “${f.specMissing.trim()}” is written into the spec and that box is cleared.` : "Write the specification to move it to Ready to order."}</p>}
+      </fieldset>
+
+      <fieldset className="space-y-2">
+        <legend className={`${groupHead} mb-2`}>Owners</legend>
+        <div className="grid gap-3 sm:grid-cols-2">
+          {text("owner", <>Warehouse <span className="font-normal">· gets it in and checks it</span></>, listOwners)}
+          {text("crewOwner", <>Crew <span className="font-normal">· makes sure it is used on the job</span></>, listOwners)}
+        </div>
+        {noCrewColumn && <p className="text-body text-[var(--state-held-text)]">{UPDATE_LINE}</p>}
+      </fieldset>
+
+      <fieldset className="space-y-2">
+        <legend className={`${groupHead} mb-2`}>Status and dates</legend>
+        <div className="grid gap-3 sm:grid-cols-3">
+          <label className="block min-w-0"><span className={lab}>Status</span>
+            <select value={incomplete && f.status !== "cancelled" ? "to_specify" : f.status} onChange={(e) => set({ status: e.target.value as MaterialStatus })} disabled={busy !== null} className={controlClass}>
+              {STATUSES.map((s) => <option key={s} value={s} disabled={!statusAllowed(f, s) || (!incomplete && s === "to_specify")}>{STATUS_WORD[s]}{s === "used" && !f.crewOwner.trim() ? " (name the crew owner first)" : ""}</option>)}
+            </select>
+          </label>
+          {date("needBy", needWordOf(f.kind))}
+          {date("eta", etaWordOf(f.kind))}
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2">
+          {text("vendor", f.kind === "material" ? "Supplier" : "Shop")}
+          {text("etaNote", "About the date")}
+        </div>
+      </fieldset>
+
+      <MoreDetails label="Question and note" filled={folded} total={3}>
+        <div className="grid gap-3 sm:grid-cols-2">
+          {text("question", "Open question")}
+          {text("answer", "Answer")}
+        </div>
+        {text("note", "Note")}
+      </MoreDetails>
+
+      {err && <div role="alert" className={`text-body font-medium ${red} flex items-start gap-1.5`}><CircleAlert aria-hidden className="w-4 h-4 shrink-0 mt-0.5" /><span>{err}</span></div>}
+      <div className="flex flex-wrap items-center gap-2">
+        <button type="button" disabled={busy !== null} onClick={() => void remove()} className={`${btn} mr-auto`}>
+          {busy === "remove" ? <Loader2 aria-hidden className="w-4 h-4 animate-spin" /> : <Trash2 aria-hidden className="w-4 h-4" />} {busy === "remove" ? "Removing" : "Remove"}
+        </button>
+        {changedAt && <span className={`basis-full sm:basis-auto order-last sm:order-none text-caption ${muted}`}>Last changed{row.updatedByName ? ` by ${row.updatedByName}` : ""} {changedAt}</span>}
+        <button type="button" disabled={busy !== null} onClick={onClose} className={btn}>Cancel</button>
+        <button type="submit" disabled={busy !== null} className={pri}>{busy === "save" ? <Loader2 aria-hidden className="w-4 h-4 animate-spin" /> : null} {busy === "save" ? "Saving" : "Save"}</button>
       </div>
-      <datalist id="mr-work-orders">{workOrders.map((w) => <option key={w} value={w} />)}</datalist>
-      <div className="grid gap-3 sm:grid-cols-3">
-        <label className="block"><span className={label}>Status</span>
-          <select value={incomplete && f.status !== "cancelled" ? "to_specify" : f.status} onChange={(e) => set({ status: e.target.value as MaterialStatus })} className={`${field} mt-0.5`}>
-            {STATUSES.map((s) => <option key={s} value={s} disabled={!statusAllowed(f, s) || (!incomplete && s === "to_specify")}>{STATUS_WORD[s]}</option>)}
-          </select>
-        </label>
-        <label className="block"><span className={label}>Need-by</span><input type="date" value={f.needBy ?? ""} onChange={(e) => set({ needBy: e.target.value || null })} className={`${field} mt-0.5`} /></label>
-        <label className="block"><span className={label}>{f.kind === "material" ? "ETA" : "Return date"}</span><input type="date" value={f.eta ?? ""} onChange={(e) => set({ eta: e.target.value || null })} className={`${field} mt-0.5`} /></label>
-      </div>
-      {incomplete && <p className="text-caption font-medium text-[var(--state-overdue-text)]">{f.specMissing.trim() ? `It stays at "Spec incomplete" until "${f.specMissing.trim()}" is filled in and that box is cleared.` : "Write the specification to move it to Ready to order."}</p>}
-      {text("etaNote", "About the date", f.kind === "material" ? "4 on back order" : "Quoted 72 h")}
-      <div className="grid gap-3 sm:grid-cols-2">
-        {text("question", "Open question", "How long is the weld neck?")}
-        {text("answer", "Answer", "Closes the question")}
-      </div>
-      {text("note", "Note", "")}
-      {phases.length > 0 && <label className="block"><span className={label}>Phase</span><select value={f.phaseId ?? ""} onChange={(e) => set({ phaseId: e.target.value || null })} className={`${field} mt-0.5`}><option value="">Whole project</option>{phases.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label>}
-    </div>
+    </form>
   );
 }

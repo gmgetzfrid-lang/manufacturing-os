@@ -186,10 +186,10 @@ export function snapStart(t: number, cal: Cal, tz: string, times: ShiftTimes): n
 /** A step that is the trip itself ("Hotshot Exchanger to Redman", "Meter Out
  *  for Service"): clock time away, not crew time. */
 export const OFFSITE_STEP = /\b(out for (service|repair|calibration|cal)|hot\s*-?\s*shot|(send|sent|ship|shipped|haul|hauled|truck|trucked)\s+(it\s+)?(out|off|to)\b|to (the )?(shop|vendor)\b|at (the )?(shop|vendor)\b|off[- ]?site)/i;
-const isStartUp = (name: string) => /start\s*-?\s*up/i.test(name);
+export const isStartUp = (name: string) => /start\s*-?\s*up/i.test(name);
 /** The shutdown itself ("Transmix-2 - Shutdown"), not work that needs one
  *  ("Shutdown-Required Inspection ..."). */
-const isShutdown = (name: string) => /shut\s*-?\s*down\s*$/i.test(name.trim()) && !/required/i.test(name);
+export const isShutdown = (name: string) => /shut\s*-?\s*down\s*$/i.test(name.trim()) && !/required/i.test(name);
 
 /** How a step runs next time, from how its work order's crew really ran it
  *  this year (null: never worked, the file's calendar). A trip off site and

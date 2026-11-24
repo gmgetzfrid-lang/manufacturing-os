@@ -168,7 +168,7 @@ export default function CompareRevisionsModal({
         </div>
         <div className="px-4 sm:px-5 pb-3 flex items-center gap-2 flex-wrap shrink-0 border-b border-[var(--color-border)]">
           <label className="flex items-center gap-1.5 text-body">
-            <span className="text-rose-300 font-medium">Base</span>
+            <span className="text-[var(--on-dark-bad)] font-medium">Base</span>
             <select value={baseId ?? ""} onChange={(e) => pick("base", e.target.value)} className={selectCls} disabled={loading}>
               {versions.map((v) => <option key={v.id} value={v.id}>{optionLabel(v)}</option>)}
             </select>
@@ -177,7 +177,7 @@ export default function CompareRevisionsModal({
             <ArrowLeftRight className="w-4 h-4" />
           </button>
           <label className="flex items-center gap-1.5 text-body">
-            <span className="text-emerald-300 font-medium">Compare</span>
+            <span className="text-[var(--on-dark-good)] font-medium">Compare</span>
             <select value={compareId ?? ""} onChange={(e) => pick("compare", e.target.value)} className={selectCls} disabled={loading}>
               {versions.map((v) => <option key={v.id} value={v.id}>{optionLabel(v)}</option>)}
             </select>
@@ -197,7 +197,7 @@ export default function CompareRevisionsModal({
               <span className="text-body">Loading revisions…</span>
             </div>
           ) : error ? (
-            <div className="absolute inset-0 flex flex-col items-center justify-center text-rose-300">
+            <div className="absolute inset-0 flex flex-col items-center justify-center text-[var(--on-dark-bad)]">
               <AlertTriangle className="w-10 h-10 mb-2 opacity-60" />
               <span className="text-body font-medium">The revisions didn&apos;t load.</span>
               <span className="text-body mt-1 max-w-md text-center text-[var(--color-text-muted)]">{error}</span>

@@ -21,17 +21,18 @@ import { sayError } from "@/components/projects/sayError";
 const field = "h-9 pointer-coarse:h-11 w-full rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-body text-[var(--color-text)]";
 const label = "block text-body font-medium text-[var(--color-text-muted)] mb-1";
 const primary = "inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-caption font-medium hover:bg-[var(--color-accent-hover)] disabled:opacity-50";
-const quiet = "inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-[var(--color-border-strong)] text-caption font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50";
+const quiet = "inline-flex items-center gap-1 px-2.5 py-1.5 pointer-coarse:min-h-11 rounded-lg border border-[var(--color-border-strong)] text-caption font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50";
 
 const dateOf = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : "");
 
 // ─── The AFE ───────────────────────────────────────────────────────
 
-/** The AFE at the top of Budget: what's authorized, how much of it the
- *  budget lines use, Edit (a supplement, a correction, a new document) and
- *  every change so far. */
-export function AfeCard({ orgId, projectId, afe, linesTotal, cur, canManage, actor, fileOf, onSaved }: {
-  orgId: string; projectId: string; afe: Afe | null; linesTotal: number; cur: string; canManage: boolean; actor: Actor;
+/** The AFE on Budget, on one line: its number, what's authorized, the
+ *  charge account, See the AFE, Edit (a supplement, a correction, a new
+ *  document) and every change so far. How much of it the budget lines use
+ *  is the Budget sub-tab's answer line, above it. */
+export function AfeCard({ orgId, projectId, afe, cur, canManage, actor, fileOf, onSaved }: {
+  orgId: string; projectId: string; afe: Afe | null; cur: string; canManage: boolean; actor: Actor;
   /** A document id as a file to preview (the current AFE, older ones). */
   fileOf: (docId: string | null) => PreviewFile | null; onSaved: (msg: string) => void;
 }) {
@@ -41,35 +42,25 @@ export function AfeCard({ orgId, projectId, afe, linesTotal, cur, canManage, act
   const [showHistory, setShowHistory] = useState(false);
   const [tick, setTick] = useState(0);
   useEffect(() => { let alive = true; void loadAfeHistory(projectId).then((h) => { if (alive) setHistory(h.history); }).catch(() => { if (alive) setHistory([]); }); return () => { alive = false; }; }, [projectId, tick]);
-  const left = a.authorized != null ? a.authorized - linesTotal : null;
+  const has = !!(a.afeNumber || a.authorized != null || a.chargeAccount || a.docId);
+  const file = fileOf(a.docId);
   return (
-    <div className="px-4 py-3 space-y-2">
-      <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
-        <div>
-          <div className={label}>AFE</div>
-          <div className="text-reading font-medium text-[var(--color-text)]">{a.afeNumber || <span className="text-[var(--color-text-faint)] font-medium">No number</span>}</div>
-        </div>
-        <div>
-          <div className={label}>Authorized</div>
-          <div className="text-reading font-medium tabular-nums text-[var(--color-text)]">{a.authorized != null ? fmtMoney(a.authorized, cur) : <span className="text-[var(--color-text-faint)] font-medium">Not set</span>}</div>
-        </div>
-        {a.chargeAccount && (
-          <div>
-            <div className={label}>Charge account</div>
-            <div className="text-body font-display tabular-nums text-[var(--color-text)]">{a.chargeAccount}</div>
-          </div>
-        )}
-        <div>
-          <div className={label}>Budget lines</div>
-          <div className="text-body tabular-nums text-[var(--color-text)]">
-            <b>{fmtMoney(linesTotal, cur)}</b>
-            {left != null && Math.abs(left) >= 1 && <span className={left < 0 ? " text-[var(--state-overdue-text)] font-medium" : " text-[var(--color-text-muted)]"}>{left < 0 ? ` · ${fmtMoney(-left, cur)} more than authorized` : ` · ${fmtMoney(left, cur)} not on a line yet`}</span>}
-          </div>
-        </div>
-        <div className="ml-auto flex items-center gap-1.5">
-          {fileOf(a.docId) && <PreviewButton file={fileOf(a.docId)} label="See the AFE" className="!text-caption !px-2.5 !py-1.5 border border-[var(--color-border-strong)] !text-[var(--color-text)]" />}
-          {canManage && !editing && <button type="button" onClick={() => setEditing(true)} className={quiet}><Pencil className="w-3.5 h-3.5" /> Edit AFE</button>}
-        </div>
+    <div className="px-4 sm:px-5 py-3 space-y-2">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-body">
+        {has ? (
+          <span className="min-w-0 flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-[var(--color-text-muted)]">
+            <span>AFE <span className="font-medium text-[var(--color-text)]">{a.afeNumber || "no number"}</span></span>
+            <span aria-hidden>·</span>
+            {a.authorized != null
+              ? <span><span className="font-medium tabular-nums text-[var(--color-text)]">{fmtMoney(a.authorized, cur)}</span> authorized</span>
+              : <span>Authorized amount not set</span>}
+            {a.chargeAccount && <><span aria-hidden>·</span><span>Charge account <span className="font-display tabular-nums text-[var(--color-text)]">{a.chargeAccount}</span></span></>}
+          </span>
+        ) : <span className="text-[var(--color-text-muted)]">No AFE on file.</span>}
+        <span className="ml-auto flex items-center gap-1.5">
+          {file && <PreviewButton file={file} label="See the AFE" className="!text-caption !px-2.5 !py-1.5 border border-[var(--color-border-strong)] !text-[var(--color-text)]" />}
+          {canManage && !editing && <button type="button" onClick={() => setEditing(true)} className={quiet}><Pencil className="w-3.5 h-3.5" /> {has ? "Edit AFE" : "Add the AFE"}</button>}
+        </span>
       </div>
       {editing && (
         <AfeEditor orgId={orgId} projectId={projectId} afe={a} actor={actor} cur={cur}
@@ -78,7 +69,7 @@ export function AfeCard({ orgId, projectId, afe, linesTotal, cur, canManage, act
       )}
       {history && history.length > 0 && (
         <div>
-          <button type="button" onClick={() => setShowHistory((v) => !v)} className="inline-flex items-center gap-1 text-body text-[var(--color-accent-text)] hover:underline">
+          <button type="button" onClick={() => setShowHistory((v) => !v)} aria-expanded={showHistory} className="inline-flex items-center gap-1 min-h-10 pointer-coarse:min-h-11 text-body text-[var(--color-accent-text)] hover:underline">
             <History className="w-3.5 h-3.5" /> {showHistory ? "Hide" : "Show"} AFE changes · {history.filter((h) => h.at).length}
           </button>
           {showHistory && (

@@ -13,11 +13,13 @@ import type { ShiftRecord } from "@/lib/shiftRecord";
 import type { StepLook } from "@/lib/lookBack";
 import { companyOf, estimateByWorkOrder, manpowerSummary, shiftCounts, type ManpowerSettings, type ShiftCount, type WorkSpan } from "@/lib/manpower";
 import LoadingBlock from "@/components/ui/LoadingBlock";
+import HelpTooltip from "@/components/ui/HelpTooltip";
 
 // Each company keeps its color (fixed order, by man-hours); past seven, Other.
+// The app's chart colors (globals.css --viz-cat-*), the same in every chart.
 const SWATCH = [
-  "bg-[#2a78d6] dark:bg-[#3987e5]", "bg-[#eb6834] dark:bg-[#d95926]", "bg-[#1baf7a] dark:bg-[#199e70]", "bg-[#eda100] dark:bg-[#c98500]",
-  "bg-[#e87ba4] dark:bg-[#d55181]", "bg-[#008300] dark:bg-[#008300]", "bg-[#6250d6] dark:bg-[#9085e9]",
+  "bg-[var(--viz-cat-1)]", "bg-[var(--viz-cat-2)]", "bg-[var(--viz-cat-3)]", "bg-[var(--viz-cat-4)]",
+  "bg-[var(--viz-cat-5)]", "bg-[var(--viz-cat-6)]", "bg-[var(--viz-cat-7)]",
 ];
 const OTHER = "bg-[var(--viz-neutral)]";
 const OTHER_NAME = "Other";
@@ -93,10 +95,10 @@ export default function ManpowerLook({ shifts, records, settings, steps, tz, now
   const head = "text-caption font-medium text-[var(--color-text)]";
   if (sum.counted === 0) {
     return (
-      <div className="space-y-1">
-        <div className={head}>Manpower</div>
-        <p className="text-caption text-[var(--color-text-muted)]">No head counts were entered at the shift meetings{shifts.some((r) => r.start <= now) ? "" : " yet"}. Enter each crew&apos;s direct and indirect on Shift › Meeting; they show here shift by shift against the bid.</p>
-      </div>
+      <p className="text-body text-[var(--color-text-muted)]">
+        <span className="font-medium text-[var(--color-text)]">Manpower: </span>
+        no head counts were entered at the shift meetings{shifts.some((r) => r.start <= now) ? "" : " yet"}. Enter each crew&apos;s direct and indirect on Shift › Meeting; they show here shift by shift against the bid.
+      </p>
     );
   }
 
@@ -131,20 +133,22 @@ export default function ManpowerLook({ shifts, records, settings, steps, tz, now
 
   return (
     <div className="space-y-3">
+      {/* The answer: the man-hours counted, big; the rest small on one line. */}
       <div>
         <div className={head}>Manpower, as counted at the shift meetings</div>
-        <p className="mt-0.5 text-caption leading-snug text-[var(--color-text-muted)]">
-          Counted on {sum.counted} of {plural(sum.shifts, "shift")}{sum.carried > 0 ? `; ${sum.carried} of those carried over from the shift before, not checked` : ""}. Man-hours are the count times the shift&apos;s hours: who left early or came late isn&apos;t seen.
-        </p>
-      </div>
-
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-6 gap-y-3">
-        <MiniTile k="Man-hours" v={n0(sum.totalMH)} s={sum.directMH + sum.indirectMH > 0 ? `${n0(sum.directMH)} direct · ${n0(sum.indirectMH)} indirect${sum.unsplitMH > 0 ? ` · ${n0(sum.unsplitMH)} not split` : ""}` : "not split direct / indirect"} />
-        <MiniTile k="Peak on site" v={sum.peak ? String(sum.peak.n) : "-"} s={sum.peak ? labelOf({ key: sum.peak.key, kind: sum.peak.key.endsWith(":night") ? "night" : "day" }) : ""} />
-        <MiniTile k="Recordable rate" v={sum.recordableRate != null ? sum.recordableRate.toFixed(2) : "-"} s={`${plural(sum.incidents.recordable, "recordable")} on counted hours`} />
-        {costRates
-          ? <MiniTile k="At bid rates" v={money(sum.cost ?? 0)} s="counted man-hours x rate" />
-          : <MiniTile k="Indirect" v={ir != null ? `${ir}%` : "-"} s="of split man-hours" />}
+        <div className="mt-1 flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+          <span className="font-display text-section font-bold tabular-nums whitespace-nowrap text-[var(--color-text)]">{n0(sum.totalMH)}</span>
+          <span className="text-body text-[var(--color-text)]">man-hours, counted on {sum.counted} of {plural(sum.shifts, "shift")}{sum.carried > 0 ? `; ${sum.carried} of those carried over from the shift before, not checked` : ""}.</span>
+          <HelpTooltip>Man-hours are the count times the shift&apos;s hours: who left early or came late isn&apos;t seen.</HelpTooltip>
+        </div>
+        <dl className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-caption text-[var(--color-text-muted)]">
+          <Fact k="Split" v={sum.directMH + sum.indirectMH > 0 ? `${n0(sum.directMH)} direct · ${n0(sum.indirectMH)} indirect${sum.unsplitMH > 0 ? ` · ${n0(sum.unsplitMH)} not split` : ""}` : "not split direct / indirect"} />
+          <Fact k="Peak on site" v={sum.peak ? `${sum.peak.n}, ${labelOf({ key: sum.peak.key, kind: sum.peak.key.endsWith(":night") ? "night" : "day" })}` : "-"} />
+          <Fact k="Recordable rate" v={sum.recordableRate != null ? sum.recordableRate.toFixed(2) : "-"} s={`${plural(sum.incidents.recordable, "recordable")} on counted hours`} />
+          {costRates
+            ? <Fact k="At bid rates" v={money(sum.cost ?? 0)} s="counted man-hours x rate" />
+            : <Fact k="Indirect" v={ir != null ? `${ir}%` : "-"} s="of split man-hours" />}
+        </dl>
       </div>
 
       <div>
@@ -210,7 +214,7 @@ export default function ManpowerLook({ shifts, records, settings, steps, tz, now
       </div>
 
       <div>
-        <div className={head}>By company</div>
+        <div className={`${head} flex items-center gap-1.5`}>By company{rate.size > 0 && <HelpTooltip>Man-hours per planned hour compare companies and jobs, not a crew rate: the schedule&apos;s hours are clock time, not man-hours. Only finished steps worked wholly on counted shifts are in it.</HelpTooltip>}</div>
         <ul className="mt-1 divide-y divide-[var(--color-border)]/60">
           {sum.companies.map((x) => {
             const r = rate.get(x.company);
@@ -247,12 +251,13 @@ export default function ManpowerLook({ shifts, records, settings, steps, tz, now
 
       {wos.length > 0 && (
         <div>
-          <div className={head}>Man-hours by work order (estimated)</div>
-          <p className="mt-0.5 text-caption leading-snug text-[var(--color-text-muted)]">
-            Nobody counts by job: each shift, a company&apos;s direct hours are shared over its work going then, by hours going (holds left out).
-            {addedMH > 0 && <> Added work took about {n0(addedMH)} direct man-hours.</>}
-            {est.untiedMH > 0 && <> {n0(est.untiedMH)} direct man-hours were counted with none of that company&apos;s work going.</>}
-          </p>
+          <div className={`${head} flex items-center gap-1.5`}>Man-hours by work order (estimated) <HelpTooltip>Nobody counts by job: each shift, a company&apos;s direct hours are shared over its work going then, by hours going (holds left out).</HelpTooltip></div>
+          {(addedMH > 0 || est.untiedMH > 0) && (
+            <p className="mt-0.5 text-caption leading-snug text-[var(--color-text-muted)]">
+              {addedMH > 0 && <>Added work took about {n0(addedMH)} direct man-hours.</>}
+              {est.untiedMH > 0 && <>{addedMH > 0 ? " " : ""}{n0(est.untiedMH)} direct man-hours were counted with none of that company&apos;s work going.</>}
+            </p>
+          )}
           <ul className="mt-1 divide-y divide-[var(--color-border)]/60 text-caption">
             {(allWos ? wos : wos.slice(0, 10)).map((w) => (
               <li key={w.key} className="flex items-baseline gap-2 py-1">
@@ -264,17 +269,17 @@ export default function ManpowerLook({ shifts, records, settings, steps, tz, now
           {wos.length > 10 && <button type="button" onClick={() => setAllWos(!allWos)} className="mt-1 text-body text-[var(--color-accent-text)] hover:underline">{allWos ? "Show the top 10" : `Show all ${wos.length}`}</button>}
         </div>
       )}
-      {rate.size > 0 && <p className="text-caption leading-snug text-[var(--color-text-muted)]">Man-hours per planned hour compare companies and jobs, not a crew rate: the schedule&apos;s hours are clock time, not man-hours. Only finished steps worked wholly on counted shifts are in it.</p>}
     </div>
   );
 }
 
-function MiniTile({ k, v, s }: { k: string; v: string; s: string }) {
+/** One small fact on the line under the answer: "Peak on site 45, Thu day". */
+function Fact({ k, v, s }: { k: string; v: string; s?: string }) {
   return (
     <div className="min-w-0">
-      <div className="text-body font-medium text-[var(--color-text-muted)]">{k}</div>
-      <div className="mt-0.5 text-body font-medium truncate text-[var(--color-text)]">{v}</div>
-      <div className="text-caption leading-snug text-[var(--color-text-muted)]">{s}</div>
+      <dt className="inline">{k} </dt>
+      <dd className="inline font-medium tabular-nums text-[var(--color-text)]">{v}</dd>
+      {s && <dd className="inline"> ({s})</dd>}
     </div>
   );
 }

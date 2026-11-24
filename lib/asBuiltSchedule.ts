@@ -25,6 +25,8 @@ import { originalPlan, vsPlanWords } from "@/lib/closeoutStatus";
 import { phaseIndex, type ProjectPhase } from "@/lib/projectPhases";
 import { fmtInTz, wallClock, dayKey, wallClockToMs } from "@/lib/scheduleTz";
 import { noEmDash } from "@/lib/noEmDash";
+import { hoursDays } from "@/lib/phaseReport";
+import { shiftKey, type AsBuiltWork } from "@/lib/asBuiltWork";
 
 const toMs = (v: unknown): number | null => { const t = v == null || v === "" ? NaN : typeof v === "number" ? v : Date.parse(String(v)); return Number.isFinite(t) ? t : null; };
 const H = 3_600_000;
@@ -200,6 +202,66 @@ export function stepBar(s: BuiltStep, now: number): { from: number; to: number }
   return from != null && to != null && to > from ? { from, to } : null;
 }
 
+// ─── Each work order against its own plan (the screen and the page) ─────
+
+/** How late it finished against its own planned finish, in hours; not
+ *  done, how late it is so far (`sofar`). Null: not due yet, or no plan. */
+export function lateOf(o: { planFinish: number | null; finish: number | null }, now: number): { h: number | null; sofar: boolean } {
+  if (o.planFinish == null) return { h: null, sofar: false };
+  if (o.finish != null) return { h: (o.finish - o.planFinish) / H, sofar: false };
+  return now > o.planFinish ? { h: (now - o.planFinish) / H, sofar: true } : { h: null, sofar: false };
+}
+
+/** "12 h", "26 h (1.1 days)", "6 h so far", "on time (3 h early)": a late
+ *  by figure in words, and whether it is late. */
+export function lateWords(o: { planFinish: number | null; finish: number | null }, now: number): { text: string; late: boolean } {
+  const { h, sofar } = lateOf(o, now);
+  if (h == null) return { text: o.planFinish == null ? "no plan" : "not due yet", late: false };
+  if (h >= 0.5) return { text: `${hoursDays(h)}${sofar ? " so far" : ""}`, late: true };
+  if (sofar) return { text: "due now", late: false };
+  return { text: h <= -0.5 ? `on time (${hoursDays(-h)} early)` : "on time", late: false };
+}
+
+/** A phase (or the whole job) in a sentence: "Finished 33.5 h late". */
+export function answerOf(b: { planFinish: number | null; finish: number | null }, now: number): { text: string; late: boolean } {
+  const { h, sofar } = lateOf(b, now);
+  if (b.planFinish == null) return { text: b.finish != null ? "Finished, with no plan dates to measure against" : "Not done, with no plan dates", late: false };
+  if (h == null) return { text: "Not done yet", late: false };
+  if (sofar) return h >= 0.5 ? { text: `Not done, ${hoursDays(h)} past its planned finish`, late: true } : { text: "Not done, due now", late: false };
+  return h >= 0.5 ? { text: `Finished ${hoursDays(h)} late`, late: true } : { text: h <= -0.5 ? `Finished ${hoursDays(-h)} early` : "Finished on time", late: false };
+}
+
+/** A phase's work orders, on the phase's own plan: its planned finish (the
+ *  original plan's last step in it), its finish (every step done), and the
+ *  span its bars run across (first planned or actual start to last planned
+ *  or actual finish, or now for work still going). */
+export interface PhaseBlock { name: string | null; orders: BuiltOrder[]; planFinish: number | null; finish: number | null; from: number; to: number }
+
+/** The work orders by phase, in the order the phases come; one block (name
+ *  null) when there are no phases. */
+export function phaseBlocks(a: AsBuilt, now: number): PhaseBlock[] {
+  const by = new Map<string, BuiltOrder[]>();
+  for (const o of a.orders) { const k = o.phase ?? ""; const xs = by.get(k); if (xs) xs.push(o); else by.set(k, [o]); }
+  const nums = (xs: Array<number | null>) => xs.filter((v): v is number => v != null);
+  return [...by.entries()].map(([k, orders]) => {
+    const inPlan = nums(orders.flatMap((o) => o.steps.filter((s) => s.inPlan).map((s) => s.planFinish)));
+    const any = nums(orders.map((o) => o.planFinish));
+    const planFinish = inPlan.length ? Math.max(...inPlan) : any.length ? Math.max(...any) : null;
+    const finish = orders.every((o) => o.finish != null) ? Math.max(...nums(orders.map((o) => o.finish))) : null;
+    const pts = nums(orders.flatMap((o) => [o.planStart, o.planFinish, o.barStart, o.finish ?? (o.status !== "not_started" ? now : null)]));
+    const from = pts.length ? Math.min(...pts) : now;
+    return { name: k || null, orders, planFinish, finish, from, to: Math.max(pts.length ? Math.max(...pts) : now, from + 12 * H) };
+  });
+}
+
+/** Most late first: the latest against its own planned finish at the top
+ *  (work still open by how late it is so far), then on time, then not due
+ *  or with no plan; ties in planned start order. */
+export function mostLateFirst<T extends { planFinish: number | null; finish: number | null; planStart: number | null }>(xs: T[], now: number): T[] {
+  const key = (o: T) => lateOf(o, now).h ?? -Infinity;
+  return [...xs].sort((a, b) => key(b) - key(a) || (a.planStart ?? 0) - (b.planStart ?? 0));
+}
+
 // ─── Words ───────────────────────────────────────────────────────────────
 
 const esc = (s: string) => noEmDash(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -220,16 +282,27 @@ export function asBuiltKey(a: AsBuilt, tz: string): string[] {
   return out;
 }
 
-// ─── The printable report (landscape): timeline, then the table ──────────
+// ─── The printable report (landscape) ────────────────────────────────────
+//
+// As on the screen: the answer, then each phase on its own dates with its
+// own planned-finish line, each work order most late first with its planned
+// finish, actual finish, late by and shifts waited, and one bar (the plan a
+// gray box, as built solid, the part past its own planned finish red, the
+// shifts it waited hatched). Then the same work orders with every step:
+// on paper nothing is folded away.
 
-const NAVY = "#000A72", INK = "#0f172a", MUTED = "#64748b", RULE = "#e2e8f0", GREEN = "#0f766e", AMBER = "#b45309", BLUE = "#2563eb", GRAY = "#94a3b8";
+const NAVY = "#000A72", INK = "#0f172a", MUTED = "#64748b", RULE = "#e2e8f0", AMBER = "#b45309", BLUE = "#2563eb", GRAY = "#94a3b8", RED = "#b91c1c";
 const FONT = "font-family:Lato,Calibri,Arial,sans-serif;";
+const PLAN_BOX = `background:#f1f5f9;border:1px solid ${GRAY};`;
+/** Laid over a bar: the shifts it waited with nothing logged. */
+const WAITED = "background:repeating-linear-gradient(135deg,transparent 0 2px,#ffffff 2px 4px);";
+/** Before a step started: ready, its crew elsewhere. */
+const READY = `background:repeating-linear-gradient(135deg,#cbd5e1 0 2px,#ffffff 2px 4px);border:1px solid ${GRAY};`;
+const NIGHTS = "Shifts waited: shifts between its first and last work with nothing logged (a step: also the shifts it was ready but not started). Night shifts count only for work that ran on nights.";
 
-/** The days the report's bars run across, and where a time falls on them (%). */
-function axisOf(a: AsBuilt, tz: string, now: number) {
-  const pts = [a.planStart, a.planFinish, a.start, a.finish, ...a.orders.flatMap((o) => [o.planStart, o.planFinish, o.barStart, o.finish ?? (o.status !== "not_started" ? now : null)])].filter((x): x is number => x != null);
-  if (!pts.length) return null;
-  const first = dayKey(Math.min(...pts), tz), last = dayKey(Math.max(...pts), tz);
+/** A phase's days, and where a time falls on them (%). */
+function axisOf(from: number, to: number, planEnd: number | null, tz: string) {
+  const first = dayKey(from, tz), last = dayKey(to, tz);
   const dayStart = (k: string) => { const [y, m, d] = k.split("-").map(Number); return wallClockToMs({ year: y, month: m, day: d, hour: 0, minute: 0, second: 0 }, tz); };
   const days: string[] = [];
   for (let k = first, g = 0; k <= last && g < 120; g++) {
@@ -242,80 +315,121 @@ function axisOf(a: AsBuilt, tz: string, now: number) {
   const t1 = wallClockToMs({ year: ly, month: lm, day: ld + 1, hour: 0, minute: 0, second: 0 }, tz);
   const x = (t: number) => Math.max(0, Math.min(100, ((t - t0) / (t1 - t0)) * 100));
   const grid = days.map((k, i) => `<div style="position:absolute;left:${(i / days.length) * 100}%;top:0;bottom:0;border-left:1px solid ${RULE};"></div>`).join("");
-  const planEnd = a.planFinish != null ? `<div style="position:absolute;left:${x(a.planFinish)}%;top:0;bottom:0;border-left:2px solid ${NAVY};"></div>` : "";
+  // The phase's planned finish: one dark line through every row.
+  const planLine = planEnd != null ? `<div style="position:absolute;left:${x(planEnd)}%;top:0;bottom:0;border-left:2px solid ${INK};"></div>` : "";
   const head = days.map((k) => { const [y, m, d] = k.split("-").map(Number); const dd = new Date(Date.UTC(y, m - 1, d)); return `<div style="flex:1;text-align:center;font-size:8.5px;color:${MUTED};border-left:1px solid ${RULE};padding:1px 0;">${dd.toLocaleDateString("en-US", { weekday: "short", timeZone: "UTC" })}<br>${m}/${d}</div>`; }).join("");
-  const bar = (s: number | null, f: number | null, style: string, top: number, h: number, inner = "") => {
-    if (s == null || f == null) return "";
+  const bar = (s: number | null, f: number | null, style: string, top: number, h: number, title = "") => {
+    if (s == null || f == null || f <= s) return "";
     const l = x(s), w = Math.max(0.4, x(f) - l);
-    return `<div style="position:absolute;left:${l}%;width:${w}%;top:${top}px;height:${h}px;${style}border-radius:2px;box-sizing:border-box;overflow:hidden;">${inner}</div>`;
+    return `<div${title ? ` title="${esc(title)}"` : ""} style="position:absolute;left:${l}%;width:${w}%;top:${top}px;height:${h}px;${style}border-radius:2px;box-sizing:border-box;overflow:hidden;"></div>`;
   };
-  return { x, grid, planEnd, head, bar };
+  return { x, grid, planLine, head, bar };
+}
+type Axis = ReturnType<typeof axisOf>;
+/** Only what the page reads of the job as worked (lib/asBuiltWork). */
+type Worked = Pick<AsBuiltWork, "shifts" | "steps" | "orders">;
+
+/** One bar: the plan a gray box, as built solid to its own planned finish,
+ *  red past it, the shifts it waited hatched over it; `faded` when its
+ *  start wasn't recorded. */
+function barHtml(x: { planStart: number | null; planFinish: number | null; from: number | null; to: number | null }, ax: Axis, waits: Array<{ start: number; end: number }>, ready: Array<{ start: number; end: number }> = [], faded = false): string {
+  const { planStart: ps, planFinish: pf, from, to } = x;
+  const fade = faded ? "opacity:.55;" : "";
+  let h = ax.bar(ps, pf, PLAN_BOX, 2, 14);
+  for (const r of ready) h += ax.bar(r.start, r.end, READY, 5, 8);
+  if (from != null && to != null && to > from) {
+    if (pf == null || from < pf) h += ax.bar(from, pf == null ? to : Math.min(to, pf), `background:${BLUE};${fade}`, 5, 8);
+    if (pf != null && to > pf) h += ax.bar(Math.max(from, pf), to, `background:${RED};${fade}`, 5, 8);
+  }
+  for (const w of waits) h += ax.bar(w.start, w.end, WAITED, 5, 8);
+  return h;
 }
 
-const stepColor = (s: BuiltStep) => (!s.inPlan ? AMBER : s.status === "done" ? GREEN : BLUE);
-const LEGEND = (extra = "") => `<div style="${FONT}font-size:10px;color:${MUTED};margin-bottom:4px;"><span style="display:inline-block;width:14px;height:5px;background:${GRAY};"></span> Plan &nbsp; <span style="display:inline-block;width:14px;height:6px;background:${GREEN};"></span> Done &nbsp; <span style="display:inline-block;width:14px;height:6px;background:${BLUE};"></span> Still going &nbsp; <span style="display:inline-block;width:14px;height:6px;background:${AMBER};"></span> Added after the plan &nbsp; <span style="display:inline-block;width:2px;height:10px;background:${NAVY};"></span> Planned finish${extra}</div>`;
+const KEY = `<div style="${FONT}font-size:10px;color:${MUTED};margin:2px 0 4px;">` +
+  `<span style="display:inline-block;width:14px;height:8px;${PLAN_BOX}"></span> Plan &nbsp; ` +
+  `<span style="display:inline-block;width:14px;height:6px;background:${BLUE};"></span> As built &nbsp; ` +
+  `<span style="display:inline-block;width:14px;height:6px;background:${RED};"></span> Past its own planned finish &nbsp; ` +
+  `<span style="display:inline-block;width:14px;height:6px;background:${BLUE};position:relative;"><span style="position:absolute;inset:0;${WAITED}"></span></span> Shifts waited, nothing logged &nbsp; ` +
+  `<span style="display:inline-block;width:14px;height:6px;${READY}"></span> Ready, not started &nbsp; ` +
+  `<span style="display:inline-block;width:2px;height:10px;background:${INK};"></span> The phase's planned finish &nbsp; Faded: start not recorded</div>`;
 
-/** A work order's bar, one piece per step (start to finish as built),
- *  steps worked at the same time stacked. */
-function orderBar(o: BuiltOrder, ax: NonNullable<ReturnType<typeof axisOf>>, now: number, top: number): { html: string; h: number } {
-  const { lanes, at } = laneSteps(o.steps.flatMap((s) => { const b = stepBar(s, now); return b ? [{ ...b, s }] : []; }));
-  const html = at.map((p) => ax.bar(p.from, p.to, `background:${stepColor(p.s)};border-right:1.5px solid #fff;`, top + p.lane * 8, 6)).join("");
-  return { html, h: Math.max(1, lanes) * 8 };
-}
-
-function timelineHtml(a: AsBuilt, tz: string, now: number): string {
-  const ax = axisOf(a, tz, now);
-  if (!ax) return "";
-  const rows = a.orders.map((o) => {
-    const b = orderBar(o, ax, now, 9);
-    return `<tr><td style="${FONT}font-size:9.5px;padding:2px 6px 2px 0;white-space:nowrap;max-width:230px;overflow:hidden;text-overflow:ellipsis;border-bottom:1px solid ${RULE};vertical-align:top;">${o.wo ? `<b>${esc(o.wo)}</b> ` : ""}${esc(o.name)}</td>` +
-      `<td style="padding:0;border-bottom:1px solid ${RULE};"><div style="position:relative;height:${b.h + 12}px;">${ax.grid}${ax.planEnd}${ax.bar(o.planStart, o.planFinish, `background:${GRAY};`, 3, 5)}${b.html}</div></td>` +
-      `<td style="${FONT}font-size:9.5px;padding:2px 0 2px 6px;text-align:right;white-space:nowrap;border-bottom:1px solid ${RULE};vertical-align:top;color:${o.varianceH != null && o.varianceH >= 0.5 ? "#b91c1c" : MUTED};">${o.finish != null ? varianceWords(o.varianceH) : BUILT_WORD[o.status]}</td></tr>`;
-  }).join("");
-  return `<div style="${FONT}font-size:14px;font-weight:bold;color:${NAVY};margin:14px 0 4px;border-bottom:2px solid ${NAVY};padding-bottom:3px;">Timeline</div>` +
-    LEGEND(" &nbsp; Each work order's bar is its steps, one piece each, as built; steps worked at the same time are stacked.") +
-    `<table cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;table-layout:fixed;"><colgroup><col style="width:230px"><col><col style="width:62px"></colgroup>` +
-    `<tr><td></td><td style="padding:0;"><div style="display:flex;">${ax.head}</div></td><td style="${FONT}font-size:8.5px;color:${MUTED};text-align:right;">vs plan</td></tr>${rows}</table>`;
-}
-
-/** Every work order with its steps, each on the same days as the timeline:
- *  the plan (gray) above what was done. */
-function tableHtml(a: AsBuilt, tz: string, now: number): string {
-  const ax = axisOf(a, tz, now);
-  if (!ax) return "";
+/** Every work order with its steps, the phases each on their own dates. */
+function blocksHtml(a: AsBuilt, tz: string, now: number, work: Worked | null): { overview: string; detail: string } {
+  const blocks = phaseBlocks(a, now);
+  const idx = new Map((work?.shifts ?? []).map((w, i) => [shiftKey(w), i]));
+  const shiftsOf = (keys: string[]) => keys.map((k) => idx.get(k)).filter((i): i is number => i != null).map((i) => work!.shifts[i]);
   const cell = (v: string, extra = "") => `<td style="${FONT}font-size:9.5px;padding:2px 4px;border-bottom:1px solid ${RULE};vertical-align:top;${extra}">${v}</td>`;
-  const th = (t: string, right = false) => `<th style="${FONT}font-size:8.5px;font-weight:bold;text-transform:uppercase;letter-spacing:.05em;color:${MUTED};text-align:${right ? "right" : "left"};padding:3px 4px;border-bottom:1px solid ${INK};">${t}</th>`;
-  const lane = (inner: string, h: number) => `<td style="padding:0;border-bottom:1px solid ${RULE};"><div style="position:relative;height:${h}px;">${ax.grid}${ax.planEnd}${inner}</div></td>`;
-  const vs = (h: number | null) => cell(esc(varianceWords(h)), `text-align:right;white-space:nowrap;${h != null && h >= 0.5 ? "color:#b91c1c;" : ""}`);
-  const body = a.orders.map((o) => {
-    const b = orderBar(o, ax, now, 9);
-    const top = `<tr style="background:#f1f5f9;">${cell(`<b>${o.wo ? `WO ${esc(o.wo)} · ` : ""}${esc(o.name)}</b>${o.phase ? ` <span style="color:${MUTED};">· ${esc(o.phase)}</span>` : ""}${o.allAdded ? ` <span style="color:${AMBER};font-weight:bold;">· added</span>` : ""}${o.foundOn ? `<div style="font-size:8.5px;color:${MUTED};">Found on ${esc(o.foundOn)}</div>` : ""}<div style="font-size:8.5px;color:${MUTED};">${o.done} of ${o.steps.length} steps done</div>`)}` +
-      lane(`${ax.bar(o.planStart, o.planFinish, `background:${GRAY};`, 3, 5)}${b.html}`, b.h + 14) + cell("") + vs(o.varianceH) + cell(esc(BUILT_WORD[o.status]), "white-space:nowrap;") + `</tr>`;
-    const steps = o.steps.map((s) => {
-      const sb = stepBar(s, now);
-      const when = s.start != null || s.finish != null ? `${s.start != null ? esc(dt(s.start, tz)) : `<span style="color:${AMBER};">start not recorded</span>`} to ${s.finish != null ? esc(dt(s.finish, tz)) : "still going"}` : "";
-      return `<tr>${cell(`${esc(s.name)}<div style="font-size:8.5px;color:${MUTED};">${[s.crew ? esc(s.crew) : "", when].filter(Boolean).join(" · ")}</div>${s.added ? `<div style="font-size:8.5px;color:${AMBER};">${esc(s.added.charAt(0).toUpperCase() + s.added.slice(1))}</div>` : ""}`, "padding-left:12px;")}` +
-        lane(`${ax.bar(s.planStart, s.planFinish, `background:${GRAY};`, 3, 4)}${sb ? ax.bar(sb.from, sb.to, `background:${stepColor(s)};${s.start == null ? "opacity:.55;" : ""}`, 9, 7) : ""}`, 20) +
-        cell(s.elapsedH != null ? `${s.elapsedH} h` : "", "text-align:right;white-space:nowrap;") + vs(s.varianceH) +
-        cell(s.status === "done" ? "Done" : `${esc(BUILT_WORD[s.status])}${s.pct ? ` ${s.pct}%` : ""}`, "white-space:nowrap;") + `</tr>`;
-    }).join("");
-    return top + steps;
-  }).join("");
-  return `<div style="${FONT}font-size:14px;font-weight:bold;color:${NAVY};margin:16px 0 4px;border-bottom:2px solid ${NAVY};padding-bottom:3px;">Work orders and steps</div>` +
-    LEGEND(" &nbsp; Plan h and exact times are in the Excel file.") +
-    `<table cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;table-layout:fixed;"><colgroup><col style="width:250px"><col><col style="width:44px"><col style="width:52px"><col style="width:74px"></colgroup>` +
-    `<tr>${th("Work order, step")}<th style="padding:0;border-bottom:1px solid ${INK};"><div style="display:flex;">${ax.head}</div></th>${th("Took", true)}${th("vs plan", true)}${th("Status")}</tr>${body}</table>`;
+  const th = (t: string, right = false) => `<th style="${FONT}font-size:8.5px;font-weight:bold;text-transform:uppercase;letter-spacing:.05em;color:${MUTED};text-align:${right ? "right" : "left"};padding:3px 4px;border-bottom:1px solid ${INK};vertical-align:bottom;">${t}</th>`;
+  const when2 = (t: number | null) => (t == null ? "-" : `${esc(fmtInTz(t, tz, { month: "numeric", day: "numeric" }))}<br>${esc(fmtInTz(t, tz, { hour: "numeric", minute: "2-digit", hour12: true }))}`);
+  const late = (x: { planFinish: number | null; finish: number | null }) => { const w = lateWords(x, now); return cell(esc(w.text), `text-align:right;${w.late ? `color:${RED};font-weight:bold;` : ""}`); };
+  const waited = (n: number | null) => cell(n == null ? "-" : n ? `${n}` : "-", `text-align:right;${n ? `color:${AMBER};font-weight:bold;` : `color:${MUTED};`}`);
+  const lane = (ax: Axis, inner: string, h: number) => `<td style="padding:0;border-bottom:1px solid ${RULE};"><div style="position:relative;height:${h}px;">${ax.grid}${inner}${ax.planLine}</div></td>`;
+  const orderEnd = (o: BuiltOrder) => o.finish ?? (o.status !== "not_started" ? now : null);
+  const orderName = (o: BuiltOrder) => `<b>${o.wo ? `WO ${esc(o.wo)} · ` : ""}${esc(o.name)}</b>${o.phase ? ` <span style="color:${MUTED};">· ${esc(o.phase)}</span>` : ""}${o.allAdded ? ` <span style="color:${AMBER};font-weight:bold;">· added</span>` : ""}` +
+    `${o.foundOn ? `<div style="font-size:8.5px;color:${MUTED};">Found on ${esc(o.foundOn)}</div>` : ""}<div style="font-size:8.5px;color:${MUTED};">${o.done} of ${o.steps.length} steps done</div>`;
+  const orderBar = (o: BuiltOrder, ax: Axis) => {
+    const ow = work?.orders.get(o.key);
+    const waits = ow ? ow.cells.flatMap((c, i) => (c === "wait" ? [work!.shifts[i]] : [])) : [];
+    return barHtml({ planStart: o.planStart, planFinish: o.planFinish, from: o.barStart, to: orderEnd(o) }, ax, waits);
+  };
+  const blockHead = (b: PhaseBlock) => {
+    const ans = answerOf(b, now);
+    return `<div style="${FONT}font-size:12px;color:${INK};margin:10px 0 2px;">${b.name ? `<b style="font-size:13px;">${esc(b.name)}</b> &nbsp;` : ""}` +
+      `<span style="color:${MUTED};">Planned finish</span> <b>${esc(dtLong(b.planFinish, tz))}</b> · ${b.finish != null ? `<span style="color:${MUTED};">finished</span> <b>${esc(dtLong(b.finish, tz))}</b>` : "not done yet"}` +
+      ` · <b style="color:${ans.late ? RED : INK};">${esc(ans.text.charAt(0).toLowerCase() + ans.text.slice(1))}</b> · ${b.orders.length} work order${b.orders.length === 1 ? "" : "s"}</div>`;
+  };
+  let overview = "", detail = "";
+  for (const b of blocks) {
+    const ax = axisOf(b.from, b.to, b.planFinish, tz);
+    const orders = mostLateFirst(b.orders, now);
+    overview += blockHead(b) +
+      `<table cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;table-layout:fixed;"><colgroup><col style="width:230px"><col style="width:64px"><col style="width:64px"><col style="width:84px"><col style="width:46px"><col><col style="width:70px"></colgroup>` +
+      `<tr>${th("Work order")}${th("Planned finish")}${th("Actual finish")}${th("Late by", true)}${th("Shifts waited", true)}<th style="padding:0;border-bottom:1px solid ${INK};"><div style="display:flex;">${ax.head}</div></th>${th("Status")}</tr>` +
+      orders.map((o) => `<tr>${cell(orderName(o))}${cell(when2(o.planFinish))}${cell(o.finish != null ? when2(o.finish) : esc(BUILT_WORD[o.status].toLowerCase()), o.finish != null ? "" : `color:${MUTED};`)}${late(o)}${waited(work ? work.orders.get(o.key)?.waited ?? 0 : null)}` +
+        `${lane(ax, orderBar(o, ax), 20)}${cell(esc(BUILT_WORD[o.status]), "white-space:nowrap;")}</tr>`).join("") + `</table>`;
+    detail += blockHead(b) +
+      `<table cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;table-layout:fixed;"><colgroup><col style="width:250px"><col style="width:60px"><col style="width:60px"><col><col style="width:44px"><col style="width:84px"><col style="width:46px"><col style="width:74px"></colgroup>` +
+      `<tr>${th("Work order, step")}${th("Planned finish")}${th("Actual finish")}<th style="padding:0;border-bottom:1px solid ${INK};"><div style="display:flex;">${ax.head}</div></th>${th("Took", true)}${th("Late by", true)}${th("Shifts waited", true)}${th("Status")}</tr>` +
+      orders.map((o) => {
+        const top = `<tr style="background:#f1f5f9;">${cell(orderName(o))}${cell(when2(o.planFinish))}${cell(o.finish != null ? when2(o.finish) : "-")}${lane(ax, orderBar(o, ax), 20)}${cell("")}${late(o)}${waited(work ? work.orders.get(o.key)?.waited ?? 0 : null)}${cell(esc(BUILT_WORD[o.status]), "white-space:nowrap;")}</tr>`;
+        const steps = o.steps.map((s) => {
+          const sb = stepBar(s, now);
+          const w = work?.steps.get(s.id);
+          const span = s.start != null || s.finish != null ? `${s.start != null ? esc(dt(s.start, tz)) : `<span style="color:${AMBER};">start not recorded</span>`} to ${s.finish != null ? esc(dt(s.finish, tz)) : "still going"}` : "";
+          const nWaited = w ? w.waits.reduce((n, r) => n + r.shifts, 0) + (w.ready?.shifts.length ?? 0) : null;
+          const bar = barHtml({ planStart: s.planStart, planFinish: s.planFinish, from: sb?.from ?? null, to: sb?.to ?? null }, ax, w ? shiftsOf(w.waits.flatMap((r) => r.keys)) : [], w?.ready ? shiftsOf(w.ready.shifts) : [], s.start == null);
+          return `<tr>${cell(`${esc(s.name)}<div style="font-size:8.5px;color:${MUTED};">${[s.crew ? esc(s.crew) : "", span].filter(Boolean).join(" · ")}</div>${s.added ? `<div style="font-size:8.5px;color:${AMBER};">${esc(s.added.charAt(0).toUpperCase() + s.added.slice(1))}</div>` : ""}`, "padding-left:12px;")}` +
+            `${cell(when2(s.planFinish))}${cell(s.finish != null ? when2(s.finish) : "-")}${lane(ax, bar, 20)}` +
+            `${cell(s.elapsedH != null ? `${s.elapsedH} h` : "", "text-align:right;white-space:nowrap;")}${late(s)}${waited(nWaited)}` +
+            `${cell(s.status === "done" ? "Done" : `${esc(BUILT_WORD[s.status])}${s.pct ? ` ${s.pct}%` : ""}`, "white-space:nowrap;")}</tr>`;
+        }).join("");
+        return top + steps;
+      }).join("") + `</table>`;
+  }
+  const h2 = (t: string) => `<div style="${FONT}font-size:14px;font-weight:bold;color:${NAVY};margin:16px 0 4px;border-bottom:2px solid ${NAVY};padding-bottom:3px;">${esc(t)}</div>`;
+  const note = `<div style="${FONT}font-size:9.5px;color:${MUTED};margin-bottom:2px;">Late by: against each work order's own planned finish (a step's against its own). ${work ? esc(NIGHTS) : "Shifts waited weren't read for this copy."}</div>`;
+  return {
+    overview: h2("Work orders, most late first") + note + KEY + overview,
+    detail: h2("Work orders and steps") + `<div style="${FONT}font-size:9.5px;color:${MUTED};">Most late first, each with every step. Plan h and exact times are in the Excel file.</div>` + KEY + detail,
+  };
 }
 
-/** The whole report as a page to print (landscape). */
-export function asBuiltDocument(a: AsBuilt, o: { project: string; scope: string; tz: string; now: number }): string {
+/** The whole report as a page to print (landscape). `work`: the job as
+ *  worked (lib/asBuiltWork), for the shifts each waited. */
+export function asBuiltDocument(a: AsBuilt, o: { project: string; scope: string; tz: string; now: number; work?: Worked | null }): string {
   const { tz, now } = o;
   const tile = (k: string, v: string, s: string) => `<td style="${FONT}border:1px solid ${RULE};padding:6px 8px;vertical-align:top;"><div style="font-size:8.5px;font-weight:bold;letter-spacing:.08em;text-transform:uppercase;color:${MUTED};">${esc(k)}</div><div style="font-size:15px;font-weight:bold;color:${INK};">${esc(v)}</div><div style="font-size:9.5px;color:${MUTED};">${esc(s)}</div></td>`;
   const late = a.finish != null && a.planFinish != null ? r1((a.finish - a.planFinish) / H) : null;
+  const blocks = phaseBlocks(a, now);
+  // The answer first, each phase against its own plan.
+  const answers = blocks.map((b) => ({ b, ans: answerOf(b, now) }));
+  const answer = `<div style="${FONT}font-size:16px;font-weight:bold;margin-top:6px;">` + (answers.length === 1
+    ? `<span style="color:${answers[0].ans.late ? RED : INK};">${esc(answers[0].ans.text)}</span>`
+    : answers.map(({ b, ans }) => `${esc(b.name ?? "No phase")}: <span style="color:${ans.late ? RED : INK};">${esc(ans.text.charAt(0).toLowerCase() + ans.text.slice(1))}</span>`).join(` <span style="color:${MUTED};font-weight:normal;">·</span> `)) + `</div>`;
   const tiles = `<table cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;margin-top:6px;"><tr>` +
     tile("Original plan", a.planStart != null ? `${dt(a.planStart, tz)} to ${dt(a.planFinish, tz)}` : "-", a.basis.kind === "baseline" ? "as saved" : "no plan saved: the schedule as planned") +
     tile("As built", a.start != null ? `${dt(a.start, tz)} to ${a.finish != null ? dt(a.finish, tz) : "still going"}` : "not started", a.finish != null ? "first start to last finish" : `${a.done} of ${a.steps} steps done`) +
-    tile("Finish vs plan", a.finish != null && late != null ? vsPlanWords(late) : "-", a.finish != null ? `finished ${dtLong(a.finish, tz)}` : "not finished") +
+    tile(blocks.length > 1 ? "Whole job vs plan" : "Finish vs plan", a.finish != null && late != null ? vsPlanWords(late) : "-", a.finish != null ? `finished ${dtLong(a.finish, tz)}` : "not finished") +
     tile("Steps", `${a.done} / ${a.steps}`, `${a.orders.length} work orders`) +
     tile("Added after the plan", `${a.added} step${a.added === 1 ? "" : "s"}`, a.cancelled.length ? `${a.cancelled.length} taken off` : "nothing taken off") +
     `</tr></table>`;
@@ -324,10 +438,11 @@ export function asBuiltDocument(a: AsBuilt, o: { project: string; scope: string;
     ? `<div style="${FONT}font-size:14px;font-weight:bold;color:${NAVY};margin:16px 0 4px;border-bottom:2px solid ${NAVY};padding-bottom:3px;">Taken off the schedule</div>` +
       `<table cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;${FONT}font-size:9.5px;">${a.cancelled.map((c) => `<tr><td style="padding:2px 4px;border-bottom:1px solid ${RULE};"><b>${esc(c.name)}</b>${c.where ? ` <span style="color:${MUTED};">${esc(c.where)}</span>` : ""}</td><td style="padding:2px 4px;border-bottom:1px solid ${RULE};">${c.steps} step${c.steps === 1 ? "" : "s"}</td><td style="padding:2px 4px;border-bottom:1px solid ${RULE};">${esc(dt(c.at, tz))}</td><td style="padding:2px 4px;border-bottom:1px solid ${RULE};">${esc(c.note ?? "")}</td></tr>`).join("")}</table>`
     : "";
+  const parts = blocksHtml(a, tz, now, o.work ?? null);
   const body = `<div style="${FONT}color:${INK};">` +
     `<div style="border-top:4px solid ${NAVY};padding:8px 0 2px;"><div style="font-size:10px;font-weight:bold;letter-spacing:.12em;text-transform:uppercase;color:${MUTED};">As-built schedule</div>` +
     `<div style="font-size:19px;font-weight:bold;color:${NAVY};">${esc(o.project)}</div><div style="font-size:11px;color:${MUTED};">${esc(o.scope)} · as of ${esc(dtLong(now, tz))}</div></div>` +
-    tiles + key + timelineHtml(a, tz, now) + tableHtml(a, tz, now) + cancelled + `</div>`;
+    answer + tiles + key + parts.overview + parts.detail + cancelled + `</div>`;
   return `<!doctype html><html><head><meta charset="utf-8"><title>${esc(`${o.project} - as-built schedule`)}</title><style>@page{size:landscape;margin:10mm}body{margin:0;-webkit-print-color-adjust:exact;print-color-adjust:exact}@media screen{body{padding:16px}}tr{page-break-inside:avoid}</style></head><body>${body}</body></html>`;
 }
 

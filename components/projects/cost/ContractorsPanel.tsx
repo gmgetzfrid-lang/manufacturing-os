@@ -35,6 +35,9 @@ import { useFileDrag } from "@/hooks/useFileDrag";
 import { tryUpload } from "@/lib/uploadRetry";
 import { fileSize } from "@/components/projects/cost/FilePreview";
 import { sayError } from "@/components/projects/sayError";
+import HelpTooltip from "@/components/ui/HelpTooltip";
+import { MoreDetails } from "@/components/ui/MoreDetails";
+import { AnswerLine, answerButton } from "@/components/projects/cost/Answer";
 
 const btn = "inline-flex items-center justify-center gap-1.5 h-10 pointer-coarse:h-11 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] whitespace-nowrap disabled:opacity-50 transition-colors";
 const pri = "inline-flex items-center justify-center gap-1.5 h-10 pointer-coarse:h-11 px-3.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-body font-medium hover:bg-[var(--color-accent-hover)] whitespace-nowrap disabled:opacity-50 transition-colors";
@@ -84,6 +87,8 @@ export interface ContractorsProps {
   parties: CostParty[]; accounts: CostAccount[]; entries: CostEntry[]; docs: CostDocument[];
   onPartiesChanged: () => void;
   onQuotes: () => void;
+  /** Costs › Budget's company list, to add a company not on the schedule. */
+  onAddCompany?: () => void;
   /** A contractor's page to open on (asked for from elsewhere). */
   initial?: string | null;
   /** Setup › Staffing plans: each contractor's crews and staffing plan only
@@ -207,21 +212,33 @@ export default function ContractorsPanel(p: ContractorsProps) {
     </div>
   );
 
+  // The answer: how many contractors still owe something, the first of
+  // them one tap away. Those with something to put in come first.
+  const owing = list.filter((x) => stepsOf(x).some((st) => !st.done));
+  const ordered = [...owing, ...list.filter((x) => !owing.includes(x))];
+  const kernNote = "Kern Energy crews are counted at the meeting but are not billed, so they have no page here.";
   return (
     <div className="space-y-4" data-contractors>
       {err && <Err>{err}</Err>}
-      <section className={card}>
-        <h3 className="text-reading font-medium text-[var(--color-text)]">What each contractor should send, and what it sent</h3>
-        <p className="mt-0.5 text-body text-[var(--color-text-muted)]">{(() => { const n = list.filter((x) => stepsOf(x).some((st) => !st.done)).length; return list.length ? (n ? `${plural(n, "contractor")} with something still to put in.` : "Everything is in for every contractor.") : ""; })()}{scope ? ` Showing ${scope.name}.` : ""}</p>
-      </section>
       {list.length === 0 ? (
-        <div className={`${card} text-center text-body text-[var(--color-text-muted)]`}>No contractor crews on the schedule and none on the Costs tab yet.</div>
+        <AnswerLine action={p.onAddCompany ? <button type="button" onClick={p.onAddCompany} className={answerButton}><Plus className="w-4 h-4" /> Add a company</button> : undefined}>
+          No contractor crews on the schedule and none on the Costs tab yet. <HelpTooltip>{kernNote}</HelpTooltip>
+        </AnswerLine>
       ) : (
+        <AnswerLine value={owing.length ? owing.length : undefined}
+          action={owing.length ? <button type="button" onClick={() => setOpen(owing[0].c.company)} className={answerButton}>Open {owing[0].c.company}</button> : undefined}
+          sub={scope ? `Showing ${scope.name}.` : undefined}>
+          {owing.length
+            ? <>of {plural(list.length, "contractor")} {owing.length === 1 ? "has" : "have"} something still to put in.</>
+            : <>Everything is in for every contractor ({list.length}).</>}
+          {" "}<HelpTooltip>What each contractor should send, and what it sent: its quote and budget line, its staffing plan, its rate sheet, and every shift&apos;s head count. {kernNote}</HelpTooltip>
+        </AnswerLine>
+      )}
+      {list.length > 0 && (
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-          {list.map((x) => <ContractorCard key={x.c.company} x={x} onOpen={() => setOpen(x.c.company)} />)}
+          {ordered.map((x) => <ContractorCard key={x.c.company} x={x} onOpen={() => setOpen(x.c.company)} />)}
         </div>
       )}
-      <p className="text-caption text-[var(--color-text-muted)]">Kern Energy crews are counted at the meeting but are not billed, so they have no page here.</p>
     </div>
   );
 }
@@ -248,7 +265,7 @@ function ContractorCard({ x, onOpen }: { x: Crew; onOpen: () => void }) {
   const steps = stepsOf(x);
   const left = steps.filter((s) => !s.done).length;
   return (
-    <button type="button" onClick={onOpen} className={`${card} text-left hover:border-[var(--color-main)] transition-colors flex flex-col gap-2.5`} data-contractor={x.c.company}>
+    <button type="button" onClick={onOpen} className={`${card} text-left hover:border-[var(--color-main)] transition-colors flex flex-col gap-2.5 ${left ? "" : "bg-[var(--color-surface-2)]/40"}`} data-contractor={x.c.company}>
       <span className="flex items-center gap-2">
         <HardHat className="w-4 h-4 text-[var(--color-text-muted)]" />
         <b className="min-w-0 flex-1 text-reading text-[var(--color-text)] truncate">{x.c.company}</b>
@@ -330,11 +347,17 @@ function Answer({ x, scope }: { x: Crew; scope: ProjectPhase | null }) {
   return (
     <section className="rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] p-4 sm:p-5" data-crew-answer>
       {s.paidToDate != null && s.counted ? (
-        <b className="block text-reading leading-snug text-[var(--color-text)]">Through {shiftLabel(lastCounted!.key)}: paid about {money(s.paidToDate)} for {plural(s.countedHeads, "head")}; the plan was {money(s.planOnCounted)}{s.plannedOnCounted ? ` for ${s.plannedOnCounted}` : ""}.</b>
+        <AnswerLine value={money(s.paidToDate)}>
+          paid (estimate) through {shiftLabel(lastCounted!.key)} for {plural(s.countedHeads, "head")}; the plan was {money(s.planOnCounted)}{s.plannedOnCounted ? ` for ${s.plannedOnCounted}` : ""}.
+        </AnswerLine>
       ) : s.planTotal != null ? (
-        <b className="block text-reading leading-snug text-[var(--color-text)]">{x.c.company}&apos;s plan {p2 ? `for ${p2} ` : ""}costs {money(s.planTotal)}.</b>
+        <AnswerLine value={money(s.planTotal)}>for {x.c.company}&apos;s plan{p2 ? ` in ${p2}` : ""}.</AnswerLine>
+      ) : s.counted ? (
+        <AnswerLine value={s.countedHeads}>
+          head{s.countedHeads === 1 ? "" : "s"} counted on {plural(s.counted, "shift")}; the plan had {s.plannedOnCounted}.{x.sheet ? "" : " Add the rate sheet to see what they cost."}
+        </AnswerLine>
       ) : (
-        <b className="block text-reading leading-snug text-[var(--color-text)]">{s.counted ? `${plural(s.countedHeads, "head")} counted on ${plural(s.counted, "shift")}; the plan had ${s.plannedOnCounted}.` : "No head counts yet."} {x.sheet ? "" : "Add the rate sheet to see what they cost."}</b>
+        <AnswerLine>No head counts yet.{x.sheet ? "" : " Add the rate sheet to see what they cost."}</AnswerLine>
       )}
       {(() => {
         const parts = [s.counted && x.plan ? (s.short ? `${plural(s.short, "shift")} came in short of the plan` : "No shift came in short of the plan") : "",
@@ -342,7 +365,7 @@ function Answer({ x, scope }: { x: Crew; scope: ProjectPhase | null }) {
           s.counted && s.forecast != null ? `${where} forecast ${money(s.forecast)}${s.planTotal != null ? ` against a plan of ${money(s.planTotal)}` : ""}` : ""].filter(Boolean);
         const money2 = [x.quote ? `Quote ${money(x.quote.totalAmount)}` : "", x.line ? `${x.line.name} line ${money(x.line.budget)}` : ""].filter(Boolean).join(", ");
         const text = [parts.join("; "), money2].filter(Boolean).join(". ");
-        return text ? <p className="mt-1 text-body text-[var(--color-text)]">{text}.</p> : null;
+        return text ? <p className="mt-2 text-body text-[var(--color-text-muted)]">{text}.</p> : null;
       })()}
       {s.uncounted > 0 && <p className="mt-1 text-caption font-medium text-[var(--state-held-text)]">{s.uncounted === 1 ? "1 shift that has started is not counted yet. It is priced at the plan until it is." : `${s.uncounted} shifts that have started are not counted yet. They are priced at the plan until they are.`} Count them at Shift › Meeting.</p>}
       {s.unpriced.length > 0 && <p className="mt-1 text-caption font-medium text-[var(--state-held-text)]">No rate for {s.unpriced.join(", ")}: left out of every cost until it has one.</p>}
@@ -352,12 +375,15 @@ function Answer({ x, scope }: { x: Crew; scope: ProjectPhase | null }) {
 
 type SectionProps = ContractorsProps & { x: Crew; co: string; settings: CrewSettings; allCrews: string[]; setSettings: (f: (s: CrewSettings) => CrewSettings) => void; busy: string | null; act: (k: string, f: () => Promise<void>) => Promise<void>; scope: ProjectPhase | null; reload: () => Promise<void>; paidShift: (s: RateSheet | null) => number };
 
-function Section({ id, title, done, sub, children }: { id: string; title: string; done: boolean; sub?: string; children: React.ReactNode }) {
+function Section({ id, title, done, sub, help, children }: { id: string; title: string; done: boolean; sub?: string; help?: React.ReactNode; children: React.ReactNode }) {
   return (
     <section className={`${card} space-y-3 scroll-mt-4`} data-section={id}>
       <div className="flex items-start gap-2">
-        <span aria-label={done ? "Done" : "To do"} className="mt-[7px] w-[7px] h-[7px] rounded-full shrink-0" style={{ background: done ? "var(--state-released)" : "var(--state-held)" }} />
-        <div className="min-w-0 flex-1"><h4 className="text-reading font-medium text-[var(--color-text)]">{title}</h4>{sub && <p className="text-caption text-[var(--color-text-muted)]">{sub}</p>}</div>
+        <span aria-label={done ? "Done" : "To do"} className="mt-[9px] w-[7px] h-[7px] rounded-full shrink-0" style={{ background: done ? "var(--state-released)" : "var(--state-held)" }} />
+        <div className="min-w-0 flex-1">
+          <h4 className="flex items-center gap-1.5 text-reading font-medium text-[var(--color-text)]">{title}{help && <HelpTooltip>{help}</HelpTooltip>}</h4>
+          {sub && <p className="text-body text-[var(--color-text-muted)]">{sub}</p>}
+        </div>
       </div>
       {children}
     </section>
@@ -387,7 +413,7 @@ function MoneySection(p: SectionProps) {
   });
   const quotes = x.c.party ? p.docs.filter((d) => d.kind === "quote" && d.partyId === x.c.party!.id && d.status !== "void") : [];
   return (
-    <Section id="money" title="Quote and budget line" done={!!x.quote || !!x.line} sub="What it was hired for, and the budget line its cost comes out of.">
+    <Section id="money" title="Quote and budget line" done={!!x.quote || !!x.line} help="What it was hired for, and the budget line its cost comes out of.">
       <div className="grid gap-3 sm:grid-cols-3">
         <div className="space-y-1">
           <span className={label}>Company on the Costs tab</span>
@@ -430,8 +456,7 @@ function CrewsSection(p: SectionProps) {
   if (!x.c.crews.length && !others.length) return null;
   return (
     <section className={`${card} space-y-2`} data-section="crews">
-      <h4 className="text-body font-medium text-[var(--color-text)]">Its crews on the schedule</h4>
-      <p className="text-caption text-[var(--color-text-muted)]">Their head counts at the meeting are {co}&rsquo;s.</p>
+      <h4 className="flex items-center gap-1.5 text-body font-medium text-[var(--color-text)]">Its crews on the schedule <HelpTooltip>Their head counts at the meeting are {co}&rsquo;s.</HelpTooltip></h4>
       <div className="flex gap-1.5 flex-wrap items-center">
         {x.c.crews.map((c) => (
           <span key={c} className="inline-flex items-center gap-1 rounded-md border border-[var(--color-border-strong)] px-2.5 py-1 text-body text-[var(--color-text)]">{c}
@@ -528,13 +553,13 @@ function PlanSection(p: SectionProps) {
   const phaseName = (b: PlanGrid["bands"][number]) => { const t = bandTarget(b, p.phases, scopeSpan(p)); return t == null ? "Outside this project's dates" : t === "project" ? "This project's dates" : `${p.phases.find((x) => x.id === t)?.name ?? "A phase"}'s dates`; };
 
   return (
-    <Section id="plan" title={p.scope ? `Staffing plan, ${p.scope.name}` : "Staffing plan"} done={!!saved && (!range || !!inPhase)} sub={saved ? sourcesOf(saved).map((x) => { const ds = Object.keys(saved.shifts).map((k) => k.split(":")[0]).filter((d) => d >= x.from && d <= x.to).sort(); return `${phaseOf(x) ? `${phaseOf(x)}: ` : ""}${x.file || "typed in"}${ds.length ? ` (${dayLabel(ds[0])} to ${dayLabel(ds[ds.length - 1])})` : ""}`; }).join(" · ") : `How many of each craft ${co} sends each day and night. Upload its sheet or type it in; each phase can have its own.`}>
+    <Section id="plan" title={p.scope ? `Staffing plan, ${p.scope.name}` : "Staffing plan"} done={!!saved && (!range || !!inPhase)} help={`How many of each craft ${co} sends each day and night. Upload its sheet or type it in; each phase can have its own.`} sub={saved ? sourcesOf(saved).map((x) => { const ds = Object.keys(saved.shifts).map((k) => k.split(":")[0]).filter((d) => d >= x.from && d <= x.to).sort(); return `${phaseOf(x) ? `${phaseOf(x)}: ` : ""}${x.file || "typed in"}${ds.length ? ` (${dayLabel(ds[0])} to ${dayLabel(ds[ds.length - 1])})` : ""}`; }).join(" · ") : "Not in yet."}>
       {range && saved && !inPhase && <p className="text-caption font-medium text-[var(--state-held-text)]">Nothing in for {p.scope!.name} yet. Upload {co}&apos;s sheet for it; the other phases&apos; plans stay as they are.</p>}
       {sheetFile && <PickedSheet file={sheetFile.file} failed={sheetFile.failed} onRetry={() => void readFile(sheetFile.file)} />}
       {msg && <p className="text-caption font-medium text-[var(--state-held-text)]">{msg}</p>}
       {p.canManage && !read && (
         <div className="flex gap-1.5 flex-wrap">
-          <SheetPick cls={saved ? btn : pri} onFile={(f) => void readFile(f)} label={p.scope ? (inPhase ? `Read a new sheet for ${p.scope.name}` : `Upload ${p.scope.name}'s sheet`) : saved ? "Read a sheet (replaces only its dates)" : "Upload its staffing plan"} />
+          <SheetPick cls={saved || draft ? btn : pri} onFile={(f) => void readFile(f)} label={p.scope ? (inPhase ? `Read a new sheet for ${p.scope.name}` : `Upload ${p.scope.name}'s sheet`) : saved ? "Read a sheet (replaces only its dates)" : "Upload its staffing plan"} />
           {!plan && <button type="button" onClick={() => setDraft(blank())} className={btn}><Plus className="w-4 h-4" /> Type it in</button>}
           {saved && !draft && <button type="button" onClick={() => void download()} className={btn}><Download className="w-4 h-4" /> Download (Excel)</button>}
           {saved && !draft && (!range || inPhase) && <button type="button" disabled={!!p.busy} onClick={() => void remove()} className={btn}><Trash2 className="w-4 h-4" /> {p.scope ? `Remove ${p.scope.name}'s plan` : "Remove"}</button>}
@@ -622,17 +647,27 @@ function PlanGridView(p: SectionProps & { plan: StaffingPlan; onChange: ((next: 
   return (
     <div className="space-y-2">
       {p.onChange && (
-        <div className="flex gap-2 flex-wrap items-end rounded-xl border border-dashed border-[var(--color-border-strong)] p-2.5" data-plan-fill>
-          <label className="grid gap-0.5"><span className={label}>Craft</span>
-            <select value={craft} onChange={(e) => setCraft(e.target.value)} className={`${field} w-56`}>{pickList.map((c) => <option key={c.name} value={c.name}>{c.name}</option>)}<option value="__other">Another craft…</option></select>
-          </label>
-          {craft === "__other" && <label className="grid gap-0.5"><span className={label}>Its name</span><input value={other} onChange={(e) => setOther(e.target.value)} className={`${field} w-44`} placeholder="Insulator Journeyman" /></label>}
-          <label className="grid gap-0.5"><span className={label}>Days</span><input inputMode="numeric" value={dn.day} onChange={(e) => setDn({ ...dn, day: e.target.value })} className={`${field} w-16 text-center`} /></label>
-          <label className="grid gap-0.5"><span className={label}>Nights</span><input inputMode="numeric" value={dn.night} onChange={(e) => setDn({ ...dn, night: e.target.value })} className={`${field} w-16 text-center`} /></label>
-          <label className="grid gap-0.5"><span className={label}>From</span><input type="date" value={range.from} onChange={(e) => setRange({ ...range, from: e.target.value })} className={field} /></label>
-          <label className="grid gap-0.5"><span className={label}>To</span><input type="date" value={range.to} onChange={(e) => setRange({ ...range, to: e.target.value })} className={field} /></label>
-          <button type="button" onClick={fill} className={pri}>Fill these days</button>
-        </div>
+        // A craft and its heads a day and a night, filled over the dates in
+        // view; other dates are folded (the button says which days it fills).
+        <form onSubmit={(e) => { e.preventDefault(); fill(); }} className="space-y-1 rounded-xl border border-dashed border-[var(--color-border-strong)] p-2.5" data-plan-fill aria-label="Fill a craft's heads">
+          <div className="flex gap-2 flex-wrap items-end">
+            <label className="grid gap-0.5 min-w-0"><span className={label}>Craft</span>
+              <select value={craft} onChange={(e) => setCraft(e.target.value)} className={`${field} w-56 max-w-full`}>{pickList.map((c) => <option key={c.name} value={c.name}>{c.name}</option>)}<option value="__other">Another craft…</option></select>
+            </label>
+            {craft === "__other" && <label className="grid gap-0.5"><span className={label}>Its name</span><input value={other} onChange={(e) => setOther(e.target.value)} className={`${field} w-44`} placeholder="Insulator Journeyman" /></label>}
+            <label className="grid gap-0.5"><span className={label}>Day heads</span><input inputMode="numeric" value={dn.day} onChange={(e) => setDn({ ...dn, day: e.target.value })} className={`${field} w-20 text-center`} /></label>
+            <label className="grid gap-0.5"><span className={label}>Night heads</span><input inputMode="numeric" value={dn.night} onChange={(e) => setDn({ ...dn, night: e.target.value })} className={`${field} w-20 text-center`} /></label>
+            <button type="submit" disabled={!range.from || !range.to || range.to < range.from} className={btn}>
+              {range.from && range.to ? `Fill ${dayLabel(range.from)} to ${dayLabel(range.to)}` : "Pick the dates to fill"}
+            </button>
+          </div>
+          <MoreDetails label="Other dates" defaultOpen={!range.from || !range.to}>
+            <div className="flex gap-2 flex-wrap items-end">
+              <label className="grid gap-0.5"><span className={label}>From</span><input type="date" value={range.from} onChange={(e) => setRange({ ...range, from: e.target.value })} className={field} /></label>
+              <label className="grid gap-0.5"><span className={label}>To</span><input type="date" value={range.to} onChange={(e) => setRange({ ...range, to: e.target.value })} className={field} /></label>
+            </div>
+          </MoreDetails>
+        </form>
       )}
       {crafts.length === 0 ? <p className="text-caption text-[var(--color-text-muted)]">Pick a craft and fill its days to start the plan.</p> : (
         <div ref={box} className="overflow-x-auto rounded-xl border border-[var(--color-border)]">
@@ -723,17 +758,16 @@ function RatesSection(p: SectionProps) {
   );
   const cols = "sm:grid-cols-[minmax(0,1fr)_6.5rem_6.5rem_6.5rem_7.5rem]";
   return (
-    <Section id="rates" title="Rate sheet" done={!!saved && missing.length === 0} sub={saved?.file ? `Read from ${saved.file}.` : `What ${co} charges an hour for each craft. Type it in, or read it from their Excel sheet.`}>
-      {msg && <p className="text-caption font-medium text-[var(--color-text)]">{msg}</p>}
-      <div className="flex gap-3 flex-wrap items-end">
-        {rule("paidHours", "Paid hours a shift", String(shiftH), "h")}
-        {rule("stHours", "Straight time for the first", String(RULES.stHours), "h")}
-        {rule("dtAfter", "Double time past", String(RULES.dtAfter), "h")}
-        {rule("perDiem", "Per diem a head", "0", "a day")}
-        {p.canManage && <SheetPick cls={btn} onFile={(f) => void readFile(f)} label="Read their rate sheet" />}
-      </div>
+    <Section id="rates" title="Rate sheet" done={!!saved && missing.length === 0}
+      help={<>What {co} charges an hour for each craft. Type it in, or read it from their Excel sheet. For a PDF rate sheet, type the rates in. Overtime and double time left blank are 1.5 and 2 times straight time.</>}
+      sub={saved?.file ? `Read from ${saved.file}.` : saved ? "Typed in." : "Not in yet."}>
+      {msg && <p className="text-body font-medium text-[var(--color-text)]">{msg}</p>}
+      {p.canManage && (
+        <div className="flex gap-2 flex-wrap items-center">
+          <SheetPick cls={btn} onFile={(f) => void readFile(f)} label="Read their rate sheet" />
+        </div>
+      )}
       {sheetFile && <PickedSheet file={sheetFile.file} failed={sheetFile.failed} onRetry={() => void readFile(sheetFile.file)} />}
-      <p className="text-caption text-[var(--color-text-muted)]">California daily overtime: time and a half after {sheet.stHours ?? RULES.stHours} hours, double time after {sheet.dtAfter ?? RULES.dtAfter}. Change it if the contract says otherwise. Overtime and double time left blank are 1.5 and 2 times straight time. For a PDF rate sheet, type the rates in.</p>
       {crafts.length === 0 ? <p className="text-caption text-[var(--color-text-muted)]">Put in the staffing plan first: its crafts are the rows here.</p> : (
         <div className="rounded-xl border border-[var(--color-border)] text-body" data-rate-table>
           <div className={`hidden sm:grid ${cols} gap-x-2 px-3 py-2 bg-[var(--color-surface-2)] rounded-t-xl border-b border-[var(--color-border)] text-caption font-medium text-[var(--color-text-muted)]`}>
@@ -765,6 +799,18 @@ function RatesSection(p: SectionProps) {
           })}
         </div>
       )}
+      {/* The pay rules: California's to start, each changed only if the
+          contract says otherwise, so they are folded with a count. */}
+      <MoreDetails label="Pay rules and per diem" total={4} defaultOpen={false}
+        filled={(["paidHours", "stHours", "dtAfter", "perDiem"] as const).filter((k) => sheet[k] != null).length}>
+        <p className="text-body text-[var(--color-text-muted)]">California daily overtime: time and a half after {sheet.stHours ?? RULES.stHours} hours, double time after {sheet.dtAfter ?? RULES.dtAfter}. Change it if the contract says otherwise.</p>
+        <div className="flex gap-3 flex-wrap items-end">
+          {rule("paidHours", "Paid hours a shift", String(shiftH), "h")}
+          {rule("stHours", "Straight time for the first", String(RULES.stHours), "h")}
+          {rule("dtAfter", "Double time past", String(RULES.dtAfter), "h")}
+          {rule("perDiem", "Per diem a head", "0", "a day")}
+        </div>
+      </MoreDetails>
       {draft && (
         <div className="flex gap-1.5 flex-wrap items-center">
           <button type="button" disabled={!!p.busy} onClick={() => void save()} className={pri}>{p.busy === "rates" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} {p.busy === "rates" ? "Saving" : "Save the rates"}</button>
@@ -784,14 +830,15 @@ function DailySection({ x, scope }: { x: Crew; scope: ProjectPhase | null }) {
   // Paid less plan, run up over the counted shifts.
   const running = rows.reduce<number[]>((acc, r) => { const last = acc.length ? acc[acc.length - 1] : 0; acc.push(r.counted != null ? last + (r.paid ?? 0) - (r.planCost ?? 0) : last); return acc; }, []);
   return (
-    <Section id="daily" title="Every day: did we get what we paid for?" done={x.sum.counted > 0} sub={`${scope ? `${scope.name}, s` : "S"}hift by shift: the plan's heads, the heads counted at the meeting${priced ? ", and what they cost at the rate sheet" : ""}.`}>
-      {rows.length === 0 ? <p className="text-caption text-[var(--color-text-muted)]">Nothing yet: no plan and no head counts{scope ? ` in ${scope.name}` : ""}.</p> : (<>
+    <Section id="daily" title="Every day: did we get what we paid for?" done={x.sum.counted > 0}
+      help={<>{scope ? `${scope.name}, s` : "S"}hift by shift: the plan&apos;s heads, the heads counted at the meeting{priced ? ", and what they cost at the rate sheet" : ""}. Counted heads are priced at the plan&rsquo;s crafts for that shift. These are estimates from head counts and rates; posted invoices are what was really billed. Head counts go in at Shift › Meeting.</>}>
+      {rows.length === 0 ? <p className="text-body text-[var(--color-text-muted)]">Nothing yet: no plan and no head counts{scope ? ` in ${scope.name}` : ""}.</p> : (<>
         {priced && (
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-2" data-crew-kpis>
+          <dl className="flex flex-wrap gap-x-5 gap-y-1 text-body" data-crew-kpis>
             {[["Heads counted", x.sum.counted ? `${x.sum.countedHeads} of ${x.sum.plannedOnCounted}` : "None yet", x.sum.counted ? "against the plan, on the counted shifts" : "counted at the shift meeting"], ["Paid to date (estimate)", x.sum.counted ? money(x.sum.paidToDate) : "-", "head counts at the rate sheet"], ["Overtime to date", x.sum.overtime ? money(x.sum.overtime) : "None", "crews held over"], ["Forecast", money(x.sum.forecast), x.sum.counted ? `plan ${money(x.sum.planTotal)}` : "the plan, until heads are counted"]].map(([k, v, s]) => (
-              <div key={k} className="rounded-xl border border-[var(--color-border)] px-3 py-2"><div className={label}>{k}</div><div className="text-reading font-medium tabular-nums text-[var(--color-text)]">{v}</div><div className="text-caption text-[var(--color-text-muted)]">{s}</div></div>
+              <div key={k} className="min-w-0"><dt className="inline text-[var(--color-text-muted)]">{k} </dt><dd className="inline font-medium tabular-nums text-[var(--color-text)]">{v}</dd><dd className="inline text-[var(--color-text-muted)]">, {s}</dd></div>
             ))}
-          </div>
+          </dl>
         )}
         <ul className="sm:hidden divide-y divide-[var(--color-border)] rounded-xl border border-[var(--color-border)]" data-crew-daily-list>
           {rows.map((r) => {
@@ -847,7 +894,6 @@ function DailySection({ x, scope }: { x: Crew; scope: ProjectPhase | null }) {
             </tbody>
           </table>
         </div>
-        <p className="text-caption text-[var(--color-text-muted)]">Counted heads are priced at the plan&rsquo;s crafts for that shift. These are estimates from head counts and rates; posted invoices are what was really billed. Head counts go in at Shift › Meeting.</p>
       </>)}
     </Section>
   );

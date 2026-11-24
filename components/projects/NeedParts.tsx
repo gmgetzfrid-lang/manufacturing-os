@@ -1,15 +1,29 @@
 "use client";
 
 // The small parts every requirement on a project is shown with: the quiet
-// line saying where it came from (lib/requirementSource), an on/off switch,
-// and a two-way Needed / Not needed choice.
+// line saying where it came from (lib/requirementSource), or the same words
+// behind a "?" next to a title, an on/off switch, and a two-way Needed /
+// Not needed choice.
 
 import React from "react";
+import HelpTooltip from "@/components/ui/HelpTooltip";
 import { sourceWords, type Source } from "@/lib/requirementSource";
 
 /** "App default: each phase needs its own PSSR" / "Set for this project (Nov 23 by eng)". */
 export function SourceLine({ source, tz, className = "" }: { source: Source; tz: string; className?: string }) {
   return <span className={`block text-body leading-snug text-[var(--color-text-muted)] ${className}`} data-source={source.kind}>{sourceWords(source, tz)}</span>;
+}
+
+/** Where it came from, behind a "?" next to the section's title (with any
+ *  short explanation of the section first), so no line sits under it. */
+export function SourceHelp({ source, tz, children }: { source: Source; tz: string; children?: React.ReactNode }) {
+  return (
+    <HelpTooltip>
+      <span className="block font-normal" data-source={source.kind}>
+        {children}{children ? " " : null}{sourceWords(source, tz)}.
+      </span>
+    </HelpTooltip>
+  );
 }
 
 /** An on/off switch (a turnover document required for this job). */

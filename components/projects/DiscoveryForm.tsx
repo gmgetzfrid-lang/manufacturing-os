@@ -23,6 +23,7 @@ import DateTimePicker from "@/components/projects/DateTimePicker";
 import CrewPicker from "@/components/projects/CrewPicker";
 import { inheritedWorkOrders } from "@/lib/workOrderCrew";
 import { sayError } from "@/components/projects/sayError";
+import { MoreDetails } from "@/components/ui/MoreDetails";
 
 const ms = (v: unknown) => (v == null ? NaN : Date.parse(String(v)));
 // The time at the tap (saving), not at render.
@@ -130,9 +131,13 @@ export default function DiscoveryForm({ milestones, task: startTask, newWo, tz, 
   // that wasn't on the schedule.
   // A work order of its own is most often unplanned work: added scope.
   const [kind, setKind] = useState<AddedKind>(newWo || !startTask ? "added" : "discovery");
+  // What the form filled in by itself, to count what was changed in More details.
+  const [first] = useState(() => ({ kind, afterId, holds: holds.join(",") }));
   const k = ADDED[kind];
   const [rows, setRows] = useState<Array<{ name: string; crew: string; hours: string }>>(() => [{ name: "", crew: steps.find((s) => s.id === afterId)?.responsibleParty ?? "", hours: "" }]);
   const [approvedBy, setApprovedBy] = useState("");
+  // More details opened by a problem in it (a new key opens it again).
+  const [moreOpen, setMoreOpen] = useState(0);
   const [msg, setMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   // When it was found (history) — and when the work starts (the plan).
@@ -181,8 +186,9 @@ export default function DiscoveryForm({ milestones, task: startTask, newWo, tz, 
     if (!what.trim()) { setMsg(kind === "added" ? "Say what's being added." : "Say what was found."); return; }
     if (!wo.trim() && !noWo) { setMsg(`Put in its work order #${taskWo ? `, or tap Same as the task (${taskWo})` : ""}, or No WO # yet.`); return; }
     if (!filled.length) { setMsg("Add the work it needs: a step with its hours."); return; }
-    if (timeProblem) { setMsg(timeProblem); return; }
-    if (foundAt > clock() + 60_000) { setMsg(`When it was ${k.found} can't be in the future.`); return; }
+    // The times are in More details: open it to the box that needs fixing.
+    if (timeProblem) { setMsg(timeProblem); setMoreOpen((n) => n + 1); return; }
+    if (foundAt > clock() + 60_000) { setMsg(`When it was ${k.found} can't be in the future.`); setMoreOpen((n) => n + 1); return; }
     if (!draft) return;
     setBusy(true); setMsg(null);
     const ok = await onSave({ ...draft, wo: noWo ? null : wo.trim() }, now).catch((e: Error) => { setMsg(sayError(e)); return false; });
@@ -193,7 +199,7 @@ export default function DiscoveryForm({ milestones, task: startTask, newWo, tz, 
   const inp = "h-8 pointer-coarse:h-11 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-caption text-[var(--color-text)] ";
   const lbl = "block mb-1 text-body font-medium text-[var(--color-text-muted)]";
   // A choice: picked is dark, the rest a quiet fill.
-  const chip = (on: boolean) => `h-8 px-3 rounded-lg text-caption font-medium ${on ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`;
+  const chip = (on: boolean) => `h-8 pointer-coarse:h-11 px-3 rounded-lg text-caption font-medium ${on ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`;
   return (
     <div ref={boxRef} aria-modal="true" className="fixed inset-0 z-[185] bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)] animate-in fade-in" onClick={onClose}>
       <div role="dialog" aria-label="Add work to the schedule" onClick={(e) => e.stopPropagation()}
@@ -207,15 +213,8 @@ export default function DiscoveryForm({ milestones, task: startTask, newWo, tz, 
           <button type="button" onClick={onClose} aria-label="Close" className="ui-hit -mr-1.5 w-8 h-8 shrink-0 inline-flex items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
         </div>
         <div className="px-4 py-3 space-y-3">
-          <div className="space-y-1">
-            <div className="flex flex-wrap gap-1" role="group" aria-label="What kind of work">
-              {(["discovery", "added"] as const).map((x) => (
-                <button key={x} type="button" aria-pressed={kind === x} onClick={() => { setKind(x); setMsg(null); }}
-                  className={chip(kind === x)}>{ADDED[x].word}</button>
-              ))}
-            </div>
-            <div className="text-caption text-[var(--color-text-muted)]">{kind === "added" ? "Known work that wasn't on the schedule." : "Found when the equipment was opened."} You can change this later.</div>
-          </div>
+          {/* Up front, what's needed to add it: where, what, the work, its WO #.
+              The rest is filled in already and folded below. */}
           <div className="flex flex-wrap gap-1" role="group" aria-label="Where it goes">
             {([[false, "Under a work order"], [true, "A new work order"]] as const).map(([v, l]) => (
               <button key={l} type="button" aria-pressed={isNew === v} onClick={() => goNew(v)}
@@ -249,21 +248,6 @@ export default function DiscoveryForm({ milestones, task: startTask, newWo, tz, 
             <textarea value={what} onChange={(e) => { setWhat(e.target.value); setMsg(null); }} rows={2} placeholder={kind === "added" ? "e.g. Clean the downcomers while the tower is open" : "e.g. Tray 14 cracked at the weld - needs repair before close-up"}
               className={`${inp} w-full h-auto py-1.5`} />
           </label>
-          <div className="space-y-1">
-            <span className={lbl}>Work order # <span className="normal-case tracking-normal font-normal text-caption text-[var(--color-text-muted)]">(required)</span></span>
-            <div className="flex flex-wrap items-center gap-1.5">
-              <input value={wo} onChange={(e) => { setWo(e.target.value); setNoWo(false); setMsg(null); }} placeholder="e.g. 310990" aria-label="Work order number"
-                className={`${inp} w-36 font-display tabular-nums`} />
-              {taskWo && (
-                <button type="button" aria-pressed={!noWo && wo.trim() === taskWo} onClick={() => { setWo(taskWo); setNoWo(false); setMsg(null); }}
-                  className={chip(!noWo && wo.trim() === taskWo)}>Same as the task: {taskWo}</button>
-              )}
-              <button type="button" aria-pressed={noWo} onClick={() => { setNoWo(true); setWo(""); setMsg(null); }}
-                className={chip(noWo)}>No WO # yet</button>
-            </div>
-            {noWo && <div className="text-caption text-[var(--color-text-muted)]">{taskWo ? `It shows under the task's WO ${taskWo} until you add its own (the step's Edit).` : "Add it later on the step (Edit)."}</div>}
-          </div>
-          <DateTimePicker label={`When was it ${k.found}?`} hint="(required)" value={foundV} onChange={(v) => { setFoundV(v); setMsg(null); }} tz={tz} times={times} />
           <div>
             <span className={lbl}>Work it adds</span>
             <div className="space-y-1.5">
@@ -280,66 +264,98 @@ export default function DiscoveryForm({ milestones, task: startTask, newWo, tz, 
                   {rows.length > 1 && <button type="button" onClick={() => setRows(rows.filter((_, j) => j !== i))} aria-label="Remove this step" className="ui-hit w-7 h-7 inline-flex items-center justify-center rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"><Trash2 className="w-3.5 h-3.5" /></button>}
                 </div>
               ))}
-              <button type="button" onClick={() => setRows([...rows, { name: "", crew: rows[rows.length - 1]?.crew ?? "", hours: "" }])} className="inline-flex items-center gap-1 hover:underline text-[var(--color-accent-text)]"><Plus className="w-3.5 h-3.5" /> Another step (done after the one above)</button>
+              <button type="button" onClick={() => setRows([...rows, { name: "", crew: rows[rows.length - 1]?.crew ?? "", hours: "" }])} className="inline-flex items-center gap-1 min-h-8 pointer-coarse:min-h-11 hover:underline text-[var(--color-accent-text)]"><Plus className="w-3.5 h-3.5" /> Another step (done after the one above)</button>
             </div>
           </div>
-          {isNew ? (
-            <div className="text-caption text-[var(--color-text-muted)]">On its own: its steps run one after the other, linked to nothing else. If it waits on or holds up other work, link it from the step&apos;s Edit plan.</div>
-          ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <label className="block">
-              <span className={lbl}>Starts after</span>
-              <select value={afterId ?? ""} onChange={(e) => pickAfter(e.target.value || null)} className={`${inp} w-full`}>
-                <option value="">{startMode === "set" ? "Nothing before it" : "Nothing, starts now"}</option>
-                {steps.map((s) => <option key={s.id} value={s.id!}>{s.name}{s.status === "completed" ? " (done)" : s.status === "in_progress" ? " (under way)" : ""}</option>)}
-              </select>
-              {/* After work that isn't done: it waits for it — say so, so two
-                  jobs meant to run side by side aren't put one after the other. */}
-              {afterId && steps.find((s) => s.id === afterId)?.status !== "completed" && (
-                <span className="mt-1 block text-caption font-medium text-[var(--state-held-text)]">
-                  One after the other: it waits until “{afterName}” is done{follows != null ? ` (planned ${fmt(follows)})` : ""}. Running side by side? Pick what they both start after.
-                </span>
+          <div className="space-y-1">
+            <span className={lbl}>Work order # <span className="normal-case tracking-normal font-normal text-caption text-[var(--color-text-muted)]">(required)</span></span>
+            <div className="flex flex-wrap items-center gap-1.5">
+              <input value={wo} onChange={(e) => { setWo(e.target.value); setNoWo(false); setMsg(null); }} placeholder="e.g. 310990" aria-label="Work order number"
+                className={`${inp} w-36 font-display tabular-nums`} />
+              {taskWo && (
+                <button type="button" aria-pressed={!noWo && wo.trim() === taskWo} onClick={() => { setWo(taskWo); setNoWo(false); setMsg(null); }}
+                  className={chip(!noWo && wo.trim() === taskWo)}>Same as the task: {taskWo}</button>
               )}
-            </label>
-            <div>
-              <span className={lbl}>Holds up <span className="normal-case tracking-normal font-normal text-caption text-[var(--color-text-muted)]">(can&apos;t start until it&apos;s done)</span></span>
-              <div className="max-h-28 overflow-y-auto border-y border-[var(--color-border)] py-1 space-y-0.5">
-                {steps.filter((s) => s.id !== afterId && s.status !== "completed").map((s) => (
-                  <label key={s.id} className="flex items-start gap-1.5">
-                    <input type="checkbox" className="mt-0.5 accent-[var(--color-text)]" checked={holds.includes(s.id!)} onChange={(e) => setHolds(e.target.checked ? [...holds, s.id!] : holds.filter((x) => x !== s.id))} />
-                    <span className="break-words">{s.name}</span>
-                  </label>
+              <button type="button" aria-pressed={noWo} onClick={() => { setNoWo(true); setWo(""); setMsg(null); }}
+                className={chip(noWo)}>No WO # yet</button>
+            </div>
+            {noWo && <div className="text-caption text-[var(--color-text-muted)]">{taskWo ? `It shows under the task's WO ${taskWo} until you add its own (the step's Edit).` : "Add it later on the step (Edit)."}</div>}
+          </div>
+
+          {/* Filled in already: the kind of work, when it was found (now),
+              what it starts after and holds up (from the task), when it can
+              start (as soon as it can), who approved it. Change any here. */}
+          <MoreDetails key={moreOpen} defaultOpen={moreOpen > 0} total={6}
+            filled={[kind !== first.kind, foundV !== (onDay && onDay < nowV ? onDay : nowV), afterId !== first.afterId, holds.join(",") !== first.holds, startMode === "set", !!approvedBy.trim()].filter(Boolean).length}>
+            <div className="space-y-1">
+              <div className="flex flex-wrap gap-1" role="group" aria-label="What kind of work">
+                {(["discovery", "added"] as const).map((x) => (
+                  <button key={x} type="button" aria-pressed={kind === x} onClick={() => { setKind(x); setMsg(null); }}
+                    className={chip(kind === x)}>{ADDED[x].word}</button>
                 ))}
-                {steps.filter((s) => s.id !== afterId && s.status !== "completed").length === 0 && <span className="text-[var(--color-text-muted)] italic">Nothing left on this task</span>}
+              </div>
+              <div className="text-caption text-[var(--color-text-muted)]">{kind === "added" ? "Known work that wasn't on the schedule." : "Found when the equipment was opened."} You can change this later.</div>
+            </div>
+            <DateTimePicker label={`When was it ${k.found}?`} hint="(required)" value={foundV} onChange={(v) => { setFoundV(v); setMsg(null); }} tz={tz} times={times} />
+            {isNew ? (
+              <div className="text-caption text-[var(--color-text-muted)]">On its own: its steps run one after the other, linked to nothing else. If it waits on or holds up other work, link it from the step&apos;s Edit plan.</div>
+            ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <label className="block">
+                <span className={lbl}>Starts after</span>
+                <select value={afterId ?? ""} onChange={(e) => pickAfter(e.target.value || null)} className={`${inp} w-full`}>
+                  <option value="">{startMode === "set" ? "Nothing before it" : "Nothing, starts now"}</option>
+                  {steps.map((s) => <option key={s.id} value={s.id!}>{s.name}{s.status === "completed" ? " (done)" : s.status === "in_progress" ? " (under way)" : ""}</option>)}
+                </select>
+              </label>
+              <div>
+                <span className={lbl}>Holds up <span className="normal-case tracking-normal font-normal text-caption text-[var(--color-text-muted)]">(can&apos;t start until it&apos;s done)</span></span>
+                <div className="max-h-28 overflow-y-auto border-y border-[var(--color-border)] py-1 space-y-0.5">
+                  {steps.filter((s) => s.id !== afterId && s.status !== "completed").map((s) => (
+                    <label key={s.id} className="flex items-start gap-1.5 min-h-8 pointer-coarse:min-h-11">
+                      <input type="checkbox" className="mt-0.5 accent-[var(--color-text)]" checked={holds.includes(s.id!)} onChange={(e) => setHolds(e.target.checked ? [...holds, s.id!] : holds.filter((x) => x !== s.id))} />
+                      <span className="break-words">{s.name}</span>
+                    </label>
+                  ))}
+                  {steps.filter((s) => s.id !== afterId && s.status !== "completed").length === 0 && <span className="text-[var(--color-text-muted)] italic">Nothing left on this task</span>}
+                </div>
               </div>
             </div>
-          </div>
-          )}
-          <div className="space-y-1.5">
-            <span className={lbl}>When can the work start?</span>
-            <div className="flex flex-wrap gap-1" role="group" aria-label="When the work starts">
-              {([["asap", `As soon as it can: ${fmt(asap)}`], ["set", "At a set time"]] as const).map(([k, l]) => (
-                <button key={k} type="button" aria-pressed={startMode === k} onClick={() => { setStartMode(k); setMsg(null); if (k === "set" && !startV) setStartV(toDateTimeInput(asap, tz)); }}
-                  className={chip(startMode === k)}>{l}</button>
-              ))}
+            )}
+            <div className="space-y-1.5">
+              <span className={lbl}>When can the work start?</span>
+              <div className="flex flex-wrap gap-1" role="group" aria-label="When the work starts">
+                {([["asap", `As soon as it can: ${fmt(asap)}`], ["set", "At a set time"]] as const).map(([k, l]) => (
+                  <button key={k} type="button" aria-pressed={startMode === k} onClick={() => { setStartMode(k); setMsg(null); if (k === "set" && !startV) setStartV(toDateTimeInput(asap, tz)); }}
+                    className={chip(startMode === k)}>{l}</button>
+                ))}
+              </div>
+              {startMode === "asap"
+                ? <div className="text-caption text-[var(--color-text-muted)]">{(() => {
+                  if (afterStep && afterStep.status !== "completed") return follows != null && follows >= now ? `When “${afterName}” is planned to be done.` : `When “${afterName}” is done. It isn't yet, so from now.`;
+                  const end = afterStep ? ms(afterStep.actualAt ?? afterStep.plannedAt) : NaN;
+                  if (Number.isFinite(end) && Number.isFinite(foundMs) && end > foundMs) return `When “${afterName}” was done.`;
+                  return `Right when it was ${k.found}.`;
+                })()}</div>
+                : <DateTimePicker label="Planned start" value={startV} onChange={(v) => { setStartV(v); setMsg(null); }} tz={tz} times={times} future showNow={false} />}
             </div>
-            {startMode === "asap"
-              ? <div className="text-caption text-[var(--color-text-muted)]">{(() => {
-                if (afterStep && afterStep.status !== "completed") return follows != null && follows >= now ? `When “${afterName}” is planned to be done.` : `When “${afterName}” is done. It isn't yet, so from now.`;
-                const end = afterStep ? ms(afterStep.actualAt ?? afterStep.plannedAt) : NaN;
-                if (Number.isFinite(end) && Number.isFinite(foundMs) && end > foundMs) return `When “${afterName}” was done.`;
-                return `Right when it was ${k.found}.`;
-              })()}</div>
-              : <DateTimePicker label="Planned start" value={startV} onChange={(v) => { setStartV(v); setMsg(null); }} tz={tz} times={times} future showNow={false} />}
-          </div>
-          <label className="block">
-            <span className={lbl}>Approved by <span className="normal-case tracking-normal font-normal text-caption text-[var(--color-text-muted)]">(optional)</span></span>
-            <input value={approvedBy} onChange={(e) => setApprovedBy(e.target.value)} placeholder={`e.g. ${ptype.short} manager / owner rep`} className={`${inp} w-full`} />
-          </label>
+            <label className="block">
+              <span className={lbl}>Approved by <span className="normal-case tracking-normal font-normal text-caption text-[var(--color-text-muted)]">(optional)</span></span>
+              <input value={approvedBy} onChange={(e) => setApprovedBy(e.target.value)} placeholder={`e.g. ${ptype.short} manager / owner rep`} className={`${inp} w-full`} />
+            </label>
+          </MoreDetails>
 
           {/* What it does to the schedule — before it's saved. */}
           <div className={`border-t border-[var(--color-border)] pt-3 space-y-1 ${plan?.impact.critical ? "border-l-2 border-l-[var(--state-overdue)] pl-3" : ""}`}>
             <div className="text-body font-medium text-[var(--color-text-muted)]">What it does to the schedule</div>
+            {/* After work that isn't done: it waits for it. Said here, in sight,
+                so two jobs meant to run side by side aren't put one after the
+                other without anyone seeing (the choice is in More details). */}
+            {!isNew && afterId && steps.find((s) => s.id === afterId)?.status !== "completed" && (
+              <div className="font-medium text-[var(--state-held-text)]">
+                One after the other: it waits until “{afterName}” is done{follows != null ? ` (planned ${fmt(follows)})` : ""}. Running side by side? Change what it starts after in More details.
+              </div>
+            )}
             {!plan ? <div className="text-[var(--color-text-muted)]">{timeProblem && filled.length ? timeProblem : "Add the work it needs (a step and its hours) to see."}</div> : (
               <>
                 <div className="font-medium">{impactLine(plan.impact, hrs, typeWord(ptype))}</div>

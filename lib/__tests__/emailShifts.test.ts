@@ -107,3 +107,27 @@ describe("header lines", () => {
     expect(headerShift("Expected Timeline: Monday 11/2/26 @ 6:00AM to Sunday 11/8/26 @ 4:00PM", TZ, times, NOW)).toBeNull();
   });
 });
+
+describe("the app's own short headings, pasted back in", () => {
+  it("reads Done, Next shift and People as their sections", () => {
+    const text = `LRU Turnaround November 2026                                         November 4, 2026 6:00 AM – 6:00 PM
+Done
+Schultz
+Pulled 12 trays on V-1
+Next shift
+Schultz
+Continue pulling trays on V-1
+People
+Schultz – 30
+Shift Notes
+5:30 AM – Shift change meeting.`;
+    const parts = splitShifts(text, TZ, times, NOW);
+    expect(parts).not.toBeNull();
+    const kinds = sectionsFound(parts!).map((s) => s.kind);
+    expect(kinds).toEqual(expect.arrayContaining(["done", "plan", "people", "notes"]));
+    const kept = partText(parts![0], DEFAULT_OMIT);
+    expect(kept).toContain("Pulled 12 trays on V-1");
+    expect(kept).not.toContain("Continue pulling trays on V-1");
+    expect(kept).not.toContain("Schultz – 30");
+  });
+});
