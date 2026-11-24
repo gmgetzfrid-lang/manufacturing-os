@@ -29,7 +29,8 @@ describe("a report copied for an update", () => {
     const h = toEmailHtml(doc);
     expect(h).not.toMatch(/class=|<style|display:\s*(flex|grid)/);
     expect(h).toContain("Acme &lt;Mech&gt;");
-    expect(h).toContain("&nbsp;Behind<");
+    // The verdict's word in its shaded box.
+    expect(h).toMatch(/bgcolor="#fff1f2"[^>]*>[\s\S]*?>Behind<\/div>/);
     expect((h.match(/<table/g) ?? []).length).toBeGreaterThan(4);
   });
 });

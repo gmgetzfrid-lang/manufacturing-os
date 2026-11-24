@@ -266,6 +266,7 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
         ...(byTaskDone.length ? [{
           k: "table", head: ["Task", "WO", "Last done · In progress", "Who", "What it means", "vs plan"], align: ["left", "left", "left", "left", "left", "right"],
           textLabels: ["", "WO", "", "by", "", "vs plan"], nowrap: [1, 5],
+          list: { title: 0, tag: 1, lines: [[3], [2]], right: 4, under: [5] },
           rows: byTaskDone.map((x) => [
             { t: x.task, bold: true, ...(x.taskPct || x.count || x.critical ? { sub: [...(x.critical ? [{ t: "Critical path", tone: "rose" as const }] : []), ...(x.taskPct || x.count ? [{ t: [x.taskPct ? pctText(x.taskPct)!.replace(/^task /, x.own ? "" : "task ") : null, x.count ?? null].filter(Boolean).join(" · ") }] : [])] } : {}) }, x.woShown,
             // The step done last and the one still going, labeled: its time when
@@ -275,8 +276,11 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
                 const lead = [l.wo ? `WO ${l.wo}` : "", look.showTimes && l.time != null ? f.T(l.time) : ""].filter(Boolean).join(" ");
                 return { t: `${label}: ${lead ? `${lead} ` : ""}${l.name}${l.critical ? " · critical path" : ""}${l.discovery ? ` · ${l.discovery}` : ""}${more ? ` (+${more} more ${word})` : ""}`, note: l.note };
               };
-              const shown = [x.lastDone ? say("Last done", x.lastDone, x.moreDone, "done") : null, x.going ? say("In progress", x.going, x.moreGoing, "going") : null].filter((v): v is { t: string; note: string | undefined } => !!v);
+              // A work order of one step: its last step is its own name, not said twice.
+              const own = (l: typeof x.last) => l.name === x.task && !l.wo && !(look.showTimes && l.time != null) && !l.critical && !l.discovery;
+              const shown = [x.lastDone && !(own(x.lastDone) && !x.moreDone) ? say("Last done", x.lastDone, x.moreDone, "done") : null, x.going ? say("In progress", x.going, x.moreGoing, "going") : null].filter((v): v is { t: string; note: string | undefined } => !!v);
               const [first, ...rest] = shown;
+              if (!first) return x.lastDone?.note ? { t: "", note: x.lastDone.note } : "";
               return { t: first.t, ...(first.note ? { note: first.note } : {}), ...(rest.length ? { lines: rest.map((r) => ({ t: r.t, note: r.note })) } : {}) };
             })(),
             muted(x.who),
@@ -359,6 +363,7 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
         tonight.length ? {
           k: "table", head: ["Task", "Step", "WO", "Who", "When", "Done", "Goal", "vs plan"], align: ["left", "left", "left", "left", "left", "right", "right", "right"],
           textLabels: ["", "", "WO", "by", "", "done", "goal", "vs plan"], nowrap: [2, 5, 6, 7],
+          list: { group: 0, title: 1, tag: 2, lines: [[3, 4], [5, 6]], right: 7 },
           rows: [...byTask(shown, (r) => [stepCell(r), wo(r), who(r), planCell(r), `${r.percent}%`, goalCell(r), vsCell(r)], taskSub, !!look.order?.next?.length), ...more(tonight.length - shown.length, 8)],
         } as ExportBlock : { k: "note", text: report.goals.byPlan ? "Nothing left open on the plan." : `Nothing planned for the ${shiftName(next).toLowerCase()}.` } as ExportBlock,
         ...(report.goals.byPlan && planSetText(look.plan, f) ? [{ k: "note", text: planSetText(look.plan, f)! } as ExportBlock] : []),
@@ -389,6 +394,7 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
       blocks: [{
         k: "table", head: ["Task", "Step", "WO", "Who", "Why it carries", "Done", "vs plan"], align: ["left", "left", "left", "left", "left", "right", "right"],
         textLabels: ["", "", "WO", "by", "", "done", "vs plan"], nowrap: [2, 5, 6],
+        list: { group: 0, title: 1, tag: 2, lines: [[3, 4], [5]], right: 6 },
         rows: [...byTask(shown, (r) => [stepCell(r), wo(r), who(r), why(r), doneCell(r), vsCell(r)], taskSub, !!look.order?.later?.length), ...more(later.length - shown.length, 7)],
       }],
     });
@@ -411,6 +417,7 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
         list.length ? {
           k: "table", head: ["Task", "Step", "WO", "Who", "When", "Done", "Goal", "vs plan"], align: ["left", "left", "left", "left", "left", "right", "right", "right"],
           textLabels: ["", "", "WO", "by", "", "done", "goal", "vs plan"], nowrap: [2, 5, 6, 7],
+          list: { group: 0, title: 1, tag: 2, lines: [[3, 4], [5, 6]], right: 7 },
           rows: [...byTask(shown, (r) => [stepCell(r), wo(r), who(r), when(r), `${r.percent}%`, goal(r), vs(r)], taskSub, false), ...more(list.length - shown.length, 8)],
         } as ExportBlock : { k: "note", text: ar.goals.byPlan ? "Nothing left open on the plan." : `Nothing planned for the ${shiftName(nx).toLowerCase()}.` } as ExportBlock,
         ...(set ? [{ k: "note", text: set } as ExportBlock] : ar.goals.byPlan ? [] : [{ k: "note", text: `No plan set: the schedule's list, with what the ${other} crew leaves open.` } as ExportBlock]),
@@ -493,7 +500,7 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
   if (sn.length) {
     out.push({
       id: "notes", title: "Notes & actions", sub: "follow-ups and anything else that happened",
-      blocks: [{ k: "table", head: ["Time", "Note"], align: ["left", "left"], nowrap: [0],
+      blocks: [{ k: "table", head: ["Time", "Note"], align: ["left", "left"], nowrap: [0], list: { title: 0, lines: [[1]] },
         rows: [...sn].sort((a, b) => a.at - b.at).map((x) => [x.from ? `${f.D(x.at)} ${f.T(x.at)}` : f.T(x.at), { t: x.text, ...(x.followUp ? { sub: [{ t: x.from ? `Follow-up, open since ${x.from}` : "Follow-up - stays until cleared", tone: "amber" as const }] } : {}) }] as ExportCell[]) }],
     });
   }
@@ -531,6 +538,7 @@ export function discoveryBlock(list: Discovery[], f: { DTs: (ms: number) => stri
     // Short columns on the row; what was found and the work it added, the
     // long part, on one full-width line under it (nothing left out).
     k: "table", head: ["When", "Task", "Kind", "What it did"], align: ["left", "left", "left", "left"], nowrap: [0],
+    list: { title: 1, lines: [[2, 0], [3]] },
     rows: list.map((d) => [
       f.DTs(d.record.foundAt),
       { t: d.task?.name ?? "", bold: true, ...(d.task?.workOrderRef ? { sub: [{ t: `WO ${d.task.workOrderRef}` }] } : {}) },

@@ -173,7 +173,8 @@ describe("a comment explains a step, quietly", () => {
   });
   it("50% on a multi-day step reads on plan, with the comment under the step", () => {
     const html = toEmailHtml({ kind: "k", project: "p", when: "w", asOf: "a", sections: secs });
-    expect(html).toMatch(/Calibrate meter<div[^>]*font-style:italic[^>]*>“Sent out for calibration - back Wednesday”/);
+    // The comment right under the step's name.
+    expect(html).toMatch(/Calibrate meter<\/div><div[^>]*font-style:italic[^>]*>“Sent out for calibration - back Wednesday”/);
     const text = toPlainText({ kind: "k", project: "p", when: "w", asOf: "a", sections: secs });
     expect(text).toMatch(/FT-101 Coriolis meter - Calibrate meter \("Sent out for calibration - back Wednesday"\) · on plan, continues next day shift · done 50%/);
   });

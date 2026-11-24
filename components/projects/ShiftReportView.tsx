@@ -2056,7 +2056,7 @@ const waitWhy = (j: WaitingReady["waiting"][number]) => `${CAUSE_WORD[j.cause]}$
 const readyWhy = (j: WaitingReady["ready"][number]) => (j.crewOn.length ? `Crew was on ${[...new Set(j.crewOn.map(orderWord))].slice(0, 3).join(", ")}` : "No work logged by this crew this shift");
 const WAIT_NONE = "Nothing sat this shift: every started job moved, and no ready job was left unstarted.";
 const waitingTitle = (shift: ShiftWindow, c: Ctx) => `Waiting and ready - ${shiftName(shift)} ${c.D(shift.start)}`;
-const WAIT_SUB = "started jobs with nothing logged this shift, and ready jobs that did not start";
+const WAIT_SUB = "started with nothing logged, or ready and not started";
 const SERVICE_TITLE = "Out for service (a planned step, not waiting)";
 
 /** The lists as the update's blocks (email, copy, Word). */

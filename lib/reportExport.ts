@@ -62,6 +62,16 @@ export type ExportBlock =
     /** A line under a row, the table's whole width (by row, as `rows`): a
      *  long note that a narrow column would squeeze into a strip. */
     notes?: Array<string | null | undefined>;
+    /** In the email and print, drawn as a list read top to bottom (the
+     *  posts the owner sent: a heading per group, each row its name in bold
+     *  with its tag, its details on lines under it, its value on the
+     *  right), not as a grid of narrow columns. By column: `group` heads a
+     *  group where filled (the task), `title` names the row, `tag` is set
+     *  apart beside it (the WO), each of `lines` is one line under it (its
+     *  columns joined with " · ", each with its text label), `right` is the
+     *  value on the right with `under` beneath it. Plain text keeps the
+     *  table's own lines. */
+    list?: { group?: number; title: number; tag?: number; lines?: number[][]; right?: number; under?: number[] };
   }
   /** The numbers, two bars (done and planned, of the whole job) and the
    *  bottom line beside them — the update's first glance. */
@@ -368,6 +378,88 @@ const tagHtml = (t: ExportTag) =>
 
 const td = (style: string, html: string, attrs = "") => `<td ${attrs}style="${FONT}${style}">${html}</td>`;
 
+const toneFg = (t?: Tone) => (t ? (t === "muted" ? MUTED : TONE[t].fg) : INK);
+/** A WO number or tag, set apart: a light chip (its shading survives a
+ *  pasted email that drops sizes and colors). */
+const chipHtml = (t: string) => `<span style="font-family:Consolas,Menlo,monospace;font-size:12px;font-weight:bold;color:#1e3a8a;background-color:#eef2ff;border-radius:6px;padding:1px 6px;white-space:nowrap;">${esc(t)}</span>`;
+
+/** A table drawn as a list (see `list` on the table block). Rows are
+ *  separated by a thin line, a group's heading sits on a light band, and
+ *  the value is on the right. Bold, the bands and the lines carry the
+ *  structure, so it still reads when a mail app's paste drops the sizes
+ *  and colors (Outlook's "merge formatting"). */
+function listHtml(b: Extract<ExportBlock, { k: "table" }> & { list: NonNullable<Extract<ExportBlock, { k: "table" }>["list"]> }): string {
+  const L = b.list;
+  const cellOf = (c: ExportCell | undefined) => (c == null ? { t: "" } : typeof c === "string" ? { t: c } : c);
+  const label = (j: number) => b.textLabels?.[j] ?? "";
+  const subLines = (o: ReturnType<typeof cellOf>) => [
+    ...("lines" in o && o.lines?.length ? o.lines.map((x) => ({ t: x.t, tone: x.tone, note: x.note })) : []),
+    ...("sub" in o && o.sub?.length ? o.sub.map((x) => ({ t: x.t, tone: x.tone, note: undefined as string | undefined })) : []),
+  ];
+  const line = (html: string, tone?: Tone, size = 14) => `<div style="${FONT}font-size:${size}px;line-height:1.45;color:${toneFg(tone)};margin-top:2px;">${html}</div>`;
+  let html = "", open = false, first = true;
+  const close = () => { if (open) { html += `</table>`; open = false; } };
+  const start = () => { if (!open) { html += `<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:separate;border-spacing:0;border:1px solid ${LINE};border-radius:8px;margin:0 0 8px;">`; open = true; first = true; } };
+  b.rows.forEach((r, i) => {
+    const g = L.group != null ? cellOf(r[L.group]) : null;
+    // "+ 3 more" in the group's column is a row of its own, not a heading.
+    if (g && g.t.startsWith("+ ")) { start(); html += `<tr>${td(`padding:8px 12px;font-size:12px;color:${MUTED};${first ? "" : "border-top:1px solid #e2e8f0;"}`, esc(g.t), `colspan="2" `)}</tr>`; first = false; return; }
+    if (g && g.t) {
+      start();
+      // The group's heading: its name bold on a light band, its standing beside it.
+      const gsub = subLines(g).map((x) => x.t).join(" · ");
+      html += `<tr>${td(`padding:8px 12px;background-color:#f1f5f9;${first ? "border-radius:8px 8px 0 0;" : `border-top:1px solid ${LINE};`}`,
+        `<b style="font-size:14px;color:${INK};">${esc(g.t)}</b>${gsub ? `<span style="font-size:12px;color:${MUTED};">&nbsp; ${esc(gsub)}</span>` : ""}`, `colspan="2" bgcolor="#f1f5f9" `)}</tr>`;
+      first = false;
+    }
+    start();
+    const t = cellOf(r[L.title]);
+    if (!t.t && !(L.right != null && cellText(r[L.right] ?? ""))) return;
+    const tag = L.tag != null ? cellText(r[L.tag] ?? "") : "";
+    const under = subLines(t);
+    const rows = (L.lines ?? []).map((cols) => cols.map((j) => {
+      const c = cellOf(r[j]);
+      if (!c.t || c.t === "-") return "";
+      const lab = label(j);
+      // "0% done", "goal 100%", "WO 301859": the label where it reads.
+      const word = lab && !c.tone ? (lab === "done" ? `${c.t} ${lab}` : `${lab} ${c.t}`) : c.t;
+      return `<span style="color:${toneFg(c.tone)};${c.bold ? "font-weight:bold;" : ""}">${esc(word)}</span>`;
+    }).filter(Boolean).join(`<span style="color:${MUTED};"> · </span>`)).filter(Boolean);
+    const extra = (L.lines ?? []).flat().flatMap((j) => subLines(cellOf(r[j])));
+    const note = "note" in t && t.note ? `<div style="${FONT}font-size:12px;font-style:italic;color:${MUTED};margin-top:2px;">“${esc(t.note)}”</div>` : "";
+    // Under the name, one size (12): its flags first (critical path, why
+    // behind), then who and when, then the rest (where the task stands).
+    const sub = (x: { t: string; tone?: Tone; note?: string }) => line(esc(x.t), x.tone ?? "muted", 12) + (x.note ? `<div style="${FONT}font-size:12px;font-style:italic;color:${MUTED};">“${esc(x.note)}”</div>` : "");
+    const flagged = (x: { tone?: Tone }) => !!x.tone && x.tone !== "muted" && x.tone !== "slate";
+    // What was written on the step comes right under its name.
+    const left = `<div style="${FONT}font-size:14px;line-height:1.4;font-weight:bold;color:${toneFg(t.tone)};">${esc(t.t)}${tag ? `&nbsp; ${chipHtml(tag)}` : ""}</div>` + note +
+      under.filter(flagged).map(sub).join("") +
+      rows.map((x) => line(x, undefined, 12)).join("") +
+      [...under.filter((x) => !flagged(x)), ...extra].map(sub).join("");
+    // The value on the right; a long one ("Done late, was due Nov 11
+    // 12:00 PM") keeps its first words there and puts the rest under them.
+    const rc = L.right != null ? cellOf(r[L.right]) : { t: "" };
+    const cut = rc.t.length > 14 ? rc.t.indexOf(", ") : -1;
+    const rTop = cut > 0 ? rc.t.slice(0, cut) : rc.t, rRest = cut > 0 ? rc.t.slice(cut + 2) : "";
+    const underRight = [rRest, ...(L.under ?? []).map((j) => { const c = cellOf(r[j]); return c.t && c.t !== "-" ? (label(j) && !c.tone ? `${label(j)} ${c.t}` : c.t) : ""; })].filter(Boolean);
+    // A bare value ("−1 h") says what it is under it ("vs plan").
+    if (!underRight.length && rc.t && L.right != null && label(L.right)) underRight.push(label(L.right));
+    const rsub = subLines(rc);
+    const right = rc.t || underRight.length
+      ? `<div style="${FONT}font-size:14px;font-weight:bold;color:${toneFg(rc.tone)};white-space:nowrap;">${esc(rTop)}</div>` +
+        underRight.map((x) => `<div style="${FONT}font-size:12px;color:${MUTED};white-space:nowrap;">${esc(x)}</div>`).join("") +
+        rsub.map((x) => `<div style="${FONT}font-size:12px;color:${toneFg(x.tone ?? "muted")};">${esc(x.t)}</div>`).join("")
+      : "";
+    const top = first ? "" : `border-top:1px solid #e2e8f0;`;
+    html += `<tr>${td(`padding:8px 12px;vertical-align:top;${top}`, left)}${td(`padding:8px 12px 8px 0;vertical-align:top;text-align:right;width:1%;${top}`, right)}</tr>`;
+    first = false;
+    const n = b.notes?.[i]?.trim();
+    if (n) html += `<tr>${td(`padding:0 12px 8px;font-size:12px;line-height:1.4;color:#475569;`, esc(n), `colspan="2" `)}</tr>`;
+  });
+  close();
+  return html;
+}
+
 function blockHtml(b: ExportBlock): string {
   switch (b.k) {
     case "stats":
@@ -396,9 +488,9 @@ function blockHtml(b: ExportBlock): string {
     case "sub":
       return `<p style="${FONT}font-size:12px;font-weight:600;margin:8px 0 3px;color:${TONE[b.tone].fg};">${esc(b.title)} (${b.count})</p>`;
     case "label":
-      return `<p style="${FONT}font-size:12px;font-weight:bold;margin:10px 0 4px;color:${INK};">${esc(b.text)}</p>`;
+      return `<p style="${FONT}font-size:14px;font-weight:bold;margin:12px 0 6px;color:${INK};">${esc(b.text)}</p>`;
     case "empty":
-      return `<p style="${FONT}font-size:12px;font-style:italic;margin:3px 0;color:${MUTED};">${esc(b.text)}</p>`;
+      return `<p style="${FONT}font-size:14px;line-height:1.45;margin:3px 0;color:${MUTED};">${esc(b.text)}</p>`;
     case "list":
       return `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">${b.items.map((x) =>
         `<tr>${td("font-size:12px;color:#059669;padding:1px 6px 1px 0;vertical-align:top;", "&#10003;")}${td(`font-size:12px;color:${INK};padding:1px 0;`,
@@ -417,6 +509,7 @@ function blockHtml(b: ExportBlock): string {
           `<tr>${td(`font-size:14px;color:${MUTED};padding:3px 6px 3px 2px;vertical-align:top;width:10px;`, "&bull;")}${td(`font-size:14px;color:${INK};padding:3px 0;vertical-align:top;line-height:1.4;`, esc(x))}</tr>`).join("")}</table>` +
         (b.sources?.length ? `<p style="${FONT}font-size:12px;color:${MUTED};margin:4px 0 0;">From ${b.sources.map((x) => `<a href="${esc(x.url)}" style="color:${MUTED};">${esc(x.label)}</a>`).join(" · ")}</p>` : "");
     case "table": {
+      if (b.list) return listHtml(b as Extract<ExportBlock, { k: "table" }> & { list: NonNullable<Extract<ExportBlock, { k: "table" }>["list"]> });
       // A column with nothing in it (no step started yet) isn't drawn.
       const keep = b.head.map((_, j) => j === 0 || b.rows.some((r) => cellText(r[j] ?? "") !== ""));
       const al = (j: number) => b.align?.[j] ?? "left";
@@ -570,7 +663,6 @@ function barsHtml(b: { done: number; plan: number; from: string; to: string }): 
 function heroHtml(d: ExportDoc, off: ReadonlySet<HeaderPart> = new Set(), o: { crews?: boolean } = {}): string {
   const s = d.status && !off.has("status") ? d.status : null;
   const t = s ? TONE[s.tone] : null;
-  const whenLine = [off.has("kind") ? "" : d.kind, off.has("when") ? "" : d.when, off.has("asof") ? "" : `as of ${d.asOf}`].filter(Boolean).join(" · ");
   const project = off.has("project") ? "" : d.project;
   const stand = d.sections.find((x) => x.id === "stand");
   const ov = stand?.blocks.find(isOverview);
@@ -584,26 +676,43 @@ function heroHtml(d: ExportDoc, off: ReadonlySet<HeaderPart> = new Set(), o: { c
   // The crews' counts, unless the shift table under the card lists them.
   const crews = o.crews === false ? "" : onSite ? (onSite[2] ? `On site: ${onSite[2]}` : "") : head;
   const rows: string[] = [];
-  if (whenLine || project) rows.push(td("padding:12px 16px 0;",
-    (whenLine ? `<div style="${FONT}font-size:12px;line-height:1.4;color:${MUTED};">${esc(whenLine)}</div>` : "") +
-    (project ? `<div style="${FONT}font-size:20px;line-height:1.3;font-weight:bold;color:${INK};margin-top:2px;">${esc(project)}</div>` : "")));
+  // What and when, in pieces, never one run-on line: the kind small with
+  // the as-of time on the right, the project, then each shift as a small
+  // label over its value ("This shift" / "Day shift Mon, Nov 16 6:00 AM–6:00
+  // PM"). Notes on the as-of time ("progress as recorded by …") go to the foot.
+  const [asOfTime, ...asOfNotes] = off.has("asof") ? [""] : d.asOf.split(" · ");
+  const shifts = off.has("when") ? [] : d.when.split(" → ");
+  const pair = (label: string, value: string) => `<div style="display:inline-block;vertical-align:top;margin:0 28px 4px 0;">` +
+    `<div style="${FONT}font-size:12px;color:${MUTED};">${esc(label)}</div><div style="${FONT}font-size:14px;font-weight:bold;color:${INK};">${esc(value)}</div></div>`;
+  const shiftPairs = shifts.length > 1 ? pair("This shift", shifts[0]) + pair("Next shift", shifts.slice(1).join(" → ")) : shifts.length ? pair("Shift", shifts[0]) : "";
+  const kind = off.has("kind") ? "" : d.kind;
+  if (kind || asOfTime || project || shiftPairs) rows.push(td("padding:12px 16px 0;",
+    (kind || asOfTime ? `<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;"><tr>` +
+      td(`font-size:12px;color:${MUTED};`, esc(kind)) + td(`font-size:12px;color:${MUTED};text-align:right;white-space:nowrap;`, asOfTime ? `As of ${esc(asOfTime)}` : "") + `</tr></table>` : "") +
+    (project ? `<div style="${FONT}font-size:20px;line-height:1.3;font-weight:bold;color:${INK};margin-top:2px;">${esc(project)}</div>` : "") +
+    (shiftPairs ? `<div style="margin-top:8px;">${shiftPairs}</div>` : "")));
   if (s && t) {
-    const word = `<div style="${FONT}font-size:14px;font-weight:bold;color:${t.fg};"><span style="color:${SOLID[s.tone]};">&#9679;</span>&nbsp;${esc(sentence(s.label))}</div>` +
-      (s.detail ? `<div style="${FONT}font-size:14px;line-height:1.45;color:${INK};margin-top:2px;">${esc(s.detail)}</div>` : "");
-    rows.push(td("padding:10px 16px 12px;", s.key
-      ? `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;"><tr>` +
-        td("padding:0 14px 0 0;vertical-align:middle;white-space:nowrap;", `<div style="${FONT}font-size:26px;line-height:1.1;font-weight:bold;color:${t.fg};white-space:nowrap;">${esc(s.key).replace(/ /g, "&nbsp;")}</div>`) +
-        td("vertical-align:middle;", word) + `</tr></table>`
-      : word));
+    // The verdict in a shaded box: its key number and word. The shading and
+    // bold survive a paste that drops sizes and colors, so the answer still
+    // stands out; the sentence beside it says the rest.
+    // The shaded box sits in its own table, so it is only as tall as what's
+    // in it, whatever the sentence beside it wraps to.
+    const box = td("padding:0;vertical-align:top;width:1%;", `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse:separate;border-spacing:0;"><tr>` +
+      td(`padding:8px 14px;background-color:${t.bg};border-radius:8px;white-space:nowrap;`,
+        (s.key ? `<div style="${FONT}font-size:26px;line-height:1.1;font-weight:bold;color:${t.fg};white-space:nowrap;">${esc(s.key).replace(/ /g, "&nbsp;")}</div>` : "") +
+        `<div style="${FONT}font-size:${s.key ? 12 : 16}px;font-weight:bold;color:${t.fg};">${esc(sentence(s.label))}</div>`, `bgcolor="${t.bg}" `) + `</tr></table>`);
+    rows.push(td("padding:12px 16px;", `<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:separate;border-spacing:0;"><tr>` +
+      box + td("padding:0 0 0 14px;vertical-align:top;", s.detail ? `<div style="${FONT}font-size:14px;line-height:1.45;color:${INK};">${esc(s.detail)}</div>` : "") + `</tr></table>`));
   }
-  if (metrics.length || bars || standLine || crews) rows.push(td(`padding:10px 16px 10px;border-top:1px solid #e2e8f0;`,
+  const foot = [standLine, ...asOfNotes].filter(Boolean).join(" · ");
+  if (metrics.length || bars || foot || crews) rows.push(td(`padding:10px 16px 10px;border-top:1px solid #e2e8f0;`,
     // Inline blocks, not cells: on a phone the numbers wrap to a second
     // line instead of squeezing (Outlook desktop stacks them, still read).
     metrics.map((m) => `<div style="display:inline-block;vertical-align:top;margin:0 24px 4px 0;">` +
       `<div style="${FONT}font-size:12px;color:${MUTED};white-space:nowrap;">${esc(m.label)}</div>` +
       `<div style="${FONT}font-size:16px;font-weight:bold;color:${m.tone === "rose" || m.tone === "amber" || m.tone === "emerald" ? TONE[m.tone].fg : INK};white-space:nowrap;">${esc(m.value).replace(/ /g, "&nbsp;")}</div></div>`).join("") +
     (bars ? barsHtml(bars) : "") +
-    (standLine ? `<div style="${FONT}font-size:12px;line-height:1.4;color:${MUTED};margin-top:4px;">${esc(standLine)}</div>` : "") +
+    (foot ? `<div style="${FONT}font-size:12px;line-height:1.4;color:${MUTED};margin-top:4px;">${esc(foot)}</div>` : "") +
     (crews ? `<div style="${FONT}font-size:12px;line-height:1.4;color:#334155;margin-top:2px;">${esc(crews)}</div>` : "")));
   if (!rows.length) return "";
   const edge = s ? SOLID[s.tone] : LINE;
@@ -642,16 +751,30 @@ function emailHtml(d: ExportDoc): string {
   for (const sec of d.sections) {
     // Where we stand's numbers and line are in the card; what's left of it
     // (why behind) stays as a section, without the line said twice.
-    const s = sec.id === "stand" && sec.blocks.some(isOverview) ? { ...sec, sub: undefined, blocks: sec.blocks.filter((b) => !isOverview(b)) } : sec;
+    // (why behind) stays as a section, its own heading for a title ("Why
+    // we're behind", "15 h of work behind plan" under it).
+    const left = sec.blocks.filter((b) => !isOverview(b));
+    const lead = left[0]?.k === "label" ? left[0].text : "";
+    const cut = lead.indexOf(" - ");
+    const s = sec.id === "stand" && sec.blocks.some(isOverview)
+      ? lead ? { ...sec, title: cut > 0 ? lead.slice(0, cut) : lead, sub: cut > 0 ? lead.slice(cut + 3) : undefined, blocks: left.slice(1) } : { ...sec, sub: undefined, blocks: left }
+      : sec;
     if (!s.blocks.length) continue;
-    // A section that needs attention gets a colored rule, not a number.
-    const rule = s.flag === "rose" ? SOLID.rose : s.flag === "amber" ? SOLID.amber : INK;
+    // The section's heading on a light band (it survives a pasted email that
+    // drops sizes and colors, so the sections still stand apart). The title
+    // bold with its count beside it ("Done · 6 finished"); the shift and
+    // anything else on a line under it, never one run-on line. A section
+    // that needs attention gets a rule down its left in its color.
+    const segs = (s.sub ?? "").split(" · ").filter(Boolean);
+    const counts = segs.filter((x) => /^[+\d]/.test(x));
+    const rest = segs.filter((x) => !/^[+\d]/.test(x));
+    const edge = s.flag === "rose" ? SOLID.rose : s.flag === "amber" ? SOLID.amber : "#f1f5f9";
     // data-sec: lets a printed copy put a section on its own page (safety).
-    html += `<table data-sec="${esc(s.id ?? "")}" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;max-width:820px;margin-top:18px;"><tr>` +
-      td(`border-bottom:2px solid ${rule};padding:0 0 3px;`,
-        `<span style="${FONT}font-size:16px;font-weight:bold;color:${INK};">${esc(s.title)}</span>` +
-        (s.sub ? `<span style="${FONT}font-size:12px;color:${MUTED};">&nbsp;&nbsp;${esc(s.sub)}</span>` : "")) +
-      `</tr><tr>${td("padding:6px 0 0;", s.blocks.map(blockHtml).join(""))}</tr></table>`;
+    html += `<table data-sec="${esc(s.id ?? "")}" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;max-width:820px;margin-top:20px;"><tr>` +
+      td(`padding:8px 12px;background-color:#f1f5f9;border-left:4px solid ${edge};border-radius:8px;`,
+        `<div style="${FONT}font-size:16px;line-height:1.3;color:${INK};"><b>${esc(s.title)}</b>${counts.length ? `<span style="color:#334155;"> · ${esc(counts.join(" · "))}</span>` : ""}</div>` +
+        (rest.length ? `<div style="${FONT}font-size:12px;line-height:1.4;color:${MUTED};margin-top:1px;">${esc(rest.join(" · "))}</div>` : ""), `bgcolor="#f1f5f9" `) +
+      `</tr><tr>${td("padding:8px 0 0;", s.blocks.map(blockHtml).join(""))}</tr></table>`;
   }
   if (d.footer) html += `<p style="${FONT}font-size:12px;color:#94a3b8;margin-top:14px;max-width:820px;">${esc(d.footer)}</p>`;
   return html + `</div>`;

@@ -32,8 +32,8 @@ Collected Nov 24, 2026 from the owner's review of the project pages and reports.
 - **Done.** The shift table reads as grouped lists: each row's name with its count ("Plan · 1"), each crew with its count, the equipment as a tag before the step, items numbered in the email itself (the preview used to drop the numbers), note times in their own column, the head count with numbers on the right and a total. Safety is one tinted line with its mark (no incidents, not entered, or each incident); the Shift tab says it the same way.
 - **Done.** Detailed format checked on screen: empty hours one after another are one row ("12:00 PM to 5:00"), time and WO columns take only the width they need, good or bad lines are tinted callouts.
 - **Done.** The Word file's header has the key number big and "On site" with the other numbers.
+- **Done.** The email reads right when Outlook pastes it with "merge formatting" (sizes, colors and fonts dropped; bold, shading and lines kept): the shifts are labeled pieces, not one run-on line; the verdict sits in a shaded box; each section heading is a shaded band with its count beside it and the shift under it; the step tables are lists (task as a heading, each step its name in bold with its WO tag, who and when under it, the hours on the right); the causes are one line, not tiles. Both formats fit a 375 px phone. Checked by rendering the email as sent and as merged.
 - **Open (kept on purpose).** The plant's own shift table has no "Next shift" row; it is the plant's form, so it was left as is.
-- **Open.** On a phone the Detailed format's 8-column "Shift after" table is wider than the screen (474 px at 375); the required format fits.
 
 ## 4. Printed reports
 - **Done.** "Where the time went" sits right under the opening tiles of the close-out report.
@@ -74,7 +74,7 @@ Collected Nov 24, 2026 from the owner's review of the project pages and reports.
 ## Still open, in one list (checked Nov 24, 2026)
 - **Database steps not run yet** (checked read-only against the live database): the materials table itself (20261119; until it exists, material lines are kept in the project's settings and the daily reminders can't see them), its two owners (20261125), its verify-by date (20261126), and the subscription rule in the database (20261124; today the block is on screen and on the server only). All four, in order: `supabase/RUN_PENDING_2026-11-24.sql`.
 - Materials: the verify-by lead time is a default of 14 days, not the turnaround book's number (the book isn't in the app). Reminders go to the bell only, not email, and only to owners who are on the project.
-- Printed reports other than the shift update (work orders, close-out, phase report) haven't had the type-scale pass: the work-orders print still uses tiny uppercase headers. The shift update's Detailed format is wider than a phone screen (its 8-column "Shift after" table).
+- Printed reports other than the shift update (work orders, close-out, phase report) haven't had the type-scale pass: the work-orders print still uses tiny uppercase headers.
 - Of the six posts sent Nov 24, only DUr4dCgCLiA and the first slide of DY1Q6_CpsV8 could be opened here; the other four need an Instagram sign-in. Their ideas are not in yet.
 - Review slides: their charts haven't been checked for the "biggest bar fills the width" problem fixed on screen.
 - Close-out report: identical rows (the 8 "Completed at Redman") are not merged.

@@ -135,7 +135,9 @@ describe("put off, not behind: how each chain reads", () => {
     const blocks = behindWhyBlocks(w, f, 8);
     const table = blocks.find((b) => b.k === "table") as { rows: unknown[][] };
     expect(table.rows).toHaveLength(4);
-    expect(blocks.some((b) => b.k === "stats")).toBe(true);
+    // The causes in one line, not a row of tiles.
+    expect(blocks.some((b) => b.k === "stats")).toBe(false);
+    expect(blocks[1]).toEqual({ k: "note", text: "Late, critical path 4 h · On hold 3 h · Put off 10 h · Slower than plan 6 h" });
   });
   it("never says the work was done out of order", () => {
     expect(JSON.stringify(behindWhyBlocks(w, f, 8)) + whyTitle(w, f.hrs)).not.toMatch(/out of order/i);

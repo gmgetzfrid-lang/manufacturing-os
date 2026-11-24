@@ -266,14 +266,21 @@ export function behindWhyBlocks(why: BehindWhy, f: { DTs: (ms: number) => string
   const top = list.slice(0, max), rest = list.slice(max);
   return [
     { k: "label", text: whyTitle(why, f.hrs) },
-    { k: "stats", items: labelHours(why).map((x) => ({ label: x.short[0].toUpperCase() + x.short.slice(1), value: h(x.hours), tone: (x.flag ? "rose" : "slate") as Tone })) } as ExportBlock,
+    // The causes in one line ("Put off 13 h · Discovery 2 h"), not a row of
+    // tiles (rule N6); each chain below says its own.
+    { k: "note", text: labelHours(why).map((x) => `${x.short[0].toUpperCase() + x.short.slice(1)} ${h(x.hours)}`).join(" · ") } as ExportBlock,
     {
       k: "table", head: ["Holding it up", "Cause", "Work behind"], align: ["left", "left", "right"], textLabels: ["", "", "behind"], nowrap: [2],
+      // A list: what holds it up in bold, the facts under it, the hours and
+      // the cause on the right.
+      list: { title: 0, right: 2, under: [1] },
       rows: [
         ...top.map((ch) => {
           const t = chainText(ch, f);
           return [
-            { t: `${t.title} - ${t.state}`, bold: true, sub: [t.facts, t.waiting, t.split].filter((x): x is string => !!x).map((x) => ({ t: x })) },
+            // The state is in the facts ("Not started - nothing it waits on
+            // is open"), so the title is the step alone.
+            { t: t.facts ? t.title : `${t.title} - ${t.state}`, bold: true, sub: [t.facts, t.waiting, t.split].filter((x): x is string => !!x).map((x) => ({ t: x })) },
             { t: chainLabel(ch).short, tone: chainLabel(ch).flag ? "rose" as const : CAUSE_EXPORT_TONE[ch.cause] },
             { t: h(ch.hours), bold: true, tone: chainLabel(ch).flag ? "rose" as const : "slate" as const },
           ];
