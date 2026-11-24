@@ -52,6 +52,7 @@ import MaterialsRegister from "@/components/projects/MaterialsRegister";
 import EventOrganization from "@/components/projects/EventOrganization";
 import ProjectCoach from "@/components/projects/ProjectCoach";
 import ProjectNeeds from "@/components/projects/ProjectNeeds";
+import ScopeList from "@/components/projects/setup/ScopeList";
 import SetupHost from "@/components/projects/SetupHost";
 import { isWatching, watch, unwatch } from "@/lib/subscriptions";
 import { openProjectReport } from "@/lib/projectReport";
@@ -811,6 +812,10 @@ export default function ProjectDetailPage() {
         {/* The work is done: what's left to close, as one path. */}
         {tab === "plan" && closing && (
           <ClosePath close={close} standings={standings} when={when} />
+        )}
+        {/* The scope, as the work order list says it (components/projects/setup). */}
+        {tab === "plan" && project.id && (
+          <ScopeList projectId={project.id} canManage={!!canManage} noSchedule={!!noSchedule} actorEmail={userEmail ?? undefined} />
         )}
         {/* Everything this project asks for, from day one, each changed in
             place. With no schedule yet, importing it comes first (below). */}

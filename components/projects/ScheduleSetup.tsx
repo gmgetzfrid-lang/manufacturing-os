@@ -125,7 +125,10 @@ export function useSetupItems(p: Pick<Props, "projectId" | "timezone" | "milesto
   const rolesSet = useRolesSet(p.projectId);
   const items = useMemo(() => setupChecklist({
     timezoneSet: !!p.timezone, shiftTimesSaved: saved, criticalChosen: critical != null, hasBaseline: p.hasBaseline, nightDecided, letterheadSet, typeSet, equipmentSet, manpowerSet: mpSet, rolesSet,
-  }), [p.timezone, saved, critical, p.hasBaseline, nightDecided, letterheadSet, typeSet, equipmentSet, mpSet, rolesSet]);
+    // No schedule yet (a project started from its work order list): night
+    // shifts wait for it, so a new project doesn't open setup by itself.
+    scheduleIn: p.milestones ? p.milestones.length > 0 : undefined,
+  }), [p.timezone, saved, critical, p.hasBaseline, nightDecided, letterheadSet, typeSet, equipmentSet, mpSet, rolesSet, p.milestones]);
   return { items, critical };
 }
 

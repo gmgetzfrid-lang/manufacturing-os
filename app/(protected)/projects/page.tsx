@@ -33,7 +33,7 @@ import { listMilestones } from "@/lib/milestones";
 import { computeExecutionReport } from "@/lib/executionReport";
 import { projectDue, type ProjectDue } from "@/lib/projectPhases";
 import { dayKey } from "@/lib/scheduleTz";
-import ProjectWizard from "@/components/projects/ProjectWizard";
+import NewTurnaround from "@/components/projects/setup/NewTurnaround";
 import { exportAllProjectsToCsv } from "@/lib/projectExport";
 import StaleCheckoutBanner from "@/components/projects/StaleCheckoutBanner";
 import type { Project, ProjectStatus, Timestamp } from "@/types/schema";
@@ -362,14 +362,13 @@ export default function ProjectsPage() {
       </PageBody>
 
       {showCreate && activeOrgId && uid && (
-        <ProjectWizard
+        <NewTurnaround
           orgId={activeOrgId}
           actorUserId={uid}
           actorEmail={userEmail ?? undefined}
           actorRole={activeRole}
+          // It opens the new project itself.
           onClose={() => setShowCreate(false)}
-          // The wizard opens the new project itself.
-          onCreated={() => { setShowCreate(false); }}
         />
       )}
     </PageShell>

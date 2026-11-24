@@ -52,6 +52,9 @@ export function setupChecklist(s: {
   manpowerSet?: boolean | null;
   /** The event's roles saved, each required one with a person. null = still loading. */
   rolesSet?: boolean | null;
+  /** The project has a schedule. Without one, night shifts have nothing to
+   *  hand over, so they aren't asked for yet (false); undefined = as before. */
+  scheduleIn?: boolean;
 }): SetupItem[] {
   return [
     { id: "type", label: "Project type", required: false, extra: true, done: !!s.typeSet,
@@ -65,8 +68,8 @@ export function setupChecklist(s: {
     // Required: a schedule file puts work in night hours that nights may not
     // staff — the turnover would hand day work to nights. One choice settles
     // it ("follow the file" is a choice too).
-    { id: "night", label: "Night shifts", required: true, done: s.nightDecided === true, checking: s.nightDecided === null,
-      why: "Until it's set, every step the file put in night hours is handed to nights - even on jobs that only work days." },
+    { id: "night", label: "Night shifts", required: s.scheduleIn !== false, done: s.nightDecided === true, checking: s.nightDecided === null,
+      why: s.scheduleIn === false ? "Asked once the schedule is in: which jobs have a night crew." : "Until it's set, every step the file put in night hours is handed to nights - even on jobs that only work days." },
     { id: "critical", label: "Critical path source", required: false, done: s.criticalChosen,
       why: "Schedule files often mark nearly everything critical - choose where it comes from." },
     { id: "baseline", label: "Baseline", required: false, done: s.hasBaseline,

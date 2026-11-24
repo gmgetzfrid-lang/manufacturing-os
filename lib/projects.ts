@@ -96,7 +96,8 @@ export function rowToActivity(r: Record<string, unknown>): ProjectActivity {
 export type CreateProjectInput = {
   orgId: string;
   name: string;
-  description: string;            // required — a project without context is useless
+  /** Optional: the work order list says what the project is. */
+  description?: string;
   visibility?: ProjectVisibility;
   mocReference?: string;
   linkedTicketId?: string;
@@ -116,7 +117,6 @@ function isUnknownColumnError(message: string | undefined, column: string): bool
 
 export async function createProject(input: CreateProjectInput): Promise<Project> {
   if (!input.name.trim()) throw new Error("Project name is required");
-  if (!input.description?.trim()) throw new Error("Project description is required - explain what the team will be doing");
   const now = new Date().toISOString();
   const timezone = isValidTimeZone(input.timezone) && input.timezone !== DEFAULT_SCHEDULE_TZ ? input.timezone : null;
   const row: Record<string, unknown> = {
