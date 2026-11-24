@@ -200,8 +200,10 @@ export default function DocBrowserBody() {
     const buckets = dayBuckets(top?.newDates ?? [], 14);
     const wk = weekSplit(top?.newDates ?? []);
     const head = (
-      <div className="mb-3 flex items-end justify-between gap-4 shrink-0">
-        <span className="text-[14px] text-[var(--color-text-muted)]">
+      // On a phone the week's line goes under the count instead of off the
+      // edge.
+      <div className="mb-3 flex flex-wrap items-end justify-between gap-x-4 gap-y-1 shrink-0">
+        <span className="whitespace-nowrap text-[14px] text-[var(--color-text-muted)]">
           {/* Small: the page has its one large number already. */}
           <span className={`font-display text-section font-semibold tabular-nums ${(top?.totalDocs ?? 0) === 0 ? "text-[var(--color-text-faint)]" : "text-[var(--color-heading)]"}`}>{(top?.totalDocs ?? 0).toLocaleString()}</span> controlled documents
         </span>
