@@ -16,14 +16,14 @@
 import { Card } from "@/components/ui/PageHero";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { SubTabs } from "@/components/projects/SubTabs";
-import { ChevronRight, CircleAlert, Loader2, Plus, Trash2 } from "lucide-react";
+import { ChevronRight, CircleAlert, Loader2, Trash2 } from "lucide-react";
 import { phaseIndex, type ProjectPhase } from "@/lib/projectPhases";
 import type { Milestone } from "@/types/schema";
 import { supabase } from "@/lib/supabase";
 import { fetchAllRows } from "@/lib/fetchAllRows";
 import {
   OWNER_WORD, QUESTION_LIMIT_H, STATUSES, STATUS_WORD, ageWord, attention, blankMaterial, closed, deleteMaterial, late, listMaterials, nextStatus,
-  parseDay, pastedLines, questionAgeH, questionOpen, saveMaterial, specIncomplete, statusAllowed, summarize,
+  parseDay, pastedLines, questionAgeH, questionOpen, saveMaterial, specIncomplete, statusAllowed, summarize, verifyDate, VERIFY_LEAD_DAYS,
   type Material, type MaterialFields, type MaterialKind, type MaterialStatus, type NewLine, type SavedMaterial,
 } from "@/lib/materials";
 import { appConfirm } from "@/components/providers/DialogProvider";
@@ -33,6 +33,7 @@ import { InlineAddRow, type AddField, type AddResult } from "@/components/ui/Inl
 import { MoreDetails } from "@/components/ui/MoreDetails";
 import HelpTooltip from "@/components/ui/HelpTooltip";
 import { controlClass } from "@/components/ui/Field";
+import { listMembers } from "@/lib/projects";
 
 const btn = "ui-press inline-flex items-center justify-center gap-1.5 h-10 pointer-coarse:h-11 px-3.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] whitespace-nowrap disabled:opacity-50";
 const pri = "ui-press inline-flex items-center justify-center gap-1.5 h-10 pointer-coarse:h-11 px-3.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)] text-body font-medium whitespace-nowrap disabled:opacity-50";
@@ -50,6 +51,7 @@ const todayDay = () => { const d = new Date(); return `${d.getFullYear()}-${pad2
 const needWordOf = (k: MaterialKind) => (k === "offsite" ? "Needed back by" : "Need-by");
 const etaWordOf = (k: MaterialKind) => (k === "offsite" ? "Return date" : "ETA");
 const UPDATE_LINE = "Crew owners and “Used on the job” aren’t saved until the database update is applied (20261125_materials_two_owners.sql).";
+const VERIFY_LINE = "Verify-by dates picked on a line aren’t saved until the database update is applied (20261126_materials_verify_by.sql); until then each line works to its need-by date less " + VERIFY_LEAD_DAYS + " days.";
 
 type Filter = "all" | "attention" | "offsite" | "received";
 type Step = { id: string; name: string; parent_id: string | null; is_summary: boolean | null; cancelled_at?: string | null; attributes?: Record<string, unknown> | null };
@@ -102,7 +104,10 @@ export default function MaterialsRegister({ orgId, projectId, phases, canManage,
     listMaterials(projectId).then((r) => { setRows(r.rows); setCrewColumn(r.crewColumn); }).catch((e) => { setErr(sayError(e)); setRows((o) => o ?? []); });
   }, [projectId]);
   useEffect(() => { load(); }, [load]);
-  const saved = (s: SavedMaterial) => { if (s.heldBack.length) setHeldBack(true); };
+  const saved = (s: SavedMaterial) => {
+    if (s.heldBack.some((h) => h !== "verifyBy")) setHeldBack(true);
+    if (s.heldBack.includes("verifyBy")) setVerifyHeld(true);
+  };
 
   const scoped = useMemo(() => (rows ?? []).filter((r) => !phaseId || r.phaseId === phaseId), [rows, phaseId]);
   const sum = useMemo(() => summarize(scoped, now), [scoped, now]);
@@ -112,7 +117,16 @@ export default function MaterialsRegister({ orgId, projectId, phases, canManage,
     const order = (a: Material, b: Material) => Number(attention(b, now).length > 0) - Number(attention(a, now).length > 0) || (a.needBy ?? "9").localeCompare(b.needBy ?? "9") || a.item.localeCompare(b.item);
     return { open: pick.filter((r) => !closed(r.status)).sort(order), done: pick.filter((r) => closed(r.status)).sort(order) };
   }, [scoped, filter, now]);
-  const owners = useMemo(() => [...new Set((rows ?? []).flatMap((r) => [r.owner.trim(), r.crewOwner.trim()]).filter(Boolean))].sort(), [rows]);
+  // The project's people, to pick an owner from (no typing); a name already
+  // on a line stays a choice. Reminders reach an owner who is one of them.
+  const [people, setPeople] = useState<string[]>([]);
+  useEffect(() => {
+    let live = true;
+    listMembers(projectId).then((ms) => { if (live) setPeople([...new Set(ms.map((m) => (m.userName || m.userEmail || "").trim()).filter(Boolean))]); }).catch(() => { /* typed names still work */ });
+    return () => { live = false; };
+  }, [projectId]);
+  const owners = useMemo(() => [...new Set([...people, ...(rows ?? []).flatMap((r) => [r.owner.trim(), r.crewOwner.trim()]).filter(Boolean)])].sort((a, b) => a.localeCompare(b)), [rows, people]);
+  const [verifyHeld, setVerifyHeld] = useState(false);
 
   // ── Adding, like a spreadsheet ──
   const addOne = async (l: NewLine) => {
@@ -120,9 +134,16 @@ export default function MaterialsRegister({ orgId, projectId, phases, canManage,
   };
   const onAdd = async (v: Record<string, string>): Promise<string | undefined> => {
     const needBy = v.needBy ? parseDay(v.needBy, todayDay()) : null;
-    if (v.needBy && !needBy) return `Type the ${needWordOf(kind).toLowerCase()} as a date.`;
-    try { await addOne({ item: v.item, qty: v.qty, workOrder: v.workOrder, needBy }); }
-    catch (e) { return sayError(e); }
+    if (v.needBy && !needBy) return `Pick the ${needWordOf(kind).toLowerCase()} on the calendar.`;
+    const verifyBy = v.verifyBy ? parseDay(v.verifyBy, todayDay()) : null;
+    if (v.verifyBy && !verifyBy) return "Pick the verify-by date on the calendar.";
+    const wo = v.workOrder ?? "";
+    try {
+      saved(await saveMaterial({ orgId, projectId, actor: me, fields: {
+        ...blankMaterial(v.phase || phaseOf(wo) || phaseId), kind, item: v.item, spec: v.spec ?? "", qty: v.qty ?? "", workOrder: wo,
+        needBy, verifyBy, owner: v.owner ?? "", crewOwner: v.crewOwner ?? "",
+      } }));
+    } catch (e) { return sayError(e); }
     load();
     return undefined;
   };
@@ -268,11 +289,24 @@ export default function MaterialsRegister({ orgId, projectId, phases, canManage,
 
   // The add row's boxes: stacked on a phone, side by side from a small
   // tablet up (even widths), item widest from md up.
+  // What a line needs, picked rather than typed where it can be: the work
+  // order and owners from lists, dates on the calendar, the phase from the
+  // work order unless picked.
+  const pick = (none: string, xs: Array<{ value: string; label: string }>) => [{ value: "", label: none }, ...xs];
   const addFields: AddField[] = [
-    { key: "item", label: "Item", required: true, width: "w-full sm:min-w-0 md:flex-1" },
-    { key: "qty", label: "Qty", placeholder: "Qty", width: "w-full sm:min-w-0 md:w-28 md:shrink-0" },
-    { key: "workOrder", label: "Work order", list: workOrders, width: "w-full sm:min-w-0 md:w-36 md:shrink-0" },
+    { key: "item", label: "Item", required: true, width: "w-full sm:min-w-0 md:flex-1 md:min-w-[14rem]" },
+    { key: "spec", label: kind === "material" ? "Spec" : "What to do", placeholder: kind === "material" ? "Size, rating, material" : "Repair, test, calibrate", width: "w-full sm:min-w-0 md:w-56 md:shrink-0" },
+    { key: "qty", label: "Qty", placeholder: "Qty", width: "w-full sm:min-w-0 md:w-20 md:shrink-0" },
+    workOrders.length
+      ? { key: "workOrder", label: "Work order", type: "select", options: pick("None", workOrders.map((w) => ({ value: w, label: w }))), width: "w-full sm:min-w-0 md:w-56 md:shrink-0" }
+      : { key: "workOrder", label: "Work order", width: "w-full sm:min-w-0 md:w-40 md:shrink-0" },
+    ...(phases.length ? [{ key: "phase", label: "Phase", type: "select" as const, options: pick("From the work order", phases.map((p) => ({ value: p.id, label: p.name }))), width: "w-full sm:min-w-0 md:w-44 md:shrink-0" }] : []),
     { key: "needBy", label: needWordOf(kind), type: "date", width: "w-full sm:min-w-0 md:w-40 md:shrink-0" },
+    { key: "verifyBy", label: "Verify by", type: "date", width: "w-full sm:min-w-0 md:w-40 md:shrink-0" },
+    // From the project's people; with none listed yet, a name is typed.
+    ...(["owner", "crewOwner"] as const).map((k): AddField => (owners.length
+      ? { key: k, label: k === "owner" ? "Warehouse owner" : "Crew owner", type: "select", options: pick("Not set", owners.map((o) => ({ value: o, label: o }))), width: "w-full sm:min-w-0 md:w-48 md:shrink-0" }
+      : { key: k, label: k === "owner" ? "Warehouse owner" : "Crew owner", placeholder: "Name", width: "w-full sm:min-w-0 md:w-48 md:shrink-0" })),
   ];
 
   return (
@@ -302,6 +336,7 @@ export default function MaterialsRegister({ orgId, projectId, phases, canManage,
         )}
         {err && <div role="alert" className={`text-body font-medium ${red} flex items-start gap-1.5`}><CircleAlert aria-hidden className="w-4 h-4 shrink-0 mt-0.5" /><span>{err}</span></div>}
         {(heldBack || crewColumn === false) && <p role="status" className="text-body text-[var(--state-held-text)]">{UPDATE_LINE}</p>}
+        {verifyHeld && <p role="status" className="text-body text-[var(--state-held-text)]">{VERIFY_LINE}</p>}
       </div>
 
       {/* Filters only when there is something to filter (L5). */}
@@ -350,7 +385,10 @@ export default function MaterialsRegister({ orgId, projectId, phases, canManage,
             <h3 className={groupHead}>Add a line</h3>
             <KindSwitch value={kind} onChange={setKind} />
           </div>
-          <InlineAddRow fields={addFields} onAdd={onAdd} onPasteRows={onPasteRows} what="line" draftKey={`materials-add:${projectId}`} />
+          <InlineAddRow wrap fields={addFields} onAdd={onAdd} onPasteRows={onPasteRows} what="line" draftKey={`materials-add:${projectId}`} />
+          <p className="mt-1 text-caption text-[var(--color-text-muted)]">
+            Verify by: when it is to be in hand and checked. Left blank, it is the need-by date less {VERIFY_LEAD_DAYS} days, a default until your turnaround book&apos;s number is in. The warehouse owner gets a reminder in the app from 3 days before it until the line is checked.
+          </p>
         </div>
       )}
     </Card>
@@ -407,8 +445,12 @@ function LinePanel({ row, orgId, projectId, actor, phases, workOrders, owners, p
   const text = (k: "item" | "spec" | "specMissing" | "qty" | "owner" | "crewOwner" | "vendor" | "etaNote" | "question" | "answer" | "note", name: React.ReactNode, list?: string) => (
     <label className="block min-w-0"><span className={lab}>{name}</span><input list={list} value={f[k]} onChange={(e) => set({ [k]: e.target.value })} disabled={busy !== null} className={controlClass} /></label>
   );
-  const date = (k: "needBy" | "eta", name: string) => (
-    <label className="block min-w-0"><span className={lab}>{name}</span><input type="date" value={f[k] ?? ""} onChange={(e) => set(k === "needBy" ? { needBy: e.target.value || null } : { eta: e.target.value || null })} disabled={busy !== null} className={controlClass} /></label>
+  const date = (k: "needBy" | "eta" | "verifyBy", name: string, hint?: string) => (
+    <label className="block min-w-0"><span className={lab}>{name}</span><input type="date" value={f[k] ?? ""} placeholder={hint}
+      onClick={(e) => { try { (e.currentTarget as HTMLInputElement & { showPicker?: () => void }).showPicker?.(); } catch { /* the browser's own way */ } }}
+      onChange={(e) => set(k === "needBy" ? { needBy: e.target.value || null } : k === "verifyBy" ? { verifyBy: e.target.value || null } : { eta: e.target.value || null })} disabled={busy !== null} className={controlClass} />
+      {k === "verifyBy" && !f.verifyBy && verifyDate(f) && <span className="block mt-0.5 text-caption text-[var(--color-text-muted)]">{verifyDate(f)} from the need-by date</span>}
+    </label>
   );
   const folded = [f.question, f.answer, f.note].filter((x) => x.trim()).length;
   const changedAt = Number.isFinite(row.updatedAt) ? new Date(row.updatedAt).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : null;
@@ -457,6 +499,9 @@ function LinePanel({ row, orgId, projectId, actor, phases, workOrders, owners, p
           </label>
           {date("needBy", needWordOf(f.kind))}
           {date("eta", etaWordOf(f.kind))}
+        </div>
+        <div className="grid gap-3 sm:grid-cols-3">
+          {date("verifyBy", "Verify by")}
         </div>
         <div className="grid gap-3 sm:grid-cols-2">
           {text("vendor", f.kind === "material" ? "Supplier" : "Shop")}

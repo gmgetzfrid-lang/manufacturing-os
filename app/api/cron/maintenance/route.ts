@@ -35,6 +35,7 @@ import { scanEffectiveDates } from "@/lib/effectiveDate";
 import { scanRetention } from "@/lib/retention";
 import { scanAccessRecerts } from "@/lib/accessRecert";
 import { scanDistributionAcks } from "@/lib/distributionAcks";
+import { scanMaterialReminders } from "@/lib/materialReminders";
 import { syncAllKnowledgeSources } from "@/lib/knowledgeSourceSync";
 import { drainKnowledgeIngestQueue } from "@/lib/knowledgeIngest";
 import { drainEmbedBacklog } from "@/lib/knowledgeEmbedDrain";
@@ -174,6 +175,8 @@ async function handler(req: NextRequest) {
       ["retention", scanRetention],
       ["access-recert", scanAccessRecerts],
       ["distribution-acks", scanDistributionAcks],
+      // Materials to be in hand and checked: the warehouse owner's reminder.
+      ["material-verify", (orgId: string) => scanMaterialReminders(orgId)],
     ];
     for (const org of (orgRows as Array<{ id: string }>) ?? []) {
       result.complianceOrgs += 1;

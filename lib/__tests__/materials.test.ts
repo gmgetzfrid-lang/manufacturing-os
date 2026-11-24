@@ -5,7 +5,7 @@ import {
 } from "@/lib/materials";
 
 const now = Date.parse("2026-10-20T12:00:00Z");
-const row = (x: Partial<MaterialFields>): MaterialFields => ({ ...blankMaterial(null), item: "Flange", spec: "6 in 300# RF", owner: "Planner", crewOwner: "Crew lead", needBy: "2026-10-24", status: "ready", ...x });
+const row = (x: Partial<MaterialFields>): MaterialFields => ({ ...blankMaterial(null), item: "Flange", spec: "6 in 300# RF", owner: "Planner", crewOwner: "Crew lead", needBy: "2026-10-24", verifyBy: "2026-10-24", status: "ready", ...x });
 
 describe("materials register rules", () => {
   it("a specification with something missing can't be ordered", () => {

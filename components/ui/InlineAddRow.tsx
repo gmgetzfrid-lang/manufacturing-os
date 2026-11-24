@@ -20,7 +20,11 @@ export interface AddField {
    *  empty and no placeholder is given. */
   label: string;
   placeholder?: string;
-  type?: "text" | "date" | "number";
+  /** "select": a pick from `options` (no typing); "date": the calendar
+   *  opens on a click anywhere in the box. */
+  type?: "text" | "date" | "number" | "select";
+  /** The choices of a select; the first is what a blank box means. */
+  options?: Array<{ value: string; label: string }>;
   /** Tailwind width for the box on wide screens ("w-28", "flex-1"). */
   width?: string;
   /** Suggestions while typing (work orders, people, units). */
@@ -34,7 +38,9 @@ export interface AddField {
  *  header row"). */
 export type AddResult = void | string | { ok: boolean; text: string };
 
-export function InlineAddRow({ fields, onAdd, onPasteRows, addLabel = "Add", what = "line", disabled, disabledWhy, draftKey }: {
+export function InlineAddRow({ fields, onAdd, onPasteRows, addLabel = "Add", what = "line", disabled, disabledWhy, draftKey, wrap = false }: {
+  /** Many boxes: wrap onto more lines at every width, not one long row. */
+  wrap?: boolean;
   fields: AddField[];
   /** Save one line. Throw (or return a message) to keep the boxes as typed. */
   onAdd: (values: Record<string, string>) => Promise<AddResult>;
@@ -98,26 +104,39 @@ export function InlineAddRow({ fields, onAdd, onPasteRows, addLabel = "Add", wha
     <div>
       <form
         onSubmit={(e) => { e.preventDefault(); void add(); }}
-        className="flex flex-wrap sm:flex-nowrap items-end gap-2"
+        className={`flex flex-wrap ${wrap ? "gap-x-2 gap-y-3" : "sm:flex-nowrap gap-2"} items-end`}
         aria-label={`Add a ${what}`}
       >
         {fields.map((f, i) => (
           <label key={f.key} className={`flex flex-col gap-1 min-w-0 ${f.width ?? (i === 0 ? "flex-1 min-w-[12rem]" : "w-full sm:w-36")}`}>
             {/* The box's name stays in sight while typing (rule F2). */}
             <span className="text-body font-medium text-[var(--color-text-muted)] truncate">{f.label}{f.required ? "" : <span className="font-normal"> (optional)</span>}</span>
-            <input
-              ref={i === 0 ? first : undefined}
-              type={f.type === "number" ? "text" : f.type ?? "text"}
-              inputMode={f.inputMode ?? (f.type === "number" ? "decimal" : undefined)}
-              enterKeyHint={i === fields.length - 1 ? "done" : "next"}
-              list={f.list?.length ? `${id}-${f.key}` : undefined}
-              value={v[f.key] ?? ""}
-              placeholder={f.placeholder ?? f.label}
-              disabled={disabled || busy}
-              onChange={(e) => { setV((o) => ({ ...o, [f.key]: e.target.value })); if (note && !note.ok) setNote(null); }}
-              onPaste={i === 0 ? onPaste : undefined}
-              className={controlClass}
-            />
+            {f.type === "select" ? (
+              <select
+                value={v[f.key] ?? ""}
+                disabled={disabled || busy}
+                onChange={(e) => { setV((o) => ({ ...o, [f.key]: e.target.value })); if (note && !note.ok) setNote(null); }}
+                className={controlClass}
+              >
+                {(f.options ?? []).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
+            ) : (
+              <input
+                ref={i === 0 ? first : undefined}
+                type={f.type === "number" ? "text" : f.type ?? "text"}
+                inputMode={f.inputMode ?? (f.type === "number" ? "decimal" : undefined)}
+                enterKeyHint={i === fields.length - 1 ? "done" : "next"}
+                list={f.list?.length ? `${id}-${f.key}` : undefined}
+                value={v[f.key] ?? ""}
+                placeholder={f.placeholder ?? f.label}
+                disabled={disabled || busy}
+                onChange={(e) => { setV((o) => ({ ...o, [f.key]: e.target.value })); if (note && !note.ok) setNote(null); }}
+                onPaste={i === 0 ? onPaste : undefined}
+                // The calendar on a click anywhere in a date box, not only its icon.
+                onClick={f.type === "date" ? (e) => { try { (e.currentTarget as HTMLInputElement & { showPicker?: () => void }).showPicker?.(); } catch { /* the browser's own way */ } } : undefined}
+                className={controlClass}
+              />
+            )}
             {f.list?.length ? <datalist id={`${id}-${f.key}`}>{f.list.map((o) => <option key={o} value={o} />)}</datalist> : null}
           </label>
         ))}

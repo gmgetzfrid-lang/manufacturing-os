@@ -49,6 +49,10 @@ export interface MaterialFields {
   status: MaterialStatus;
   /** "YYYY-MM-DD". */
   needBy: string | null;
+  /** "YYYY-MM-DD": by when it is to be in hand and checked ("Received,
+   *  checked"), the warehouse owner's date; reminders go out as it nears
+   *  (column `verify_by`, 20261126_materials_verify_by.sql). */
+  verifyBy: string | null;
   eta: string | null;
   etaNote: string;
   question: string;
@@ -65,8 +69,27 @@ export interface Material extends MaterialFields {
 
 export const blankMaterial = (phaseId: string | null): MaterialFields => ({
   kind: "material", item: "", spec: "", specMissing: "", qty: "", workOrder: "", owner: "", crewOwner: "", vendor: "", status: "to_specify",
-  needBy: null, eta: null, etaNote: "", question: "", questionAt: null, questionBy: null, answer: "", note: "", phaseId,
+  needBy: null, verifyBy: null, eta: null, etaNote: "", question: "", questionAt: null, questionBy: null, answer: "", note: "", phaseId,
 });
+
+/** Days before the need-by date a line is to be in hand and checked, when
+ *  no verify-by date is set. A default until the turnaround book's own
+ *  number is put in (the book isn't in the app yet). */
+export const VERIFY_LEAD_DAYS = 14;
+/** The verify-by date a line works to: its own, else its need-by date less
+ *  VERIFY_LEAD_DAYS. */
+export function verifyDate(m: Pick<MaterialFields, "verifyBy" | "needBy">): string | null {
+  if (m.verifyBy) return m.verifyBy;
+  if (!m.needBy) return null;
+  const t = Date.parse(`${m.needBy}T12:00:00Z`) - VERIFY_LEAD_DAYS * 86_400_000;
+  return Number.isFinite(t) ? new Date(t).toISOString().slice(0, 10) : null;
+}
+/** Not yet in hand and checked, and its verify-by date has passed. */
+export function unverified(m: Pick<MaterialFields, "status" | "verifyBy" | "needBy">, now: number): boolean {
+  if (m.status === "checked" || closed(m.status)) return false;
+  const d = verifyDate(m);
+  return !!d && now > dayMs(d);
+}
 
 // ─── The rules ─────────────────────────────────────────────────────
 
@@ -121,6 +144,7 @@ export function attention(m: MaterialFields, now: number): string[] {
   if (age >= QUESTION_LIMIT_H) out.push(`Question open ${ageWord(age)}`);
   if (m.status === "short") out.push("Short or wrong");
   if (late(m, now)) out.push("Late against need-by");
+  else if (unverified(m, now)) out.push(`Not checked by ${verifyDate(m)}`);
   if (!m.owner.trim()) out.push("No warehouse owner");
   if (!m.crewOwner.trim()) out.push("No crew owner");
   if (!m.needBy && !arrived(m.status)) out.push("No need-by date");
@@ -208,7 +232,7 @@ const missingTable = (e: DbError | null | undefined) =>
 
 interface Row {
   id: string; org_id: string; project_id: string; phase_id: string | null; kind: string; item: string; spec: string | null; spec_missing: string | null;
-  qty: string | null; work_order: string | null; owner: string | null; crew_owner?: string | null; vendor: string | null; status: string; need_by: string | null; eta: string | null; eta_note: string | null;
+  qty: string | null; work_order: string | null; owner: string | null; crew_owner?: string | null; vendor: string | null; status: string; need_by: string | null; verify_by?: string | null; eta: string | null; eta_note: string | null;
   question: string | null; question_at: string | null; question_by: string | null; answer: string | null; note: string | null;
   created_by_name: string | null; created_at: string; updated_by_name: string | null; updated_at: string;
 }
@@ -217,7 +241,7 @@ export function materialFromRow(r: Row): Material {
     id: r.id, orgId: r.org_id, projectId: r.project_id, phaseId: r.phase_id, kind: r.kind === "offsite" ? "offsite" : "material",
     item: r.item ?? "", spec: r.spec ?? "", specMissing: r.spec_missing ?? "", qty: r.qty ?? "", workOrder: r.work_order ?? "", owner: r.owner ?? "", crewOwner: r.crew_owner ?? "", vendor: r.vendor ?? "",
     status: (STATUSES as string[]).includes(r.status) ? (r.status as MaterialStatus) : "to_specify",
-    needBy: r.need_by, eta: r.eta, etaNote: r.eta_note ?? "", question: r.question ?? "", questionAt: r.question_at ? Date.parse(r.question_at) : null, questionBy: r.question_by,
+    needBy: r.need_by, verifyBy: r.verify_by ?? null, eta: r.eta, etaNote: r.eta_note ?? "", question: r.question ?? "", questionAt: r.question_at ? Date.parse(r.question_at) : null, questionBy: r.question_by,
     answer: r.answer ?? "", note: r.note ?? "",
     createdByName: r.created_by_name, createdAt: Date.parse(r.created_at), updatedByName: r.updated_by_name, updatedAt: Date.parse(r.updated_at),
   };
@@ -267,7 +291,7 @@ const t = (s: string) => noEmDash(s.trim()) || null;
 /** What a save left out because the database is older than this code: the
  *  crew owner (no crew_owner column) and "Used on the job" (a status check
  *  without 'used'). Empty when everything was saved. */
-export type HeldBack = Array<"crewOwner" | "used">;
+export type HeldBack = Array<"crewOwner" | "used" | "verifyBy">;
 export interface SavedMaterial extends Material { heldBack: HeldBack }
 
 export async function saveMaterial(input: { id?: string; orgId: string; projectId: string; fields: MaterialFields; was?: MaterialFields | null; actor: { id: string | null; name: string | null } }): Promise<SavedMaterial> {
@@ -279,7 +303,7 @@ export async function saveMaterial(input: { id?: string; orgId: string; projectI
   const answered = f.answer.trim() && f.answer.trim() !== (input.was?.answer ?? "").trim();
   const row: Record<string, unknown> = {
     org_id: input.orgId, project_id: input.projectId, phase_id: f.phaseId, kind: f.kind, item: noEmDash(f.item.trim()), spec: t(f.spec), spec_missing: t(f.specMissing), qty: t(f.qty),
-    work_order: t(f.workOrder), owner: t(f.owner), crew_owner: t(f.crewOwner), vendor: t(f.vendor), status: f.status, need_by: f.needBy || null, eta: f.eta || null, eta_note: t(f.etaNote),
+    work_order: t(f.workOrder), owner: t(f.owner), crew_owner: t(f.crewOwner), vendor: t(f.vendor), status: f.status, need_by: f.needBy || null, verify_by: f.verifyBy || null, eta: f.eta || null, eta_note: t(f.etaNote),
     question: t(f.question), answer: t(f.answer), note: t(f.note), updated_by_name: input.actor.name, updated_at: now,
     ...(asked ? { question_at: now, question_by: input.actor.name } : !f.question.trim() ? { question_at: null, question_by: null } : {}),
     ...(answered ? { answered_at: now } : !f.answer.trim() ? { answered_at: null } : {}),
@@ -291,12 +315,17 @@ export async function saveMaterial(input: { id?: string; orgId: string; projectI
   // A database without 20261125 turns down the crew owner or "used": the
   // line is saved without them, and the caller says so.
   const heldBack: HeldBack = [];
-  for (let attempt = 0; attempt < 3; attempt++) {
+  for (let attempt = 0; attempt < 4; attempt++) {
     const q = input.id
       ? supabase.from("project_materials").update(row).eq("id", input.id).select("*").single()
       : supabase.from("project_materials").insert({ ...row, created_by: input.actor.id, created_by_name: input.actor.name }).select("*").single();
     const { data, error } = await q;
     if (!error) return { ...materialFromRow(data as Row), heldBack };
+    if ("verify_by" in row && /verify_by/i.test(words(error)) && (error.code === "PGRST204" || error.code === "42703" || /column/i.test(words(error)))) {
+      delete row.verify_by;
+      if (f.verifyBy) heldBack.push("verifyBy");
+      continue;
+    }
     if ("crew_owner" in row && noCrewColumn(error)) {
       delete row.crew_owner;
       if (f.crewOwner.trim()) heldBack.push("crewOwner");
