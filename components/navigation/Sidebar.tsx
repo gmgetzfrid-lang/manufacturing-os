@@ -50,7 +50,6 @@ import { useTicketNotifications } from '@/hooks/useTicketNotifications';
 import { useNotificationCenter } from '@/components/notifications/NotificationCenter';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import LogoUploadModal from '@/components/branding/LogoUploadModal';
-import { AppMark } from '@/components/brand/AppMark';
 import UserAvatar from '@/components/ui/UserAvatar';
 import { badgeText } from '@/lib/badge';
 import { onTransitionClick } from '@/lib/viewTransition';
@@ -320,9 +319,7 @@ export default function Sidebar({
             aria-label="Expand sidebar"
             className="group relative w-10 h-10 rounded-lg flex items-center justify-center text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface)] transition-colors"
           >
-            {/* The product's mark; the arrow shows on hover and focus. */}
-            {!logoUrl && <AppMark size={28} ring className="transition-opacity group-hover:opacity-0 group-focus-visible:opacity-0" />}
-            <ChevronRight className={`ui-chevron w-5 h-5 group-hover:translate-x-0.5 ${logoUrl ? '' : 'absolute opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100'}`} />
+            <ChevronRight className="ui-chevron w-5 h-5 group-hover:translate-x-0.5" />
           </button>
         ) : (
           <>
@@ -336,11 +333,8 @@ export default function Sidebar({
                 </span>
               </div>
             ) : (
-              <>
-                {/* The product's mark (the same as the home-screen icon). */}
-                <AppMark size={32} ring />
-                <div className="flex-1 min-w-0 font-display text-[18px] font-semibold text-[var(--color-text)] leading-none truncate">Manufacturing OS</div>
-              </>
+              // No logo uploaded yet: the product's name (it has no mark).
+              <div className="flex-1 min-w-0 font-display text-[18px] font-semibold text-[var(--color-text)] leading-none truncate">Manufacturing OS</div>
             )}
             <button
               onClick={() => (isMobile ? onMobileClose?.() : setRailCollapsed((v) => !v))}

@@ -25,6 +25,7 @@ import { Button } from "@/components/ui/Button";
 import CopyId from "@/components/ui/CopyId";
 import { SkeletonRows } from "@/components/ui/Skeleton";
 import { PublicBar } from "@/components/marketing/PublicChrome";
+import { useSender } from "@/components/brand/WorkspaceLogo";
 import type { ResolvedShare, ResolvedShareItem } from "@/lib/documentShares";
 
 import { friendlyError } from "@/lib/friendlyError";
@@ -58,6 +59,7 @@ export default function SharePage() {
   const { token } = useParams<{ token: string }>();
   const [state, setState] = useState<State>("loading");
   const [data, setData] = useState<ResolvedShare | null>(null);
+  useSender(data, state !== "loading");
   const [codeError, setCodeError] = useState<string | null>(null);
   const [checking, setChecking] = useState(false);
   // Each wrong code starts the boxes over, empty.

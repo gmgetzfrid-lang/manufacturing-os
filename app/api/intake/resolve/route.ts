@@ -8,6 +8,7 @@
 // explain instead of 404ing.
 
 import { NextRequest, NextResponse } from "next/server";
+import { logoLinkFor } from "@/lib/brandServer";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
 export const runtime = "nodejs";
@@ -45,6 +46,7 @@ export async function GET(req: NextRequest) {
     .from("projects").select("name").eq("id", link.project_id as string).maybeSingle();
   const { data: org } = await supabaseAdmin
     .from("orgs").select("name").eq("id", link.org_id as string).maybeSingle();
+  const orgLogo = await logoLinkFor(link.org_id as string);
 
   // Link purpose, fetched tolerantly — the column arrives with 20261013 and
   // a pre-migration deployment must keep serving document links unchanged.
@@ -72,6 +74,7 @@ export async function GET(req: NextRequest) {
       rfqGroup,
       projectName: (project?.name as string | null) ?? "Project",
       orgName: (org?.name as string | null) ?? null,
+      orgLogo,
       companyName: link.company_name,
       allowAutoSupersede: false,
       items: [],
@@ -160,6 +163,7 @@ export async function GET(req: NextRequest) {
     purpose: "documents",
     projectName: (project?.name as string | null) ?? "Project",
     orgName: (org?.name as string | null) ?? null,
+    orgLogo,
     companyName: link.company_name,
     allowAutoSupersede: !!link.allow_auto_supersede,
     items,

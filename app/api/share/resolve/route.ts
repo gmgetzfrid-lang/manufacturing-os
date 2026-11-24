@@ -10,6 +10,7 @@
 // come from /api/share/file, which stamps them and records each one served.
 
 import { NextRequest, NextResponse } from "next/server";
+import { logoLinkFor } from "@/lib/brandServer";
 import { createClient } from "@supabase/supabase-js";
 import {
   SHARE_TOKEN_RE, fileKind, gateShare, loadShareByToken, resolveIssuedFile, shareItems,
@@ -71,6 +72,7 @@ export async function GET(req: NextRequest) {
 
   const body: ResolvedShare = {
     orgName: (org as { name?: string | null } | null)?.name ?? null,
+    orgLogo: await logoLinkFor(share.org_id),
     senderName: share.created_by_name ?? null,
     recipient: share.recipient ?? share.note ?? null,
     expiresAt: share.expires_at,

@@ -36,14 +36,14 @@
 // v5: stop inventing 504s — see the honesty rule below. v6: prefetches
 // are never intercepted. v7: nor is the manifest. v8: nor are sent links,
 // and copies cached from them before are dropped).
-const VERSION = "mfgos-v8";
+const VERSION = "mfgos-v9";
 const SHELL_CACHE = `${VERSION}-shell`;
 const RUNTIME_CACHE = `${VERSION}-runtime`;
 
 // Not the manifest: the browser fetches it itself (with the sign-in a
 // protected preview deployment needs). Fetched from here it was redirected
 // to Vercel's sign-in page and surfaced as "503 (Offline)" in the console.
-const SHELL_ASSETS = ["/", "/offline", "/icon.svg"];
+const SHELL_ASSETS = ["/", "/offline"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -252,8 +252,8 @@ self.addEventListener("push", (event) => {
   const title = data.title || "Manufacturing OS";
   const options = {
     body: data.body || "",
-    icon: "/icon-192.png",
-    badge: "/icon-192.png",
+    // The workspace's logo (this device's, from its sign-in cookie).
+    icon: "/api/brand/icon?s=192",
     tag: data.tag || "mfgos-reminder",
     renotify: true,
     data: { url: data.url || "/" },

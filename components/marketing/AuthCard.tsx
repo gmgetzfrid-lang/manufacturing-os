@@ -5,14 +5,14 @@
 // and what's inside, all things the app does, over a fragment of a P&ID in
 // fine lines (the plant the app holds the drawings of), with a glimpse of
 // the app's own Home answer; the form sits on the right, on the page. On a
-// phone the panel becomes a short band above the form, the mark and one
+// phone the panel becomes a short band above the form, the logo and one
 // line beside a slice of the same drawing; the form itself is the same.
 // The form: the page's title above it, the fields on one white sheet, one
 // filled button.
 
 import React from "react";
 import Link from "next/link";
-import { Logo } from "./PublicChrome";
+import { DeviceWorkspaceLogo } from "@/components/brand/WorkspaceLogo";
 import { PlantLineArt } from "./PlantLineArt";
 
 /** What the app holds, said plainly (each one is a real part of it). */
@@ -65,7 +65,8 @@ export function AuthCard({ title, sub, children, footer, wide = false }: {
           className="lg:hidden absolute -z-10 right-0 top-0 h-full w-[72%] text-[var(--color-accent-text)] [mask-image:linear-gradient(to_right,transparent,black_60%)]" />
         <PlantLineArt preserveAspectRatio="xMaxYMax slice"
           className="max-lg:hidden absolute -z-10 right-0 bottom-0 w-[118%] h-[60%] text-[var(--color-accent-text)] [mask-image:linear-gradient(to_bottom,transparent,black_38%)]" />
-        <Link href="/about" aria-label="About Manufacturing OS" className="self-start rounded-lg"><Logo /></Link>
+        {/* The workspace's own logo (this device's, after its first sign-in). */}
+        <div className="self-start"><DeviceWorkspaceLogo /></div>
         <p className="lg:hidden mt-3 max-w-[62%] text-[14px] leading-snug text-[var(--color-text-muted)]">Your site&apos;s drawings, equipment and work, in one place.</p>
         <div className="max-lg:hidden mt-[9vh] max-w-[30rem]">
           <p className="font-display text-title font-semibold text-[var(--color-text)]">Your site&apos;s drawings, equipment and work, in one place.</p>

@@ -54,6 +54,8 @@ export interface ResolvedShareItem {
 }
 export interface ResolvedShare {
   orgName: string | null;
+  /** The sending workspace's logo link (/api/brand/logo), when it has one. */
+  orgLogo?: string | null;
   senderName: string | null;
   recipient: string | null;
   expiresAt: string | null;

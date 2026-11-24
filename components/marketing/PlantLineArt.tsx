@@ -1,15 +1,13 @@
 // A fragment of a P&ID, drawn in fine lines for the front door's brand
 // side: a column with its trays, a reflux drum, a shell-and-tube
-// exchanger, a pump, the control valve from the app mark, instrument
+// exchanger, a pump, a control valve, instrument
 // bubbles with their tags, signal lines, flow arrows, a drafting grid and
 // a corner of the title block. It is decoration (aria-hidden), drawn in
-// currentColor at low strength so the form beside it stays the focus; the
-// valve's actuator keeps the mark's warm accent, faintly.
+// currentColor at low strength so the form beside it stays the focus.
 
 "use client";
 
 import React, { useId } from "react";
-import { MARK_ACCENT } from "@/components/brand/AppMark";
 
 /** An instrument bubble: a circle, the line through it (in the control
  *  room), the letters above and the loop number below. */
@@ -79,10 +77,10 @@ export function PlantLineArt({ className = "", style, preserveAspectRatio = "xMa
         <path d="M150 156v44h80" />
         <path d="M262 200h130" />
         <Arrow x={360} y={200} dir="r" />
-        {/* The control valve (the app mark): bowtie, stem, actuator. */}
+        {/* The control valve: bowtie, stem, actuator. */}
         <path d="M230 190l16 10-16 10zM262 190l-16 10 16 10z" className="pla-fill" />
         <path d="M246 200v-22" />
-        <path d="M232 178a14 14 0 0 1 28 0z" fill={MARK_ACCENT} stroke="none" opacity=".75" />
+        <path d="M232 178a14 14 0 0 1 28 0z" className="pla-fill" />
         {/* Level loop on the column, its signal to the valve. */}
         <Bubble x={520} y={150} tag="LT" n="101" />
         <path d="M468 150h33" strokeDasharray="2 4" />

@@ -10,6 +10,7 @@
 //   POST { token, name, note? }  → recipient-side acknowledgment
 
 import { NextRequest, NextResponse } from "next/server";
+import { logoLinkFor } from "@/lib/brandServer";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
@@ -90,6 +91,7 @@ export async function GET(req: NextRequest) {
     status: t.status,
     notes: t.notes,
     orgName: (org?.name as string | null) ?? null,
+    orgLogo: await logoLinkFor(t.org_id as string),
     fromName: t.created_by_name,
     issuedAt: t.issued_at,
     acknowledgedAt: t.acknowledged_at,

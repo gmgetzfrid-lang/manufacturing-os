@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { PageHero, PageBody, Card, heroQuiet } from "@/components/ui/PageHero";
 import { PublicBar } from "@/components/marketing/PublicChrome";
+import { useSender } from "@/components/brand/WorkspaceLogo";
 import { Button } from "@/components/ui/Button";
 import { SkeletonText } from "@/components/ui/Skeleton";
 import { StatusTag } from "@/components/requests/RequestBits";
@@ -69,7 +70,7 @@ interface SubmittedQuote {
   submittedAt: string | null;
 }
 interface Resolved {
-  projectName: string; orgName: string | null; companyName: string;
+  projectName: string; orgName: string | null; orgLogo?: string | null; companyName: string;
   allowAutoSupersede: boolean; items: IntakeItem[];
   redlineRequests?: RedlineRequest[];
   /** 'quote' links submit prices, not drawings — the portal reshapes. */
@@ -109,6 +110,7 @@ export default function IntakePortal({ params }: { params: Promise<{ token: stri
   const { token } = React.use(params);
   const [state, setState] = useState<"loading" | "ok" | "revoked" | "expired" | "notfound" | "error">("loading");
   const [data, setData] = useState<Resolved | null>(null);
+  useSender(data, state !== "loading");
   const [msg, setMsg] = useState<{ tone: "ok" | "err"; text: string } | null>(null);
 
   // Submission form

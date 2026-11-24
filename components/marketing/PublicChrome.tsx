@@ -1,27 +1,25 @@
 // The public pages' top bar and footer, in the brand's deep shade: the
-// product mark, the sections of /about, and the two ways in.
+// product's name, the sections of /about, and the two ways in.
 
 import Link from "next/link";
 import { btnQuiet } from "@/components/admin/kit";
-import { AppLogo, AppMark } from "@/components/brand/AppMark";
+import { SenderLogo, Wordmark } from "@/components/brand/WorkspaceLogo";
 
 const wrap = "max-w-[1200px] mx-auto px-4 sm:px-6";
 
-/** The product's mark and name (the same mark as the home-screen icon).
- *  These pages sit on the deep brand shade, so the tile gets its hairline. */
+/** The product's name (it has no mark; a workspace shows its own logo). */
 export function Logo() {
-  return <AppLogo ring />;
+  return <Wordmark />;
 }
 
 /** The slim bar on a page someone opens from outside the company (a
- *  shared link, a transmittal, an upload link): the product's mark and
- *  name on the white top bar, the same as inside the app. */
+ *  shared link, a transmittal, an upload link): the sending company's
+ *  logo (its name when it has none) on the white top bar. The page says
+ *  who sent it with useSender. */
 export function PublicBar() {
   return (
     <header className="sticky top-0 z-30 bg-[var(--color-surface)] border-b border-[var(--color-border)]">
-      <div className="h-14 px-4 sm:px-6 flex items-center">
-        <AppLogo size={28} nameClass="text-[17px]" />
-      </div>
+      <div className="h-14 px-4 sm:px-6 flex items-center"><SenderLogo /></div>
     </header>
   );
 }
@@ -30,9 +28,7 @@ export function PublicBar() {
  *  in the field), white on the verdict's color. */
 export function PublicSignature() {
   return (
-    <p className="mt-10 inline-flex items-center gap-2 font-display text-[15px] font-semibold text-white">
-      <AppMark size={22} ring /> Manufacturing OS
-    </p>
+    <p className="mt-10 font-display text-[15px] font-semibold text-white">Manufacturing OS</p>
   );
 }
 

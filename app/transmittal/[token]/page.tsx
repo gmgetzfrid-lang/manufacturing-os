@@ -11,6 +11,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import { FileText, CheckCircle2, Download } from "lucide-react";
 import { PageHero, PageBody, Card } from "@/components/ui/PageHero";
 import { PublicBar } from "@/components/marketing/PublicChrome";
+import { useSender } from "@/components/brand/WorkspaceLogo";
 import { Button } from "@/components/ui/Button";
 import CopyId from "@/components/ui/CopyId";
 import ErrorNote from "@/components/ui/ErrorNote";
@@ -27,7 +28,7 @@ function when(iso: string, time = false): string {
   return time ? `${day}, ${d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}` : day;
 }
 
-// The page frame: the product's bar, the header with the answer, the cards
+// The page frame: the sender's bar, the header with the answer, the cards
 // under it. Kept
 // outside the page component so typing in the receipt form doesn't remount
 // everything (and drop the cursor) on each key.
@@ -48,7 +49,7 @@ function Shell({ kicker, title, sub, children }: { kicker: React.ReactNode; titl
 interface PortalItem { documentId: string; number: string; title: string | null; rev: string | null }
 interface PortalData {
   number: string; subject: string | null; purpose: string | null; status: string;
-  notes: string | null; orgName: string | null; fromName: string | null;
+  notes: string | null; orgName: string | null; orgLogo?: string | null; fromName: string | null;
   issuedAt: string | null; acknowledgedAt: string | null; acknowledgedByName: string | null;
   recipientName: string | null; recipientCompany: string | null;
   items: PortalItem[];
@@ -58,6 +59,7 @@ export default function TransmittalPortal({ params }: { params: Promise<{ token:
   const { token } = React.use(params);
   const [state, setState] = useState<"loading" | "ok" | "voided" | "notfound" | "error">("loading");
   const [data, setData] = useState<PortalData | null>(null);
+  useSender(data, state !== "loading");
   const [msg, setMsg] = useState<{ tone: "ok" | "err"; text: string } | null>(null);
   const [ackName, setAckName] = useState("");
   const [ackNote, setAckNote] = useState("");

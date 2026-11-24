@@ -52,6 +52,14 @@ export function OrgBrandingProvider({ children }: { children: React.ReactNode })
 
   useEffect(() => { void load(); }, [load]);
 
+  // This device signs in to this workspace: the sign-in page, the tab icon
+  // and the home-screen icon show its logo (read by /api/brand/*).
+  useEffect(() => {
+    if (!activeOrgId) return;
+    const secure = location.protocol === "https:" ? "; Secure" : "";
+    document.cookie = `mos_ws=${activeOrgId}; Path=/; Max-Age=31536000; SameSite=Lax${secure}`;
+  }, [activeOrgId]);
+
   const save = useCallback(async (b: OrgBranding) => {
     if (!activeOrgId) return;
     await saveOrgBranding(activeOrgId, b);
