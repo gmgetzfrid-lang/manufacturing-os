@@ -22,7 +22,7 @@ Collected Nov 24, 2026 from the owner's review of the project pages and reports.
 - Phone: the round account button floats over report text (rule T4).
 
 ## 3. Shift email and printout (what management reads)
-- Order: status sentence, done, next shift, problems and follow-ups, safety, people. Today the 40 attendee names fill the first screen; put a one-line head count up top in the form "<n> on site: <crew> <n>, <crew> <n>..." and the names at the end.
+- Order: status sentence, done, next shift, problems and follow-ups, safety, people. Today the attendee list (32 names on the Nov 19 day shift) fills the first screen; put a one-line head count up top in the form "<n> on site: <crew> <n>, <crew> <n>..." and the names at the end.
 - 21 checkboxes to set before each send: save the choice per project, one "Sections" link to change it.
 - Short labels ("Done", "Next shift"); times go in the row.
 - One status sentence with the key number, smaller tiles; drop bars that repeat 100%.
