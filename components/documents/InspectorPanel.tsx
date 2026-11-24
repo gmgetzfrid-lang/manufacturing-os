@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { Search, Pencil, History, ArrowRight, Lock, Trash2, Maximize2, Shield, Layers, LogIn, LogOut, FileText, User, Calendar, ArrowUpFromLine, Archive, ArchiveRestore, Send, GitBranch, GitCompare, Wrench, Check, Package, ChevronRight, Tag, Users, ClipboardCheck, Hand, StickyNote } from "lucide-react";
+import { ArrowDownToLine, Search, Pencil, History, ArrowRight, Lock, Trash2, Maximize2, Shield, Layers, LogIn, LogOut, FileText, User, Calendar, ArrowUpFromLine, Archive, ArchiveRestore, Send, GitBranch, GitCompare, Wrench, Check, Package, ChevronRight, Tag, Users, ClipboardCheck, Hand, StickyNote } from "lucide-react";
 import NextLink from "next/link";
 import SecureDocViewer from "@/components/viewers/SecureDocViewer";
 import CheckoutStatusCell from "@/components/documents/CheckoutStatusCell";
@@ -49,6 +49,11 @@ import type { DocumentRecord, DocumentVersion, LibraryCustomColumn } from "@/typ
 import { AuditEntry } from "@/lib/audit";
 
 import { friendlyError } from "@/lib/friendlyError";
+import DocAsk from "@/components/documents/DocAsk";
+import type { Ask } from "@/lib/asks";
+import { shownRevision, uploadedName } from "@/lib/revisionShown";
+import { previewKind } from "@/lib/filePreview";
+import { downloadStoredFile } from "@/lib/fileDownload";
 interface InspectorPanelProps {
   selectedDoc: DocumentRecord | null;
   selectedVersion: DocumentVersion | null;
@@ -87,6 +92,12 @@ interface InspectorPanelProps {
   // tag-photo strip directly so users don't have to open Metadata Editor.
   orgId?: string;
   customColumns?: LibraryCustomColumn[];
+  /** What the person was sent here to do (from a notification, the Inbox
+   *  or Home): a "Needed from you" box at the top says it and gives the
+   *  buttons. Absent, the panel is as it always was. */
+  ask?: Ask | null;
+  /** The notification that brought them, when one did. */
+  askNotificationId?: string | null;
 }
 
 function formatBytes(bytes?: number): string {
@@ -149,6 +160,8 @@ export default function InspectorPanel({
   onOpenVersion,
   orgId,
   customColumns,
+  ask = null,
+  askNotificationId = null,
 }: InspectorPanelProps) {
   const canManageAssets = activeRole === 'Admin' || activeRole === 'Manager' || activeRole === 'Supervisor'
     || (activeRole?.includes('Engineer') ?? false) || activeRole === 'Drafter' || activeRole === 'DocCtrl';
@@ -370,9 +383,52 @@ export default function InspectorPanel({
     .flatMap((g) => g.tags.map((t) => ({ tag: t, label: g.label, referenceKind: g.referenceKind })));
   const allTags = allTagsFor === (selectedDoc.id ?? "");
   const shownTags = allTags ? tags : tags.slice(0, 4);
+  // The revision as stored, unless it is a guess the old file-name reader
+  // made from a word ("Response" read as Rev "esponse"): then none is set.
+  const fileName = uploadedName(selectedDoc);
+  const revShown = shownRevision(selectedDoc.rev, fileName);
+  const versionRev = shownRevision(selectedVersion?.revisionLabel, fileName);
+  // Only PDFs and pictures preview; anything else is a file card with an
+  // explicit Download (a Word file in a frame downloads on its own).
+  const preview = selectedVersion?.fileUrl ? previewKind({ fileName, mime: selectedVersion.fileType, path: selectedVersion.fileUrl }) : "none";
+  const canPreview = !!selectedVersion?.fileUrl && preview !== "none";
+  const downloadFile = async () => {
+    if (!selectedVersion?.fileUrl) return;
+    try {
+      await downloadStoredFile(selectedVersion.fileUrl, fileName || title);
+      if (selectedDoc.id && selectedDoc.orgId && uid) {
+        const { logFileDownload } = await import("@/lib/audit");
+        void logFileDownload({ orgId: selectedDoc.orgId, fileId: selectedDoc.id, fileName: fileName || title, userId: uid, userEmail: userEmail || "unknown", userRole: activeRole, version: versionRev ?? undefined }).catch(() => {});
+      }
+    } catch (e) {
+      await appAlert({ message: `The download didn't start. ${friendlyError(e)}`, tone: "danger" });
+    }
+  };
+  // With a "Needed from you" box on top, its button is the panel's one
+  // primary; Open steps down to a quiet button.
+  const askOn = !!ask && !!selectedDoc.id && !!orgId;
 
   return (
     <div className="space-y-5 animate-in fade-in slide-in-from-right-4 duration-300">
+
+      {/* NEEDED FROM YOU: what the person was sent here to do, first. */}
+      {askOn && ask && (
+        <DocAsk
+          key={`${selectedDoc.id}:${ask}`}
+          ask={ask}
+          notificationId={askNotificationId}
+          doc={selectedDoc}
+          version={selectedVersion}
+          orgId={orgId!}
+          uid={uid}
+          userEmail={userEmail}
+          activeRole={activeRole}
+          canManage={canPublishEff}
+          canOpen={canPreview}
+          onOpen={onFullScreen}
+          onCheckout={onCheckout}
+        />
+      )}
 
       {/* HEADER: the drawing number (click to copy), its title, then its
           facts in one quiet row (rev, status, who has it, sheet) and what
@@ -390,7 +446,7 @@ export default function InspectorPanel({
           <div className="min-w-0">
             <dt className="text-[13px] text-[var(--color-text-muted)]">Rev</dt>
             <dd className="mt-0.5 text-[20px] leading-tight">
-              {selectedDoc.rev ? <CopyId value={selectedDoc.rev} label="revision" /> : <span className="text-[var(--color-text-faint)]">-</span>}
+              {revShown ? <CopyId value={revShown} label="revision" /> : <span className="text-[16px] text-[var(--color-text-muted)]">No revision set</span>}
             </dd>
           </div>
           <div className="min-w-0">
@@ -422,10 +478,10 @@ export default function InspectorPanel({
           const by = (selectedVersion?.createdByName || "").split("@")[0];
           const when = selectedVersion?.releasedAt ?? selectedVersion?.createdAt ?? selectedDoc.updatedAt;
           const verb = selectedDoc.status === "Draft" ? "uploaded" : "issued";
-          const rev = selectedVersion?.revisionLabel ?? selectedDoc.rev;
+          const rev = versionRev ?? revShown;
           return (
             <p className="mt-3 text-[14px] text-[var(--color-text-muted)]">
-              {rev ? <>Rev <span className="ui-id text-[var(--color-text)]">{rev}</span> {verb}</> : "Updated"}
+              {rev ? <>Rev <span className="ui-id text-[var(--color-text)]">{rev}</span> {verb}</> : verb === "issued" ? "Issued" : "Uploaded"}
               {by ? <> by <span className="text-[var(--color-text)]">{by}</span></> : null}
               {when ? <>, {whenText(when)}</> : null}
               {isCheckedOut && selectedDoc.checkedOutAt ? <>. Checked out {checkedOutByMe ? "by you" : `by ${selectedDoc.checkedOutByName || "someone"}`} {whenText(selectedDoc.checkedOutAt)}</> : null}
@@ -500,8 +556,13 @@ export default function InspectorPanel({
         const canPub = !!(canPublishEff && onRevUp);
         const pubLocked = selectedDoc.status === "Archived" || (isCheckedOut && !checkedOutByMe);
         const publishMain = canPub && checkedOutByMe && !pubLocked;
-        const main = `${heroPrimary} disabled:cursor-not-allowed`;
         const quiet = `${heroQuiet} !h-10 disabled:cursor-not-allowed`;
+        const main = askOn ? quiet : `${heroPrimary} disabled:cursor-not-allowed`;
+        // Open shows the file full size; a file that can't be shown
+        // downloads instead, and only on this press.
+        const openBtn = (cls: string) => canPreview || !selectedVersion?.fileUrl
+          ? <button onClick={onFullScreen} disabled={!selectedVersion?.fileUrl} className={cls}><Maximize2 className="w-4 h-4" /> Open</button>
+          : <button onClick={() => void downloadFile()} className={cls} title="This file type can't be shown here: it downloads"><ArrowDownToLine className="w-4 h-4" /> Download</button>;
         const publish = (cls: string) => (
           <button onClick={onRevUp} disabled={pubLocked} className={cls}
             title={isCheckedOut && !checkedOutByMe ? `Locked: ${selectedDoc.checkedOutByName || "another user"} has this checked out. Publishing over their work is blocked: coordinate or ask them to check in.` : "Publish a new revision"}>
@@ -510,14 +571,8 @@ export default function InspectorPanel({
         );
         return (
           <div className="flex flex-wrap items-center gap-2">
-            {publishMain ? publish(main) : (
-              <button onClick={onFullScreen} disabled={!selectedVersion?.fileUrl} className={main}>
-                <Maximize2 className="w-4 h-4" /> Open
-              </button>
-            )}
-            {publishMain && (
-              <button onClick={onFullScreen} disabled={!selectedVersion?.fileUrl} className={quiet}><Maximize2 className="w-4 h-4" /> Open</button>
-            )}
+            {publishMain ? publish(main) : openBtn(main)}
+            {publishMain && openBtn(quiet)}
             <button onClick={() => onCheckout(selectedDoc)} className={quiet}
               title={checkedOutByMe ? "You have it checked out" : isCheckedOut ? `Checked out by ${selectedDoc.checkedOutByName || "someone else"}` : "Check out"}>
               {checkedOutByMe ? <LogOut className="w-4 h-4" /> : <LogIn className="w-4 h-4" />}
@@ -565,23 +620,27 @@ export default function InspectorPanel({
 
       {/* PREVIEW ────────────────────────────────────────────────────── */}
       {selectedVersion?.fileUrl ? (
-        <div className="relative group rounded-lg overflow-hidden h-[40vh] min-h-72 bg-[var(--color-ink)]">
+        <div className={`relative group rounded-lg overflow-hidden ${canPreview ? "h-[40vh] min-h-72" : "h-64"} bg-[var(--color-ink)]`}>
           <SecureDocViewer
             url={selectedVersion.fileUrl}
             title={title}
             docNumber={selectedDoc.documentNumber || selectedDoc.id || ""}
-            rev={selectedDoc.rev || "-"}
+            rev={revShown ?? ""}
+            fileName={fileName}
+            mime={selectedVersion.fileType}
+            size={sizeBytes ?? null}
+            onDownload={downloadFile}
             zoomLevel={75}
             watermarkText="PREVIEW"
           />
           {/* Click-catcher overlay — iframe absorbs pointer events otherwise */}
-          <button
+          {canPreview && <button
             type="button"
             onClick={onFullScreen}
             className="absolute inset-0 z-10 bg-black/0 hover:bg-black/10 transition-colors cursor-zoom-in"
             title="Open full size"
             aria-label="Open full size"
-          />
+          />}
         </div>
       ) : (
         <div className="h-40 rounded-lg bg-[var(--color-surface-2)] flex items-center justify-center text-[14px] text-[var(--color-text-muted)]">

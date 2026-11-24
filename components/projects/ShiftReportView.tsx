@@ -1206,6 +1206,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
       )}
       {meeting === "turnover" && (
         <ShipBar shippedAt={shippedAt} shippedBy={hand.shippedByName} canShip={canShip} busy={shipBusy} err={hand.err} label={`${fmtInTz(shift.start, tz, { weekday: "short", month: "short", day: "numeric" })} ${shift.kind} shift`}
+          endedAt={now >= shift.end ? new Date(shift.end).toISOString() : null}
           tries={Object.keys(decisionsToShip(decisions, carried)).length}
           when={(iso) => `${ctx.DTs(Date.parse(iso))}`}
           onShip={() => { setShipBusy(true); void hand.ship((d) => decisionsToShip(d, carried, (hand.pullDraft ?? pullSet)?.crew ?? null), hand.pullDraft ?? pullSet, exportDoc, userName).finally(() => setShipBusy(false)); }}

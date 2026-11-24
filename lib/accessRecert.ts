@@ -135,7 +135,7 @@ export async function scanAccessRecerts(orgId: string, opts?: { leadDays?: numbe
     const ownerId = (l.owner_user_id as string | null) ?? null;
     const targets = uniq([...(ownerId ? [ownerId] : []), ...controllers]);
     const name = (l.name as string) || "a library";
-    const link = `/documents/${l.id as string}`;
+    const link = `/documents/${l.id as string}?ask=recert`;
     await Promise.all(targets.map((uid) =>
       notify({ orgId, userId: uid, kind: "access_recert_due", title: overdue ? `Access recert overdue: ${name}` : `Access recert due: ${name}`, body: "Review who has access to this library and recertify it.", link, resourceType: "library", resourceId: l.id as string })
     ));

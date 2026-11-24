@@ -33,6 +33,7 @@ import { formatAgo, exportInboxCsv } from "@/components/cockpit/CommandDeck";
 import { AttentionFeed, type AttnFilter } from "@/components/cockpit/AttentionFeed";
 import GroupedTable, { type Group } from "@/components/cockpit/GroupedTable";
 import { buildNeeds, needsFacts } from "@/components/cockpit/needsYou";
+import { withAsk } from "@/lib/asks";
 import { StatusTag, rowBtn, iconBtn, link, humanDate, sheet, SectionHead } from "@/components/cockpit/ui";
 import { useNotificationsSeen, readSeen } from "@/components/notifications/seen";
 
@@ -184,12 +185,13 @@ export default function InboxPage() {
   const docLink = (href: string, label: string) => (
     <Link href={href} className="ui-id">{label}</Link>
   );
-  const ticketRows = (list: TicketListItem[]) => list.slice(0, 6).map((t, i) => ({
+  // `ask`: the request opens with what is waiting on you at the top.
+  const ticketRows = (list: TicketListItem[], ask?: "turn") => list.slice(0, 6).map((t, i) => ({
     key: t.id ?? `t-${i}`,
     item: (
       <span className="inline-flex items-baseline gap-0.5 min-w-0 max-w-full">
         {t.ticketId && <CopyId value={t.ticketId} label="request number" className="shrink-0" />}
-        <Link href={`/requests/${t.id ?? ""}`} className="min-w-0 truncate text-[var(--color-text)] hover:text-[var(--color-accent-text)] hover:underline underline-offset-2">{t.title ?? "Untitled"}</Link>
+        <Link href={withAsk(`/requests/${t.id ?? ""}`, ask)} className="min-w-0 truncate text-[var(--color-text)] hover:text-[var(--color-accent-text)] hover:underline underline-offset-2">{t.title ?? "Untitled"}</Link>
       </span>
     ),
     detail: t.status ? <StageTag tone={stageTone(t.status)}>{stageLabel(t.status)}</StageTag> : "–",
@@ -204,7 +206,7 @@ export default function InboxPage() {
       key: "markups", title: "Markup requests for you", count: data.markupRequestsToMe.length,
       rows: data.markupRequestsToMe.slice(0, 6).map((mr) => ({
         key: mr.id,
-        item: docLink(mr.libraryId ? `/documents/${mr.libraryId}?doc=${mr.documentId}` : "/documents", mr.documentNumber || mr.documentTitle || mr.documentId.slice(0, 8)),
+        item: docLink(mr.libraryId ? `/documents/${mr.libraryId}?doc=${mr.documentId}&ask=markup` : "/documents", mr.documentNumber || mr.documentTitle || mr.documentId.slice(0, 8)),
         detail: <>{mr.requestedByName ? `From ${mr.requestedByName}` : ""}{mr.message ? `${mr.requestedByName ? ": " : ""}“${mr.message}”` : ""}</>,
         when: ago(mr.createdAt),
         // The row's point is "Mark shared"; declining sits in its menu.
@@ -217,7 +219,7 @@ export default function InboxPage() {
         ),
       })),
     },
-    { key: "assigned", title: "Requests assigned to you", count: data.ticketsAssigned.length, rows: ticketRows(data.ticketsAssigned), more: ticketMore(data.ticketsAssigned.length) },
+    { key: "assigned", title: "Requests assigned to you", count: data.ticketsAssigned.length, rows: ticketRows(data.ticketsAssigned, "turn"), more: ticketMore(data.ticketsAssigned.length) },
     { key: "unread", title: "Requests with new activity", count: data.ticketsUnread.length, rows: ticketRows(data.ticketsUnread), more: ticketMore(data.ticketsUnread.length) },
     { key: "watching", title: "Requests you watch", count: data.ticketsWatching.length, rows: ticketRows(data.ticketsWatching), more: ticketMore(data.ticketsWatching.length) },
     {
@@ -225,8 +227,8 @@ export default function InboxPage() {
       help: "Drafts in review that need your sign-off before they can publish.",
       rows: data.reviewsPendingOnMe.slice(0, 6).map((r) => ({
         key: r.signoffId, late: (r.__ageDays ?? 0) >= 14,
-        item: docLink(`/documents/${r.libraryId}?doc=${r.documentId}`, r.label),
-        detail: r.revisionLabel ? `Draft ${r.revisionLabel}` : "Draft",
+        item: docLink(`/documents/${r.libraryId}?doc=${r.documentId}&ask=signoff`, r.label),
+        detail: r.revisionLabel ? `Sign off draft ${r.revisionLabel}` : "Sign off the draft",
         when: ageTag(r.__ageDays),
       })),
     },
@@ -236,8 +238,8 @@ export default function InboxPage() {
       help: "Documents whose scheduled review is due. Open each, check it is still right, and mark it reviewed.",
       rows: [...data.reviewCyclesDueOnMe].sort((a, b) => Number(b.overdue) - Number(a.overdue) || String(a.nextReviewDate ?? "").localeCompare(String(b.nextReviewDate ?? ""))).slice(0, 6).map((r) => ({
         key: r.documentId, late: r.overdue,
-        item: docLink(`/documents/${r.libraryId}?doc=${r.documentId}`, r.label),
-        detail: "Periodic review",
+        item: docLink(`/documents/${r.libraryId}?doc=${r.documentId}&ask=review`, r.label),
+        detail: "Periodic review: still current, or needs changes",
         when: r.overdue
           ? <StatusTag tone="overdue">Overdue{r.nextReviewDate ? `, due ${humanDate(r.nextReviewDate.slice(0, 10))}` : ""}</StatusTag>
           : <>Due {r.nextReviewDate ? humanDate(r.nextReviewDate.slice(0, 10)) : "now"}</>,
@@ -249,7 +251,7 @@ export default function InboxPage() {
       help: "Someone sent you a revision and needs your confirmation for the record. Open the document and select “I have this revision”.",
       rows: data.distributionAcksPendingOnMe.slice(0, 6).map((a) => ({
         key: a.ackId,
-        item: docLink(a.libraryId ? `/documents/${a.libraryId}?doc=${a.documentId}` : "/documents", a.label),
+        item: docLink(a.libraryId ? `/documents/${a.libraryId}?doc=${a.documentId}&ask=dist` : "/documents", a.label),
         detail: [a.revLabel ? `Rev ${a.revLabel}` : null, a.requestedByName ? `from ${a.requestedByName}` : null].filter(Boolean).join(", "),
         when: ago(a.requestedAt),
       })),
@@ -259,8 +261,8 @@ export default function InboxPage() {
       help: "Controlled revisions you must confirm you have read and understood. Open each and sign.",
       rows: data.acknowledgmentsPendingOnMe.slice(0, 6).map((a) => ({
         key: a.rosterId, late: (a.__ageDays ?? 0) >= 14,
-        item: docLink(`/documents/${a.libraryId}?doc=${a.documentId}`, a.label),
-        detail: a.revisionLabel ? `Rev ${a.revisionLabel}` : "",
+        item: docLink(`/documents/${a.libraryId}?doc=${a.documentId}&ask=ack`, a.label),
+        detail: a.revisionLabel ? `Read and acknowledge Rev ${a.revisionLabel}` : "Read and acknowledge",
         when: ageTag(a.__ageDays),
       })),
     },
@@ -269,8 +271,8 @@ export default function InboxPage() {
       help: "Check who has access to these libraries and recertify it.",
       rows: data.accessRecertsDue.slice(0, 6).map((r) => ({
         key: r.libraryId, late: r.overdue,
-        item: <Link href={`/documents/${r.libraryId}`} className="font-semibold text-[var(--color-text)] hover:text-[var(--color-accent-text)]">{r.name}</Link>,
-        detail: "Access recertification",
+        item: <Link href={`/documents/${r.libraryId}?ask=recert`} className="font-semibold text-[var(--color-text)] hover:text-[var(--color-accent-text)]">{r.name}</Link>,
+        detail: "Check who has access and confirm it",
         when: r.overdue
           ? <StatusTag tone="overdue">Overdue{r.nextDate ? `, due ${humanDate(r.nextDate.slice(0, 10))}` : ""}</StatusTag>
           : <>Due {r.nextDate ? humanDate(r.nextDate.slice(0, 10)) : "now"}</>,
@@ -301,7 +303,7 @@ export default function InboxPage() {
       key: "late-ms", title: "Milestones past their date", tone: "bad", count: data.milestonesOverdue.length,
       rows: data.milestonesOverdue.slice(0, 6).map((m, i) => ({
         key: m.id ?? `mo-${i}`, late: true,
-        item: m.projectId ? <Link href={`/projects/${m.projectId}?tab=plan`} className="font-semibold text-[var(--color-text)] hover:text-[var(--color-accent-text)]">{m.name}</Link> : <span className="font-semibold">{m.name}</span>,
+        item: m.projectId ? <Link href={`/projects/${m.projectId}?tab=plan&ask=late&m=${m.id ?? ""}`} className="font-semibold text-[var(--color-text)] hover:text-[var(--color-accent-text)]">{m.name}</Link> : <span className="font-semibold">{m.name}</span>,
         detail: m.__projectName ?? "",
         when: <StatusTag tone="overdue">{m.__overdueDays ?? 0} day{m.__overdueDays === 1 ? "" : "s"} late</StatusTag>,
       })),
@@ -312,7 +314,7 @@ export default function InboxPage() {
         const d = m.__dueInDays ?? 0;
         return {
           key: m.id ?? `m-${i}`,
-          item: m.projectId ? <Link href={`/projects/${m.projectId}?tab=plan`} className="font-semibold text-[var(--color-text)] hover:text-[var(--color-accent-text)]">{m.name}</Link> : <span className="font-semibold">{m.name}</span>,
+          item: m.projectId ? <Link href={`/projects/${m.projectId}?tab=plan&ask=due&m=${m.id ?? ""}`} className="font-semibold text-[var(--color-text)] hover:text-[var(--color-accent-text)]">{m.name}</Link> : <span className="font-semibold">{m.name}</span>,
           detail: m.__projectName ?? "",
           when: d <= 2 ? <StatusTag tone="held">{d === 0 ? "Due today" : `In ${d} day${d === 1 ? "" : "s"}`}</StatusTag> : <>In {d} days</>,
         };

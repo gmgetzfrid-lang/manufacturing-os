@@ -26,12 +26,15 @@ export function computeNudges(snap: InboxSnapshot): Nudge[] {
 
   if (snap.myStaleCheckouts.length > 0) {
     const n = snap.myStaleCheckouts.length;
+    const first = snap.myStaleCheckouts[0];
     nudges.push({
       id: "stale-checkouts",
       severity: "high",
       message: `${n} of your checkouts ${n === 1 ? "has" : "have"} been out a while. Check in or extend so others aren't blocked.`,
-      actionLabel: "Review checkouts",
-      href: "/checkouts",
+      // One: straight to that document, with Check in and Keep it longer
+      // at the top. Several: the checkouts list.
+      actionLabel: n === 1 && first?.libraryId ? "Check in or keep it" : "Review checkouts",
+      href: n === 1 && first?.libraryId ? `/documents/${first.libraryId}?doc=${first.documentId}&ask=checkout` : "/checkouts",
     });
   }
 
@@ -57,8 +60,8 @@ export function computeNudges(snap: InboxSnapshot): Nudge[] {
       id: "overdue-milestones",
       severity: "high",
       message: `${overdue.length} milestone${overdue.length === 1 ? " is" : "s are"} overdue${oldest?.__overdueDays ? ` (oldest ${oldest.__overdueDays}d late)` : ""}. Update the status or reschedule.`,
-      actionLabel: "Go to projects",
-      href: "/projects",
+      actionLabel: overdue.length === 1 && oldest?.projectId ? "Update it" : "Go to projects",
+      href: overdue.length === 1 && oldest?.projectId ? `/projects/${oldest.projectId}?tab=plan&ask=late&m=${oldest.id ?? ""}` : "/projects",
     });
   }
 

@@ -341,6 +341,16 @@ export default function ExecutionView({
     window.addEventListener("step:edit-plan", on);
     return () => window.removeEventListener("step:edit-plan", on);
   }, []);
+  // Open a step's panel from elsewhere on the page (the "Needed from you"
+  // box a late step's link opens with: components/projects/ProjectAsk).
+  useEffect(() => {
+    const on = (e: Event) => {
+      const id = (e as CustomEvent<{ id?: string }>).detail?.id;
+      if (id) setDetailId(id);
+    };
+    window.addEventListener("step:open", on);
+    return () => window.removeEventListener("step:open", on);
+  }, []);
   // Remove a step from any view (the step card's Remove): delete it with
   // Undo, or cancel it on the record (components/projects/RemoveStep).
   const [removeId, setRemoveId] = useState<string | null>(null);

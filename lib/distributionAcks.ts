@@ -253,7 +253,7 @@ export async function scanDistributionAcks(orgId: string, opts?: {
     const docId = r.document_id as string;
     const doc = docs.get(docId);
     const label = (doc?.document_number as string) || (doc?.title as string) || (doc?.name as string) || "Document";
-    const link = doc?.library_id ? `/documents/${doc.library_id as string}?doc=${docId}` : undefined;
+    const link = doc?.library_id ? `/documents/${doc.library_id as string}?doc=${docId}&ask=dist` : undefined;
     if (!recentlyNagged.has(`${r.recipient_user_id as string}:${docId}`)) {
       sends.push(() => notify({
         orgId,

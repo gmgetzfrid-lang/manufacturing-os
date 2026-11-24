@@ -294,7 +294,7 @@ export async function scanAndNotifyReviews(orgId: string, opts?: { leadDays?: nu
     const days = daysUntilReview(doc.next_review_date) ?? 0;
     const overdue = days < 0;
     const label = doc.document_number || doc.title || doc.name || "Document";
-    const link = `/documents/${doc.library_id}?doc=${doc.id}`;
+    const link = `/documents/${doc.library_id}?doc=${doc.id}&ask=review`;
     await Promise.all([...recipients].map((uid) =>
       notify({
         orgId, userId: uid, kind: "review_due",

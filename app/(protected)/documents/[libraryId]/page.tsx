@@ -218,6 +218,9 @@ import {
 } from "lucide-react";
 
 import { friendlyError } from "@/lib/friendlyError";
+import { readAsk, type Ask } from "@/lib/asks";
+import { shownRevision, uploadedName } from "@/lib/revisionShown";
+import LibraryAsk from "@/components/documents/LibraryAsk";
 // The selection bars float over the list: above a phone's Upload bar, and
 // above the staged tray when it shows (--staged-tray-h).
 const SELECTION_BAR_BOTTOM = "bottom-[calc(5rem_+_var(--staged-tray-h,0px))] sm:bottom-[calc(2.5rem_+_var(--staged-tray-h,0px))]";
@@ -420,6 +423,25 @@ export default function LibraryExplorerPage() {
     void import("@/lib/projects").then((m) => m.autoReleaseExpiredAdHoc(activeOrgId)).catch(() => undefined);
   }, [activeOrgId]);
   const [selectedVersion, setSelectedVersion] = useState<DocumentVersion | null>(null);
+  // What the person was sent here to do (?ask=<what>, from a notification,
+  // the Inbox or Home): kept from the address it arrived with, for the
+  // document it named, until they move on to another document.
+  const askParam = readAsk(searchParams.get("ask"));
+  const askNParam = searchParams.get("n");
+  const askDocParam = searchParams.get("doc");
+  const [landingAsk, setLandingAsk] = useState<{ ask: Ask; n: string | null; docId: string | null } | null>(() => askParam ? { ask: askParam, n: askNParam, docId: askDocParam } : null);
+  const [seenAsk, setSeenAsk] = useState(`${askParam}|${askNParam}|${askDocParam}`);
+  if (`${askParam}|${askNParam}|${askDocParam}` !== seenAsk) {
+    setSeenAsk(`${askParam}|${askNParam}|${askDocParam}`);
+    if (askParam) setLandingAsk({ ask: askParam, n: askNParam, docId: askDocParam });
+  }
+  // Picking another document ends the ask (closing the panel keeps it, so
+  // the box is still there when they open it again from the same row).
+  const [askLeftFor, setAskLeftFor] = useState<string | null>(null);
+  if (landingAsk?.docId && selectedDoc?.id && selectedDoc.id !== landingAsk.docId && askLeftFor !== selectedDoc.id) {
+    setAskLeftFor(selectedDoc.id);
+    setLandingAsk(null);
+  }
   const [, setSessions] = useState<CheckoutSession[]>([]);
 
   // Sync selectedDoc with live documents list
@@ -439,6 +461,7 @@ export default function LibraryExplorerPage() {
   const [reviewControlTarget, setReviewControlTarget] = useState<{ level: "library" | "collection"; id: string; name?: string } | null>(null);
   const [retentionTarget, setRetentionTarget] = useState<{ level: "library" | "collection"; id: string; name?: string } | null>(null);
   const [recertOpen, setRecertOpen] = useState(false);
+  const [recertSaved, setRecertSaved] = useState(0);
   const [showMetadataEditor, setShowMetadataEditor] = useState(false);
   
   // NEW: Wizard State
@@ -1671,6 +1694,8 @@ export default function LibraryExplorerPage() {
     }
     const sp = new URLSearchParams(searchParams.toString());
     sp.delete("doc"); sp.delete("fs"); sp.delete("book");
+    // The ask goes with the document it was for.
+    if (!landingAsk || (landingAsk.docId && stateDoc && stateDoc !== landingAsk.docId)) { sp.delete("ask"); sp.delete("n"); }
     if (selectedDoc?.id) {
       sp.set("doc", selectedDoc.id);
       if (showFullScreen) sp.set("fs", "1");
@@ -1713,7 +1738,7 @@ export default function LibraryExplorerPage() {
         lastUrlDoc.current = stateDoc;
       } else window.history.replaceState(null, "", url);
     }
-  }, [selectedDoc, showFullScreen, showMultiView, openBookId, currentFolderId, searchParams, pathname]);
+  }, [selectedDoc, showFullScreen, showMultiView, openBookId, currentFolderId, searchParams, pathname, landingAsk]);
 
   // The filter over the list and the search, kept in the address as they
   // are typed (rewriting the entry, never a new step per letter). `urlText`
@@ -3622,7 +3647,7 @@ export default function LibraryExplorerPage() {
   const renderDocCell = (docRecord: DocumentRecord, key: string) => {
     if (key === "title") return docRecord.title || docRecord.name || "Untitled";
     if (key === "documentNumber") return docRecord.documentNumber || "-";
-    if (key === "rev") return docRecord.rev || "-";
+    if (key === "rev") return shownRevision(docRecord.rev, uploadedName(docRecord)) || "-";
     if (key === "status") return docRecord.status || "-";
     if (key === "updatedAt") return humanDate(docRecord.updatedAt);
     if (key === "createdAt") return humanDate(docRecord.createdAt);
@@ -3956,12 +3981,14 @@ export default function LibraryExplorerPage() {
 
   // The one orange action. On a phone it rides in the bottom bar, so its
   // menu opens upward there.
+  // Sent here to recertify access: that box holds the one primary button.
+  const libraryAskOn = landingAsk?.ask === "recert" && !landingAsk.docId;
   const uploadPrimary = (
     <div className="relative">
       <button
         type="button"
         onClick={() => setUploadMenuOpen((v) => !v)}
-        className={`${heroPrimary} w-full`}
+        className={`${libraryAskOn ? heroQuiet : heroPrimary} w-full`}
         title="Upload files or a whole folder"
         aria-haspopup="menu"
         aria-expanded={uploadMenuOpen}
@@ -4376,6 +4403,10 @@ export default function LibraryExplorerPage() {
             </PageHero>
 
             <PageBody>
+            {/* Sent here to recertify who has access: said first. */}
+            {libraryAskOn && activeOrgId && (
+              <LibraryAsk libraryId={libraryId} orgId={activeOrgId} name={library.name} refreshKey={recertSaved} onCheck={() => setRecertOpen(true)} />
+            )}
             {findOn && activeOrgId && (
               <Card
                 label={<>Search: “{find.trim()}”</>}
@@ -4866,7 +4897,7 @@ export default function LibraryExplorerPage() {
                             </span>
                             <span className="mt-0.5 flex items-center gap-x-3 text-[13px] text-[var(--color-text-muted)] min-w-0">
                               {showTitle && <span className="truncate min-w-0">{doc.title}</span>}
-                              <span className="shrink-0">Rev <span className="font-display tabular-nums font-semibold text-[var(--color-text)]">{doc.rev || "-"}</span></span>
+                              <span className="shrink-0">Rev <span className="font-display tabular-nums font-semibold text-[var(--color-text)]">{shownRevision(doc.rev, uploadedName(doc)) || "-"}</span></span>
                               {out
                                 ? <span className="shrink-0 font-semibold text-[var(--state-held)] truncate">Checked out{doc.checkedOutBy === uid ? " by you" : doc.checkedOutByName ? ` by ${doc.checkedOutByName}` : ""}</span>
                                 : <span className="shrink-0">{humanDate(doc.updatedAt)}</span>}
@@ -5344,6 +5375,8 @@ export default function LibraryExplorerPage() {
               setSelectedVersion(v);
               setShowFullScreen(true);
             }}
+            ask={landingAsk && landingAsk.docId === selectedDoc.id ? landingAsk.ask : null}
+            askNotificationId={landingAsk && landingAsk.docId === selectedDoc.id ? landingAsk.n : null}
             folderPath={(() => {
               const f = selectedDoc.collectionId ? folderMap.get(selectedDoc.collectionId) : null;
               if (!f) return library.name;
@@ -5593,6 +5626,7 @@ export default function LibraryExplorerPage() {
           uid={uid}
           userName={userEmail}
           onClose={() => setRecertOpen(false)}
+          onSaved={() => setRecertSaved((n) => n + 1)}
         />
       )}
 

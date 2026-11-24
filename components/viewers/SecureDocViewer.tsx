@@ -1,19 +1,33 @@
 "use client";
 
 import React, { useEffect, useRef, useState } from 'react';
-import { Loader2, AlertTriangle, XCircle, ShieldAlert, Lock } from 'lucide-react';
+import { Loader2, AlertTriangle, XCircle, ShieldAlert, Lock, FileText, Download } from 'lucide-react';
 import { useRole } from '@/components/providers/RoleContext';
 import { logFileView } from '@/lib/audit';
 import { supabase } from '@/lib/supabase';
 import { recordIntent } from '@/lib/intents';
 import BackupViewer from '@/components/archive/BackupViewer';
 import { fileBlob, fileBlobIfStarted, fileLink } from '@/lib/docOpen';
+import { previewKind, fileTypeName, sizeWords } from '@/lib/filePreview';
+import { downloadStoredFile } from '@/lib/fileDownload';
+import { logFileDownload } from '@/lib/audit';
+import { friendlyError } from '@/lib/friendlyError';
 
 interface SecureDocViewerProps {
   url: string;
   title: string;
   docNumber: string;
+  /** The revision to show; empty when none is set (the bar leaves it out). */
   rev: string;
+  /** The uploaded file's name and stored type: only PDFs and pictures
+   *  preview. Anything else (Word, Excel, CAD) shows as a file card and
+   *  downloads only when Download is pressed, so opening a panel never
+   *  starts a download (a phone asked "Download this file?" at once). */
+  fileName?: string;
+  mime?: string | null;
+  size?: number | null;
+  /** Download for the file card; when absent the card saves the file itself. */
+  onDownload?: () => Promise<void> | void;
   documentId?: string;
   orgId?: string;
   watermarkText?: string;
@@ -25,12 +39,30 @@ export default function SecureDocViewer({
   title, 
   docNumber, 
   rev,
+  fileName,
+  mime,
+  size,
+  onDownload,
   documentId,
   orgId, 
   watermarkText,
   zoomLevel 
 }: SecureDocViewerProps) {
   const { userEmail, uid, activeRole } = useRole();
+  const kind = previewKind({ fileName, mime, path: url });
+  const shownName = fileName || decodeURIComponent((url || '').split(/[?#]/)[0].split('/').pop() || '') || title;
+  const [saving, setSaving] = useState(false);
+  const [saveErr, setSaveErr] = useState<unknown>(null);
+  const download = async () => {
+    setSaving(true); setSaveErr(null);
+    try {
+      if (onDownload) { await onDownload(); return; }
+      await downloadStoredFile(url, shownName);
+      if (documentId && orgId && uid) {
+        void logFileDownload({ orgId, fileId: documentId, fileName: shownName, userId: uid, userEmail: userEmail || 'unknown', userRole: activeRole, version: rev || undefined }).catch(() => {});
+      }
+    } catch (e) { setSaveErr(e); } finally { setSaving(false); }
+  };
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
@@ -135,7 +167,9 @@ export default function SecureDocViewer({
       }
     };
 
-    if (url) void show();
+    // Only files the browser can draw are fetched: a frame given a Word or
+    // CAD file downloads it instead of showing it.
+    if (url && kind !== 'none') void show();
 
     // The local URL is this frame's own; the bytes stay in the cache.
     return () => {
@@ -145,7 +179,7 @@ export default function SecureDocViewer({
         blobUrlRef.current = null;
       }
     };
-  }, [url]);
+  }, [url, kind]);
 
   // --- 2. SECURITY: ANTI-EXFILTRATION ---
   useEffect(() => {
@@ -199,7 +233,9 @@ export default function SecureDocViewer({
           repeated. */}
       <div className="h-9 border-b border-[var(--color-border)] flex items-center gap-2 px-3 shrink-0 z-50 min-w-0" title={title}>
         <span className="font-display text-[15px] font-semibold tabular-nums text-[var(--color-text)] truncate">{docNumber}</span>
-        <span className="text-[13px] text-[var(--color-text-muted)] shrink-0">Rev <span className="font-display tabular-nums font-semibold text-[var(--color-text)]">{rev}</span></span>
+        {rev && rev !== '-'
+          ? <span className="text-[13px] text-[var(--color-text-muted)] shrink-0">Rev <span className="font-display tabular-nums font-semibold text-[var(--color-text)]">{rev}</span></span>
+          : <span className="text-[13px] text-[var(--color-text-muted)] shrink-0">No revision set</span>}
         <Lock className="w-3.5 h-3.5 text-[var(--color-text-muted)] shrink-0 ml-auto" aria-label="Print and save are off in this preview" />
       </div>
 
@@ -225,7 +261,27 @@ export default function SecureDocViewer({
 
       {/* CONTENT AREA */}
       <div className="flex-1 relative bg-[var(--color-surface)]">
-        {archivedInfo ? (
+        {kind === 'none' ? (
+          // A file the browser can't show: what it is, and a Download that
+          // only runs when pressed.
+          <div className="absolute inset-0 z-[60] flex items-center justify-center p-4 bg-[var(--color-surface-2)]">
+            <div className="w-full max-w-sm rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-[var(--color-text)]">
+              <div className="flex items-start gap-3">
+                <FileText aria-hidden className="w-8 h-8 shrink-0 text-[var(--color-text-muted)]" />
+                <div className="min-w-0">
+                  <p className="text-[15px] font-semibold break-words">{shownName}</p>
+                  <p className="text-[14px] text-[var(--color-text-muted)]">{[fileTypeName({ fileName: shownName, mime, path: url }), sizeWords(size)].filter(Boolean).join(', ')}</p>
+                </div>
+              </div>
+              <p className="mt-3 text-[14px] text-[var(--color-text-muted)]">This file type can&apos;t be shown here. Download it to open it in its own program.</p>
+              <button type="button" onClick={() => void download()} disabled={saving}
+                className="mt-3 inline-flex items-center justify-center gap-2 h-10 pointer-coarse:h-11 px-4 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[15px] font-semibold text-[var(--color-text)] disabled:opacity-60">
+                {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />} Download
+              </button>
+              {saveErr != null && <p role="alert" className="mt-2 text-[14px] text-[var(--state-overdue-text)]">The download didn&apos;t start. {friendlyError(saveErr)}</p>}
+            </div>
+          </div>
+        ) : archivedInfo ? (
           <div className="absolute inset-0 overflow-y-auto bg-[var(--color-canvas)] p-4 z-20">
             <BackupViewer
               target={{
@@ -248,6 +304,9 @@ export default function SecureDocViewer({
             <h3 className="font-display text-[17px] font-semibold text-[var(--color-text)]">Couldn&apos;t open the preview</h3>
             <p className="text-[13px] mt-1 text-[var(--color-text-muted)] max-w-md">{error}</p>
           </div>
+        ) : blobUrl && kind === 'image' ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={blobUrl} alt={title} className="w-full h-full object-contain bg-[var(--color-surface)]" draggable={false} />
         ) : blobUrl ? (
           <iframe
             src={`${blobUrl}#toolbar=0&navpanes=0&scrollbar=0&zoom=${zoomLevel}`}
